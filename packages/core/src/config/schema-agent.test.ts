@@ -15,7 +15,7 @@ import {
   ContextGuardConfigSchema,
   AgentsMapSchema,
   DeferredToolsConfigSchema,
-} from "./schema-agent.js";
+} from "./schema-agent/index.js";
 
 // ---------------------------------------------------------------------------
 // AgentConfigSchema

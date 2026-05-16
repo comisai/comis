@@ -6,7 +6,7 @@ import {
   DmScopeConfigSchema,
   PruningConfigSchema,
   SessionCompactionConfigSchema,
-} from "./schema-agent.js";
+} from "./schema-agent/index.js";
 
 describe("SessionResetPolicySchema", () => {
   it("parses valid reset policy", () => {

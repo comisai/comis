@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { ContextEngineConfigSchema } from "./schema-agent.js";
+import { ContextEngineConfigSchema } from "./schema-agent/index.js";
 
 // ---------------------------------------------------------------------------
 // ContextEngineConfigSchema

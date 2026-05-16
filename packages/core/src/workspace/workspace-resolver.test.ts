@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { AgentConfig } from "../config/schema-agent.js";
+import type { AgentConfig } from "../config/schema-agent/index.js";
 import { PathTraversalError } from "../security/safe-path.js";
 import os from "node:os";
 import path from "node:path";
