@@ -21,7 +21,7 @@
 
 import { createHash } from "node:crypto";
 import type { ToolCapabilityPort } from "@comis/core";
-import { ShellQuoteTracker } from "./exec-security.js";
+import { ShellQuoteTracker } from "./exec-security/index.js";
 
 // --------------------------------------------------------------------------
 // Public types (consumed by exec-tool.ts, process-tool.ts, process-registry.ts)

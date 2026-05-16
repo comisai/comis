@@ -19,7 +19,7 @@ import {
   getManagedSectionRedirect,
   formatRedirectHint,
 } from "@comis/core";
-import { validateExecCommand } from "../../tools/builtin/exec-security.js";
+import { validateExecCommand } from "../../tools/builtin/exec-security/index.js";
 import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
 
 export function registerAllToolMetadata(): void {

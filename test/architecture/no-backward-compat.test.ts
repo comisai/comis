@@ -128,7 +128,11 @@ const BC_REM_02_PATH_TAIL_ALLOWLIST: readonly string[] = [
   "packages/daemon/src/api/session-handlers.ts", // doc-comment about synchronous "backward compatible" inline-result path
   "packages/memory/src/schema.ts", // module-level flag set "for backward compatibility" — schema-init carry-over
   "packages/memory/src/setup-secrets.ts", // explicit two-mode "legacy mode" branch (no MEMORY_DB_KEY env) — out of Phase 38 scope (secrets-store optionality)
-  "packages/skills/src/tools/builtin/exec-tool.ts", // doc-string: "Backward compatibility is NOT preserved (see feedback_no_backward_compat)" — POLICY citation
+  // Phase 43 plan 02a (FILE-SPLIT-02) split exec-tool.ts into exec-tool/ subdirectory;
+  // POLICY citation text moved verbatim to exec-types.ts (deps interface docblock) and
+  // index.ts (createExecTool factory docblock).
+  "packages/skills/src/tools/builtin/exec-tool/exec-types.ts", // doc-string: "Backward compatibility is NOT preserved" — POLICY citation (post-split)
+  "packages/skills/src/tools/builtin/exec-tool/index.ts", // doc-string: "Backward compat NOT preserved (memory feedback_no_backward_compat)" — POLICY citation (post-split)
   "packages/skills/src/tools/builtin/process-tool.ts", // doc-string: "Backward compatibility is NOT preserved" + "backward compat with the prior positional ..." — POLICY citations
   "packages/skills/src/platform-tools/tools/browser-tool.ts", // RpcCall-or-deps-object signature; doc-comment describing the two-shape acceptance — out of Phase 38 scope
   "packages/skills/src/platform-tools/tools/agents-manage-tool.ts", // doc-string: "default-logger compat shim (per feedback_no_backward_compat.md)" — POLICY citation

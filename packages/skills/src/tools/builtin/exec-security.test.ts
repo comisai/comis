@@ -25,7 +25,7 @@ import {
   detectBraceExpansion,
   detectProcEnvironAccess,
   detectCommentQuoteDesync,
-} from "./exec-security.js";
+} from "./exec-security/index.js";
 
 describe("sanitizeCommandInput", () => {
   // Should BLOCK
