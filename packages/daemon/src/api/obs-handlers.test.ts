@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import { createObsHandlers } from "./obs-handlers.js";
-import type { ObsHandlerDeps } from "./obs-handlers.js";
+import { createObsHandlers } from "./obs-handlers/index.js";
+import type { ObsHandlerDeps } from "./obs-handlers/index.js";
 
 // ---------------------------------------------------------------------------
 // Helper: create isolated mock deps per test

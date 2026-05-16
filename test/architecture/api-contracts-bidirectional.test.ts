@@ -82,6 +82,51 @@ function listContractFiles(dir: string): string[] {
 }
 
 /**
+ * Recursive walker for handler files under `HANDLER_DIR` (and any
+ * subdirectories created by Phase 43 Wave 7 splits — e.g. `graph-handlers/`,
+ * `obs-handlers/`, `session-handlers/`, `config-handlers/`).
+ *
+ * Returns paths relative to `HANDLER_DIR` (matching the previous
+ * `readdirSync(HANDLER_DIR).filter(f => f.endsWith("-handlers.ts"))` shape).
+ * Accepts top-level `*-handlers.ts` files AND any `.ts` file inside a
+ * `*-handlers/` subdirectory (excluding test files, snapshots, parity tests).
+ */
+function listHandlerFiles(dir: string, prefix = ""): string[] {
+  const out: string[] = [];
+  let entries: ReturnType<typeof readdirSync>;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const ent of entries) {
+    const relPath = prefix ? `${prefix}/${ent.name}` : ent.name;
+    const full = resolve(dir, ent.name);
+    if (ent.isDirectory()) {
+      if (ent.name === "__snapshots__" || ent.name === "shared") continue;
+      // Descend only into `*-handlers/` subdirectories (Phase 43 FILE-SPLIT-03/04/05/09).
+      if (ent.name.endsWith("-handlers")) {
+        out.push(...listHandlerFiles(full, relPath));
+      }
+    } else if (
+      ent.isFile() &&
+      ent.name.endsWith(".ts") &&
+      !ent.name.endsWith(".test.ts") &&
+      !ent.name.endsWith(".parity.test.ts")
+    ) {
+      // At top level: accept only `*-handlers.ts` files (preserve original semantics).
+      // Inside `*-handlers/` subdir: accept any non-test `.ts` (leaf modules + index).
+      if (prefix) {
+        out.push(relPath);
+      } else if (ent.name.endsWith("-handlers.ts")) {
+        out.push(relPath);
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Find `export const <ContractName> = defineContract({ method: "..." ... })`
  * across every `.ts` file under `packages/core/src/api-contracts/` (recursive
  * — supports the Phase 43 subdirectory splits per FILE-SPLIT-14). Returns
@@ -169,9 +214,7 @@ function collectMethodsFromFile(file: string): TaggedMethod[] {
 }
 
 describe("Contract registry — bidirectional 1:1 (WEB-CONTRACTS-07)", () => {
-  const handlerFiles = readdirSync(HANDLER_DIR).filter(
-    (f) => f.endsWith("-handlers.ts") && !f.endsWith(".test.ts"),
-  );
+  const handlerFiles = listHandlerFiles(HANDLER_DIR);
 
   it("sanity: api/ contains at least 20 *-handlers.ts files", () => {
     expect(

@@ -32,7 +32,7 @@ vi.mock("./memory-handlers.js", () => ({
   })),
 }));
 
-vi.mock("./session-handlers.js", () => ({
+vi.mock("./session-handlers/index.js", () => ({
   createSessionHandlers: vi.fn(() => ({
     "session.list": vi.fn(async () => ({ sessions: [] })),
     "session.get": vi.fn(async () => ({ session: null })),
@@ -59,7 +59,7 @@ vi.mock("./media-handlers.js", () => ({
   })),
 }));
 
-vi.mock("./config-handlers.js", () => ({
+vi.mock("./config-handlers/index.js", () => ({
   createConfigHandlers: vi.fn(() => ({
     "config.get": vi.fn(async () => ({})),
     "config.set": vi.fn(async () => ({ updated: true })),
@@ -94,7 +94,7 @@ vi.mock("./agent-handlers.js", () => ({
   })),
 }));
 
-vi.mock("./obs-handlers.js", () => ({
+vi.mock("./obs-handlers/index.js", () => ({
   createObsHandlers: vi.fn(() => ({
     "obs.diagnostics": vi.fn(async () => ({})),
     "obs.billing": vi.fn(async () => ({})),

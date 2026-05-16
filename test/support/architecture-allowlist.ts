@@ -555,12 +555,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "phase-F",
   },
   {
-    file: "packages/daemon/src/api/config-handlers.ts",
-    lines: 1328,
-    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
-    removedIn: "phase-F",
-  },
-  {
     file: "packages/daemon/src/wiring/setup-agents.ts",
     lines: 1149,
     reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-03",
@@ -573,18 +567,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "phase-F",
   },
   {
-    file: "packages/daemon/src/api/session-handlers.ts",
-    lines: 1085,
-    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
-    removedIn: "phase-F",
-  },
-  {
-    file: "packages/daemon/src/api/graph-handlers.ts",
-    lines: 1028,
-    reason: "Daemon RPC handler group; split in Phase F per FILE-SPLIT-06",
-    removedIn: "phase-F",
-  },
-  {
     file: "packages/daemon/src/wiring/setup-gateway.ts",
     lines: 973,
     reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-07",
@@ -594,12 +576,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     file: "packages/daemon/src/wiring/setup-cross-session.ts",
     lines: 931,
     reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-08",
-    removedIn: "phase-F",
-  },
-  {
-    file: "packages/daemon/src/api/obs-handlers.ts",
-    lines: 881,
-    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
     removedIn: "phase-F",
   },
   // skills (0 files remaining — exec-tool.ts + exec-security.ts dropped in Phase 43 plan 02a, web-search-tool.ts + skill-registry.ts dropped in 43-02b, mcp-client.ts dropped in 43-02c per FILE-SPLIT-02 + FILE-SPLIT-11 + FILE-SPLIT-16)
@@ -914,9 +890,27 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/daemon/src/api/config-handlers.ts",
-    lineRanges: [[164, 164], [487, 487], [495, 495], [525, 525], [535, 535], [550, 550], [579, 579], [658, 658], [692, 692], [727, 727], [767, 767], [875, 875], [883, 883], [893, 893], [915, 915], [926, 926], [941, 941], [948, 948], [1071, 1071], [1078, 1078], [1100, 1100], [1134, 1134], [1175, 1175], [1213, 1213], [1216, 1216], [1224, 1224], [1230, 1230], [1257, 1257], [1260, 1260], [1268, 1268], [1277, 1277], [1302, 1302]],
-    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
+    file: "packages/daemon/src/api/config-handlers/config-helpers.ts",
+    lineRanges: [[159, 159], [222, 222]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-03.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/config-handlers/config-read.ts",
+    lineRanges: [[41, 41], [49, 49], [77, 77], [97, 97], [135, 135], [169, 169]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-03.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/config-handlers/config-write.ts",
+    lineRanges: [[74, 74], [84, 84], [99, 99], [128, 128], [179, 179], [214, 214], [254, 254], [361, 361]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-03.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/config-handlers/config-export.ts",
+    lineRanges: [[64, 64], [74, 74], [96, 96], [107, 107], [122, 122], [129, 129], [251, 251], [259, 259], [262, 262], [270, 270], [276, 276], [302, 302], [305, 305], [313, 313], [322, 322], [347, 347]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-03.",
     removedIn: "permanent",
   },
   {
@@ -944,9 +938,27 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/daemon/src/api/graph-handlers.ts",
-    lineRanges: [[126, 126], [142, 142], [147, 147], [391, 391], [414, 414], [440, 440], [485, 485], [502, 502], [533, 533], [604, 604], [609, 609], [617, 617], [637, 637], [642, 642], [674, 674], [679, 679], [688, 688], [708, 708], [728, 728], [733, 733], [742, 742], [758, 758], [794, 794], [808, 808], [837, 837], [909, 909], [913, 913], [921, 921], [1005, 1005], [1009, 1009], [1017, 1017]],
-    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
+    file: "packages/daemon/src/api/graph-handlers/graph-helpers.ts",
+    lineRanges: [[108, 108], [124, 124], [129, 129], [365, 365]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-05.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/graph-handlers/graph-mutate.ts",
+    lineRanges: [[55, 55], [81, 81], [126, 126], [143, 143], [168, 168], [173, 173], [181, 181], [201, 201], [206, 206], [238, 238], [243, 243], [252, 252], [264, 264], [268, 268], [276, 276]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-05.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/graph-handlers/graph-query.ts",
+    lineRanges: [[53, 53], [124, 124], [149, 149], [185, 185], [199, 199], [228, 228], [300, 300], [304, 304], [312, 312]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-05.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/graph-handlers/graph-export.ts",
+    lineRanges: [[32, 32], [37, 37], [46, 46]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-05.",
     removedIn: "permanent",
   },
   {
@@ -986,9 +998,21 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/daemon/src/api/obs-handlers.ts",
-    lineRanges: [[138, 138], [477, 477], [517, 517], [535, 535], [558, 558], [619, 619], [845, 845]],
-    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
+    file: "packages/daemon/src/api/obs-handlers/obs-diagnostics.ts",
+    lineRanges: [[49, 49], [107, 107], [147, 147], [165, 165], [171, 171], [188, 188], [249, 249]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-09.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/obs-handlers/obs-metrics.ts",
+    lineRanges: [[50, 50], [134, 134], [140, 140], [203, 203], [208, 208], [239, 239], [294, 294], [331, 331], [371, 371], [395, 395]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-09.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/obs-handlers/obs-export.ts",
+    lineRanges: [[41, 41], [81, 81], [89, 89]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-09.",
     removedIn: "permanent",
   },
   {
@@ -1010,9 +1034,21 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/daemon/src/api/session-handlers.ts",
-    lineRanges: [[612, 612], [790, 790], [819, 819], [937, 937]],
-    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
+    file: "packages/daemon/src/api/session-handlers/session-read.ts",
+    lineRanges: [[100, 100], [279, 279]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-04.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/session-handlers/session-mutate.ts",
+    lineRanges: [[37, 37], [66, 66], [184, 184], [200, 200], [208, 208]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-04.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/session-handlers/session-archive.ts",
+    lineRanges: [[34, 34], [36, 36], [42, 42], [63, 63], [69, 69], [87, 87], [89, 89], [95, 95]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-04.",
     removedIn: "permanent",
   },
   {

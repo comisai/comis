@@ -1,0 +1,286 @@
+// SPDX-License-Identifier: Apache-2.0
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+/**
+ * Graph mutation RPC handlers (Phase 43 split per FILE-SPLIT-05).
+ *
+ * Write-side handlers that produce/modify execution graphs:
+ *   - graph.define, graph.execute, graph.cancel
+ *   - graph.save, graph.delete, graph.deleteRun
+ *
+ * Pure helpers (transformNodes, validateGraphWarnings, schemaToExample,
+ * buildGraphInput, validateTypeConfigs) live in `graph-helpers.ts` to keep
+ * this file under the ≤500L Phase F cap.
+ *
+ * @module
+ */
+
+import { randomUUID } from "node:crypto";
+import { existsSync, rmSync } from "node:fs";
+import {
+  safePath,
+  GraphDefineContract,
+  GraphExecuteContract,
+  GraphCancelContract,
+  GraphSaveContract,
+  GraphDeleteContract,
+  GraphDeleteRunContract,
+  stripInternalFields,
+} from "@comis/core";
+import { extractUserVariables, substituteUserVariables } from "../../graph/user-variables.js";
+import type { RpcHandler } from "../types.js";
+import {
+  IS_DEV,
+  type GraphHandlerDeps,
+  buildGraphInput,
+  validateGraphWarnings,
+  validateTypeConfigs,
+} from "./graph-helpers.js";
+
+// ---------------------------------------------------------------------------
+// Mutation handlers
+// ---------------------------------------------------------------------------
+
+/**
+ * Bind the write-side graph RPC handlers (define / execute / cancel / save /
+ * delete / deleteRun). Object-spread compatible with `Record<string, RpcHandler>`.
+ */
+export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, RpcHandler> {
+  return {
+    [GraphDefineContract.method]: async (rawParams) => {
+      // Bespoke pre-Zod validation FIRST (preserves user-friendly error
+      // messages matching existing handler-test assertions —
+      // "Missing required parameter: nodes" rather than Zod's JSON dump).
+      const rawNodes = rawParams.nodes as unknown[];
+      if (!rawNodes || !Array.isArray(rawNodes) || rawNodes.length === 0) {
+        throw new Error("Missing required parameter: nodes");
+      }
+
+      const userParams = stripInternalFields(rawParams);
+      GraphDefineContract.request.parse(userParams);
+
+      const validated = buildGraphInput(userParams);
+      validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
+      const { warnings, errors } = validateGraphWarnings(validated.graph);
+
+      const result = {
+        valid: true,
+        nodeCount: validated.graph.nodes.length,
+        executionOrder: validated.executionOrder,
+        label: validated.graph.label,
+        warnings,
+        errors,
+        userVariables: extractUserVariables(validated.graph.nodes),
+      };
+      if (IS_DEV) GraphDefineContract.response.parse(result);
+      return result;
+    },
+
+    [GraphExecuteContract.method]: async (rawParams) => {
+      // Bespoke pre-Zod validation FIRST.
+      if (!deps.securityConfig.agentToAgent?.enabled) {
+        throw new Error("Agent-to-agent messaging is disabled by policy.");
+      }
+
+      const userParams = stripInternalFields(rawParams);
+      GraphExecuteContract.request.parse(userParams);
+
+      const validated = buildGraphInput(userParams);
+      validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
+
+      // Apply user-variable substitution if variables provided
+      const variables = userParams.variables as Record<string, string> | undefined;
+      let finalValidated = validated;
+      if (variables && Object.keys(variables).length > 0) {
+        const substitutedNodes = validated.graph.nodes.map((node) => ({
+          ...node,
+          task: substituteUserVariables(node.task, variables),
+        }));
+        finalValidated = {
+          graph: { ...validated.graph, nodes: substitutedNodes },
+          executionOrder: validated.executionOrder,
+        };
+      }
+
+      // Check for unresolved variables AFTER substitution (execute-time only)
+      const unresolvedWarnings: Array<{ nodeId: string; type: string; message: string; fix: string }> = [];
+      const varPattern = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+      for (const node of finalValidated.graph.nodes) {
+        varPattern.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = varPattern.exec(node.task)) !== null) {
+          unresolvedWarnings.push({
+            nodeId: node.nodeId,
+            type: "unresolved_variable",
+            message: `Node "${node.nodeId}" has unresolved variable \${${match[1]}} -- provide a value in the variables parameter`,
+            fix: `Provide a value for "${match[1]}" in the variables parameter, or remove the \${${match[1]}} placeholder.`,
+          });
+        }
+      }
+
+      // Pre-execution channel validation for approval-gate nodes
+      const hasApprovalGate = finalValidated.graph.nodes.some(n => n.typeId === "approval-gate");
+      if (hasApprovalGate) {
+        const announceChannelType = rawParams._callerChannelType as string | undefined;
+        const announceChannelId = rawParams._callerChannelId as string | undefined;
+        if (!announceChannelType || !announceChannelId) {
+          throw new Error(
+            "Graph contains approval-gate nodes but no announcement channel is configured. " +
+            "The graph must be triggered from a channel context (Telegram, Discord, etc.)."
+          );
+        }
+      }
+
+      const coordResult = await deps.graphCoordinator.run({
+        graph: finalValidated,
+        callerSessionKey: rawParams._callerSessionKey as string | undefined,
+        callerAgentId: rawParams._agentId as string | undefined,
+        announceChannelType: rawParams._callerChannelType as string | undefined,
+        announceChannelId: rawParams._callerChannelId as string | undefined,
+        nodeProgress: userParams.node_progress === true,
+      });
+
+      if (!coordResult.ok) {
+        throw new Error(coordResult.error);
+      }
+
+      const graphId = coordResult.value;
+
+      deps.logger?.info(
+        { graphId, nodeCount: finalValidated.graph.nodes.length, method: "graph.execute" },
+        "Graph execution started",
+      );
+
+      const result: Record<string, unknown> = {
+        graphId,
+        async: true,
+        nodeCount: finalValidated.graph.nodes.length,
+        label: finalValidated.graph.label,
+        hint: "Graph is running asynchronously and survives independently of this session. You will be automatically notified with results when it completes — do NOT poll with status/cron. Just tell the user it's running.",
+        ...(unresolvedWarnings.length > 0 && { warnings: unresolvedWarnings }),
+      };
+      if (IS_DEV) GraphExecuteContract.response.parse(result);
+      return result;
+    },
+
+    [GraphCancelContract.method]: async (rawParams) => {
+      // Bespoke pre-Zod validation FIRST.
+      if (!deps.securityConfig.agentToAgent?.enabled) {
+        throw new Error("Agent-to-agent messaging is disabled by policy.");
+      }
+
+      const cancelGraphId = rawParams.graphId ?? rawParams.graph_id;
+      if (!cancelGraphId) {
+        throw new Error("Missing required parameter: graphId");
+      }
+
+      const userParams = stripInternalFields(rawParams);
+      GraphCancelContract.request.parse(userParams);
+
+      const cancelled = deps.graphCoordinator.cancel(cancelGraphId as string);
+      if (!cancelled) {
+        throw new Error("Graph not found or already terminal");
+      }
+
+      deps.logger?.info(
+        { graphId: cancelGraphId, method: "graph.cancel" },
+        "Graph cancelled",
+      );
+
+      const result = { cancelled: true, graphId: cancelGraphId as string };
+      if (IS_DEV) GraphCancelContract.response.parse(result);
+      return result;
+    },
+
+    // -----------------------------------------------------------------
+    // Named graph persistence
+    // -----------------------------------------------------------------
+
+    [GraphSaveContract.method]: async (rawParams) => {
+      // Bespoke pre-Zod validation FIRST.
+      if (!deps.namedGraphStore) {
+        throw new Error("Named graph storage not available");
+      }
+
+      const label = rawParams.label as string | undefined;
+      if (!label || typeof label !== "string" || label.trim().length === 0) {
+        throw new Error("Missing required parameter: label (non-empty string)");
+      }
+
+      const userParams = stripInternalFields(rawParams);
+      GraphSaveContract.request.parse(userParams);
+
+      const id = (rawParams.id as string) ?? randomUUID();
+      const tenantId = deps.tenantId ?? "default";
+      const agentId = (rawParams.agentId as string) ?? deps.defaultAgentId;
+
+      // Validate structure (typeId/typeConfig pairing, DAG sort, Zod schema)
+      const validated = buildGraphInput(userParams);
+      validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
+
+      deps.namedGraphStore.save({
+        id,
+        tenantId,
+        agentId,
+        label: label.trim(),
+        nodes: (rawParams.nodes as unknown[]) ?? [],
+        edges: (rawParams.edges as unknown[]) ?? [],
+        settings: rawParams.settings ?? {},
+      });
+
+      const result = { id, saved: true };
+      if (IS_DEV) GraphSaveContract.response.parse(result);
+      return result;
+    },
+
+    [GraphDeleteContract.method]: async (rawParams) => {
+      // Bespoke pre-Zod validation FIRST.
+      if (!deps.namedGraphStore) {
+        throw new Error("Named graph storage not available");
+      }
+
+      const id = rawParams.id as string | undefined;
+      if (!id) {
+        throw new Error("Missing required parameter: id");
+      }
+
+      const userParams = stripInternalFields(rawParams);
+      GraphDeleteContract.request.parse(userParams);
+
+      const tenantId = deps.tenantId ?? "default";
+      const deleted = deps.namedGraphStore.softDelete(id, tenantId);
+      if (!deleted) {
+        throw new Error("Named graph not found");
+      }
+
+      const result = { id, deleted: true };
+      if (IS_DEV) GraphDeleteContract.response.parse(result);
+      return result;
+    },
+
+    [GraphDeleteRunContract.method]: async (rawParams) => {
+      // Bespoke pre-Zod validation FIRST.
+      const graphId = rawParams.graphId ?? rawParams.graph_id;
+      if (!graphId || typeof graphId !== "string") {
+        throw new Error("Missing required parameter: graphId");
+      }
+
+      if (!deps.dataDir) {
+        throw new Error("dataDir not configured — cannot delete graph run");
+      }
+
+      const userParams = stripInternalFields(rawParams);
+      GraphDeleteRunContract.request.parse(userParams);
+
+      const graphDir = safePath(deps.dataDir, "graph-runs", graphId);
+      if (!existsSync(graphDir)) {
+        throw new Error("Graph run not found");
+      }
+
+      rmSync(graphDir, { recursive: true, force: true });
+
+      const result = { graphId, deleted: true };
+      if (IS_DEV) GraphDeleteRunContract.response.parse(result);
+      return result;
+    },
+  };
+}

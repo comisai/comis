@@ -125,7 +125,7 @@ const BC_REM_02_PATH_TAIL_ALLOWLIST: readonly string[] = [
   "packages/core/src/event-bus/events-infra.ts", // doc-string on canonical/coexisting-form pair (events-infra event-payload schema)
   "packages/daemon/src/api/types.ts", // doc-comment on optional-field message-id rationale
   "packages/daemon/src/api/env-handlers.ts", // "legacy fallback" / "Legacy mode" .env-file branch — out of Phase 38 scope (env-handlers refactor tracked separately)
-  "packages/daemon/src/api/session-handlers.ts", // doc-comment about synchronous "backward compatible" inline-result path
+  "packages/daemon/src/api/session-handlers/session-mutate.ts", // doc-comment about synchronous "backward compatible" inline-result path (Phase 43 FILE-SPLIT-04 retarget; was session-handlers.ts pre-split)
   "packages/memory/src/schema.ts", // module-level flag set "for backward compatibility" — schema-init carry-over
   "packages/memory/src/setup-secrets.ts", // explicit two-mode "legacy mode" branch (no MEMORY_DB_KEY env) — out of Phase 38 scope (secrets-store optionality)
   // Phase 43 plan 02a (FILE-SPLIT-02) split exec-tool.ts into exec-tool/ subdirectory;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import { createSessionHandlers } from "./session-handlers.js";
-import type { SessionHandlerDeps } from "./session-handlers.js";
+import { createSessionHandlers } from "./session-handlers/index.js";
+import type { SessionHandlerDeps } from "./session-handlers/index.js";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
