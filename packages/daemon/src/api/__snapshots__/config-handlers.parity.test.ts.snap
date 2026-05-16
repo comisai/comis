@@ -1,0 +1,65 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`config-handlers parity (FILE-SPLIT-03) > behavior matrix: representative inputs > coerceConfigValue: covers boolean, number, string, and unknown-schema fallback 1`] = `
+"{
+  "boolFalse": false,
+  "boolPassThrough": "maybe",
+  "boolTrue": true,
+  "nonStringPassThrough": true,
+  "numberEmpty": "",
+  "numberNonNumeric": "abc",
+  "numberValid": 42,
+  "stringPassThrough": "hello",
+  "undefinedSchemaBool": true,
+  "undefinedSchemaNumber": 3.14
+}"
+`;
+
+exports[`config-handlers parity (FILE-SPLIT-03) > behavior matrix: representative inputs > config.history: returns expected degraded envelope when configGitManager is absent (admin trust) 1`] = `
+"{
+  "entries": [],
+  "error": "Config versioning not available"
+}"
+`;
+
+exports[`config-handlers parity (FILE-SPLIT-03) > behavior matrix: representative inputs > config.read: rejects with admin-trust guard message when trust is missing 1`] = `
+"{
+  "error": "Admin access required for config read"
+}"
+`;
+
+exports[`config-handlers parity (FILE-SPLIT-03) > behavior matrix: representative inputs > resolveSchemaForPath: returns concrete schema for known path and undefined for unknown 1`] = `
+"{
+  "knownDeep": true,
+  "knownLeafString": true,
+  "nonObjectRoot": true,
+  "unknownKey": true,
+  "unknownSection": true
+}"
+`;
+
+exports[`config-handlers parity (FILE-SPLIT-03) > behavior matrix: representative inputs > unwrapSchema: identity on plain types and unwraps optional, nullable, and default 1`] = `
+"{
+  "defaultString": true,
+  "identityNumber": true,
+  "identityString": true,
+  "nullableString": true,
+  "optionalString": true,
+  "undefinedPassThrough": true
+}"
+`;
+
+exports[`config-handlers parity (FILE-SPLIT-03) > public API surface > createConfigHandlers: returned handler map has expected method names 1`] = `
+"[
+  "config.apply",
+  "config.diff",
+  "config.gc",
+  "config.history",
+  "config.patch",
+  "config.read",
+  "config.rollback",
+  "config.schema",
+  "gateway.restart",
+  "gateway.status"
+]"
+`;

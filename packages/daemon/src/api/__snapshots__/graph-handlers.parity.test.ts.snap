@@ -1,0 +1,134 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`graph-handlers parity (FILE-SPLIT-05) > behavior matrix: representative inputs > graph.define: returns expected envelope for a minimal valid graph 1`] = `
+"{
+  "errors": [],
+  "executionOrder": [
+    "a",
+    "b"
+  ],
+  "label": "parity-fixture",
+  "nodeCount": 2,
+  "userVariables": [],
+  "valid": true,
+  "warnings": []
+}"
+`;
+
+exports[`graph-handlers parity (FILE-SPLIT-05) > behavior matrix: representative inputs > graph.list: throws expected error when namedGraphStore is absent 1`] = `
+"{
+  "error": "Named graph storage not available"
+}"
+`;
+
+exports[`graph-handlers parity (FILE-SPLIT-05) > behavior matrix: representative inputs > schemaToExample: produces expected example for known schema 1`] = `
+"{
+  "count": "number",
+  "described": "a description",
+  "enabled": "boolean",
+  "name": "string",
+  "nested": "object",
+  "optionalField": "string (optional)",
+  "tags": "array",
+  "withDefault": "string"
+}"
+`;
+
+exports[`graph-handlers parity (FILE-SPLIT-05) > behavior matrix: representative inputs > transformNodes: transforms a known snake_case input graph 1`] = `
+"[
+  {
+    "agentId": "fetcher",
+    "dependsOn": [],
+    "maxSteps": 10,
+    "model": "claude-sonnet-4-20250514",
+    "nodeId": "fetch",
+    "task": "Fetch data for \${TICKER}",
+    "timeoutMs": 5000
+  },
+  {
+    "barrierMode": "majority",
+    "contextMode": "summary",
+    "dependsOn": [
+      "fetch"
+    ],
+    "nodeId": "aggregate",
+    "retries": 2,
+    "task": "Aggregate results"
+  },
+  {
+    "dependsOn": [
+      "aggregate"
+    ],
+    "nodeId": "typed",
+    "task": "Run debate",
+    "typeConfig": {
+      "agents": [
+        "a",
+        "b"
+      ]
+    },
+    "typeId": "debate"
+  }
+]"
+`;
+
+exports[`graph-handlers parity (FILE-SPLIT-05) > behavior matrix: representative inputs > validateGraphWarnings: emits expected warnings for problematic graph 1`] = `
+"{
+  "errors": [],
+  "warnings": [
+    {
+      "fix": "Add \\"missing\\" to dependsOn, or remove the template reference.",
+      "message": "Node \\"root\\" references {{missing.result}} but \\"missing\\" is not in its dependsOn",
+      "nodeId": "root",
+      "type": "unresolved_template"
+    },
+    {
+      "fix": "Add this node to another node's dependsOn, or add a dependsOn referencing an upstream node.",
+      "message": "Node \\"orphan\\" is disconnected — no dependsOn and nothing depends on it",
+      "nodeId": "orphan",
+      "type": "orphan_node"
+    },
+    {
+      "fix": "Add more dependsOn entries for fan-in, or remove barrierMode.",
+      "message": "Node \\"root\\" uses barrierMode \\"majority\\" but has only 0 dependency — barrier mode only matters with 2+ dependencies",
+      "nodeId": "root",
+      "type": "barrier_mode_low_deps"
+    },
+    {
+      "fix": "Remove the agentId field from this typed node.",
+      "message": "Node \\"typed\\" has both typeId \\"approval-gate\\" and agentId -- agentId is ignored for typed nodes (agents come from type_config)",
+      "nodeId": "typed",
+      "type": "typed_node_agentid_ignored"
+    },
+    {
+      "fix": "Consider setting retries to 0 for typed nodes, or accept the cost of full re-execution.",
+      "message": "Node \\"typed\\" has type \\"approval-gate\\" with retries=3 -- retrying re-runs the entire driver from scratch",
+      "nodeId": "typed",
+      "type": "typed_node_expensive_retry"
+    },
+    {
+      "fix": "Set retries to 0 for approval-gate nodes.",
+      "message": "Node \\"typed\\" is an approval-gate with retries=3 -- retry will re-prompt the user",
+      "nodeId": "typed",
+      "type": "typed_node_approval_retry"
+    }
+  ]
+}"
+`;
+
+exports[`graph-handlers parity (FILE-SPLIT-05) > public API surface > createGraphHandlers: returned handler map has expected method names 1`] = `
+"[
+  "graph.cancel",
+  "graph.define",
+  "graph.delete",
+  "graph.deleteRun",
+  "graph.execute",
+  "graph.list",
+  "graph.load",
+  "graph.outputs",
+  "graph.runDetail",
+  "graph.runs",
+  "graph.save",
+  "graph.status"
+]"
+`;
