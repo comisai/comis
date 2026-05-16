@@ -37,7 +37,7 @@ import { setupMcp } from "./setup-mcp.js";
 // without throwing AND the per-agent port is the live adapter) is proven
 // here by exercising the SAME factory (createToolCapabilityAdapter) that
 // setupSingleAgent invokes inside the real setupAgents loop.
-import type { setupAgents } from "./setup-agents.js";
+import type { setupAgents } from "./setup-agents/index.js";
 import { createToolCapabilityAdapter } from "./tool-capability-adapter.js";
 import { createNoOpCapabilityPort } from "@comis/core";
 import type { ToolingConfig } from "@comis/core";

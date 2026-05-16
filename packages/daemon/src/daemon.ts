@@ -40,7 +40,7 @@ import {
   setupBackgroundCompletionRunner,
   setupOutputRetention,
 } from "./wiring/index.js";
-import { setupSingleAgent } from "./wiring/setup-agents.js";
+import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { createActiveRunRegistry, createBackgroundSessionResolver, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides } from "@comis/agent";
 // Phase 35 Plan 35-04 (D-01 #4/#5): createModelCatalog + resolveWorkspaceDir
 // relocated from @comis/agent to @comis/core.

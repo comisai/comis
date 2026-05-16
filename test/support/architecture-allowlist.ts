@@ -555,12 +555,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "phase-F",
   },
   {
-    file: "packages/daemon/src/wiring/setup-agents.ts",
-    lines: 1149,
-    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-03",
-    removedIn: "phase-F",
-  },
-  {
     file: "packages/daemon/src/wiring/setup-channels.ts",
     lines: 1111,
     reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-04",
@@ -1106,9 +1100,15 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/daemon/src/wiring/setup-agents.ts",
-    lineRanges: [[908, 908], [1085, 1085], [1109, 1109]],
-    reason: "@allow-throw boundary: setup-agents wiring guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    file: "packages/daemon/src/wiring/setup-agents/setup-agents-registry.ts",
+    lineRanges: [[314, 314], [403, 403]],
+    reason: "@allow-throw boundary: setup-agents registry guards (encrypted-mode secrets pre-check + executor-not-found fallback); consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07). Phase 43 wave 8 split (FILE-SPLIT-08): re-targeted from setup-agents.ts.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-agents/setup-agents-tooling.ts",
+    lineRanges: [[57, 57], [81, 81]],
+    reason: "@allow-throw boundary: setup-agents tooling guards (pi-ai catalog empty / missing provider model); consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07). Phase 43 wave 8 split (FILE-SPLIT-08): re-targeted from setup-agents.ts.",
     removedIn: "permanent",
   },
   {
@@ -1696,10 +1696,10 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     removedIn: "phase-D",
   },
   {
-    file: "packages/daemon/src/wiring/setup-agents.ts",
+    file: "packages/daemon/src/wiring/setup-agents/setup-agents-types.ts",
     typeName: "SingleAgentDeps",
     optionalCount: 21,
-    reason: "(a) Daemon-internal per-agent deps; every `?` field gates on a daemon-global resource being wired (providerHealth, lastKnownModel, embeddingPort, deliveryMirror, geminiCacheManager — each is undefined unless the corresponding subsystem started successfully). The `secretsCrypto?` + `secretsDb?` pair is conditional on `oauth.storage === 'encrypted'` config. Construction site at setup-agents.ts wires from setupMemory/setupSecrets results. (TS-HYG-13 — Plan 41-08 audit).",
+    reason: "(a) Daemon-internal per-agent deps; every `?` field gates on a daemon-global resource being wired (providerHealth, lastKnownModel, embeddingPort, deliveryMirror, geminiCacheManager — each is undefined unless the corresponding subsystem started successfully). The `secretsCrypto?` + `secretsDb?` pair is conditional on `oauth.storage === 'encrypted'` config. Construction site at setup-agents-registry.ts wires from setupMemory/setupSecrets results. (TS-HYG-13 — Plan 41-08 audit). Phase 43 wave 8 split (FILE-SPLIT-08): re-targeted from setup-agents.ts to setup-agents-types.ts.",
     removedIn: "phase-D",
   },
   {
