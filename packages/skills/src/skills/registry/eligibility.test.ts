@@ -22,7 +22,8 @@ import {
   type RuntimeEligibilityContext,
   type EligibilityResult,
 } from "./eligibility.js";
-import { createSkillRegistry } from "./skill-registry.js";
+// Phase 43 plan 02b (FILE-SPLIT-11): skill-registry.ts split into skill-registry/ subdirectory; import retargeted to the barrel.
+import { createSkillRegistry } from "./skill-registry/index.js";
 import type { TypedEventBus } from "@comis/core";
 import { createSecretManager, SkillsConfigSchema } from "@comis/core";
 import { createMockEventBus as _createMockEventBus } from "../../../../../test/support/mock-event-bus.js";

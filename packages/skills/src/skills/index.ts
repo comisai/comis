@@ -33,8 +33,8 @@
 // ===========================================================================
 
 // Registry
-export { createSkillRegistry } from "./registry/skill-registry.js";
-export type { SkillRegistry, SkillWatcherHandle } from "./registry/skill-registry.js";
+export { createSkillRegistry } from "./registry/skill-registry/index.js";
+export type { SkillRegistry, SkillWatcherHandle } from "./registry/skill-registry/index.js";
 
 // Eligibility
 export { createRuntimeEligibilityContext } from "./registry/eligibility.js";
@@ -90,7 +90,7 @@ export type { ToolFilterReason, ToolPolicyResult } from "./policy/index.js";
 // ===========================================================================
 
 // Built-in tools (web-search, web-fetch)
-export { createWebSearchTool, __clearSearchCache } from "../tools/builtin/web-search-tool.js";
+export { createWebSearchTool, __clearSearchCache } from "../tools/builtin/web-search-tool/index.js";
 export { createWebFetchTool, fetchUrlContent, __clearFetchCache } from "../tools/builtin/web-fetch-tool.js";
 
 // Built-in tools -- Source profiles (per-tool limits and extraction config)
