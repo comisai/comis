@@ -1,0 +1,70 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`setup-channels parity (FILE-SPLIT-08) > public API surface > exports the expected named symbols 1`] = `
+"[
+  "setupChannels"
+]"
+`;
+
+exports[`setup-channels parity (FILE-SPLIT-08) > type-level interface witnesses > ChannelsDeps: interface key set is stable 1`] = `
+"[
+  "activeRunRegistry",
+  "approvalGate",
+  "assembleToolsForAgent",
+  "audioConverter",
+  "channelsLogger",
+  "container",
+  "costTrackers",
+  "cronExecutionTrackers",
+  "defaultAgentId",
+  "defaultWorkspaceDir",
+  "deliveryQueue",
+  "embeddingQueue",
+  "executors",
+  "fileExtractionConfig",
+  "fileExtractor",
+  "imageAnalyzer",
+  "linkRunner",
+  "logger",
+  "maxMediaBytes",
+  "mediaSemaphore",
+  "mediaTempManager",
+  "memoryAdapter",
+  "onMessageProcessed",
+  "onMessageReceived",
+  "onTaskExtraction",
+  "piSessionAdapters",
+  "queueConfig",
+  "rpcCall",
+  "sessionManager",
+  "sessionResolver",
+  "sessionStore",
+  "ssrfFetcher",
+  "tenantId",
+  "transcriber",
+  "ttsAdapter",
+  "workspaceDirs"
+]"
+`;
+
+exports[`setup-channels parity (FILE-SPLIT-08) > type-level interface witnesses > ChannelsResult: interface key set is stable 1`] = `
+"[
+  "adaptersByType",
+  "approvalNotifier",
+  "channelCapabilities",
+  "channelManager",
+  "channelPlugins",
+  "commandQueue",
+  "compositeResolver",
+  "deliveryService",
+  "lifecycleReactors",
+  "resolveAttachment"
+]"
+`;
+
+exports[`setup-channels parity (FILE-SPLIT-08) > type-level interface witnesses > setupChannels: returns a function value (factory contract) 1`] = `
+"{
+  "kind": "function",
+  "nameLen": true
+}"
+`;

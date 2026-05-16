@@ -1,0 +1,61 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`setup-cross-session parity (FILE-SPLIT-08) > constant exports > MIN_SUB_AGENT_STEPS: stable floor value 1`] = `"30"`;
+
+exports[`setup-cross-session parity (FILE-SPLIT-08) > constant exports > SUB_AGENT_TOOL_DENYLIST: stable membership list 1`] = `
+"[
+  "agents_manage",
+  "channels_manage",
+  "gateway",
+  "heartbeat_manage",
+  "memory_manage",
+  "models_manage",
+  "providers_manage",
+  "sessions_manage",
+  "skills_manage",
+  "tokens_manage"
+]"
+`;
+
+exports[`setup-cross-session parity (FILE-SPLIT-08) > public API surface > exports the expected named symbols 1`] = `
+"[
+  "MIN_SUB_AGENT_STEPS",
+  "SUB_AGENT_TOOL_DENYLIST",
+  "resolveGraphCacheRetention",
+  "setupCrossSession"
+]"
+`;
+
+exports[`setup-cross-session parity (FILE-SPLIT-08) > resolveGraphCacheRetention behavior matrix > resolveGraphCacheRetention: returns long when depth is undefined and isLeafNode is undefined 1`] = `""long""`;
+
+exports[`setup-cross-session parity (FILE-SPLIT-08) > resolveGraphCacheRetention behavior matrix > resolveGraphCacheRetention: returns long when isLeafNode is false 1`] = `""long""`;
+
+exports[`setup-cross-session parity (FILE-SPLIT-08) > resolveGraphCacheRetention behavior matrix > resolveGraphCacheRetention: returns long when isLeafNode is undefined 1`] = `""long""`;
+
+exports[`setup-cross-session parity (FILE-SPLIT-08) > resolveGraphCacheRetention behavior matrix > resolveGraphCacheRetention: returns short when isLeafNode is true 1`] = `""short""`;
+
+exports[`setup-cross-session parity (FILE-SPLIT-08) > resolveGraphCacheRetention behavior matrix > resolveGraphCacheRetention: returns short when isLeafNode is true regardless of depth 1`] = `
+"{
+  "depthDeep": "short",
+  "depthOne": "short",
+  "depthZero": "short"
+}"
+`;
+
+exports[`setup-cross-session parity (FILE-SPLIT-08) > type-level interface witnesses > CrossSessionResult: interface key set is stable 1`] = `
+"[
+  "announceToParent",
+  "announcementBatcher",
+  "crossSessionSender",
+  "deadLetterQueue",
+  "sendToChannel",
+  "subAgentRunner"
+]"
+`;
+
+exports[`setup-cross-session parity (FILE-SPLIT-08) > type-level interface witnesses > setupCrossSession: returns a function value (factory contract) 1`] = `
+"{
+  "kind": "function",
+  "nameLen": true
+}"
+`;
