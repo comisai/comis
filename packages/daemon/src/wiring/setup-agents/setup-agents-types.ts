@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Daemon agents-subsystem types.
+ *
+ * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-agents.ts.
+ * Holds the `SingleAgentDeps` and `SingleAgentResult` interfaces so the
+ * runtime and registry leaves can both reference them without inflating
+ * either leaf past the ≤600L subdirectory cap.
+ *
+ * @module
+ */
+
+import type {
+  AppContainer,
+  FileLockPort,
+  InjectionRateLimiter,
+  OAuthCredentialStorePort,
+  SecretsCrypto,
+  ToolCapabilityPort,
+} from "@comis/core";
+import type { ComisLogger } from "@comis/infra";
+import type Database from "better-sqlite3";
+import type { SqliteMemoryAdapter, createSessionStore } from "@comis/memory";
+import type {
+  AgentExecutor,
+  ActiveRunRegistry,
+  ProviderHealthMonitor,
+  LastKnownModelTracker,
+  createBudgetGuard,
+  createComisSessionManager,
+  createCostTracker,
+  createStepCounter,
+} from "@comis/agent";
+import type { SkillRegistry, SkillWatcherHandle, McpClientManager } from "@comis/skills";
+
+// PiSessionAdapter type — inferred from @comis/agent's createComisSessionManager.
+// Mirrored in setup-agents-registry.ts (both leaves derive it independently
+// from the same factory) to avoid a runtime-only dependency from registry.
+type PiSessionAdapter = ReturnType<typeof createComisSessionManager>;
+
+/** Shared dependencies computed once before the agent loop and passed to each
+ *  setupSingleAgent() call. Exposed on AgentsResult so daemon.ts can capture
+ *  the struct in a closure for hot-add without re-deriving deps. */
+export interface SingleAgentDeps {
+  container: AppContainer;
+  memoryAdapter: SqliteMemoryAdapter;
+  sessionStore: ReturnType<typeof createSessionStore>;
+  agentLogger: ComisLogger;
+  resolvedAgentDir: string;
+  daemonTracingDefaults?: { outputDir: string; maxSize: string; maxFiles: number };
+  subAgentToolNames?: string[];
+  mcpToolsInherited: boolean;
+  outboundMediaEnabled?: boolean;
+  autonomousMediaEnabled?: boolean;
+  activeRunRegistry?: ActiveRunRegistry;
+  canaryFallbackSecret?: string;
+  injectionRateLimiter?: InjectionRateLimiter;
+  embeddingQueue?: { enqueue(entryId: string, content: string): void };
+  contextStore?: import("@comis/core").ContextStorePort;
+  db?: unknown;
+  /** Global provider health monitor shared across all agents */
+  providerHealth?: ProviderHealthMonitor;
+  /** Global last-known-working model tracker shared across all agents */
+  lastKnownModel?: LastKnownModelTracker;
+  /** Optional embedding port for discover_tools semantic search. */
+  embeddingPort?: import("@comis/core").EmbeddingPort;
+  /** Delivery mirror port for session mirroring injection */
+  deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
+  /** Delivery mirror config for injection budget */
+  deliveryMirrorConfig?: { maxEntriesPerInjection: number; maxCharsPerInjection: number };
+  /** Gemini CachedContent lifecycle manager. */
+  geminiCacheManager?: import("@comis/agent").GeminiCacheManager;
+  /** Resolve platform message character limit for a channel type.
+   * Uses deferred channelPlugins ref populated after setupChannels. */
+  getChannelMaxChars?: (channelType: string) => number | undefined;
+  /** Background task manager for auto-promotion of long-running tools. */
+  backgroundTaskManager?: import("@comis/agent").BackgroundTaskManager;
+  /**
+   * SecretsCrypto engine bound to SECRETS_MASTER_KEY. Defined when the daemon
+   * was started with a valid master key (encrypted-secrets mode). Required
+   * when `appConfig.oauth.storage === "encrypted"` — selectOAuthCredentialStore
+   * fails fast with an operator hint when missing.
+   */
+  secretsCrypto?: SecretsCrypto;
+  /**
+   * Shared better-sqlite3 handle to secrets.db (the SqliteSecretStoreHandle.db
+   * field, plumbed through from daemon.ts after createSqliteSecretStore).
+   * Required when `appConfig.oauth.storage === "encrypted"` so the OAuth
+   * profile adapter can share the existing connection rather than opening a
+   * second handle to the same DB file — eliminates the dual-handle lifecycle
+   * hazards: close-order, schema-init double-execution, prepared-statement
+   * cache fragmentation.
+   */
+  secretsDb?: Database.Database;
+  /**
+   * The daemon-level OAuthCredentialStore handle. Constructed ONCE in
+   * setupAgents() and passed down to every per-agent setupSingleAgent call
+   * AND surfaced on AgentsResult so daemon.ts can thread it into
+   * RpcDispatchDeps for `agents.update` existence checks. Single shared
+   * handle (file backend is stateless on a shared path; encrypted backend
+   * shares the secretsDb connection).
+   */
+  oauthCredentialStore: OAuthCredentialStorePort;
+  /**
+   * Daemon-global MCP client manager. Live-runtime view consumed by the
+   * per-agent ToolCapabilityPort adapter constructed inside setupSingleAgent.
+   * Threaded from daemon.ts; setupMcp runs before setupAgents.
+   */
+  mcpClientManager: McpClientManager;
+  /**
+   * Canonical FileLockPort adapter (proper-lockfile-backed `createFileLock()`
+   * from `@comis/scheduler`). Phase 32 commit 12 (ORCH-EXT-15) moved
+   * construction here so agent/session/oauth modules no longer import
+   * `@comis/scheduler` directly. The port is stateless — one instance
+   * shared across every per-agent OAuth store, OAuth token manager, and
+   * session-write-lock call site is safe.
+   */
+  fileLock: FileLockPort;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: import("@comis/core").ClockPort;
+  /** Environment-variable reads (Phase 39 PORTS-12). */
+  env: import("@comis/core").EnvPort;
+  /** Timer scheduling (Phase 39 PORTS-13). */
+  timers: import("@comis/core").TimerPort;
+}
+
+/** Per-agent outputs from setupSingleAgent(), matching the Maps in AgentsResult. */
+export interface SingleAgentResult {
+  executor: AgentExecutor;
+  workspaceDir: string;
+  costTracker: ReturnType<typeof createCostTracker>;
+  budgetGuard: ReturnType<typeof createBudgetGuard>;
+  stepCounter: ReturnType<typeof createStepCounter>;
+  piSessionAdapter: PiSessionAdapter;
+  skillWatcherHandle?: SkillWatcherHandle;
+  skillRegistry: SkillRegistry;
+  /**
+   * Per-agent live ToolCapabilityPort. Constructed via
+   * createToolCapabilityAdapter using this agent's skillRegistry and the
+   * daemon-global mcpClientManager.
+   */
+  toolCapabilityPort: ToolCapabilityPort;
+}

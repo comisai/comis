@@ -10,7 +10,7 @@ import type { ComisLogger } from "@comis/infra";
 const mockAdaptersByType = new Map<string, ChannelPort>();
 const mockAdapter = { sendMessage: vi.fn(async () => ({ ok: true })) } as unknown as ChannelPort;
 
-vi.mock("./setup-channels-adapters.js", () => ({
+vi.mock("../setup-channels-adapters.js", () => ({
   bootstrapAdapters: vi.fn(async () => ({
     adaptersByType: mockAdaptersByType,
     tgPlugin: undefined,
@@ -20,7 +20,7 @@ vi.mock("./setup-channels-adapters.js", () => ({
   })),
 }));
 
-vi.mock("./setup-channels-media.js", () => ({
+vi.mock("../setup-channels-media.js", () => ({
   buildMediaPipeline: vi.fn(async () => ({
     compositeResolver: { resolve: vi.fn(), schemes: [] },
     resolveAttachment: vi.fn(async () => null),
@@ -125,8 +125,8 @@ vi.mock("@comis/skills", () => ({
   applyToolPolicy: vi.fn((tools: unknown[]) => ({ tools, filtered: [] })),
 }));
 
-import { setupChannels, type ChannelsDeps } from "./setup-channels.js";
-import { bootstrapAdapters } from "./setup-channels-adapters.js";
+import { setupChannels, type ChannelsDeps } from "./index.js";
+import { bootstrapAdapters } from "../setup-channels-adapters.js";
 // Phase 32 commit 4: createChannelManager moved with channel-manager.ts to @comis/orchestrator.
 import { createChannelManager } from "@comis/orchestrator";
 

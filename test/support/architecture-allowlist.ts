@@ -554,30 +554,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "Daemon entrypoint; split in Phase F per FILE-SPLIT-01",
     removedIn: "phase-F",
   },
-  {
-    file: "packages/daemon/src/wiring/setup-agents.ts",
-    lines: 1149,
-    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-03",
-    removedIn: "phase-F",
-  },
-  {
-    file: "packages/daemon/src/wiring/setup-channels.ts",
-    lines: 1111,
-    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-04",
-    removedIn: "phase-F",
-  },
-  {
-    file: "packages/daemon/src/wiring/setup-gateway.ts",
-    lines: 973,
-    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-07",
-    removedIn: "phase-F",
-  },
-  {
-    file: "packages/daemon/src/wiring/setup-cross-session.ts",
-    lines: 931,
-    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-08",
-    removedIn: "phase-F",
-  },
   // skills (0 files remaining — exec-tool.ts + exec-security.ts dropped in Phase 43 plan 02a, web-search-tool.ts + skill-registry.ts dropped in 43-02b, mcp-client.ts dropped in 43-02c per FILE-SPLIT-02 + FILE-SPLIT-11 + FILE-SPLIT-16)
   // core (0 files remaining; api-contracts/workspace.ts + api-contracts/orchestrator.ts + config/schema-agent.ts split in Plan 43-06 per FILE-SPLIT-14/16)
   // cli (0 files remaining; tooling-fill/orchestrator.ts split in Plan 43-05 per FILE-SPLIT-10; commands/config.ts dropped below 800L in Plan 43-05 via config-parsers.ts helper extraction per FILE-SPLIT-10)
@@ -1106,9 +1082,15 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/daemon/src/wiring/setup-agents.ts",
-    lineRanges: [[908, 908], [1085, 1085], [1109, 1109]],
-    reason: "@allow-throw boundary: setup-agents wiring guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    file: "packages/daemon/src/wiring/setup-agents/setup-agents-registry.ts",
+    lineRanges: [[314, 314], [403, 403]],
+    reason: "@allow-throw boundary: setup-agents registry guards (encrypted-mode secrets pre-check + executor-not-found fallback); consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07). Phase 43 wave 8 split (FILE-SPLIT-08): re-targeted from setup-agents.ts.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-agents/setup-agents-tooling.ts",
+    lineRanges: [[57, 57], [81, 81]],
+    reason: "@allow-throw boundary: setup-agents tooling guards (pi-ai catalog empty / missing provider model); consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07). Phase 43 wave 8 split (FILE-SPLIT-08): re-targeted from setup-agents.ts.",
     removedIn: "permanent",
   },
   {
@@ -1118,9 +1100,9 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/daemon/src/wiring/setup-gateway.ts",
-    lineRanges: [[136, 136]],
-    reason: "@allow-throw boundary: gateway wiring re-raise; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    file: "packages/daemon/src/wiring/setup-gateway/setup-gateway-rpc.ts",
+    lineRanges: [[79, 79]],
+    reason: "@allow-throw boundary: gateway RPC bridge re-raise (rpcCall wrapper re-throws after structured-debug log emission); consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07). Phase 43 wave 8 split (FILE-SPLIT-08): re-targeted from setup-gateway.ts.",
     removedIn: "permanent",
   },
   {
@@ -1668,10 +1650,10 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     removedIn: "phase-D",
   },
   {
-    file: "packages/daemon/src/wiring/setup-channels.ts",
+    file: "packages/daemon/src/wiring/setup-channels/setup-channels-registry.ts",
     typeName: "ChannelsDeps",
     optionalCount: 26,
-    reason: "(b) Cluster-split candidate: channel-bootstrap deps span media handling (transcriber, ttsAdapter, audioConverter, imageAnalyzer, fileExtractor — each gated by config presence + native dep availability), session lifecycle (piSessionAdapters, costTrackers), inbound-routing callbacks (onMessageReceived, onMessageProcessed), and per-agent cron tracker maps. Single composition-root caller (daemon.ts:1594) builds optionals from config flags. Future refactor: split media-deps + session-tracking-deps from core channel-deps. (TS-HYG-13 — Plan 41-08 audit).",
+    reason: "(b) Cluster-split candidate: channel-bootstrap deps span media handling (transcriber, ttsAdapter, audioConverter, imageAnalyzer, fileExtractor — each gated by config presence + native dep availability), session lifecycle (piSessionAdapters, costTrackers), inbound-routing callbacks (onMessageReceived, onMessageProcessed), and per-agent cron tracker maps. Single composition-root caller (daemon.ts:1594) builds optionals from config flags. Future refactor: split media-deps + session-tracking-deps from core channel-deps. (TS-HYG-13 — Plan 41-08 audit). Phase 43 wave 8 split (FILE-SPLIT-08): re-targeted from setup-channels.ts.",
     removedIn: "phase-D",
   },
   {
@@ -1696,10 +1678,10 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     removedIn: "phase-D",
   },
   {
-    file: "packages/daemon/src/wiring/setup-agents.ts",
+    file: "packages/daemon/src/wiring/setup-agents/setup-agents-types.ts",
     typeName: "SingleAgentDeps",
     optionalCount: 21,
-    reason: "(a) Daemon-internal per-agent deps; every `?` field gates on a daemon-global resource being wired (providerHealth, lastKnownModel, embeddingPort, deliveryMirror, geminiCacheManager — each is undefined unless the corresponding subsystem started successfully). The `secretsCrypto?` + `secretsDb?` pair is conditional on `oauth.storage === 'encrypted'` config. Construction site at setup-agents.ts wires from setupMemory/setupSecrets results. (TS-HYG-13 — Plan 41-08 audit).",
+    reason: "(a) Daemon-internal per-agent deps; every `?` field gates on a daemon-global resource being wired (providerHealth, lastKnownModel, embeddingPort, deliveryMirror, geminiCacheManager — each is undefined unless the corresponding subsystem started successfully). The `secretsCrypto?` + `secretsDb?` pair is conditional on `oauth.storage === 'encrypted'` config. Construction site at setup-agents-registry.ts wires from setupMemory/setupSecrets results. (TS-HYG-13 — Plan 41-08 audit). Phase 43 wave 8 split (FILE-SPLIT-08): re-targeted from setup-agents.ts to setup-agents-types.ts.",
     removedIn: "phase-D",
   },
   {
