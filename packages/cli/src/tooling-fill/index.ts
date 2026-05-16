@@ -65,4 +65,4 @@ export {
   type OrchestratorOpts,
   type OrchestratorResult,
   type PromptIO,
-} from "./orchestrator.js";
+} from "./orchestrator/index.js";

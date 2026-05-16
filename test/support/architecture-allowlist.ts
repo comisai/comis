@@ -622,13 +622,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "Config schema module; split in Phase F per FILE-SPLIT-17",
     removedIn: "phase-F",
   },
-  // cli (2 files)
-  {
-    file: "packages/cli/src/tooling-fill/orchestrator.ts",
-    lines: 1064,
-    reason: "CLI tooling-fill orchestrator; split in Phase F per FILE-SPLIT-18",
-    removedIn: "phase-F",
-  },
+  // cli (1 file remaining; tooling-fill/orchestrator.ts split in Plan 43-05 per FILE-SPLIT-10)
   {
     file: "packages/cli/src/commands/config.ts",
     lines: 807,
