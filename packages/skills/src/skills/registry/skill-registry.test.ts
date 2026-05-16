@@ -15,7 +15,8 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseSkillManifest } from "../manifest/parser.js";
 import { discoverSkills } from "./discovery.js";
-import { createSkillRegistry } from "./skill-registry.js";
+// Phase 43 plan 02b (FILE-SPLIT-11): skill-registry.ts split into skill-registry/ subdirectory; import retargeted to the barrel.
+import { createSkillRegistry } from "./skill-registry/index.js";
 import { createMockEventBus as _createMockEventBus } from "../../../../../test/support/mock-event-bus.js";
 
 function createMockEventBus(): TypedEventBus & { events: { name: string; payload: unknown }[] } {

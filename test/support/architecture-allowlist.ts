@@ -609,12 +609,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "MCP integration client; split in Phase F per FILE-SPLIT-12",
     removedIn: "phase-F",
   },
-  {
-    file: "packages/skills/src/skills/registry/skill-registry.ts",
-    lines: 812,
-    reason: "Skill registry; split in Phase F per FILE-SPLIT-14",
-    removedIn: "phase-F",
-  },
   // core (3 files)
   {
     file: "packages/core/src/api-contracts/workspace.ts",

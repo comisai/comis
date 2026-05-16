@@ -33,8 +33,8 @@
 // ===========================================================================
 
 // Registry
-export { createSkillRegistry } from "./registry/skill-registry.js";
-export type { SkillRegistry, SkillWatcherHandle } from "./registry/skill-registry.js";
+export { createSkillRegistry } from "./registry/skill-registry/index.js";
+export type { SkillRegistry, SkillWatcherHandle } from "./registry/skill-registry/index.js";
 
 // Eligibility
 export { createRuntimeEligibilityContext } from "./registry/eligibility.js";
