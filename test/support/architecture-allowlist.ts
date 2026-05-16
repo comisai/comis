@@ -547,12 +547,12 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // ============================================================================
   // Phase F — Long-file splits outside agent/executor/ (21 files) — closes Phase 43 (FILE-SPLIT)
   // ============================================================================
-  // daemon (8 files: daemon.ts + 4 wiring/setup-*.ts + 3 api/*-handlers.ts)
+  // daemon (1 file remaining post-43-08c; 7 of 8 Phase-F daemon entries dropped — daemon.ts split into stages/ subdirectory in Plan 43-08c per FILE-SPLIT-06, wiring/setup-*.ts split in 43-08b, api/*-handlers.ts split in 43-07a/07b)
   {
     file: "packages/daemon/src/daemon.ts",
-    lines: 2600,
-    reason: "Daemon entrypoint; split in Phase F per FILE-SPLIT-01",
-    removedIn: "phase-F",
+    lines: 1300,
+    reason: "Phase 43 Plan 08c (FILE-SPLIT-06) split daemon.ts from 2,631L → 1,269L by extracting ~30 helpers to stages/* (5 helper modules + 1 barrel). The 5 stage* orchestrators (stageFoundation/Agents/Channels/Gateway/Shutdown) MUST stay in daemon.ts per DAEMON-API-06 (each ≤200L AST-measured, asserted by packages/daemon/src/__tests__/architecture.test.ts:175-249) and FILE-SPLIT-07 (bootstrap-order test asserts stage call sequence in daemon.ts main()). The composition root cannot fit the project-wide 800L HYG-03 cap while preserving DAEMON-API-06 (5 × 200L stage bodies + main + small helpers = ~1,270L minimum). Defer pending a future architectural revisit if either DAEMON-API-06 is relaxed (stages moved to per-stage files) or HYG-03 introduces a composition-root exemption category. The post-split daemon.ts is a thin composition root that calls helper functions; further per-stage extraction would create artificial seams that work against the bootstrap-order test (FILE-SPLIT-07 source-text + AST assertions live-read daemon.ts).",
+    removedIn: "deferred",
   },
   // skills (0 files remaining — exec-tool.ts + exec-security.ts dropped in Phase 43 plan 02a, web-search-tool.ts + skill-registry.ts dropped in 43-02b, mcp-client.ts dropped in 43-02c per FILE-SPLIT-02 + FILE-SPLIT-11 + FILE-SPLIT-16)
   // core (0 files remaining; api-contracts/workspace.ts + api-contracts/orchestrator.ts + config/schema-agent.ts split in Plan 43-06 per FILE-SPLIT-14/16)
@@ -1053,8 +1053,8 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   },
   {
     file: "packages/daemon/src/daemon.ts",
-    lineRanges: [[438, 438], [452, 452], [558, 558], [567, 567], [1435, 1435], [1801, 1801]],
-    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits) (Phase 41 TS-HYG-07).",
+    lineRanges: [[326, 326], [335, 335]],
+    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits) (Phase 41 TS-HYG-07). Line-range re-derived after Phase 43 Plan 08c (FILE-SPLIT-06) — 4 of the 6 pre-split throws moved to stages/foundation-helpers.ts (2) + stages/channels-helpers.ts (1) + stages/gateway-helpers.ts (1); those leaves carry file-level @allow-throw: annotations (primary mechanism per test/architecture/raw-throw.test.ts).",
     removedIn: "permanent",
   },
   {

@@ -59,6 +59,11 @@ import * as ts from "typescript";
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
 const DAEMON_TS_PATH = resolve(SRC_ROOT, "daemon.ts");
+// Phase 43 FILE-SPLIT-06: the inter-stage Handle interfaces (FoundationHandle,
+// AgentsHandle, ChannelsHandle, GatewayHandle) were moved from daemon.ts to
+// daemon-types.ts. The handle-chaining (it #3 below) reads both files; the
+// stage call sequence (it #1, #2, #3 stage-call assertions) stays in daemon.ts.
+const DAEMON_TYPES_TS_PATH = resolve(SRC_ROOT, "daemon-types.ts");
 
 /**
  * Expected stage call sequence — the documented orchestration order
@@ -201,51 +206,60 @@ describe("daemon bootstrap order (FILE-SPLIT-07)", () => {
     // Behavioral invariant from the plan §interfaces (43-01-PLAN.md):
     // stageFoundation returns a FoundationHandle that stageAgents consumes.
     // The chaining is enforced at the type level (AgentsHandle extends
-    // FoundationHandle — see daemon.ts:748) and at the call site (main()
-    // passes `{ overrides, foundation }` to stageAgents — see daemon.ts:2570).
+    // FoundationHandle — see daemon-types.ts after Phase 43 FILE-SPLIT-06; was
+    // daemon.ts:748 before the split) and at the call site (main() passes
+    // `{ overrides, foundation }` to stageAgents — daemon.ts).
     //
     // This test asserts the source structure (not runtime behavior) — it
     // proves the source documents the handle chaining contract via:
-    //   1. AgentsHandle extends FoundationHandle (interface inheritance).
+    //   1. AgentsHandle extends FoundationHandle (interface inheritance,
+    //      checked in daemon-types.ts after Phase 43 FILE-SPLIT-06).
     //   2. stageAgents accepts a `foundation` parameter.
     //   3. stageChannels accepts `agents` (the AgentsHandle composite).
     //   4. stageGateway accepts `channels` (the ChannelsHandle composite).
     //
     // If any of these surface contracts drift, the smoke test catches it
     // at the source level before runtime behavior diverges.
-    const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
+    const daemonSource = readFileSync(DAEMON_TS_PATH, "utf8");
+    const daemonTypesSource = readFileSync(DAEMON_TYPES_TS_PATH, "utf8");
+    // Phase 43 FILE-SPLIT-06: the Handle interface chain moved from daemon.ts
+    // (lines 748, 1231, 1754 pre-split) into daemon-types.ts. The chaining
+    // declarations are searched in either file so the test stays robust to
+    // future re-arrangements within the daemon module.
+    const moduleSource = daemonSource + "\n" + daemonTypesSource;
     expect(
-      sourceText.includes("AgentsHandle extends FoundationHandle"),
-      "daemon.ts must declare `AgentsHandle extends FoundationHandle` to thread " +
-        "the foundation handle through stageAgents.",
+      moduleSource.includes("AgentsHandle extends FoundationHandle"),
+      "daemon module must declare `AgentsHandle extends FoundationHandle` to thread " +
+        "the foundation handle through stageAgents (checked in daemon.ts + daemon-types.ts).",
     ).toBe(true);
     expect(
-      sourceText.includes("ChannelsHandle extends AgentsHandle"),
-      "daemon.ts must declare `ChannelsHandle extends AgentsHandle` to thread " +
-        "the agents handle through stageChannels.",
+      moduleSource.includes("ChannelsHandle extends AgentsHandle"),
+      "daemon module must declare `ChannelsHandle extends AgentsHandle` to thread " +
+        "the agents handle through stageChannels (checked in daemon.ts + daemon-types.ts).",
     ).toBe(true);
     expect(
-      sourceText.includes("GatewayHandle extends ChannelsHandle"),
-      "daemon.ts must declare `GatewayHandle extends ChannelsHandle` to thread " +
-        "the channels handle through stageGateway.",
+      moduleSource.includes("GatewayHandle extends ChannelsHandle"),
+      "daemon module must declare `GatewayHandle extends ChannelsHandle` to thread " +
+        "the channels handle through stageGateway (checked in daemon.ts + daemon-types.ts).",
     ).toBe(true);
     // Stage call signatures — each stage past the first takes the prior
-    // handle as a named parameter. These are stable identifiers in the
-    // source even after Wave 8 helper extraction.
+    // handle as a named parameter. These are stable identifiers in
+    // daemon.ts even after Wave 8c helper extraction (the stage* functions
+    // themselves stay in daemon.ts per DAEMON-API-06).
     expect(
-      sourceText.includes("await stageAgents({ overrides, foundation })"),
+      daemonSource.includes("await stageAgents({ overrides, foundation })"),
       "main() must call stageAgents with the foundation handle threaded through.",
     ).toBe(true);
     expect(
-      sourceText.includes("await stageChannels({ agents })"),
+      daemonSource.includes("await stageChannels({ agents })"),
       "main() must call stageChannels with the agents handle threaded through.",
     ).toBe(true);
     expect(
-      sourceText.includes("await stageGateway({ overrides, channels"),
+      daemonSource.includes("await stageGateway({ overrides, channels"),
       "main() must call stageGateway with the channels handle threaded through.",
     ).toBe(true);
     expect(
-      sourceText.includes("await stageShutdown({ overrides, gateway"),
+      daemonSource.includes("await stageShutdown({ overrides, gateway"),
       "main() must call stageShutdown with the gateway handle threaded through.",
     ).toBe(true);
   });

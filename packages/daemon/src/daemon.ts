@@ -2,18 +2,35 @@
 // @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits) (Phase 41 TS-HYG-07).
 /**
  * Daemon Entry Point: thin orchestrator calling setupXxx() factories in sequence.
+ *
+ * Phase 43 Wave 8c (FILE-SPLIT-06): helpers extracted to `./stages/` (5 modules
+ * + 1 barrel); Handle interfaces and SessionStoreBridge moved to
+ * `./daemon-types.ts`. This file is now the composition root: 5 stage*
+ * orchestrators (each ≤200L per DAEMON-API-06) + main() + 4 small helpers
+ * (DEFAULT_CONFIG_PATHS / applyInspectDefaultsForLogging /
+ * hardenDataDirPermissions / runPreflightDoctor).
+ *
  * @module
  */
 
-import { bootstrap, loadEnvFile, createApprovalGate, parseFormattedSessionKey, createConfigGitManager, envSubset, generateStrongToken, createAuditAggregator, createInjectionRateLimiter, validateMemoryWrite, checkApprovalsConfig, safePath, resolveConfigSecretRefs, formatSessionKey, BackgroundTasksConfigSchema } from "@comis/core";
-import type { SecretStorePort, WrapExternalContentOptions, PerAgentConfig, ToolCapabilityPort } from "@comis/core";
+import {
+  bootstrap,
+  loadEnvFile,
+  createApprovalGate,
+  parseFormattedSessionKey,
+  envSubset,
+  createInjectionRateLimiter,
+  checkApprovalsConfig,
+  safePath,
+  resolveConfigSecretRefs,
+  BackgroundTasksConfigSchema,
+} from "@comis/core";
+import type { PerAgentConfig } from "@comis/core";
 // Phase 39 PORTS-06: runtime adapter factories — constructed at the composition
 // root and threaded through wiring helpers that retarget Date.now / process.env
 // / setTimeout / setInterval (PORTS-11/12/13). Sanctioned construction site.
 import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/infra";
-import { setupSecrets as _setupSecretsImpl, createSqliteSecretStore, createNamedGraphStore, createContextStore, createObservabilityStore } from "@comis/memory";
-import type { ObservabilityStore } from "@comis/memory";
-import { ok, err, suppressError } from "@comis/shared";
+import { setupSecrets as _setupSecretsImpl, createNamedGraphStore, createContextStore, createObservabilityStore } from "@comis/memory";
 import { createGatewayServer } from "@comis/gateway";
 import {
   setupLogging,
@@ -25,7 +42,6 @@ import {
   setupChannels,
   setupMedia,
   setupCrossSession,
-  setupMcp,
   setupTools,
   setupMonitoring,
   setupHeartbeat,
@@ -38,48 +54,76 @@ import {
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
-  setupOutputRetention,
 } from "./wiring/index.js";
-import { setupSingleAgent } from "./wiring/setup-agents/index.js";
-import { createActiveRunRegistry, createBackgroundSessionResolver, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides } from "@comis/agent";
+import {
+  createActiveRunRegistry,
+  createBackgroundSessionResolver,
+  createGeminiCacheManager,
+  validateProviderOverrides,
+} from "@comis/agent";
 // Phase 35 Plan 35-04 (D-01 #4/#5): createModelCatalog + resolveWorkspaceDir
 // relocated from @comis/agent to @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import type { GeminiCacheManager } from "@comis/agent";
-import { detectSandboxProvider, createImageGenProvider, createImageGenRateLimiter, createFileStateTracker } from "@comis/skills";
-import type { SandboxProvider, ImageGenRateLimiter } from "@comis/skills";
+import { detectSandboxProvider } from "@comis/skills";
 import { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js";
-import { createChannelHealthMonitor, type ChannelHealthMonitor } from "@comis/channels";
 import { createWakeCoalescer, createSystemEventQueue, type WakeReasonKind } from "@comis/scheduler";
 import { createTokenRegistry } from "./api/token-handlers.js";
-import type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
+import type { DaemonInstance, DaemonOverrides, FoundationHandle, AgentsHandle, ChannelsHandle, GatewayHandle, PermissionCorrection, SessionStoreBridge } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { createLatencyRecorder } from "./observability/latency-recorder.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
-import type { ObsPersistenceResult } from "./observability/obs-persistence-wiring.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager } from "./observability/log-infra.js";
 import { createTokenTracker } from "./observability/token-tracker.js";
 import { createTracingLogger } from "./observability/trace-logger.js";
-import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { setupChannelHealthLogging } from "./observability/channel-health-logger.js";
 import { registerGracefulShutdown } from "./process/graceful-shutdown.js";
 import { createProcessMonitor } from "./process/process-monitor.js";
 import { startWatchdog } from "./health/watchdog.js";
-import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
-import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-preflight.js";
-import { randomUUID, createHmac } from "node:crypto";
-import { existsSync, chmodSync, statSync, mkdirSync, readFileSync, unlinkSync, cpSync } from "node:fs";
-import { writeFile as fsWriteFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { existsSync, chmodSync, statSync, mkdirSync } from "node:fs";
 import { createExecGit } from "./config/exec-git.js";
 import { saveLastKnownGood, buildRollbackSuggestion, handleRestoreFlag } from "./config/last-known-good.js";
-import { createRestartContinuationTracker, loadContinuations, buildMcpStatusLine } from "./wiring/restart-continuation.js";
+import { createRestartContinuationTracker } from "./wiring/restart-continuation.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import os from "node:os";
-import { dirname as pathDirname, resolve as pathResolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname as pathDirname } from "node:path";
 import { inspect } from "node:util";
+
+// Stage-helper imports (FILE-SPLIT-06).
+import {
+  seedBundledSkillCreator,
+  bootstrapSecretsAndEnv,
+  wireConfigGitManager,
+} from "./stages/foundation-helpers.js";
+import {
+  restoreApprovalState,
+  setupMcpManager,
+  wirePostAgentsCleanup,
+  buildAuditBundle,
+  buildDeferredCronWakeCallback,
+} from "./stages/agents-helpers.js";
+import {
+  buildChannelManagerDeps,
+  buildGraphCoordinatorDeps,
+  setupChannelHealthMonitor,
+  createCapabilityPortResolver,
+  wirePostChannelsLifecycle,
+  buildImageGenBundle,
+} from "./stages/channels-helpers.js";
+import {
+  resolveGatewayTokens,
+  createHotAdd,
+  createHotRemove,
+  buildRpcDispatchDeps,
+  replayContinuationsIfAny,
+} from "./stages/gateway-helpers.js";
+import {
+  wireHealthLogging,
+  emitStartupBanner,
+} from "./stages/shutdown-helpers.js";
 
 export const DEFAULT_CONFIG_PATHS = [
   safePath(safePath(os.homedir(), ".comis"), "config.yaml"),
@@ -118,79 +162,9 @@ export function applyInspectDefaultsForLogging(
   return { depthChanged, breakLengthChanged };
 }
 
-/**
- * Sensitive environment variable prefixes to remove from process.env after
- * the SecretManager snapshot captures them. Prevents leakage through
- * subprocess inheritance.
- */
-const SENSITIVE_PREFIXES = [
-  "ANTHROPIC_",
-  "OPENAI_",
-  "TELEGRAM_",
-  "DISCORD_",
-  "SLACK_",
-  "WHATSAPP_",
-  "GOOGLE_",
-  "GROQ_",
-  "MISTRAL_",
-  "DEEPGRAM_",
-  "ELEVENLABS_",
-  "SENDGRID_",
-  "STRIPE_",
-] as const;
-
-/** Individual keys to scrub that don't match prefix patterns. */
-const SENSITIVE_EXACT_KEYS = new Set([
-  "SECRETS_MASTER_KEY",
-]);
-
-/**
- * Remove sensitive environment variables from process.env.
- * Called AFTER mergedEnv snapshot is built but BEFORE bootstrap().
- * Preserves operational vars: COMIS_*, PATH, HOME, NODE_ENV, etc.
- *
- * COMIS_* PRESERVATION (WR-08): `COMIS_DATA_DIR` and `COMIS_CONFIG_PATHS` are
- * INTENTIONALLY preserved across the scrub. They are filesystem-layout
- * pointers, not credentials -- subprocesses (MCP stdio servers, exec tools,
- * the apply-patch helper) need them to locate the daemon's data dir.
- *
- * Filesystem-layout pointers are still mildly sensitive (a misbehaving
- * subprocess could log them, surfacing the daemon's on-disk location). The
- * mitigation is per-spawn-site: untrusted-child spawns (exec-tool, MCP stdio
- * adapters, ffmpeg, etc.) MUST go through `envSubset(secretManager,
- * [...SUBPROCESS_SYSTEM])` -- see stageAgents line 1039 -- which yields a
- * minimal env (PATH, HOME, LANG, ...) and explicitly EXCLUDES COMIS_*. New
- * subprocess spawn sites MUST follow this pattern; do NOT pass `process.env`
- * directly to a child even after scrub, because COMIS_* values are still
- * present.
- */
-function scrubProcessEnv(): void {
-   
-  for (const key of Object.keys(process.env)) {
-    if (SENSITIVE_EXACT_KEYS.has(key)) {
-      // eslint-disable-next-line no-restricted-syntax -- see scrubProcessEnv comment above
-      delete process.env[key];
-      continue;
-    }
-    for (const prefix of SENSITIVE_PREFIXES) {
-      if (key.startsWith(prefix)) {
-        // eslint-disable-next-line no-restricted-syntax -- see scrubProcessEnv comment above
-        delete process.env[key];
-        break;
-      }
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Startup permission hardening
 // ---------------------------------------------------------------------------
-
-interface PermissionCorrection {
-  file: string;
-  oldMode: number;
-  newMode: number;
-}
 
 /**
  * Scan ~/.comis/ and fix permissions on the data directory and known
@@ -287,227 +261,6 @@ export async function runPreflightDoctor(
 // ---------------------------------------------------------------------------
 // Stage 1: foundation (DAEMON-API-06)
 // ---------------------------------------------------------------------------
-
-/**
- * Handle returned by `stageFoundation`. Consumed by later stages (stageAgents,
- * stageChannels, stageGateway, stageShutdown — Plans 04-07) and by the
- * remainder of `main()` until those stages absorb the destructure.
- *
- * Every field listed here is either:
- *   - consumed by a later stage call, OR
- *   - returned to callers via DaemonInstance, OR
- *   - read by main()'s tail (Plans 04-07 absorb these reads).
- */
-export interface FoundationHandle {
-  // Core (4 fields)
-  container: Awaited<ReturnType<typeof bootstrap>> extends import("@comis/shared").Result<infer C, unknown> ? C : never;
-  dataDir: string;
-  configPaths: string[];
-  envPath: string;
-  // Phase 39 PORTS-06 runtime adapters (constructed at composition root,
-  // threaded through later stages and consumer factories).
-  clock: import("@comis/core").ClockPort;
-  env: import("@comis/core").EnvPort;
-  timers: import("@comis/core").TimerPort;
-  // Secrets (4 fields)
-  secretStore: SecretStorePort | undefined;
-  secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
-  secretsDb: import("better-sqlite3").Database | undefined;
-  permissionCorrections: PermissionCorrection[];
-  // Config-git (2 fields)
-  execGit: ReturnType<typeof createExecGit>;
-  configGitManager: ReturnType<typeof createConfigGitManager> | undefined;
-  // Logging (10 fields)
-  logger: ReturnType<typeof setupLogging>["logger"];
-  logLevelManager: ReturnType<typeof setupLogging>["logLevelManager"];
-  daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-  gatewayLogger: ReturnType<typeof setupLogging>["gatewayLogger"];
-  channelsLogger: ReturnType<typeof setupLogging>["channelsLogger"];
-  agentLogger: ReturnType<typeof setupLogging>["agentLogger"];
-  schedulerLogger: ReturnType<typeof setupLogging>["schedulerLogger"];
-  skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
-  memoryLogger: ReturnType<typeof setupLogging>["memoryLogger"];
-  daemonVersion: string;
-  // Observability (8 fields)
-  tokenTracker: ReturnType<typeof setupObservability>["tokenTracker"];
-  latencyRecorder: ReturnType<typeof setupObservability>["latencyRecorder"];
-  sharedCostTracker: ReturnType<typeof setupObservability>["sharedCostTracker"];
-  diagnosticCollector: ReturnType<typeof setupObservability>["diagnosticCollector"];
-  billingEstimator: ReturnType<typeof setupObservability>["billingEstimator"];
-  channelActivityTracker: ReturnType<typeof setupObservability>["channelActivityTracker"];
-  deliveryTracer: ReturnType<typeof setupObservability>["deliveryTracer"];
-  contextPipelineCollector: ReturnType<typeof createContextPipelineCollector>;
-  // Process (3 fields)
-  processMonitor: ReturnType<typeof setupHealth>["processMonitor"];
-  watchdogHandle: ReturnType<typeof setupHealth>["watchdogHandle"];
-  deviceIdentity: ReturnType<typeof setupHealth>["deviceIdentity"];
-  // Memory + embedding (~11 fields)
-  disposeEmbedding: Awaited<ReturnType<typeof setupMemory>>["disposeEmbedding"];
-  cachedPort: Awaited<ReturnType<typeof setupMemory>>["cachedPort"];
-  memoryAdapter: Awaited<ReturnType<typeof setupMemory>>["memoryAdapter"];
-  db: Awaited<ReturnType<typeof setupMemory>>["db"];
-  sessionStore: Awaited<ReturnType<typeof setupMemory>>["sessionStore"];
-  memoryApi: Awaited<ReturnType<typeof setupMemory>>["memoryApi"];
-  embeddingQueue: Awaited<ReturnType<typeof setupMemory>>["embeddingQueue"];
-  backgroundIndexingPromise: Awaited<ReturnType<typeof setupMemory>>["backgroundIndexingPromise"];
-  embeddingCacheStats: Awaited<ReturnType<typeof setupMemory>>["embeddingCacheStats"];
-  embeddingCircuitBreakerState: Awaited<ReturnType<typeof setupMemory>>["embeddingCircuitBreakerState"];
-  maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
-  obsStore: ObservabilityStore | undefined;
-  obsPersistence: ObsPersistenceResult | undefined;
-  contextStore: ReturnType<typeof createContextStore>;
-  // Runtime registries (4 fields)
-  activeRunRegistry: ReturnType<typeof createActiveRunRegistry>;
-  sessionResolver: ReturnType<typeof createBackgroundSessionResolver>;
-  canaryFallbackSecret: string;
-  injectionRateLimiter: ReturnType<typeof createInjectionRateLimiter>;
-  // Session mirroring (3 fields)
-  deliveryMirror: Awaited<ReturnType<typeof setupDeliveryMirror>>["deliveryMirror"];
-  startMirrorPrune: Awaited<ReturnType<typeof setupDeliveryMirror>>["startPrune"];
-  shutdownMirror: Awaited<ReturnType<typeof setupDeliveryMirror>>["shutdown"];
-  // Gemini cache (1 field)
-  geminiCacheManager: GeminiCacheManager;
-  // Deferred refs populated by later stages
-  channelPluginsRef: { ref?: Map<string, import("@comis/core").ChannelPluginPort> };
-  backgroundTaskManager: ReturnType<typeof setupBackgroundTasks>["backgroundTaskManager"];
-  bgNotifyRef: { ref?: import("./notification/notification-service.js").NotificationService };
-  bgNotifyFn: (opts: { agentId: string; message: string; priority: "normal"; origin: "background_task" }) => Promise<void>;
-}
-
-/**
- * Seed the bundled skill-creator skill into the user's data directory.
- * Idempotent: only writes if the destination is missing OR the bundled
- * version is newer than the installed version (frontmatter `version:` field).
- *
- * Extracted from `main()` (Phase 34 commit 3) to keep `stageFoundation`
- * under the DAEMON-API-06 200-line cap. Lifted verbatim from the original
- * inline block (36 lines) -- no behavior change.
- */
-function seedBundledSkillCreator(deps: {
-  dataDir: string;
-  agentLogger: ReturnType<typeof setupLogging>["agentLogger"];
-}): void {
-  const { dataDir, agentLogger } = deps;
-  const skillsTarget = safePath(dataDir, "skills");
-  const skillCreatorDest = safePath(skillsTarget, "skill-creator");
-  const __filename = fileURLToPath(import.meta.url);
-  const bundledSrc = pathResolve(__filename, "../../bundled-skills/skill-creator");
-  if (!existsSync(bundledSrc)) return;
-  const bundledSkillMd = safePath(bundledSrc, "SKILL.md");
-  const installedSkillMd = safePath(skillCreatorDest, "SKILL.md");
-  let shouldSeed = !existsSync(skillCreatorDest);
-  if (!shouldSeed && existsSync(bundledSkillMd) && existsSync(installedSkillMd)) {
-    const extractVersion = (path: string): string | undefined => {
-      try {
-        const head = readFileSync(path, "utf-8").slice(0, 512);
-        const match = head.match(/^version:\s*["']?([^"'\n]+)/m);
-        return match?.[1]?.trim();
-      } catch { return undefined; }
-    };
-    const bundledVersion = extractVersion(bundledSkillMd);
-    const installedVersion = extractVersion(installedSkillMd);
-    if (bundledVersion && bundledVersion !== installedVersion) {
-      shouldSeed = true;
-      agentLogger.info(
-        { skill: "skill-creator", installedVersion: installedVersion ?? "none", bundledVersion },
-        "Bundled skill-creator version newer than installed — updating",
-      );
-    }
-  }
-  if (shouldSeed) {
-    mkdirSync(skillsTarget, { recursive: true });
-    cpSync(bundledSrc, skillCreatorDest, { recursive: true });
-    agentLogger.info({ skill: "skill-creator" }, "Bundled skill-creator seeded into data directory");
-  }
-}
-
-/**
- * Bootstrap secrets and build merged-env / process.env scrub. Extracted from
- * stageFoundation to fit the DAEMON-API-06 ≤200-line cap. Returns a bundle of
- * the secret store + crypto + db handle and the merged-env map. The control
- * flow (decryptAll throws → fatal; null secretsBootResult → no-op) is the same
- * as the original inline form.
- *
- * Implements DAEMON-API-09 refs #1-#4 (mergedEnv / secretStore / secretsCrypto
- * / secretsDb) via single-IIFE init.
- */
-function bootstrapSecretsAndEnv(deps: {
-  setupSecrets: typeof _setupSecretsImpl;
-  dataDir: string;
-}): {
-  mergedEnv: Record<string, string | undefined>;
-  secretStore: SecretStorePort | undefined;
-  secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
-  secretsDb: import("better-sqlite3").Database | undefined;
-} {
-  const secretsBootResult = deps.setupSecrets({
-    env: process.env as Record<string, string | undefined>,
-    dataDir: deps.dataDir,
-  });
-  if (!secretsBootResult.ok) {
-    throw new Error(`Secrets bootstrap failed: ${secretsBootResult.error.message}`);
-  }
-  if (secretsBootResult.value === null) {
-    return {
-      mergedEnv: process.env as Record<string, string | undefined>,
-      secretStore: undefined,
-      secretsCrypto: undefined,
-      secretsDb: undefined,
-    };
-  }
-  const { crypto, dbPath } = secretsBootResult.value;
-  const store = createSqliteSecretStore(dbPath, crypto);
-  const decryptResult = store.decryptAll();
-  if (!decryptResult.ok) {
-    throw new Error(`Secret decryption failed: ${decryptResult.error.message}`);
-  }
-  const merged: Record<string, string | undefined> = {};
-  for (const [name, value] of decryptResult.value) merged[name] = value;
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) merged[key] = value;
-  }
-  scrubProcessEnv();
-  return {
-    mergedEnv: merged,
-    secretStore: store as SecretStorePort,
-    secretsCrypto: crypto,
-    secretsDb: store.db,
-  };
-}
-
-/**
- * Build a `ConfigGitManager` bound to `configDir` (or `undefined` if no config
- * file was resolved). Extracted from stageFoundation to fit the DAEMON-API-06
- * ≤200-line cap.
- */
-function wireConfigGitManager(deps: {
-  configDir: string;
-  execGit: ReturnType<typeof createExecGit>;
-}): ReturnType<typeof createConfigGitManager> | undefined {
-  if (!deps.configDir) return undefined;
-  return createConfigGitManager({
-    configDir: deps.configDir,
-    execGit: deps.execGit,
-    writeFile: async (relativePath, content) => {
-      try {
-        const targetPath = safePath(deps.configDir, relativePath);
-        await fsWriteFile(targetPath, content, "utf-8");
-        return ok(undefined);
-      } catch (e: unknown) {
-        return err(e instanceof Error ? e.message : String(e));
-      }
-    },
-    removeDir: async (relativePath) => {
-      try {
-        const targetPath = safePath(deps.configDir, relativePath);
-        await rm(targetPath, { recursive: true, force: true });
-        return ok(undefined);
-      } catch (e: unknown) {
-        return err(e instanceof Error ? e.message : String(e));
-      }
-    },
-  });
-}
 
 /**
  * stageFoundation — daemon-process foundation startup. Owns:
@@ -663,7 +416,7 @@ async function stageFoundation(input: {
   const contextStore = createContextStore(db);
   const activeRunRegistry = createActiveRunRegistry();
   const sessionResolver = createBackgroundSessionResolver({ activeRunRegistry });
-  const canaryFallbackSecret = createHmac("sha256", container.config.tenantId)
+  const canaryFallbackSecret = (await import("node:crypto")).createHmac("sha256", container.config.tenantId)
     .update("comis:canary-fallback")
     .digest("hex");
   const injectionRateLimiter = createInjectionRateLimiter({ clock, timers });
@@ -734,259 +487,6 @@ async function stageFoundation(input: {
 // ---------------------------------------------------------------------------
 // Stage 2: agents (DAEMON-API-06 part 2 / Plan 34-04)
 // ---------------------------------------------------------------------------
-
-/**
- * Handle returned by `stageAgents`. Extends `FoundationHandle` so main() and
- * later stages can keep a single destructure surface.
- *
- * Plan 34-04 extracts the agent-runtime startup block (agents map, executors,
- * mcpClientManager, schedulers, media, RPC bridge, approval gate with restore,
- * delivery queue) from main() into stageAgents. cronWakeCallbackRef is a
- * deferred-ref slot populated by stageChannels (Plan 05) once wakeCoalescer
- * is constructed.
- */
-export interface AgentsHandle extends FoundationHandle {
-  // Agents (core)
-  defaultAgentId: string;
-  defaultWorkspaceDir: string;
-  agentsConfig: Record<string, PerAgentConfig>;
-  sessionManager: Awaited<ReturnType<typeof setupAgents>>["sessionManager"];
-  executors: Awaited<ReturnType<typeof setupAgents>>["executors"];
-  workspaceDirs: Awaited<ReturnType<typeof setupAgents>>["workspaceDirs"];
-  costTrackers: Awaited<ReturnType<typeof setupAgents>>["costTrackers"];
-  budgetGuards: Awaited<ReturnType<typeof setupAgents>>["budgetGuards"];
-  stepCounters: Awaited<ReturnType<typeof setupAgents>>["stepCounters"];
-  getExecutor: Awaited<ReturnType<typeof setupAgents>>["getExecutor"];
-  piSessionAdapters: Awaited<ReturnType<typeof setupAgents>>["piSessionAdapters"];
-  skillWatcherHandles: Awaited<ReturnType<typeof setupAgents>>["skillWatcherHandles"];
-  skillRegistries: Awaited<ReturnType<typeof setupAgents>>["skillRegistries"];
-  lockCleanupTimer: Awaited<ReturnType<typeof setupAgents>>["lockCleanupTimer"];
-  singleAgentDeps: Awaited<ReturnType<typeof setupAgents>>["singleAgentDeps"];
-  providerHealth: Awaited<ReturnType<typeof setupAgents>>["providerHealth"];
-  oauthCredentialStore: Awaited<ReturnType<typeof setupAgents>>["oauthCredentialStore"];
-  toolCapabilityPorts: Awaited<ReturnType<typeof setupAgents>>["toolCapabilityPorts"];
-  mcpClientManager: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
-  // Restart continuation tracker
-  continuationTracker: ReturnType<typeof createRestartContinuationTracker>;
-  // Subprocess envs
-  subprocessEnv: Record<string, string>;
-  execToolEnv: Record<string, string>;
-  // Schedulers
-  systemEventQueue: ReturnType<typeof createSystemEventQueue>;
-  cronSchedulers: Awaited<ReturnType<typeof setupSchedulers>>["cronSchedulers"];
-  executionTrackers: Awaited<ReturnType<typeof setupSchedulers>>["executionTrackers"];
-  browserServices: Awaited<ReturnType<typeof setupSchedulers>>["browserServices"];
-  resetSchedulers: Awaited<ReturnType<typeof setupSchedulers>>["resetSchedulers"];
-  getAgentCronScheduler: Awaited<ReturnType<typeof setupSchedulers>>["getAgentCronScheduler"];
-  getAgentBrowserService: Awaited<ReturnType<typeof setupSchedulers>>["getAgentBrowserService"];
-  sessionTrackerRegistry: import("@comis/agent").SessionTrackerRegistry<ReturnType<typeof createFileStateTracker>>;
-  extractFromConversation: ReturnType<typeof setupTaskExtraction>["extractFromConversation"];
-  auditAggregator: ReturnType<typeof createAuditAggregator>;
-  onSuspiciousContent: WrapExternalContentOptions["onSuspiciousContent"];
-  // Media
-  ttsAdapter: Awaited<ReturnType<typeof setupMedia>>["ttsAdapter"];
-  visionRegistry: Awaited<ReturnType<typeof setupMedia>>["visionRegistry"];
-  linkRunner: Awaited<ReturnType<typeof setupMedia>>["linkRunner"];
-  mediaTempManager: Awaited<ReturnType<typeof setupMedia>>["mediaTempManager"];
-  mediaSemaphore: Awaited<ReturnType<typeof setupMedia>>["mediaSemaphore"];
-  audioConverter: Awaited<ReturnType<typeof setupMedia>>["audioConverter"];
-  transcriber: Awaited<ReturnType<typeof setupMedia>>["transcriber"];
-  ssrfFetcher: Awaited<ReturnType<typeof setupMedia>>["ssrfFetcher"];
-  fileExtractor: Awaited<ReturnType<typeof setupMedia>>["fileExtractor"];
-  // RPC bridge (deferred-dispatch)
-  rpcCall: ReturnType<typeof setupRpcBridge>["rpcCall"];
-  wireDispatch: ReturnType<typeof setupRpcBridge>["wireDispatch"];
-  // Approval gate
-  approvalGate: ReturnType<typeof createApprovalGate>;
-  // Delivery queue
-  channelAdaptersRef: Map<string, import("@comis/core").DeliveryAdapter>;
-  deliveryQueue: Awaited<ReturnType<typeof setupDeliveryQueue>>["deliveryQueue"];
-  drainAndStartDeliveryPrune: Awaited<ReturnType<typeof setupDeliveryQueue>>["drainAndStart"];
-  shutdownDeliveryQueue: Awaited<ReturnType<typeof setupDeliveryQueue>>["shutdown"];
-  // Deferred wake-callback ref (populated in stageChannels post-wakeCoalescer)
-  cronWakeCallbackRef: { ref?: (reason: string) => void };
-}
-
-/**
- * Restore approval pending requests and cache from disk at startup.
- *
- * Extracted from the original daemon.ts approval-restore block (39L) to keep
- * `stageAgents` under the DAEMON-API-06 ≤200L cap. Reads
- * `<dataDir>/restart-approvals.json` and `<dataDir>/restart-approval-cache.json`
- * (written by graceful shutdown), restores into the in-memory ApprovalGate,
- * then deletes the files. Best-effort on JSON parse failure: log warn + unlink.
- */
-function restoreApprovalState(deps: {
-  approvalGate: ReturnType<typeof createApprovalGate>;
-  dataDir: string;
-  containerDataDir: string | undefined;
-  daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-}): void {
-  const { approvalGate, dataDir, containerDataDir, daemonLogger } = deps;
-  // 6.6.8.6.1. Restore pending approvals from previous restart
-  const approvalRestorePath = safePath(containerDataDir || dataDir, "restart-approvals.json");
-  if (existsSync(approvalRestorePath)) {
-    try {
-      const raw = readFileSync(approvalRestorePath, "utf-8");
-      const records = JSON.parse(raw);
-      unlinkSync(approvalRestorePath);
-      const restored = approvalGate.restorePending(records);
-      if (restored > 0) {
-        daemonLogger.info({ count: restored, total: records.length }, "Pending approvals restored from previous session");
-      }
-    } catch (restoreErr) {
-      daemonLogger.warn(
-        { err: restoreErr, hint: "Could not restore pending approvals; operators may need to re-approve", errorKind: "internal" as const },
-        "Failed to restore pending approvals",
-      );
-      try { unlinkSync(approvalRestorePath); } catch { /* ignore */ }
-    }
-  }
-
-  // 6.6.8.6.2. Restore approval cache from previous session
-  const approvalCacheRestorePath = safePath(containerDataDir || dataDir, "restart-approval-cache.json");
-  if (existsSync(approvalCacheRestorePath)) {
-    try {
-      const raw = readFileSync(approvalCacheRestorePath, "utf-8");
-      unlinkSync(approvalCacheRestorePath); // Consume immediately
-      const entries = JSON.parse(raw);
-      const restored = approvalGate.restoreApprovalCache(entries);
-      if (restored > 0) {
-        daemonLogger.info({ count: restored, total: entries.length }, "Approval cache restored from previous session");
-      }
-    } catch (restoreErr) {
-      daemonLogger.warn(
-        { err: restoreErr, hint: "Could not restore approval cache; users may need to re-approve", errorKind: "internal" as const },
-        "Failed to restore approval cache",
-      );
-      try { unlinkSync(approvalCacheRestorePath); } catch { /* ignore */ }
-    }
-  }
-}
-
-/**
- * Construct the daemon-global MCP client manager. Hoisted to its own helper
- * to fit stageAgents under DAEMON-API-06 ≤200L. The manager is a pure
- * in-memory state holder (no I/O), so construction is safe before any
- * server-connect attempts and BEFORE setupAgents (per-agent
- * ToolCapabilityPort adapter construction closes over the manager).
- */
-async function setupMcpManager(deps: {
-  container: Awaited<ReturnType<typeof bootstrap>> extends import("@comis/shared").Result<infer C, unknown> ? C : never;
-  skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
-  defaultWorkspaceDir: string;
-}): Promise<Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"]> {
-  const { container, skillsLogger, defaultWorkspaceDir } = deps;
-  const { mcpClientManager } = await setupMcp({
-    servers: container.config.integrations.mcp.servers,
-    logger: skillsLogger,
-    callToolTimeoutMs: container.config.integrations.mcp.callToolTimeoutMs,
-    defaultCwd: defaultWorkspaceDir,
-    eventBus: container.eventBus,
-    stdioDefaultConcurrency: container.config.integrations.mcp.stdioDefaultConcurrency,
-    httpDefaultConcurrency: container.config.integrations.mcp.httpDefaultConcurrency,
-  });
-  return mcpClientManager;
-}
-
-/**
- * Wire post-setupAgents cleanup listeners: session:expired releases
- * sessionTrackerRegistry, Gemini cache disposal, and MCP disconnect cleanup.
- * Schedules an orphan-cache cleanup pass for any stale comis:* caches.
- *
- * Extracted from stageAgents to fit the DAEMON-API-06 ≤200L cap.
- */
-function wirePostAgentsCleanup(deps: {
-  eventBus: Awaited<ReturnType<typeof bootstrap>> extends import("@comis/shared").Result<infer C, unknown> ? C extends { eventBus: infer EB } ? EB : never : never;
-  geminiCacheManager: GeminiCacheManager;
-  daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-}): import("@comis/agent").SessionTrackerRegistry<ReturnType<typeof createFileStateTracker>> {
-  const { eventBus, geminiCacheManager, daemonLogger } = deps;
-  // Clean up all session-scoped state on session expiry
-  wireSessionStateCleanup(eventBus);
-  // Per-session FileStateTracker pool -- keeps the LLM's file read state alive
-  // across turns. Registered trackers are released on session:expired.
-  const sessionTrackerRegistry = createSessionTrackerRegistry(createFileStateTracker);
-  eventBus.on("session:expired", (payload) => {
-    sessionTrackerRegistry.release(formatSessionKey(payload.sessionKey));
-  });
-  // Dispose Gemini cache on session expiry (fire-and-forget)
-  wireGeminiCacheCleanup(eventBus, geminiCacheManager);
-  // Clean up orphaned comis:* caches from previous daemon runs
-  suppressError(
-    geminiCacheManager.cleanupOrphaned().then((result) => {
-      if (result.ok && (result.value.deleted > 0 || result.value.skipped > 0)) {
-        daemonLogger.info(
-          { deleted: result.value.deleted, skipped: result.value.skipped },
-          "Gemini cache: orphan cleanup complete",
-        );
-      }
-    }),
-    "gemini-cache-orphan-cleanup",
-  );
-  // Clean up discovery state when MCP servers disconnect or remove tools
-  wireMcpDisconnectCleanup(eventBus);
-  return sessionTrackerRegistry;
-}
-
-/**
- * Build the audit aggregator + onSuspiciousContent reporter pair used by
- * stageAgents and threaded into setupMedia. Extracted to keep stageAgents
- * under the DAEMON-API-06 ≤200L cap.
- */
-function buildAuditBundle(deps: {
-  eventBus: Awaited<ReturnType<typeof bootstrap>> extends import("@comis/shared").Result<infer C, unknown> ? C extends { eventBus: infer EB } ? EB : never : never;
-  skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
-  clock: import("@comis/core").ClockPort;
-  timers: import("@comis/core").TimerPort;
-}): {
-  auditAggregator: ReturnType<typeof createAuditAggregator>;
-  onSuspiciousContent: WrapExternalContentOptions["onSuspiciousContent"];
-} {
-  const auditAggregator = createAuditAggregator(
-    deps.eventBus,
-    { clock: deps.clock, timers: deps.timers },
-    undefined,
-    deps.skillsLogger,
-  );
-  const onSuspiciousContent: WrapExternalContentOptions["onSuspiciousContent"] = (info) => {
-    auditAggregator.record({ source: "external_content", patterns: info.patterns });
-  };
-  return { auditAggregator, onSuspiciousContent };
-}
-
-/**
- * Build the onCronWake callback handed to setupSchedulers. Reads
- * `cronWakeCallbackRef.ref` at INVOCATION time (deferred), so the live
- * wakeCoalescer wired up later in stageChannels is what actually receives
- * the wake. If a cron fires in the gap between stageAgents returning and
- * stageChannels populating the ref (typically milliseconds, but a heavy
- * startup may stretch it to seconds), surface the drop with a debug log
- * line so the silent miss is visible (WR-07).
- *
- * Observability-only: we intentionally do NOT buffer-then-drain (the
- * precedent set by channelPluginsRef / bgNotifyRef etc.). Cron wakes are
- * timer-driven; replaying a backlog could cause a wake storm if N timers
- * fired during a slow startup.
- *
- * Extracted from stageAgents to keep it under the DAEMON-API-06 ≤200L cap.
- */
-function buildDeferredCronWakeCallback(
-  cronWakeCallbackRef: { ref?: (reason: string) => void },
-  daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"],
-): (reason: string) => void {
-  return (reason: string) => {
-    const callback = cronWakeCallbackRef.ref;
-    if (callback) {
-      callback(reason);
-    } else {
-      daemonLogger.debug(
-        { reason, hint: "wakeCoalescer not yet constructed; cron wake dropped" },
-        "Cron wake dropped during stage handoff",
-      );
-    }
-  };
-}
 
 /**
  * stageAgents — agent-runtime startup. Owns:
@@ -1218,334 +718,6 @@ async function stageAgents(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * Handle returned by `stageChannels`. Extends `AgentsHandle` so main() and
- * later stages keep a single destructure surface.
- *
- * Plan 34-05 extracts the channel-runtime startup block (channel adapters,
- * cross-session sender + subAgentRunner, sandbox/image-gen providers, tools,
- * heartbeat, wake coalescer, graph coordinator, monitoring, agent management
- * runtime state) from main() into stageChannels. The deferred cronWakeCallback
- * ref (DAEMON-API-09 ref #8) is populated inside stageChannels once
- * wakeCoalescer is constructed.
- */
-export interface ChannelsHandle extends AgentsHandle {
-  // Channels (core)
-  adaptersByType: Awaited<ReturnType<typeof setupChannels>>["adaptersByType"];
-  channelManager: Awaited<ReturnType<typeof setupChannels>>["channelManager"];
-  resolveAttachment: Awaited<ReturnType<typeof setupChannels>>["resolveAttachment"];
-  lifecycleReactors: Awaited<ReturnType<typeof setupChannels>>["lifecycleReactors"];
-  channelPlugins: Awaited<ReturnType<typeof setupChannels>>["channelPlugins"];
-  channelCapabilities: Awaited<ReturnType<typeof setupChannels>>["channelCapabilities"];
-  commandQueue: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
-  deliveryService: Awaited<ReturnType<typeof setupChannels>>["deliveryService"];
-  inboundMessageIdResolver: InboundMessageIdResolver;
-  // Channel health monitor (refs #10 + #11 subsumed by helper return value)
-  channelHealthMonitor: ChannelHealthMonitor | undefined;
-  stopChannelHealthMonitor: (() => void) | undefined;
-  // Notifications + background completion
-  notificationContext: ReturnType<typeof setupNotifications>;
-  bgCompletionRunnerContext: ReturnType<typeof setupBackgroundCompletionRunner>;
-  // Cross-session + sub-agent runtime
-  crossSessionSender: ReturnType<typeof setupCrossSession>["crossSessionSender"];
-  subAgentRunner: ReturnType<typeof setupCrossSession>["subAgentRunner"];
-  sendToChannel: ReturnType<typeof setupCrossSession>["sendToChannel"];
-  announceToParent: ReturnType<typeof setupCrossSession>["announceToParent"];
-  deadLetterQueue: ReturnType<typeof setupCrossSession>["deadLetterQueue"];
-  announcementBatcher: ReturnType<typeof setupCrossSession>["announcementBatcher"];
-  gatewaySendRef: { ref?: (channelId: string, text: string) => boolean };
-  // Sandbox + image generation
-  sandboxProvider: SandboxProvider | undefined;
-  imageGenProvider: ReturnType<typeof createImageGenProvider> extends import("@comis/shared").Result<infer P, unknown> ? P | undefined : never;
-  imageGenRateLimiter: ImageGenRateLimiter | undefined;
-  imageGenConfig: AgentsHandle["container"]["config"]["integrations"]["media"]["imageGeneration"];
-  // Tools (assembler + preprocessor)
-  assembleToolsForAgent: ReturnType<typeof setupTools>["assembleToolsForAgent"];
-  preprocessMessageText: ReturnType<typeof setupTools>["preprocessMessageText"];
-  getCapabilityPortForAgent: (agentId: string) => ToolCapabilityPort;
-  // Monitoring + heartbeat
-  heartbeatRunner: ReturnType<typeof setupMonitoring>["heartbeatRunner"];
-  duplicateDetector: ReturnType<typeof setupMonitoring>["duplicateDetector"];
-  perAgentRunner: ReturnType<typeof setupHeartbeat>["perAgentRunner"];
-  wakeCoalescer: ReturnType<typeof createWakeCoalescer>;
-  // Graph
-  nodeTypeRegistry: ReturnType<typeof createNodeTypeRegistry>;
-  graphCoordinator: ReturnType<typeof createGraphCoordinator>;
-  namedGraphStore: ReturnType<typeof createNamedGraphStore>;
-  // Agent management runtime state
-  suspendedAgents: Set<string>;
-  modelCatalog: ReturnType<typeof createModelCatalog>;
-  channelConfig: Record<string, { enabled: boolean }>;
-  promptTimeoutTimestamps: number[];
-}
-
-/**
- * Build the deps object passed to `setupChannels`. Lifted from the inline
- * argument-construction block inside stageChannels to keep the stage body
- * under the DAEMON-API-06 ≤200L cap (helper itself ≤50L per DAEMON-API-07).
- *
- * All closure inputs flow through `deps`. The returned object is consumed
- * verbatim by `setupChannels(...)`; no inline mutation here.
- */
-function buildChannelManagerDeps(deps: {
-  agents: AgentsHandle;
-  toolAssemblerRef: { ref?: (agentId: string, options?: import("./wiring/setup-tools.js").AssembleToolsOptions) => Promise<unknown[]> };
-  inboundMessageIdResolverRef: { ref?: InboundMessageIdResolver };
-  sessionTrackerRef: { ref?: import("./notification/session-tracker.js").SessionTracker };
-}): Parameters<typeof setupChannels>[0] {
-  const { agents, toolAssemblerRef, inboundMessageIdResolverRef, sessionTrackerRef } = deps;
-  const {
-    container, executors, defaultAgentId, sessionManager, sessionStore,
-    logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
-    ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, embeddingQueue,
-    activeRunRegistry, sessionResolver, rpcCall, extractFromConversation,
-    continuationTracker, approvalGate,
-    piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
-  } = agents;
-  return {
-    container, executors, defaultAgentId, sessionManager, sessionStore,
-    logger, channelsLogger,
-    linkRunner, ssrfFetcher, transcriber,
-    maxMediaBytes: container.config.integrations.media.infrastructure.maxRemoteFetchBytes,
-    /* eslint-disable @typescript-eslint/no-explicit-any -- matches assembleToolsForAgent signature from setup-tools.ts */
-    assembleToolsForAgent: (agentId: string, options?: { sessionKey?: import("@comis/core").SessionKey }): Promise<any[]> =>
-      toolAssemblerRef.ref ? toolAssemblerRef.ref(agentId, options) as Promise<any[]> : Promise.resolve([]),
-    /* eslint-enable @typescript-eslint/no-explicit-any */
-    ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore,
-    fileExtractor, fileExtractionConfig: container.config.integrations.media.documentExtraction,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter,
-    tenantId: container.config.tenantId,
-    embeddingQueue, queueConfig: container.config.queue,
-    activeRunRegistry, sessionResolver, rpcCall,
-    onTaskExtraction: extractFromConversation,
-    onMessageReceived: (msg, channelType) => {
-      const chatType = typeof msg.metadata?.telegramChatType === "string"
-        ? msg.metadata.telegramChatType
-        : undefined;
-      continuationTracker.track({
-        agentId: defaultAgentId, channelType, channelId: msg.channelId,
-        userId: msg.senderId, chatType, tenantId: container.config.tenantId, timestamp: Date.now(),
-      });
-      inboundMessageIdResolverRef.ref?.record(msg, channelType);
-    },
-    onMessageProcessed: (msg, channelType) => {
-      sessionTrackerRef.ref?.recordActivity(defaultAgentId, channelType, msg.channelId);
-    },
-    approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
-    piSessionAdapters, costTrackers, deliveryQueue,
-    cronExecutionTrackers: executionTrackers,
-  };
-}
-
-/**
- * Build the deps object passed to `createGraphCoordinator`. Lifted from the
- * inline argument-construction block inside stageChannels to keep the stage
- * body under the DAEMON-API-06 ≤200L cap (helper itself ≤50L per
- * DAEMON-API-07).
- */
-function buildGraphCoordinatorDeps(deps: {
-  agents: AgentsHandle;
-  channels: {
-    subAgentRunner: ReturnType<typeof setupCrossSession>["subAgentRunner"];
-    sendToChannel: ReturnType<typeof setupCrossSession>["sendToChannel"];
-    announceToParent: ReturnType<typeof setupCrossSession>["announceToParent"];
-    announcementBatcher: ReturnType<typeof setupCrossSession>["announcementBatcher"];
-    commandQueue: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
-    assembleToolsForAgent: ReturnType<typeof setupTools>["assembleToolsForAgent"];
-    nodeTypeRegistry: ReturnType<typeof createNodeTypeRegistry>;
-  };
-}): Parameters<typeof createGraphCoordinator>[0] {
-  const { agents, channels } = deps;
-  const { container, defaultAgentId, dataDir, agentLogger, activeRunRegistry, agentsConfig } = agents;
-  const a2aSec = container.config.security.agentToAgent as Record<string, unknown>;
-  return {
-    subAgentRunner: channels.subAgentRunner, eventBus: container.eventBus,
-    sendToChannel: channels.sendToChannel, announceToParent: channels.announceToParent,
-    batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
-    maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? 4,
-    maxResultLength: a2aSec.graphMaxResultLength as number | undefined,
-    maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
-    logger: agentLogger?.child?.({ submodule: "graph-coordinator" }),
-    dataDir: container.config.dataDir || dataDir,
-    nodeTypeRegistry: channels.nodeTypeRegistry, activeRunRegistry,
-    assembleToolsForAgent: async (agentId: string) => {
-      const tools = await channels.assembleToolsForAgent(agentId);
-      return tools.map((t: { name: string; description?: string; inputSchema?: unknown }) => ({
-        name: t.name, description: t.description, inputSchema: t.inputSchema,
-      }));
-    },
-    touchParentSession: channels.commandQueue
-      ? (sessionKey: string) => channels.commandQueue!.touchLane(sessionKey)
-      : undefined,
-    preWarm: buildGraphPreWarm({ agentsConfig, defaultAgentId, secretManager: container.secretManager }),
-  };
-}
-
-/**
- * Build the optional pre-warm cache config for Anthropic graph executions.
- * Returns undefined if no Anthropic API key is resolvable. Extracted from
- * buildGraphCoordinatorDeps to keep both helpers under DAEMON-API-07 ≤50L.
- */
-function buildGraphPreWarm(deps: {
-  agentsConfig: AgentsHandle["agentsConfig"];
-  defaultAgentId: string;
-  secretManager: AgentsHandle["container"]["secretManager"];
-}): NonNullable<Parameters<typeof createGraphCoordinator>[0]["preWarm"]> | undefined {
-  const { agentsConfig, defaultAgentId, secretManager } = deps;
-  const agentCfg = agentsConfig[defaultAgentId];
-  const provider = agentCfg?.provider ?? "anthropic";
-  const resolvedModel = agentCfg?.model === "default" || !agentCfg?.model
-    ? "claude-sonnet-4-5-20250929"
-    : agentCfg.model;
-  const apiKey = secretManager.get("anthropic-api-key") ?? secretManager.get("ANTHROPIC_API_KEY") ?? "";
-  if (!apiKey) return undefined;
-  return {
-    provider, modelId: resolvedModel, apiKey,
-    systemPrompt: agentCfg?.name
-      ? `You are ${agentCfg.name}. You are a helpful AI assistant.`
-      : "You are a helpful AI assistant.",
-    tools: [] as Array<{ name: string; description?: string; inputSchema?: unknown }>,
-  };
-}
-
-/**
- * Set up the channel health monitor. Returns `{ monitor, stop }`, subsuming
- * today's `let channelHealthMonitor` + `let stopChannelHealthMonitor`
- * (DAEMON-API-09 refs #10 + #11) into a single helper return value -- both
- * `let`s disappear from stageChannels.
- *
- * Extracted to keep stageChannels under the DAEMON-API-06 ≤200L cap.
- */
-function setupChannelHealthMonitor(deps: {
-  adaptersByType: Awaited<ReturnType<typeof setupChannels>>["adaptersByType"];
-  daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-  container: AgentsHandle["container"];
-}): { monitor: ChannelHealthMonitor | undefined; stop: (() => void) | undefined } {
-  const { adaptersByType, daemonLogger, container } = deps;
-  const healthCheckConfig = container.config.channels?.healthCheck;
-  if (healthCheckConfig?.enabled === false) return { monitor: undefined, stop: undefined };
-  const monitor = createChannelHealthMonitor({
-    eventBus: container.eventBus,
-    pollIntervalMs: healthCheckConfig?.pollIntervalMs,
-    staleThresholdMs: healthCheckConfig?.staleThresholdMs,
-    idleThresholdMs: healthCheckConfig?.idleThresholdMs,
-    errorThreshold: healthCheckConfig?.errorThreshold,
-    stuckThresholdMs: healthCheckConfig?.stuckThresholdMs,
-    startupGraceMs: healthCheckConfig?.startupGraceMs,
-    autoRestartOnStale: healthCheckConfig?.autoRestartOnStale,
-    maxRestartsPerHour: healthCheckConfig?.maxRestartsPerHour,
-    restartCooldownMs: healthCheckConfig?.restartCooldownMs,
-    restartAdapter: async (channelType: string) => {
-      const adapter = adaptersByType.get(channelType);
-      if (!adapter) return;
-      daemonLogger.info({ channelType }, "Health monitor triggering auto-restart for stale adapter");
-      await adapter.stop();
-      await adapter.start();
-    },
-  });
-  const stop = monitor.start(adaptersByType);
-  return { monitor, stop };
-}
-
-/**
- * Factory: resolve a `ToolCapabilityPort` for an agentId; falls back to the
- * default agent's port. Throws if neither is registered (mirrors setup-tools.ts
- * `agents[agentId] ?? agents[defaultAgentId]` convention).
- *
- * Extracted to keep stageChannels under the DAEMON-API-06 ≤200L cap. The
- * original 17L closure is logically a factory; factory form is clearer.
- */
-function createCapabilityPortResolver(
-  toolCapabilityPorts: Map<string, ToolCapabilityPort>,
-  defaultAgentId: string,
-): (agentId: string) => ToolCapabilityPort {
-  return (agentId: string) => {
-    const port = toolCapabilityPorts.get(agentId) ?? toolCapabilityPorts.get(defaultAgentId);
-    if (!port) {
-      throw new Error(
-        `No ToolCapabilityPort registered for agent '${agentId}' and no default agent ('${defaultAgentId}') fallback available -- the agent may have been removed or the daemon failed to initialize.`,
-      );
-    }
-    return port;
-  };
-}
-
-/**
- * Wire post-setupChannels lifecycle hooks: populate the delivery-queue
- * channelAdapters map, drain + start prune timer, mirror prune lifecycle,
- * delivery-queue logging, and output retention housekeeper.
- *
- * Extracted to keep stageChannels under the DAEMON-API-06 ≤200L cap.
- */
-async function wirePostChannelsLifecycle(deps: {
-  adaptersByType: Awaited<ReturnType<typeof setupChannels>>["adaptersByType"];
-  channelAdaptersRef: AgentsHandle["channelAdaptersRef"];
-  drainAndStartDeliveryPrune: AgentsHandle["drainAndStartDeliveryPrune"];
-  shutdownDeliveryQueue: AgentsHandle["shutdownDeliveryQueue"];
-  startMirrorPrune: AgentsHandle["startMirrorPrune"];
-  shutdownMirror: AgentsHandle["shutdownMirror"];
-  daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-  container: AgentsHandle["container"];
-  defaultWorkspaceDir: string;
-  outputRetentionConfig: AgentsHandle["container"]["config"]["outputRetention"];
-}): Promise<void> {
-  const { adaptersByType, channelAdaptersRef, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    startMirrorPrune, shutdownMirror, daemonLogger, container, defaultWorkspaceDir,
-    outputRetentionConfig } = deps;
-  for (const [type, adapter] of adaptersByType) channelAdaptersRef.set(type, adapter);
-  await drainAndStartDeliveryPrune();
-  container.eventBus.on("system:shutdown", () => { shutdownDeliveryQueue(); });
-  startMirrorPrune();
-  container.eventBus.on("system:shutdown", () => { shutdownMirror(); });
-  setupDeliveryQueueLogging({ eventBus: container.eventBus, logger: daemonLogger });
-  if (defaultWorkspaceDir) {
-    const outputRetentionHandle = setupOutputRetention({
-      config: outputRetentionConfig, workspaceDir: defaultWorkspaceDir, logger: daemonLogger,
-    });
-    container.eventBus.on("system:shutdown", () => { outputRetentionHandle.shutdown(); });
-  } else {
-    daemonLogger.debug(
-      { hint: "No defaultWorkspaceDir; output retention housekeeper skipped" },
-      "Output retention: skipped (no default workspace)",
-    );
-  }
-}
-
-/**
- * Build the image-generation provider bundle: provider + rate limiter + config.
- * Logs the same info/debug/warn lines as the original inline block.
- *
- * Extracted to keep stageChannels under the DAEMON-API-06 ≤200L cap.
- */
-function buildImageGenBundle(deps: {
-  container: AgentsHandle["container"];
-  skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
-}): {
-  imageGenProvider: ChannelsHandle["imageGenProvider"];
-  imageGenRateLimiter: ImageGenRateLimiter | undefined;
-  imageGenConfig: ChannelsHandle["imageGenConfig"];
-} {
-  const { container, skillsLogger } = deps;
-  const imageGenConfig = container.config.integrations.media.imageGeneration;
-  const imageGenResult = createImageGenProvider(imageGenConfig, container.secretManager);
-  const imageGenProvider = imageGenResult.ok ? imageGenResult.value : undefined;
-  const imageGenRateLimiter = imageGenProvider
-    ? createImageGenRateLimiter({ maxPerHour: imageGenConfig.maxPerHour })
-    : undefined;
-  if (imageGenProvider) {
-    skillsLogger.info({ provider: imageGenConfig.provider }, "Image generation provider initialized");
-  } else if (imageGenResult.ok) {
-    skillsLogger.debug("Image generation disabled: API key not configured");
-  } else {
-    skillsLogger.warn(
-      { err: imageGenResult.error, hint: "Check image generation config provider value", errorKind: "config" as const },
-      "Image generation provider creation failed",
-    );
-  }
-  return { imageGenProvider, imageGenRateLimiter, imageGenConfig };
-}
-
-/**
  * stageChannels — channel-runtime startup. Owns:
  *   - channel adapters + composite media resolution + delivery service
  *   - inbound message id resolver
@@ -1718,360 +890,9 @@ async function stageChannels(input: {
   };
 }
 
-/**
- * Shape of the session-store bridge object literal constructed inside
- * stageGateway. Captured as a named type so GatewayHandle declares a precise
- * field type (rather than a TypeScript `object`) and so consumers can satisfy
- * the type without re-stating the literal. Mirrors the four-method facade
- * consumed by the RPC dispatch layer (rpc-dispatch.ts:88-101).
- */
-type SessionStoreBridge = {
-  listDetailed: (tenantId?: string) => Array<{
-    sessionKey: string;
-    userId: string;
-    channelId: string;
-    metadata: Record<string, unknown>;
-    createdAt: number;
-    updatedAt: number;
-    messageCount: number;
-  }>;
-  loadByFormattedKey: (sessionKey: string) => { messages: unknown[]; metadata: Record<string, unknown>; createdAt: number; updatedAt: number } | undefined;
-  deleteByFormattedKey: (sessionKey: string) => boolean;
-  saveByFormattedKey: (sessionKey: string, messages: unknown[], metadata?: Record<string, unknown>) => void;
-};
-
-/**
- * Handle returned by `stageGateway`. Extends `ChannelsHandle` so main() and
- * `stageShutdown` (Plan 07) can read every field constructed across all four
- * runtime stages. Carries ~13 new fields covering token registry, session
- * store bridge, hot-add/hot-remove closures, RPC dispatch deps, gateway server
- * handle, active execution tracker, and WebSocket connection manager.
- *
- * The `shutdownRef` slot is declared empty inside stageGateway and populated
- * by `stageShutdown` (Plan 07) once the live shutdown handle is constructed
- * (hot-add closures read `.value` at RPC call time, not at definition time).
- */
-export interface GatewayHandle extends ChannelsHandle {
-  // Token registry (4 fields)
-  tokenRegistry: ReturnType<typeof createTokenRegistry>;
-  runtimeTokens: Array<{ id: string; secretBuf: Buffer; scopes: string[] }>;
-  removedTokenIds: Set<string>;
-  resolvedGatewayTokens: Array<{ id: string; secret: string; scopes: string[] }>;
-  // Session store bridge (1 field)
-  sessionStoreBridge: SessionStoreBridge;
-  // Shutdown ref (populated by stageShutdown -- Plan 07)
-  shutdownRef: { value?: { readonly isShuttingDown: boolean } };
-  // Hot-add / hot-remove closures (2 fields)
-  hotAdd: (agentId: string, config: PerAgentConfig) => Promise<void>;
-  hotRemove: (agentId: string) => Promise<void>;
-  // RPC dispatch deps (1 field; mutated post-gateway-init for wsConnections/mediaDir/onGatewayAttachment)
-  rpcDispatchDeps: import("./api/rpc-dispatch.js").ApiDispatchDeps;
-  // Gateway server (4 fields)
-  gatewayHandle: import("@comis/gateway").GatewayServerHandle | undefined;
-  activeExecutions: Map<string, { agentId: string; startedAt: number }>;
-  getActiveConnectionCount: () => number;
-  wsConnections: import("@comis/gateway").WsConnectionManager;
-}
-
-/**
- * Resolve gateway tokens from config (config -> env -> auto-generated).
- * Extracted from stageGateway to fit the DAEMON-API-06 ≤200L cap. Lifts the
- * 24L config-token resolution block verbatim.
- */
-function resolveGatewayTokens(deps: {
-  container: ChannelsHandle["container"];
-  daemonLogger: ChannelsHandle["daemonLogger"];
-}): Array<{ id: string; secret: string; scopes: string[] }> {
-  const { container, daemonLogger } = deps;
-  const resolved: Array<{ id: string; secret: string; scopes: string[] }> = [];
-  for (const t of container.config.gateway?.tokens ?? []) {
-    const tokenId = t.id ?? "unknown";
-    const tokenScopes = [...(t.scopes ?? [])];
-    if (typeof t.secret === "string" && t.secret.length >= 32) {
-      // Source: config (explicit secret present and valid)
-      resolved.push({ id: tokenId, secret: t.secret, scopes: tokenScopes });
-    } else {
-      const envKey = `GATEWAY_TOKEN_${tokenId.toUpperCase().replace(/-/g, "_")}`;
-      const envSecret = container.secretManager.get(envKey);
-      if (envSecret) {
-        // Source: env / SecretManager
-        resolved.push({ id: tokenId, secret: envSecret, scopes: tokenScopes });
-      } else {
-        // Source: auto-generated (ephemeral)
-        const generated = generateStrongToken();
-        resolved.push({ id: tokenId, secret: generated, scopes: tokenScopes });
-        daemonLogger.warn(
-          { tokenId, envVar: envKey, hint: `Set ${envKey} in environment or secrets store for persistence`, errorKind: "config" as const },
-          "Gateway token auto-generated (ephemeral -- will be lost on restart)",
-        );
-      }
-    }
-  }
-  return resolved;
-}
-
-/**
- * Factory: hot-add agent closure. Returns the closure that captures
- * destructured Maps + setupSingleAgent + shutdownRef + eventBus by reference
- * (all consumers hold the same Map references). Extracted to fit stageGateway
- * under the DAEMON-API-06 ≤200L cap.
- */
-function createHotAdd(deps: {
-  channels: ChannelsHandle;
-  shutdownRef: { value?: { readonly isShuttingDown: boolean } };
-}): (agentId: string, config: PerAgentConfig) => Promise<void> {
-  const { channels, shutdownRef } = deps;
-  const {
-    singleAgentDeps, executors, workspaceDirs, costTrackers, budgetGuards,
-    stepCounters, piSessionAdapters, skillWatcherHandles, skillRegistries,
-    toolCapabilityPorts, container, daemonLogger,
-  } = channels;
-  return async (agentId, config) => {
-    const startMs = Date.now();
-    if (shutdownRef.value?.isShuttingDown) {
-      throw new Error("Cannot hot-add agent during shutdown");
-    }
-    const result = await setupSingleAgent(agentId, config, singleAgentDeps);
-    executors.set(agentId, result.executor);
-    workspaceDirs.set(agentId, result.workspaceDir);
-    costTrackers.set(agentId, result.costTracker);
-    budgetGuards.set(agentId, result.budgetGuard);
-    stepCounters.set(agentId, result.stepCounter);
-    piSessionAdapters.set(agentId, result.piSessionAdapter);
-    if (result.skillWatcherHandle) {
-      skillWatcherHandles.set(agentId, result.skillWatcherHandle);
-    }
-    skillRegistries.set(agentId, result.skillRegistry);
-    toolCapabilityPorts.set(agentId, result.toolCapabilityPort);
-    container.eventBus.emit("agent:hot_added", { agentId, timestamp: Date.now() });
-    daemonLogger.info({ agentId, durationMs: Date.now() - startMs }, "Agent hot-added to running daemon");
-  };
-}
-
-/**
- * Factory: hot-remove agent closure. Mirror of createHotAdd. Extracted to fit
- * stageGateway under the DAEMON-API-06 ≤200L cap.
- */
-function createHotRemove(deps: {
-  channels: ChannelsHandle;
-}): (agentId: string) => Promise<void> {
-  const {
-    activeRunRegistry, daemonLogger, skillWatcherHandles, executors, workspaceDirs,
-    costTrackers, budgetGuards, stepCounters, piSessionAdapters, skillRegistries,
-    toolCapabilityPorts, container,
-  } = deps.channels;
-  return async (agentId) => {
-    const startMs = Date.now();
-    // Warn if agent may have active executions.
-    // ActiveRunRegistry is keyed by sessionKey, not agentId. Since hot-remove is
-    // rare and the registry is small, a coarse size > 0 check is sufficient for v1.
-    if (activeRunRegistry.size > 0) {
-      daemonLogger.warn(
-        { agentId, activeRuns: activeRunRegistry.size,
-          hint: "Agent removed while daemon has active executions; if this agent has an in-flight run it will complete but response delivery may fail",
-          errorKind: "internal" as const },
-        "Hot-removing agent with possible active executions",
-      );
-    }
-    // Stop skill watcher if present
-    const watcher = skillWatcherHandles.get(agentId);
-    if (watcher) {
-      await watcher.close();
-      skillWatcherHandles.delete(agentId);
-    }
-    // Remove from all Maps (workspace dir preserved on disk for data safety)
-    executors.delete(agentId);
-    workspaceDirs.delete(agentId);
-    costTrackers.delete(agentId);
-    budgetGuards.delete(agentId);
-    stepCounters.delete(agentId);
-    piSessionAdapters.delete(agentId);
-    skillRegistries.delete(agentId);
-    toolCapabilityPorts.delete(agentId);
-    container.eventBus.emit("agent:hot_removed", { agentId, timestamp: Date.now() });
-    daemonLogger.info({ agentId, durationMs: Date.now() - startMs }, "Agent hot-removed from running daemon");
-  };
-}
-
-/**
- * Build the rpcDispatchDeps literal. Single largest extraction (was ~76L).
- * Returns the full ApiDispatchDeps shape consumed by `wireDispatch` -- every
- * field name MUST match the ApiDispatchDeps aggregator in api/types.ts.
- * Extracted to fit stageGateway under the DAEMON-API-06 ≤200L cap.
- */
-function buildImageHandlerDeps(deps: {
-  channels: ChannelsHandle;
-}): import("./api/rpc-dispatch.js").ApiDispatchDeps["imageHandlerDeps"] {
-  const { imageGenProvider, imageGenRateLimiter, imageGenConfig, skillsLogger, adaptersByType } = deps.channels;
-  if (!imageGenProvider || !imageGenRateLimiter) return undefined;
-  return {
-    provider: imageGenProvider,
-    rateLimiter: imageGenRateLimiter,
-    config: imageGenConfig,
-    logger: skillsLogger,
-    getChannelAdapter: (channelType: string) => adaptersByType.get(channelType),
-  };
-}
-
-function buildTokenStoreMutators(deps: {
-  runtimeTokens: Array<{ id: string; secretBuf: Buffer; scopes: string[] }>;
-  removedTokenIds: Set<string>;
-}): Pick<import("./api/rpc-dispatch.js").ApiDispatchDeps, "addToTokenStore" | "removeFromTokenStore"> {
-  const { runtimeTokens, removedTokenIds } = deps;
-  return {
-    addToTokenStore: (entry) => {
-      runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes });
-    },
-    removeFromTokenStore: (id) => {
-      removedTokenIds.add(id);
-      const idx = runtimeTokens.findIndex((t) => t.id === id);
-      if (idx >= 0) runtimeTokens.splice(idx, 1);
-    },
-  };
-}
-
-function buildContextEngineConfig(channels: ChannelsHandle): { maxRecallsPerDay: number; maxExpandTokens: number; recallTimeoutMs: number } {
-  const { agentsConfig: agents, defaultAgentId } = channels;
-  return {
-    maxRecallsPerDay: agents[defaultAgentId]?.contextEngine?.maxRecallsPerDay ?? 10,
-    maxExpandTokens: agents[defaultAgentId]?.contextEngine?.maxExpandTokens ?? 4000,
-    recallTimeoutMs: agents[defaultAgentId]?.contextEngine?.recallTimeoutMs ?? 120000,
-  };
-}
-
-export type GatewayPreDispatchSlice = Pick<GatewayHandle,
-  "tokenRegistry" | "runtimeTokens" | "removedTokenIds" | "sessionStoreBridge" | "hotAdd" | "hotRemove">;
-
-function buildRpcDispatchDeps(deps: {
-  channels: ChannelsHandle;
-  startupStartMs: number;
-  gateway: GatewayPreDispatchSlice;
-}): import("./api/rpc-dispatch.js").ApiDispatchDeps {
-  const { channels: c, gateway: g, startupStartMs } = deps;
-  return {
-    defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
-    cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
-    defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
-    memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
-    tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
-    agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
-    sessionStore: g.sessionStoreBridge,
-    crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
-    graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
-    securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
-    inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry,
-    mediaConfig: c.container.config.integrations.media, ttsAdapter: c.ttsAdapter, linkRunner: c.linkRunner,
-    logger: c.logger, container: c.container, configPaths: c.configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS,
-    configGitManager: c.configGitManager,
-    configWebhook: c.container.config.daemon.configWebhook as { url?: string; timeoutMs?: number; secret?: string },
-    secretStore: c.secretStore, envFilePath: c.envPath, logLevelManager: c.logLevelManager,
-    getAgentBrowserService: c.getAgentBrowserService,
-    resolveAttachment: c.resolveAttachment, transcriber: c.transcriber, fileExtractor: c.fileExtractor,
-    approvalGate: c.approvalGate, suspendedAgents: c.suspendedAgents,
-    hotAdd: g.hotAdd, hotRemove: g.hotRemove,
-    diagnosticCollector: c.diagnosticCollector, billingEstimator: c.billingEstimator,
-    channelActivityTracker: c.channelActivityTracker, deliveryTracer: c.deliveryTracer, budgetGuards: c.budgetGuards,
-    modelCatalog: c.modelCatalog, channelConfig: c.channelConfig,
-    tokenRegistry: g.tokenRegistry,
-    ...buildTokenStoreMutators({ runtimeTokens: g.runtimeTokens, removedTokenIds: g.removedTokenIds }),
-    memoryWriteValidator: validateMemoryWrite,
-    // Plan 34-08b: MemoryApiDeps.eventBus now accepts the full
-    // AppContainer["eventBus"] type. The legacy down-cast to `{ emit }` is
-    // unnecessary and was rejected by the broadened cluster slice.
-    eventBus: c.container.eventBus,
-    mcpClientManager: c.mcpClientManager, contextStore: c.contextStore,
-    contextEngineConfig: buildContextEngineConfig(c),
-    obsStore: c.obsStore, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
-    contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
-    deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
-    channelPlugins: c.channelPlugins, healthMonitor: c.channelHealthMonitor,
-    embeddingCacheStats: c.embeddingCacheStats, embeddingCircuitBreakerState: c.embeddingCircuitBreakerState,
-    skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
-    imageHandlerDeps: buildImageHandlerDeps({ channels: c }),
-    oauthCredentialStore: c.oauthCredentialStore,
-  };
-}
-
-/**
- * Build the synthetic-restart message payload for a single continuation
- * record. Rehydrates chat-type metadata so downstream resolveChatType /
- * isGroupMessage classify the resumed session correctly. Extracted from
- * replayContinuationsIfAny to keep the per-record loop under the
- * DAEMON-API-07 ≤50L helper cap.
- */
-function buildSyntheticRestartMessage(deps: {
-  record: ReturnType<typeof loadContinuations>[number];
-  baseText: string;
-  mcpStatusLine: string | undefined;
-}): { id: string; channelId: string; channelType: string; senderId: string; text: string; timestamp: number; attachments: never[]; metadata: Record<string, unknown> } {
-  const { record, baseText, mcpStatusLine } = deps;
-  const metadata: Record<string, unknown> = {
-    isRestartContinuation: true,
-    mcpStatusLine: mcpStatusLine ?? null,
-  };
-  if (record.channelType === "telegram" && record.chatType) {
-    metadata.telegramChatType = record.chatType;
-  }
-  if (record.chatType === "group" || record.chatType === "supergroup") {
-    // Channel-agnostic flag mirrored by other adapters (e.g. WhatsApp).
-    metadata.isGroup = true;
-  }
-  return {
-    id: randomUUID(),
-    channelId: record.channelId,
-    channelType: record.channelType,
-    senderId: record.userId,
-    text: mcpStatusLine ? `${baseText}\n${mcpStatusLine}` : baseText,
-    timestamp: Date.now(),
-    attachments: [] as never[],
-    metadata,
-  };
-}
-
-/**
- * Replay restart continuations from disk if any. Owns the block that
- * loads persisted continuation records and re-injects synthetic restart
- * messages through channelManager. Extracted to fit stageGateway under the
- * DAEMON-API-06 ≤200L cap; per-record message construction further
- * extracted into buildSyntheticRestartMessage to fit DAEMON-API-07 ≤50L.
- */
-async function replayContinuationsIfAny(deps: {
-  channels: ChannelsHandle;
-}): Promise<void> {
-  const { container, dataDir, daemonLogger, mcpClientManager, continuationTracker, channelManager } = deps.channels;
-  const continuationFilePath = safePath(container.config.dataDir || dataDir, "restart-continuations.json");
-  const continuations = loadContinuations(continuationFilePath, 5 * 60_000, daemonLogger);
-  if (continuations.length === 0 || !channelManager) return;
-  daemonLogger.info({ count: continuations.length }, "Replaying restart continuations");
-  const mcpStatusLine = buildMcpStatusLine(mcpClientManager.getAllConnections());
-  if (mcpStatusLine) {
-    daemonLogger.warn(
-      { mcpStatusLine, continuationCount: continuations.length,
-        hint: "One or more MCP servers failed to handshake after restart; surfacing status to agents via synthetic system message",
-        errorKind: "dependency" as const },
-      "MCP connection failures detected during restart continuation replay",
-    );
-  }
-  const baseText = "[system: daemon restarted to apply a config change. The result of your previous tool call is in the conversation above — react to it naturally, confirm or surface any issue, then yield to the user.]";
-  for (const record of continuations) {
-    // Skip sessions that already received a message during this startup cycle
-    // (e.g., Telegram webhook delivered before continuation replay ran).
-    if (continuationTracker.isTracked(record)) {
-      daemonLogger.debug(
-        { channelType: record.channelType, channelId: record.channelId },
-        "Skipping continuation replay: session already active this cycle",
-      );
-      continue;
-    }
-    const syntheticMsg = buildSyntheticRestartMessage({ record, baseText, mcpStatusLine });
-    channelManager.injectMessage(record.channelType, syntheticMsg).catch((injectErr) => {
-      daemonLogger.warn(
-        { err: injectErr, channelType: record.channelType, channelId: record.channelId, hint: "Continuation replay failed; user can re-send to resume", errorKind: "internal" as const },
-        "Failed to replay continuation",
-      );
-    });
-  }
-}
+// ---------------------------------------------------------------------------
+// Stage 4: gateway (DAEMON-API-06 part 4 / Plan 34-06)
+// ---------------------------------------------------------------------------
 
 /**
  * stageGateway -- gateway-runtime startup. Owns:
@@ -2149,6 +970,7 @@ async function stageGateway(input: {
     channels,
     startupStartMs,
     gateway: { tokenRegistry, runtimeTokens, removedTokenIds, sessionStoreBridge, hotAdd, hotRemove },
+    defaultConfigPaths: DEFAULT_CONFIG_PATHS,
   });
   wireDispatch(rpcDispatchDeps);
 
@@ -2175,14 +997,13 @@ async function stageGateway(input: {
   // off `deps` at RPC INVOCATION time (`deps.wsConnections`, `deps.mediaDir`,
   // `deps.onGatewayAttachment`). They MUST NOT destructure them at factory
   // creation time -- the factory runs INSIDE `wireDispatch(rpcDispatchDeps)`
-  // at line 2071, BEFORE the mutations below. A destructure like
+  // above, BEFORE the mutations below. A destructure like
   //   const { wsConnections, mediaDir } = deps;
   // at the top of `createMessageHandlers` would capture `undefined` (the
   // pre-mutation values) and silently break gateway-bound RPC paths. The
   // wireDispatch call must remain BEFORE the mutations so the gateway server
-  // (setupGateway, line 2075) can register methods on the dynamic router
-  // before its HTTP listener starts; "fix by mutating earlier" is not an
-  // option.
+  // (setupGateway, above) can register methods on the dynamic router before
+  // its HTTP listener starts; "fix by mutating earlier" is not an option.
   rpcDispatchDeps.wsConnections = wsConnections;
   if (defaultWorkspaceDir) {
     rpcDispatchDeps.mediaDir = safePath(defaultWorkspaceDir, "media");
@@ -2240,194 +1061,9 @@ async function stageGateway(input: {
   };
 }
 
-/**
- * Wire eventBus health subscriptions to structured logger metrics. Lifted from
- * the ~88L block in main() (single largest extraction win for stageShutdown).
- * Reads metrics from the observability event bus, prunes prompt timeouts,
- * computes stuck-sub-agent counters, force-kills sub-agents past threshold,
- * and emits the canonical "Daemon health" DEBUG line.
- */
-/** Read DB file + WAL file sizes (best-effort; returns undefined fields on failure). */
-function readDbSizeMetrics(db: GatewayHandle["db"]): {
-  memoryDbSizeBytes?: number;
-  memoryDbWalSizeBytes?: number;
-} {
-  let memoryDbSizeBytes: number | undefined;
-  let memoryDbWalSizeBytes: number | undefined;
-  try {
-    const dbFilePath = db.name;
-    if (dbFilePath) {
-      memoryDbSizeBytes = statSync(dbFilePath).size;
-      try { memoryDbWalSizeBytes = statSync(dbFilePath + "-wal").size; }
-      catch { /* WAL file may not exist */ }
-    }
-  } catch { /* stat failure must not crash health check */ }
-  return { memoryDbSizeBytes, memoryDbWalSizeBytes };
-}
-
-/**
- * Count active sub-agent runs and force-kill any past the threshold-aware cutoff.
- * Graph sub-agents get a longer threshold since they do multi-step analytical work.
- * Returns { activeSubAgentRuns, stuckSubAgentRuns, stuckKilledThisTick } counters.
- */
-function computeAndKillStuckSubAgents(deps: {
-  container: GatewayHandle["container"];
-  daemonLogger: GatewayHandle["daemonLogger"];
-  subAgentRunner: GatewayHandle["subAgentRunner"];
-}): { activeSubAgentRuns: number; stuckSubAgentRuns: number; stuckKilledThisTick: number } {
-  const { container, daemonLogger, subAgentRunner } = deps;
-  const stuckKillThresholdMs = container.config.security.agentToAgent.subagentContext?.stuckKillThresholdMs ?? 180_000;
-  const graphStuckKillThresholdMs = container.config.security.agentToAgent.subagentContext?.graphStuckKillThresholdMs ?? 600_000;
-  const allRuns = subAgentRunner.listRuns();
-  const now = Date.now();
-  let activeSubAgentRuns = 0;
-  let stuckSubAgentRuns = 0;
-  let stuckKilledThisTick = 0;
-  for (const run of allRuns) {
-    if (run.status !== "running") continue;
-    activeSubAgentRuns++;
-    const threshold = run.graphId ? graphStuckKillThresholdMs : stuckKillThresholdMs;
-    if (threshold > 0 && (now - run.startedAt) > threshold) stuckSubAgentRuns++;
-    if (threshold <= 0) continue;
-    if ((now - run.startedAt) <= threshold) continue;
-    subAgentRunner.killRun(run.runId);
-    stuckKilledThisTick++;
-    daemonLogger.warn({
-      runId: run.runId, agentId: run.agentId, runtimeMs: now - run.startedAt,
-      thresholdMs: threshold, isGraphRun: !!run.graphId,
-      hint: run.graphId
-        ? "Graph sub-agent exceeded graphStuckKillThresholdMs; force-killed by health handler. Adjust security.agentToAgent.subagentContext.graphStuckKillThresholdMs if needed."
-        : "Sub-agent exceeded stuckKillThresholdMs; force-killed by health handler. Adjust security.agentToAgent.subagentContext.stuckKillThresholdMs if needed.",
-      errorKind: "timeout" as const,
-    }, "Stuck sub-agent killed by health handler");
-  }
-  return { activeSubAgentRuns, stuckSubAgentRuns, stuckKilledThisTick };
-}
-
-function wireHealthLogging(deps: {
-  container: GatewayHandle["container"];
-  daemonLogger: GatewayHandle["daemonLogger"];
-  db: GatewayHandle["db"];
-  maintenanceTick: GatewayHandle["maintenanceTick"];
-  subAgentRunner: GatewayHandle["subAgentRunner"];
-  promptTimeoutTimestamps: GatewayHandle["promptTimeoutTimestamps"];
-  activeExecutions: GatewayHandle["activeExecutions"];
-  getActiveConnectionCount: GatewayHandle["getActiveConnectionCount"];
-  deadLetterQueue: GatewayHandle["deadLetterQueue"];
-  providerHealth: GatewayHandle["providerHealth"];
-  deliveryQueue: GatewayHandle["deliveryQueue"];
-}): void {
-  const {
-    container, daemonLogger, db, maintenanceTick, subAgentRunner,
-    promptTimeoutTimestamps, activeExecutions, getActiveConnectionCount,
-    deadLetterQueue, providerHealth, deliveryQueue,
-  } = deps;
-  container.eventBus.on("observability:metrics", async (metrics) => {
-    // Prune prompt timeout timestamps to 5-minute window
-    const fiveMinAgo = Date.now() - 5 * 60_000;
-    while (promptTimeoutTimestamps.length > 0 && promptTimeoutTimestamps[0]! < fiveMinAgo) {
-      promptTimeoutTimestamps.shift();
-    }
-    const { memoryDbSizeBytes, memoryDbWalSizeBytes } = readDbSizeMetrics(db);
-    maintenanceTick();
-    const { activeSubAgentRuns, stuckSubAgentRuns, stuckKilledThisTick } =
-      computeAndKillStuckSubAgents({ container, daemonLogger, subAgentRunner });
-    daemonLogger.debug({
-      rssBytes: metrics.rssBytes, heapUsedBytes: metrics.heapUsedBytes,
-      heapTotalBytes: metrics.heapTotalBytes, externalBytes: metrics.externalBytes,
-      eventLoopP99Ms: Math.round(metrics.eventLoopDelayMs.p99 * 100) / 100,
-      activeHandles: metrics.activeHandles, activeConnections: getActiveConnectionCount(),
-      activeExecutions: activeExecutions.size, uptimeSeconds: Math.round(metrics.uptimeSeconds),
-      activeSubAgentRuns, stuckSubAgentRuns, stuckKilledThisTick,
-      deadLetterQueueSize: deadLetterQueue?.size() ?? 0,
-      degradedProviders: [...providerHealth.getHealthSummary().entries()]
-        .filter(([, v]) => v.degraded).map(([k]) => k),
-      promptTimeoutsLast5m: promptTimeoutTimestamps.length,
-      ...(memoryDbSizeBytes !== undefined && { memoryDbSizeBytes }),
-      ...(memoryDbWalSizeBytes !== undefined && { memoryDbWalSizeBytes }),
-      pendingDeliveryCount: await deliveryQueue.pendingEntries().then(r => r.ok ? r.value.length : 0),
-    }, "Daemon health");
-  });
-}
-
-/**
- * Emit startup banner + docker restart-policy warn + OAuth TLS preflight.
- * Lifted from the ~25L block in main(). Emits the canonical
- * "Comis daemon started" INFO line (log line 5 in daemon-lifecycle.test.ts).
- */
-/** Build the startup-banner manifest sub-object (secrets/memory/agents/skills/gateway). */
-function buildStartupBannerManifest(deps: {
-  container: GatewayHandle["container"];
-  agents: GatewayHandle["agentsConfig"];
-  db: GatewayHandle["db"];
-  secretStore: GatewayHandle["secretStore"];
-  cachedPort: GatewayHandle["cachedPort"];
-  ttsAdapter: GatewayHandle["ttsAdapter"];
-  visionRegistry: GatewayHandle["visionRegistry"];
-}): Record<string, unknown> {
-  const { container, agents, db, secretStore, cachedPort, ttsAdapter, visionRegistry } = deps;
-  const gwConfig = container.config.gateway;
-  return {
-    secrets: { encrypted: !!secretStore },
-    memory: { embedding: !!cachedPort, dbPath: db.name },
-    agents: Object.fromEntries(
-      Object.entries(agents).map(([id, cfg]) => [id, { model: cfg.model }]),
-    ),
-    skills: {
-      tts: !!ttsAdapter,
-      vision: visionRegistry ? [...visionRegistry.keys()] : [],
-      linkUnderstanding: container.config.integrations.media.linkUnderstanding.enabled,
-    },
-    gateway: {
-      enabled: gwConfig.enabled,
-      port: gwConfig.enabled ? gwConfig.port : undefined,
-      tls: !!gwConfig.tls?.certPath,
-    },
-  };
-}
-
-function emitStartupBanner(deps: {
-  container: GatewayHandle["container"];
-  daemonLogger: GatewayHandle["daemonLogger"];
-  daemonVersion: GatewayHandle["daemonVersion"];
-  agents: GatewayHandle["agentsConfig"];
-  adaptersByType: GatewayHandle["adaptersByType"];
-  configPaths: GatewayHandle["configPaths"];
-  db: GatewayHandle["db"];
-  secretStore: GatewayHandle["secretStore"];
-  cachedPort: GatewayHandle["cachedPort"];
-  ttsAdapter: GatewayHandle["ttsAdapter"];
-  visionRegistry: GatewayHandle["visionRegistry"];
-  startupStartMs: number;
-  instanceId: string;
-}): void {
-  const {
-    container, daemonLogger, daemonVersion, agents, adaptersByType, configPaths,
-    db, secretStore, cachedPort, ttsAdapter, visionRegistry,
-    startupStartMs, instanceId,
-  } = deps;
-  const gwConfig = container.config.gateway;
-  daemonLogger.info({
-    version: daemonVersion, agents: Object.keys(agents),
-    channels: Array.from(adaptersByType.keys()),
-    port: gwConfig.enabled ? gwConfig.port : undefined, instanceId,
-    startupDurationMs: Date.now() - startupStartMs, configPaths, dbPath: db.name,
-    logLevel: container.config.logLevel ?? "info", nodeVersion: process.versions.node,
-    manifest: buildStartupBannerManifest({
-      container, agents, db, secretStore, cachedPort, ttsAdapter, visionRegistry,
-    }),
-  }, "Comis daemon started");
-  // Docker-only: surface restart-policy requirement immediately after the
-  // startup banner. No-op outside containers. Wired here so the WARN lands
-  // in `docker logs` next to the banner, where operators look first.
-  emitDockerRestartPolicyWarn(daemonLogger);
-  // Boot-time TLS preflight against auth.openai.com.
-  // Fire-and-forget -- daemon is already serving by this point; the WARN
-  // is purely advisory. Skipped when no OAuth-using agent is configured.
-  if (hasAnyOAuthAgent(container.config.agents)) {
-    void emitOAuthTlsPreflightWarn(daemonLogger);
-  }
-}
+// ---------------------------------------------------------------------------
+// Stage 5: shutdown (DAEMON-API-06 part 5 / Plan 34-07)
+// ---------------------------------------------------------------------------
 
 /**
  * stageShutdown -- final stage. Constructs the shutdown handle, populates
