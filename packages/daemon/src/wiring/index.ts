@@ -22,7 +22,7 @@ export { setupMcp, type McpResult } from "./setup-mcp.js";
 export { setupTools, type ToolsResult } from "./setup-tools.js";
 export { setupHeartbeat, type HeartbeatSetupDeps, type HeartbeatSetupResult } from "./setup-heartbeat.js";
 export { setupShutdown, type ShutdownResult } from "./setup-shutdown.js";
-export { setupGateway, type GatewayDeps, type GatewayResult, setupRpcBridge, type RpcBridgeResult } from "./setup-gateway.js";
+export { setupGateway, type GatewayDeps, type GatewayResult, setupRpcBridge, type RpcBridgeResult } from "./setup-gateway/index.js";
 export { setupDeliveryQueue, type DeliveryQueueResult, setupDeliveryMirror, type DeliveryMirrorResult } from "./setup-delivery.js";
 export { setupNotifications, type NotificationContext } from "./setup-notifications.js";
 export { setupBackgroundTasks, type BackgroundTasksContext } from "./setup-background-tasks.js";

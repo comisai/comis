@@ -555,12 +555,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "phase-F",
   },
   {
-    file: "packages/daemon/src/wiring/setup-gateway.ts",
-    lines: 973,
-    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-07",
-    removedIn: "phase-F",
-  },
-  {
     file: "packages/daemon/src/wiring/setup-cross-session.ts",
     lines: 931,
     reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-08",
@@ -1112,9 +1106,9 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/daemon/src/wiring/setup-gateway.ts",
-    lineRanges: [[136, 136]],
-    reason: "@allow-throw boundary: gateway wiring re-raise; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    file: "packages/daemon/src/wiring/setup-gateway/setup-gateway-rpc.ts",
+    lineRanges: [[79, 79]],
+    reason: "@allow-throw boundary: gateway RPC bridge re-raise (rpcCall wrapper re-throws after structured-debug log emission); consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07). Phase 43 wave 8 split (FILE-SPLIT-08): re-targeted from setup-gateway.ts.",
     removedIn: "permanent",
   },
   {
