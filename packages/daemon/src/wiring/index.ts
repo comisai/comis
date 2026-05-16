@@ -17,7 +17,7 @@ export { setupMedia, type MediaResult } from "./setup-media.js";
 export { setupCrossSession, type CrossSessionResult } from "./setup-cross-session.js";
 export { setupAgents, type AgentsResult } from "./setup-agents/index.js";
 export { setupSchedulers, type SchedulersResult, setupTaskExtraction, type TaskExtractionResult } from "./setup-schedulers.js";
-export { setupChannels, type ChannelsResult } from "./setup-channels.js";
+export { setupChannels, type ChannelsResult } from "./setup-channels/index.js";
 export { setupMcp, type McpResult } from "./setup-mcp.js";
 export { setupTools, type ToolsResult } from "./setup-tools.js";
 export { setupHeartbeat, type HeartbeatSetupDeps, type HeartbeatSetupResult } from "./setup-heartbeat.js";

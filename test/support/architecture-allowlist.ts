@@ -555,12 +555,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "phase-F",
   },
   {
-    file: "packages/daemon/src/wiring/setup-channels.ts",
-    lines: 1111,
-    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-04",
-    removedIn: "phase-F",
-  },
-  {
     file: "packages/daemon/src/wiring/setup-gateway.ts",
     lines: 973,
     reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-07",
@@ -1668,10 +1662,10 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     removedIn: "phase-D",
   },
   {
-    file: "packages/daemon/src/wiring/setup-channels.ts",
+    file: "packages/daemon/src/wiring/setup-channels/setup-channels-registry.ts",
     typeName: "ChannelsDeps",
     optionalCount: 26,
-    reason: "(b) Cluster-split candidate: channel-bootstrap deps span media handling (transcriber, ttsAdapter, audioConverter, imageAnalyzer, fileExtractor — each gated by config presence + native dep availability), session lifecycle (piSessionAdapters, costTrackers), inbound-routing callbacks (onMessageReceived, onMessageProcessed), and per-agent cron tracker maps. Single composition-root caller (daemon.ts:1594) builds optionals from config flags. Future refactor: split media-deps + session-tracking-deps from core channel-deps. (TS-HYG-13 — Plan 41-08 audit).",
+    reason: "(b) Cluster-split candidate: channel-bootstrap deps span media handling (transcriber, ttsAdapter, audioConverter, imageAnalyzer, fileExtractor — each gated by config presence + native dep availability), session lifecycle (piSessionAdapters, costTrackers), inbound-routing callbacks (onMessageReceived, onMessageProcessed), and per-agent cron tracker maps. Single composition-root caller (daemon.ts:1594) builds optionals from config flags. Future refactor: split media-deps + session-tracking-deps from core channel-deps. (TS-HYG-13 — Plan 41-08 audit). Phase 43 wave 8 split (FILE-SPLIT-08): re-targeted from setup-channels.ts.",
     removedIn: "phase-D",
   },
   {
