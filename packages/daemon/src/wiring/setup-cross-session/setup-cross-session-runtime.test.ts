@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { SUB_AGENT_TOOL_DENYLIST, MIN_SUB_AGENT_STEPS, resolveGraphCacheRetention } from "./setup-cross-session.js";
-import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { SUB_AGENT_TOOL_DENYLIST, MIN_SUB_AGENT_STEPS, resolveGraphCacheRetention } from "./index.js";
+import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -251,7 +251,7 @@ describe("setupCrossSession", () => {
   });
 
   async function getSetupCrossSession() {
-    const mod = await import("./setup-cross-session.js");
+    const mod = await import("./index.js");
     return mod.setupCrossSession;
   }
 

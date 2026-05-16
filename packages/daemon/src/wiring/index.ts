@@ -14,7 +14,7 @@ export { setupObservability, type ObservabilityResult } from "./setup-observabil
 export { setupHealth, type HealthResult, setupMonitoring, type MonitoringResult } from "./setup-health.js";
 export { setupMemory, type MemoryResult } from "./setup-memory.js";
 export { setupMedia, type MediaResult } from "./setup-media.js";
-export { setupCrossSession, type CrossSessionResult } from "./setup-cross-session.js";
+export { setupCrossSession, type CrossSessionResult } from "./setup-cross-session/index.js";
 export { setupAgents, type AgentsResult } from "./setup-agents/index.js";
 export { setupSchedulers, type SchedulersResult, setupTaskExtraction, type TaskExtractionResult } from "./setup-schedulers.js";
 export { setupChannels, type ChannelsResult } from "./setup-channels/index.js";
