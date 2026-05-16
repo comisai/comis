@@ -545,8 +545,19 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
 
   // ============================================================================
-  // Phase F — Long-file splits outside agent/executor/ (21 files) — closes Phase 43 (FILE-SPLIT)
+  // Phase F — Long-file splits outside agent/executor/ (21 files) — CLOSED Phase 43 (FILE-SPLIT-16/17/18)
   // ============================================================================
+  // Phase 43 SHIPPED with 0 phase-F tags in any allowlist (closure invariant per §9.5).
+  // 21 of 22 source files split into per-subdirectory modules across Waves 2-8; 2 files
+  // remain in this allowlist as `removedIn: "deferred"` with documented architectural
+  // rationale (Phase 42 §13.3 + RESEARCH OQ-3 patterns):
+  //   - daemon.ts: DAEMON-API-06 + FILE-SPLIT-07 force a ~1,270L floor (5 × 200L stage
+  //     bodies must stay in daemon.ts); plan target ≤500L is infeasible without
+  //     relaxing the bootstrap-order test invariants (Plan 43-08c deviation).
+  //   - context-store.ts: NOT cited in REQUIREMENTS.md; grew during Plan 41-04 mapper
+  //     retargeting (post-Phase F design); deferred pending dedicated mapper-pattern
+  //     audit (Plan 43-10 closing commit per RESEARCH OQ-3).
+  //
   // daemon (1 file remaining post-43-08c; 7 of 8 Phase-F daemon entries dropped — daemon.ts split into stages/ subdirectory in Plan 43-08c per FILE-SPLIT-06, wiring/setup-*.ts split in 43-08b, api/*-handlers.ts split in 43-07a/07b)
   {
     file: "packages/daemon/src/daemon.ts",
@@ -558,12 +569,12 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // core (0 files remaining; api-contracts/workspace.ts + api-contracts/orchestrator.ts + config/schema-agent.ts split in Plan 43-06 per FILE-SPLIT-14/16)
   // cli (0 files remaining; tooling-fill/orchestrator.ts split in Plan 43-05 per FILE-SPLIT-10; commands/config.ts dropped below 800L in Plan 43-05 via config-parsers.ts helper extraction per FILE-SPLIT-10)
   // channels (0 files remaining; telegram-adapter.ts split in Plan 43-04 per FILE-SPLIT-12)
-  // memory (1 file remaining; observability-store.ts split in Plan 43-03)
+  // memory (1 file remaining; observability-store.ts split in Plan 43-03; context-store.ts deferred at Phase 43 closing commit per RESEARCH OQ-3)
   {
     file: "packages/memory/src/context-store.ts",
-    lines: 854,
-    reason: "Memory context store; grew from 769→854 lines during Plan 41-04 mapper retargeting (17 inline mapper factories + 7 named mappers added at module top to honor TS-HYG-03). Split in Phase F alongside observability-store per FILE-SPLIT-21 (memory-package decomposition).",
-    removedIn: "phase-F",
+    lines: 853,
+    reason: "Memory context store (853L re-measured at Phase 43 closing commit; -1L drift from 854L design-doc cite); grew from 769→854 lines during Plan 41-04 mapper retargeting (17 inline mapper factories + 7 named mappers added at module top to honor TS-HYG-03). NOT cited in REQUIREMENTS.md (Phase F design predates the addition). Deferred per Phase 43 RESEARCH OQ-3 pending dedicated audit of the inline mapper factory pattern — a focused follow-up phase will split it after the mapper-pattern audit completes (FILE-SPLIT-16 default-defer per §9.5).",
+    removedIn: "deferred",
   },
 ] as const;
 export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
