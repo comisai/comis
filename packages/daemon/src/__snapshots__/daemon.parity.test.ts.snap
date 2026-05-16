@@ -1,0 +1,117 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`daemon parity (FILE-SPLIT-06) > behavior matrix: pure helpers > DEFAULT_CONFIG_PATHS: structural shape 1`] = `
+"{
+  "count": 2,
+  "suffixes": [
+    "config.yaml",
+    "config.local.yaml"
+  ]
+}"
+`;
+
+exports[`daemon parity (FILE-SPLIT-06) > behavior matrix: pure helpers > applyInspectDefaultsForLogging: returns false flags when ANTHROPIC_LOG is unset 1`] = `
+"{
+  "breakLengthChanged": false,
+  "depthChanged": false
+}"
+`;
+
+exports[`daemon parity (FILE-SPLIT-06) > behavior matrix: pure helpers > applyInspectDefaultsForLogging: returns false flags when ANTHROPIC_LOG=warn (does not trigger) 1`] = `
+"{
+  "breakLengthChanged": false,
+  "depthChanged": false
+}"
+`;
+
+exports[`daemon parity (FILE-SPLIT-06) > behavior matrix: pure helpers > applyInspectDefaultsForLogging: returns true flags when ANTHROPIC_LOG=debug and prior defaults differ 1`] = `
+"{
+  "breakLengthChanged": true,
+  "depthChanged": true
+}"
+`;
+
+exports[`daemon parity (FILE-SPLIT-06) > behavior matrix: pure helpers > hardenDataDirPermissions: applies 0o600 to known sensitive files when modes are too open 1`] = `
+"{
+  "corrected": [
+    {
+      "newMode": "0o600",
+      "oldMode": "0o644",
+      "relPath": "<dir>/config.yaml"
+    }
+  ],
+  "correctedCount": 1
+}"
+`;
+
+exports[`daemon parity (FILE-SPLIT-06) > behavior matrix: pure helpers > hardenDataDirPermissions: applies 0o700 to data dir when permissions are too open 1`] = `
+"{
+  "corrected": [
+    {
+      "newMode": "0o700",
+      "oldMode": "0o755",
+      "relPath": "<dir>"
+    }
+  ],
+  "correctedCount": 1,
+  "postMode": "0o700"
+}"
+`;
+
+exports[`daemon parity (FILE-SPLIT-06) > public API surface > DaemonInstance: interface key set is stable 1`] = `
+"[
+  "adapterRegistry",
+  "approvalGate",
+  "backgroundTaskManager",
+  "billingEstimator",
+  "browserServices",
+  "channelActivityTracker",
+  "channelHealthMonitor",
+  "container",
+  "cronSchedulers",
+  "deliveryAdapters",
+  "deliveryQueue",
+  "deliveryTracer",
+  "deviceIdentity",
+  "diagnosticCollector",
+  "gatewayHandle",
+  "heartbeatRunner",
+  "latencyRecorder",
+  "logLevelManager",
+  "logger",
+  "processMonitor",
+  "resetSchedulers",
+  "rpcCall",
+  "sessionStoreBridge",
+  "shutdownHandle",
+  "tokenTracker",
+  "watchdogHandle"
+]"
+`;
+
+exports[`daemon parity (FILE-SPLIT-06) > public API surface > DaemonOverrides: interface key set is stable 1`] = `
+"[
+  "bootstrap",
+  "createGatewayServer",
+  "createLatencyRecorder",
+  "createLogLevelManager",
+  "createProcessMonitor",
+  "createTokenTracker",
+  "createTracingLogger",
+  "exit",
+  "preflightDoctor",
+  "registerGracefulShutdown",
+  "setupMedia",
+  "setupSecrets",
+  "startWatchdog",
+  "timers"
+]"
+`;
+
+exports[`daemon parity (FILE-SPLIT-06) > public API surface > daemon: exports the expected named symbols 1`] = `
+"[
+  "DEFAULT_CONFIG_PATHS",
+  "applyInspectDefaultsForLogging",
+  "hardenDataDirPermissions"
+]"
+`;
