@@ -76,7 +76,7 @@ export { createSqliteDeliveryQueue } from "./delivery-queue-adapter.js";
 export { createSqliteDeliveryMirror } from "./delivery-mirror-adapter.js";
 
 // Observability store
-export { createObservabilityStore } from "./observability-store.js";
+export { createObservabilityStore } from "./observability-store/index.js";
 export type {
   ObservabilityStore,
   TokenUsageRow,
@@ -91,7 +91,7 @@ export type {
   ObsTableName,
   ResetResult,
   PruneResult,
-} from "./observability-store.js";
+} from "./observability-store/index.js";
 
 // Context store schema (DAG mode)
 export { initContextSchema } from "./context-schema.js";

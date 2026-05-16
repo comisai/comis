@@ -2,8 +2,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema } from "./schema.js";
-import { createObservabilityStore } from "./observability-store.js";
-import type { ObservabilityStore } from "./observability-store.js";
+import { createObservabilityStore } from "./observability-store/index.js";
+import type { ObservabilityStore } from "./observability-store/index.js";
 
 describe("ObservabilityStore", () => {
   let db: Database.Database;

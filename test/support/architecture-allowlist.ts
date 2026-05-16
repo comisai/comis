@@ -642,13 +642,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "Channel adapter; split in Phase F per FILE-SPLIT-20",
     removedIn: "phase-F",
   },
-  // memory (2 files)
-  {
-    file: "packages/memory/src/observability-store.ts",
-    lines: 802,
-    reason: "@allow-throw boundary: unknown-table guard in resetTable(); consumed by obs-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
-    removedIn: "phase-F",
-  },
+  // memory (1 file remaining; observability-store.ts split in Plan 43-03)
   {
     file: "packages/memory/src/context-store.ts",
     lines: 854,
@@ -1181,12 +1175,13 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     reason: "@allow-throw boundary: MemoryApi.clear() scope-required guard; consumed by daemon memory-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
     removedIn: "permanent",
   },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    lineRanges: [[795, 795]],
-    reason: "@allow-throw boundary: unknown-table guard in resetTable(); consumed by obs-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
-    removedIn: "permanent",
-  },
+  // observability-store.ts entry REMOVED in Plan 43-03: split into
+  // observability-store/ subdirectory (FILE-SPLIT-13); the @allow-throw
+  // unknown-table guard now lives in observability-store/observability-reset.ts
+  // which carries a file-level `// @allow-throw:` annotation. The raw-throw
+  // rule excludes annotated files before consulting the allowlist, so no
+  // replacement entry is required (net shrink-only change, satisfies the
+  // allowlist-shrink ratchet by construction).
   {
     file: "packages/memory/src/row-mapper.ts",
     lineRanges: [[193, 193], [218, 218], [223, 223]],
