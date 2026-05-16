@@ -1312,6 +1312,28 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // WORKSPACE_CONTRACTS / MEMORY_CONTRACTS / MEDIA_CONTRACTS /
       // AGENTS_CONTRACTS / CHANNELS_CONTRACTS when Plan 35-19 lands.
       "ORCHESTRATOR_CONTRACTS",
+      // Phase 43 Wave 6 (43-06) — Per-family slice arrays introduced by the
+      // workspace.ts and orchestrator.ts subdirectory splits (FILE-SPLIT-14).
+      // Each slice array is composed into the parent aggregator (WORKSPACE_
+      // CONTRACTS / ORCHESTRATOR_CONTRACTS) inside @comis/core itself via the
+      // subdirectory `index.ts` barrel — same self-import skip rule as the
+      // parent aggregator arrays above. The `export *` from each family file
+      // in the barrel surfaces these slice consts on @comis/core's public
+      // barrel; tightening to named re-exports without the slice consts
+      // would require listing 36 + 27 individual contracts in the
+      // sub-aggregators, which would be a determinism-fragile change
+      // (any future contract added to a handler-family file would need a
+      // matching named export in the aggregator). Same supersession path
+      // as the parent contract aggregators when Plan 35-19 lands.
+      "WORKSPACE_HANDLERS_CONTRACTS",
+      "BROWSER_HANDLERS_CONTRACTS",
+      "APPROVAL_HANDLERS_CONTRACTS",
+      "SKILL_HANDLERS_CONTRACTS",
+      "NOTIFICATION_HANDLERS_CONTRACTS",
+      "CRON_HANDLERS_CONTRACTS",
+      "GRAPH_HANDLERS_CONTRACTS",
+      "HEARTBEAT_HANDLERS_CONTRACTS",
+      "SUBAGENT_HANDLERS_CONTRACTS",
       // Phase 35 Wave C (35-19 — Wave C CLOSURE) — sessions contracts
       // (12 methods spanning the single session-handlers.ts factory file
       // that owns the SessionsApiDeps cluster slice from Phase 34 plan
