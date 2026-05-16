@@ -45,7 +45,7 @@ import { ORCHESTRATOR_CONTRACTS } from "./orchestrator.js";
 import { SECRETS_CONTRACTS } from "./secrets.js";
 import { SESSIONS_CONTRACTS } from "./sessions.js";
 import { TOKENS_CONTRACTS } from "./tokens.js";
-import { WORKSPACE_CONTRACTS } from "./workspace.js";
+import { WORKSPACE_CONTRACTS } from "./workspace/index.js";
 
 /**
  * Ordered array — codegen-deterministic iteration. Alphabetical by domain
@@ -93,4 +93,4 @@ export * from "./orchestrator.js";
 export * from "./secrets.js";
 export * from "./sessions.js";
 export * from "./tokens.js";
-export * from "./workspace.js";
+export * from "./workspace/index.js";

@@ -55,22 +55,43 @@ const HANDLER_DIR = resolve(REPO_ROOT, "packages/daemon/src/api");
 const CONTRACT_DIR = resolve(REPO_ROOT, "packages/core/src/api-contracts");
 
 /**
+ * Recursively enumerate every `.ts` file under `dir`, skipping
+ * `*.test.ts` files and `__snapshots__/` directories. Used by
+ * `resolveContractMethodName` to support the Phase 43 split where
+ * large contract files (workspace.ts, orchestrator.ts) were
+ * decomposed into subdirectories (e.g. `workspace/workspace-handlers.ts`).
+ */
+function listContractFiles(dir: string): string[] {
+  const out: string[] = [];
+  let entries: ReturnType<typeof readdirSync>;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const ent of entries) {
+    const full = resolve(dir, ent.name);
+    if (ent.isDirectory()) {
+      if (ent.name === "__snapshots__") continue;
+      out.push(...listContractFiles(full));
+    } else if (ent.isFile() && ent.name.endsWith(".ts") && !ent.name.endsWith(".test.ts")) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+/**
  * Find `export const <ContractName> = defineContract({ method: "..." ... })`
- * across every `.ts` file under `packages/core/src/api-contracts/`. Returns
+ * across every `.ts` file under `packages/core/src/api-contracts/` (recursive
+ * — supports the Phase 43 subdirectory splits per FILE-SPLIT-14). Returns
  * the matched method literal or `undefined` if the contract symbol is not
  * present (Wave A: registry is empty, so this is `undefined` for everything).
  */
 function resolveContractMethodName(contractName: string): string | undefined {
-  let files: readonly string[];
-  try {
-    files = readdirSync(CONTRACT_DIR).filter(
-      (f) => f.endsWith(".ts") && !f.endsWith(".test.ts"),
-    );
-  } catch {
-    return undefined;
-  }
+  const files = listContractFiles(CONTRACT_DIR);
   for (const file of files) {
-    const src = readFileSync(resolve(CONTRACT_DIR, file), "utf8");
+    const src = readFileSync(file, "utf8");
     // Match `defineContract({ method: "..." })`-style declarations; tolerant
     // of formatting (multi-line, with intervening fields).
     const pattern = new RegExp(
