@@ -255,3 +255,108 @@ describe("file-size — Phase 42 executor subdirectory caps (EXEC-SPLIT-10)", ()
     });
   }
 });
+
+/**
+ * Phase 43 Phase F subdirectory stricter caps — FILE-SPLIT-NN family.
+ *
+ * Per design §9: each new subdirectory created by a Wave 2-8 split has a
+ * stricter line cap than the project-wide 800L HYG-03 gate. The cap is
+ * enforced ONLY when the subdirectory exists (i.e., after each split commit
+ * lands).
+ *
+ * Pre-split state (Wave 1 — this commit): NONE of the target subdirectories
+ * exist yet. Every cap is vacuously satisfied via `!existsSync(absDir)`.
+ *
+ * GREEN state: as each Wave 2-8 split commit creates its subdirectory, the
+ * corresponding cap activates and enforces. Wave-by-wave:
+ *   Wave 2 — skills (exec-tool, exec-security, mcp-client, web-search-tool, skill-registry)
+ *   Wave 3 — memory (observability-store)
+ *   Wave 4 — channels (telegram-adapter)
+ *   Wave 5 — CLI (tooling-fill/orchestrator)
+ *   Wave 6 — core schema/contracts (schema-agent, workspace, orchestrator)
+ *   Wave 7 — daemon API (config-handlers, session-handlers, graph-handlers, obs-handlers)
+ *   Wave 8 — daemon wiring + daemon.ts stages (setup-agents/channels/gateway/cross-session, stages/)
+ *
+ * Walker pattern + .split(/\r?\n/).length line counter + formatViolations
+ * error shape mirror the HYG-03 + EXEC-SPLIT-10 blocks above.
+ */
+describe("file-size — Phase 43 Phase F subdirectory caps (FILE-SPLIT-NN)", () => {
+  const CAPS: ReadonlyArray<{ dir: string; cap: number; req: string }> = [
+    // Wave 2: Skills
+    { dir: "packages/skills/src/tools/builtin/exec-tool", cap: 600, req: "FILE-SPLIT-02" },
+    { dir: "packages/skills/src/tools/builtin/exec-security", cap: 500, req: "FILE-SPLIT-11" },
+    { dir: "packages/skills/src/skills/integrations/mcp-client", cap: 500, req: "FILE-SPLIT-11" },
+    { dir: "packages/skills/src/tools/builtin/web-search-tool", cap: 500, req: "FILE-SPLIT-11" },
+    { dir: "packages/skills/src/skills/registry/skill-registry", cap: 500, req: "FILE-SPLIT-11" },
+    // Wave 3: Memory
+    { dir: "packages/memory/src/observability-store", cap: 500, req: "FILE-SPLIT-13" },
+    // Wave 4: Channels
+    { dir: "packages/channels/src/telegram/telegram-adapter", cap: 500, req: "FILE-SPLIT-12" },
+    // Wave 5: CLI
+    { dir: "packages/cli/src/tooling-fill/orchestrator", cap: 500, req: "FILE-SPLIT-10" },
+    // Wave 6: Core schema/contracts
+    { dir: "packages/core/src/config/schema-agent", cap: 500, req: "FILE-SPLIT-14" },
+    { dir: "packages/core/src/api-contracts/workspace", cap: 500, req: "FILE-SPLIT-14" },
+    { dir: "packages/core/src/api-contracts/orchestrator", cap: 500, req: "FILE-SPLIT-14" },
+    // Wave 7: Daemon API
+    { dir: "packages/daemon/src/api/config-handlers", cap: 400, req: "FILE-SPLIT-03" },
+    { dir: "packages/daemon/src/api/session-handlers", cap: 500, req: "FILE-SPLIT-04" },
+    { dir: "packages/daemon/src/api/graph-handlers", cap: 500, req: "FILE-SPLIT-05" },
+    { dir: "packages/daemon/src/api/obs-handlers", cap: 500, req: "FILE-SPLIT-09" },
+    // Wave 8: Daemon wiring + daemon.ts stages
+    { dir: "packages/daemon/src/wiring/setup-agents", cap: 600, req: "FILE-SPLIT-08" },
+    { dir: "packages/daemon/src/wiring/setup-channels", cap: 600, req: "FILE-SPLIT-08" },
+    { dir: "packages/daemon/src/wiring/setup-gateway", cap: 600, req: "FILE-SPLIT-08" },
+    { dir: "packages/daemon/src/wiring/setup-cross-session", cap: 600, req: "FILE-SPLIT-08" },
+    { dir: "packages/daemon/src/stages", cap: 600, req: "FILE-SPLIT-06" },
+  ];
+
+  /**
+   * §13.3 fallback exceptions — reserved for files whose further closure
+   * extraction is deferred mid-wave. Each entry carries a paired
+   * `removedIn: "deferred"` allowlist entry in test/support/architecture-allowlist.ts
+   * citing the friction.
+   *
+   * Empty at Wave 1 (this commit). Populated as needed by Waves 2-8 closure
+   * audits.
+   */
+  const FALLBACK_EXCEPTIONS: ReadonlySet<string> = new Set<string>([
+    // Reserved for §13.3 fallbacks discovered mid-wave (each entry gets a
+    // `removedIn: "deferred"` allowlist entry citing the friction).
+  ]);
+
+  for (const { dir, cap, req } of CAPS) {
+    it(`${dir}/* production .ts files ≤${cap} lines (${req})`, () => {
+      const absDir = resolve(REPO_ROOT, dir);
+      // Vacuously satisfied pre-split: directory does not exist yet.
+      if (!existsSync(absDir)) {
+        expect([]).toEqual([]);
+        return;
+      }
+      const files: string[] = [];
+      walkProductionFiles(absDir, files);
+      const violations = files
+        .map((file) => ({
+          file,
+          lines: readFileSync(file, "utf8").split(/\r?\n/).length,
+        }))
+        .filter((v) => v.lines > cap)
+        .filter((v) => !FALLBACK_EXCEPTIONS.has(repoRelative(v.file)));
+
+      expect(
+        violations,
+        formatViolations({
+          description: `Phase 43 Phase F subdirectory cap (${req}): every production .ts file under ${dir}/ must be ≤${cap} lines.`,
+          violations: violations.map((v) => ({
+            file: repoRelative(v.file),
+            line: v.lines,
+            snippet: `${v.lines} lines (cap: ${cap})`,
+          })),
+          suggestedFix: `Extract additional helpers per RESEARCH §"Decomposition" tables. The barrel index.ts (≤80L) re-exports only canonical names — no aliases.`,
+          designRef: `code-quality-plan §9 / Phase 43 / ${req}`,
+          allowlistRef: `FALLBACK_EXCEPTIONS Set carries §13.3 fallback paths with explicit removedIn: "deferred" entries.`,
+        }),
+      ).toEqual([]);
+    });
+  }
+});
