@@ -75,8 +75,8 @@ const { atomicWriteFile, writeBackup, isDaemonRunning } = await import(
   "../sync-tooling/index.js"
 );
 const core = await import("@comis/core");
-const { runToolingFill } = await import("./orchestrator.js");
-import type { OrchestratorOpts, PromptIO } from "./orchestrator.js";
+const { runToolingFill } = await import("./orchestrator/index.js");
+import type { OrchestratorOpts, PromptIO } from "./orchestrator/index.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures + helpers
