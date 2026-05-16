@@ -1,0 +1,84 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`skill-registry parity (FILE-SPLIT-11) > behavior matrix: representative inputs > createSkillRegistry: empty registry list returns empty array 1`] = `
+"{
+  "descriptionsBeforeInit": [],
+  "eligibleBeforeInit": [],
+  "metadataCountBeforeInit": 0,
+  "userInvocableBeforeInit": []
+}"
+`;
+
+exports[`skill-registry parity (FILE-SPLIT-11) > behavior matrix: representative inputs > createSkillRegistry: getPromptSkillCapabilities returns empty array when registry is empty 1`] = `
+"{
+  "entries": [],
+  "frozen": true,
+  "length": 0
+}"
+`;
+
+exports[`skill-registry parity (FILE-SPLIT-11) > behavior matrix: representative inputs > createSkillRegistry: getRelevantPromptSkills returns empty when no skills discovered 1`] = `
+"{
+  "empty_query": [],
+  "long_query": [],
+  "short_query": []
+}"
+`;
+
+exports[`skill-registry parity (FILE-SPLIT-11) > behavior matrix: representative inputs > createSkillRegistry: getSnapshot returns prompt + skills + version 1`] = `
+"{
+  "prompt": "",
+  "skills": [],
+  "version": 0,
+  "versionAccessor": 0
+}"
+`;
+
+exports[`skill-registry parity (FILE-SPLIT-11) > behavior matrix: representative inputs > createSkillRegistry: initFromSdkSkills with empty list yields empty registry 1`] = `
+"{
+  "descriptions": [],
+  "eligible": [],
+  "metadataCount": 0,
+  "userInvocable": []
+}"
+`;
+
+exports[`skill-registry parity (FILE-SPLIT-11) > behavior matrix: representative inputs > createSkillRegistry: loadPromptSkill returns error for unknown name 1`] = `
+"{
+  "errorMessage": "Prompt skill not found: nonexistent",
+  "ok": false
+}"
+`;
+
+exports[`skill-registry parity (FILE-SPLIT-11) > public API surface > createSkillRegistry: factory returns expected handle shape 1`] = `
+"{
+  "keys": [
+    "getEligibleSkillNames",
+    "getMetadataCount",
+    "getPromptSkillCapabilities",
+    "getPromptSkillDescriptions",
+    "getRelevantPromptSkills",
+    "getSnapshot",
+    "getSnapshotVersion",
+    "getUserInvocableSkillNames",
+    "init",
+    "initFromSdkSkills",
+    "loadPromptSkill",
+    "startWatching"
+  ],
+  "shape": {
+    "getEligibleSkillNames": "function",
+    "getMetadataCount": "function",
+    "getPromptSkillCapabilities": "function",
+    "getPromptSkillDescriptions": "function",
+    "getRelevantPromptSkills": "function",
+    "getSnapshot": "function",
+    "getSnapshotVersion": "function",
+    "getUserInvocableSkillNames": "function",
+    "init": "function",
+    "initFromSdkSkills": "function",
+    "loadPromptSkill": "function",
+    "startWatching": "function"
+  }
+}"
+`;
