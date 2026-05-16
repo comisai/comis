@@ -11,7 +11,7 @@ export { createBrowserHandlers, type BrowserHandlerDeps } from "./browser-handle
 export { createSubagentHandlers } from "./subagent-handlers.js";
 export { createApprovalHandlers, type ApprovalHandlerDeps } from "./approval-handlers.js";
 export { createAgentHandlers, type AgentHandlerDeps } from "./agent-handlers.js";
-export { createObsHandlers, type ObsHandlerDeps } from "./obs-handlers.js";
+export { createObsHandlers, type ObsHandlerDeps } from "./obs-handlers/index.js";
 export { createModelHandlers, type ModelHandlerDeps } from "./model-handlers.js";
 export { createChannelHandlers, type ChannelHandlerDeps } from "./channel-handlers.js";
 export { createTokenHandlers, createTokenRegistry, type TokenHandlerDeps, type TokenRegistry } from "./token-handlers.js";

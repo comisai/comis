@@ -590,12 +590,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-08",
     removedIn: "phase-F",
   },
-  {
-    file: "packages/daemon/src/api/obs-handlers.ts",
-    lines: 881,
-    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
-    removedIn: "phase-F",
-  },
   // skills (0 files remaining — exec-tool.ts + exec-security.ts dropped in Phase 43 plan 02a, web-search-tool.ts + skill-registry.ts dropped in 43-02b, mcp-client.ts dropped in 43-02c per FILE-SPLIT-02 + FILE-SPLIT-11 + FILE-SPLIT-16)
   // core (0 files remaining; api-contracts/workspace.ts + api-contracts/orchestrator.ts + config/schema-agent.ts split in Plan 43-06 per FILE-SPLIT-14/16)
   // cli (0 files remaining; tooling-fill/orchestrator.ts split in Plan 43-05 per FILE-SPLIT-10; commands/config.ts dropped below 800L in Plan 43-05 via config-parsers.ts helper extraction per FILE-SPLIT-10)
@@ -998,9 +992,21 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/daemon/src/api/obs-handlers.ts",
-    lineRanges: [[138, 138], [477, 477], [517, 517], [535, 535], [558, 558], [619, 619], [845, 845]],
-    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
+    file: "packages/daemon/src/api/obs-handlers/obs-diagnostics.ts",
+    lineRanges: [[49, 49], [107, 107], [147, 147], [165, 165], [171, 171], [188, 188], [249, 249]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-09.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/obs-handlers/obs-metrics.ts",
+    lineRanges: [[50, 50], [134, 134], [140, 140], [203, 203], [208, 208], [239, 239], [294, 294], [331, 331], [371, 371], [395, 395]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-09.",
+    removedIn: "permanent",
+  },
+  {
+    file: "packages/daemon/src/api/obs-handlers/obs-export.ts",
+    lineRanges: [[41, 41], [81, 81], [89, 89]],
+    reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2). Phase 43 FILE-SPLIT-09.",
     removedIn: "permanent",
   },
   {

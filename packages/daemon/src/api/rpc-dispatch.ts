@@ -32,7 +32,7 @@ import { createBrowserHandlers } from "./browser-handlers.js";
 import { createSubagentHandlers } from "./subagent-handlers.js";
 import { createApprovalHandlers } from "./approval-handlers.js";
 import { createAgentHandlers } from "./agent-handlers.js";
-import { createObsHandlers } from "./obs-handlers.js";
+import { createObsHandlers } from "./obs-handlers/index.js";
 import { createModelHandlers } from "./model-handlers.js";
 import { createChannelHandlers } from "./channel-handlers.js";
 import { createTokenHandlers } from "./token-handlers.js";

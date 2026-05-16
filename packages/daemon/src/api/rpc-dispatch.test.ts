@@ -94,7 +94,7 @@ vi.mock("./agent-handlers.js", () => ({
   })),
 }));
 
-vi.mock("./obs-handlers.js", () => ({
+vi.mock("./obs-handlers/index.js", () => ({
   createObsHandlers: vi.fn(() => ({
     "obs.diagnostics": vi.fn(async () => ({})),
     "obs.billing": vi.fn(async () => ({})),
