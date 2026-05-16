@@ -1,0 +1,55 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`session-handlers parity (FILE-SPLIT-04) > behavior matrix: representative inputs > agents.list: returns the deps.agents key set for a single-agent fixture 1`] = `
+"{
+  "agents": [
+    "default"
+  ]
+}"
+`;
+
+exports[`session-handlers parity (FILE-SPLIT-04) > behavior matrix: representative inputs > session.compact: returns expected envelope for a valid session with instructions 1`] = `
+"{
+  "compactionTriggered": true,
+  "estimatedTokens": 19,
+  "instructions": "summarize the conversation",
+  "messageCount": 2,
+  "sessionKey": "valid-session"
+}"
+`;
+
+exports[`session-handlers parity (FILE-SPLIT-04) > behavior matrix: representative inputs > session.delete: rejects with admin-trust error message when trust is missing 1`] = `
+"{
+  "error": "Admin trust level required"
+}"
+`;
+
+exports[`session-handlers parity (FILE-SPLIT-04) > behavior matrix: representative inputs > session.delete: throws expected error message for unknown session key with admin trust 1`] = `
+"{
+  "error": "Session not found: no-such-session"
+}"
+`;
+
+exports[`session-handlers parity (FILE-SPLIT-04) > behavior matrix: representative inputs > session.list: returns empty envelope for empty session store 1`] = `
+"{
+  "sessions": [],
+  "total": 0
+}"
+`;
+
+exports[`session-handlers parity (FILE-SPLIT-04) > public API surface > createSessionHandlers: returned handler map has expected method names 1`] = `
+"[
+  "agents.list",
+  "session.compact",
+  "session.delete",
+  "session.export",
+  "session.history",
+  "session.list",
+  "session.reset",
+  "session.run_status",
+  "session.search",
+  "session.send",
+  "session.spawn",
+  "session.status"
+]"
+`;
