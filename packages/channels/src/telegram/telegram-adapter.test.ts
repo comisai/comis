@@ -132,7 +132,7 @@ import { ok, err } from "@comis/shared";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { validateBotToken, validateWebhookSecret } from "./credential-validator.js";
 import { mapGrammyToNormalized } from "./message-mapper.js";
-import { createTelegramAdapter, type TelegramAdapterDeps } from "./telegram-adapter.js";
+import { createTelegramAdapter, type TelegramAdapterDeps } from "./telegram-adapter/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -635,13 +635,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "CLI command module; split in Phase F per FILE-SPLIT-19",
     removedIn: "phase-F",
   },
-  // channels (1 file)
-  {
-    file: "packages/channels/src/telegram/telegram-adapter.ts",
-    lines: 852,
-    reason: "Channel adapter; split in Phase F per FILE-SPLIT-20",
-    removedIn: "phase-F",
-  },
+  // channels (0 files remaining; telegram-adapter.ts split in Plan 43-04 per FILE-SPLIT-12)
   // memory (1 file remaining; observability-store.ts split in Plan 43-03)
   {
     file: "packages/memory/src/context-store.ts",
@@ -719,7 +713,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     reason: "@allow-throw boundary: workspace-manager re-raise of non-EEXIST fs errors (line 101); consumed by daemon bootstrap (daemon.ts catch boundary) (Phase 41 TS-HYG-07).",
     removedIn: "permanent",
   },
-  // ----- channels package (9 files) -----
+  // ----- channels package (8 files; telegram-adapter.ts dropped in Plan 43-04 per FILE-SPLIT-12) -----
   {
     file: "packages/channels/src/discord/discord-resolver.ts",
     lineRanges: [[62, 62]],
@@ -762,12 +756,10 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     reason: "@allow-throw boundary: media-resolver throws inside fromPromise(); converted to Result.err (Phase 41 TS-HYG-07).",
     removedIn: "permanent",
   },
-  {
-    file: "packages/channels/src/telegram/telegram-adapter.ts",
-    lineRanges: [[125, 125], [503, 503], [551, 551]],
-    reason: "@allow-throw boundary: Telegram SDK boundary throws; consumed by adapter try/catch + inbound-pipeline catch (Phase 41 TS-HYG-07).",
-    removedIn: "permanent",
-  },
+  // telegram-adapter.ts entry dropped in Plan 43-04 (FILE-SPLIT-12 split): the
+  // 3 throw sites now live in telegram-adapter/{telegram-webhook.ts,telegram-
+  // outbound.ts}, both of which carry file-level `@allow-throw:` annotations
+  // on line 2 (same pattern as Plan 43-02c's mcp-client-discover.ts).
   {
     file: "packages/channels/src/whatsapp/whatsapp-resolver.ts",
     lineRanges: [[94, 94], [100, 100], [106, 106], [126, 126]],

@@ -49,7 +49,7 @@ vi.mock("./voice-sender.js", () => ({
 
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createTelegramPlugin } from "./telegram-plugin.js";
-import type { TelegramAdapterDeps } from "./telegram-adapter.js";
+import type { TelegramAdapterDeps } from "./telegram-adapter/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

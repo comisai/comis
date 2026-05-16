@@ -2,8 +2,8 @@
 // @comis/channels - Channel adapters and messaging infrastructure
 
 // Telegram adapter
-export { createTelegramAdapter } from "./telegram/telegram-adapter.js";
-export type { TelegramAdapterDeps, TelegramAdapterHandle } from "./telegram/telegram-adapter.js";
+export { createTelegramAdapter } from "./telegram/telegram-adapter/index.js";
+export type { TelegramAdapterDeps, TelegramAdapterHandle } from "./telegram/telegram-adapter/index.js";
 
 // Telegram utilities
 export { mapGrammyToNormalized } from "./telegram/message-mapper.js";
