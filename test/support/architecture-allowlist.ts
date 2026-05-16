@@ -602,13 +602,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
     removedIn: "phase-F",
   },
-  // skills (4 files remaining — exec-tool.ts dropped in Phase 43 plan 02a per FILE-SPLIT-02 + FILE-SPLIT-16)
-  {
-    file: "packages/skills/src/tools/builtin/exec-security.ts",
-    lines: 1153,
-    reason: "Built-in tool security layer; split in Phase F per FILE-SPLIT-11",
-    removedIn: "phase-F",
-  },
+  // skills (3 files remaining — exec-tool.ts + exec-security.ts both dropped in Phase 43 plan 02a per FILE-SPLIT-02 + FILE-SPLIT-11 + FILE-SPLIT-16)
   {
     file: "packages/skills/src/skills/integrations/mcp-client.ts",
     lines: 1041,

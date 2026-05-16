@@ -21,7 +21,7 @@ import type { ExecSandboxConfig } from "../sandbox/types.js";
 import type { ProcessRegistry } from "../process-registry.js";
 import { truncateTail, formatSize, DEFAULT_MAX_BYTES } from "../truncate.js";
 import { createOutputCleaner } from "../output-cleaner.js";
-import { interpretExitCode } from "../exec-security.js";
+import { interpretExitCode } from "../exec-security/index.js";
 import { matchExecRecoveryHint } from "../exec-diagnostics.js";
 import {
   jsonResult,

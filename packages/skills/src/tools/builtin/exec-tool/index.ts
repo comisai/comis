@@ -25,7 +25,7 @@ import {
   readNumberParam,
   readBooleanParam,
 } from "../../../platform-tools/tool-helpers.js";
-import { extractHeredoc, validateExecCommand } from "../exec-security.js";
+import { extractHeredoc, validateExecCommand } from "../exec-security/index.js";
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, ExecParams, type ExecToolDeps } from "./exec-types.js";
 import {
   resolveCwd,
