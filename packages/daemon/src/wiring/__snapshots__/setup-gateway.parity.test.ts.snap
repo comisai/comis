@@ -1,0 +1,136 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > buildExecutionRequestedLogFields behavior matrix > buildExecutionRequestedLogFields: includes messageHash and connectionId when both provided 1`] = `
+"{
+  "agentId": "default",
+  "connectionId": "conn-123",
+  "messageHash": "b94d27b9934d",
+  "messageLen": 11
+}"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > buildExecutionRequestedLogFields behavior matrix > buildExecutionRequestedLogFields: omits messageHash when message is empty string 1`] = `
+"{
+  "agentId": "default",
+  "messageLen": 0
+}"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > buildExecutionRequestedLogFields behavior matrix > buildExecutionRequestedLogFields: omits messageHash when message is undefined 1`] = `
+"{
+  "agentId": "default",
+  "messageLen": 0
+}"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > buildExecutionRequestedLogFields behavior matrix > buildExecutionRequestedLogFields: produces stable 12-char messageHash prefix for the same message 1`] = `
+"{
+  "messageHash": "b94d27b9934d",
+  "messageHashLen": 12
+}"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > deriveTrustLevel behavior matrix > deriveTrustLevel: returns admin when scopes include literal admin 1`] = `""admin""`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > deriveTrustLevel behavior matrix > deriveTrustLevel: returns admin when scopes include wildcard star 1`] = `""admin""`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > deriveTrustLevel behavior matrix > deriveTrustLevel: returns user when scopes are undefined (fail-closed default) 1`] = `""user""`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > deriveTrustLevel behavior matrix > deriveTrustLevel: returns user when scopes contain only non-privileged scopes 1`] = `""user""`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > deriveTrustLevel behavior matrix > deriveTrustLevel: returns user when scopes is an empty array 1`] = `""user""`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > handleConfigChatCommand trust-gate behavior matrix > handleConfigChatCommand: blocks config history when caller has no admin scope 1`] = `
+"{
+  "handled": true,
+  "response": "Config read requires admin trust. Your token does not have admin scope."
+}"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > handleConfigChatCommand trust-gate behavior matrix > handleConfigChatCommand: blocks config set when caller has no admin scope 1`] = `
+"{
+  "handled": true,
+  "response": "Config modification requires admin trust. Your token does not have admin scope."
+}"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > handleConfigChatCommand trust-gate behavior matrix > handleConfigChatCommand: blocks config show when caller has no admin scope 1`] = `
+"{
+  "handled": true,
+  "response": "Config read requires admin trust. Your token does not have admin scope."
+}"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > handleConfigChatCommand trust-gate behavior matrix > handleConfigChatCommand: returns the unknown-subcommand response 1`] = `
+"{
+  "handled": true,
+  "response": "Unknown config subcommand: bogus-subcommand. Available: show, set, history"
+}"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > public API surface > exports the expected named symbols 1`] = `
+"[
+  "buildExecutionRequestedLogFields",
+  "deriveTrustLevel",
+  "handleConfigChatCommand",
+  "setupGateway",
+  "setupRpcBridge"
+]"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > setupRpcBridge factory contract > setupRpcBridge: returns a result object with rpcCall and wireDispatch keys 1`] = `
+"{
+  "keys": [
+    "rpcCall",
+    "wireDispatch"
+  ],
+  "rpcCallKind": "function",
+  "wireDispatchKind": "function"
+}"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > type-level interface witnesses > GatewayDeps: interface key set is stable 1`] = `
+"[
+  "_createGatewayServer",
+  "agents",
+  "assembleToolsForAgent",
+  "cachedPort",
+  "configPaths",
+  "container",
+  "costTrackers",
+  "defaultAgentId",
+  "defaultConfigPaths",
+  "embeddingQueue",
+  "gatewayLogger",
+  "getExecutor",
+  "gwConfig",
+  "instanceId",
+  "memoryAdapter",
+  "memoryApi",
+  "piSessionAdapters",
+  "preprocessMessageText",
+  "resolvedTokens",
+  "rpcCall",
+  "sessionStore",
+  "startupStartMs",
+  "suspendedAgents",
+  "webhooksConfig",
+  "workspaceDirs"
+]"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > type-level interface witnesses > GatewayResult: interface key set is stable 1`] = `
+"[
+  "activeExecutions",
+  "gatewayHandle",
+  "getActiveConnectionCount",
+  "wsConnections"
+]"
+`;
+
+exports[`setup-gateway parity (FILE-SPLIT-08) > type-level interface witnesses > RpcBridgeResult: interface key set is stable 1`] = `
+"[
+  "rpcCall",
+  "wireDispatch"
+]"
+`;
