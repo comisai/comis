@@ -21,7 +21,7 @@ export type { ApiDispatchDeps };
 
 import { createCronHandlers } from "./cron-handlers.js";
 import { createMemoryHandlers } from "./memory-handlers.js";
-import { createSessionHandlers } from "./session-handlers.js";
+import { createSessionHandlers } from "./session-handlers/index.js";
 import { createMessageHandlers } from "./message-handlers.js";
 import { createMediaHandlers } from "./media-handlers.js";
 import { createConfigHandlers } from "./config-handlers.js";

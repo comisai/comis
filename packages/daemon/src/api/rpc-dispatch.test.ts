@@ -32,7 +32,7 @@ vi.mock("./memory-handlers.js", () => ({
   })),
 }));
 
-vi.mock("./session-handlers.js", () => ({
+vi.mock("./session-handlers/index.js", () => ({
   createSessionHandlers: vi.fn(() => ({
     "session.list": vi.fn(async () => ({ sessions: [] })),
     "session.get": vi.fn(async () => ({ session: null })),

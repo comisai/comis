@@ -3,7 +3,7 @@
 export type { RpcHandler } from "./types.js";
 export { createCronHandlers, type CronHandlerDeps } from "./cron-handlers.js";
 export { createMemoryHandlers, type MemoryHandlerDeps } from "./memory-handlers.js";
-export { createSessionHandlers, type SessionHandlerDeps } from "./session-handlers.js";
+export { createSessionHandlers, type SessionHandlerDeps } from "./session-handlers/index.js";
 export { createMessageHandlers, type MessageHandlerDeps } from "./message-handlers.js";
 export { createMediaHandlers, type MediaHandlerDeps } from "./media-handlers.js";
 export { createConfigHandlers, type ConfigHandlerDeps } from "./config-handlers.js";
