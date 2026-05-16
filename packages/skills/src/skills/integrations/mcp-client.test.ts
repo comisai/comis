@@ -93,7 +93,7 @@ import {
   parseQualifiedName,
   type McpServerConfig,
   type McpClientManagerDeps,
-} from "./mcp-client.js";
+} from "./mcp-client/index.js"; // Phase 43 plan 02c — retargeted from ./mcp-client.js post-split (FILE-SPLIT-11)
 
 // ---------------------------------------------------------------------------
 // Helpers

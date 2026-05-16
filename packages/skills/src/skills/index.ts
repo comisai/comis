@@ -68,7 +68,7 @@ export { expandSkillForInvocation } from "./prompt/processor.js";
 export { scanSkillContent, type ContentScanResult, type ContentScanFinding } from "./prompt/content-scanner.js";
 
 // Integrations -- MCP client manager
-export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./integrations/mcp-client.js";
+export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./integrations/mcp-client/index.js";
 export type {
   McpClientManager,
   McpClientManagerDeps,
@@ -78,7 +78,7 @@ export type {
   McpToolDefinition,
   McpToolCallResult,
   McpToolCallContent,
-} from "./integrations/mcp-client.js";
+} from "./integrations/mcp-client/index.js";
 
 // Tool policy (profiles and groups for tool filtering)
 export { applyToolPolicy, expandGroups, TOOL_PROFILES, TOOL_GROUPS } from "./policy/index.js";
