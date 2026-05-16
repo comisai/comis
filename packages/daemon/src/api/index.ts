@@ -22,7 +22,7 @@ export { createDaemonHandlers, type DaemonHandlerDeps } from "./daemon-handlers.
 export { createEnvHandlers, type EnvHandlerDeps } from "./env-handlers.js";
 export { createSecretsHandlers, type SecretsHandlerDeps } from "./secrets-handlers.js";
 export { createAuthHandlers, type AuthHandlerDeps } from "./auth-handlers.js";
-export { createGraphHandlers, type GraphHandlerDeps } from "./graph-handlers.js";
+export { createGraphHandlers, type GraphHandlerDeps } from "./graph-handlers/index.js";
 export { createHeartbeatHandlers, type HeartbeatHandlerDeps } from "./heartbeat-handlers.js";
 export { createSkillHandlers, type SkillHandlerDeps } from "./skill-handlers.js";
 export { createRpcDispatch, classifyRpcError, type ApiDispatchDeps } from "./rpc-dispatch.js";

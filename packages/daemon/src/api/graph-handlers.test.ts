@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createGraphHandlers, transformNodes, validateGraphWarnings, schemaToExample, type GraphHandlerDeps } from "./graph-handlers.js";
+import { createGraphHandlers, transformNodes, validateGraphWarnings, schemaToExample, type GraphHandlerDeps } from "./graph-handlers/index.js";
 import { ok } from "@comis/shared";
 import type { NodeExecutionState } from "@comis/core";
 import { z } from "zod";

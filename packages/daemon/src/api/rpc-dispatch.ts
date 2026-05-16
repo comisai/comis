@@ -39,7 +39,7 @@ import { createTokenHandlers } from "./token-handlers.js";
 import { createDaemonHandlers } from "./daemon-handlers.js";
 import { createMcpHandlers } from "./mcp-handlers.js";
 import { createContextHandlers } from "./context-handlers.js";
-import { createGraphHandlers } from "./graph-handlers.js";
+import { createGraphHandlers } from "./graph-handlers/index.js";
 import { createWorkspaceHandlers } from "./workspace-handlers.js";
 import { createHeartbeatHandlers } from "./heartbeat-handlers.js";
 import { createSkillHandlers } from "./skill-handlers.js";
