@@ -146,7 +146,8 @@ async function mockSessionRoutes(page: Page): Promise<void> {
  */
 async function loginForDetail(page: Page): Promise<void> {
   await page.locator("ic-app").waitFor();
-  const tokenInput = page.locator("ic-app").getByRole("textbox");
+  // type="password" has no implicit textbox role; locate by placeholder.
+  const tokenInput = page.locator("ic-app").getByPlaceholder("Gateway bearer token");
   await tokenInput.fill("test-token-123");
   await page.locator("ic-app").getByRole("button", { name: "Connect" }).click();
   // When URL hash is sessions/:key, router resolves to ic-session-detail

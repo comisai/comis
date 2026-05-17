@@ -16,8 +16,9 @@ export async function login(page: Page): Promise<void> {
   // Wait for the app element to be present
   await page.locator("ic-app").waitFor();
 
-  // Fill the password input with a test token
-  const tokenInput = page.locator("ic-app").getByRole("textbox");
+  // Fill the password input with a test token.
+  // type="password" has no implicit role="textbox", so target by placeholder.
+  const tokenInput = page.locator("ic-app").getByPlaceholder("Gateway bearer token");
   await tokenInput.fill("test-token-123");
 
   // Click the Connect button
@@ -34,5 +35,6 @@ export async function login(page: Page): Promise<void> {
  * @param label - The sidebar button label (e.g., "Chat", "Memory", "Agents")
  */
 export async function navigateTo(page: Page, label: string): Promise<void> {
-  await page.getByRole("button", { name: label }).click();
+  // Exact match: sidebar items have substring overlap (e.g. "Agents" vs "Sub-Agents").
+  await page.getByRole("button", { name: label, exact: true }).click();
 }

@@ -13,8 +13,8 @@ test.describe("Auth and Navigation", () => {
   test("login flow: token entry loads dashboard", async ({ page }) => {
     await page.goto("/");
 
-    // Auth screen should be visible
-    const tokenInput = page.locator("ic-app").getByRole("textbox");
+    // Auth screen should be visible (type="password" has no implicit textbox role)
+    const tokenInput = page.locator("ic-app").getByPlaceholder("Gateway bearer token");
     await expect(tokenInput).toBeVisible();
     await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
 
@@ -55,8 +55,8 @@ test.describe("Auth and Navigation", () => {
     // Click Logout in the sidebar
     await page.getByRole("button", { name: "Logout" }).click();
 
-    // Auth screen should return
-    const tokenInput = page.locator("ic-app").getByRole("textbox");
+    // Auth screen should return (type="password" has no implicit textbox role)
+    const tokenInput = page.locator("ic-app").getByPlaceholder("Gateway bearer token");
     await expect(tokenInput).toBeVisible({ timeout: 5_000 });
     await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
   });
