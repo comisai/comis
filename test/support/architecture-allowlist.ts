@@ -261,9 +261,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/agents/agent-list.ts",
-    lines: 1081,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1104,
+    reason: "Lit web view; RPC orchestration extracted via agent-list-controller.ts (models.list, obs.billing.byAgent, agents.suspend, agents.resume, agents.delete, agents.create moved out — 6 unique RPC methods spanning 5 call sites). Higher-level data flows (getAgents bulk bootstrap) go through apiClient (REST) — orthogonal to the rpcClient.call boundary regex. Residual ≤1110L is dominated by ~265L of CSS, the 7-column ic-data-table column definitions with per-column render functions (status tag / model monospace / messages-today Intl.NumberFormat / cost currency / budget inline bar / 3-action row), SSE-driven debounced reload from observability:token_usage/agent:hot_added/agent:hot_removed events, the 3-step new-agent wizard (id/name → provider/model dropdowns driven by models.list catalog → tool-policy profile → confirm) with per-step validation and <dialog> HTMLDialogElement lifecycle, suspend/resume + delete confirm flow with toast surfacing, and the search + status-chip filter pipeline — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/pipelines/pipeline-list.ts",

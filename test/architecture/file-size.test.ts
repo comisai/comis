@@ -624,6 +624,27 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // navigation — all tightly DOM-coupled. Auto-acceptable per
     // WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/views/session-detail.ts",
+    // agent-list.ts (Wave 5 / Task 3): RPC extraction completed via
+    // agent-list-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates daemon I/O to the controller (models.list,
+    // obs.billing.byAgent, agents.suspend, agents.resume,
+    // agents.delete, agents.create moved out — 6 unique RPC methods
+    // spanning 5 call sites). Higher-level data flows (getAgents bulk
+    // bootstrap) go through apiClient (REST). The remaining ≤1110L is
+    // dominated by ~265L of component-scoped CSS, the 7-column ic-
+    // data-table column definitions with per-column render functions
+    // (status tag / model monospace / messagesToday Intl.NumberFormat /
+    // costToday currency / budgetUtilization inline bar / 3-action
+    // row), the SSE-driven debounced reload from observability:
+    // token_usage / agent:hot_added / agent:hot_removed events, the
+    // 3-step new-agent wizard (id/name → provider/model dropdowns
+    // driven by models.list catalog → tool-policy profile → confirm)
+    // with per-step validation and a <dialog> HTMLDialogElement
+    // lifecycle, the suspend/resume + delete confirm flow with toast
+    // surfacing, and the search-and-status-chip filter pipeline — all
+    // tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
+    // fallback).
+    "packages/web/src/views/agents/agent-list.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
