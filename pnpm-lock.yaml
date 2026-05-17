@@ -879,6 +879,9 @@ importers:
 
   packages/web:
     dependencies:
+      '@comis/core':
+        specifier: workspace:*
+        version: link:../core
       '@dagrejs/dagre':
         specifier: 2.0.4
         version: 2.0.4
