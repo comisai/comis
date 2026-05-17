@@ -156,11 +156,11 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     //   ic-graph-canvas.ts:    0 rpcClient.call (verified HEAD) — EXCLUDED (regex never matches); deferred Tier 3 per OQ-4.
     //   dashboard.ts:          drained — RPC extracted via dashboard-controller.ts (Task 5).
     // Wave 5
-    "packages/web/src/views/mcp-management.ts",                     //  8 rpcClient.call (verified HEAD)
-    "packages/web/src/views/session-detail.ts",                     //  3 rpcClient.call (verified HEAD)
-    "packages/web/src/views/agents/agent-list.ts",                  //  5 rpcClient.call (verified HEAD)
-    "packages/web/src/views/pipelines/pipeline-list.ts",            //  7 rpcClient.call (verified HEAD)
-    "packages/web/src/views/pipelines/pipeline-builder.ts",         //  4 rpcClient.call (verified HEAD)
+    //   mcp-management.ts: drained — RPC extracted via mcp-management-controller.ts (Task 1).
+    //   session-detail.ts: drained — RPC extracted via session-detail-controller.ts (Task 2).
+    //   agents/agent-list.ts: drained — RPC extracted via agent-list-controller.ts (Task 3).
+    //   pipelines/pipeline-list.ts: drained — RPC extracted via pipeline-list-controller.ts (Task 4).
+    //   pipelines/pipeline-builder.ts: drained — RPC extracted via pipeline-builder-controller.ts (Task 5).
     // Wave 6
     "packages/web/src/views/agents/agent-detail.ts",                //  3 rpcClient.call (verified HEAD)
     "packages/web/src/views/media-test.ts",                         //  7 rpcClient.call (verified HEAD) — INCLUDED

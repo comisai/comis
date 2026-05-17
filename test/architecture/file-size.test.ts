@@ -587,6 +587,103 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
     // fallback).
     "packages/web/src/views/dashboard.ts",
+    // mcp-management.ts (Wave 5 / Task 1): RPC extraction completed
+    // via mcp-management-controller.ts — view contains 0
+    // rpcClient.call sites and delegates daemon I/O to the controller
+    // (mcp.list, config.read, mcp.status, config.patch, mcp.disconnect,
+    // mcp.reconnect, mcp.test moved out — 6 unique RPC methods spanning
+    // 8 call sites). The remaining ≤1150L is dominated by ~375L of
+    // component-scoped CSS, the add-server form renderer (one big
+    // <select transport> + transport-conditional command/url/headers/
+    // env textarea block), 5 render helpers (_renderServer,
+    // _renderConfigOnlyServer, _renderToolList, _renderInstructions,
+    // _renderTestResult), capability badge + server version + status
+    // tag rendering for 6 statuses, two confirm-dialog flows (delete /
+    // disconnect), and the toolbar/add-form open/close + 6-field add-
+    // form state — all tightly DOM-coupled. Existing render +
+    // interaction flows keep state on the view. Auto-acceptable per
+    // WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/mcp-management.ts",
+    // session-detail.ts (Wave 5 / Task 2): RPC extraction completed
+    // via session-detail-controller.ts — view contains 0
+    // rpcClient.call sites and delegates daemon I/O to the controller
+    // (obs.context.pipeline, obs.context.dag, obs.billing.bySession
+    // moved out — 3 unique RPC methods spanning 3 call sites). Higher-
+    // level data flows (getSessionDetail, resetSession, compactSession,
+    // deleteSession, exportSession) go through apiClient (REST) —
+    // orthogonal to the rpcClient.call boundary regex. The remaining
+    // ≤1110L is dominated by ~300L of component-scoped CSS, 3 tab
+    // renderers (conversation / context / metrics) with lazy-load gates
+    // on first-activation, the per-message renderer mapping role →
+    // ic-chat-message / ic-tool-call / compaction-marker, the
+    // ic-budget-segment-bar + ic-layer-waterfall context-tab renderers,
+    // the per-execution pipeline-snapshot selection grid, the metrics-
+    // tab cost / token / call-count stat cards with health diagnostics,
+    // the confirm-dialog flow for reset/compact/delete actions with
+    // variant-specific copy, and the breadcrumb-driven hash-route
+    // navigation — all tightly DOM-coupled. Auto-acceptable per
+    // WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/session-detail.ts",
+    // agent-list.ts (Wave 5 / Task 3): RPC extraction completed via
+    // agent-list-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates daemon I/O to the controller (models.list,
+    // obs.billing.byAgent, agents.suspend, agents.resume,
+    // agents.delete, agents.create moved out — 6 unique RPC methods
+    // spanning 5 call sites). Higher-level data flows (getAgents bulk
+    // bootstrap) go through apiClient (REST). The remaining ≤1110L is
+    // dominated by ~265L of component-scoped CSS, the 7-column ic-
+    // data-table column definitions with per-column render functions
+    // (status tag / model monospace / messagesToday Intl.NumberFormat /
+    // costToday currency / budgetUtilization inline bar / 3-action
+    // row), the SSE-driven debounced reload from observability:
+    // token_usage / agent:hot_added / agent:hot_removed events, the
+    // 3-step new-agent wizard (id/name → provider/model dropdowns
+    // driven by models.list catalog → tool-policy profile → confirm)
+    // with per-step validation and a <dialog> HTMLDialogElement
+    // lifecycle, the suspend/resume + delete confirm flow with toast
+    // surfacing, and the search-and-status-chip filter pipeline — all
+    // tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
+    // fallback).
+    "packages/web/src/views/agents/agent-list.ts",
+    // pipeline-list.ts (Wave 5 / Task 4): RPC extraction completed via
+    // pipeline-list-controller.ts — view contains 0 rpcClient.call
+    // sites and delegates daemon I/O to the controller (graph.list,
+    // graph.status, graph.load, obs.channels.all, graph.execute,
+    // graph.save, graph.delete moved out — 7 unique RPC methods
+    // spanning 8 call sites). Controller fits the tighter 700L cap
+    // (152L); residual view ≤1080L is dominated by ~340L of
+    // component-scoped CSS, the merge logic for graph.list saved
+    // entries with graph.status execution snapshots, search + sort +
+    // filter pipeline with per-column compare across 5 sort keys, the
+    // status-dot color mapping for 5 graph statuses, two confirm flows
+    // (delete + variable-prompt overlay for ${VAR} substitution), the
+    // quick-execute orchestration with approval-gate channel-context
+    // resolution, the duplicate-with-new-id flow, and the per-row
+    // 3-action toolbar (run / duplicate / delete) — all tightly DOM-
+    // coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/pipelines/pipeline-list.ts",
+    // pipeline-builder.ts (Wave 5 / Task 5 — LOWEST RISK): RPC
+    // extraction completed via pipeline-builder-controller.ts — view
+    // contains 0 rpcClient.call sites and delegates daemon I/O to the
+    // controller (graph.define, graph.load, graph.save, graph.execute
+    // moved out — 4 unique RPC methods spanning 4 call sites).
+    // Controller fits the tighter 700L cap (121L). The view PRESERVES
+    // verbatim the createGraphBuilderState consumer pattern + all 7
+    // ic-graph-canvas @property bindings (.viewport / .nodes / .edges /
+    // .selectedNodeIds / .selectedEdgeId / .snapToGrid /
+    // .highlightNodeIds) — Wave 4's ic-graph-canvas integration is the
+    // critical gate, re-validated by Playwright pipeline-builder.spec.
+    // Residual view ≤1050L is dominated by the createGraphBuilderState
+    // factory + 8 view-mirror @state fields that subscribe to graph
+    // state, the 200ms validation debounce timer, the keyboard handler
+    // (Delete/Backspace/Cmd+Z/Cmd+Shift+Z/arrow nudges/Cmd+S/Cmd+R/
+    // Cmd+A/Esc), the document-level beforeunload + hashchange guards
+    // for dirty drafts, the template-picker overlay + variable-prompt
+    // overlay flows, the server-load execution-format → canvas-format
+    // node mapper with auto-layout fallback, and the validate/save/run
+    // toolbar wiring — all tightly DOM-coupled. Auto-acceptable per
+    // WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/pipelines/pipeline-builder.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
