@@ -494,6 +494,18 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // + reset-confirm dialog — all tightly DOM-coupled. Auto-acceptable
     // per WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/views/observe-view.ts",
+    // models.ts (Wave 3 / Task 5): RPC extraction completed via
+    // models-controller.ts — view contains 0 rpcClient.call sites and
+    // delegates daemon I/O to the controller (config.read, models.list,
+    // agents.list, agents.get, config.patch, models.test, agents.update
+    // moved out). Residual ≤1440L is dominated by 3 tab renderers
+    // (providers/models/defaults), provider-card grid with inline edit
+    // + connectivity test, model-catalog table with search + provider
+    // filter + sort, model-alias CRUD form, per-agent override grid
+    // with provider/model dropdowns, and a SSE-driven reload-debounce
+    // flow — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09
+    // (§10.5 fallback).
+    "packages/web/src/views/models.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

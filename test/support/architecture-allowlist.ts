@@ -213,9 +213,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/models.ts",
-    lines: 1431,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1439,
+    reason: "Lit web view; RPC orchestration extracted via models-controller.ts (config.read, models.list, agents.list, agents.get, config.patch, models.test, agents.update moved out). Residual ≤1440L is dominated by 3 tab renderers (providers/models/defaults), provider-card grid with inline edit + connectivity test, model-catalog table with search + provider filter + sort, model-alias CRUD form, per-agent override grid with provider/model dropdowns, and a SSE-driven reload-debounce flow — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/components/graph/ic-node-editor.ts",
