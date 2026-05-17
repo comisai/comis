@@ -78,8 +78,16 @@ export interface ChannelDetailController extends ReactiveController {
     channelType: string,
     limit: number,
   ): Promise<DeliveryRecentResult>;
-  /** Channel-level observability stats (obs.channels.get). */
-  getChannelObs(channelId: string): Promise<ChannelObsGetResult>;
+  /**
+   * Channel-level observability stats (obs.channels.get).
+   *
+   * @param channelTypeOrId — daemon's obs.channels.get accepts either a
+   *   channelType (e.g. "telegram" — for adapter-level overview) or a
+   *   channel.channelId (for instance-level stats). The channel-detail
+   *   view currently passes `this.channelType` for the overview case;
+   *   the parameter is named flexibly to reflect this dual contract.
+   */
+  getChannelObs(channelTypeOrId: string): Promise<ChannelObsGetResult>;
   /** Current delivery-queue status (delivery.queue.status). */
   getDeliveryQueueStatus(channelType: string): Promise<DeliveryQueueStatus>;
   /** Platform capabilities for one channel (channels.capabilities). */
@@ -138,9 +146,14 @@ export function createChannelDetailController(
       });
     },
 
-    getChannelObs(channelId: string): Promise<ChannelObsGetResult> {
+    getChannelObs(channelTypeOrId: string): Promise<ChannelObsGetResult> {
+      // The daemon's obs.channels.get accepts the param under the
+      // `channelId` key for both adapter-level (channelType) and
+      // instance-level (channelId) lookups — the field name on the wire
+      // does NOT change. Only the controller parameter name is renamed
+      // here for caller clarity.
       return rpcClient.call<ChannelObsGetResult>("obs.channels.get", {
-        channelId,
+        channelId: channelTypeOrId,
       });
     },
 
