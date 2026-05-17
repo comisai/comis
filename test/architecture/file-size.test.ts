@@ -360,3 +360,146 @@ describe("file-size — Phase 43 Phase F subdirectory caps (FILE-SPLIT-NN)", () 
     });
   }
 });
+
+/**
+ * Phase 44 Phase G per-FILE caps — WEB-DECOMP-NN family.
+ *
+ * Per design §10: each Wave 2-7 split commit extracts a `<view>-controller.ts`
+ * alongside the existing `<view>.ts`. The PAIRED cap enforces BOTH a view ≤viewCap
+ * (default 800L, tightened to 500L for 5 small files per plan-06/07 acceptance)
+ * AND a controller ≤controllerCap (per-file per RESEARCH §"Decomposition"). The
+ * cap activates ONLY when the controller file exists (i.e., post-split).
+ *
+ * Pre-split (Wave 1 — this commit): NONE of the 26 controllers exist yet. Every
+ * cap is vacuously satisfied via `!existsSync(absController)`. The view's
+ * existing `phase-G` `fileSizeAllowlist` entry covers the global ≤800L gate
+ * until the controller exists.
+ *
+ * GREEN state: as each Wave 2-7 split commit creates its `<view>-controller.ts`,
+ * the corresponding cap activates and enforces BOTH the tightened view cap AND
+ * the controller cap. The view's `fileSizeAllowlist` entry is removed in the
+ * same commit (drains the `phase-G` cohort progressively).
+ *
+ * Walker is NOT used here — each cap is a single absolute file path. Line
+ * counter (`.split(/\r?\n/).length`) and `formatViolations()` error shape
+ * mirror the HYG-03 + EXEC-SPLIT-10 + FILE-SPLIT-NN blocks above.
+ */
+describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
+  const FILE_CAPS: ReadonlyArray<{
+    file: string;
+    viewCap: number;
+    controllerCap: number;
+    req: string;
+  }> = [
+    // Wave 2
+    { file: "packages/web/src/views/setup-wizard.ts",          viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/skills.ts",                viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/chat-console.ts",          viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/message-center.ts",        viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/config-editor.ts",         viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    // Wave 3
+    { file: "packages/web/src/views/agents/agent-editor.ts",   viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/scheduler.ts",             viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/memory-inspector.ts",      viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/observe-view.ts",          viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/models.ts",                viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    // Wave 4 (incl. graph components)
+    { file: "packages/web/src/components/graph/ic-node-editor.ts",  viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-04" },
+    { file: "packages/web/src/views/agents/workspace-manager.ts",   viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/channel-detail.ts",             viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/components/graph/ic-graph-canvas.ts", viewCap: 800, controllerCap: 800, req: "WEB-DECOMP-04" },
+    { file: "packages/web/src/views/dashboard.ts",                  viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    // Wave 5
+    { file: "packages/web/src/views/mcp-management.ts",             viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/session-detail.ts",             viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/agents/agent-list.ts",          viewCap: 800, controllerCap: 900, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/pipelines/pipeline-list.ts",    viewCap: 800, controllerCap: 700, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/pipelines/pipeline-builder.ts", viewCap: 800, controllerCap: 700, req: "WEB-DECOMP-01" },
+    // Wave 6
+    { file: "packages/web/src/views/agents/agent-detail.ts",        viewCap: 500, controllerCap: 700, req: "WEB-DECOMP-01" }, // W4: tightened to 500 (per plan-06 acceptance)
+    { file: "packages/web/src/views/media-test.ts",                 viewCap: 500, controllerCap: 600, req: "WEB-DECOMP-01" }, // W4: tightened to 500 (per plan-06 acceptance)
+    { file: "packages/web/src/components/scheduler/ic-cron-editor.ts", viewCap: 500, controllerCap: 500, req: "WEB-DECOMP-04" }, // W4: tightened to 500 (per plan-06 acceptance)
+    { file: "packages/web/src/views/pipelines/pipeline-monitor.ts",    viewCap: 500, controllerCap: 500, req: "WEB-DECOMP-01" }, // W4: tightened to 500 (per plan-06 acceptance)
+    // Wave 7
+    { file: "packages/web/src/app.ts",                              viewCap: 800, controllerCap: 500, req: "WEB-DECOMP-01" },
+    { file: "packages/web/src/views/security.ts",                   viewCap: 500, controllerCap: 500, req: "WEB-DECOMP-01" }, // W4: tightened to 500 (per plan-07 acceptance)
+
+    // === Wave 4 Tier 2 fallback entries (W3 pre-seed) =========================
+    // Per OQ-4 / PATTERNS.md §"Special cases" #14, if ic-graph-canvas Tier 1 (single
+    // controller) fails to reach caps, Tier 2 falls back to TWO helper modules:
+    // `ic-graph-canvas-pan-zoom.ts` + `ic-graph-canvas-drag.ts` (pure functions,
+    // NOT controllers; ≤400L each per RESEARCH §"Graph Component Notes" #2).
+    //
+    // To AVOID mutating this CAPS array mid-phase (test-binding stability), the
+    // Tier-2 entries are pre-seeded here as commented-out lines. If Wave 4 Tier 2
+    // is selected, the executor UNCOMMENTS these two lines AND removes (or
+    // comments out) the `ic-graph-canvas.ts` entry above — net zero array
+    // mutation. Tier 1 path leaves these commented and changes nothing.
+    //
+    // Tier 2 contract: uncomment the two entries below + remove (or comment out)
+    // the `ic-graph-canvas.ts` entry. DO NOT add net-new entries mid-phase.
+    //
+    // { file: "packages/web/src/components/graph/ic-graph-canvas-pan-zoom.ts", viewCap: 400, controllerCap: 0, req: "WEB-DECOMP-04" }, // Tier 2 fallback
+    // { file: "packages/web/src/components/graph/ic-graph-canvas-drag.ts",     viewCap: 400, controllerCap: 0, req: "WEB-DECOMP-04" }, // Tier 2 fallback
+  ];
+
+  /**
+   * §10.5 fallback exceptions — reserved for files whose view+controller cap
+   * cannot be met without violating design intent. Each entry carries a paired
+   * `removedIn: "deferred"` allowlist entry in test/support/architecture-allowlist.ts
+   * with reason "web view; internal velocity only". Auto-acceptable per WEB-DECOMP-09.
+   *
+   * Empty at Wave 1 (this commit). Populated as needed by Waves 2-7 + Wave 8.
+   */
+  const FALLBACK_EXCEPTIONS: ReadonlySet<string> = new Set<string>([
+    // Reserved for §10.5 fallbacks (auto-acceptable per WEB-DECOMP-09).
+  ]);
+
+  for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
+    it(`${file} ≤${viewCap} lines + co-located controller ≤${controllerCap} lines (${req})`, () => {
+      const absView = resolve(REPO_ROOT, file);
+      if (!existsSync(absView)) {
+        // File was removed entirely — out of phase scope.
+        expect([]).toEqual([]);
+        return;
+      }
+      if (FALLBACK_EXCEPTIONS.has(file)) {
+        // Deferred per WEB-DECOMP-09 — vacuously satisfied.
+        expect([]).toEqual([]);
+        return;
+      }
+      const controllerPath = file.replace(/\.ts$/, "-controller.ts");
+      const absController = resolve(REPO_ROOT, controllerPath);
+      if (!existsSync(absController)) {
+        // Pre-split: vacuously satisfied. The view's fileSizeAllowlist phase-G
+        // entry covers the global ≤800L gate until the controller exists.
+        expect([]).toEqual([]);
+        return;
+      }
+      // Post-split: enforce BOTH caps.
+      const viewLines = readFileSync(absView, "utf8").split(/\r?\n/).length;
+      const controllerLines = readFileSync(absController, "utf8").split(/\r?\n/).length;
+      const violations: Array<{ path: string; lines: number; cap: number }> = [];
+      if (viewLines > viewCap) {
+        violations.push({ path: file, lines: viewLines, cap: viewCap });
+      }
+      if (controllerLines > controllerCap) {
+        violations.push({ path: controllerPath, lines: controllerLines, cap: controllerCap });
+      }
+      expect(
+        violations,
+        formatViolations({
+          description: `Phase 44 Phase G view+controller cap (${req}): view ≤${viewCap}L AND controller ≤${controllerCap}L.`,
+          violations: violations.map((v) => ({
+            file: v.path,
+            line: v.lines,
+            snippet: `${v.lines} lines (cap: ${v.cap})`,
+          })),
+          suggestedFix: `Push template helpers to view; push more action methods + state to controller. Or accept WEB-DECOMP-09 deferral (auto-acceptable) by adding to FALLBACK_EXCEPTIONS + fileSizeAllowlist with removedIn: "deferred".`,
+          designRef: `code-quality-plan §10 / Phase 44 / ${req}`,
+          allowlistRef: `FALLBACK_EXCEPTIONS Set carries §10.5 fallback paths with explicit removedIn: "deferred" entries (auto-acceptable per WEB-DECOMP-09).`,
+        }),
+      ).toEqual([]);
+    });
+  }
+});
