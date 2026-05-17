@@ -9,20 +9,27 @@
  *   1. Controllers contain NO Lit `` html` `` template literals (controllers own
  *      state + RPC; templates live in the view).
  *   2. Views do NOT directly call `rpcClient.call(...)` (controllers own RPC).
- *      Gated by `PRE_EXTRACTION_ALLOWLIST` — drained per Wave 2-7 split commit.
+ *      Gated by `PRE_EXTRACTION_ALLOWLIST` — fully drained at Phase 44 close
+ *      (Wave 8 closing-drain commit). Set state is now TERMINAL: 5 OOS permanent
+ *      entries only.
  *   3. Naming convention: controllers MUST end in `-controller.ts`
  *      (no `-ctrl.ts` or `.controller.ts` alternates).
  *   4. Co-location: every `<view>-controller.ts` MUST have a `<view>.ts` neighbor
  *      in the same directory.
  *
- * Wave 1 (this commit) state: assertions 1+3+4 vacuously satisfied (no controllers
- * exist). Assertion 2 satisfied via `PRE_EXTRACTION_ALLOWLIST` containing EXACTLY
- * the files where `grep -cE '\b(this\.)?rpcClient!?\.call\b' <file>` returns >0
- * at HEAD (23 in-scope INCLUDED + 5 OOS INCLUDED = 28 paths). Each Wave 2-7 split
- * commit REMOVES its in-scope file from the Set IF the file is currently in the Set;
- * the 3 in-scope files with grep == 0 (`ic-graph-canvas.ts`, `ic-cron-editor.ts`,
- * `app.ts`) are NOT in the Set, so no drain step is needed for them. The 5 OOS
- * files STAY in the Set permanently (not Phase 44 scope, but legitimately call RPC).
+ * **Phase 44 closure state (Wave 8 commit):** all 26 in-scope files have reached
+ * terminal state (split + drained from PRE_EXTRACTION_ALLOWLIST, or never in the
+ * Set because grep == 0 at HEAD, or §10.5-deferred per WEB-DECOMP-09 with the
+ * `removedIn: "deferred"` allowlist entry). PRE_EXTRACTION_ALLOWLIST contains
+ * EXACTLY the 5 OUT-OF-SCOPE files that legitimately call rpcClient.call today
+ * but are not Phase 44 scope (under 800L). These STAY in the Set permanently —
+ * they are NOT post-Phase-44 violations. Closure invariant verified by Wave 8:
+ * `grep -c 'removedIn: "phase-G"' test/support/architecture-allowlist.ts == 0`.
+ *
+ * Any future regression that re-introduces a `rpcClient.call(...)` site in a
+ * view OR a `<view>-controller.ts` that contains an html`` template OR a
+ * misnamed controller-suffix variant OR an orphan controller without a sibling
+ * view will fail this test. This is the post-Phase-44 architectural gate.
  *
  * @module
  */
@@ -116,68 +123,48 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
   // (Controllers own RPC orchestration; views render snapshot data.)
   // ----------------------------------------------------------------------
   //
-  // PRE_EXTRACTION_ALLOWLIST — drained per Wave 2-7 split commit.
+  // PRE_EXTRACTION_ALLOWLIST — FULLY DRAINED at Phase 44 close (Wave 8).
   //
-  //   IN-SCOPE INCLUDED (23): Phase 44 extracts a controller for each; each
-  //                            Wave 2-7 split commit REMOVES the file's path
-  //                            from this Set.
-  //   IN-SCOPE EXCLUDED (3):   ic-graph-canvas.ts + ic-cron-editor.ts + app.ts
-  //                            have grep == 0 for `\b(this\.)?rpcClient!?\.call\b`
-  //                            at Wave-1 HEAD (verified). The regex never matches
-  //                            them, so they MUST NOT be in this Set — including
-  //                            them would be misleading dead weight, and no drain
-  //                            step is needed when Waves 4 / 6 / 7 extract them.
-  //   OUT-OF-SCOPE INCLUDED (5): legitimately call rpcClient.call today but are
-  //                              NOT in Phase 44 scope (below 800L). These STAY
-  //                              in the Set permanently — no Phase 44 extraction.
+  // **Set state is terminal.** All 26 in-scope Phase 44 files have reached
+  // closure (either split + drained from this Set, or never in the Set because
+  // grep == 0 at Wave-1 baseline, or §10.5-deferred per WEB-DECOMP-09 with the
+  // corresponding `removedIn: "deferred"` entry in `test/support/architecture-allowlist.ts`).
   //
-  // Source of truth for each entry's inclusion: the `grep -cE` count next to it
-  // (verified at Wave-1 baseline on `feat/code-quality-plan` HEAD, 2026-05-17).
-  // Each entry MUST have count >0. Any entry with count == 0 MUST be removed.
+  // The remaining 5 entries are ALL OUT-OF-SCOPE: they legitimately call
+  // `rpcClient.call(...)` today but are below the 800L Phase-44 cap and were
+  // not included in the §10.2 / 2026-05-13-addendum inventory. They STAY in
+  // this Set permanently — they are NOT post-Phase-44 violations. Any future
+  // phase that decides to extract controllers for these files would drain
+  // them at that time.
+  //
+  // Closure invariant (verified by Wave 8 commit):
+  //   `grep -c 'removedIn: "phase-G"' test/support/architecture-allowlist.ts == 0`
+  //
+  // Wave-by-wave drain history (for audit; do not modify these annotations):
+  //   Wave 2 (5 drains): setup-wizard, skills, chat-console, message-center, config-editor.
+  //   Wave 3 (5 drains): agent-editor, scheduler, memory-inspector, observe-view, models.
+  //   Wave 4 (4 drains): ic-node-editor, workspace-manager, channel-detail, dashboard.
+  //                      (ic-graph-canvas was never in the Set — 0 rpcClient.call at HEAD;
+  //                       deferred Tier 3 per OQ-4 with allowlist `removedIn: "deferred"`.)
+  //   Wave 5 (5 drains): mcp-management, session-detail, agent-list, pipeline-list, pipeline-builder.
+  //   Wave 6 (3 drains): agent-detail, media-test, pipeline-monitor.
+  //                      (ic-cron-editor was never in the Set — 0 rpcClient.call at HEAD;
+  //                       NO-RPC controller variant landed; §10.5-deferred for view cap.)
+  //   Wave 7 (1 drain):  security.
+  //                      (app.ts was never in the Set — 0 rpcClient.call at HEAD; RPC
+  //                       indirect via PollingController construction. Tier 1 app-controller
+  //                       split landed cleanly under the 500L cap with no drain step needed.)
+  //   Wave 8 (0 drains): no remaining in-scope entries — phase closing commit only.
+  //
+  //   Total: 23 in-scope drains via Set + 3 in-scope non-Set files (cap-met or deferred)
+  //          = 26 in-scope files reaching terminal state.
   //
   const PRE_EXTRACTION_ALLOWLIST = new Set<string>([
-    // ===== IN-SCOPE INCLUDED — drained per Wave 2-7 split commit =====
-    // Wave 2
-    //   setup-wizard.ts:   drained — extracted via setup-wizard-controller.ts   (Task 1).
-    //   skills.ts:         drained — extracted via skills-controller.ts         (Task 2).
-    //   chat-console.ts:   drained — RPC extracted via chat-console-controller.ts (Task 3).
-    //   message-center.ts: drained — RPC extracted via message-center-controller.ts (Task 4).
-    //   config-editor.ts:  drained — RPC extracted via config-editor-controller.ts (Task 5).
-    // Wave 3
-    //   agent-editor.ts:    drained — RPC extracted via agent-editor-controller.ts (Task 1).
-    //   scheduler.ts:       drained — RPC extracted via scheduler-controller.ts (Task 2).
-    //   memory-inspector.ts: drained — RPC extracted via memory-inspector-controller.ts (Task 3).
-    //   observe-view.ts:    drained — RPC extracted via observe-view-controller.ts (Task 4).
-    //   models.ts:          drained — RPC extracted via models-controller.ts (Task 5).
-    // Wave 4
-    //   ic-node-editor.ts:     drained — RPC extracted via ic-node-editor-controller.ts (Task 1).
-    //   workspace-manager.ts:  drained — RPC extracted via workspace-manager-controller.ts (Task 2).
-    //   channel-detail.ts:     drained — RPC extracted via channel-detail-controller.ts (Task 3).
-    //   ic-graph-canvas.ts:    0 rpcClient.call (verified HEAD) — EXCLUDED (regex never matches); deferred Tier 3 per OQ-4.
-    //   dashboard.ts:          drained — RPC extracted via dashboard-controller.ts (Task 5).
-    // Wave 5
-    //   mcp-management.ts: drained — RPC extracted via mcp-management-controller.ts (Task 1).
-    //   session-detail.ts: drained — RPC extracted via session-detail-controller.ts (Task 2).
-    //   agents/agent-list.ts: drained — RPC extracted via agent-list-controller.ts (Task 3).
-    //   pipelines/pipeline-list.ts: drained — RPC extracted via pipeline-list-controller.ts (Task 4).
-    //   pipelines/pipeline-builder.ts: drained — RPC extracted via pipeline-builder-controller.ts (Task 5).
-    // Wave 6
-    //   agents/agent-detail.ts: drained — RPC extracted via agent-detail-controller.ts (Task 1).
-    //   media-test.ts: drained — RPC extracted via media-test-controller.ts (Task 2).
-    // ic-cron-editor.ts: 0 rpcClient.call (verified HEAD) — EXCLUDED (form-only, no RPC).
-    //   pipelines/pipeline-monitor.ts: drained — RPC extracted via pipeline-monitor-controller.ts (Task 4).
-    // Wave 7
-    // app.ts: 0 rpcClient.call (verified HEAD) — EXCLUDED (RPC indirect via PollingController).
-    //   Note: app.ts constructs `rpcClient` then passes it to PollingController; it
-    //   does NOT directly call `rpcClient.call(...)`. The boundary regex matches only
-    //   direct call sites — app.ts is therefore not a Wave-1 baseline violator and
-    //   needs no entry here. Wave 7's app-controller extraction does NOT require a
-    //   Set drain step for app.ts (was never in the Set).
-    //   security.ts: drained — RPC extracted via security-controller.ts (Task 2).
-
-    // ===== OUT-OF-SCOPE INCLUDED — STAY permanently (not Phase 44 scope) =====
-    // Each verified to have grep >0 at Wave-1 HEAD. Counts not annotated since
-    // they are not subject to Phase 44 cap pressure and not drained by any wave.
+    // ===== OUT-OF-SCOPE PERMANENT (5 entries) — NOT Phase 44 scope =====
+    // Each verified to have `grep -cE '\b(this\.)?rpcClient!?\.call\b'` > 0 at
+    // Wave-1 HEAD and at Phase 44 close. These files are <800L and were never
+    // in the §10.2 / 2026-05-13-addendum inventory. They STAY in this Set
+    // permanently as the legitimate post-Phase-44 baseline.
     "packages/web/src/views/channel-list.ts",
     "packages/web/src/views/context-dag-browser.ts",
     "packages/web/src/views/media-config.ts",
