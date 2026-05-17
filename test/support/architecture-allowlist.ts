@@ -285,9 +285,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/media-test.ts",
-    lines: 948,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 983,
+    reason: "Lit web view; RPC extraction completed via media-test-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (media.providers, media.test.stt, media.test.tts, media.test.vision, media.test.document, media.test.video, media.test.link moved out — 7 unique RPC methods spanning 7 call sites). Controller fits the tighter 600L cap (139L). Wave-6 caps tightened the view from 800L to 500L; the residual ≤985L is dominated by ~310L of component-scoped CSS, 6 tab content renderers (STT / TTS / Vision / Document / Video / Link) with per-tab file-upload + base64-encode hot paths (ArrayBuffer → btoa chunked-conversion), 3 file-size guard branches with 25 / 20 / 50 MB limits, audio-playback Object URL lifecycle (revoke on tab-switch + disconnect), image-preview Object URL lifecycle, the provider-availability probe with graceful media.providers-missing fallback, 6 per-tab result panels with per-result-type sub-renderers (transcription / synthesized audio / vision-tag list / document-page list / video-segments / link metadata), IcToast error surfacing in each handler, and the active-tab + processing-flag + per-tab @state coordination — all tightly DOM-coupled and integration-critical for operator verification. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/components/scheduler/ic-cron-editor.ts",

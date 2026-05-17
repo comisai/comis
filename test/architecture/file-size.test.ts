@@ -704,6 +704,23 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // consecutive-error / running-tick state coalescing — all tightly
     // DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/views/agents/agent-detail.ts",
+    // media-test.ts (Wave 6 / Task 2): RPC extraction completed via
+    // media-test-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates all daemon I/O to the controller (media.providers,
+    // media.test.stt, media.test.tts, media.test.vision,
+    // media.test.document, media.test.video, media.test.link moved
+    // out — 7 unique RPC methods spanning 7 call sites). Controller
+    // fits the tighter 600L cap (139L). Wave-6 caps tightened the
+    // view from 800L to 500L; the residual ≤985L is dominated by
+    // ~310L of component-scoped CSS, 6 tab content renderers (STT /
+    // TTS / Vision / Document / Video / Link) with per-tab file-
+    // upload + base64-encode hot paths, audio-playback + image-
+    // preview Object URL lifecycle, provider-availability probe with
+    // graceful media.providers-missing fallback, and per-tab result
+    // panel sub-renderers — all tightly DOM-coupled and integration-
+    // critical for operator verification. Auto-acceptable per
+    // WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/media-test.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
