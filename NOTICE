@@ -126,3 +126,54 @@ edge-tts-universal
 @img/sharp-libvips-darwin-arm64
   Licensed under LGPL-3.0-or-later
   Platform-specific native binary for sharp image processing
+
+
+OPTIONAL COMPONENTS (NOT BUNDLED, INSTALLED ON OPT-IN)
+========================================================
+
+The following components are not bundled with Comis. They are downloaded
+and installed only when an operator opts in via an installer flag or build
+arg. The published comisai npm tarball and Docker images do not contain
+them; they live on the operator's host after a deliberate install action.
+
+CloakBrowser - Stealth Chromium with source-level fingerprint patches
+  Opt-in via `install.sh --with-cloakbrowser` or
+  `docker build --build-arg COMIS_WITH_CLOAKBROWSER=1 ...`.
+
+  The CloakBrowser npm wrapper:
+    Copyright CloakHQ
+    Licensed under MIT
+    https://github.com/CloakHQ/CloakBrowser
+
+  The compiled CloakBrowser Chromium binary (auto-downloaded by the
+  wrapper to ~/.cloakbrowser/):
+    Copyright CloakHQ. Built on Chromium (Copyright The Chromium Authors,
+    BSD-3-Clause) and ungoogled-chromium.
+    Distributed under the CloakBrowser Binary License, a separate
+    proprietary license — NOT MIT, NOT Apache-2.0.
+
+    Summary of the binary license terms (see the canonical text at
+    https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md
+    for the authoritative version):
+      * Free for personal and commercial INTERNAL use, including self-
+        hosting Comis on your own infrastructure.
+      * REDISTRIBUTION of the binary is prohibited. Listing it as a
+        dependency (e.g. in install.sh, package.json, Dockerfile) is
+        explicitly permitted because end users download it from CloakHQ
+        channels themselves.
+      * BUNDLING the binary into a product, hosted service, or cloud
+        artifact distributed to third-party customers (including running
+        the binary on your infrastructure to serve third-party users —
+        browser-as-a-service style) requires a separate OEM/SaaS license
+        from CloakHQ (cloakhq@pm.me).
+      * Reverse engineering, decompiling, modifying, or removing
+        attribution from the binary is prohibited.
+
+  Comis does NOT redistribute the CloakBrowser binary. References to it in
+  install.sh, Dockerfile, packages/skills/src/tools/browser/chrome-detection.ts,
+  and the documentation constitute dependency listing per the binary
+  license. Operators who enable --with-cloakbrowser accept the binary
+  license at the moment of install.
+
+  If you intend to ship a hosted Comis service that uses --with-cloakbrowser,
+  obtain the OEM license from CloakHQ before doing so.
