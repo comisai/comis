@@ -189,9 +189,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/agents/agent-editor.ts",
-    lines: 1629,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1644,
+    reason: "Lit web view; RPC orchestration extracted via agent-editor-controller.ts (models.list, config.read, config.patch, daemon.setLogLevel, agents.{get,create,update} moved out). Residual ≤1700L is dominated by createDefaultForm() (~125L), _mapConfigToDetail() (~135L), _populateForm() (~180L), _buildPayload() (~290L), _buildYamlPreview() (~65L), plus 13 sub-editor render bindings. The mapping/payload helpers are tightly coupled to the @state form shape and existing test suite (96 priv() calls across 41 tests). Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/scheduler.ts",

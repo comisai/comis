@@ -442,6 +442,20 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // state, multi-tab gateway/history sub-views, and rollback confirm
     // dialogs — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09.
     "packages/web/src/views/config-editor.ts",
+    // agent-editor.ts (Wave 3 / Task 1): RPC extraction completed via
+    // agent-editor-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates all daemon I/O to the controller (models.list,
+    // config.read, config.patch, daemon.setLogLevel, agents.get/create/update
+    // moved out). The remaining ≤1700L is dominated by createDefaultForm()
+    // (~125L), _mapConfigToDetail() (~135L), _populateForm() (~180L),
+    // _buildPayload() (~290L), and _buildYamlPreview() (~65L) — config
+    // mapping helpers tightly coupled to the @state form shape and the
+    // 13 property-bound sub-editors in agents/editors/. Existing test
+    // suite (96 priv() calls across 41 tests) relies on direct
+    // `priv()._form = …` mutation. Full state extraction would require
+    // a full test rewrite. Auto-acceptable per WEB-DECOMP-09 (§10.5
+    // fallback).
+    "packages/web/src/views/agents/agent-editor.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
