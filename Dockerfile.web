@@ -10,14 +10,20 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/web/package.json packages/web/
 COPY packages/shared/package.json packages/shared/
+COPY packages/core/package.json packages/core/
 
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --filter @comis/web...
 
 COPY packages/web/ packages/web/
 COPY packages/shared/ packages/shared/
+COPY packages/core/ packages/core/
 
-RUN cd packages/web && pnpm build
+# Build shared → core → web in dependency order. `pnpm -r --filter @comis/web...`
+# expands to web plus its transitive workspace deps and runs each build in
+# topological order. Web imports system-time helpers from @comis/core, which
+# vite resolves from core/dist/ at build time — so core must finish first.
+RUN pnpm -r --filter @comis/web... run build
 
 # ============================================================================
 # Serve with Nginx

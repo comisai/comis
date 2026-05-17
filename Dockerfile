@@ -49,15 +49,9 @@ COPY packages/ packages/
 COPY tsconfig.base.json ./
 
 # Build all packages (TypeScript compilation + native module rebuild).
-# Build everything except @comis/web first so pnpm's topology resolves
-# without web (which lacks a declared @comis/core dep but reads
-# ../core/dist/runtime/system-time.js at vite-config-load time), then
-# build web last when core's dist/ exists on disk.
-RUN pnpm --filter='!@comis/web' -r build && \
-    pnpm --filter @comis/web build
-
-# Build web SPA separately
-RUN cd packages/web && pnpm build
+# pnpm respects the workspace dep graph and builds in topological order,
+# so @comis/core finishes before @comis/web's vite build needs it.
+RUN pnpm -r run build
 
 # Prune devDependencies for production
 # CI=true prevents pnpm from prompting for TTY confirmation when purging node_modules

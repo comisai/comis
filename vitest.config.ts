@@ -3,11 +3,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: [],
-    // test/e2e is the wire-level end-to-end project — spawns real daemons
-    // against 127.0.0.1 mock chat-platform servers. Has its own
-    // vitest.config.ts (no coverage thresholds; e2e tier owns its own
-    // scope per AGENTS.md §2.5).
-    projects: ["packages/*", "test/architecture", "test/e2e", "scripts/contracts"],
+    // test/e2e is the wire-level end-to-end project — opt-in via
+    // `pnpm test:e2e` (it uses its own vitest.config.ts and imports
+    // adapter SDKs that are not hoisted to the repo root, so it cannot
+    // run from the default `pnpm test` invocation in a clean install).
+    projects: ["packages/*", "test/architecture", "scripts/contracts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
