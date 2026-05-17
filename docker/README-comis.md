@@ -27,14 +27,14 @@ Every release pushes the following tags automatically:
 
 | Pattern | Example | Notes |
 |---------|---------|-------|
-| `{version}` | `1.0.40` | Immutable — pin this in production |
+| `{version}` | `1.0.41` | Immutable — pin this in production |
 | `{major}.{minor}` | `1.0` | Tracks the latest patch |
 | `latest` | `latest` | Default variant, latest release |
-| `{version}-slim` | `1.0.40-slim` | Slim variant, immutable |
+| `{version}-slim` | `1.0.41-slim` | Slim variant, immutable |
 | `{major}.{minor}-slim` | `1.0-slim` | Slim variant, latest patch |
 | `latest-slim` | `latest-slim` | Slim variant, latest release |
 
-> **Tip:** Pin to an immutable version tag in production (e.g. `comisai/comis:1.0.40`) rather than `latest`.
+> **Tip:** Pin to an immutable version tag in production (e.g. `comisai/comis:1.0.41`) rather than `latest`.
 
 ---
 
