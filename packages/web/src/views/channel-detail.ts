@@ -12,6 +12,11 @@ import {
   createChannelDetailController,
   type ChannelDetailController,
 } from "./channel-detail-controller.js";
+// Canonical DTOs from the api-types barrel -- the controller already imports
+// these (channel-detail-controller.ts:22-23); reusing them in the view
+// surfaces a compile error if the daemon contract evolves rather than
+// allowing the view's inline literal to silently drift.
+import type { DeliveryQueueStatus, PlatformCapabilities } from "../api/types/index.js";
 
 // Side-effect registrations for sub-components
 import "../components/nav/ic-breadcrumb.js";
@@ -576,8 +581,8 @@ export class IcChannelDetail extends LitElement {
   @state() private _connectionMode = "";
   @state() private _lastError = "";
   @state() private _actionPending = false;
-  @state() private _queueStatus: { pending: number; inFlight: number; failed: number; delivered: number; expired: number } | null = null;
-  @state() private _capabilities: { reactions: boolean; editMessages: boolean; deleteMessages: boolean; fetchHistory: boolean; attachments: boolean; threads: boolean; mentions: boolean; formatting: string[]; buttons: boolean; cards: boolean; effects: boolean } | null = null;
+  @state() private _queueStatus: DeliveryQueueStatus | null = null;
+  @state() private _capabilities: PlatformCapabilities | null = null;
   @state() private _mediaProcessing: Record<string, boolean> = {
     transcribeAudio: true,
     analyzeImages: true,
