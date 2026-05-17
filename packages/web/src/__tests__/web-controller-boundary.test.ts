@@ -138,11 +138,11 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
   const PRE_EXTRACTION_ALLOWLIST = new Set<string>([
     // ===== IN-SCOPE INCLUDED — drained per Wave 2-7 split commit =====
     // Wave 2
-    "packages/web/src/views/setup-wizard.ts",                       //  4 rpcClient.call (verified HEAD)
-    "packages/web/src/views/skills.ts",                             //  7 rpcClient.call (verified HEAD)
-    "packages/web/src/views/chat-console.ts",                       //  7 rpcClient.call (verified HEAD)
-    "packages/web/src/views/message-center.ts",                     // 14 rpcClient.call (verified HEAD)
-    "packages/web/src/views/config-editor.ts",                      // 12 rpcClient.call (verified HEAD)
+    //   setup-wizard.ts:   drained — extracted via setup-wizard-controller.ts   (Task 1).
+    //   skills.ts:         drained — extracted via skills-controller.ts         (Task 2).
+    //   chat-console.ts:   drained — RPC extracted via chat-console-controller.ts (Task 3).
+    //   message-center.ts: drained — RPC extracted via message-center-controller.ts (Task 4).
+    //   config-editor.ts:  drained — RPC extracted via config-editor-controller.ts (Task 5).
     // Wave 3
     "packages/web/src/views/agents/agent-editor.ts",                //  8 rpcClient.call (verified HEAD)
     "packages/web/src/views/scheduler.ts",                          // 11 rpcClient.call (verified HEAD)

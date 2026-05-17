@@ -5,6 +5,7 @@ import process from "node:process";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { IcSetupWizard, WizardData } from "./setup-wizard.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import type { SetupWizardController } from "./setup-wizard-controller.js";
 
 // Side-effect import to register custom element
 import "./setup-wizard.js";
@@ -43,6 +44,12 @@ async function createElement(
   props?: Record<string, unknown>,
 ): Promise<IcSetupWizard> {
   const el = document.createElement("ic-setup-wizard") as IcSetupWizard;
+  // Post-Phase-44 the view delegates state to a controller instantiated when
+  // rpcClient is set. Tests that don't care about RPC still need a controller
+  // to back state reads, so default to a minimal mock.
+  if (!props || !("rpcClient" in props)) {
+    Object.assign(el, { rpcClient: createMockRpcClient() });
+  }
   if (props) {
     Object.assign(el, props);
   }
@@ -56,16 +63,54 @@ async function flush(el: IcSetupWizard): Promise<void> {
   await (el as any).updateComplete;
 }
 
-function priv(el: IcSetupWizard) {
-  return el as unknown as {
-    _currentStep: number;
-    _wizardData: WizardData;
-    _testResult: { status: string; message?: string };
-    _expandedChannels: Set<string>;
-    _yamlPreview: string;
-    _applying: boolean;
-    _applyDone: boolean;
-    _validationErrors: Record<string, string>;
+/**
+ * Test-only state accessor. Post-Phase-44 the view delegates state to
+ * `SetupWizardController`; `priv()` returns a getter/setter facade so
+ * the existing test suite (which read/wrote `_wizardData`, `_currentStep`,
+ * etc.) keeps reading from the controller snapshot and writing through
+ * its action methods.
+ */
+function priv(el: IcSetupWizard): {
+  _currentStep: number;
+  _wizardData: WizardData;
+  _testResult: { status: string; message?: string };
+  _expandedChannels: ReadonlySet<string>;
+  _yamlPreview: string;
+  _applying: boolean;
+  _applyDone: boolean;
+  _validationErrors: Readonly<Record<string, string>>;
+  _catalogProvidersLoading: boolean;
+  _catalogProvidersError: string | undefined;
+  _modelOptions: ReadonlyArray<{ id: string; cost: number }>;
+} {
+  const ctrl = (el as unknown as { _controller: SetupWizardController | null })._controller;
+  if (!ctrl) {
+    throw new Error("priv: controller not yet instantiated (did you forget to set rpcClient?)");
+  }
+  return {
+    get _currentStep() { return ctrl.getSnapshot().currentStep; },
+    set _currentStep(v: number) { ctrl.setCurrentStep(v); },
+    get _wizardData() { return ctrl.getSnapshot().wizardData; },
+    set _wizardData(v: WizardData) {
+      ctrl.updateWizardData(v);
+    },
+    get _testResult() { return ctrl.getSnapshot().testResult; },
+    get _expandedChannels() { return ctrl.getSnapshot().expandedChannels; },
+    set _expandedChannels(v: ReadonlySet<string>) {
+      // Set via a no-op toggleExpand chain — easier: re-derive the diff.
+      const cur = ctrl.getSnapshot().expandedChannels;
+      // Remove platforms that should no longer be expanded.
+      for (const p of cur) if (!v.has(p)) ctrl.toggleExpand(p);
+      // Add platforms that should now be expanded.
+      for (const p of v) if (!cur.has(p)) ctrl.toggleExpand(p);
+    },
+    get _yamlPreview() { return ctrl.getSnapshot().yamlPreview; },
+    get _applying() { return ctrl.getSnapshot().applying; },
+    get _applyDone() { return ctrl.getSnapshot().applyDone; },
+    get _validationErrors() { return ctrl.getSnapshot().validationErrors; },
+    get _catalogProvidersLoading() { return ctrl.getSnapshot().catalogProvidersLoading; },
+    get _catalogProvidersError() { return ctrl.getSnapshot().catalogProvidersError; },
+    get _modelOptions() { return ctrl.getSnapshot().modelOptions; },
   };
 }
 

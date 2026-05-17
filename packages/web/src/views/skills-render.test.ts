@@ -15,13 +15,121 @@
  * @module
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import type { IcSkillsView } from "./skills.js";
+import type { SkillsController, SkillsViewSnapshot } from "./skills-controller.js";
 import "./skills.js";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function priv(el: IcSkillsView): any {
-  return el as unknown as Record<string, unknown>;
+/**
+ * Post-Phase-44 the view delegates state to a controller. These render-branch
+ * tests want to poke at private state directly, so `priv()` installs a stub
+ * controller on first call (attaching a `_stubSnap` updater) and returns a
+ * mutable proxy that writes through that updater. Subsequent `priv()` calls
+ * reuse the same stub via `_stubSnap`, preserving the mutated state.
+ */
+function priv(el: IcSkillsView): {
+  _loadState: "loading" | "loaded" | "error";
+  _error: string;
+  _activeTab: string;
+  _agentIds: string[];
+  _discoveredSkills: unknown[];
+  _recentSkillEvents: unknown[];
+  _renderTabContent(): unknown;
+  _renderRecentActivity(): unknown;
+} {
+  type Mut = SkillsViewSnapshot & Record<string, unknown>;
+  const e = el as unknown as {
+    _controller: SkillsController | null;
+    _stubSnap?: { snap: Mut };
+  };
+  if (!e._stubSnap) {
+    const holder: { snap: Mut } = {
+      snap: {
+        loadState: "loading",
+        error: "",
+        activeTab: "tools",
+        skillsConfig: null,
+        discoveredSkills: [],
+        targetAgentId: "",
+        agentIds: [],
+        skillScope: "all",
+        defaultAgentId: "default",
+        searchQuery: "",
+        importUrl: "",
+        isImportingSkill: false,
+        isUploadingSkill: false,
+        deletingSkill: null,
+        installAgent: "",
+        installScope: "shared",
+        newAllowedSkill: "",
+        newDeniedSkill: "",
+        newPolicyAllow: "",
+        newPolicyDeny: "",
+        recentSkillEvents: [],
+      } as Mut,
+    };
+    e._stubSnap = holder;
+    const stub = {
+      hostConnected: vi.fn(),
+      hostDisconnected: vi.fn(),
+      getSnapshot: () => holder.snap,
+      loadData: vi.fn(),
+      tryLoad: vi.fn(),
+      refreshSkills: vi.fn(),
+      onToolToggle: vi.fn(),
+      onPromptFieldChange: vi.fn(),
+      addToList: vi.fn(),
+      removeFromList: vi.fn(),
+      onAgentChange: vi.fn(),
+      handleFolderSelected: vi.fn(),
+      handleImportSkill: vi.fn(),
+      handleDeleteSkill: vi.fn(),
+      confirmDeleteSkill: vi.fn(),
+      cancelDeleteSkill: vi.fn(),
+      onProfileChange: vi.fn(),
+      addPolicyItem: vi.fn(),
+      removePolicyItem: vi.fn(),
+      getResolvedTools: () => ({ included: [], denied: [] }),
+      setActiveTab: vi.fn((v: string) => { holder.snap = { ...holder.snap, activeTab: v }; el.requestUpdate(); }),
+      setSearchQuery: vi.fn((v: string) => { holder.snap = { ...holder.snap, searchQuery: v }; el.requestUpdate(); }),
+      setSkillScope: vi.fn(),
+      setImportUrl: vi.fn(),
+      setInstallAgent: vi.fn(),
+      setInstallScope: vi.fn(),
+      setNewAllowedSkill: vi.fn(),
+      setNewDeniedSkill: vi.fn(),
+      setNewPolicyAllow: vi.fn(),
+      setNewPolicyDeny: vi.fn(),
+    } as unknown as SkillsController;
+    e._controller = stub;
+  }
+  const holder = e._stubSnap;
+  const update = (partial: Partial<Mut>) => {
+    holder.snap = { ...holder.snap, ...partial };
+    el.requestUpdate();
+  };
+  return {
+    set _loadState(v: "loading" | "loaded" | "error") { update({ loadState: v }); },
+    get _loadState() { return holder.snap.loadState; },
+    set _error(v: string) { update({ error: v }); },
+    get _error() { return holder.snap.error; },
+    set _activeTab(v: string) { update({ activeTab: v }); },
+    get _activeTab() { return holder.snap.activeTab; },
+    set _agentIds(v: string[]) { update({ agentIds: v }); },
+    get _agentIds() { return holder.snap.agentIds as string[]; },
+    set _discoveredSkills(v: unknown[]) { update({ discoveredSkills: v as Mut["discoveredSkills"] }); },
+    get _discoveredSkills() { return holder.snap.discoveredSkills as unknown[]; },
+    set _recentSkillEvents(v: unknown[]) { update({ recentSkillEvents: v as Mut["recentSkillEvents"] }); },
+    get _recentSkillEvents() { return holder.snap.recentSkillEvents as unknown[]; },
+    _renderTabContent() {
+      return (el as unknown as { _renderTabContent(s: SkillsViewSnapshot): unknown })
+        ._renderTabContent(holder.snap);
+    },
+    _renderRecentActivity() {
+      return (el as unknown as { _renderRecentActivity(s: SkillsViewSnapshot): unknown })
+        ._renderRecentActivity(holder.snap);
+    },
+  };
 }
 
 describe("IcSkillsView render() — load-state branches", () => {

@@ -170,34 +170,22 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // Web view + component decomposition (26 files)
   // ============================================================================
   {
-    file: "packages/web/src/views/setup-wizard.ts",
-    lines: 1887,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
-  },
-  {
-    file: "packages/web/src/views/skills.ts",
-    lines: 1854,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
-  },
-  {
     file: "packages/web/src/views/chat-console.ts",
-    lines: 1786,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1163,
+    reason: "Lit web view; RPC orchestration extracted via chat-console-controller.ts. Residual DOM-coupled interaction logic (recording, drag-drop, scroll/focus, slash menu, raf-batched streaming) does not split into a controller without breaking 67 existing @state-driven tests. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/message-center.ts",
-    lines: 1772,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1338,
+    reason: "Lit web view; RPC orchestration extracted via message-center-controller.ts (14 rpc methods moved out). Residual DOM-coupled interaction logic (emoji picker, inline edit, 5 confirmation dialogs, 4 per-platform action panels with dynamic inputs) does not split cleanly into a controller. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/config-editor.ts",
-    lines: 1697,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1214,
+    reason: "Lit web view; RPC orchestration extracted via config-editor-controller.ts (config.read/schema/apply/patch/history/diff/rollback/gc moved out). Residual schema-driven form renderer + YAML diff + tree state + multi-tab sub-views are DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/agents/agent-editor.ts",
