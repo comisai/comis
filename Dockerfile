@@ -34,6 +34,7 @@ COPY packages/channels/package.json    packages/channels/
 COPY packages/skills/package.json      packages/skills/
 COPY packages/cli/package.json         packages/cli/
 COPY packages/daemon/package.json      packages/daemon/
+COPY packages/orchestrator/package.json packages/orchestrator/
 COPY packages/comis/package.json       packages/comis/
 COPY packages/web/package.json         packages/web/
 
@@ -47,8 +48,13 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY packages/ packages/
 COPY tsconfig.base.json ./
 
-# Build all packages (TypeScript compilation + native module rebuild)
-RUN pnpm build
+# Build all packages (TypeScript compilation + native module rebuild).
+# Build everything except @comis/web first so pnpm's topology resolves
+# without web (which lacks a declared @comis/core dep but reads
+# ../core/dist/runtime/system-time.js at vite-config-load time), then
+# build web last when core's dist/ exists on disk.
+RUN pnpm --filter='!@comis/web' -r build && \
+    pnpm --filter @comis/web build
 
 # Build web SPA separately
 RUN cd packages/web && pnpm build
@@ -98,6 +104,17 @@ FROM base-${COMIS_VARIANT} AS final
 
 # Build args for optional packages
 ARG COMIS_DOCKER_APT_PACKAGES=""
+
+# Browser-tool provisioning (mirrors the install.sh flags so the same matrix
+# of capabilities is reachable via Docker). All default off — flip on at
+# build time:
+#   docker build --build-arg COMIS_WITH_BROWSER=1            (stock Chrome)
+#   docker build --build-arg COMIS_WITH_XVFB=1               (+ headed via Xvfb)
+#   docker build --build-arg COMIS_WITH_CLOAKBROWSER=1       (stealth Chromium)
+# Setting XVFB or CLOAKBROWSER implies BROWSER (shared libs are required).
+ARG COMIS_WITH_BROWSER=0
+ARG COMIS_WITH_XVFB=0
+ARG COMIS_WITH_CLOAKBROWSER=0
 
 WORKDIR /app
 
@@ -200,6 +217,97 @@ RUN if getent passwd 1000 >/dev/null 2>&1; then \
     mkdir -p /home/comis/.comis && chown comis:comis /home/comis/.comis && \
     mkdir -p /etc/comis && chown comis:comis /etc/comis
 
+# ─── Browser-tool runtime (optional, gated on build args) ───────────────────
+# Mirrors install.sh's install_browser_deps_linux. Three layers:
+#   1. Shared libs needed by any Chromium-family browser running headless.
+#      (Same list as install.sh; Debian bookworm names — no t64 transition
+#      to worry about on the base image used here.)
+#   2. The browser binary:
+#        * --with-browser   → Google Chrome from Google's official apt repo
+#        * --with-cloakbrowser → CloakBrowser stealth Chromium via npm (the
+#          binary auto-downloads to ~/.cloakbrowser/ on first launch; we
+#          pre-pull it at build time so the container's first browser tool
+#          call doesn't stall on a 200 MB fetch).
+#   3. Xvfb when --with-xvfb is on, so the daemon can run headed against a
+#      virtual display (needed for the hardest anti-bot tier — DataDome,
+#      Kasada, some Cloudflare-managed challenges).
+#
+# Skipped entirely when all three args are 0 (the default) — keeps the
+# baseline image lean.
+RUN if [ "${COMIS_WITH_BROWSER}" = "1" ] || [ "${COMIS_WITH_XVFB}" = "1" ] || [ "${COMIS_WITH_CLOAKBROWSER}" = "1" ]; then \
+        set -eux; \
+        export DEBIAN_FRONTEND=noninteractive; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \
+            libcups2 libxkbcommon0 libxcomposite1 libxdamage1 libxext6 \
+            libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libdrm2 \
+            libasound2 fonts-liberation fonts-noto-color-emoji gnupg; \
+        if [ "${COMIS_WITH_XVFB}" = "1" ]; then \
+            apt-get install -y --no-install-recommends xvfb; \
+        fi; \
+        if [ "${COMIS_WITH_CLOAKBROWSER}" != "1" ]; then \
+            # Stock Chrome via Google's apt repo. Pinned via signed-by keyring
+            # so we don't touch the global trust store.
+            install -d -m 0755 /etc/apt/keyrings; \
+            curl -fsSL --proto '=https' --tlsv1.2 \
+                https://dl.google.com/linux/linux_signing_key.pub \
+                | gpg --dearmor --yes -o /etc/apt/keyrings/google-chrome.gpg; \
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+                > /etc/apt/sources.list.d/google-chrome.list; \
+            apt-get update; \
+            apt-get install -y --no-install-recommends google-chrome-stable; \
+            # Pre-create Chrome's out-of-profile write paths and chown to comis
+            # so first launch doesn't fail trying to mkdir under a read-only
+            # bind-mount (matches register_service_systemd dir setup).
+            mkdir -p /home/comis/.config/google-chrome \
+                     /home/comis/.local/share/applications \
+                     /home/comis/.config/comis/browser; \
+        fi; \
+        if [ "${COMIS_WITH_CLOAKBROWSER}" = "1" ]; then \
+            # Install the npm wrapper system-wide, then run `cloakbrowser
+            # install` as the comis user so the binary cache lands at
+            # /home/comis/.cloakbrowser/ — where chrome-detection.ts looks
+            # for it.
+            mkdir -p /opt/cloakbrowser-wrapper; \
+            chown -R comis:comis /opt/cloakbrowser-wrapper; \
+            printf '%s\n' '{"name":"cloakbrowser-wrapper","version":"0.0.0","private":true}' \
+                > /opt/cloakbrowser-wrapper/package.json; \
+            chown comis:comis /opt/cloakbrowser-wrapper/package.json; \
+            su - comis -c "cd /opt/cloakbrowser-wrapper && npm install --no-audit --no-fund --silent cloakbrowser playwright-core"; \
+            # Pre-pull the stealth Chromium binary (~140-210 MB depending on
+            # release). Filter the per-MB progress chatter so the build log
+            # stays readable.
+            su - comis -c "/opt/cloakbrowser-wrapper/node_modules/.bin/cloakbrowser install 2>&1 | grep -vE 'Download progress:' || true"; \
+            mkdir -p /home/comis/.config/comis/browser /home/comis/.config/chromium; \
+            chown -R comis:comis /home/comis/.cloakbrowser /home/comis/.config; \
+        fi; \
+        rm -rf /var/cache/apt/archives/*.deb /var/lib/apt/lists/*; \
+    fi
+
+# Propagate the build choice to the runtime entrypoint. The shim at
+# /usr/local/bin/comis-entrypoint.sh checks this to decide whether to start
+# Xvfb. Defaulting to "0" keeps zero-arg image builds identical to before.
+ENV COMIS_WITH_XVFB="${COMIS_WITH_XVFB}"
+
+# Seed a browser config block when any browser flag is set. Same shape as
+# maybe_seed_browser_config in install.sh — headless=false when Xvfb is
+# present so the daemon uses the virtual display. The daemon reads its
+# config from /home/comis/.comis/config.yaml at startup; if a user mounts
+# their own config, theirs wins (we only write if the file doesn't exist).
+RUN if [ "${COMIS_WITH_BROWSER}" = "1" ] || [ "${COMIS_WITH_XVFB}" = "1" ] || [ "${COMIS_WITH_CLOAKBROWSER}" = "1" ]; then \
+        if [ ! -f /home/comis/.comis/config.yaml ]; then \
+            HL="true"; \
+            [ "${COMIS_WITH_XVFB}" = "1" ] && HL="false"; \
+            SRC="--with-browser"; \
+            [ "${COMIS_WITH_CLOAKBROWSER}" = "1" ] && SRC="--with-cloakbrowser"; \
+            [ "${COMIS_WITH_XVFB}" = "1" ] && SRC="${SRC} --with-xvfb"; \
+            printf '# Browser tool — installed via %s\n# noSandbox: required because the daemon container runs without\n# CAP_SYS_ADMIN; the Chromium setuid sandbox cannot elevate anyway.\nbrowser:\n  enabled: true\n  noSandbox: true\n  headless: %s\n' \
+                "${SRC}" "${HL}" > /home/comis/.comis/config.yaml; \
+            chown comis:comis /home/comis/.comis/config.yaml; \
+        fi; \
+    fi
+
 # Copy built application
 COPY --from=runtime-assets --chown=comis:comis /app /app
 
@@ -209,6 +317,12 @@ COPY --from=build --chown=comis:comis /build/packages/web/dist /app/packages/web
 # Create CLI symlink
 RUN ln -sf /app/packages/cli/dist/cli.js /usr/local/bin/comis && \
     chmod +x /app/packages/cli/dist/cli.js
+
+# Install the entrypoint shim. Responsible for starting Xvfb (when the image
+# was built with --with-xvfb) before exec'ing the daemon. Equivalent to the
+# comis-xvfb.service companion unit on the systemd install path.
+COPY --chown=root:root docker/comis-entrypoint.sh /usr/local/bin/comis-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/comis-entrypoint.sh
 
 # Switch to non-root user
 USER comis
@@ -272,10 +386,11 @@ EXPOSE 4766
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -sf http://127.0.0.1:4766/health || exit 1
 
-# Use dumb-init for proper PID 1 signal handling
-ENTRYPOINT ["dumb-init", "--"]
+# Use dumb-init for proper PID 1 signal handling, then the shim which
+# optionally starts Xvfb before exec'ing the daemon (CMD).
+ENTRYPOINT ["dumb-init", "--", "/usr/local/bin/comis-entrypoint.sh"]
 
-# Start daemon
+# Start daemon (the shim execs whatever is passed; this is the default).
 CMD ["node", "packages/daemon/dist/daemon.js"]
 
 # OCI metadata

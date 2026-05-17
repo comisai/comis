@@ -1,0 +1,177 @@
+# ============================================================================
+# Dockerfile.install — Comis container built via the bare-metal installer
+# ============================================================================
+#
+# Builds a Comis image by running website/public/install.sh inside a fresh
+# Ubuntu 24.04 base — the exact same code path operators hit on a VPS via
+#   curl -fsSL https://comis.ai/install.sh | bash
+# This validates the installer end-to-end in CI and gives operators a
+# reproducible "what would install.sh do on my VPS" container.
+#
+# Differs from the main Dockerfile:
+#   * Source of truth is install.sh (not the multi-stage TS build).
+#     Any installer bug surfaces here first.
+#   * Browser/Xvfb/cloak provisioning runs through install.sh's logic
+#     (apt repo setup, t64 transition handling, cloakbrowser pre-pull) — so
+#     we exercise the bare-VPS code path verbatim.
+#
+# Build args mirror the install.sh CLI flags 1:1:
+#
+#   docker build -f Dockerfile.install \
+#     --build-arg COMIS_WITH_BROWSER=1                  \  # stock Chrome
+#     --build-arg COMIS_WITH_XVFB=1                     \  # + headed via Xvfb
+#     --build-arg COMIS_WITH_CLOAKBROWSER=1             \  # stealth Chromium
+#     -t comis-installed:dev .
+
+# Global ARGs — declared before any FROM so they can be used in FROM lines.
+ARG COMIS_INSTALL_NODE_IMAGE="node:22-bookworm@sha256:9059d9d7db987b86299e052ff6630cd95e5a770336967c21110e53289a877433"
+ARG COMIS_INSTALL_BASE_IMAGE="ubuntu:24.04"
+
+# ── Stage 1: build the comisai npm tarball ────────────────────────────────
+# Same node version as the main Dockerfile so the workspace build is
+# byte-identical to a release-time pack.
+FROM ${COMIS_INSTALL_NODE_IMAGE} AS packer
+
+WORKDIR /build
+RUN corepack enable && corepack prepare pnpm@10.7.1 --activate
+
+# Workspace manifests first (layer caching)
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY packages/shared/package.json      packages/shared/
+COPY packages/core/package.json        packages/core/
+COPY packages/infra/package.json       packages/infra/
+COPY packages/memory/package.json      packages/memory/
+COPY packages/gateway/package.json     packages/gateway/
+COPY packages/scheduler/package.json   packages/scheduler/
+COPY packages/agent/package.json       packages/agent/
+COPY packages/channels/package.json    packages/channels/
+COPY packages/skills/package.json      packages/skills/
+COPY packages/cli/package.json         packages/cli/
+COPY packages/daemon/package.json      packages/daemon/
+COPY packages/comis/package.json       packages/comis/
+COPY packages/web/package.json         packages/web/
+COPY packages/orchestrator/package.json packages/orchestrator/
+
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    NODE_OPTIONS="--max-old-space-size=2048" \
+    pnpm install --frozen-lockfile
+
+COPY packages/ packages/
+COPY tsconfig.base.json ./
+# Build everything except @comis/web first, then web last — same rationale
+# as the main Dockerfile (web reads ../core/dist/... at config-load time but
+# doesn't declare @comis/core as a workspace dep, so pnpm's topology can't
+# order them).
+RUN pnpm --filter='!@comis/web' -r build && \
+    pnpm --filter @comis/web build
+
+# packages/comis/scripts/prepack.js bundles @comis/* into node_modules/ and
+# rewrites workspace:* refs to literal versions — same shape as the npm
+# release tarball.
+RUN cd packages/comis && npm pack && mv comisai-*.tgz /comisai.tgz
+
+# ── Stage 2: run the bare-VPS installer ───────────────────────────────────
+FROM ${COMIS_INSTALL_BASE_IMAGE} AS install
+
+ARG COMIS_WITH_BROWSER=0
+ARG COMIS_WITH_XVFB=0
+ARG COMIS_WITH_CLOAKBROWSER=0
+
+# Minimal prerequisites the installer needs to bootstrap. install.sh handles
+# the rest (Node, apt deps, browser binaries, t64 transition pkgs).
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl wget ca-certificates sudo lsb-release \
+        gnupg procps iproute2 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Pre-create the comis user (UID/GID 1000 for parity with the main Comis
+# image). install.sh normally creates this user inside its
+# should_create_dedicated_user branch — but that branch requires systemd,
+# which Docker doesn't run. Creating the user here and running the installer
+# as them gives us the same end state (Comis + cloakbrowser binaries land
+# under /home/comis/) without standing up systemd.
+#
+# Ubuntu 24.04 ships a default `ubuntu` user at UID/GID 1000 — rename it to
+# `comis` if present; create from scratch otherwise.
+RUN if getent passwd 1000 >/dev/null 2>&1; then \
+        EXISTING=$(getent passwd 1000 | cut -d: -f1); \
+        usermod -l comis -d /home/comis -m "$EXISTING"; \
+        groupmod -n comis "$(getent group 1000 | cut -d: -f1)"; \
+    else \
+        groupadd --gid 1000 comis && \
+        useradd --uid 1000 --gid comis --shell /bin/bash --create-home comis; \
+    fi
+
+# Password-less sudo for the comis user during install only — install.sh's
+# non-root apt/dnf/yum paths shell out to `sudo apt-get install …`. We strip
+# this after the install so the runtime container has no sudo escalation.
+RUN echo "comis ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/comis-installer && \
+    chmod 0440 /etc/sudoers.d/comis-installer
+
+COPY website/public/install.sh /tmp/install.sh
+COPY --from=packer /comisai.tgz /tmp/comisai.tgz
+RUN chmod +x /tmp/install.sh /tmp/comisai.tgz && \
+    chown comis:comis /tmp/install.sh /tmp/comisai.tgz
+
+# Run install.sh as the comis user. The installer's non-root branch handles:
+#   * install_node (apt via sudo)
+#   * install_git, install_uv, install_rust
+#   * install_browser_deps_linux  (apt deps + Chrome via Google's apt repo,
+#                                  OR skipped when --with-cloakbrowser)
+#   * install_comis (npm install -g into ~/.npm-global)
+#   * install_cloakbrowser (binary cached at ~/.cloakbrowser/<version>/)
+#   * register_service (no-op due to --service none)
+#
+# Flags:
+#   --service none                 systemd isn't running in Docker
+#   --no-prompt --no-init          non-interactive build
+#   --no-autostart --no-service-start  belt-and-suspenders (--service none
+#                                  already skips both, but explicit is good)
+#   --tarball /tmp/comisai.tgz     install from the stage-1 build, not npm
+RUN set -eux; \
+    INSTALLER_ARGS="--service none --no-prompt --no-init --no-autostart --no-service-start --tarball /tmp/comisai.tgz"; \
+    [ "${COMIS_WITH_BROWSER}" = "1" ] && INSTALLER_ARGS="${INSTALLER_ARGS} --with-browser"; \
+    [ "${COMIS_WITH_XVFB}" = "1" ] && INSTALLER_ARGS="${INSTALLER_ARGS} --with-xvfb"; \
+    [ "${COMIS_WITH_CLOAKBROWSER}" = "1" ] && INSTALLER_ARGS="${INSTALLER_ARGS} --with-cloakbrowser"; \
+    echo "+ install.sh ${INSTALLER_ARGS}"; \
+    su - comis -c "bash /tmp/install.sh ${INSTALLER_ARGS}"
+
+# Strip the temporary sudo grant — the runtime container should not have
+# escalation paths. The daemon runs as the unprivileged comis user.
+RUN rm -f /etc/sudoers.d/comis-installer && \
+    rm -f /tmp/install.sh /tmp/comisai.tgz
+
+# Entrypoint shim — starts Xvfb when built with --with-xvfb, then execs
+# whatever CMD specifies. Mirrors the wiring done by the main Dockerfile.
+COPY --chown=root:root docker/comis-entrypoint.sh /usr/local/bin/comis-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/comis-entrypoint.sh
+
+# Carry the build choice to the runtime so the shim knows whether to start
+# Xvfb. Defaulting to "0" keeps no-flag images identical to a stock install.
+ENV COMIS_WITH_XVFB="${COMIS_WITH_XVFB}" \
+    NODE_ENV=production \
+    COMIS_DATA_DIR=/home/comis/.comis \
+    COMIS_GATEWAY_HOST=0.0.0.0
+
+# Drop to the comis user the installer created.
+USER comis
+WORKDIR /home/comis
+
+VOLUME ["/home/comis/.comis"]
+EXPOSE 4766
+
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -sf http://127.0.0.1:4766/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/comis-entrypoint.sh"]
+# The installer drops the daemon under ~comis/.npm-global/. Pin the absolute
+# path here so CMD works whatever npm prefix layout the host happens to use.
+CMD ["node", "/home/comis/.npm-global/lib/node_modules/comisai/node_modules/@comis/daemon/dist/daemon.js"]
+
+LABEL org.opencontainers.image.source="https://github.com/comisai/comis" \
+      org.opencontainers.image.title="Comis (installer-built)" \
+      org.opencontainers.image.description="Comis container built via install.sh — same code path as a bare VPS install" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.vendor="Comis"

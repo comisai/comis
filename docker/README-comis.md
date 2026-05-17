@@ -128,6 +128,84 @@ Secrets are auto-redacted in Comis logs (3 levels deep) — but never log them y
 
 ---
 
+## Browser tool (optional)
+
+Off by default. Three build args mirror the bare-VPS `install.sh` flags:
+
+| Build arg | What it adds |
+|---|---|
+| `COMIS_WITH_BROWSER=1` | Google Chrome + Chromium shared libs. Headless by default. |
+| `COMIS_WITH_XVFB=1` | Implies `COMIS_WITH_BROWSER`. Adds Xvfb so the daemon can run headed against a virtual display (needed for sites that detect headless mode). Entrypoint starts Xvfb on `:99` before the daemon. Seeds `headless: false` in the default config. |
+| `COMIS_WITH_CLOAKBROWSER=1` | Implies `COMIS_WITH_BROWSER`. Installs CloakBrowser (stealth Chromium with source-level fingerprint patches) instead of Google Chrome. `findChrome()` auto-picks the cloak binary. |
+
+Build a stealth-capable image:
+
+```bash
+# Stock Chrome — works for most sites
+docker build \
+  --build-arg COMIS_WITH_BROWSER=1 \
+  -t comisai/comis:browser .
+
+# Headed via Xvfb — pass BrowserScan/bot.incolumitas
+docker build \
+  --build-arg COMIS_WITH_XVFB=1 \
+  -t comisai/comis:xvfb .
+
+# Stealth Chromium — bypass Cloudflare Turnstile, FingerprintJS,
+# Reddit's secondary fingerprint check on non-datacenter IPs
+docker build \
+  --build-arg COMIS_WITH_CLOAKBROWSER=1 \
+  -t comisai/comis:cloak .
+
+# Full stack — stealth Chromium + headed for the hardest tier
+docker build \
+  --build-arg COMIS_WITH_CLOAKBROWSER=1 \
+  --build-arg COMIS_WITH_XVFB=1 \
+  -t comisai/comis:cloak-xvfb .
+```
+
+Run identically to the no-browser image; the daemon detects the binary at startup and uses it via CDP. No env vars needed.
+
+```bash
+docker run -d \
+  --name comis \
+  --restart unless-stopped \
+  -p 127.0.0.1:4766:4766 \
+  -v comis-data:/home/comis/.comis \
+  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  comisai/comis:cloak-xvfb
+```
+
+**Image-size impact:**
+
+| Image | Approx size |
+|---|---|
+| Base (no browser) | 700 MB (slim) / 1 GB (default) |
+| `+browser`  (Google Chrome) | +400 MB |
+| `+xvfb` | +15 MB on top of `+browser` |
+| `+cloakbrowser` | +500 MB (CloakBrowser binary cache, two versions kept for auto-rollback) |
+
+**Caveats:**
+
+- **Datacenter IPs (AWS, DigitalOcean, Hetzner, Hostinger, …)** are pre-blocked by Reddit and many social sites regardless of browser fingerprint. CloakBrowser does not provide a proxy. If your container runs on a datacenter ASN, you'll also need a residential proxy.
+- **CloakBrowser license:** free for self-hosted use. Bundling into a hosted service distributed to third-party customers requires an OEM license from CloakHQ. See [BINARY-LICENSE.md](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md).
+- **Xvfb** runs as the same `comis` user, inside the container's own namespace — no host-level X server is involved.
+
+### Installer-built image (alternative path)
+
+The repo also ships `Dockerfile.install` — a fresh Ubuntu 24.04 image that runs `install.sh` end-to-end inside the container. Same flags, same end state, but exercises the bare-VPS install path verbatim. Useful for CI testing the installer or for operators who want strict parity with their VPS deploy:
+
+```bash
+docker build -f Dockerfile.install \
+  --build-arg COMIS_WITH_CLOAKBROWSER=1 \
+  --build-arg COMIS_WITH_XVFB=1 \
+  -t comis-installed:cloak-xvfb .
+```
+
+The main `Dockerfile` is the production-grade path (multi-stage, smaller). `Dockerfile.install` is the validation path.
+
+---
+
 ## Security
 
 - Runs as non-root user `comis` (UID/GID 1000)

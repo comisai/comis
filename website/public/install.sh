@@ -3821,9 +3821,10 @@ maybe_seed_browser_config() {
 
     local headless_value="true"
     local source_flag="--with-browser"
+    [[ "$WITH_CLOAKBROWSER" == "1" ]] && source_flag="--with-cloakbrowser"
     if [[ "$WITH_XVFB" == "1" ]]; then
         headless_value="false"
-        source_flag="--with-xvfb"
+        source_flag="${source_flag} --with-xvfb"
     fi
 
     local block
@@ -3849,16 +3850,22 @@ YAML
     fi
     printf '%s\n' "$block" >> "$tmp"
 
-    if [[ -f "$cfg" ]]; then
-        maybe_sudo install -m 0600 "$tmp" "$cfg"
+    # Two paths:
+    #   * Non-root install (operator or reexec'd comis user, or --service
+    #     none / Docker): write directly. Do NOT route through maybe_sudo —
+    #     that would unnecessarily escalate via sudo and create a root-owned
+    #     file in the user's own HOME (broken under Docker, and surprising
+    #     elsewhere). Plain `install` inherits the current user's ownership.
+    #   * Root install with a dedicated COMIS_USER (systemd dedicated-user
+    #     flow): write as root with -o $COMIS_SVC_USER so the daemon can
+    #     read it.
+    if ! is_root; then
+        install -m 0600 "$tmp" "$cfg"
+    elif [[ -n "${COMIS_SVC_USER:-}" ]] && comis_user_exists; then
+        install -m 0600 -o "$COMIS_SVC_USER" -g "${COMIS_SVC_GROUP:-$COMIS_SVC_USER}" "$tmp" "$cfg" 2>/dev/null || \
+            install -m 0600 "$tmp" "$cfg"
     else
-        maybe_sudo install -m 0600 -o "$COMIS_SVC_USER" -g "$COMIS_SVC_GROUP" "$tmp" "$cfg" 2>/dev/null || \
-            maybe_sudo install -m 0600 "$tmp" "$cfg"
-    fi
-    # When writing as root, restore comis-user ownership so the daemon can
-    # read its own config.
-    if is_root && [[ -n "${COMIS_SVC_USER:-}" ]] && comis_user_exists; then
-        maybe_sudo chown "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" "$cfg" 2>/dev/null || true
+        install -m 0600 "$tmp" "$cfg"
     fi
     ui_success "Seeded browser config block in ${cfg}"
 }
@@ -4842,6 +4849,23 @@ main() {
     # finds the binary at ~/.cloakbrowser/.
     if [[ "$OS" == "linux" && "$WITH_CLOAKBROWSER" == "1" ]]; then
         install_cloakbrowser || true
+    fi
+
+    # Seed the browser config block here (in addition to the systemd-scope
+    # call inside register_service_systemd) so that --service none / Docker
+    # paths also get config.yaml populated. maybe_seed_browser_config is
+    # idempotent: it skips when a `browser:` block already exists, and runs
+    # only when --with-browser / --with-cloakbrowser / --with-xvfb is set.
+    if [[ "$WITH_BROWSER" == "1" ]] && [[ "$COMIS_REEXEC" != "1" ]]; then
+        # In the dedicated-user root flow, COMIS_CONFIG_FILE is set by
+        # resolve_service_template_vars (called from register_service). When
+        # --service none is in play that doesn't run, so we resolve the
+        # config path here too. Default to the current user's ~/.comis path.
+        if [[ -z "${COMIS_CONFIG_FILE:-}" ]]; then
+            COMIS_CONFIG_FILE="${HOME}/.comis/config.yaml"
+            mkdir -p "${HOME}/.comis" 2>/dev/null || true
+        fi
+        maybe_seed_browser_config
     fi
 
     # Register the daemon with the selected service manager.
