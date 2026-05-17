@@ -518,14 +518,32 @@ export class IcModelsView extends LitElement {
   /** Controller owns RPC orchestration (thin façade pattern — view keeps @state + SSE). */
   private _controller: ModelsController | null = null;
 
+  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) controller; mirrors `dashboard.ts:_ensureController()`
+   *  so call sites can use `const ctrl = this._ensureController(); if (!ctrl) return;`
+   *  instead of unsafe `this._controller!` non-null assertions. Detects rpcClient
+   *  swaps and recreates so the controller never holds a stale client. */
+  private _ensureController(): ModelsController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
+    if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
+      this._controller = createModelsController(this, this.rpcClient);
+    }
+    return this._controller;
+  }
+
   override connectedCallback(): void {
     super.connectedCallback();
     // Note: _loadData() is NOT called here -- rpcClient is typically
     // null at this point. The updated() callback handles loading once
     // the client property is set.
-    if (this.rpcClient) {
-      this._controller = createModelsController(this, this.rpcClient);
-    }
+    this._ensureController();
     this._initSse();
   }
 
@@ -546,9 +564,7 @@ export class IcModelsView extends LitElement {
       this._initSse();
     }
     if (changed.has("rpcClient") && this.rpcClient) {
-      if (!this._controller) {
-        this._controller = createModelsController(this, this.rpcClient);
-      }
+      this._ensureController();
       this._rpcStatusUnsub?.();
       this._rpcStatusUnsub = null;
 
@@ -639,11 +655,16 @@ export class IcModelsView extends LitElement {
 
       // Load per-agent model overrides in the background (supplementary)
       (async () => {
+        const controller = this._ensureController();
+        if (!controller) {
+          this._agents = [];
+          return;
+        }
         try {
-          const agentsList = await this._controller!.listAgents();
+          const agentsList = await controller.listAgents();
           const agentIds = (agentsList.agents ?? []).slice(0, 20);
           const agentDetails = await Promise.allSettled(
-            agentIds.map((id) => this._controller!.getAgent(id)),
+            agentIds.map((id) => controller.getAgent(id)),
           );
           this._agents = agentDetails
             .filter((r): r is PromiseFulfilledResult<{ agentId: string; config: { provider?: string; model?: string } }> =>

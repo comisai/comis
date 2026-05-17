@@ -8,6 +8,13 @@ import { systemDateFrom } from "@comis/core";
 import {
   createWorkspaceManagerController,
   type WorkspaceManagerController,
+  // Canonical DTOs -- single source of truth shared with the controller.
+  // If the daemon contract evolves, the controller's exports surface a
+  // compile error at the view boundary rather than silently drifting.
+  type WorkspaceStatusDto,
+  type WorkspaceDirEntry,
+  type GitStatusDto,
+  type GitCommitDto,
 } from "./workspace-manager-controller.js";
 
 // Side-effect imports to register custom elements used in template
@@ -18,43 +25,6 @@ import "../../components/feedback/ic-confirm-dialog.js";
 import "../../components/feedback/ic-empty-state.js";
 import "../../components/shell/ic-skeleton-view.js";
 import "../../components/data/ic-relative-time.js";
-
-/** Workspace status returned by workspace.status RPC. */
-interface WorkspaceStatusDto {
-  dir: string;
-  exists: boolean;
-  files: Array<{ name: string; present: boolean; sizeBytes?: number }>;
-  hasGitRepo: boolean;
-  isBootstrapped: boolean;
-  state?: { version: number; bootstrapSeededAt?: number; onboardingCompletedAt?: number };
-}
-
-/** Single entry in a workspace subdirectory listing. */
-interface WorkspaceDirEntry {
-  name: string;
-  type: "file" | "directory";
-  sizeBytes?: number;
-  modifiedAt?: number;
-}
-
-/** Git status returned by workspace.git.status RPC. */
-interface GitStatusDto {
-  branch: string;
-  clean: boolean;
-  entries: Array<{
-    path: string;
-    status: "modified" | "added" | "deleted" | "untracked" | "renamed" | "copied";
-    staged: boolean;
-  }>;
-}
-
-/** Single commit entry returned by workspace.git.log RPC. */
-interface GitCommitDto {
-  sha: string;
-  author: string;
-  date: string;
-  message: string;
-}
 
 /** Known workspace subdirectories. */
 const WORKSPACE_SUBDIRS = ["projects", "scripts", "documents", "media", "data", "output"] as const;

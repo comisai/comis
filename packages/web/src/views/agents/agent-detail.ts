@@ -401,9 +401,19 @@ export class IcAgentDetail extends LitElement {
   /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
   private _controller: AgentDetailController | null = null;
 
-  /** Lazily instantiate controller; matches the dashboard.ts Wave-4 pattern. */
+  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
+   *  Wave-4 pattern, with rpcClient-swap detection. */
   private _ensureController(): AgentDetailController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
     if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
       this._controller = createAgentDetailController(this, this.rpcClient);
     }
     return this._controller;

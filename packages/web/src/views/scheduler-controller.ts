@@ -103,7 +103,9 @@ export function createSchedulerController(
     },
 
     getStatus(agentId: string): Promise<CronStatusResult> {
-      return rpcClient.call<CronStatusResult>("cron.status", { _agentId: agentId });
+      return rpcClient.call<CronStatusResult>("cron.status", {
+        _agentId: agentId || undefined,
+      });
     },
 
     getHeartbeatStates(): Promise<HeartbeatStatesResult> {
@@ -116,7 +118,7 @@ export function createSchedulerController(
     ): Promise<CronAddResult> {
       return rpcClient.call<CronAddResult>("cron.add", {
         ...jobInput,
-        _agentId: agentId,
+        _agentId: agentId || undefined,
         _deliveryTarget: jobInput.deliveryTarget,
       });
     },
@@ -126,15 +128,21 @@ export function createSchedulerController(
       agentId: string,
       jobInput: Record<string, unknown>,
     ): Promise<void> {
+      // Spread jobInput FIRST so the positional jobId / _agentId arguments
+      // win over any same-named keys an upstream caller may have included
+      // in jobInput (defensive sanitization -- matches addJob's order).
       await rpcClient.call("cron.update", {
-        jobId,
-        _agentId: agentId,
         ...jobInput,
+        jobId,
+        _agentId: agentId || undefined,
       });
     },
 
     async removeJob(jobId: string, agentId: string): Promise<void> {
-      await rpcClient.call("cron.remove", { jobId, _agentId: agentId });
+      await rpcClient.call("cron.remove", {
+        jobId,
+        _agentId: agentId || undefined,
+      });
     },
 
     async setConfig(section: string, path: string, value: unknown): Promise<void> {
@@ -142,11 +150,14 @@ export function createSchedulerController(
     },
 
     async runJob(jobName: string, agentId: string): Promise<void> {
-      await rpcClient.call("cron.run", { jobName, _agentId: agentId });
+      await rpcClient.call("cron.run", {
+        jobName,
+        _agentId: agentId || undefined,
+      });
     },
 
     async triggerHeartbeat(agentId: string): Promise<void> {
-      await rpcClient.call("heartbeat.trigger", { agentId });
+      await rpcClient.call("heartbeat.trigger", { agentId: agentId || undefined });
     },
   };
 

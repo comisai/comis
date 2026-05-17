@@ -255,11 +255,29 @@ export class IcChatConsole extends LitElement {
 
   @state() private _controller: ChatConsoleController | null = null;
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    if (this.rpcClient && !this._controller) {
+  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) controller; mirrors `dashboard.ts:_ensureController()`
+   *  so call sites can use `const ctrl = this._ensureController(); if (!ctrl) return;`
+   *  pattern instead of unsafe `this._controller!` non-null assertions. Detects
+   *  rpcClient swaps and recreates so the controller never holds a stale client. */
+  private _ensureController(): ChatConsoleController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
+    if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
       this._controller = createChatConsoleController(this, this.rpcClient);
     }
+    return this._controller;
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._ensureController();
     this._setupEventListeners();
   }
 
@@ -292,9 +310,7 @@ export class IcChatConsole extends LitElement {
     }
     // Load data when rpcClient becomes available (handles late property binding)
     if (changed.has("rpcClient") && this.rpcClient) {
-      if (!this._controller) {
-        this._controller = createChatConsoleController(this, this.rpcClient);
-      }
+      this._ensureController();
       this._rpcStatusUnsub?.();
       if (this.rpcClient.status === "connected") {
         this._initialLoad();
@@ -440,7 +456,8 @@ export class IcChatConsole extends LitElement {
   }
 
   private async _loadSessions(): Promise<void> {
-    if (!this.rpcClient) {
+    const controller = this._ensureController();
+    if (!controller) {
       this._loading = false;
       return;
     }
@@ -448,7 +465,7 @@ export class IcChatConsole extends LitElement {
       // Closed-union retype: session.list returns kind ∈
       // {"dm", "group", "sub-agent"} per session-handlers.ts:413-417 derivation
       // (parentSessionKey -> "sub-agent" | guildId -> "group" | else "dm").
-      const sessions = await this._controller!.listSessions();
+      const sessions = await controller.listSessions();
       this._sessions = sessions.map((s) => ({
         key: s.sessionKey,
         agentId: s.agentId,
@@ -709,12 +726,17 @@ export class IcChatConsole extends LitElement {
   }
 
   private async _transcribeBlob(blob: Blob): Promise<void> {
+    const controller = this._ensureController();
+    if (!controller) {
+      IcToast.show("Transcription unavailable -- not connected", "error");
+      return;
+    }
     this._transcribing = true;
     try {
       const bytes = new Uint8Array(await blob.arrayBuffer());
       let binary = "";
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const text = await this._controller!.transcribeAudio(btoa(binary), "webm");
+      const text = await controller.transcribeAudio(btoa(binary), "webm");
       if (text) this._inputValue += (this._inputValue ? " " : "") + text;
     } catch {
       IcToast.show("Transcription failed", "error");

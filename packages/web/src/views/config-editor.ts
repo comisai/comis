@@ -255,11 +255,29 @@ export class IcConfigEditor extends LitElement {
   /** RPC-orchestration controller — created when rpcClient becomes available. */
   @state() private _controller: ConfigEditorController | null = null;
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    if (this.rpcClient && !this._controller) {
+  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) controller; mirrors `dashboard.ts:_ensureController()`
+   *  so call sites can use `const ctrl = this._ensureController(); if (!ctrl) return;`
+   *  instead of unsafe `this._controller!` non-null assertions. Detects rpcClient
+   *  swaps and recreates so the controller never holds a stale client. */
+  private _ensureController(): ConfigEditorController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
+    if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
       this._controller = createConfigEditorController(this, this.rpcClient);
     }
+    return this._controller;
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._ensureController();
     // Listen for external config changes via SSE
     this._configPatchedHandler = () => {
       if (this._dataLoaded && !this._dirty) this._tryLoad();
@@ -295,9 +313,7 @@ export class IcConfigEditor extends LitElement {
 
   override updated(changed: Map<string, unknown>): void {
     if (changed.has("rpcClient") && this.rpcClient) {
-      if (!this._controller) {
-        this._controller = createConfigEditorController(this, this.rpcClient);
-      }
+      this._ensureController();
       this._tryLoad();
     }
   }
@@ -584,7 +600,9 @@ export class IcConfigEditor extends LitElement {
   /* ---------------------------------------------------------------- */
 
   private async _onApply(): Promise<void> {
-    if (!this.rpcClient || !this._dirty) return;
+    if (!this._dirty) return;
+    const controller = this._ensureController();
+    if (!controller) return;
 
     this._applying = true;
     let value: unknown;
@@ -605,7 +623,7 @@ export class IcConfigEditor extends LitElement {
     this._rollbackSnapshot = structuredClone(this._configData) as Record<string, unknown>;
 
     try {
-      await this._controller!.applyConfig({
+      await controller.applyConfig({
         section: this._selectedSection,
         value,
       });
@@ -613,7 +631,7 @@ export class IcConfigEditor extends LitElement {
       this._dirty = false;
 
       // Reload config data
-      const configResult = await this._controller!.readConfig();
+      const configResult = await controller.readConfig();
       this._configData = configResult.config;
       this._loadSectionState();
     } catch (err) {

@@ -463,11 +463,21 @@ export class IcMcpManagement extends LitElement {
   /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
   private _controller: McpManagementController | null = null;
 
-  /** Lazily instantiate controller; matches the dashboard.ts Wave-4 pattern so
-   *  test code that bypasses Lit's reactive cycle (priv(el).rpcClient = mock
-   *  then immediately call methods) still constructs the controller. */
+  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
+   *  Wave-4 pattern so test code that bypasses Lit's reactive cycle
+   *  (priv(el).rpcClient = mock then immediately call methods) still
+   *  constructs the controller. Detects rpcClient swaps and recreates. */
   private _ensureController(): McpManagementController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
     if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
       this._controller = createMcpManagementController(this, this.rpcClient);
     }
     return this._controller;

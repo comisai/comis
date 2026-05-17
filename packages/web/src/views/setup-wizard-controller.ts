@@ -519,14 +519,34 @@ export function createSetupWizardController(
 
   /* ------------------ Public controller ------------------ */
 
+  // Track the rpcClient.onStatusChange unsubscribe handle so we can clean
+  // up if the host disconnects before the initial provider load fires.
+  let _rpcStatusUnsub: (() => void) | null = null;
+
   const controller: SetupWizardController = {
     hostConnected(): void {
-      // Fire-and-forget; loadCatalogProviders sets its own loading/error state.
-      void controller.loadCatalogProviders();
+      // Defer loadCatalogProviders until rpcClient is actually connected --
+      // hostConnected fires synchronously when the view mounts, but the
+      // WebSocket may still be in CONNECTING state (app-controller
+      // _completeInit() calls rpcClient.connect() milliseconds earlier).
+      // Calling models.list_providers pre-OPEN surfaces a Retry placeholder
+      // on first paint. Matches the skills-controller.tryLoad() pattern.
+      if (rpcClient.status === "connected") {
+        void controller.loadCatalogProviders();
+      } else {
+        _rpcStatusUnsub = rpcClient.onStatusChange((status) => {
+          if (status === "connected") {
+            void controller.loadCatalogProviders();
+            _rpcStatusUnsub?.();
+            _rpcStatusUnsub = null;
+          }
+        });
+      }
     },
 
     hostDisconnected(): void {
-      // No timers/subs to cancel.
+      _rpcStatusUnsub?.();
+      _rpcStatusUnsub = null;
     },
 
     getSnapshot(): SetupWizardSnapshot {
