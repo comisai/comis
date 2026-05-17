@@ -482,6 +482,18 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
     // fallback).
     "packages/web/src/views/memory-inspector.ts",
+    // observe-view.ts (Wave 3 / Task 4): RPC extraction completed via
+    // observe-view-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates daemon I/O to the controller (obs.reset moved out).
+    // Higher-level data and tab-section refreshes flow via SSE events
+    // (observability:metrics/token_usage/reset) + apiClient wrappers,
+    // which the boundary regex doesn't match. Residual ≤1570L is
+    // dominated by 6 tab renderers (overview/billing/diagnostics/
+    // delivery/channels/health) + sparkline + per-tab stat-card grids +
+    // filterable delivery-trace table + agent/channel health row grids
+    // + reset-confirm dialog — all tightly DOM-coupled. Auto-acceptable
+    // per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/observe-view.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

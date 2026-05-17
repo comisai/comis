@@ -207,9 +207,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/observe-view.ts",
-    lines: 1553,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1567,
+    reason: "Lit web view; RPC orchestration extracted via observe-view-controller.ts (obs.reset moved out). Higher-level data and tab-section refreshes flow via SSE events (observability:metrics/token_usage/reset) + apiClient wrappers, which the boundary regex doesn't match. Residual ≤1570L is dominated by 6 tab renderers (overview/billing/diagnostics/delivery/channels/health) + sparkline + per-tab stat-card grids + filterable delivery-trace table + agent/channel health row grids + reset-confirm dialog — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/models.ts",
