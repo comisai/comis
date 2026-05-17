@@ -684,6 +684,26 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // toolbar wiring — all tightly DOM-coupled. Auto-acceptable per
     // WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/views/pipelines/pipeline-builder.ts",
+    // agent-detail.ts (Wave 6 / Task 1): RPC extraction completed via
+    // agent-detail-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates all daemon I/O to the controller (agents.get,
+    // obs.billing.byAgent, skills.list, heartbeat.states,
+    // agents.suspend, agents.resume, agents.delete moved out — 7
+    // unique RPC methods spanning 6 call sites). Controller fits the
+    // tighter 700L cap (128L). Wave-6 caps tightened the view from
+    // 800L to 500L; the residual ≤1020L is dominated by ~380L of
+    // component-scoped CSS, the two-column detail layout with 7 card
+    // renderers (Identity / Stats / Config / BudgetGauges /
+    // CircuitBreaker / Skills / Heartbeat), the daemon-config →
+    // AgentDetail _mapToAgentDetail() mapper with 7 nested optional
+    // shape branches, the SseController consumer driving debounced
+    // reload from observability:token_usage +
+    // scheduler:heartbeat_delivered events, the suspend/resume +
+    // delete action flow with ic-confirm-dialog lifecycle + IcToast
+    // surfacing, and the heartbeat status renderer with backoff /
+    // consecutive-error / running-tick state coalescing — all tightly
+    // DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/agents/agent-detail.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

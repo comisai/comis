@@ -162,7 +162,7 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     //   pipelines/pipeline-list.ts: drained — RPC extracted via pipeline-list-controller.ts (Task 4).
     //   pipelines/pipeline-builder.ts: drained — RPC extracted via pipeline-builder-controller.ts (Task 5).
     // Wave 6
-    "packages/web/src/views/agents/agent-detail.ts",                //  3 rpcClient.call (verified HEAD)
+    //   agents/agent-detail.ts: drained — RPC extracted via agent-detail-controller.ts (Task 1).
     "packages/web/src/views/media-test.ts",                         //  7 rpcClient.call (verified HEAD) — INCLUDED
     // ic-cron-editor.ts: 0 rpcClient.call (verified HEAD) — EXCLUDED (form-only, no RPC).
     "packages/web/src/views/pipelines/pipeline-monitor.ts",         //  4 rpcClient.call (verified HEAD) — INCLUDED

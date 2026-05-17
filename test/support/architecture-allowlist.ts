@@ -279,9 +279,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/agents/agent-detail.ts",
-    lines: 1003,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1018,
+    reason: "Lit web view; RPC extraction completed via agent-detail-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (agents.get, obs.billing.byAgent, skills.list, heartbeat.states, agents.suspend, agents.resume, agents.delete moved out — 7 unique RPC methods spanning 6 call sites). Controller fits the tighter 700L cap (128L). The remaining ≤1020L is dominated by ~380L of component-scoped CSS, the two-column detail layout with 7 card renderers (_renderIdentityCard / _renderStatsCard / _renderConfigCard / _renderBudgetGaugesCard / _renderCircuitBreakerCard / _renderSkillsCard / _renderHeartbeatCard), the daemon-config → AgentDetail _mapToAgentDetail() mapper (~63L) with 7 nested optional shape branches (circuitBreaker / contextGuard / sdkRetry / modelFailover / rag / sessionPolicy / concurrency), the SseController consumer driving debounced reload from observability:token_usage + scheduler:heartbeat_delivered events, the suspend/resume + delete action flow with ic-confirm-dialog lifecycle + IcToast surfacing, the heartbeat status renderer with backoff / consecutive-error / running-tick state coalescing, the skill-chip variant mapping for 4 source classes, and the relative-time formatters — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/media-test.ts",
