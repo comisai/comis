@@ -3,7 +3,6 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
-import type { DeliveryQueueStatus, PlatformCapabilities } from "../api/types/index.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
