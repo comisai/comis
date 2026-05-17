@@ -522,6 +522,19 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // clearing — all tightly DOM-coupled. Auto-acceptable per
     // WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/components/graph/ic-node-editor.ts",
+    // workspace-manager.ts (Wave 4 / Task 2): RPC extraction completed
+    // via workspace-manager-controller.ts — view contains 0
+    // rpcClient.call sites and delegates daemon I/O to the controller
+    // (workspace.status/readFile/listDir/writeFile/resetFile/deleteFile/
+    // init + workspace.git.status/log/diff/restore/commit moved out).
+    // The remaining ≤1340L is dominated by ~440L of CSS, the two-panel
+    // layout (file tree sidebar + editor/dir panel + git tab), 6
+    // confirm-dialog flows (delete/reset/restore + commit-on-empty),
+    // tab-switching state, dirty-tracking on the textarea, the diff
+    // viewer with status badge rendering, and the WORKSPACE_SUBDIRS-
+    // driven tree section rendering — all tightly DOM-coupled. Auto-
+    // acceptable per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/agents/workspace-manager.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

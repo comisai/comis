@@ -225,9 +225,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/agents/workspace-manager.ts",
-    lines: 1345,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1337,
+    reason: "Lit web view; RPC orchestration extracted via workspace-manager-controller.ts (workspace.status/readFile/listDir/writeFile/resetFile/deleteFile/init + workspace.git.status/log/diff/restore/commit moved out). Residual ≤1340L is dominated by ~440L of CSS, the two-panel layout (file tree sidebar + editor/dir panel + git tab), 6 confirm-dialog flows (delete/reset/restore + commit-on-empty), tab-switching state, dirty-tracking on the textarea, and the diff viewer with status badge rendering — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/channel-detail.ts",
