@@ -587,6 +587,23 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
     // fallback).
     "packages/web/src/views/dashboard.ts",
+    // mcp-management.ts (Wave 5 / Task 1): RPC extraction completed
+    // via mcp-management-controller.ts — view contains 0
+    // rpcClient.call sites and delegates daemon I/O to the controller
+    // (mcp.list, config.read, mcp.status, config.patch, mcp.disconnect,
+    // mcp.reconnect, mcp.test moved out — 6 unique RPC methods spanning
+    // 8 call sites). The remaining ≤1150L is dominated by ~375L of
+    // component-scoped CSS, the add-server form renderer (one big
+    // <select transport> + transport-conditional command/url/headers/
+    // env textarea block), 5 render helpers (_renderServer,
+    // _renderConfigOnlyServer, _renderToolList, _renderInstructions,
+    // _renderTestResult), capability badge + server version + status
+    // tag rendering for 6 statuses, two confirm-dialog flows (delete /
+    // disconnect), and the toolbar/add-form open/close + 6-field add-
+    // form state — all tightly DOM-coupled. Existing render +
+    // interaction flows keep state on the view. Auto-acceptable per
+    // WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/mcp-management.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

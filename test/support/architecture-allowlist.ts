@@ -249,9 +249,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/mcp-management.ts",
-    lines: 1133,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1148,
+    reason: "Lit web view; RPC orchestration extracted via mcp-management-controller.ts (mcp.list, config.read, mcp.status, config.patch, mcp.disconnect, mcp.reconnect, mcp.test moved out — 6 unique RPC methods spanning 8 call sites). Residual ≤1150L is dominated by ~375L of component-scoped CSS, the add-server form renderer (transport select + transport-conditional command/url/headers/env block), 5 render helpers (_renderServer, _renderConfigOnlyServer, _renderToolList, _renderInstructions, _renderTestResult), capability badge + server-version + 6-status tag rendering, two confirm-dialog flows (delete/disconnect), and the 6-field add-form state — all tightly DOM-coupled. Existing render + interaction flows keep state on the view. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/session-detail.ts",
