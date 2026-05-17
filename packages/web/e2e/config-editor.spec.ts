@@ -141,10 +141,11 @@ test.describe("Config editor view", () => {
     const formModeBtn = editor.locator(".mode-btn").first();
     await expect(formModeBtn).toHaveAttribute("data-active", "");
 
-    // General section is selected by default -- verify form fields
-    // tenantId field should show "default" value
-    const formContent = editor.locator(".form-content");
-    await expect(formContent).toBeVisible();
+    // General section is selected by default -- verify form fields.
+    // Form rendering moved into the ic-schema-form sub-component; assert it
+    // mounts and exposes the expected fields.
+    const formHost = editor.locator("ic-schema-form");
+    await expect(formHost).toBeVisible();
 
     // Verify tenantId label (toTitleCase turns "tenantId" into "Tenant Id")
     await expect(editor.getByText("Tenant Id", { exact: true })).toBeVisible();
