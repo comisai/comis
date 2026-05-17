@@ -134,74 +134,62 @@ test.describe("Channel list view", () => {
   test("channel cards show connection status", async ({ page }) => {
     const channelList = page.locator("ic-channel-list");
 
-    // Connected channels show "connected" status text
-    // The channel card renders ch.status as a status label
-    const discordCard = channelList.locator(".channel-card").filter({ hasText: "Discord" });
-    await expect(discordCard.getByText("connected")).toBeVisible();
+    // ic-channel-card renders a status pill with the health-label derived
+    // from the channel's status (e.g. "connected" -> "Healthy"). Scope the
+    // assertion to the ic-channel-card element so the status text inside
+    // the shadow root is queried.
+    const discordCard = channelList.locator("ic-channel-card").filter({ hasText: "Discord" });
+    await expect(discordCard.locator(".status-text")).toHaveText("Healthy");
 
-    const telegramCard = channelList.locator(".channel-card").filter({ hasText: "Telegram" });
-    await expect(telegramCard.getByText("connected")).toBeVisible();
+    const telegramCard = channelList.locator("ic-channel-card").filter({ hasText: "Telegram" });
+    await expect(telegramCard.locator(".status-text")).toHaveText("Healthy");
   });
 
-  test("channel cards show message count metrics when expanded", async ({ page }) => {
+  test("channel cards show message count metrics", async ({ page }) => {
     const channelList = page.locator("ic-channel-list");
 
-    // Click on discord card header to expand it
-    const discordHeader = channelList.locator(".channel-card").filter({ hasText: "Discord" }).locator(".card-header");
-    await discordHeader.click();
-
-    // Discord has messagesSent: 100 + messagesReceived: 50 = 150 messages
-    const discordCard = channelList.locator(".channel-card").filter({ hasText: "Discord" });
-    await expect(discordCard.getByText("150")).toBeVisible();
+    // Cards always render the Messages metric (no expand/collapse). The
+    // count is messagesSent + messagesReceived from obs.channels.all.
+    const discordCard = channelList.locator("ic-channel-card").filter({ hasText: "Discord" });
     await expect(discordCard.getByText("Messages")).toBeVisible();
+    // Discord: 100 + 50 = 150
+    await expect(discordCard.locator(".metric-value").first()).toHaveText("150");
 
-    // Expand telegram card
-    const telegramHeader = channelList.locator(".channel-card").filter({ hasText: "Telegram" }).locator(".card-header");
-    await telegramHeader.click();
-
-    // Telegram has messagesSent: 50 + messagesReceived: 25 = 75 messages
-    const telegramCard = channelList.locator(".channel-card").filter({ hasText: "Telegram" });
-    await expect(telegramCard.getByText("75")).toBeVisible();
+    const telegramCard = channelList.locator("ic-channel-card").filter({ hasText: "Telegram" });
+    // Telegram: 50 + 25 = 75
+    await expect(telegramCard.locator(".metric-value").first()).toHaveText("75");
   });
 
-  test("disabled channel shows in disabled section with enable button", async ({ page }) => {
+  test("disabled channel renders with Enable action button", async ({ page }) => {
     const channelList = page.locator("ic-channel-list");
 
-    // Disabled section title should be visible (use heading role to disambiguate from status label)
-    const disabledSection = channelList.locator(".disabled-section");
-    await expect(disabledSection.getByRole("heading", { name: "Disabled" })).toBeVisible();
+    // The channel-list no longer groups disabled channels into a separate
+    // section -- all channels share a single card-grid. Disabled channels
+    // render with status text "Disconnected" and expose an Enable button
+    // in place of Configure/Restart.
+    const slackCard = channelList.locator("ic-channel-card").filter({ hasText: "Slack" });
+    await expect(slackCard).toBeVisible();
+    await expect(slackCard.locator(".status-text")).toHaveText("Disconnected");
+    await expect(slackCard.getByRole("button", { name: /Enable Slack/i })).toBeVisible();
 
-    // Slack is disabled - shows in disabled row
-    await expect(disabledSection.getByText("Slack")).toBeVisible();
-
-    // Enable button should be present for disabled channels
-    await expect(disabledSection.getByRole("button", { name: "Enable" })).toBeVisible();
+    // The Disabled counter chip is also surfaced in the stats row.
+    await expect(channelList.locator(".stat-badge--disconnected")).toContainText("Disabled");
   });
 
-  test("expanded channel card shows lifecycle action buttons", async ({ page }) => {
+  test("channel cards expose lifecycle action buttons", async ({ page }) => {
     const channelList = page.locator("ic-channel-list");
 
-    // Expand discord card
-    const discordHeader = channelList.locator(".channel-card").filter({ hasText: "Discord" }).locator(".card-header");
-    await discordHeader.click();
-
-    // Verify action buttons are visible in expanded card
-    const discordCard = channelList.locator(".channel-card").filter({ hasText: "Discord" });
-    await expect(discordCard.getByRole("button", { name: "Configure" })).toBeVisible();
-    await expect(discordCard.getByRole("button", { name: "Restart" })).toBeVisible();
-    await expect(discordCard.getByRole("button", { name: "Stop" })).toBeVisible();
+    // Enabled cards always show Configure + Restart buttons (no expand step).
+    const discordCard = channelList.locator("ic-channel-card").filter({ hasText: "Discord" });
+    await expect(discordCard.getByRole("button", { name: /Configure Discord/i })).toBeVisible();
+    await expect(discordCard.getByRole("button", { name: /Restart Discord/i })).toBeVisible();
   });
 
   test("clicking Configure navigates to channel detail", async ({ page }) => {
     const channelList = page.locator("ic-channel-list");
 
-    // Expand discord card
-    const discordHeader = channelList.locator(".channel-card").filter({ hasText: "Discord" }).locator(".card-header");
-    await discordHeader.click();
-
-    // Click configure button
-    const discordCard = channelList.locator(".channel-card").filter({ hasText: "Discord" });
-    await discordCard.getByRole("button", { name: "Configure" }).click();
+    const discordCard = channelList.locator("ic-channel-card").filter({ hasText: "Discord" });
+    await discordCard.getByRole("button", { name: /Configure Discord/i }).click();
 
     // Verify navigation occurred (channel detail component renders)
     await expect(page.locator("ic-channel-detail")).toBeVisible({ timeout: 5_000 });
