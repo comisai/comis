@@ -604,6 +604,26 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // interaction flows keep state on the view. Auto-acceptable per
     // WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/views/mcp-management.ts",
+    // session-detail.ts (Wave 5 / Task 2): RPC extraction completed
+    // via session-detail-controller.ts — view contains 0
+    // rpcClient.call sites and delegates daemon I/O to the controller
+    // (obs.context.pipeline, obs.context.dag, obs.billing.bySession
+    // moved out — 3 unique RPC methods spanning 3 call sites). Higher-
+    // level data flows (getSessionDetail, resetSession, compactSession,
+    // deleteSession, exportSession) go through apiClient (REST) —
+    // orthogonal to the rpcClient.call boundary regex. The remaining
+    // ≤1110L is dominated by ~300L of component-scoped CSS, 3 tab
+    // renderers (conversation / context / metrics) with lazy-load gates
+    // on first-activation, the per-message renderer mapping role →
+    // ic-chat-message / ic-tool-call / compaction-marker, the
+    // ic-budget-segment-bar + ic-layer-waterfall context-tab renderers,
+    // the per-execution pipeline-snapshot selection grid, the metrics-
+    // tab cost / token / call-count stat cards with health diagnostics,
+    // the confirm-dialog flow for reset/compact/delete actions with
+    // variant-specific copy, and the breadcrumb-driven hash-route
+    // navigation — all tightly DOM-coupled. Auto-acceptable per
+    // WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/session-detail.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

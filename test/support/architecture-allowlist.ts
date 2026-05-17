@@ -255,9 +255,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/session-detail.ts",
-    lines: 1089,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1102,
+    reason: "Lit web view; RPC orchestration extracted via session-detail-controller.ts (obs.context.pipeline, obs.context.dag, obs.billing.bySession moved out — 3 unique RPC methods spanning 3 call sites). Higher-level data flows (getSessionDetail, resetSession, compactSession, deleteSession, exportSession) go through apiClient (REST) — orthogonal to the rpcClient.call boundary regex. Residual ≤1110L is dominated by ~300L of CSS, 3 tab renderers (conversation/context/metrics) with lazy-load gates, the per-message renderer mapping role→ic-chat-message/ic-tool-call/compaction-marker, ic-budget-segment-bar + ic-layer-waterfall context-tab renderers, the per-execution pipeline-snapshot selection grid, the metrics-tab cost/token/call-count stat cards with health diagnostics, the confirm-dialog flow for reset/compact/delete actions with variant-specific copy, and breadcrumb hash-route navigation — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/agents/agent-list.ts",

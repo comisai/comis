@@ -157,7 +157,7 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     //   dashboard.ts:          drained — RPC extracted via dashboard-controller.ts (Task 5).
     // Wave 5
     //   mcp-management.ts: drained — RPC extracted via mcp-management-controller.ts (Task 1).
-    "packages/web/src/views/session-detail.ts",                     //  3 rpcClient.call (verified HEAD)
+    //   session-detail.ts: drained — RPC extracted via session-detail-controller.ts (Task 2).
     "packages/web/src/views/agents/agent-list.ts",                  //  5 rpcClient.call (verified HEAD)
     "packages/web/src/views/pipelines/pipeline-list.ts",            //  7 rpcClient.call (verified HEAD)
     "packages/web/src/views/pipelines/pipeline-builder.ts",         //  4 rpcClient.call (verified HEAD)
