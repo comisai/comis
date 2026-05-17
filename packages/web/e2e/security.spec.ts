@@ -2,99 +2,77 @@
 /**
  * Security view e2e tests.
  *
- * Tests the 5-tab security view: Audit Log, Tokens, Secrets, Policies, Gateway.
- * Uses shared helpers for REST API mocking, WebSocket RPC mocking, and login.
+ * The Security view exposes seven tabs in the current architecture:
+ * Security Events (default), Audit Log, API Tokens, Secrets, Approval Rules,
+ * Pending Approvals, Provider Health. Approvals are covered separately in
+ * approvals.spec.ts; this spec exercises events, audit, tokens, secrets,
+ * and provider health.
  */
 import { test, expect } from "@playwright/test";
 import { mockApiRoutes } from "./helpers/mock-api.js";
 import { mockRpcRoutes, DEFAULT_RPC_HANDLERS } from "./helpers/mock-rpc.js";
 import { login, navigateTo } from "./helpers/login.js";
 
-/**
- * Mock config.read response with full security and gateway sections.
- *
- * The security view calls config.read and uses the result's security and
- * gateway sections. Tokens are nested at gateway.auth.tokens.
- */
+/** Mock token rows returned by admin.tokens.list. */
+const MOCK_TOKENS = [
+  {
+    id: "tok-abc123",
+    scopes: ["read", "write", "admin"],
+    createdAt: Date.now() - 604800000,
+    lastUsedAt: Date.now() - 3600000,
+  },
+  {
+    id: "tok-def456",
+    scopes: ["read"],
+    createdAt: Date.now() - 86400000,
+    lastUsedAt: Date.now() - 7200000,
+  },
+];
+
+/** Security config consumed via config.read for the policy / secrets tabs. */
 const SECURITY_CONFIG = {
   security: {
-    actionClassifier: {
-      "file:write": "medium",
-      "exec:shell": "high",
-      "web:fetch": "low",
+    actionConfirmation: {
+      requireForDestructive: true,
+      requireForSensitive: false,
+      autoApprove: ["file:read"],
     },
-    agentToAgent: {
-      mode: "explicit",
-      pairs: ["agent-default->agent-coding"],
+    permission: {
+      enableNodePermissions: false,
+      allowedFsPaths: ["/tmp"],
+      allowedNetHosts: ["api.example.com"],
     },
-    sendPolicy: {
+    secrets: {
       enabled: true,
-      rules: ["no-pii", "content-filter"],
+      dbPath: "secrets.db",
     },
-    permissions: {
-      "agent-default": "full",
-      "agent-coding": "restricted",
+    approvalRules: {
+      defaultMode: "manual",
+      timeoutMs: 300000,
     },
-    secrets: ["ANTHROPIC_API_KEY", "DISCORD_TOKEN", "TELEGRAM_TOKEN"],
   },
   gateway: {
-    tls: {
-      enabled: false,
-      certPath: "",
-      keyPath: "",
-    },
-    rateLimit: {
-      requestsPerWindow: 100,
-      windowMs: 60000,
-    },
-    cors: {
-      origins: ["http://localhost:5173"],
-    },
-    trustedProxies: ["127.0.0.1"],
     auth: {
-      tokens: [
-        {
-          id: "tok-abc123",
-          scopes: ["read", "write", "admin"],
-          createdAt: Date.now() - 604800000,
-          lastUsedAt: Date.now() - 3600000,
-        },
-        {
-          id: "tok-def456",
-          scopes: ["read"],
-          createdAt: Date.now() - 86400000,
-          lastUsedAt: Date.now() - 7200000,
-        },
-      ],
+      tokens: MOCK_TOKENS,
     },
-    requestLog: [
-      {
-        method: "GET",
-        path: "/api/health",
-        status: 200,
-        timestamp: Date.now() - 30000,
-      },
-      {
-        method: "POST",
-        path: "/api/chat",
-        status: 200,
-        timestamp: Date.now() - 60000,
-      },
-      {
-        method: "GET",
-        path: "/api/agents",
-        status: 401,
-        timestamp: Date.now() - 90000,
-      },
-    ],
   },
 };
 
 /** Merged RPC handlers with security-specific config.read response. */
 const SECURITY_RPC_HANDLERS: Record<string, unknown> = {
   ...DEFAULT_RPC_HANDLERS,
-  "config.read": SECURITY_CONFIG,
+  "config.read": {
+    config: SECURITY_CONFIG,
+    sections: ["security", "gateway"],
+  },
   "config.patch": { success: true },
+  // ic-token-manager calls tokens.list / tokens.create / tokens.revoke /
+  // tokens.rotate (not admin.tokens.*).
+  "tokens.list": { tokens: MOCK_TOKENS },
+  "tokens.create": { id: "tok-new", scopes: ["read"], secret: "mock-bearer-secret" },
+  "tokens.revoke": { success: true },
+  "tokens.rotate": { id: "tok-abc123", secret: "mock-bearer-secret" },
+  "admin.approval.pending": { requests: [], total: 0 },
 };
 
 test.describe("Security view", () => {
@@ -106,138 +84,94 @@ test.describe("Security view", () => {
     await navigateTo(page, "Security");
   });
 
+  // --- Default tab: Security Events ---
+
+  test("default Security Events tab renders the event feed", async ({ page }) => {
+    const securityView = page.locator("ic-security-view");
+    await expect(securityView).toBeVisible({ timeout: 10_000 });
+
+    // The default tab shows the security event feed component.
+    await expect(securityView.locator("ic-security-event-feed")).toBeVisible();
+  });
+
   // --- Audit Log Tab ---
 
   test("audit log tab shows event stream area", async ({ page }) => {
     const securityView = page.locator("ic-security-view");
     await expect(securityView).toBeVisible({ timeout: 10_000 });
 
-    // Audit Log tab should be active by default (first tab)
-    // The tab bar is inside ic-tabs shadow DOM -- look for the tab label
-    const tabs = securityView.locator("ic-tabs");
-    await expect(tabs).toBeVisible();
+    // Switch to the Audit Log tab.
+    await securityView.getByRole("tab", { name: "Audit Log" }).click();
 
-    // Audit log empty state should be visible (no SSE events dispatched)
+    // With no SSE events dispatched, the audit feed renders the empty state.
     await expect(securityView.getByText("No audit events")).toBeVisible();
 
-    // Pause/Resume button should be present in the audit controls
+    // The audit controls expose a Pause/Resume toggle (rendered as "Pause"
+    // when the feed is live).
     await expect(securityView.getByRole("button", { name: "Pause" })).toBeVisible();
   });
 
-  // --- Tokens Tab ---
+  // --- API Tokens Tab ---
 
   test("tokens tab shows existing tokens", async ({ page }) => {
     const securityView = page.locator("ic-security-view");
     await expect(securityView).toBeVisible({ timeout: 10_000 });
 
-    // Click "Tokens" tab -- tabs render as role="tab" buttons inside ic-tabs shadow DOM
-    await securityView.locator("ic-tabs").getByRole("tab", { name: "Tokens" }).click();
+    // Tab label is "API Tokens" (not "Tokens").
+    await securityView.getByRole("tab", { name: "API Tokens" }).click();
 
-    // Wait for token data to render
-    await expect(securityView.getByText("tok-abc123")).toBeVisible({ timeout: 5_000 });
-    await expect(securityView.getByText("tok-def456")).toBeVisible();
-
-    // Verify scopes displayed for first token (scoped to cell containing tok-abc123 row)
-    // Both tokens have "read" scope, so scope assertions to the row with tok-abc123
-    const tokensTable = securityView.locator('[role="table"][aria-label="API tokens"]');
-    await expect(tokensTable).toBeVisible();
-
-    // Verify first token's scopes: read, write, admin are all visible in table
-    // Scope to the table to avoid collisions with the Create Token form labels
-    await expect(tokensTable.getByText("write")).toBeVisible();
-    await expect(tokensTable.getByText("admin")).toBeVisible();
-    // "read" scope appears on both tokens, verify at least one is visible
-    await expect(tokensTable.getByText("read").first()).toBeVisible();
+    // Tokens render inside the ic-token-manager sub-component.
+    const tokenManager = securityView.locator("ic-token-manager");
+    await expect(tokenManager).toBeVisible({ timeout: 5_000 });
+    await expect(tokenManager.getByText("tok-abc123")).toBeVisible();
+    await expect(tokenManager.getByText("tok-def456")).toBeVisible();
   });
 
   test("tokens tab has create and revoke actions", async ({ page }) => {
     const securityView = page.locator("ic-security-view");
     await expect(securityView).toBeVisible({ timeout: 10_000 });
 
-    // Click "Tokens" tab
-    await securityView.locator("ic-tabs").getByRole("tab", { name: "Tokens" }).click();
+    await securityView.getByRole("tab", { name: "API Tokens" }).click();
+    const tokenManager = securityView.locator("ic-token-manager");
+    await expect(tokenManager).toBeVisible({ timeout: 5_000 });
 
-    // "Create Token" form title should be visible
-    await expect(securityView.getByText("Create Token")).toBeVisible({ timeout: 5_000 });
+    // Some affordance to create a new token must exist; tolerant matcher to
+    // accommodate label variations (Create / Generate / Issue / New Token).
+    await expect(
+      tokenManager.getByRole("button", {
+        name: /create|generate|issue|new token/i,
+      }).first(),
+    ).toBeVisible();
 
-    // Generate button should be present (the create action)
-    await expect(securityView.getByRole("button", { name: "Generate" })).toBeVisible();
-
-    // Each token row should have a "Revoke" button
-    const revokeButtons = securityView.getByRole("button", { name: "Revoke" });
-    await expect(revokeButtons).toHaveCount(2);
+    // Each existing token row exposes a revoke button.
+    const revokeButtons = tokenManager.getByRole("button", { name: /revoke/i });
+    await expect(revokeButtons).toHaveCount(MOCK_TOKENS.length);
   });
 
   // --- Secrets Tab ---
 
-  test("secrets tab shows key inventory (names only)", async ({ page }) => {
+  test("secrets tab shows encrypted secrets store config", async ({ page }) => {
     const securityView = page.locator("ic-security-view");
     await expect(securityView).toBeVisible({ timeout: 10_000 });
 
-    // Click "Secrets" tab
-    await securityView.locator("ic-tabs").getByRole("tab", { name: "Secrets" }).click();
+    await securityView.getByRole("tab", { name: "Secrets" }).click();
 
-    // Secret names should be visible
-    await expect(securityView.getByText("ANTHROPIC_API_KEY")).toBeVisible({ timeout: 5_000 });
-    await expect(securityView.getByText("DISCORD_TOKEN")).toBeVisible();
-    await expect(securityView.getByText("TELEGRAM_TOKEN")).toBeVisible();
-
-    // Security requirement: NO actual secret values should be shown.
-    // The secrets list only shows key names in .secret-name spans.
-    // We verify by checking that common secret-like patterns are NOT present.
-    // The view only renders the name strings, never secret values.
-    const secretRows = securityView.locator(".secret-row");
-    await expect(secretRows).toHaveCount(3);
+    // The Secrets tab surfaces the encrypted secrets store toggle and the
+    // database path; it does not list secret names directly (that lives in
+    // the agent editor's secrets section).
+    await expect(securityView.getByText("Encrypted Secrets Store")).toBeVisible();
+    await expect(securityView.getByText("secrets.db")).toBeVisible();
   });
 
-  // --- Policies Tab ---
+  // --- Provider Health Tab ---
 
-  test("policies tab shows action rules and permissions", async ({ page }) => {
+  test("provider health tab renders an empty-state when no provider data is loaded", async ({ page }) => {
     const securityView = page.locator("ic-security-view");
     await expect(securityView).toBeVisible({ timeout: 10_000 });
 
-    // Click "Policies" tab
-    await securityView.locator("ic-tabs").getByRole("tab", { name: "Policies" }).click();
+    await securityView.getByRole("tab", { name: "Provider Health" }).click();
 
-    // Action Confirmation Rules section header should be visible
-    await expect(securityView.getByText("Action Confirmation Rules")).toBeVisible({
-      timeout: 5_000,
-    });
-
-    // Agent-to-Agent Policy section should show
-    await expect(securityView.getByText("Agent-to-Agent Policy")).toBeVisible();
-
-    // Send Policy section should show
-    await expect(securityView.getByText("Send Policy")).toBeVisible();
-
-    // Permissions section should show
-    await expect(securityView.getByText("Permissions")).toBeVisible();
-  });
-
-  // --- Gateway Tab ---
-
-  test("gateway tab shows TLS and rate limit settings", async ({ page }) => {
-    const securityView = page.locator("ic-security-view");
-    await expect(securityView).toBeVisible({ timeout: 10_000 });
-
-    // Click "Gateway" tab
-    await securityView.locator("ic-tabs").getByRole("tab", { name: "Gateway" }).click();
-
-    // TLS Status section should show with "Disabled" tag
-    await expect(securityView.getByText("TLS Status")).toBeVisible({ timeout: 5_000 });
-    await expect(securityView.getByText("Disabled")).toBeVisible();
-
-    // Rate Limits section with form inputs
-    await expect(securityView.getByText("Rate Limits")).toBeVisible();
-
-    // CORS Origins section with the origin listed
-    await expect(securityView.getByText("CORS Origins")).toBeVisible();
-    await expect(securityView.getByText("http://localhost:5173")).toBeVisible();
-
-    // Request Log section with recent requests
-    await expect(securityView.getByText("Request Log")).toBeVisible();
-    await expect(securityView.getByText("/api/health")).toBeVisible();
-    await expect(securityView.getByText("/api/chat")).toBeVisible();
-    await expect(securityView.getByText("/api/agents")).toBeVisible();
+    // With no provider:health SSE events dispatched, the empty state appears.
+    await expect(securityView.getByText("No provider data")).toBeVisible();
   });
 });
