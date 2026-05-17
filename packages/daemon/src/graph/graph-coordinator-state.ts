@@ -16,7 +16,7 @@ import type {
   NodeDriverContext,
   NormalizedMessage,
 } from "@comis/core";
-import type { AnnouncementBatcher } from "../announcement-batcher.js";
+import type { AnnouncementBatcher } from "@comis/orchestrator";
 
 // ---------------------------------------------------------------------------
 // Per-graph mutable state

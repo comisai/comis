@@ -16,14 +16,16 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+// Stub the two @comis/core entry points the wizard's non-interactive path
+// touches: safePath (filesystem composition) + createModelCatalog (model
+// validation). Tests that need a specific catalog response override this
+// mock per-test via
+// `vi.mocked(createModelCatalog).mockReturnValueOnce(...)`. We do NOT call
+// `importOriginal()` because @comis/core's real barrel transitively imports
+// node:os/node:fs/promises — the node:os mock below stubs only `homedir`
+// (and pulling the full module would break unrelated workspace helpers).
 vi.mock("@comis/core", () => ({
   safePath: vi.fn((...parts: string[]) => parts.join("/")),
-}));
-// Stub @comis/agent so the soft-warn validation path does not pull in the
-// real pi-ai catalog (which would re-export the full @comis/agent module
-// graph). Tests that need a specific catalog response override this mock
-// per-test via `vi.mocked(createModelCatalog).mockReturnValueOnce(...)`.
-vi.mock("@comis/agent", () => ({
   createModelCatalog: vi.fn(() => ({
     loadStatic: vi.fn(),
     getAll: vi.fn(() => [
@@ -754,7 +756,7 @@ describe("NonInteractiveError", () => {
     expect(err.field).toBe("myField");
   });
 
-  it("has correct message", () => {
+  it("preserves the provided message argument on the NonInteractiveError instance", () => {
     const err = new NonInteractiveError("something went wrong", "x");
     expect(err.message).toBe("something went wrong");
   });

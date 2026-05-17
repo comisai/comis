@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 
 import { ok, err, tryCatch } from "@comis/shared";
 import type { Result } from "@comis/shared";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import type { PairingRequest, PairedDevice } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -173,7 +173,7 @@ export function createDevicePairing(deps: DevicePairingDeps): DevicePairing {
   }
 
   function filterExpired(items: PairingRequest[]): PairingRequest[] {
-    const now = Date.now();
+    const now = systemNowMs();
     return items.filter((r) => r.requestedAtMs + ttlMs > now);
   }
 
@@ -185,7 +185,7 @@ export function createDevicePairing(deps: DevicePairingDeps): DevicePairing {
     req: PairingRequest,
     opts?: { role?: string; scopes?: string[] },
   ): PairedDevice {
-    const now = Date.now();
+    const now = systemNowMs();
     const token = generateToken();
     return {
       deviceId: req.deviceId,

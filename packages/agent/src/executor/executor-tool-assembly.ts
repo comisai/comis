@@ -17,15 +17,15 @@
 import {
   SettingsManager,
   DefaultResourceLoader,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import type {
   ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 /** Partial<Settings> extracted from SettingsManager.applyOverrides() parameter type.
  *  Settings is not re-exported from the SDK's index -- extract from the class method. */
 type SettingsOverrides = Parameters<SettingsManager['applyOverrides']>[0];
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
   formatSessionKey,
   type SessionKey,
@@ -39,7 +39,7 @@ import {
   type SenderTrustDisplayConfig,
   type ToolCapabilityPort,
 } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult } from "./tool-deferral.js";
 import { buildCapabilityIndexContext } from "./capability-index-context.js";
@@ -102,6 +102,8 @@ export interface ToolAssemblyDeps {
   };
   /** Resolve platform message character limit for a channel type. */
   getChannelMaxChars?: (channelType: string) => number | undefined;
+  /** Wall-clock + monotonic time reads. */
+  clock: import("@comis/core").ClockPort;
 }
 
 /** Result of the tool assembly pipeline. */
@@ -177,8 +179,8 @@ export interface ToolAssemblyParams {
  * guide wrapping, schema pruning, schema snapshots, provider normalization,
  * and mutation serializer.
  *
- * Pure function with params object ( extraction pattern). All mutable
- * refs and closure state remain in pi-executor.ts orchestrator scope.
+ * Pure function with params object. All mutable refs and closure state
+ * remain in pi-executor.ts orchestrator scope.
  *
  * @param params - Tool assembly parameters
  * @returns Tool assembly result with all outputs needed by the orchestrator
@@ -341,6 +343,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // Forward the tool-capability port so prompt-assembly.ts can read
       // `port.isCapabilityIndexEnabled()` for the static-prompt swap gate.
       toolCapabilityPort: deps.toolCapabilityPort,
+      clock: deps.clock,
     },
     msg,
     sessionKey,
@@ -500,7 +503,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       ? (isAnthropicFamily(resolvedModel.provider) ? "anthropic"
         : isGoogleFamily(resolvedModel.provider) ? "google"
         : "other")
-      : undefined,
+      : "default",
   };
   const deferralResult = applyToolDeferral(
     mergedCustomTools,

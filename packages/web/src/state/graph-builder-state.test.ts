@@ -133,7 +133,7 @@ describe("createGraphBuilderState", () => {
   });
 
   describe("removeNode", () => {
-    it("removes node by id", () => {
+    it("removes node by id from the graph-builder state when removeNode is called", () => {
       const state = createGraphBuilderState();
       state.addNode(makeNode("n1"));
       state.addNode(makeNode("n2"));
@@ -202,7 +202,7 @@ describe("createGraphBuilderState", () => {
   });
 
   describe("removeEdge", () => {
-    it("removes edge by id", () => {
+    it("removes edge by id from the graph-builder state when removeEdge is called", () => {
       const state = createGraphBuilderState();
       state.addNode(makeNode("n1"));
       state.addNode(makeNode("n2"));
@@ -329,7 +329,7 @@ describe("createGraphBuilderState", () => {
   });
 
   describe("setViewport", () => {
-    it("updates viewport", () => {
+    it("updates viewport (x/y/scale) on the graph-builder state when setViewport is called", () => {
       const state = createGraphBuilderState();
       const newVp = { x: 100, y: 50, scale: 1.5 };
 

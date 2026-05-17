@@ -19,6 +19,7 @@
  */
 
 import type { TypedEventBus } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -141,7 +142,7 @@ export function createProviderHealthMonitor(opts: ProviderHealthMonitorConfig): 
 
   return {
     recordFailure(provider: string, agentId: string): void {
-      const now = Date.now();
+      const now = systemNowMs();
       const record = getOrCreateProvider(provider);
       const agent = getOrCreateAgent(record, agentId);
 
@@ -178,7 +179,7 @@ export function createProviderHealthMonitor(opts: ProviderHealthMonitorConfig): 
 
       // Recovery threshold is 1: any single success recovers
       if (record.degraded) {
-        const now = Date.now();
+        const now = systemNowMs();
         record.degraded = false;
         record.lastRecovery = now;
         eventBus.emit("provider:recovered", {
@@ -194,7 +195,7 @@ export function createProviderHealthMonitor(opts: ProviderHealthMonitorConfig): 
 
       // Prune expired timestamps on access to prevent stale degradation
       if (record.degraded) {
-        const now = Date.now();
+        const now = systemNowMs();
         for (const [, agent] of record.agentFailures) {
           pruneTimestamps(agent, now);
         }
@@ -216,7 +217,7 @@ export function createProviderHealthMonitor(opts: ProviderHealthMonitorConfig): 
 
     getHealthSummary(): Map<string, ProviderHealthEntry> {
       const summary = new Map<string, ProviderHealthEntry>();
-      const now = Date.now();
+      const now = systemNowMs();
       for (const [provider, record] of providerState) {
         summary.set(provider, {
           degraded: record.degraded,

@@ -36,8 +36,12 @@ coverage/
 *.md
 !package.json
 
-# Marketing website (not containerized)
+# Marketing website (not containerized).
+# Exception: install.sh is consumed by Dockerfile.install to build the
+# "container via install.sh" variant. Negation must come AFTER the broad
+# exclude so .dockerignore semantics re-include the path.
 website/
+!website/public/install.sh
 
 # OS files
 .DS_Store

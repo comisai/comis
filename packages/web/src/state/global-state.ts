@@ -132,3 +132,42 @@ export function createGlobalState(): GlobalState {
     },
   };
 }
+
+// ===== requireGlobalState helper =====
+
+/**
+ * Typed error thrown by {@link requireGlobalState} when a component's
+ * GlobalState is null. Subclasses Error so callers can catch via
+ * `instanceof` or check `.name === "GlobalStateNotInitializedError"`.
+ */
+export class GlobalStateNotInitializedError extends Error {
+  override readonly name = "GlobalStateNotInitializedError";
+}
+
+/**
+ * Returns the component's GlobalState or throws a typed error if absent.
+ *
+ * The throw is appropriate here — app.ts is a Lit element top-level
+ * entry; the throw is caught at the framework lifecycle boundary,
+ * matching AGENTS.md §2.1's "CLI/web user-facing flows" exception.
+ *
+ * Replaces 7-8 `this._globalState!.X` non-null-assertion sites in
+ * `packages/web/src/app.ts`. The structural
+ * `{ readonly _globalState: GlobalState | null }` signature lets any
+ * Lit element with that field call it — no inheritance / mixin needed.
+ *
+ * @param component - Lit element (or any object) with a _globalState field.
+ * @returns The non-null GlobalState reference.
+ * @throws {GlobalStateNotInitializedError} When `component._globalState` is null.
+ */
+// @allow-throw: GlobalState null-check is a Lit lifecycle invariant; throw is caught at framework boundary (AGENTS.md §2.1 web-user-facing flows exception).
+export function requireGlobalState(
+  component: { readonly _globalState: GlobalState | null },
+): GlobalState {
+  if (!component._globalState) {
+    throw new GlobalStateNotInitializedError(
+      "GlobalState not initialized — component lifecycle invariant violated",
+    );
+  }
+  return component._globalState;
+}

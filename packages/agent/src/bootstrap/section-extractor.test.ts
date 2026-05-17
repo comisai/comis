@@ -273,7 +273,7 @@ describe("extractMarkdownSections", () => {
 });
 
 describe("MAX_POST_COMPACTION_CHARS", () => {
-  it("is exported as 3000", () => {
+  it("is exported as 3000 chars per post-compaction char limit", () => {
     expect(MAX_POST_COMPACTION_CHARS).toBe(3000);
   });
 });

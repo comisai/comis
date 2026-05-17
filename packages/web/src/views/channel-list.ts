@@ -12,6 +12,7 @@ import type {
 } from "../api/types/index.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // Side-effect registrations for sub-components
 import "../components/channel-card.js";
@@ -190,7 +191,7 @@ export class IcChannelList extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
   }
@@ -213,8 +214,8 @@ export class IcChannelList extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadData();
     }, delayMs);

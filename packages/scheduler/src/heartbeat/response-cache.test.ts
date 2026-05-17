@@ -12,7 +12,7 @@ describe("response-cache", () => {
       expect(hash).toMatch(/^[0-9a-f]{16}$/);
     });
 
-    it("is deterministic", () => {
+    it("produces deterministic hash for identical (prompt, digest) input pairs", () => {
       const a = hashHeartbeatPrompt("same prompt", "same digest");
       const b = hashHeartbeatPrompt("same prompt", "same digest");
       expect(a).toBe(b);
@@ -52,7 +52,7 @@ describe("response-cache", () => {
       expect(cache.size()).toBe(2);
     });
 
-    it("clears all entries", () => {
+    it("clears all cached entries from heartbeat-response cache when clear() is invoked", () => {
       const cache = createHeartbeatResponseCache();
       cache.set("k1", "v1");
       cache.set("k2", "v2");

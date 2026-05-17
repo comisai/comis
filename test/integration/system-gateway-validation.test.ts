@@ -261,7 +261,7 @@ describe("System Gateway Validation", () => {
   // ===========================================================================
 
   describe("Chat Endpoint Validation", () => {
-    it("CHAT-VAL-01: POST /api/chat with text/plain Content-Type returns 415", async () => {
+    it("POST /api/chat with text/plain Content-Type returns 415", async () => {
       const response = await fetch(`${gatewayUrl}/api/chat`, {
         method: "POST",
         headers: {
@@ -276,7 +276,7 @@ describe("System Gateway Validation", () => {
       expect(body).toHaveProperty("error", "Content-Type must be application/json");
     });
 
-    it("CHAT-VAL-02: POST /api/chat with invalid JSON body returns 400", async () => {
+    it("POST /api/chat with invalid JSON body returns 400", async () => {
       const response = await fetch(`${gatewayUrl}/api/chat`, {
         method: "POST",
         headers: {
@@ -291,7 +291,7 @@ describe("System Gateway Validation", () => {
       expect(body).toHaveProperty("error", "Invalid JSON body");
     });
 
-    it("CHAT-VAL-03: POST /api/chat with missing message field returns 400", async () => {
+    it("POST /api/chat with missing message field returns 400", async () => {
       const response = await fetch(`${gatewayUrl}/api/chat`, {
         method: "POST",
         headers: makeAuthHeaders(authToken),
@@ -303,7 +303,7 @@ describe("System Gateway Validation", () => {
       expect(body).toHaveProperty("error", "Missing required field: message (string)");
     });
 
-    it("CHAT-VAL-04: POST /api/chat with empty message returns 400", async () => {
+    it("POST /api/chat with empty message returns 400", async () => {
       const response = await fetch(`${gatewayUrl}/api/chat`, {
         method: "POST",
         headers: makeAuthHeaders(authToken),
@@ -315,7 +315,7 @@ describe("System Gateway Validation", () => {
       expect(body).toHaveProperty("error", "Missing required field: message (string)");
     });
 
-    it("CHAT-VAL-05: POST /api/chat with non-string message returns 400", async () => {
+    it("POST /api/chat with non-string message returns 400", async () => {
       const response = await fetch(`${gatewayUrl}/api/chat`, {
         method: "POST",
         headers: makeAuthHeaders(authToken),
@@ -327,7 +327,7 @@ describe("System Gateway Validation", () => {
       expect(body).toHaveProperty("error", "Missing required field: message (string)");
     });
 
-    it("CHAT-VAL-06: POST /api/chat with missing Content-Type returns 415", async () => {
+    it("POST /api/chat with missing Content-Type returns 415", async () => {
       const response = await fetch(`${gatewayUrl}/api/chat`, {
         method: "POST",
         headers: { Authorization: `Bearer ${authToken}` },
@@ -342,7 +342,7 @@ describe("System Gateway Validation", () => {
   // ===========================================================================
 
   describe("OpenAI-Compatible API Edge Cases", () => {
-    it("OPENAI-EDGE-01: POST /v1/chat/completions with empty messages returns 400", async () => {
+    it("POST /v1/chat/completions with empty messages returns 400", async () => {
       const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
         method: "POST",
         headers: makeAuthHeaders(authToken),
@@ -357,7 +357,7 @@ describe("System Gateway Validation", () => {
       expect(body.error).toBeDefined();
     });
 
-    it("OPENAI-EDGE-02: POST /v1/chat/completions without model returns 400", async () => {
+    it("POST /v1/chat/completions without model returns 400", async () => {
       const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
         method: "POST",
         headers: makeAuthHeaders(authToken),
@@ -371,7 +371,7 @@ describe("System Gateway Validation", () => {
       expect(body.error).toBeDefined();
     });
 
-    it("OPENAI-EDGE-03: POST /v1/chat/completions without auth returns 401", async () => {
+    it("POST /v1/chat/completions without auth returns 401", async () => {
       const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -387,12 +387,12 @@ describe("System Gateway Validation", () => {
       expect(body.error.type).toBe("authentication_error");
     });
 
-    it("OPENAI-EDGE-04: GET /v1/models without auth returns 401", async () => {
+    it("GET /v1/models without auth returns 401", async () => {
       const response = await fetch(`${gatewayUrl}/v1/models`);
       expect(response.status).toBe(401);
     });
 
-    it("OPENAI-EDGE-05: GET /v1/models with valid auth returns model list", async () => {
+    it("GET /v1/models with valid auth returns model list", async () => {
       const response = await fetch(`${gatewayUrl}/v1/models`, {
         headers: makeAuthHeaders(authToken),
       });
@@ -408,7 +408,7 @@ describe("System Gateway Validation", () => {
       expect(body.data[0].object).toBe("model");
     });
 
-    it("OPENAI-EDGE-06: POST /v1/responses without auth returns 401", async () => {
+    it("POST /v1/responses without auth returns 401", async () => {
       const response = await fetch(`${gatewayUrl}/v1/responses`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -421,7 +421,7 @@ describe("System Gateway Validation", () => {
       expect(body.error.type).toBe("authentication_error");
     });
 
-    it("OPENAI-EDGE-07: POST /v1/responses without model returns 400", async () => {
+    it("POST /v1/responses without model returns 400", async () => {
       const response = await fetch(`${gatewayUrl}/v1/responses`, {
         method: "POST",
         headers: makeAuthHeaders(authToken),

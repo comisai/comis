@@ -23,9 +23,9 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { generateSummary, truncateHead, truncateTail } from "@mariozechner/pi-coding-agent";
+import { generateSummary, truncateHead, truncateTail } from "@earendil-works/pi-coding-agent";
 import { type SubagentResult, SubagentResultSchema, type CondensedResult } from "@comis/core";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs, systemNowDate } from "@comis/core";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { CHARS_PER_TOKEN } from "../safety/token-estimator.js";
@@ -150,7 +150,7 @@ export function createResultCondenser(deps: ResultCondenserDeps) {
         // Emergency fallback: if the entire pipeline somehow throws,
         // produce a minimal Level 3 result so the caller never crashes.
         deps.logger.warn(
-          { runId: params.runId, agentId: params.agentId, fallbackLevel: 3, err: emergencyErr, hint: "Emergency fallback triggered; result may be incomplete", errorKind: "internal" },
+          { runId: params.runId, agentId: params.agentId, fallbackLevel: 3, err: emergencyErr, hint: "Emergency fallback triggered; result may be incomplete", errorKind: "internal" as const },
           "ResultCondenser emergency fallback",
         );
         const originalTokens = estimateTokens(params.fullResult);
@@ -179,7 +179,6 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
 
   // Compute disk path eagerly.
   // Simplified directory naming for new runs: {tenantId}/{runId}.json
-  // Legacy directories used {sanitizedSessionKey}/{runId}.json -- those remain on disk as-is.
   const tenantId = sessionKey.split(":")[0] ?? "default";
   const diskPath = safePath(deps.dataDir, "subagent-results", tenantId, `${runId}.json`);
 
@@ -242,7 +241,7 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
   } else {
     // No model/apiKey available, go straight to Level 3
     deps.logger.warn(
-      { runId, agentId, fallbackLevel: 3, hint: "No condensation model available; falling through to truncation", errorKind: "config" },
+      { runId, agentId, fallbackLevel: 3, hint: "No condensation model available; falling through to truncation", errorKind: "config" as const },
       "Result condenser: skipping Level 2 (no model/apiKey)",
     );
     const truncResult = headTailTruncate(fullResult, deps.maxResultTokens, task);
@@ -329,7 +328,7 @@ async function tryLlmCondensation(
 ): Promise<{ result: SubagentResult; condensedTokens: number } | null> {
   try {
     // Wrap fullResult in synthetic UserMessage for generateSummary.
-    const messages = [{ role: "user" as const, content: params.fullResult, timestamp: Date.now() }];
+    const messages = [{ role: "user" as const, content: params.fullResult, timestamp: systemNowMs() }];
 
     const rawOutput: string = await generateSummary(
       messages as any[],
@@ -537,7 +536,7 @@ async function persistFullResult(
         task,
         fullResult: cappedResult,
         condensationLevel: level,
-        persistedAt: new Date().toISOString(),
+        persistedAt: systemNowDate().toISOString(),
         // Finding 20: Parent trace correlation
         ...(metadata?.parentTraceId ? { parentTraceId: metadata.parentTraceId } : {}),
         ...(metadata?.graphId ? { graphId: metadata.graphId } : {}),

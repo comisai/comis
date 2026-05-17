@@ -24,9 +24,9 @@
  * @module
  */
 
-import type { SessionManager } from "@mariozechner/pi-coding-agent";
-import type { Message, ToolResultMessage } from "@mariozechner/pi-ai";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { Message, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import { safePath } from "@comis/core";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";

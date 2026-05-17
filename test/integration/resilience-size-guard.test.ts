@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Integration test: Tool result size guard (TEST-03)
+ * Integration test: Tool result size guard
  *
  * Proves that the toolResultSizeBouncer stream wrapper truncates oversized
  * tool results through the built dist output. Imports from @comis/agent
@@ -51,7 +51,7 @@ function makeContext(messages: any[]) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("resilience-size-guard integration (TEST-03)", () => {
+describe("resilience-size-guard integration", () => {
   it("passes through tool results under the limit unchanged", { timeout: 10_000 }, () => {
     const logger = createMockLogger();
     const next = createMockStreamFn();

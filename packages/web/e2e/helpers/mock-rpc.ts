@@ -95,8 +95,12 @@ export async function mockRpcRoutes(
         return;
       }
 
-      // Look up handler for the method
-      if (method in methodHandlers) {
+      // Look up handler for the method. Use Object.hasOwn (own-property
+      // check) rather than `method in methodHandlers` — the `in` operator
+      // walks the prototype chain, so a spec passing `method: "toString"`
+      // or `method: "hasOwnProperty"` would match Object.prototype and
+      // stringify a function reference.
+      if (Object.hasOwn(methodHandlers, method)) {
         ws.send(
           JSON.stringify({
             jsonrpc: "2.0",

@@ -27,9 +27,9 @@
 
 import { getToolGuideWithSchema, SYSTEM_PROMPT_GUIDES } from "../bootstrap/sections/tool-descriptions.js";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
-import type { ComisLogger } from "@comis/infra";
-import type { ToolDefinition, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
+import type { ComisLogger } from "@comis/core";
+import type { ToolDefinition, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 
 /** Set of privileged tool names for O(1) lookup. */
 const PRIVILEGED_TOOL_SET = new Set(PRIVILEGED_TOOL_NAMES);

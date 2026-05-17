@@ -70,9 +70,25 @@ export type { ModelAliasResolver, ModelAliasResolverDeps } from "./model/model-a
 export { createContextWindowResolver } from "./model/context-window-resolver.js";
 export type { ContextWindowResolver, ContextWindowResolverDeps } from "./model/context-window-resolver.js";
 
-// Model catalog
-export { createModelCatalog, resolveModelPricing, ZERO_COST } from "./model/model-catalog.js";
-export type { CatalogEntry, ModelCatalog, PerTokenCostRates } from "./model/model-catalog.js";
+// The following re-exports live in @comis/core; CLI + daemon consumers
+// retarget to @comis/core via the barrel:
+//   - createFileLock
+//   - createConsoleLogger / isDocker
+//   - isRemoteEnvironment
+//   - selectOAuthCredentialStore
+//   - loginOpenAICodexOAuth + types
+//   - OAuthError
+//   - createOAuthCredentialStoreFile + types
+//   - loginOpenAICodexDeviceCode + types
+//   - runOAuthTlsPreflight + types
+//   - createModelCatalog + types
+//   - ensureWorkspace / resolveWorkspaceDir
+// OAuth token manager runtime stays here because chokidar + pi-ai/oauth deps
+// are out of scope for core. The types (OAuthTokenManager, OAuthTokenManagerDeps,
+// OAuthError) are duplicated in @comis/core/oauth/oauth-token-manager.ts as
+// structurally-equivalent type aliases — production composition (daemon
+// setup-agents) constructs the manager from agent's runtime and assigns the
+// instance to the core-typed slot.
 
 // Cache eligibility helpers
 export { getCacheProviderInfo } from "./executor/cache-usage-helpers.js";
@@ -82,65 +98,14 @@ export type { CacheProviderInfo } from "./executor/cache-usage-helpers.js";
 export { createModelScanner } from "./model/model-scanner.js";
 export type { ScanResult, ModelScanner, ModelScannerDeps } from "./model/model-scanner.js";
 
-// OAuth token manager
+// OAuth token manager (runtime stays in agent due to chokidar + pi-ai/oauth deps)
 export { createOAuthTokenManager } from "./model/oauth-token-manager.js";
-export type { OAuthTokenManager, OAuthTokenManagerDeps, OAuthError } from "./model/oauth-token-manager.js";
 
 // Per-LLM-call OAuth dispatch helper — shared helper used by PiExecutor.execute()
 // pre-hook and the two compaction getApiKey callbacks. Re-exported so the
 // integration test can drive the same resolver hook the executor uses.
 export { resolveProviderApiKey } from "./model/resolve-provider-api-key.js";
 export type { ResolveProviderApiKeyDeps } from "./model/resolve-provider-api-key.js";
-
-// OAuth identity — pure-function JWT decoder + identity resolver + redaction helper
-export { decodeCodexJwtPayload, resolveCodexAuthIdentity, resolveCodexStableSubject, resolveCodexAccessTokenExpiry, redactEmailForLog } from "./model/oauth-identity.js";
-
-// OAuth credential store — file adapter (plaintext file-backed adapter with atomic write + per-profile lock + schema versioning)
-export { createOAuthCredentialStoreFile } from "./model/oauth-credential-store-file.js";
-export type { OAuthCredentialStoreFileConfig } from "./model/oauth-credential-store-file.js";
-
-// OAuth credential store selector — lives here so the CLI process can
-// instantiate the same adapter the daemon uses
-export { selectOAuthCredentialStore } from "./model/oauth-credential-store-selector.js";
-export type {
-  SelectOAuthCredentialStoreInput,
-  OAuthStorageMode,
-} from "./model/oauth-credential-store-selector.js";
-
-// OAuth env detection — pure function for VPS/headless heuristic
-export { isRemoteEnvironment } from "./model/oauth-env.js";
-export type { IsRemoteEnvironmentInput } from "./model/oauth-env.js";
-
-// OAuth login runner — interactive login orchestrator
-export { loginOpenAICodexOAuth } from "./model/oauth-login-runner.js";
-export type {
-  LoginError,
-  LoginRunnerSuccess,
-  LoginRunnerParams,
-  RunnerPrompter,
-} from "./model/oauth-login-runner.js";
-
-// Device-code OAuth flow
-export { loginOpenAICodexDeviceCode } from "./model/oauth-device-code.js";
-export type {
-  DeviceCodeVerificationPrompt,
-  LoginOpenAICodexDeviceCodeOptions,
-} from "./model/oauth-device-code.js";
-
-// OAuth TLS preflight
-export { runOAuthTlsPreflight } from "./model/oauth-tls-preflight.js";
-export type {
-  TlsPreflightResult,
-  TlsPreflightFailureKind,
-  RunOAuthTlsPreflightOptions,
-} from "./model/oauth-tls-preflight.js";
-
-// OAuth error catalogue
-export { rewriteOAuthError } from "./model/oauth-errors.js";
-export type {
-  OAuthErrorCode,
-  RewrittenOAuthError,
-} from "./model/oauth-errors.js";
 
 // Auth usage tracker
 export { createAuthUsageTracker } from "./model/auth-usage-tracker.js";
@@ -150,24 +115,24 @@ export type { AuthUsageTracker, ProfileStats, ProfileUsageInput } from "./model/
 export { createLastKnownModelTracker } from "./model/last-known-model.js";
 export type { LastKnownModelTracker, LastKnownModelEntry } from "./model/last-known-model.js";
 
-// Routing
-export { createMessageRouter, resolveAgent } from "./routing/message-router.js";
-export type { MessageRouter } from "./routing/message-router.js";
+// Routing symbols (router factory, resolver, router type) live in
+// @comis/orchestrator. Consumers import from @comis/orchestrator.
 
 // Session lifecycle (renamed from session-manager.ts)
 export { createSessionLifecycle } from "./session/session-lifecycle.js";
 export type { SessionLifecycle, SessionLifecycleOptions } from "./session/session-lifecycle.js";
-// Backward compat aliases
-export { createSessionLifecycle as createSessionManager } from "./session/session-lifecycle.js";
-export type { SessionLifecycle as SessionManager } from "./session/session-lifecycle.js";
 
 // Session label store (human-readable session names via metadata.label)
 export { createSessionLabelStore } from "./session/session-label-store.js";
 export type { SessionLabelStore } from "./session/session-label-store.js";
 
-// Session key builder (DM scope modes, agent prefix, thread isolation)
-export { buildScopedSessionKey, extractThreadId } from "./session/session-key-builder.js";
-export type { DmScopeMode, ScopedSessionKeyParams } from "./session/session-key-builder.js";
+// Session key builder lives in @comis/orchestrator. The builder + its
+// co-located test + dm-scope-integration.test.ts live at
+// packages/orchestrator/src/session-key/. Other files in
+// packages/agent/src/session/ (lifecycle, write-lock, reset-policy, label-store)
+// stay in agent. Consumers (orchestrator/src/inbound/inbound-resolve.ts) use
+// the relative orchestrator-internal import path; external consumers import
+// from @comis/orchestrator.
 
 // Session write lock (per-session filesystem locking)
 export { withSessionLock, cleanupStaleLocks } from "./session/session-write-lock.js";
@@ -207,19 +172,10 @@ export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 export { createRagRetriever, formatMemorySection } from "./rag/rag-retriever.js";
 export type { RagRetriever, RagRetrieverDeps } from "./rag/rag-retriever.js";
 
-// Queue
-export { createCommandQueue } from "./queue/index.js";
-export type { CommandQueue, CommandQueueDeps, QueueStats } from "./queue/index.js";
-export type { SessionLane } from "./queue/index.js";
-export { applyOverflowPolicy } from "./queue/index.js";
-export type { OverflowResult } from "./queue/index.js";
-export { coalesceMessages } from "./queue/index.js";
-export { createDebounceBuffer } from "./queue/index.js";
-export type { DebounceBuffer, DebounceBufferDeps } from "./queue/index.js";
-export { createFollowupTrigger } from "./queue/index.js";
-export type { FollowupTrigger, FollowupTriggerDeps } from "./queue/index.js";
-export { createPriorityScheduler } from "./queue/index.js";
-export type { PriorityScheduler, PrioritySchedulerDeps, LaneStats } from "./queue/index.js";
+// Queue symbols live in @comis/orchestrator:
+// createCommandQueue, CommandQueue, DebounceBuffer, FollowupTrigger, PriorityScheduler,
+// coalesceMessages, applyOverflowPolicy, SessionLane, and all related *Deps / *Stats types
+// live at packages/orchestrator/src/queue/ and re-export from @comis/orchestrator.
 
 // Bootstrap (workspace loading & system prompt assembly)
 export {
@@ -246,40 +202,16 @@ export type {
   ToolDescriptionContext,
 } from "./bootstrap/index.js";
 
-// Commands (slash command parser & handler)
-export { parseSlashCommand, createCommandHandler } from "./commands/index.js";
-export type {
-  CommandType,
-  ParsedCommand,
-  CommandDirectives,
-  CommandResult,
-  CommandHandlerDeps,
-  CommandHandler,
-} from "./commands/index.js";
+// Commands (slash command parser & handler) live in @comis/orchestrator.
+// Consumers import from @comis/orchestrator.
 
-// Commands — Prompt skill matcher
-export { matchPromptSkillCommand, detectSkillCollisions, RESERVED_COMMAND_NAMES } from "./commands/index.js";
-export type { PromptSkillMatch, CollisionWarning, PromptSkillDirective } from "./commands/index.js";
-
-// Workspace
-export {
-  ensureWorkspace,
-  getWorkspaceStatus,
-  registerWorkspaceFilesInTracker,
-  resolveWorkspaceDir,
-  WORKSPACE_FILE_NAMES,
-  WORKSPACE_SUBDIRS,
-  DEFAULT_TEMPLATES,
-  isHeartbeatContentEffectivelyEmpty,
-} from "./workspace/index.js";
-export type {
-  WorkspaceFiles,
-  EnsureWorkspaceOptions,
-  WorkspaceStatus,
-  WorkspaceFileName,
-  WorkspaceSeedTracker,
-  RegisterWorkspaceResult,
-} from "./workspace/index.js";
+// Workspace public API lives in @comis/core. The agent-internal workspace/
+// subdir is retained because agent internals (bootstrap-loader, executor, etc.)
+// consume it via relative paths; only the public barrel re-exports are deleted
+// here. One holdover: isHeartbeatContentEffectivelyEmpty is consumed by daemon
+// heartbeat code via the agent barrel (it sits next to the workspace helpers
+// as a workspace-state probe).
+export { isHeartbeatContentEffectivelyEmpty } from "./workspace/index.js";
 
 // File-state tracker registry (per-session lifetime)
 export { createSessionTrackerRegistry } from "./file-state/session-tracker-registry.js";
@@ -297,8 +229,8 @@ export { wrapInEnvelope, formatElapsed } from "./envelope/index.js";
 // ---------------------------------------------------------------------------
 
 // PiExecutor core
-export { createPiExecutor } from "./executor/pi-executor.js";
-export type { PiExecutorDeps } from "./executor/pi-executor.js";
+export { createPiExecutor } from "./executor/pi-executor/index.js";
+export type { PiExecutorDeps } from "./executor/pi-executor/index.js";
 
 // Wire session:expired to clearSession functions
 export { clearSessionState, wireSessionStateCleanup } from "./executor/session-snapshot-cleanup.js";
@@ -332,8 +264,8 @@ export { createActiveRunRegistry } from "./executor/active-run-registry.js";
 export type { ActiveRunRegistry, RunHandle } from "./executor/active-run-registry.js";
 
 // Cache break detection
-export { clearCacheBreakDetectorSession, extractGeminiPromptState } from "./executor/cache-break-detection.js";
-export type { CacheBreakDetector, CacheBreakEvent, CacheBreakReason, RecordPromptStateInput, CheckCacheBreakInput, PendingChanges, PromptStateSnapshot } from "./executor/cache-break-detection.js";
+export { clearCacheBreakDetectorSession, extractGeminiPromptState } from "./executor/cache-detection/index.js";
+export type { CacheBreakDetector, CacheBreakEvent, CacheBreakReason, RecordPromptStateInput, CheckCacheBreakInput, PendingChanges, PromptStateSnapshot } from "./executor/cache-detection/index.js";
 
 // Cache break diff writer
 export { createCacheBreakDiffWriter } from "./executor/cache-break-diff-writer.js";
@@ -405,7 +337,7 @@ export { createHybridMemoryInjector } from "./rag/hybrid-memory-injector.js";
 export type { HybridMemoryInjector, HybridMemoryInjection } from "./rag/hybrid-memory-injector.js";
 
 // Schema normalizer (strip unsupported JSON Schema keywords per provider)
-export { normalizeToolSchema, normalizeToolSchemas, PROVIDER_UNSUPPORTED_KEYWORDS } from "./safety/tool-schema-safety.js";
+export { normalizeToolSchema, PROVIDER_UNSUPPORTED_KEYWORDS } from "./safety/tool-schema-safety.js";
 export type { NormalizedSchema, ProviderName } from "./safety/tool-schema-safety.js";
 
 // Tool schema normalization pipeline (4-layer per-provider normalization)
@@ -418,7 +350,7 @@ export { stripXaiUnsupportedKeywords } from "./provider/tool-schema/clean-for-xa
 export { pruneSchemaDescriptions, pruneToolSchemas } from "./safety/tool-schema-safety.js";
 export type { PruneResult, PruneToolsResult } from "./safety/tool-schema-safety.js";
 
-// Spawn (SpawnPacketBuilder + parent summary + result condensation)
+// Spawn (SpawnPacketBuilder + parent summary + result condensation + sub-agent lifecycle)
 export { createSpawnPacketBuilder } from "./spawn/index.js";
 export type { SpawnPacketBuilderDeps, SpawnPacketBuildParams } from "./spawn/index.js";
 export { generateParentSummary } from "./spawn/index.js";
@@ -430,6 +362,9 @@ export type { NarrativeCasterConfig, CastParams } from "./spawn/index.js";
 export { createLifecycleHooks, deriveSubagentContextEngineConfig } from "./spawn/index.js";
 export type { LifecycleHooksDeps } from "./spawn/index.js";
 export { createEphemeralComisSessionManager } from "./spawn/index.js";
+export { createSubAgentRunner, ANNOUNCE_PARENT_TIMEOUT_MS } from "./spawn/index.js";
+export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger } from "./spawn/index.js";
+export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./spawn/index.js";
 
 // Context engine
 export { createContextEngine } from "./context-engine/index.js";

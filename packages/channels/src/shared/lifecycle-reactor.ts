@@ -16,7 +16,7 @@ import type {
   SessionKey,
   LifecycleReactionsConfig,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import { suppressError } from "@comis/shared";
 
 import {
@@ -31,6 +31,7 @@ import {
 } from "./emoji-tier-map.js";
 import { toSlackShortname } from "./slack-emoji-map.js";
 import { computeStallThresholds } from "./stall-detector.js";
+import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -188,11 +189,11 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       state.debounceController = null;
     }
     if (state.stallTimer) {
-      clearTimeout(state.stallTimer);
+      systemClearTimeout(state.stallTimer);
       state.stallTimer = null;
     }
     if (state.holdTimer) {
-      clearTimeout(state.holdTimer);
+      systemClearTimeout(state.holdTimer);
       state.holdTimer = null;
     }
 
@@ -214,7 +215,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       channelId: state.channelId,
       chatId: state.channelId,
       removedEmoji: state.currentEmoji,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 
@@ -244,13 +245,13 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       }
       // Clear stall timer
       if (state.stallTimer) {
-        clearTimeout(state.stallTimer);
+        systemClearTimeout(state.stallTimer);
         state.stallTimer = null;
       }
 
       // Apply reaction immediately
       state.phase = newPhase;
-      state.phaseEnteredAt = Date.now();
+      state.phaseEnteredAt = systemNowMs();
       applyReaction(state, newPhase);
 
       // Emit terminal event
@@ -262,7 +263,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
         chatId: state.channelId,
         phase: newPhase as "done" | "error",
         emoji,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       // Determine hold duration
@@ -271,7 +272,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
         : config.timing.holdDoneMs;
 
       // Start hold timer: after hold, remove reaction and clean up
-      state.holdTimer = setTimeout(() => {
+      state.holdTimer = systemSetTimeout(() => {
         // Remove the terminal emoji
         suppressError(
           adapter.removeReaction(state.channelId, state.platformMessageId, state.currentEmoji),
@@ -289,7 +290,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
         phase: newPhase,
         emoji,
         previousPhase,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       return;
@@ -307,33 +308,33 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
 
     // Update state immediately (even if emoji update is debounced)
     state.phase = newPhase;
-    state.phaseEnteredAt = Date.now();
+    state.phaseEnteredAt = systemNowMs();
 
     // Set debounce timeout
-    const debounceTimer = setTimeout(() => {
+    const debounceTimer = systemSetTimeout(() => {
       if (controller.signal.aborted) return;
       applyReaction(state, newPhase);
     }, config.timing.debounceMs);
 
     // Wire abort to cancel the debounce timer
     controller.signal.addEventListener("abort", () => {
-      clearTimeout(debounceTimer);
+      systemClearTimeout(debounceTimer);
     }, { once: true });
 
     // Update stall detection
     if (state.stallTimer) {
-      clearTimeout(state.stallTimer);
+      systemClearTimeout(state.stallTimer);
       state.stallTimer = null;
     }
 
     const thresholds = computeStallThresholds(newPhase, config.timing);
 
     // Set stall timer for soft threshold
-    state.stallTimer = setTimeout(() => {
+    state.stallTimer = systemSetTimeout(() => {
       // Verify still in same phase (timer may be stale)
       if (state.phase !== newPhase) return;
 
-      const stallMs = Date.now() - state.phaseEnteredAt;
+      const stallMs = systemNowMs() - state.phaseEnteredAt;
 
       // Determine severity
       if (stallMs >= thresholds.hardMs) {
@@ -347,7 +348,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
           phase: newPhase,
           severity: "hard",
           stallMs,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
       } else {
         // Soft stall
@@ -360,15 +361,15 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
           phase: newPhase,
           severity: "soft",
           stallMs,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
 
         // Schedule hard stall check
         const remainingHardMs = thresholds.hardMs - stallMs;
         if (remainingHardMs > 0) {
-          state.stallTimer = setTimeout(() => {
+          state.stallTimer = systemSetTimeout(() => {
             if (state.phase !== "stall_soft") return;
-            const hardStallMs = Date.now() - state.phaseEnteredAt;
+            const hardStallMs = systemNowMs() - state.phaseEnteredAt;
             transitionPhase(messageKey, "stall_hard");
             eventBus.emit("reaction:stall_detected", {
               messageId: state.platformMessageId,
@@ -378,7 +379,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
               phase: newPhase,
               severity: "hard",
               stallMs: hardStallMs,
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
             });
           }, remainingHardMs);
         }
@@ -395,7 +396,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       phase: newPhase,
       emoji,
       previousPhase,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 
@@ -424,7 +425,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       holdTimer: null,
       channelId,
       platformMessageId: messageId,
-      phaseEnteredAt: Date.now(),
+      phaseEnteredAt: systemNowMs(),
     };
 
     messageStates.set(messageKey, state);
@@ -516,11 +517,11 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
           state.debounceController = null;
         }
         if (state.stallTimer) {
-          clearTimeout(state.stallTimer);
+          systemClearTimeout(state.stallTimer);
           state.stallTimer = null;
         }
         if (state.holdTimer) {
-          clearTimeout(state.holdTimer);
+          systemClearTimeout(state.holdTimer);
           state.holdTimer = null;
         }
       }

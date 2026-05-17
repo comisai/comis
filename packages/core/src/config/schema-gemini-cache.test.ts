@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { GeminiCacheConfigSchema } from "./schema-gemini-cache.js";
-import { AgentConfigSchema } from "./schema-agent.js";
+import { AgentConfigSchema } from "./schema-agent/index.js";
 
 // ---------------------------------------------------------------------------
 // GeminiCacheConfigSchema

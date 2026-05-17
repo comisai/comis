@@ -32,8 +32,8 @@ import {
   type SessionKey,
   type PerAgentConfig,
 } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
-import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { ComisLogger, ErrorKind } from "@comis/core";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { StreamFnWrapper } from "./stream-wrappers/index.js";
 import {
   createToolResultSizeBouncer,
@@ -54,7 +54,7 @@ import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";
 import type { TtlSplitEstimate } from "../bridge/pi-event-bridge.js";
 import { createGeminiCacheInjector } from "./gemini-cache-injector.js";
 import type { GeminiCacheManager } from "./gemini-cache-manager.js";
-import { extractAnthropicPromptState, extractGeminiPromptState } from "./cache-break-detection.js";
+import { extractAnthropicPromptState, extractGeminiPromptState } from "./cache-detection/index.js";
 import { createBlockStabilityTracker } from "./block-stability-tracker.js";
 import {
   clearSessionCacheWarm,
@@ -64,7 +64,7 @@ import {
   getBreakpointIndex,
   getEvictionCooldown,
 } from "./executor-session-state.js";
-import type { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import { installMicrocompactionGuard } from "../context-engine/index.js";
 import type { ContextEngine } from "../context-engine/index.js";
 import type { AdaptiveCacheRetention } from "./adaptive-cache-retention.js";
@@ -86,6 +86,8 @@ export interface StreamSetupDeps {
   tenantId?: string;
   tracingDefaults?: { maxSize: string; maxFiles: number };
   geminiCacheManager?: GeminiCacheManager;
+  /** Wall-clock + monotonic time reads. */
+  clock: import("@comis/core").ClockPort;
 }
 
 /** Parameters for the setupStreamWrappers function. */
@@ -147,9 +149,9 @@ export interface StreamSetupResult {
 /**
  * Build the ordered stream wrapper chain for a single execution.
  *
- * Pure function with params object ( extraction pattern). All mutable
- * refs and closure state remain in pi-executor.ts orchestrator scope and are
- * accessed via getter callbacks.
+ * Pure function with params object. All mutable refs and closure state
+ * remain in pi-executor.ts orchestrator scope and are accessed via getter
+ * callbacks.
  *
  * @param params - Stream setup parameters including config, deps, and getter callbacks
  * @returns Stream setup result with wrappers array and shared state refs
@@ -230,7 +232,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     clearSessionLatches(formattedKey);                  // 4. SESS-LATCH: Reset latches for fresh cache cycle
     // Latch idle thinking clear when elapsed > 1h
     if (!executionOverrides?.spawnPacket) {
-      const elapsed = getElapsedSinceLastResponse(formattedKey);
+      const elapsed = getElapsedSinceLastResponse(formattedKey, deps.clock);
       if (elapsed !== undefined && elapsed > 60 * 60 * 1000) {
         getOrCreateSessionLatches(formattedKey).idleThinkingClear.setOnce(true);
       }
@@ -243,6 +245,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       getRetention: () => capturedRetention?.getRetention(),
       onTtlExpiry,
       logger: deps.logger,
+      clock: deps.clock,
     }),
     validationErrorFormatter,
     bouncerWrapper,
@@ -268,6 +271,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     ),
     createRequestBodyInjector(
       {
+        clock: deps.clock,
         getCacheRetention: () => capturedRetention?.getRetention()
           ?? capturedCacheRetention ?? config.cacheRetention,
         getMessageRetention: () => capturedRetention?.getMessageRetention(),
@@ -280,7 +284,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
         cacheWriteTimestamp: executionOverrides?.spawnPacket?.cacheSafeParams?.cacheWriteTimestamp,
         parentCacheRetention: executionOverrides?.spawnPacket?.cacheSafeParams?.cacheRetention,
         getCacheFenceIndex: () => getBreakpointIndex(formattedKey) ?? -1,
-        getElapsedSinceLastResponse: () => getElapsedSinceLastResponse(formattedKey),
+        getElapsedSinceLastResponse: () => getElapsedSinceLastResponse(formattedKey, deps.clock),
         getLastResponseTs: () => getLastResponseTs(formattedKey),
         promoteRecentZoneOnSlowCadence:
           config.advancedCacheOptimization?.enableRecentZonePromotion ?? true,
@@ -395,8 +399,8 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       const traceMaxFiles = deps.tracingDefaults?.maxFiles ?? 3;
 
       wrappers.push(
-        createCacheTraceWriter({ filePath: cacheTracePath, agentId, sessionId: formattedKey, maxSize: traceMaxSize, maxFiles: traceMaxFiles }, deps.logger),
-        createApiPayloadTraceWriter({ filePath: apiPayloadPath, agentId, sessionId: formattedKey, maxSize: traceMaxSize, maxFiles: traceMaxFiles }, deps.logger),
+        createCacheTraceWriter({ filePath: cacheTracePath, agentId, sessionId: formattedKey, maxSize: traceMaxSize, maxFiles: traceMaxFiles, clock: deps.clock }, deps.logger),
+        createApiPayloadTraceWriter({ filePath: apiPayloadPath, agentId, sessionId: formattedKey, maxSize: traceMaxSize, maxFiles: traceMaxFiles, clock: deps.clock }, deps.logger),
       );
 
       deps.logger.info(

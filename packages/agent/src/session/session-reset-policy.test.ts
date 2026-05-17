@@ -1,8 +1,48 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { formatSessionKey, TypedEventBus } from "@comis/core";
-import type { SessionKey, SessionResetPolicyConfig } from "@comis/core";
+import type {
+  SessionKey,
+  SessionResetPolicyConfig,
+  ComputeDailyResetNextRun,
+  TimerPort,
+  TimerHandle,
+} from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Lightweight TimerPort wrapper that delegates to globals so
+// vi.useFakeTimers() continues to intercept setInterval below.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 import type { SessionStore, SessionDetailedEntry } from "@comis/memory";
+// Test-only import from @comis/scheduler: provides the canonical cron-shape
+// helper that daemon composition (setup-schedulers.ts) wires into agent's
+// SessionResetSchedulerDeps.computeDailyResetNextRun in production. The
+// production source (session-reset-policy.ts) does NOT import this — agent's
+// production source is scheduler-free.
+import { computeNextRunAtMs } from "@comis/scheduler";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import {
   classifySession,
@@ -17,6 +57,24 @@ import type {
   SessionResetSchedulerDeps,
 } from "./session-reset-policy.js";
 import type { SessionLifecycle } from "./session-lifecycle.js";
+
+// ---------------------------------------------------------------------------
+// computeDailyResetNextRun stub — wraps the real scheduler helper into the
+// signature SessionResetSchedulerDeps expects. Behavior is identical to what
+// daemon composition wires in production; the indirection only proves the
+// callback is consumed (and lets future tests inject a deterministic stub).
+// ---------------------------------------------------------------------------
+
+const computeDailyResetNextRun: ComputeDailyResetNextRun = (
+  updatedAt: number,
+  hour: number,
+  timezone: string,
+): number | undefined => {
+  return computeNextRunAtMs(
+    { kind: "cron", expr: `0 ${hour} * * *`, tz: timezone || undefined },
+    updatedAt,
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -185,7 +243,7 @@ describe("isDailyResetDue", () => {
     const after4AM = today4AM.getTime() + 3_600_000; // 5 AM
 
     // Use UTC timezone for deterministic tests
-    const result = isDailyResetDue(before4AM, 4, "UTC", after4AM);
+    const result = isDailyResetDue(before4AM, 4, "UTC", after4AM, computeDailyResetNextRun);
     expect(result).toBe(true);
   });
 
@@ -196,7 +254,7 @@ describe("isDailyResetDue", () => {
     const after4AM = today4AM.getTime() + 3_600_000; // 5 AM
     const later = today4AM.getTime() + 7_200_000; // 6 AM
 
-    const result = isDailyResetDue(after4AM, 4, "UTC", later);
+    const result = isDailyResetDue(after4AM, 4, "UTC", later, computeDailyResetNextRun);
     expect(result).toBe(false);
   });
 
@@ -210,8 +268,24 @@ describe("isDailyResetDue", () => {
     const updatedAt = Date.UTC(2025, 5, 15, 3, 0, 0); // 03:00 UTC
     const nowMs = Date.UTC(2025, 5, 15, 5, 0, 0); // 05:00 UTC
 
-    const result = isDailyResetDue(updatedAt, 0, "America/New_York", nowMs);
+    const result = isDailyResetDue(
+      updatedAt,
+      0,
+      "America/New_York",
+      nowMs,
+      computeDailyResetNextRun,
+    );
     expect(result).toBe(true);
+  });
+
+  it("returns false when computeDailyResetNextRun returns undefined (invalid schedule)", () => {
+    // Stub that simulates an invalid cron expression / unparseable hour.
+    // The production wrapper treats undefined as "not due" — never spuriously
+    // resets a session because of a malformed policy config.
+    const undefinedStub: ComputeDailyResetNextRun = () => undefined;
+    const nowMs = Date.now();
+    const result = isDailyResetDue(nowMs - 86_400_000, 99, "UTC", nowMs, undefinedStub);
+    expect(result).toBe(false);
   });
 });
 
@@ -261,7 +335,7 @@ describe("checkReset", () => {
       dailyResetTimezone: "",
       idleTimeoutMs: 14_400_000,
     };
-    const result = checkReset(policy, staleSession, now);
+    const result = checkReset(policy, staleSession, now, computeDailyResetNextRun);
     expect(result.reset).toBe(false);
     expect(result.reason).toBe("disabled");
   });
@@ -273,7 +347,7 @@ describe("checkReset", () => {
       dailyResetTimezone: "",
       idleTimeoutMs: 10_000, // 10s timeout
     };
-    const result = checkReset(policy, staleSession, now);
+    const result = checkReset(policy, staleSession, now, computeDailyResetNextRun);
     expect(result.reset).toBe(true);
     expect(result.reason).toBe("idle");
   });
@@ -285,7 +359,7 @@ describe("checkReset", () => {
       dailyResetTimezone: "",
       idleTimeoutMs: 14_400_000,
     };
-    const result = checkReset(policy, freshSession, now);
+    const result = checkReset(policy, freshSession, now, computeDailyResetNextRun);
     expect(result.reset).toBe(false);
     expect(result.reason).toBe("not-due");
   });
@@ -304,7 +378,7 @@ describe("checkReset", () => {
       dailyResetTimezone: "UTC",
       idleTimeoutMs: 14_400_000,
     };
-    const result = checkReset(policy, dailySession, fixedNow);
+    const result = checkReset(policy, dailySession, fixedNow, computeDailyResetNextRun);
     expect(result.reset).toBe(true);
     expect(result.reason).toBe("daily");
   });
@@ -317,7 +391,7 @@ describe("checkReset", () => {
       dailyResetTimezone: "UTC",
       idleTimeoutMs: 10_000, // 10s -- staleSession is way past this
     };
-    const result = checkReset(policy, staleSession, now);
+    const result = checkReset(policy, staleSession, now, computeDailyResetNextRun);
     expect(result.reset).toBe(true);
     expect(result.reason).toMatch(/idle|daily/);
   });
@@ -329,7 +403,7 @@ describe("checkReset", () => {
       dailyResetTimezone: "UTC",
       idleTimeoutMs: 100_000_000, // very large
     };
-    const result = checkReset(policy, freshSession, now);
+    const result = checkReset(policy, freshSession, now, computeDailyResetNextRun);
     expect(result.reset).toBe(false);
     expect(result.reason).toBe("not-due");
   });
@@ -362,7 +436,9 @@ describe("createSessionResetScheduler", () => {
       eventBus,
       logger,
       getConfig: () => defaultConfig({ mode: "idle", idleTimeoutMs: 10_000 }),
+      computeDailyResetNextRun,
       nowMs: () => Date.now(),
+      timers: testTimers,
       ...overrides,
     };
   }

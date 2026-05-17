@@ -4,7 +4,7 @@ import { CSSResult } from "lit";
 import { sharedStyles, focusStyles, srOnly, breakpoints } from "./shared.js";
 
 describe("sharedStyles", () => {
-  it("is a CSSResult", () => {
+  it("sharedStyles is a CSSResult instance per Lit styles contract", () => {
     expect(sharedStyles).toBeInstanceOf(CSSResult);
   });
 
@@ -25,7 +25,7 @@ describe("sharedStyles", () => {
 });
 
 describe("focusStyles", () => {
-  it("is a CSSResult", () => {
+  it("focusStyles is a CSSResult instance per Lit styles contract", () => {
     expect(focusStyles).toBeInstanceOf(CSSResult);
   });
 
@@ -46,7 +46,7 @@ describe("breakpoints", () => {
     expect(typeof breakpoints).toBe("object");
   });
 
-  it("has exactly 7 keys", () => {
+  it("declares exactly 7 keys on the breakpoints object per responsive-design contract", () => {
     expect(Object.keys(breakpoints)).toHaveLength(7);
   });
 
@@ -68,7 +68,7 @@ describe("breakpoints", () => {
 });
 
 describe("srOnly", () => {
-  it("is a CSSResult", () => {
+  it("srOnly is a CSSResult instance per Lit styles contract for screen-reader-only", () => {
     expect(srOnly).toBeInstanceOf(CSSResult);
   });
 

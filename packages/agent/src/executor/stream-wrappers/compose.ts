@@ -5,8 +5,8 @@
  * @module
  */
 
-import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { ComisLogger } from "@comis/infra";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import type { ComisLogger } from "@comis/core";
 
 import type { StreamFnWrapper } from "./types.js";
 

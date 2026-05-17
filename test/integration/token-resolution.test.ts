@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Token Resolution Integration Tests (TEST-02)
+ * Token Resolution Integration Tests
  *
  * Validates the three-tier gateway token resolution chain:
  *   1. Config: explicit secret present and >= 32 chars -> use directly
@@ -14,7 +14,7 @@
  *   - Config token with explicit secret does NOT trigger WARN log
  *   - Authenticated RPC succeeds with config-provided token
  *
- * Uses port 8561 (config.test-token-resolution.yaml).
+ * Uses port 8564 (config.test-token-resolution.yaml).
  */
 
 import { resolve, dirname } from "node:path";
@@ -39,7 +39,7 @@ const CONFIG_PATH = resolve(__dirname, "../config/config.test-token-resolution.y
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("Token Resolution Integration Tests (TEST-02)", () => {
+describe("Token Resolution Integration Tests", () => {
   let handle: TestDaemonHandle;
   let logCapture: ReturnType<typeof createLogCapture>;
 

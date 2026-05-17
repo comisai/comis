@@ -15,6 +15,7 @@
  */
 
 import type { SecretManager } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -115,13 +116,14 @@ export function createAuthProfileManager(config: AuthProfileManagerConfig): Auth
   }
 
   /**
-   * Explicit strategy: iterate in config order, return first non-cooldown key.
-   * This is the original behavior, preserved for backward compatibility.
+   * Explicit strategy: iterate the configured profiles in order; return the
+   * first non-cooldown key whose secret resolves. Used when the auth-profile
+   * policy is `explicit` (the default for static API keys).
    */
   function getExplicit(providerProfiles: AuthProfile[]): string | undefined {
     for (const profile of providerProfiles) {
       const s = getState(profile.keyName);
-      if (Date.now() >= s.cooldownUntilMs) {
+      if (systemNowMs() >= s.cooldownUntilMs) {
         const value = secretManager.get(profile.keyName);
         if (value !== undefined) {
           return value;
@@ -147,7 +149,7 @@ export function createAuthProfileManager(config: AuthProfileManagerConfig): Auth
       idx = (idx + 1) % providerProfiles.length;
 
       const s = getState(profile!.keyName);
-      if (Date.now() >= s.cooldownUntilMs) {
+      if (systemNowMs() >= s.cooldownUntilMs) {
         const value = secretManager.get(profile!.keyName);
         if (value !== undefined) {
           rrIndex.set(provider, idx); // Advance index for next call
@@ -170,7 +172,7 @@ export function createAuthProfileManager(config: AuthProfileManagerConfig): Auth
     const lastKeyName = lastGood.get(provider);
     if (lastKeyName) {
       const s = getState(lastKeyName);
-      if (Date.now() >= s.cooldownUntilMs) {
+      if (systemNowMs() >= s.cooldownUntilMs) {
         const value = secretManager.get(lastKeyName);
         if (value !== undefined) return value;
       }
@@ -179,7 +181,7 @@ export function createAuthProfileManager(config: AuthProfileManagerConfig): Auth
     // Fall through to first available (explicit order)
     for (const profile of providerProfiles) {
       const s = getState(profile.keyName);
-      if (Date.now() >= s.cooldownUntilMs) {
+      if (systemNowMs() >= s.cooldownUntilMs) {
         const value = secretManager.get(profile.keyName);
         if (value !== undefined) return value;
       }
@@ -207,7 +209,7 @@ export function createAuthProfileManager(config: AuthProfileManagerConfig): Auth
       const s = getState(keyName);
       s.failures += 1;
       const cooldownMs = Math.min(initialMs * Math.pow(multiplier, s.failures - 1), capMs);
-      s.cooldownUntilMs = Date.now() + cooldownMs;
+      s.cooldownUntilMs = systemNowMs() + cooldownMs;
     },
 
     recordSuccess(keyName: string): void {
@@ -224,7 +226,7 @@ export function createAuthProfileManager(config: AuthProfileManagerConfig): Auth
 
     isInCooldown(keyName: string): boolean {
       const s = getState(keyName);
-      return Date.now() < s.cooldownUntilMs;
+      return systemNowMs() < s.cooldownUntilMs;
     },
 
     getProfiles(provider: string): AuthProfile[] {

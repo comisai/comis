@@ -10,10 +10,9 @@
  * @module
  */
 
-import type { TypedEventBus, ChannelPort, EventMap, DeliveryQueuePort } from "@comis/core";
+import type { TypedEventBus, ChannelPort, EventMap, DeliveryQueuePort, DeliveryService } from "@comis/core";
 import { parseFormattedSessionKey } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
-import { deliverToChannel } from "./deliver-to-channel.js";
+import type { ComisLogger } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,6 +25,11 @@ export interface ApprovalNotifierDeps {
   logger: ComisLogger;
   /** Delivery queue for crash-safe persistence. */
   deliveryQueue?: DeliveryQueuePort;
+  /** DeliveryService constructed once at the daemon composition root.
+   *  The single delivery callsite below uses
+   *  `deps.deliveryService.deliverToChannel(...)` rather than a
+   *  free-standing standalone export. */
+  deliveryService: DeliveryService;
 }
 
 export interface ApprovalNotifier {
@@ -89,10 +93,10 @@ export function createApprovalNotifier(deps: ApprovalNotifierDeps): ApprovalNoti
         `Approve or deny via web console, or reply: /approve ${requestIdShort} or /deny ${requestIdShort}`,
       ].join("\n");
 
-      // Fire-and-forget: don't block the event bus
-      deliverToChannel(adapter, chatId, text, { skipChunking: true },
-        deps.deliveryQueue ? { deliveryQueue: deps.deliveryQueue } : undefined,
-      ).then((result) => {
+      // Fire-and-forget: don't block the event bus. Method form via threaded
+      // DeliveryService; deliveryQueue is captured in closure at construction.
+      deps.deliveryService.deliverToChannel(adapter, chatId, text, { skipChunking: true })
+        .then((result) => {
         if (!result.ok || !result.value.ok) {
           deps.logger.warn(
             {

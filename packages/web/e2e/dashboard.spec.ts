@@ -23,12 +23,17 @@ test.describe("Dashboard view", () => {
     await expect(dashboard.getByText("Active Agents")).toBeVisible();
     await expect(dashboard.getByText(`${activeAgentCount}/${totalAgentCount}`)).toBeVisible();
 
-    // Verify "Channels" stat card shows correct count (scoped to label text)
-    const connectedChannelCount = MOCK_CHANNELS.filter((c) => c.status === "connected").length;
-    const totalChannelCount = MOCK_CHANNELS.length;
-    // Use exact match to avoid matching the section title "Channels" which is also present
-    await expect(dashboard.locator("ic-stat-card").filter({ hasText: "Channels" })).toBeVisible();
-    await expect(dashboard.getByText(`${connectedChannelCount}/${totalChannelCount}`)).toBeVisible();
+    // Verify channels section is rendered with channel badges (the dashboard
+    // does not have a "Channels" stat card -- channels appear as a section
+    // with ic-channel-badge entries below the stat row).
+    await expect(
+      dashboard.locator(".section-title").filter({ hasText: "Channels" }),
+    ).toBeVisible();
+    for (const channel of MOCK_CHANNELS) {
+      await expect(
+        page.locator("ic-channel-badge").getByText(channel.name),
+      ).toBeVisible();
+    }
   });
 
   test("dashboard shows system health card with uptime and memory", async ({ page }) => {

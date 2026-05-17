@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import os from "node:os";
 import { parse as parseYaml } from "yaml";
-import { AppConfigSchema, loadEnvFile } from "@comis/core";
+import { AppConfigSchema, loadEnvFile, systemGetEnv } from "@comis/core";
 import type { DoctorCheck, DoctorFinding } from "../types.js";
 
 const ENV_REF_RE = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
@@ -21,8 +21,7 @@ const ENV_REF_RE = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
 function resolveEnvRefs(obj: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(obj)) {
     if (typeof value === "string" && value.includes("${")) {
-      // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-      obj[key] = value.replace(ENV_REF_RE, (match, varName: string) => process.env[varName] ?? match);
+      obj[key] = value.replace(ENV_REF_RE, (match, varName: string) => systemGetEnv(varName) ?? match);
     } else if (value && typeof value === "object" && !Array.isArray(value)) {
       resolveEnvRefs(value as Record<string, unknown>);
     } else if (Array.isArray(value)) {

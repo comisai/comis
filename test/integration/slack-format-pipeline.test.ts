@@ -8,14 +8,15 @@
  *
  *   SLACK-FMT-01: Single markdown message renders correct mrkdwn through pipeline
  *   SLACK-FMT-02: Multi-chunk message preserves bold without italic corruption
- *   SLACK-FMT-03: deliverToChannel with mock Slack adapter sends mrkdwn, not raw markdown
+ *   SLACK-FMT-03: DeliveryService.deliverToChannel with mock Slack adapter sends mrkdwn, not raw markdown
  */
 
 import { describe, it, expect } from "vitest";
-import { formatForChannel, deliverToChannel } from "@comis/channels";
-import type { DeliveryAdapter } from "@comis/channels";
+import { formatForChannel } from "@comis/core";
+import type { DeliveryAdapter } from "@comis/core";
 import { ok } from "@comis/shared";
 import type { Result } from "@comis/shared";
+import { makeDeliveryService } from "../support/factories.js";
 
 // ---------------------------------------------------------------------------
 // Mock adapter factory
@@ -96,10 +97,11 @@ describe("SLACK-FMT: Slack Format Pipeline E2E", () => {
   });
 
   // SLACK-FMT-03
-  it("deliverToChannel with mock Slack adapter sends mrkdwn, not raw markdown", async () => {
+  it("DeliveryService.deliverToChannel with mock Slack adapter sends mrkdwn, not raw markdown", async () => {
     const adapter = createMockSlackAdapter();
+    const service = makeDeliveryService();
 
-    const result = await deliverToChannel(
+    const result = await service.deliverToChannel(
       adapter,
       "C-test-channel",
       "Hello **bold** and [link](https://example.com)",

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.
 /**
  * Daemon control commands: start, stop, status, logs.
  *
@@ -17,8 +18,8 @@ import * as os from "node:os";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import chalk from "chalk";
-import { safePath } from "@comis/core";
-import { withClient } from "../client/rpc-client.js";
+import { safePath, SystemPingContract, ConfigReadContract } from "@comis/core";
+import { withClient, callTyped } from "../client/rpc-client.js";
 import { success, error, info, warn } from "../output/format.js";
 import { renderKeyValue } from "../output/table.js";
 
@@ -364,7 +365,7 @@ async function handleDaemonStart(): Promise<void> {
         if (await isSystemdActive(manager)) {
           // Verify the CLI can actually talk to the daemon
           try {
-            await withClient(async (client) => client.call("system.ping", {}));
+            await withClient(async (client) => callTyped(client, SystemPingContract, {}));
             success("Daemon is already running (systemd)");
           } catch {
             warn("Daemon is running (systemd) but CLI cannot connect");
@@ -485,8 +486,10 @@ async function stopDirectMode(): Promise<void> {
  */
 async function tryRpcStatus(): Promise<boolean> {
   try {
+    // ConfigReadContract.response is a loose record matching the daemon's
+    // return shape for `config.read`.
     const result = await withClient(async (client) => {
-      return (await client.call("config.get", {})) as Record<string, unknown>;
+      return await callTyped(client, ConfigReadContract, {});
     });
     success("Daemon is running");
     const pairs: [string, string][] = [];

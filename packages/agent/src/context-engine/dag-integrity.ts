@@ -17,7 +17,8 @@
  * @module
  */
 
-import type { ContextStore } from "@comis/memory";
+import type { ContextStorePort } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import type {
   IntegrityIssue,
   IntegrityReport,
@@ -62,7 +63,7 @@ export function checkIntegrity(
   deps: IntegrityCheckDeps,
   conversationId: string,
 ): IntegrityReport {
-  const startTime = Date.now();
+  const startTime = systemNowMs();
 
   // Collect issues from all checks
   const issues: IntegrityIssue[] = [
@@ -91,13 +92,13 @@ export function checkIntegrity(
         issueType: issue.type,
         entity: issue.entity,
         hint: "DAG integrity issue requires manual intervention",
-        errorKind: "data",
+        errorKind: "internal" as const,
       },
       issue.detail,
     );
   }
 
-  const durationMs = Date.now() - startTime;
+  const durationMs = systemNowMs() - startTime;
 
   const report: IntegrityReport = {
     conversationId,
@@ -118,7 +119,7 @@ export function checkIntegrity(
     errorsLogged: errorIssues.length,
     issueTypes,
     durationMs,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   } satisfies IntegrityCheckEvent);
 
   // Log INFO summary
@@ -141,7 +142,7 @@ export function checkIntegrity(
 // ---------------------------------------------------------------------------
 
 function checkOrphanSummaries(
-  store: ContextStore,
+  store: ContextStorePort,
   conversationId: string,
 ): IntegrityIssue[] {
   const issues: IntegrityIssue[] = [];
@@ -208,7 +209,7 @@ function checkStaleCounts(
 // ---------------------------------------------------------------------------
 
 function checkContiguityGaps(
-  store: ContextStore,
+  store: ContextStorePort,
   conversationId: string,
 ): IntegrityIssue[] {
   const issues: IntegrityIssue[] = [];
@@ -233,7 +234,7 @@ function checkContiguityGaps(
 // ---------------------------------------------------------------------------
 
 function checkDanglingRefs(
-  store: ContextStore,
+  store: ContextStorePort,
   conversationId: string,
 ): IntegrityIssue[] {
   const issues: IntegrityIssue[] = [];
@@ -327,7 +328,7 @@ function checkFtsDesync(
 // ---------------------------------------------------------------------------
 
 function checkCycles(
-  store: ContextStore,
+  store: ContextStorePort,
   conversationId: string,
 ): IntegrityIssue[] {
   const issues: IntegrityIssue[] = [];
@@ -360,7 +361,7 @@ function checkCycles(
 }
 
 function dfsDetectCycle(
-  store: ContextStore,
+  store: ContextStorePort,
   summaryId: string,
   visited: Set<string>,
   depth: number,
@@ -382,7 +383,7 @@ function dfsDetectCycle(
 // ---------------------------------------------------------------------------
 
 function applyRepairs(
-  store: ContextStore,
+  store: ContextStorePort,
   db: unknown,
   issues: IntegrityIssue[],
   conversationId: string,

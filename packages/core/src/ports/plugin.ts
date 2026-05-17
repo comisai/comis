@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { HookName, HookHandlerMap } from "./hook-types.js";
-import { z } from "zod";
+import type { z } from "zod";
 
 /**
  * PluginPort: The hexagonal architecture boundary for plugin extensions.

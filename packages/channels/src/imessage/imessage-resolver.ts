@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: media-resolver throws inside fromPromise(); converted to Result.err.
 /**
  * iMessage MediaResolverPort adapter.
  *
@@ -8,13 +9,13 @@
  *
  * Pre-read size check using fs.stat().
  * Emits a DEBUG log with platform, filePath, sizeBytes, and durationMs.
- * CRITICAL SECURITY: safePath() validation, NOT path.join().
+ * CRITICAL SECURITY: safePath() validation, NOT raw path.join.
  *
  * @module
  */
 
 import type { Attachment, MediaResolverPort, ResolvedMedia } from "@comis/core";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";
 import * as fs from "node:fs/promises";
@@ -86,9 +87,9 @@ export function createIMessageResolver(deps: IMessageResolverDeps): MediaResolve
           }
 
           // Read file
-          const startMs = Date.now();
+          const startMs = systemNowMs();
           const buffer = await fs.readFile(validatedPath);
-          const durationMs = Date.now() - startMs;
+          const durationMs = systemNowMs() - startMs;
 
           // Use attachment mimeType if available, otherwise default
           const mimeType = attachment.mimeType ?? "application/octet-stream";

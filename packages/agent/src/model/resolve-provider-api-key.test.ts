@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AuthStorage } from "@mariozechner/pi-coding-agent";
+import type { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { PerAgentConfig } from "@comis/core";
 import { ok, err } from "@comis/shared";
 
@@ -9,11 +9,11 @@ import { ok, err } from "@comis/shared";
 // `getOAuthProvider` at module init.
 // ---------------------------------------------------------------------------
 
-vi.mock("@mariozechner/pi-ai/oauth", () => ({
+vi.mock("@earendil-works/pi-ai/oauth", () => ({
   getOAuthProvider: vi.fn(),
 }));
 
-import { getOAuthProvider } from "@mariozechner/pi-ai/oauth";
+import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { resolveProviderApiKey } from "./resolve-provider-api-key.js";
 import type { OAuthTokenManager, OAuthError } from "./oauth-token-manager.js";
 

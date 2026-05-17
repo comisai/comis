@@ -15,7 +15,8 @@
  */
 
 import type { SessionKey, TypedEventBus } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import type { BudgetGuard } from "../budget/budget-guard.js";
 import type { StepCounter } from "../executor/step-counter.js";
 import type { CircuitBreaker } from "../safety/circuit-breaker.js";
@@ -73,7 +74,7 @@ export function emitStepLimitAbort(
     sessionKey: deps.sessionKey,
     reason: "max_steps",
     agentId: deps.agentId,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   });
   deps.logger.warn(
     {
@@ -126,7 +127,7 @@ export function emitBudgetAbort(
     sessionKey: deps.sessionKey,
     reason: "budget_exceeded",
     agentId: deps.agentId,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   });
   deps.logger.warn(
     {
@@ -198,7 +199,7 @@ export function emitContextAbort(
     sessionKey: deps.sessionKey,
     reason: "context_exhausted",
     agentId: deps.agentId,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   });
   deps.logger.warn(
     {
@@ -274,7 +275,7 @@ export function emitCircuitBreakerAbort(
     sessionKey: deps.sessionKey,
     reason: "circuit_breaker",
     agentId: deps.agentId,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   });
   deps.logger.warn(
     {

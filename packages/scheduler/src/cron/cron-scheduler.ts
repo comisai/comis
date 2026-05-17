@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: cron scheduler boundary error; consumed by setup-schedulers daemon-wiring catch (daemon.ts bootstrap).
 import type { TypedEventBus } from "@comis/core";
 import type { CronStore } from "./cron-store.js";
 import type { CronJob } from "./cron-types.js";
 import { computeNextRunAtMs } from "./cron-expression.js";
 import type { SchedulerLogger } from "../shared-types.js";
+import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 /** Maximum timer delay -- clamp to prevent long waits and recover from clock drift. */
 const MAX_TIMER_DELAY_MS = 60_000;
@@ -63,7 +65,7 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
 
   function armTimer(): void {
     if (timer !== null) {
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       timer = null;
     }
 
@@ -81,7 +83,7 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     const rawDelay = earliestMs === Infinity ? MAX_TIMER_DELAY_MS : Math.max(0, earliestMs - now);
     const delay = Math.min(rawDelay, MAX_TIMER_DELAY_MS);
 
-    timer = setTimeout(() => {
+    timer = systemSetTimeout(() => {
       void tick();
     }, delay);
     timer.unref();
@@ -196,7 +198,7 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
 
     stop(): void {
       if (timer !== null) {
-        clearTimeout(timer);
+        systemClearTimeout(timer);
         timer = null;
       }
       logger.info("CronScheduler stopped");

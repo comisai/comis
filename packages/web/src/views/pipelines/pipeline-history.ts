@@ -19,6 +19,7 @@ import type { GraphRunSummary } from "../../api/types/index.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/nav/ic-breadcrumb.js";
 import type { BreadcrumbItem } from "../../components/nav/ic-breadcrumb.js";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 import "../../components/feedback/ic-confirm-dialog.js";
 import "../../components/feedback/ic-toast.js";
 import "../../components/feedback/ic-empty-state.js";
@@ -38,7 +39,7 @@ const STATUS_COLORS: Record<string, string> = {
 function formatRelativeTime(epochMs: number | undefined): string {
   if (!epochMs) return "Never";
 
-  const diff = Date.now() - epochMs;
+  const diff = systemNowMs() - epochMs;
   if (diff < 0) return "just now";
 
   const seconds = Math.floor(diff / 1000);
@@ -53,7 +54,7 @@ function formatRelativeTime(epochMs: number | undefined): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
 
-  return new Date(epochMs).toISOString().slice(0, 10);
+  return systemDateFrom(epochMs).toISOString().slice(0, 10);
 }
 
 /** Sort field keys for the grid table */
@@ -420,7 +421,7 @@ export class IcPipelineHistory extends LitElement {
 
   /** Parse ISO date string to epoch ms for relative time display. */
   private _dateToRelative(dateStr: string): string {
-    const ms = new Date(dateStr).getTime();
+    const ms = systemDateFrom(dateStr).getTime();
     return formatRelativeTime(ms);
   }
 

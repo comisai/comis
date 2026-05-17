@@ -57,7 +57,7 @@ describe("IcGraphCanvas", () => {
     expect(circle?.getAttribute("r")).toBe("1");
   });
 
-  it("renders HTML layer", async () => {
+  it("renders the HTML layer inside IcGraphCanvas shadow-DOM alongside the SVG layer", async () => {
     const el = await createElement();
     const htmlLayer = el.shadowRoot?.querySelector(".html-layer");
     expect(htmlLayer).not.toBeNull();

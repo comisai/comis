@@ -69,7 +69,8 @@ describe("assembleRichSystemPrompt", () => {
     });
 
     expect(result).toContain("## Safety");
-    expect(result).toContain("## Available Tools");
+    // Tooling section emits the residual one-liner (no heading).
+    expect(result).toContain("When this turn includes a `Capabilities` context");
     expect(result).toContain("## Skills");
     expect(result).toContain("## Workspace");
     expect(result).toContain("## Runtime");
@@ -111,8 +112,8 @@ describe("assembleRichSystemPrompt", () => {
     expect(result).not.toContain("## Reactions");
     expect(result).not.toContain("## Reasoning Format");
 
-    // Included in minimal
-    expect(result).toContain("## Available Tools");
+    // Included in minimal — tooling block is the residual one-liner (no heading).
+    expect(result).toContain("When this turn includes a `Capabilities` context");
     expect(result).toContain("## Workspace");
     expect(result).toContain("## Runtime");
     expect(result).toContain("## Project Context");
@@ -185,7 +186,7 @@ describe("buildRuntimeMetadataSection", () => {
     expect(joined).toContain(" | ");
   });
 
-  it("omits empty fields", () => {
+  it("omits empty optional fields from rendered runtime metadata section", () => {
     const info: RuntimeInfo = { host: "myhost" };
     const lines = buildRuntimeMetadataSection(info, false);
     const joined = lines.join("\n");
@@ -422,69 +423,53 @@ describe("buildSafetySection", () => {
 });
 
 describe("buildToolingSection", () => {
-  it("renders tools as - name: summary format", () => {
-    const lines = buildToolingSection(["read", "edit", "web_search"], false);
+  // buildToolingSection unconditionally emits the residual one-liner. The
+  // legacy `## Available Tools` flat block + the static-prompt
+  // capability-index gate parameter have been removed.
+
+  it("emits the residual one-liner pointing at the per-turn ## Capabilities block", () => {
+    const lines = buildToolingSection(["read", "edit", "web_search"], "large");
     const joined = lines.join("\n");
 
-    expect(joined).toContain("## Available Tools");
-    expect(joined).toContain("- read: Read files, images, and PDFs with pagination");
-    expect(joined).toContain("- edit: Batch edit files via text matching");
-    expect(joined).toContain("- web_search: Search the web for information");
+    expect(joined).toContain("When this turn includes a `Capabilities` context");
+    expect(joined).toContain("authoritative for parameter shapes");
   });
 
-  it("renders unknown tools without description", () => {
-    const lines = buildToolingSection(["read", "my_custom_tool"], false);
+  it("does NOT emit the deleted legacy `## Available Tools` block", () => {
+    const lines = buildToolingSection(["read", "edit", "web_search"], "large");
     const joined = lines.join("\n");
 
-    expect(joined).toContain("- read: Read files, images, and PDFs with pagination");
-    expect(joined).toContain("- my_custom_tool");
-    // Unknown tool should NOT have a colon+description
-    expect(joined).not.toContain("- my_custom_tool:");
+    expect(joined).not.toContain("## Available Tools");
+    expect(joined).not.toContain("- read");
+    expect(joined).not.toContain("- edit");
+    expect(joined).not.toContain("- web_search");
   });
 
-  it("orders tools by TOOL_ORDER then extras alphabetically", () => {
-    const lines = buildToolingSection(["web_search", "zzz_tool", "read", "aaa_tool"], false);
-    const joined = lines.join("\n");
+  it("emits a single-line block regardless of input tools (modelTier is unused)", () => {
+    const small = buildToolingSection(["read"], "small");
+    const medium = buildToolingSection(["read"], "medium");
+    const large = buildToolingSection(["read"], "large");
 
-    const readIdx = joined.indexOf("- read:");
-    const webIdx = joined.indexOf("- web_search:");
-    const aaaIdx = joined.indexOf("- aaa_tool");
-    const zzzIdx = joined.indexOf("- zzz_tool");
-
-    // read before web_search (TOOL_ORDER)
-    expect(readIdx).toBeLessThan(webIdx);
-    // extras after all TOOL_ORDER entries
-    expect(aaaIdx).toBeGreaterThan(webIdx);
-    // extras sorted alphabetically
-    expect(aaaIdx).toBeLessThan(zzzIdx);
+    expect(small).toEqual(medium);
+    expect(medium).toEqual(large);
+    expect(small.length).toBe(1);
   });
 
-  it("merges caller-provided toolSummaries", () => {
+  it("returns empty when no tools", () => {
+    const lines = buildToolingSection([], "large");
+    expect(lines).toEqual([]);
+  });
+
+  it("ignores the caller-provided toolSummaries (legacy flat-block consumer is gone)", () => {
     const lines = buildToolingSection(
       ["read", "my_mcp_tool"],
-      false,
+      "large",
       { my_mcp_tool: "Custom MCP tool for data processing" },
     );
     const joined = lines.join("\n");
 
-    expect(joined).toContain("- my_mcp_tool: Custom MCP tool for data processing");
-  });
-
-  it("included in minimal mode", () => {
-    const lines = buildToolingSection(["read", "edit"], true);
-    expect(lines.length).toBeGreaterThan(0);
-    expect(lines.join("\n")).toContain("- read:");
-  });
-
-  it("returns empty when no tools", () => {
-    const lines = buildToolingSection([], false);
-    expect(lines).toEqual([]);
-  });
-
-  it("includes anti-hallucination rule", () => {
-    const lines = buildToolingSection(["read"], false);
-    const joined = lines.join("\n");
-    expect(joined).toContain("Never guess or fabricate tool results");
+    expect(joined).not.toContain("Custom MCP tool");
+    expect(joined).toContain("When this turn includes a `Capabilities` context");
   });
 });
 
@@ -670,10 +655,11 @@ describe("assembleRichSystemPrompt -- coding tools integration", () => {
       toolNames: ["read", "edit", "write", "grep", "find", "ls", "web_search"],
     });
 
-    // Unified format: `- name: summary` (TOOL_SUMMARIES)
-    expect(result).toContain("- read: Read files, images, and PDFs with pagination");
-    expect(result).toContain("- edit: Batch edit files via text matching");
-    expect(result).toContain("- web_search: Search the web for information");
+    // The tooling block is the residual one-liner pointing at the per-turn
+    // `## Capabilities` block. The legacy `- name: summary` flat-block
+    // format was removed.
+    expect(result).toContain("When this turn includes a `Capabilities` context");
+    expect(result).not.toContain("- read: Read files, images, and PDFs with pagination");
     // No separate coding tools section
     expect(result).not.toContain("## Coding Tools");
   });
@@ -684,8 +670,8 @@ describe("assembleRichSystemPrompt -- coding tools integration", () => {
       toolNames: ["read", "edit", "write"],
     });
 
-    expect(result).toContain("## Available Tools");
-    expect(result).toContain("- read:");
+    // Residual one-liner in minimal too.
+    expect(result).toContain("When this turn includes a `Capabilities` context");
     expect(result).not.toContain("## Coding Tools");
   });
 });
@@ -1168,15 +1154,19 @@ describe("assembleRichSystemPrompt — channelContext integration", () => {
 // ---------------------------------------------------------------------------
 
 describe("assembleRichSystemPrompt -- toolSummaries integration", () => {
-  it("merges toolSummaries into unified tooling section", () => {
+  it("toolSummaries no longer flow into the tooling section (legacy flat block deleted)", () => {
     const result = assembleRichSystemPrompt({
       promptMode: "full",
       toolNames: ["read", "my_mcp_tool"],
       toolSummaries: { my_mcp_tool: "Custom MCP tool" },
     });
 
-    expect(result).toContain("- read: Read files, images, and PDFs with pagination");
-    expect(result).toContain("- my_mcp_tool: Custom MCP tool");
+    // Per-tool summaries are no longer rendered in the static prompt; they
+    // belong in the per-turn `## Capabilities` block via the dynamic preamble.
+    expect(result).not.toContain("- read: Read files, images, and PDFs with pagination");
+    expect(result).not.toContain("- my_mcp_tool: Custom MCP tool");
+    // The tooling section is the residual one-liner.
+    expect(result).toContain("When this turn includes a `Capabilities` context");
   });
 });
 
@@ -1925,24 +1915,13 @@ describe("buildPrivilegedToolsSection", () => {
 
 // ---------------------------------------------------------------------------
 // buildToolingSection — privileged tool descriptions
+//
+// Per-tool summaries (e.g. "Manage full agent fleet") are no longer rendered
+// in the static tooling section. Tool-level descriptions live in the
+// per-turn `## Capabilities` block via the dynamic preamble, and in the
+// `## Privileged Tools & Approval Gate` section when admin tools are
+// present (see the `buildPrivilegedToolsSection` test block above).
 // ---------------------------------------------------------------------------
-
-describe("buildToolingSection -- privileged tool summaries", () => {
-  it("includes privileged tool summaries in tool listing", () => {
-    const lines = buildToolingSection(
-      ["agents_manage", "obs_query", "models_manage"],
-      false,
-    );
-    const joined = lines.join("\n");
-
-    expect(joined).toContain("agents_manage");
-    expect(joined).toContain("Manage full agent fleet");
-    expect(joined).toContain("obs_query");
-    expect(joined).toContain("Query platform diagnostics");
-    expect(joined).toContain("models_manage");
-    expect(joined).toContain("List models and test availability");
-  });
-});
 
 // ---------------------------------------------------------------------------
 // assembleRichSystemPrompt -- privileged tools integration
@@ -2179,7 +2158,7 @@ describe("assembleRichSystemPromptBlocks", () => {
     });
     expect(blocks.staticPrefix).toContain("You are TestBot");
     expect(blocks.staticPrefix).not.toContain("## Safety");
-    expect(blocks.staticPrefix).not.toContain("## Available Tools");
+    expect(blocks.staticPrefix).not.toContain("When this turn includes a `Capabilities` context");
   });
 
   it("attribution contains Safety and Language content", () => {
@@ -2191,7 +2170,7 @@ describe("assembleRichSystemPromptBlocks", () => {
     });
     expect(blocks.attribution).toContain("## Safety");
     expect(blocks.attribution).not.toContain("You are TestBot");
-    expect(blocks.attribution).not.toContain("## Available Tools");
+    expect(blocks.attribution).not.toContain("When this turn includes a `Capabilities` context");
   });
 
   it("semiStableBody contains Tool section but not identity line or Safety", () => {
@@ -2200,7 +2179,8 @@ describe("assembleRichSystemPromptBlocks", () => {
       agentName: "TestBot",
       toolNames: ["tool1"],
     });
-    expect(blocks.semiStableBody).toContain("## Available Tools");
+    // Residual one-liner (no `## Available Tools` heading).
+    expect(blocks.semiStableBody).toContain("When this turn includes a `Capabilities` context");
     expect(blocks.semiStableBody).not.toContain("You are TestBot");
     expect(blocks.semiStableBody).not.toContain("## Safety");
   });
@@ -2372,7 +2352,7 @@ describe("staticPrefix/attribution byte-identity full vs operational", () => {
     const full = assembleRichSystemPrompt({ ...params, promptMode: "full" });
     const op = assembleRichSystemPrompt({ ...params, promptMode: "operational" });
 
-    // Present in full but not in operational (MODES_FULL-only sections)
+    // Present in both full and operational (MODES_ALL sections — see SECTIONS array)
     expect(full).toContain("## Safety");
     expect(op).toContain("## Safety");
     // Sections that drop in operational
@@ -2381,8 +2361,9 @@ describe("staticPrefix/attribution byte-identity full vs operational", () => {
     expect(full).toContain("## Silent Replies");
     expect(op).not.toContain("## Silent Replies");
 
-    // Present in both (MODES_FULL_OP sections)
-    expect(op).toContain("## Available Tools");
+    // Present in both (MODES_FULL_OP sections). Tooling section is the
+    // residual one-liner (no `## Available Tools` heading).
+    expect(op).toContain("When this turn includes a `Capabilities` context");
     expect(op).toContain("## Workspace");
     expect(op).toContain("## Project Context");
   });

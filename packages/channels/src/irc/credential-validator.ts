@@ -12,6 +12,7 @@
 import { ok, err, type Result } from "@comis/shared";
 import { Client } from "irc-framework";
 import { createCredentialValidator } from "../shared/credential-validator-factory.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 /** Information returned on successful IRC connection probe. */
 export interface IrcBotInfo {
@@ -66,11 +67,11 @@ export const validateIrcConnection: (opts: ValidateIrcOpts) => Promise<Result<Ir
           } catch {
             // Best effort cleanup
           }
-          clearTimeout(timer);
+          systemClearTimeout(timer);
           resolve(result);
         };
 
-        const timer = setTimeout(() => {
+        const timer = systemSetTimeout(() => {
           settle(err(new Error(`IRC connection to ${opts.host} timed out after ${VALIDATE_TIMEOUT_MS}ms`)));
         }, VALIDATE_TIMEOUT_MS);
 

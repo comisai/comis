@@ -136,13 +136,21 @@ describe("public surface re-exports", () => {
     expect(_refs.length).toBe(3);
   });
 
-  it("re-exports createNoOpCapabilityPort as a runtime value", async () => {
+  // 30s timeout (default 5s) — dynamic import of @comis/core (~2k LoC
+  // after transform) plus v8 coverage instrumentation can exceed the
+  // default budget on cold-cache runs. Without coverage the test runs
+  // in <200ms.
+  it(
+    "re-exports createNoOpCapabilityPort as a runtime value",
+    async () => {
     const mod = await import("@comis/core");
     expect(typeof mod.createNoOpCapabilityPort).toBe("function");
     const port = mod.createNoOpCapabilityPort();
     expect(port.getInstallDetourMode()).toBe("advise");
     expect(port.isCapabilityIndexEnabled()).toBe(true);
-  });
+    },
+    30_000,
+  );
 
   it("does NOT re-export the test-only stub factory from @comis/core public surface", async () => {
     const mod = await import("@comis/core");

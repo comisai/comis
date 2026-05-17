@@ -1,0 +1,178 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Pure types for the PiExecutor factory — extracted to a dedicated file so
+ * closure-extracted helpers can `import type { PiExecutorDeps }` without
+ * creating a cyclic import with `pi-executor.ts` (which itself imports
+ * those helpers).
+ *
+ * @module
+ */
+
+import type {
+  AuthStorage,
+  ModelRegistry,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type {
+  TypedEventBus,
+  MemoryPort,
+  HookRunner,
+  SecretManager,
+  EnvelopeConfig,
+  OutputGuardPort,
+  InputValidationResult,
+  InputSecurityGuard,
+  InjectionRateLimiter,
+  SenderTrustDisplayConfig,
+  ToolCapabilityPort,
+  ClockPort,
+  EnvPort,
+  TimerPort,
+} from "@comis/core";
+import type { ComisLogger } from "@comis/core";
+
+import type { BudgetGuard } from "../../budget/budget-guard.js";
+import type { CostTracker } from "../../budget/cost-tracker.js";
+import type { StepCounter } from "../step-counter.js";
+import type { CircuitBreaker } from "../../safety/circuit-breaker.js";
+import type { ProviderHealthMonitor } from "../../safety/provider-health-monitor.js";
+import type { ComisSessionManager } from "../../session/comis-session-manager.js";
+import type { AuthRotationAdapter } from "../../model/auth-rotation-adapter.js";
+import type { OAuthTokenManager } from "../../model/oauth-token-manager.js";
+import type { ActiveRunRegistry } from "../active-run-registry.js";
+import type { GeminiCacheManager } from "../gemini-cache-manager.js";
+import type { BackgroundTaskManager } from "../../background/index.js";
+
+/** Dependencies required by the PiExecutor. */
+export interface PiExecutorDeps {
+  // Safety controls
+  circuitBreaker: CircuitBreaker;
+  /** Optional provider health monitor for cross-agent pre-check. */
+  providerHealth?: ProviderHealthMonitor;
+  /** Optional last-known-working model tracker for auth-failure fallback. */
+  lastKnownModel?: import("../../model/last-known-model.js").LastKnownModelTracker;
+  budgetGuard: BudgetGuard;
+  costTracker: CostTracker;
+  stepCounter: StepCounter;
+  eventBus: TypedEventBus;
+  logger: ComisLogger;
+  // Adapters
+  authStorage: AuthStorage;
+  modelRegistry: ModelRegistry;
+  providerAliases?: Map<string, string>;
+  // Session management
+  sessionAdapter: ComisSessionManager;
+  // Workspace
+  workspaceDir: string;
+  // Tools
+  customTools: ToolDefinition[];
+  /** Convert per-request AgentTool[] to ToolDefinition[] for SDK registration.
+   * Injected by daemon wiring to avoid agent->skills circular dependency.
+   * When provided, per-request `tools` parameter is converted and merged with customTools. */
+  convertTools?: (tools: AgentTool[]) => ToolDefinition[];
+  /** SDK agent directory for persistent settings file storage. */
+  agentDir: string;
+  // Optional
+  memoryPort?: MemoryPort;
+  hookRunner?: HookRunner;
+  // System prompt config
+  outboundMediaEnabled?: boolean;
+  mediaPersistenceEnabled?: boolean;
+  autonomousMediaEnabled?: boolean;
+  getPromptSkillsXml?: () => string;
+  /** Tool names available to sub-agents, injected by daemon from TOOL_PROFILES + config. */
+  subAgentToolNames?: string[];
+  /** Whether sub-agents inherit MCP tools from parent (subAgentMcpTools: "inherit"). */
+  mcpToolsInherited?: boolean;
+  // Full prompt assembly
+  secretManager?: SecretManager;
+  envelopeConfig?: EnvelopeConfig;
+  // Model fallback
+  /** Fallback models in "provider:modelId" format, e.g. ["anthropic:claude-sonnet-4-20250514"] */
+  fallbackModels?: string[];
+  /** Optional auth rotation adapter for multi-key providers. */
+  authRotation?: AuthRotationAdapter;
+  /**
+   * Optional OAuth token manager. When provided, the per-LLM-call
+   * dispatch hook in execute() resolves the OAuth token via the resolver
+   * chain (agent-config -> lastGood -> first available) and sets it into
+   * authStorage's runtime override Map for pi-coding-agent's outbound LLM
+   * call.
+   *
+   * Single hook per execute() — long-running execute()s
+   * (>= 1 hour) may see token expire mid-loop; revisit if observed
+   * in production.
+   */
+  oauthManager?: OAuthTokenManager;
+  /** Active run registry for mid-execution steering. */
+  activeRunRegistry?: ActiveRunRegistry;
+  /** Daemon-level tracing defaults for rotation. */
+  tracingDefaults?: { maxSize: string; maxFiles: number };
+  /** OutputGuard for scanning and redacting critical secrets in LLM responses. */
+  outputGuard?: OutputGuardPort;
+  /** Canary token for detecting canary leakage in LLM responses. */
+  canaryToken?: string;
+  /** InputValidator for structural message checks. */
+  inputValidator?: (text: string) => InputValidationResult;
+  /** InputSecurityGuard for jailbreak detection with scoring. */
+  inputGuard?: InputSecurityGuard;
+  /** InjectionRateLimiter for progressive cooldown on repeated high-risk detections. */
+  rateLimiter?: InjectionRateLimiter;
+  /** Optional skill registry for SDK skill discovery integration.
+   * Defined as a minimal interface to avoid agent->skills circular dependency.
+   * When provided, SDK-discovered skills are filtered through Comis eligibility
+   * and the registry is populated from SDK discovery results. */
+  skillRegistry?: {
+    getEligibleSkillNames(): Set<string>;
+    initFromSdkSkills(sdkSkills: Array<{ name: string; description: string; filePath: string; baseDir: string; source: string; disableModelInvocation: boolean }>): void;
+  };
+  /** Fire-and-forget embedding enqueue callback. Injected by daemon wiring. */
+  embeddingEnqueue?: (entryId: string, content: string) => void;
+  /** Optional embedding port for semantic search in discover_tools. */
+  embeddingPort?: import("@comis/core").EmbeddingPort;
+  /**
+   * Tool-capability port for the per-turn capability-index renderer.
+   * Daemon wiring injects createNoOpCapabilityPort() from @comis/core
+   * until the live adapter ships.
+   */
+  toolCapabilityPort: ToolCapabilityPort;
+  /** Sender trust display config from AppConfig. */
+  senderTrustDisplayConfig?: SenderTrustDisplayConfig;
+  /** Documentation config from AppConfig. */
+  documentationConfig?: import("@comis/core").DocumentationConfig;
+  /** Context store for DAG mode. Optional -- only present when DAG tables exist. */
+  contextStore?: import("@comis/core").ContextStorePort;
+  /** Raw database handle for DAG transactions. */
+  db?: unknown;
+  /** Tenant ID for conversation creation. */
+  tenantId?: string;
+  /** Delivery mirror port for session mirroring injection. */
+  deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
+  /** Delivery mirror config for injection budget limits. */
+  deliveryMirrorConfig?: { maxEntriesPerInjection: number; maxCharsPerInjection: number };
+  // Provider compatibility config
+  /** When true, only content inside <final> blocks reaches users. Consumer: ThinkingTagFilter. */
+  enforceFinalTag?: boolean;
+  /** When true, enables fast/cheap model routing. Consumer: stream wrappers. */
+  fastMode?: boolean;
+  /** When true, OpenAI store: true is injected. Consumer: stream wrappers. */
+  storeCompletions?: boolean;
+  /** Provider capabilities resolved from config. Consumer: resolveProviderCapabilities(). */
+  providerCapabilities?: import("@comis/core").ProviderCapabilities;
+  /** Optional Gemini CachedContent lifecycle manager for explicit cache reuse. */
+  geminiCacheManager?: GeminiCacheManager;
+  /** Resolve platform message character limit for a channel type.
+   * Injected by daemon wiring via channelPlugins capabilities. */
+  getChannelMaxChars?: (channelType: string) => number | undefined;
+  /** Background task manager for auto-promotion of long-running tools. */
+  backgroundTaskManager?: BackgroundTaskManager;
+  /** Max message.send/reply calls per execution (0 = unlimited, default: 3). */
+  maxSendsPerExecution?: number;
+  /** Wall-clock + monotonic time reads. */
+  clock: ClockPort;
+  /** Environment-variable reads. Required for fault-injector and model-retry env reads. */
+  env: EnvPort;
+  /** Timer scheduling. Required by executor-prompt-runner (race timers) and prompt-timeout. */
+  timers: TimerPort;
+}

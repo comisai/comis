@@ -9,7 +9,7 @@
  * signature was computed over no longer match the bytes being sent.
  *
  * Reference: pi-ai upstream behavior in
- * `node_modules/.pnpm/@mariozechner+pi-ai@0.67.68_HASH/node_modules/@mariozechner/pi-ai/dist/providers/anthropic.js`
+ * `node_modules/.pnpm/@mariozechner+pi-ai@0.67.68_HASH/node_modules/@earendil-works/pi-ai/dist/providers/anthropic.js`
  * around line 661 calls `sanitizeSurrogates(block.thinking)` while preserving
  * the original `signature`. A separate upstream PR is recommended (out of
  * scope for this commit); Comis is protected by this guard regardless of
@@ -40,7 +40,7 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ContextLayer, TokenBudget } from "./types.js";
 
 // ---------------------------------------------------------------------------

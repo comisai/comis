@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: monitoring source boundary re-raise; consumed via monitoring-source aggregator try/catch chain (daemon.ts bootstrap boundary).
 /**
  * Security Update HeartbeatSourcePort implementation.
  * Detects pending security updates by querying the system package
@@ -12,6 +13,7 @@ import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { envWithoutSystemdNotify } from "./exec-helpers.js";
+import { systemNowMs } from "@comis/core";
 
 const execFile = promisify(execFileCb);
 
@@ -113,7 +115,7 @@ export function createSecurityUpdateSource(
     name: SOURCE_NAME,
 
     async check(): Promise<HeartbeatCheckResult> {
-      const now = Date.now();
+      const now = systemNowMs();
 
       try {
         const pm = await detectPackageManager();

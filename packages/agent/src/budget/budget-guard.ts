@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { BudgetConfig } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import { type Result, ok, err } from "@comis/shared";
-import { estimateTokens } from "@mariozechner/pi-coding-agent";
+import { estimateTokens } from "@earendil-works/pi-coding-agent";
 
 /**
  * Budget enforcement error with diagnostic context.
@@ -60,7 +61,7 @@ export interface BudgetGuard {
  * without maintaining a local constant that could diverge.
  *
  * The `as any` is needed because the budget-guard module does not import
- * `UserMessage` from `@mariozechner/pi-ai` and the object literal satisfies
+ * `UserMessage` from `@earendil-works/pi-ai` and the object literal satisfies
  * the runtime shape expected by estimateTokens().
  */
 const SDK_PROBE_CHARS = 400;
@@ -91,7 +92,7 @@ export function createBudgetGuard(
   const entries: WindowEntry[] = [];
 
   function prune(): void {
-    const now = Date.now();
+    const now = systemNowMs();
     const dayAgo = now - ONE_DAY_MS;
     // Remove entries older than 1 day (superset of 1 hour)
     let i = 0;
@@ -104,7 +105,7 @@ export function createBudgetGuard(
   }
 
   function sumWindow(windowMs: number): number {
-    const cutoff = Date.now() - windowMs;
+    const cutoff = systemNowMs() - windowMs;
     let total = 0;
     for (const entry of entries) {
       if (entry.timestamp >= cutoff) {
@@ -150,7 +151,7 @@ export function createBudgetGuard(
 
     recordUsage(tokens: number): void {
       executionTotal += tokens;
-      entries.push({ timestamp: Date.now(), tokens });
+      entries.push({ timestamp: systemNowMs(), tokens });
 
       // Detect large discrepancy between estimated and actual token usage
       if (lastEstimate > 0 && Math.abs(tokens - lastEstimate) / lastEstimate > 0.5) {
@@ -160,7 +161,7 @@ export function createBudgetGuard(
             actual: tokens,
             ratio: (tokens / lastEstimate).toFixed(2),
             hint: "Token estimate diverged significantly from actual API usage; budget may over/under-protect",
-            errorKind: "validation",
+            errorKind: "validation" as const,
           },
           "Token estimate vs actual discrepancy",
         );

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Context, Message } from "@mariozechner/pi-ai";
+import type { Context, Message } from "@earendil-works/pi-ai";
 import { createValidationErrorFormatter } from "./validation-error-formatter.js";
-import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers.js";
+import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers/index.js";
 
 describe("createValidationErrorFormatter", () => {
   let logger: ReturnType<typeof createMockLogger>;

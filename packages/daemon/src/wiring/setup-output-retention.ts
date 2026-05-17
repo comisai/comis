@@ -26,7 +26,7 @@
 
 import { readdirSync, statSync, unlinkSync } from "node:fs";
 import type { OutputRetentionConfig, RetentionClass } from "@comis/core";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { ok, err, suppressError, type Result } from "@comis/shared";
 
@@ -178,7 +178,7 @@ export function setupOutputRetention(
 
   async function runOnePass(): Promise<{ deleted: number; bytesFreed: number }> {
     const outputDir = safePath(deps.workspaceDir, "output");
-    const now = Date.now();
+    const now = systemNowMs();
     let deleted = 0;
     let bytesFreed = 0;
 
@@ -274,7 +274,7 @@ export function setupOutputRetention(
       );
       return;
     }
-    interval = setInterval(() => {
+    interval = systemSetInterval(() => {
       // Single-tick gate: in-flight Promise prevents overlapping ticks.
       if (running) return;
       running = runOnePass()
@@ -300,7 +300,7 @@ export function setupOutputRetention(
 
   function shutdown(): void {
     if (interval) {
-      clearInterval(interval);
+      systemClearInterval(interval);
       interval = undefined;
     }
   }

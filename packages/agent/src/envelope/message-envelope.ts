@@ -10,6 +10,7 @@
  */
 
 import type { NormalizedMessage, EnvelopeConfig } from "@comis/core";
+import { systemDateFrom } from "@comis/core";
 import { formatElapsed } from "./elapsed-time.js";
 
 /**
@@ -25,7 +26,7 @@ function formatTimestamp(
   timezoneMode: string,
   timeFormat: "12h" | "24h",
 ): string {
-  const date = new Date(epochMs);
+  const date = systemDateFrom(epochMs);
   const options: Intl.DateTimeFormatOptions = {
     hour: "numeric",
     minute: "2-digit",

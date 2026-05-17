@@ -358,7 +358,7 @@ describe("ThinkingTagFilter", () => {
   // ---------- Edge cases ----------
 
   describe("edge cases", () => {
-    it("handles empty delta", () => {
+    it("handles empty delta string without throwing or emitting output", () => {
       const filter = createThinkingTagFilter();
       expect(filter.feed("")).toBe("");
     });

@@ -4,6 +4,7 @@ import { createTTLCache } from "@comis/shared";
 import type { TTLCache } from "@comis/shared";
 import type { TypedEventBus } from "../event-bus/bus.js";
 import type { ApprovalRequest, ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "../domain/approval-request.js";
+import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
 
 /**
  * Dependencies for the approval gate factory.
@@ -17,6 +18,10 @@ export interface ApprovalGateDeps {
   readonly getDenialCacheTtlMs?: () => number;
   /** Returns the batch approval cache TTL in ms (reads from config.approvals.batchApprovalTtlMs). Defaults to 30000 if not provided. Returns 0 to disable. */
   readonly getBatchApprovalTtlMs?: () => number;
+  /** Wall-clock + monotonic time reads. */
+  readonly clock: ClockPort;
+  /** setTimeout/setInterval scheduling. */
+  readonly timers: TimerPort;
   /** Optional logger for cache hit/miss debug logging. Structural type -- no Pino import needed. */
   readonly logger?: {
     debug(obj: Record<string, unknown>, msg: string): void;
@@ -79,7 +84,7 @@ export interface ApprovalGate {
 interface PendingEntry {
   readonly request: ApprovalRequest;
   readonly resolve: (resolution: ApprovalResolution) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
+  readonly timer: TimerHandle;
 }
 
 /**
@@ -98,11 +103,13 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
   /** Denial cache: keyed by `${sessionKey}::${action}`, stores cached denial resolutions. TTL managed by createTTLCache. */
   const denialCache: TTLCache<ApprovalResolution> = createTTLCache<ApprovalResolution>({
     ttlMs: deps.getDenialCacheTtlMs?.() ?? 60_000,
+    nowMs: () => deps.clock.now(),
   });
 
   /** Approval cache: keyed by `${sessionKey}::${action}`, stores cached approval resolutions. TTL managed by createTTLCache. */
   const approvalCache: TTLCache<ApprovalResolution> = createTTLCache<ApprovalResolution>({
     ttlMs: deps.getBatchApprovalTtlMs?.() ?? 30_000,
+    nowMs: () => deps.clock.now(),
   });
 
   /** Batch followers: keyed by `${sessionKey}::${action}`, holds resolve callbacks for parallel requests that joined an existing pending entry. */
@@ -121,14 +128,14 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     }
 
     // Clear the timeout timer to prevent double-resolution.
-    clearTimeout(entry.timer);
+    entry.timer.cancel();
 
     const resolution: ApprovalResolution = {
       requestId,
       approved,
       approvedBy,
       reason,
-      resolvedAt: Date.now(),
+      resolvedAt: deps.clock.now(),
     };
 
     // Approval/denial cache management with mutual invalidation.
@@ -139,7 +146,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       if (approvedBy !== "system:cached-approval") {
         const ttl = deps.getBatchApprovalTtlMs?.() ?? 30_000;
         if (ttl > 0) {
-          approvalCache.set(cacheKey, { requestId, approved, approvedBy, reason, resolvedAt: Date.now() });
+          approvalCache.set(cacheKey, { requestId, approved, approvedBy, reason, resolvedAt: deps.clock.now() });
         }
       }
       // Mutual invalidation: approval clears stale denial for exact key
@@ -156,7 +163,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       } else {
         // Explicit user denial (/deny command)
         // Populate denial cache (existing behavior)
-        denialCache.set(cacheKey, { requestId, approved, approvedBy, reason, resolvedAt: Date.now() });
+        denialCache.set(cacheKey, { requestId, approved, approvedBy, reason, resolvedAt: deps.clock.now() });
         // Mutual invalidation: denial clears stale approval for exact key (locked decision: denial always wins)
         approvalCache.delete(cacheKey);
       }
@@ -206,7 +213,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
           approved: true,
           approvedBy: "system:cached-approval",
           reason: `Auto-approved: prior approval for ${req.action} still active`,
-          resolvedAt: Date.now(),
+          resolvedAt: deps.clock.now(),
         };
         deps.eventBus.emit("approval:resolved", { ...resolution });
         return Promise.resolve(resolution);
@@ -223,7 +230,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
         approved: false,
         approvedBy: "system:cached-denial",
         reason: `Auto-denied: prior denial for ${req.action} still active`,
-        resolvedAt: Date.now(),
+        resolvedAt: deps.clock.now(),
       };
       deps.eventBus.emit("approval:resolved", { ...resolution });
       return Promise.resolve(resolution);
@@ -246,7 +253,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
 
     const requestId = randomUUID();
     const timeoutMs = deps.getTimeoutMs();
-    const createdAt = Date.now();
+    const createdAt = deps.clock.now();
 
     const request: ApprovalRequest = {
       requestId,
@@ -261,14 +268,13 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     };
 
     const promise = new Promise<ApprovalResolution>((resolve) => {
-      const timer = setTimeout(() => {
+      const timer = deps.timers.setTimeout(() => {
         resolveApproval(requestId, false, "system:timeout", "Approval request timed out");
       }, timeoutMs);
 
       // Prevent the timer from keeping the process alive during shutdown.
-      if (typeof timer === "object" && "unref" in timer) {
-        timer.unref();
-      }
+      // .unref() preserved per the TimerHandle cancel-safety contract.
+      timer.unref();
 
       pendingMap.set(requestId, { request, resolve, timer });
     });
@@ -326,13 +332,13 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
 
   function dispose(): void {
     for (const entry of pendingMap.values()) {
-      clearTimeout(entry.timer);
+      entry.timer.cancel();
       entry.resolve({
         requestId: entry.request.requestId,
         approved: false,
         approvedBy: "system:shutdown",
         reason: "Daemon shutting down",
-        resolvedAt: Date.now(),
+        resolvedAt: deps.clock.now(),
       });
     }
     pendingMap.clear();
@@ -371,7 +377,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
   }
 
   function restoreApprovalCache(entries: SerializedApprovalCacheEntry[]): number {
-    const now = Date.now();
+    const now = deps.clock.now();
     let restored = 0;
     for (const entry of entries) {
       if (entry.expiresAt <= now) continue; // Skip expired
@@ -383,7 +389,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
 
   function restorePending(records: SerializedApprovalRequest[]): number {
     let restored = 0;
-    const now = Date.now();
+    const now = deps.clock.now();
     for (const record of records) {
       const elapsed = now - record.createdAt;
       if (elapsed >= record.timeoutMs) continue; // Already expired, skip
@@ -404,13 +410,12 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       // Create a new pending entry with the ORIGINAL requestId.
       // The restored entry creates a fresh promise but the key behavior is that
       // resolveApproval(requestId, ...) works after restart.
-      const timer = setTimeout(() => {
+      const timer = deps.timers.setTimeout(() => {
         resolveApproval(record.requestId, false, "system:timeout", "Approval request timed out");
       }, remainingMs);
 
-      if (typeof timer === "object" && "unref" in timer) {
-        timer.unref();
-      }
+      // .unref() preserved per the TimerHandle cancel-safety contract.
+      timer.unref();
 
       // Use a no-op resolve for the restored entry; the original caller's promise
       // is gone after restart. resolveApproval() will still emit events.

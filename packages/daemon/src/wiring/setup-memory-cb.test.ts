@@ -9,9 +9,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { ok, err } from "@comis/shared";
 import { createCircuitBreaker } from "@comis/agent";
-import type { EmbeddingPort } from "@comis/core";
+import type { EmbeddingPort, ClockPort } from "@comis/core";
 import { createEmbeddingCircuitBreaker } from "./setup-memory.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+
+// Test clock.
+const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -39,7 +42,7 @@ describe("createEmbeddingCircuitBreaker", () => {
   // 1. forwards provider, dimensions, modelId from inner port
   it("forwards provider, dimensions, modelId from inner port", () => {
     const inner = createMockPort({ provider: "openai", dimensions: 1536, modelId: "text-embedding-3-small" });
-    const cb = createCircuitBreaker(CB_CONFIG);
+    const cb = createCircuitBreaker(CB_CONFIG, testClock);
     const wrapped = createEmbeddingCircuitBreaker(inner, cb, createMockLogger());
 
     expect(wrapped.provider).toBe("openai");
@@ -50,7 +53,7 @@ describe("createEmbeddingCircuitBreaker", () => {
   // 2. embed() delegates to inner when circuit is closed
   it("embed() delegates to inner when circuit is closed", async () => {
     const inner = createMockPort();
-    const cb = createCircuitBreaker(CB_CONFIG);
+    const cb = createCircuitBreaker(CB_CONFIG, testClock);
     const wrapped = createEmbeddingCircuitBreaker(inner, cb, createMockLogger());
 
     const result = await wrapped.embed("test");
@@ -63,7 +66,7 @@ describe("createEmbeddingCircuitBreaker", () => {
   // 3. embed() returns err when circuit is open
   it("embed() returns err when circuit is open", async () => {
     const inner = createMockPort();
-    const cb = createCircuitBreaker(CB_CONFIG);
+    const cb = createCircuitBreaker(CB_CONFIG, testClock);
 
     // Force circuit open by recording 3 failures
     cb.recordFailure();
@@ -82,7 +85,7 @@ describe("createEmbeddingCircuitBreaker", () => {
   // 4. embedBatch() delegates to inner when circuit is closed
   it("embedBatch() delegates to inner when circuit is closed", async () => {
     const inner = createMockPort();
-    const cb = createCircuitBreaker(CB_CONFIG);
+    const cb = createCircuitBreaker(CB_CONFIG, testClock);
     const wrapped = createEmbeddingCircuitBreaker(inner, cb, createMockLogger());
 
     const result = await wrapped.embedBatch(["hello", "world"]);
@@ -95,7 +98,7 @@ describe("createEmbeddingCircuitBreaker", () => {
   // 5. embedBatch() returns err when circuit is open
   it("embedBatch() returns err when circuit is open", async () => {
     const inner = createMockPort();
-    const cb = createCircuitBreaker(CB_CONFIG);
+    const cb = createCircuitBreaker(CB_CONFIG, testClock);
 
     cb.recordFailure();
     cb.recordFailure();
@@ -113,7 +116,7 @@ describe("createEmbeddingCircuitBreaker", () => {
   // 6. records success on ok result
   it("records success on ok result, circuit stays closed", async () => {
     const inner = createMockPort();
-    const cb = createCircuitBreaker(CB_CONFIG);
+    const cb = createCircuitBreaker(CB_CONFIG, testClock);
     const wrapped = createEmbeddingCircuitBreaker(inner, cb, createMockLogger());
 
     await wrapped.embed("test");
@@ -126,7 +129,7 @@ describe("createEmbeddingCircuitBreaker", () => {
     const inner = createMockPort({
       embed: vi.fn().mockResolvedValue(err(new Error("provider down"))),
     });
-    const cb = createCircuitBreaker(CB_CONFIG);
+    const cb = createCircuitBreaker(CB_CONFIG, testClock);
     const wrapped = createEmbeddingCircuitBreaker(inner, cb, createMockLogger());
 
     await wrapped.embed("a");
@@ -142,7 +145,7 @@ describe("createEmbeddingCircuitBreaker", () => {
   // 8. dispose() calls inner.dispose()
   it("dispose() calls inner.dispose()", async () => {
     const inner = createMockPort();
-    const cb = createCircuitBreaker(CB_CONFIG);
+    const cb = createCircuitBreaker(CB_CONFIG, testClock);
     const wrapped = createEmbeddingCircuitBreaker(inner, cb, createMockLogger());
 
     await wrapped.dispose!();

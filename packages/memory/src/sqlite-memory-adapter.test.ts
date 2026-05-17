@@ -263,7 +263,7 @@ describe("SqliteMemoryAdapter", () => {
       }
     });
 
-    it("scopes by tenantId", async () => {
+    it("scopes retrieve() by tenantId so entries from other tenants are not returned", async () => {
       const entry = makeEntry({ tenantId: "tenant-a" });
       await adapter.store(entry);
 
@@ -346,7 +346,7 @@ describe("SqliteMemoryAdapter", () => {
       }
     });
 
-    it("filters by tags", async () => {
+    it("filters search() results by tags array intersection per memory-adapter contract", async () => {
       await adapter.store(
         makeEntry({
           content: "tagged cat memory",
@@ -440,7 +440,7 @@ describe("SqliteMemoryAdapter", () => {
       }
     });
 
-    it("updates tags", async () => {
+    it("updates tags array on existing memory entry via adapter.update()", async () => {
       const entry = makeEntry({ tags: ["old-tag"] });
       await adapter.store(entry);
 
@@ -454,7 +454,7 @@ describe("SqliteMemoryAdapter", () => {
       }
     });
 
-    it("updates trustLevel", async () => {
+    it("updates trustLevel on existing memory entry via adapter.update()", async () => {
       const entry = makeEntry({ trustLevel: "external" });
       await adapter.store(entry);
 
@@ -466,7 +466,7 @@ describe("SqliteMemoryAdapter", () => {
       }
     });
 
-    it("updates expiresAt", async () => {
+    it("updates expiresAt timestamp on existing memory entry via adapter.update()", async () => {
       const entry = makeEntry();
       await adapter.store(entry);
 
@@ -549,7 +549,7 @@ describe("SqliteMemoryAdapter", () => {
       }
     });
 
-    it("scopes by tenantId", async () => {
+    it("scopes delete() by tenantId so foreign-tenant deletions are rejected", async () => {
       const entry = makeEntry({ tenantId: "tenant-x" });
       await adapter.store(entry);
 

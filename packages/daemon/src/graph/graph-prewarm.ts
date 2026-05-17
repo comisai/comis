@@ -9,6 +9,7 @@
  */
 
 import { fromPromise } from "@comis/shared";
+import { systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -107,7 +108,7 @@ export async function preWarmGraphCache(
   } catch (modelErr) {
     const errorMsg = `Model resolution failed: ${modelErr instanceof Error ? modelErr.message : String(modelErr)}`;
     deps.logger?.warn(
-      { provider: deps.provider, modelId: deps.modelId, hint: "Pre-warm will be skipped; graph proceeds with event-driven stagger", errorKind: "configuration" },
+      { provider: deps.provider, modelId: deps.modelId, hint: "Pre-warm will be skipped; graph proceeds with event-driven stagger", errorKind: "config" as const },
       `Pre-warm model resolution failed: ${errorMsg}`,
     );
     return { success: false, cacheWriteTokens: 0, tokensUsed: 0, cost: 0, error: errorMsg };
@@ -121,7 +122,7 @@ export async function preWarmGraphCache(
   const context = {
     systemPrompt: deps.systemPrompt,
     messages: [
-      { role: "user" as const, content: ".", timestamp: Date.now() },
+      { role: "user" as const, content: ".", timestamp: systemNowMs() },
     ],
     tools: deps.tools.map((t) => ({
       name: t.name,
@@ -132,7 +133,7 @@ export async function preWarmGraphCache(
 
   // Make the lightweight API call
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000); // 15s timeout
+  const timer = systemSetTimeout(() => controller.abort(), 15_000); // 15s timeout
 
   const callResult = await fromPromise(
     sdk.completeSimple(model, context, {
@@ -144,12 +145,12 @@ export async function preWarmGraphCache(
     }),
   );
 
-  clearTimeout(timer);
+  systemClearTimeout(timer);
 
   if (!callResult.ok) {
     const errorMsg = callResult.error instanceof Error ? callResult.error.message : String(callResult.error);
     deps.logger?.warn(
-      { provider: deps.provider, modelId: deps.modelId, err: callResult.error, hint: "Pre-warm failed; graph proceeds with event-driven stagger", errorKind: "network" },
+      { provider: deps.provider, modelId: deps.modelId, err: callResult.error, hint: "Pre-warm failed; graph proceeds with event-driven stagger", errorKind: "network" as const },
       `Pre-warm API call failed: ${errorMsg}`,
     );
     return { success: false, cacheWriteTokens: 0, tokensUsed: 0, cost: 0, error: errorMsg };

@@ -183,6 +183,61 @@ Profiles create isolated browser contexts with separate cookies, local storage, 
 
 Use the `profiles` action to create, list, and switch between browser profiles.
 
+## Stealth mode (anti-bot detection)
+
+By default the browser runs headless Chrome — fine for most public sites and internal tools, but instantly flagged by modern bot-detection services (Cloudflare Turnstile, FingerprintJS, BrowserScan, reCAPTCHA v3 scoring, Reddit's secondary fingerprint check). For agents that hit those sites you can install Comis with progressively stronger stealth.
+
+Three install-time flags compose together. They're available in both the bare-metal installer (`install.sh`) and the Docker image (build args):
+
+| Flag | What it adds | When you need it |
+|---|---|---|
+| `--with-browser` | Stock Google Chrome + headless shared libs. Sandbox `ReadWritePaths` widened for Chrome's out-of-profile writes (`~/.config/google-chrome`, `~/.local/share/applications`). | Baseline. The browser tool needs a Chrome binary to launch; this provisions one if you didn't bring your own. |
+| `--with-xvfb` | Adds Xvfb + a `comis-xvfb.service` systemd companion that runs a virtual display on `:99`. The main daemon unit joins its `/tmp` namespace so the X11 socket is reachable. Config seeded with `headless: false`. | Sites that detect headless mode itself (BrowserScan, DataDome-tier, Cloudflare managed). On the test VPS, BrowserScan flipped from `Robot` to `Normal` just by switching to headed mode via Xvfb. |
+| `--with-cloakbrowser` | Installs CloakBrowser — a stealth Chromium fork with source-level fingerprint patches at the C++ level (canvas, WebGL, audio, fonts, GPU, screen, WebRTC, hardware reporting). `findChrome()` auto-detects and prefers it over stock Chrome. Sandbox paths are tighter than the Chrome variant. | Sites that fingerprint visitors. Verified bypass on Cloudflare Turnstile (non-interactive), FingerprintJS, BrowserScan, bot.incolumitas (1 fail vs 4 fails for stock Chrome — only the irreducible W3C WebDriver-spec leak remains), and Reddit's secondary fingerprint check on non-datacenter IPs. |
+
+### Verified results (Ubuntu 24.04 VPS, head-to-head against the same probes)
+
+| Config | bot.incolumitas detection-tests | browserscan.net verdict |
+|---|---|---|
+| Stock Chrome, headless | 4 fails (UA leak, HEADCHR_UA, WEBDRIVER, CHR_MEMORY) | `Robot` |
+| Stock Chrome, headed via Xvfb | 1 fail (WEBDRIVER spec only) | `Normal` |
+| CloakBrowser, headless | 1 fail (WEBDRIVER spec only) | `Normal` |
+| CloakBrowser + Xvfb, headed | 1 fail (WEBDRIVER spec only) | `Normal` |
+
+The `WEBDRIVER` fail is unavoidable for any CDP-connected browser — it's a W3C-spec observable side effect, not a fingerprint defect. CloakBrowser's own documentation calls this out as the single irreducible cost.
+
+<Warning>
+**Datacenter IPs are pre-blocked regardless of fingerprint.** Reddit, X/Twitter, LinkedIn, and many anti-bot services blocklist datacenter ASNs (AWS, DigitalOcean, Hetzner, Hostinger, …) at the network layer before any browser fingerprint check runs. CloakBrowser does not include a proxy. If your daemon runs on a datacenter VPS, pair the stealth flag with a residential proxy.
+
+Concretely measured this session: stock Chrome and CloakBrowser produced identical 403 "blocked by network security" responses on Reddit from a Hostinger VPS. From a residential ISP, stock Chrome still got blocked but CloakBrowser bypassed Reddit's secondary fingerprint check and returned the actual subreddit content.
+</Warning>
+
+### Install examples
+
+```bash
+# Bare-metal: stealth + headed for the hardest tier
+curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser --with-xvfb
+
+# Docker: same matrix via build args
+docker build \
+  --build-arg COMIS_WITH_CLOAKBROWSER=1 \
+  --build-arg COMIS_WITH_XVFB=1 \
+  -t comisai/comis:cloak-xvfb .
+
+# Docker: validate via install.sh-based image (same end state, exercises
+# the actual installer path)
+docker build -f Dockerfile.install \
+  --build-arg COMIS_WITH_CLOAKBROWSER=1 \
+  --build-arg COMIS_WITH_XVFB=1 \
+  -t comis-installed:cloak-xvfb .
+```
+
+No runtime config change required — `findChrome()` probes `~/.cloakbrowser/chromium-*/chrome` first, then platform-specific Chrome paths. Whatever was installed wins.
+
+### License note
+
+CloakBrowser's wrapper is MIT-licensed; the compiled binary is under a separate license — **free for self-hosted use** (including bringing it into your own VPS / Docker deploys), but **bundling into a service you distribute to third-party customers requires a separate OEM license** from CloakHQ. See the [CloakBrowser binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md) for the full terms.
+
 ## Security
 
 The browser includes built-in security protections:

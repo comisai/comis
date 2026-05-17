@@ -52,8 +52,8 @@ export interface DriftCheckInput {
   currentModel: { id?: string; provider?: string; api?: string };
   /** Idle threshold from config (already resolved with default applied). */
   idleMs: number;
-  /** Now() injection for testability. Default: `Date.now()`. */
-  now?: number;
+  /** Now() injection for testability. */
+  now: number;
 }
 
 /** Result of `shouldDropSignedFields`. */
@@ -87,8 +87,7 @@ export interface DriftCheck {
  * tested explicitly so future refactors cannot silently change it.
  */
 export function shouldDropSignedFields(input: DriftCheckInput): DriftCheck {
-  const { fileEntries, currentModel, idleMs } = input;
-  const now = input.now ?? Date.now();
+  const { fileEntries, currentModel, idleMs, now } = input;
 
   if (!Array.isArray(fileEntries) || fileEntries.length === 0) {
     return { drop: false };

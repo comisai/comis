@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * ObservabilityStore mutation helpers (WRITES).
+ *
+ * Each `bind*` function creates the prepared statements its methods need
+ * (closure-captured) and returns the partial handle slice.
+ *
+ * @module
+ */
+
+import type Database from "better-sqlite3";
+import type {
+  ObservabilityStore,
+  TokenUsageRow,
+  DeliveryRow,
+  DiagnosticRow,
+  ChannelSnapshotRow,
+} from "./observability-store-types.js";
+
+/** Shape of the subset of ObservabilityStore implemented by this module. */
+export type ObservabilityMutations = Pick<
+  ObservabilityStore,
+  "insertTokenUsage" | "insertDelivery" | "insertDiagnostic" | "insertChannelSnapshot"
+>;
+
+/**
+ * Prepare mutation statements and return the write-side slice of the
+ * ObservabilityStore handle.
+ *
+ * @param db - An open better-sqlite3 Database instance with the
+ *             observability schema initialized.
+ */
+export function bindMutations(db: Database.Database): ObservabilityMutations {
+  // --- Prepared statements (fixed SQL, prepared once) ---
+
+  const insertTokenUsageStmt = db.prepare(`
+    INSERT INTO obs_token_usage (
+      timestamp, trace_id, agent_id, channel_id, execution_id, session_key,
+      provider, model, prompt_tokens, completion_tokens, total_tokens,
+      cache_read_tokens, cache_write_tokens, cost_input, cost_output, cost_total,
+      cost_cache_read, cost_cache_write, cache_saved, latency_ms, cache_retention
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertDeliveryStmt = db.prepare(`
+    INSERT INTO obs_delivery (
+      timestamp, trace_id, agent_id, channel_type, channel_id, session_key,
+      status, latency_ms, error_message, message_preview,
+      tool_calls, llm_calls, tokens_total, cost_total
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertDiagnosticStmt = db.prepare(`
+    INSERT INTO obs_diagnostics (
+      timestamp, category, severity, agent_id, session_key, message, details, trace_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertSnapshotStmt = db.prepare(`
+    INSERT INTO obs_channel_snapshots (
+      timestamp, channel_type, channel_id, status, messages_sent, messages_received, uptime_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  // --- Bound methods ---
+
+  function insertTokenUsage(entry: TokenUsageRow): void {
+    insertTokenUsageStmt.run(
+      entry.timestamp,
+      entry.traceId,
+      entry.agentId,
+      entry.channelId ?? "",
+      entry.executionId ?? "",
+      entry.sessionKey ?? "",
+      entry.provider,
+      entry.model,
+      entry.promptTokens,
+      entry.completionTokens,
+      entry.totalTokens,
+      entry.cacheReadTokens ?? 0,
+      entry.cacheWriteTokens ?? 0,
+      entry.costInput,
+      entry.costOutput,
+      entry.costTotal,
+      entry.costCacheRead ?? 0,
+      entry.costCacheWrite ?? 0,
+      entry.cacheSaved ?? 0,
+      entry.latencyMs,
+      entry.cacheRetention ?? null,
+    );
+  }
+
+  function insertDelivery(entry: DeliveryRow): void {
+    insertDeliveryStmt.run(
+      entry.timestamp,
+      entry.traceId,
+      entry.agentId,
+      entry.channelType,
+      entry.channelId,
+      entry.sessionKey ?? "",
+      entry.status,
+      entry.latencyMs,
+      entry.errorMessage ?? "",
+      entry.messagePreview ?? "",
+      entry.toolCalls ?? 0,
+      entry.llmCalls ?? 0,
+      entry.tokensTotal ?? 0,
+      entry.costTotal ?? 0,
+    );
+  }
+
+  function insertDiagnostic(entry: DiagnosticRow): void {
+    insertDiagnosticStmt.run(
+      entry.timestamp,
+      entry.category,
+      entry.severity,
+      entry.agentId ?? "",
+      entry.sessionKey ?? "",
+      entry.message,
+      entry.details ?? "",
+      entry.traceId ?? "",
+    );
+  }
+
+  function insertChannelSnapshot(entry: ChannelSnapshotRow): void {
+    insertSnapshotStmt.run(
+      entry.timestamp,
+      entry.channelType,
+      entry.channelId ?? "",
+      entry.status,
+      entry.messagesSent ?? 0,
+      entry.messagesReceived ?? 0,
+      entry.uptimeMs ?? 0,
+    );
+  }
+
+  return {
+    insertTokenUsage,
+    insertDelivery,
+    insertDiagnostic,
+    insertChannelSnapshot,
+  };
+}

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { CostTracker, CostRecord } from "@comis/agent";
+import { systemNowMs, systemDateFrom } from "@comis/core";
 
 /**
  * Aggregated billing snapshot: total cost, token count, and call count.
@@ -57,7 +58,7 @@ function filterByTime(
   sinceMs?: number,
 ): CostRecord[] {
   if (sinceMs === undefined) return records;
-  const cutoff = Date.now() - sinceMs;
+  const cutoff = systemNowMs() - sinceMs;
   return records.filter((r) => r.timestamp >= cutoff);
 }
 
@@ -159,14 +160,14 @@ export function createBillingEstimator(deps: {
     },
 
     usage24h(): TokenUsagePoint[] {
-      const now = Date.now();
+      const now = systemNowMs();
       const cutoff = now - 24 * 60 * 60 * 1000;
       const records = costTracker.getAll().filter((r) => r.timestamp >= cutoff);
 
       // Bucket tokens by hour-of-day (0-23)
       const buckets = new Array<number>(24).fill(0);
       for (const r of records) {
-        const hour = new Date(r.timestamp).getHours();
+        const hour = systemDateFrom(r.timestamp).getHours();
         buckets[hour] += r.tokens.total;
       }
 

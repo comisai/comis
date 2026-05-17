@@ -165,7 +165,7 @@ describe("lifecycle-state-machine", () => {
       }
     });
 
-    it("allows done -> idle", () => {
+    it("allows transition from 'done' phase back to 'idle' per lifecycle state-machine", () => {
       expect(isValidTransition("done", "idle")).toBe(true);
     });
 

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import { createGlobalState, type GlobalState } from "./global-state.js";
+import {
+  createGlobalState,
+  type GlobalState,
+  requireGlobalState,
+  GlobalStateNotInitializedError,
+} from "./global-state.js";
 
 describe("createGlobalState", () => {
   it("returns object with subscribe, getSnapshot, update, and default field values", () => {
@@ -186,3 +191,64 @@ describe("createGlobalState", () => {
     expect(state.pendingApprovals).toBe(7);
   });
 });
+
+// requireGlobalState helper tests.
+//
+// These tests pin the contract used to eliminate `this._globalState!.X`
+// non-null-assertion sites in packages/web/src/app.ts. New uses of the
+// `!.` non-null-assertion idiom should be rejected at code review in
+// favor of requireGlobalState(this).
+describe("requireGlobalState — typed null-check helper", () => {
+  it("requireGlobalState throws GlobalStateNotInitializedError when state is null", () => {
+    const component = { _globalState: null };
+    expect(() => requireGlobalState(component)).toThrowError(
+      GlobalStateNotInitializedError,
+    );
+  });
+
+  it("requireGlobalState throws an Error subclass that captures the name property", () => {
+    const component = { _globalState: null };
+    try {
+      requireGlobalState(component);
+      expect.fail("Expected throw but call returned");
+    } catch (e) {
+      expect(e).toBeInstanceOf(Error);
+      expect((e as Error).name).toBe("GlobalStateNotInitializedError");
+    }
+  });
+
+  it("requireGlobalState returns the GlobalState instance when present", () => {
+    const stubState = createGlobalStateStub();
+    const component = { _globalState: stubState };
+    const result = requireGlobalState(component);
+    expect(result).toBe(stubState);
+  });
+
+  it("requireGlobalState accepts any object with a _globalState field via structural typing", () => {
+    const a: { _globalState: GlobalState | null } = { _globalState: null };
+    const b: { _globalState: GlobalState | null } = {
+      _globalState: createGlobalStateStub(),
+    };
+    expect(() => requireGlobalState(a)).toThrow();
+    expect(requireGlobalState(b)).toBeDefined();
+  });
+
+  it("GlobalStateNotInitializedError name property is the literal class name string", () => {
+    const err = new GlobalStateNotInitializedError("test-msg");
+    expect(err.name).toBe("GlobalStateNotInitializedError");
+    expect(err.message).toBe("test-msg");
+    expect(err).toBeInstanceOf(Error);
+  });
+});
+
+/**
+ * Minimal GlobalState stub for requireGlobalState tests. The structural
+ * shape only needs whatever fields requireGlobalState reads — which is
+ * just the existence of a non-null reference; the helper itself does
+ * not invoke any GlobalState methods. Reusing createGlobalState() here
+ * would also work, but `{} as unknown as GlobalState` is faster and
+ * makes the structural-typing contract explicit.
+ */
+function createGlobalStateStub(): GlobalState {
+  return {} as unknown as GlobalState;
+}

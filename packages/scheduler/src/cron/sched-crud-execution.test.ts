@@ -7,7 +7,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CronStore } from "./cron-store.js";
 import type { CronJob } from "./cron-types.js";
 import { createCronScheduler } from "./cron-scheduler.js";
-import { withExecutionLock } from "../execution/execution-lock.js";
+// execution-lock.ts was deleted; use FileLockPort from @comis/core via the
+// local shim that matches the old Result<T, string> shape so the tests
+// stay readable.
+import { createFileLock } from "@comis/core";
+import type { Result } from "@comis/shared";
+const _fileLock = createFileLock();
+async function withExecutionLock<T>(
+  lockPath: string,
+  fn: () => Promise<T>,
+  opts: { staleMs?: number; updateMs?: number; retries?: number } = {},
+): Promise<Result<T, "locked" | "error">> {
+  const r = await _fileLock.withLock(lockPath, fn, opts);
+  return r.ok ? { ok: true as const, value: r.value } : { ok: false as const, error: r.error.kind };
+}
 import { createExecutionTracker } from "../execution/execution-tracker.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 function makeJob(overrides: Partial<CronJob> = {}): CronJob {

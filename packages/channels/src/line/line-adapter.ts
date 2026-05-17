@@ -26,12 +26,13 @@ import type {
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { messagingApi, webhook } from "@line/bot-sdk";
 import { buildFlexMessage, type FlexTemplate } from "./flex-builder.js";
 import { mapLineToNormalized, isMessageEvent } from "./message-mapper.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -42,6 +43,17 @@ export interface LineAdapterDeps {
   channelSecret: string;
   webhookPath?: string;
   logger: ComisLogger;
+  /**
+   * Optional LINE Messaging API base URL override (e.g.
+   * `http://127.0.0.1:54325`). When set, both the `MessagingApiClient`
+   * and `MessagingApiBlobClient` are constructed with `baseURL=apiRoot`
+   * so their HTTP requests hit the override instead of `api.line.me` /
+   * `api-data.line.me`. Production callers leave this undefined.
+   *
+   * Production seam for the wire-level E2E mock chat-platform fixture
+   * (test/e2e/mocks/line/).
+   */
+  apiRoot?: string;
 }
 
 export interface LineAdapterHandle extends ChannelPort {
@@ -63,12 +75,18 @@ export interface LineAdapterHandle extends ChannelPort {
  * via webhook events dispatched through handleWebhookEvents().
  */
 export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
+  // E2E seam: when deps.apiRoot is set, point both LINE SDK clients at the
+  // override base URL instead of api.line.me. Production omits the field
+  // entirely (byte-identical to the prior single-key shape).
+  const baseUrlOverride = deps.apiRoot ? { baseURL: deps.apiRoot } : {};
   const client = new messagingApi.MessagingApiClient({
     channelAccessToken: deps.channelAccessToken,
+    ...baseUrlOverride,
   });
 
   const blobClient = new messagingApi.MessagingApiBlobClient({
     channelAccessToken: deps.channelAccessToken,
+    ...baseUrlOverride,
   });
 
   async function getBlobContent(messageId: string): Promise<Buffer> {
@@ -106,7 +124,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
       return;
     }
 
-    _lastMessageAt = Date.now();
+    _lastMessageAt = systemNowMs();
     deps.logger.info(
       { channelType: "line" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length },
       "Inbound message",
@@ -242,7 +260,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
       }
 
       _connected = true;
-      _startedAt = Date.now();
+      _startedAt = systemNowMs();
       deps.logger.info({ channelType: "line" as const, mode: "webhook" }, "Adapter started");
       return ok(undefined);
     },
@@ -269,7 +287,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
 
         const messageId = response.sentMessages[0]?.id ?? "sent";
 
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.debug(
           { channelType: "line" as const, messageId, chatId, preview: text.slice(0, 1500) },
@@ -422,7 +440,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
         connected: _connected,
         channelId: _channelId,
         channelType: "line",
-        uptime: _connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: _connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: "webhook",

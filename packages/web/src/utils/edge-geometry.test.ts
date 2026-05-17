@@ -13,7 +13,7 @@ import {
 
 describe("edge-geometry", () => {
   describe("constants", () => {
-    it("NODE_WIDTH is 200", () => {
+    it("declares NODE_WIDTH constant equals 200 pixels per graph-builder layout contract", () => {
       expect(NODE_WIDTH).toBe(200);
     });
 
@@ -52,7 +52,7 @@ describe("edge-geometry", () => {
       expect(path).toMatch(/^M 10 20/);
     });
 
-    it("contains C command", () => {
+    it("contains the C cubic-bezier command in the generated SVG path string", () => {
       const path = computeBezierPath({ x: 10, y: 20 }, { x: 10, y: 220 });
       expect(path).toContain("C");
     });
@@ -116,7 +116,7 @@ describe("edge-geometry", () => {
       expect(path).toContain(`L ${target.x} ${target.y}`);
     });
 
-    it("default size is 8px", () => {
+    it("default arrowhead size is 8 pixels when no size argument is provided", () => {
       const target: Point = { x: 100, y: 200 };
       const source: Point = { x: 100, y: 0 };
       const path = computeArrowhead(target, source);

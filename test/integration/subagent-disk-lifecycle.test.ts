@@ -31,8 +31,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { sweepResultFiles } from "@comis/daemon";
-import { createResultCondenser } from "@comis/agent";
+import { sweepResultFiles, createResultCondenser } from "@comis/agent";
 
 // ---------------------------------------------------------------------------
 // Shared temp directory for tests (a), (b)

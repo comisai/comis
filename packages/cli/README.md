@@ -14,21 +14,24 @@ npm install -g comisai
 |---------|-------------|
 | `comis init` | Initialize a new Comis installation |
 | `comis configure` | Interactive setup wizard for channels, providers, and agents |
-| `comis daemon start\|stop\|restart` | Manage the background daemon |
+| `comis daemon start\|stop\|status\|logs` | Manage the background daemon |
 | `comis pm2 setup\|start\|stop` | PM2 process management integration |
 | `comis status` | Show daemon and channel status |
 | `comis health` | Run health checks |
 | `comis doctor` | Diagnose configuration and connectivity issues |
 | `comis agent list\|info\|...` | Manage agents |
+| `comis auth login\|list\|...` | Manage OAuth provider credentials |
 | `comis channel list\|info\|...` | Manage channel connections |
-| `comis session list\|info\|...` | Browse and manage sessions |
+| `comis sessions list\|inspect\|...` | Browse and manage sessions |
 | `comis memory search\|info\|...` | Query agent memory |
 | `comis config get\|set\|...` | View and modify configuration |
 | `comis models` | List available LLM models |
+| `comis providers list\|...` | Manage LLM provider profiles |
 | `comis secrets` | Manage encrypted credentials |
 | `comis security` | Run security checks |
 | `comis reset` | Reset agent state |
 | `comis signal-setup` | Signal messenger setup helper |
+| `comis uninstall` | Remove the Comis installation |
 
 ## Features
 

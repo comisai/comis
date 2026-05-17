@@ -13,9 +13,19 @@ import type { Command } from "commander";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import chalk from "chalk";
-import { isMap, isPair, isScalar, parseDocument } from "yaml";
-import { loadConfigFile, validateConfig, deepMerge, loadEnvFile } from "@comis/core";
-import { withClient } from "../client/rpc-client.js";
+import { parseDocument } from "yaml";
+import {
+  loadConfigFile,
+  validateConfig,
+  deepMerge,
+  loadEnvFile,
+  ConfigReadContract,
+  ConfigPatchContract,
+  ConfigHistoryContract,
+  ConfigDiffContract,
+  ConfigRollbackContract,
+} from "@comis/core";
+import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
@@ -37,6 +47,12 @@ import {
   type PromptIO,
 } from "../tooling-fill/index.js";
 import * as readline from "node:readline/promises";
+import {
+  formatDate,
+  readHintKeysForInspect,
+  resolveEnvRefs,
+  truncate,
+} from "./config-parsers.js";
 
 /** Default config paths to check (matching daemon defaults). */
 const DEFAULT_CONFIG_PATHS = [
@@ -54,32 +70,6 @@ const DEFAULT_CONFIG_PATHS = [
  * and therefore not subject to traversal concerns.
  */
 const SYNC_TOOLING_DEFAULT_CONFIG = os.homedir() + "/.comis/config.yaml";
-
-/** Pattern matching `${VAR_NAME}` env var references. */
-const ENV_REF_RE = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
-
-/**
- * Deep-walk an object and resolve `${VAR}` references using process.env.
- * Mutates in place for efficiency since the input is a transient merge result.
- */
-function resolveEnvRefs(obj: Record<string, unknown>): void {
-  for (const [key, value] of Object.entries(obj)) {
-    if (typeof value === "string" && value.includes("${")) {
-      obj[key] = value.replace(ENV_REF_RE, (match, varName: string) => {
-        // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-        return process.env[varName] ?? match;
-      });
-    } else if (value && typeof value === "object" && !Array.isArray(value)) {
-      resolveEnvRefs(value as Record<string, unknown>);
-    } else if (Array.isArray(value)) {
-      for (const item of value) {
-        if (item && typeof item === "object") {
-          resolveEnvRefs(item as Record<string, unknown>);
-        }
-      }
-    }
-  }
-}
 
 /**
  * Register the `config` subcommand group on the program.
@@ -169,7 +159,7 @@ export function registerConfigCommand(program: Command): void {
       try {
         const result = await withSpinner("Reading config...", () =>
           withClient(async (client) => {
-            return await client.call("config.read", { section });
+            return await callTyped(client, ConfigReadContract, section ? { section } : {});
           }),
         );
 
@@ -231,7 +221,18 @@ export function registerConfigCommand(program: Command): void {
 
       try {
         await withClient(async (client) => {
-          return await client.call("config.patch", { section, key, value });
+          // ConfigPatchContract.request.value accepts the wire-observable
+          // primitive | record | array-of-record union (loose record).
+          // The `value` here is JSON-parsed from the CLI arg (or raw string
+          // fallback) — already in the allowed shape. callTyped's contract
+          // input type widens to z.input, which for the union is
+          // `string | number | boolean | Record<string, unknown> | Array<Record<string, unknown>>`
+          // — cast through unknown to satisfy TS narrowing.
+          return await callTyped(client, ConfigPatchContract, {
+            section,
+            key,
+            value: value as string,
+          });
         });
 
         success(`Set ${dotPath} = ${JSON.stringify(value)}`);
@@ -255,10 +256,7 @@ export function registerConfigCommand(program: Command): void {
         const limit = parseInt(options.limit, 10);
         const result = await withSpinner("Fetching config history...", () =>
           withClient(async (client) => {
-            return (await client.call("config.history", { limit })) as {
-              entries: Array<{ sha: string; date: string; message: string; author?: string }>;
-              error?: string;
-            };
+            return await callTyped(client, ConfigHistoryContract, { limit });
           }),
         );
 
@@ -282,7 +280,7 @@ export function registerConfigCommand(program: Command): void {
           ["SHA", "Date", "Message"],
           result.entries.map((entry) => [
             entry.sha.slice(0, 7),
-            formatDate(entry.date),
+            formatDate(entry.timestamp),
             truncate(entry.message, 60),
           ]),
         );
@@ -302,10 +300,7 @@ export function registerConfigCommand(program: Command): void {
       try {
         const result = await withSpinner("Computing diff...", () =>
           withClient(async (client) => {
-            return (await client.call("config.diff", { sha })) as {
-              diff: string;
-              error?: string;
-            };
+            return await callTyped(client, ConfigDiffContract, sha ? { sha } : {});
           }),
         );
 
@@ -373,7 +368,7 @@ export function registerConfigCommand(program: Command): void {
 
       try {
         await withClient(async (client) => {
-          return await client.call("config.rollback", { sha });
+          return await callTyped(client, ConfigRollbackContract, { sha });
         });
 
         success(`Config rolled back to ${sha.slice(0, 7)}`);
@@ -747,46 +742,3 @@ export function registerConfigCommand(program: Command): void {
     );
 }
 
-/**
- * Read the keys of an existing `tooling.*.capabilityHints` map from a
- * yaml@2.8.4 Document. Returns an empty array if the path is absent or
- * the value at the path is not a YAMLMap. Local helper (avoids exposing
- * a mutation-AST utility from the sync-tooling barrel).
- */
-function readHintKeysForInspect(
-  doc: ReturnType<typeof parseDocument>,
-  hintMapPath: string[],
-): string[] {
-  if (!doc.hasIn(hintMapPath)) return [];
-  const node = doc.getIn(hintMapPath, true);
-  if (!isMap(node)) return [];
-  const keys: string[] = [];
-  for (const p of node.items) {
-    if (!isPair(p)) continue;
-    const k = isScalar(p.key) ? p.key.value : p.key;
-    if (typeof k === "string") keys.push(k);
-  }
-  return keys;
-}
-
-/**
- * Truncate a string to a maximum length with ellipsis.
- */
-function truncate(str: string, maxLength: number): string {
-  const oneLine = str.replace(/\n/g, " ");
-  if (oneLine.length <= maxLength) return oneLine;
-  return oneLine.slice(0, maxLength - 3) + "...";
-}
-
-/**
- * Format an ISO date string for display.
- */
-function formatDate(dateStr: string): string {
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleString();
-  } catch {
-    return dateStr;
-  }
-}

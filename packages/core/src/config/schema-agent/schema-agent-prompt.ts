@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Agent config — Auxiliary agent runtime schemas.
+ *
+ * Owns Routing, RAG, Bootstrap, Concurrency, Broadcast, ElevatedReply,
+ * Tracing, SdkRetry, ContextGuard, ToolLifecycle, DeferredTools, and Sep
+ * schemas — the auxiliary agent-configuration helpers that feed into the
+ * top-level `AgentConfigSchema` (composed in `schema-agent-runtime.ts`).
+ *
+ * Imports only from external siblings (TrustLevelSchema from
+ * `../../domain/memory-entry.js`) — no sibling-leaf imports inside the
+ * `schema-agent/` subdirectory; the top-level `AgentConfigSchema` in
+ * `schema-agent-runtime.ts` composes from this leaf.
+ *
+ * @module
+ */
+import { z } from "zod";
+import { TrustLevelSchema } from "../../domain/memory-entry.js";
+
+// ── Agent Configuration Schema ─────────────────────────────────────────
+
+/**
+ * Agent configuration schema.
+ *
+ * Defines agent identity, model selection, execution limits,
+ * workspace paths, and per-agent feature configuration.
+ */
+
+/** Routing binding: maps channel/peer/guild patterns to a specific agent. */
+export const RoutingBindingSchema = z.strictObject({
+    /** Channel type to match (e.g. "telegram", "discord") */
+    channelType: z.string().optional(),
+    /** Channel identifier to match */
+    channelId: z.string().optional(),
+    /** Peer (user) identifier to match */
+    peerId: z.string().optional(),
+    /** Guild (server/group) identifier to match */
+    guildId: z.string().optional(),
+    /** Agent ID to route to when this binding matches */
+    agentId: z.string().min(1),
+  });
+
+/** Routing configuration for multi-agent dispatch. */
+export const RoutingConfigSchema = z.strictObject({
+    /** Agent ID to use when no routing binding matches */
+    defaultAgentId: z.string().min(1).default("default"),
+    /** Ordered list of routing bindings (first match wins) */
+    bindings: z.array(RoutingBindingSchema).default([]),
+  });
+
+/** RAG (Retrieval-Augmented Generation) configuration for automatic memory retrieval before LLM calls. */
+export const RagConfigSchema = z.strictObject({
+    /** Enable automatic memory retrieval before LLM calls */
+    enabled: z.boolean().default(true),
+    /** Maximum number of memory results to retrieve */
+    maxResults: z.number().int().positive().default(5),
+    /** Maximum characters of memory context to inject into system prompt */
+    maxContextChars: z.number().int().positive().default(4000),
+    /** Minimum RRF score threshold (0-1) to include a memory result */
+    minScore: z.number().min(0).max(1).default(0.1),
+    /** Trust levels to include in retrieval (external excluded by default for security) */
+    includeTrustLevels: z.array(TrustLevelSchema).default(["system", "learned"]),
+  });
+
+export type RagConfig = z.infer<typeof RagConfigSchema>;
+
+/** Bootstrap configuration for workspace file injection into system prompts. */
+export const BootstrapConfigSchema = z.strictObject({
+    /** Per-file character limit for workspace files injected into system prompt */
+    maxChars: z.number().int().positive().default(20_000),
+    /** System prompt verbosity mode: full (all sections), minimal (sub-agents), none (identity only) */
+    promptMode: z.enum(["full", "minimal", "none"]).default("full"),
+    /** When true, USER.md is excluded from bootstrap context in group chat sessions (privacy). Default: true. */
+    groupChatFiltering: z.boolean().default(true),
+  });
+
+export type BootstrapConfig = z.infer<typeof BootstrapConfigSchema>;
+
+/** Per-agent concurrency limits (maxConcurrentRuns controls session serialization). */
+export const ConcurrencyConfigSchema = z.strictObject({
+    /** Maximum concurrent agent runs for this agent (default: 4) */
+    maxConcurrentRuns: z.number().int().positive().default(4),
+    /** Maximum queued messages per session before overflow (default: 50) */
+    maxQueuedPerSession: z.number().int().positive().default(50),
+  });
+
+export type ConcurrencyConfig = z.infer<typeof ConcurrencyConfigSchema>;
+
+/** Target channel for a broadcast group delivery. */
+export const BroadcastTargetSchema = z.strictObject({
+    /** Channel type (e.g., "telegram", "discord", "slack") */
+    channelType: z.string().min(1),
+    /** Channel identifier within the platform */
+    channelId: z.string().min(1),
+    /** Chat/conversation identifier within the channel */
+    chatId: z.string().min(1),
+  });
+
+/** Broadcast group for simultaneous multi-channel message delivery. */
+export const BroadcastGroupSchema = z.strictObject({
+    /** Unique group identifier (referenced in broadcast tool calls) */
+    id: z.string().min(1),
+    /** Human-readable group name */
+    name: z.string().default(""),
+    /** Channel targets for simultaneous delivery */
+    targets: z.array(BroadcastTargetSchema).default([]),
+    /** Whether this broadcast group is active */
+    enabled: z.boolean().default(true),
+  });
+
+export type BroadcastTarget = z.infer<typeof BroadcastTargetSchema>;
+export type BroadcastGroup = z.infer<typeof BroadcastGroupSchema>;
+
+/** Elevated reply mode: routes messages to different models based on sender trust level. */
+export const ElevatedReplyConfigSchema = z.strictObject({
+  /** Enable trust-based model/prompt routing */
+  enabled: z.boolean().default(false),
+  /** Map of trust level name to model route name (from modelRoutes) */
+  trustModelRoutes: z.record(z.string(), z.string()).default({}),
+  /** Map of trust level name to system prompt section override text */
+  trustPromptOverrides: z.record(z.string(), z.string()).default({}),
+  /** Default trust level for unknown senders */
+  defaultTrustLevel: z.string().default("external"),
+  /** Per-sender trust level overrides (senderId -> trust level name) */
+  senderTrustMap: z.record(z.string(), z.string()).default({}),
+});
+
+export type ElevatedReplyConfig = z.infer<typeof ElevatedReplyConfigSchema>;
+
+/** Per-agent JSONL trace configuration (disabled by default). */
+export const TracingConfigSchema = z.strictObject({
+  /** Enable per-LLM-call JSONL trace files */
+  enabled: z.boolean().default(false),
+  /** Output directory for JSONL trace files. Supports ~ expansion. Default: ~/.comis/traces */
+  outputDir: z.string().default("~/.comis/traces"),
+});
+
+export type TracingConfig = z.infer<typeof TracingConfigSchema>;
+
+/** SDK retry configuration: controls exponential backoff for transient errors (429, 5xx).
+ *  The SDK handles retry internally; this schema configures its behavior per-agent. */
+export const SdkRetryConfigSchema = z.strictObject({
+  /** Enable SDK-native retry with exponential backoff */
+  enabled: z.boolean().default(true),
+  /** Maximum number of retry attempts for transient errors (5 retries = 6 total attempts) */
+  maxRetries: z.number().int().nonnegative().default(5),
+  /** Base delay in milliseconds before first retry (4s base with exponential backoff: 4s, 8s, 16s, 32s, 60s capped) */
+  baseDelayMs: z.number().int().positive().default(4000),
+  /** Maximum delay cap in milliseconds between retries */
+  maxDelayMs: z.number().int().positive().default(60000),
+});
+
+export type SdkRetryConfig = z.infer<typeof SdkRetryConfigSchema>;
+
+/** Context window guard configuration: percent-based warn/block thresholds. */
+export const ContextGuardConfigSchema = z.strictObject({
+  /** Enable context window guard checks during execution */
+  enabled: z.boolean().default(true),
+  /** Warn when context usage reaches this percent (0-100). Default: 80. */
+  warnPercent: z.number().min(0).max(100).default(80),
+  /** Block (abort) execution when context usage reaches this percent (0-100). Default: 95. */
+  blockPercent: z.number().min(0).max(100).default(95),
+});
+
+export type ContextGuardConfig = z.infer<typeof ContextGuardConfigSchema>;
+
+/** Tool lifecycle management: per-turn usage tracking and automatic demotion of unused tools. */
+export const ToolLifecycleConfigSchema = z.strictObject({
+  /** Whether tool lifecycle management is enabled. When false, no usage tracking or demotion occurs. */
+  enabled: z.boolean().default(true),
+  /** Number of turns of non-use before a tool is demoted (schema-stripped). */
+  demotionThreshold: z.number().int().positive().default(20),
+});
+
+export type ToolLifecycleConfig = z.infer<typeof ToolLifecycleConfigSchema>;
+
+/** Deferred tools configuration: operator control over tool deferral behavior per-agent. */
+export const DeferredToolsConfigSchema = z.strictObject({
+  /** Deferral mode: "always" defers all non-core tools, "auto" uses rule+budget heuristics, "never" disables deferral. */
+  mode: z.enum(["always", "auto", "never"]).default("auto"),
+  /** Tool names that must never be deferred (force-loaded into active context). Glob patterns NOT supported -- exact names only. */
+  neverDefer: z.array(z.string()).default([]),
+  /** Tool names that must always be deferred (force-deferred regardless of rules). Glob patterns NOT supported -- exact names only. */
+  alwaysDefer: z.array(z.string()).default([]),
+});
+
+export type DeferredToolsConfig = z.infer<typeof DeferredToolsConfigSchema>;
+
+/** Silent Execution Planner (SEP) configuration: in-memory checklist system for multi-step task tracking. */
+export const SepConfigSchema = z.strictObject({
+  /** Enable/disable SEP. Default: true. */
+  enabled: z.boolean().default(true),
+  /** Minimum estimated steps to activate planning (below this threshold, overhead isn't worth it). */
+  minSteps: z.number().int().min(2).max(10).default(3),
+  /** Whether to inject a verification nudge when all steps complete. Default: true. */
+  verificationNudge: z.boolean().default(true),
+  /** Maximum plan steps to track (prevents runaway extraction on vague requests). */
+  maxSteps: z.number().int().min(3).max(30).default(15),
+  /** Whether to include progress in user-visible response. Default: false. */
+  userVisibleProgress: z.boolean().default(false),
+});
+
+export type SepConfig = z.infer<typeof SepConfigSchema>;

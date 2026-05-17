@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: 10MB session-size guard in SessionStore.save(); consumed by daemon RPC session-handlers (@allow-throw boundary).
 /**
  * Session store for conversation persistence.
  *
@@ -11,9 +12,31 @@
  */
 
 import type Database from "better-sqlite3";
-import { formatSessionKey, type SessionKey } from "@comis/core";
+import { formatSessionKey, systemNowMs, type SessionData, type SessionDetailedEntry, type SessionKey, type SessionListEntry, type SessionStorePort } from "@comis/core";
 import { z } from "zod";
-import type { SessionRow } from "./types.js";
+import { createRowMapper } from "./row-mapper.js";
+import { SessionRowSchema } from "./row-schemas.js";
+
+// Row mappers
+const sessionRowMapper = createRowMapper(SessionRowSchema);
+const sessionListEntryRowMapper = createRowMapper(
+  z.strictObject({
+    session_key: z.string(),
+    updated_at: z.number(),
+  }),
+);
+const sessionDetailedEntryRowMapper = createRowMapper(
+  z.strictObject({
+    session_key: z.string(),
+    tenant_id: z.string(),
+    user_id: z.string(),
+    channel_id: z.string(),
+    metadata: z.string(),
+    created_at: z.number(),
+    updated_at: z.number(),
+    message_count: z.number(),
+  }),
+);
 
 const SessionMessagesSchema = z.array(z.unknown());
 const SessionMetadataSchema = z.record(z.string(), z.unknown());
@@ -41,95 +64,17 @@ function parseMetadata(raw: string): Record<string, unknown> {
   }
 }
 
-/**
- * Data returned when loading a session.
- */
-export interface SessionData {
-  messages: unknown[];
-  metadata: Record<string, unknown>;
-  createdAt: number;
-  updatedAt: number;
-}
+// SessionData, SessionListEntry, SessionDetailedEntry, SessionStorePort —
+// canonical home is `@comis/core/src/ports/session-store-types.ts`.
+// Imported above for use in the factory body's internal type narrowing.
 
 /**
- * Session listing entry.
- */
-export interface SessionListEntry {
-  sessionKey: string;
-  updatedAt: number;
-}
-
-/**
- * Detailed session listing entry with all fields needed for kind derivation.
- */
-export interface SessionDetailedEntry {
-  sessionKey: string;
-  tenantId: string;
-  userId: string;
-  channelId: string;
-  metadata: Record<string, unknown>;
-  createdAt: number;
-  updatedAt: number;
-  messageCount: number;
-}
-
-/**
- * SessionStore provides CRUD operations for conversation sessions.
- *
- * All operations are synchronous (better-sqlite3 is synchronous).
- * Sessions are keyed by formatted SessionKey strings.
- */
-export interface SessionStore {
-  /**
-   * Save (upsert) a session. On conflict, updates messages/metadata/updatedAt
-   * while preserving the original createdAt.
-   */
-  save(key: SessionKey, messages: unknown[], metadata?: Record<string, unknown>): void;
-
-  /**
-   * Load a session by its key. Returns undefined if not found.
-   */
-  load(key: SessionKey): SessionData | undefined;
-
-  /**
-   * List sessions ordered by updatedAt DESC.
-   * Optionally filter by tenantId.
-   */
-  list(tenantId?: string): SessionListEntry[];
-
-  /**
-   * Delete a session by its key.
-   * @returns true if a row was deleted, false if not found.
-   */
-  delete(key: SessionKey): boolean;
-
-  /**
-   * Delete sessions that have not been updated within maxAgeMs milliseconds.
-   * @returns The number of sessions deleted.
-   */
-  deleteStale(maxAgeMs: number): number;
-
-  /**
-   * Load a session by its formatted key string (as returned by list()).
-   * Avoids the need to parse the key back into a SessionKey object.
-   */
-  loadByFormattedKey(sessionKey: string): SessionData | undefined;
-
-  /**
-   * List sessions with full detail for filtering by kind.
-   * Returns all columns needed to derive session kind (dm, group, sub-agent).
-   * Optionally filter by tenantId.
-   */
-  listDetailed(tenantId?: string): SessionDetailedEntry[];
-}
-
-/**
- * Create a SessionStore bound to the given database.
+ * Create a SessionStorePort bound to the given database.
  *
  * Assumes `initSchema()` has already been called on the database
  * to create the `sessions` table.
  */
-export function createSessionStore(db: Database.Database): SessionStore {
+export function createSessionStore(db: Database.Database): SessionStorePort {
   // Prepare statements once for performance
   const upsertStmt = db.prepare(`
     INSERT INTO sessions (session_key, tenant_id, user_id, channel_id, messages, created_at, updated_at, metadata)
@@ -165,7 +110,7 @@ export function createSessionStore(db: Database.Database): SessionStore {
 
   return {
     save(key: SessionKey, messages: unknown[], metadata?: Record<string, unknown>): void {
-      const now = Date.now();
+      const now = systemNowMs();
       const sessionKey = formatSessionKey(key);
       const messagesJson = JSON.stringify(messages);
       const metadataJson = JSON.stringify(metadata ?? {});
@@ -192,7 +137,8 @@ export function createSessionStore(db: Database.Database): SessionStore {
 
     load(key: SessionKey): SessionData | undefined {
       const sessionKey = formatSessionKey(key);
-      const row = loadStmt.get(sessionKey) as SessionRow | undefined;
+      const parsed = sessionRowMapper.parseOptionalRow(loadStmt.get(sessionKey));
+      const row = parsed.ok ? parsed.value : undefined;
       if (!row) return undefined;
 
       return {
@@ -204,9 +150,10 @@ export function createSessionStore(db: Database.Database): SessionStore {
     },
 
     list(tenantId?: string): SessionListEntry[] {
-      const rows = (
-        tenantId !== undefined ? listByTenantStmt.all(tenantId) : listAllStmt.all()
-      ) as Array<{ session_key: string; updated_at: number }>;
+      const raw =
+        tenantId !== undefined ? listByTenantStmt.all(tenantId) : listAllStmt.all();
+      const parsed = sessionListEntryRowMapper.parseRows(raw);
+      const rows = parsed.ok ? parsed.value : [];
 
       return rows.map((r) => ({
         sessionKey: r.session_key,
@@ -221,13 +168,14 @@ export function createSessionStore(db: Database.Database): SessionStore {
     },
 
     deleteStale(maxAgeMs: number): number {
-      const cutoff = Date.now() - maxAgeMs;
+      const cutoff = systemNowMs() - maxAgeMs;
       const result = deleteStaleStmt.run(cutoff);
       return result.changes;
     },
 
     loadByFormattedKey(sessionKey: string): SessionData | undefined {
-      const row = loadByKeyStmt.get(sessionKey) as SessionRow | undefined;
+      const parsed = sessionRowMapper.parseOptionalRow(loadByKeyStmt.get(sessionKey));
+      const row = parsed.ok ? parsed.value : undefined;
       if (!row) return undefined;
       return {
         messages: parseMessages(row.messages),
@@ -238,20 +186,12 @@ export function createSessionStore(db: Database.Database): SessionStore {
     },
 
     listDetailed(tenantId?: string): SessionDetailedEntry[] {
-      const rows = (
+      const raw =
         tenantId !== undefined
           ? listDetailedByTenantStmt.all(tenantId)
-          : listDetailedAllStmt.all()
-      ) as Array<{
-        session_key: string;
-        tenant_id: string;
-        user_id: string;
-        channel_id: string;
-        metadata: string;
-        created_at: number;
-        updated_at: number;
-        message_count: number;
-      }>;
+          : listDetailedAllStmt.all();
+      const parsed = sessionDetailedEntryRowMapper.parseRows(raw);
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map((r) => ({
         sessionKey: r.session_key,
         tenantId: r.tenant_id,

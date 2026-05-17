@@ -1,0 +1,11 @@
+{
+  "pnpm-test": {
+    "ms": 32270,
+    "recorded-at": "2026-05-10",
+    "machine": "single-cycle-autonomous-executor",
+    "phase": "27",
+    "methodology": "3 runs; discard cold; median of 2 warm runs",
+    "node-version": "22.21.1",
+    "vitest-version": "4.1.5"
+  }
+}

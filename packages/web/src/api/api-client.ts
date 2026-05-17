@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: web API client dev-time validation guards; consumed by Lit element error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception.
 /**
  * HTTP/SSE client for the Comis gateway REST API.
  *
@@ -18,7 +19,11 @@ import type {
   SessionInfo,
   SessionMessage,
 } from "./types/index.js";
-
+import {
+  validateRequest,
+  validateResponse,
+  type MethodName,
+} from "./contracts.generated.js";
 /** Memory search result (api-client local -- not shared with other modules) */
 export interface MemorySearchResult {
   readonly id: string;
@@ -121,6 +126,56 @@ export interface ApiClient {
   exportSessionsBulk(keys: string[]): Promise<string>;
   /** Bulk delete sessions */
   deleteSessionsBulk(keys: string[]): Promise<{ deleted: number }>;
+}
+
+/**
+ * Dev-mode validation gate, applied to the browser.
+ *
+ * In Vite dev/build, `import.meta.env.DEV` is `true` for `vite dev` and `false`
+ * for production builds. Validation surfaces contract drift fast in development
+ * but never crashes a production SPA on an unexpected daemon response shape —
+ * the daemon-side handler is the trust boundary; the browser-side validator is
+ * a sanity check.
+ *
+ * Wrapped in try/catch so non-Vite runtimes (unit tests, SSR, etc.) safely
+ * fall through to `false` without ReferenceError on `import.meta.env`.
+ */
+function isDevValidationActive(): boolean {
+  try {
+    const meta = import.meta as { env?: { DEV?: boolean } };
+    return meta.env?.DEV === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Typed JSON-RPC call helper — dispatches through the generated CONTRACTS map.
+ *
+ * Validates request + response against the inlined JSON Schema literals in
+ * `./contracts.generated.ts` when DEV mode is active. Production builds skip
+ * validation (defense-in-depth: the daemon validates server-side, which is the
+ * load-bearing trust boundary).
+ *
+ * @internal Used by every method-wrapper below that dispatches over the RPC
+ *           channel; consolidates the prior `rpcCall(method, params)` pattern
+ *           through the single generated artifact.
+ */
+function typedCall<T>(
+  rpcCall: RpcCallFn,
+  method: MethodName,
+  params: unknown,
+): Promise<T> {
+  const validating = isDevValidationActive();
+  if (validating && !validateRequest(method, params)) {
+    throw new Error(`Invalid RPC request for ${method}`);
+  }
+  return rpcCall<T>(method, params).then((raw) => {
+    if (validating && !validateResponse(method, raw)) {
+      throw new Error(`Invalid RPC response for ${method}`);
+    }
+    return raw;
+  });
 }
 
 /**
@@ -306,7 +361,11 @@ export function createApiClient(
       params: BrowseMemoryParams,
     ): Promise<{ entries: MemoryEntry[]; total: number }> {
       if (rpcCall) {
-        return rpcCall<{ entries: MemoryEntry[]; total: number }>("memory.browse", params);
+        return typedCall<{ entries: MemoryEntry[]; total: number }>(
+          rpcCall,
+          "memory.browse",
+          params,
+        );
       }
       const qs = new URLSearchParams();
       if (params.offset !== undefined) qs.set("offset", String(params.offset));
@@ -324,7 +383,7 @@ export function createApiClient(
 
     async deleteMemory(id: string): Promise<void> {
       if (rpcCall) {
-        await rpcCall("memory.delete", { id });
+        await typedCall<void>(rpcCall, "memory.delete", { id });
         return;
       }
       await fetchJson(`/api/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -332,7 +391,7 @@ export function createApiClient(
 
     async deleteMemoryBulk(ids: string[]): Promise<{ deleted: number }> {
       if (rpcCall) {
-        return rpcCall<{ deleted: number }>("memory.delete", { ids });
+        return typedCall<{ deleted: number }>(rpcCall, "memory.delete", { ids });
       }
       return fetchJson<{ deleted: number }>("/api/memory/bulk-delete", {
         method: "POST",
@@ -342,7 +401,7 @@ export function createApiClient(
 
     async exportMemory(ids?: string[]): Promise<string> {
       if (rpcCall) {
-        return rpcCall<string>("memory.export", ids ? { ids } : {});
+        return typedCall<string>(rpcCall, "memory.export", ids ? { ids } : {});
       }
       return fetchText("/api/memory/export", {
         method: "POST",
@@ -354,10 +413,10 @@ export function createApiClient(
 
     async listSessions(params?: ListSessionsParams): Promise<SessionInfo[]> {
       if (rpcCall) {
-        const result = await rpcCall<{ sessions: Array<Record<string, unknown>>; total: number }>(
-          "session.list",
-          params ?? {},
-        );
+        const result = await typedCall<{
+          sessions: Array<Record<string, unknown>>;
+          total: number;
+        }>(rpcCall, "session.list", params ?? {});
         return (result.sessions ?? []).map((raw) => {
           const sessionKey = String(raw.sessionKey ?? raw.key ?? "");
           // Extract agentId from session key: [agent:{agentId}:]{tenantId}:{userId}:{channelId}
@@ -394,7 +453,8 @@ export function createApiClient(
       key: string,
     ): Promise<{ session: SessionInfo; messages: SessionMessage[] }> {
       if (rpcCall) {
-        return rpcCall<{ session: SessionInfo; messages: SessionMessage[] }>(
+        return typedCall<{ session: SessionInfo; messages: SessionMessage[] }>(
+          rpcCall,
           "session.history",
           { session_key: key },
         );
@@ -406,7 +466,7 @@ export function createApiClient(
 
     async resetSession(key: string): Promise<void> {
       if (rpcCall) {
-        await rpcCall("session.reset", { session_key: key });
+        await typedCall<void>(rpcCall, "session.reset", { session_key: key });
         return;
       }
       await fetchJson(`/api/sessions/${encodeURIComponent(key)}/reset`, { method: "POST" });
@@ -414,7 +474,7 @@ export function createApiClient(
 
     async compactSession(key: string): Promise<void> {
       if (rpcCall) {
-        await rpcCall("session.compact", { session_key: key });
+        await typedCall<void>(rpcCall, "session.compact", { session_key: key });
         return;
       }
       await fetchJson(`/api/sessions/${encodeURIComponent(key)}/compact`, { method: "POST" });
@@ -422,7 +482,7 @@ export function createApiClient(
 
     async deleteSession(key: string): Promise<void> {
       if (rpcCall) {
-        await rpcCall("session.delete", { session_key: key });
+        await typedCall<void>(rpcCall, "session.delete", { session_key: key });
         return;
       }
       await fetchJson(`/api/sessions/${encodeURIComponent(key)}`, { method: "DELETE" });
@@ -430,14 +490,14 @@ export function createApiClient(
 
     async exportSession(key: string): Promise<string> {
       if (rpcCall) {
-        return rpcCall<string>("session.export", { session_key: key });
+        return typedCall<string>(rpcCall, "session.export", { session_key: key });
       }
       return fetchText(`/api/sessions/${encodeURIComponent(key)}/export`);
     },
 
     async resetSessionsBulk(keys: string[]): Promise<{ reset: number }> {
       if (rpcCall) {
-        return rpcCall<{ reset: number }>("session.reset", { keys });
+        return typedCall<{ reset: number }>(rpcCall, "session.reset", { keys });
       }
       return fetchJson<{ reset: number }>("/api/sessions/bulk-reset", {
         method: "POST",
@@ -447,7 +507,7 @@ export function createApiClient(
 
     async exportSessionsBulk(keys: string[]): Promise<string> {
       if (rpcCall) {
-        return rpcCall<string>("session.export", { keys });
+        return typedCall<string>(rpcCall, "session.export", { keys });
       }
       return fetchText("/api/sessions/bulk-export", {
         method: "POST",
@@ -457,7 +517,7 @@ export function createApiClient(
 
     async deleteSessionsBulk(keys: string[]): Promise<{ deleted: number }> {
       if (rpcCall) {
-        return rpcCall<{ deleted: number }>("session.delete", { keys });
+        return typedCall<{ deleted: number }>(rpcCall, "session.delete", { keys });
       }
       return fetchJson<{ deleted: number }>("/api/sessions/bulk-delete", {
         method: "POST",

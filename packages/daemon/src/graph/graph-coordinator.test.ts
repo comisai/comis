@@ -12,10 +12,10 @@ import { handleGraphCompletion } from "./graph-completion.js";
 import type { CoordinatorSharedState, GraphRunState } from "./graph-coordinator-state.js";
 
 // ---------------------------------------------------------------------------
-// Module mock for @mariozechner/pi-ai (prevents real SDK import in unit tests)
+// Module mock for @earendil-works/pi-ai (prevents real SDK import in unit tests)
 // ---------------------------------------------------------------------------
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", () => ({
   getModel: vi.fn().mockReturnValue({ id: "mock-model" }),
   getModels: vi.fn().mockReturnValue([]),
   getProviders: vi.fn().mockReturnValue([]),
@@ -2967,7 +2967,7 @@ describe("createGraphCoordinator", () => {
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy.mock.calls[0][0]).toMatchObject({
         hint: expect.stringContaining("no announce channel"),
-        errorKind: "configuration",
+        errorKind: "config",
       });
       expect(warnSpy.mock.calls[0][1]).toBe("Graph created without announce channel");
 

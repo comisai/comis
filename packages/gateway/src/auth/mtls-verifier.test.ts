@@ -139,6 +139,23 @@ describe("validateCertificates", () => {
     }
   });
 
+  it("returns error when certificate has PEM marker but corrupt body fails X509 parse", () => {
+    // Exercise the X509Certificate parse-failure branch in
+    // validateCertificates. The file passes the "-----BEGIN " sniff guard
+    // (line 40) but fails the new X509Certificate(pem) constructor at
+    // line 54, routing into the catch on line 59.
+    const corruptPath = join(TEST_DIR, "corrupt.crt");
+    writeFileSync(
+      corruptPath,
+      "-----BEGIN CERTIFICATE-----\nthis is not actually valid base64 cert data\n-----END CERTIFICATE-----\n",
+    );
+    const result = validateCertificates({ ...validPaths, certPath: corruptPath });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/Failed to parse server certificate|expired/i);
+    }
+  });
+
   it("returns error for expired certificate", () => {
     // Use openssl to create a cert with a past not-after date
     const expiredCertPath = join(TEST_DIR, "expired.crt");
@@ -240,6 +257,36 @@ describe("extractClientCN", () => {
       }),
     } as unknown as TLSSocket;
 
+    expect(extractClientCN(mockSocket)).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Extra extractClientCN + parse-error branch coverage
+  // -------------------------------------------------------------------------
+
+  it("returns first CN entry when subject.CN is an array of multiple values", () => {
+    const mockSocket = {
+      authorized: true,
+      getPeerCertificate: () => ({
+        subject: { CN: ["primary-cn", "alt-cn"] },
+      }),
+    } as unknown as TLSSocket;
+    expect(extractClientCN(mockSocket)).toBe("primary-cn");
+  });
+
+  it("returns null when subject.CN is an empty array per array-first-element fallback", () => {
+    const mockSocket = {
+      authorized: true,
+      getPeerCertificate: () => ({ subject: { CN: [] } }),
+    } as unknown as TLSSocket;
+    expect(extractClientCN(mockSocket)).toBeNull();
+  });
+
+  it("returns null when getPeerCertificate returns null/undefined", () => {
+    const mockSocket = {
+      authorized: true,
+      getPeerCertificate: () => null,
+    } as unknown as TLSSocket;
     expect(extractClientCN(mockSocket)).toBeNull();
   });
 });

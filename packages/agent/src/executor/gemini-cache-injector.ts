@@ -11,8 +11,8 @@
  * @module
  */
 
-import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError } from "@comis/shared";
 
 import type { StreamFnWrapper } from "./stream-wrappers/types.js";

@@ -218,3 +218,145 @@ describe("createStubMethods", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// trace wrapper + error classifier branch coverage
+// ---------------------------------------------------------------------------
+
+describe("createDynamicMethodRouter trace logging", () => {
+  // Minimal MethodRouterLogger stub (any args, any return)
+  function makeLogger() {
+    const debug = (...args: unknown[]): void => { calls.debug.push(args); };
+    const warn = (...args: unknown[]): void => { calls.warn.push(args); };
+    const error = (...args: unknown[]): void => { calls.error.push(args); };
+    const calls: { debug: unknown[][]; warn: unknown[][]; error: unknown[][] } = { debug: [], warn: [], error: [] };
+    return { logger: { debug, warn, error }, calls };
+  }
+
+  it("emits debug RPC-call-start and RPC-call-completed entries on a successful traced method invocation", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("cron.traced", "rpc", () => ({ ok: true }));
+    const response = await router.server.receive(
+      { jsonrpc: "2.0", method: "cron.traced", params: {}, id: 100 },
+      RPC_CTX,
+    );
+    expect(response!.result).toEqual({ ok: true });
+    expect(calls.debug.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("emits error-level log entry when traced handler throws an unclassified error message", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("cron.boom", "rpc", () => { throw new Error("generic explosion"); });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "cron.boom", params: {}, id: 101 },
+      RPC_CTX,
+    );
+    // Handler error -> classified as "internal" -> error logger
+    expect(calls.error.length).toBe(1);
+  });
+
+  it("classifies immutable-config errors as config errorKind and emits warn-level log entry", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("cron.immutable", "rpc", () => { throw new Error("This key is immutable"); });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "cron.immutable", params: {}, id: 102 },
+      RPC_CTX,
+    );
+    expect(calls.warn.length).toBe(1);
+    const logged = calls.warn[0]![0] as { errorKind: string; hint: string };
+    expect(logged.errorKind).toBe("config");
+    expect(logged.hint).toMatch(/requires daemon restart/i);
+  });
+
+  it("classifies Admin-access errors as auth errorKind and emits warn-level log entry", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("cron.authz", "rpc", () => { throw new Error("Admin access required"); });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "cron.authz", params: {}, id: 103 },
+      RPC_CTX,
+    );
+    expect(calls.warn.length).toBe(1);
+    expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("auth");
+  });
+
+  it("classifies not-found errors as validation errorKind and emits warn-level log entry", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("cron.missing", "rpc", () => { throw new Error("Resource not found in db"); });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "cron.missing", params: {}, id: 104 },
+      RPC_CTX,
+    );
+    expect(calls.warn.length).toBe(1);
+    expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("validation");
+  });
+
+  it("classifies Invalid-prefixed errors as validation errorKind and emits warn-level log entry", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("cron.invalid", "rpc", () => { throw new Error("Invalid input shape"); });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "cron.invalid", params: {}, id: 105 },
+      RPC_CTX,
+    );
+    expect(calls.warn.length).toBe(1);
+    expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("validation");
+  });
+
+  it("truncates the error excerpt at 120 characters with ellipsis when message exceeds limit", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    const longMessage = "x".repeat(200);
+    router.registerMethod("cron.long", "rpc", () => { throw new Error(longMessage); });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "cron.long", params: {}, id: 106 },
+      RPC_CTX,
+    );
+    expect(calls.error.length).toBe(1);
+    const hint = (calls.error[0]![0] as { hint: string }).hint;
+    expect(hint).toContain("...");
+    expect(hint.length).toBeLessThan(180);
+  });
+
+  it("skips trace wrapper for SUPPRESS_LOG_METHODS to avoid noise on polling endpoints", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("system.ping", "rpc", () => ({ ok: true }));
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "system.ping", params: {}, id: 107 },
+      RPC_CTX,
+    );
+    // No trace-start or trace-end debug log should be emitted for a SUPPRESS method
+    const tracedDebug = calls.debug.filter((args) => {
+      const first = args[0] as { method?: string };
+      return first?.method === "system.ping";
+    });
+    expect(tracedDebug).toHaveLength(0);
+  });
+
+  it("logs successful initial-method invocation through trace wrapper when logger is provided", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(createStubMethods(), logger);
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "agent.execute", params: { x: 1 }, id: 200 },
+      RPC_CTX,
+    );
+    expect(calls.debug.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("includes connectionId in trace logs when context carries a connectionId field", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("cron.with-conn", "rpc", () => ({ ok: true }));
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "cron.with-conn", params: {}, id: 108 },
+      { clientId: "c", scopes: ["rpc"], connectionId: "conn-abc" },
+    );
+    const first = calls.debug[0]![0] as { connectionId?: string };
+    expect(first.connectionId).toBe("conn-abc");
+  });
+});

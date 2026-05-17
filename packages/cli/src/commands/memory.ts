@@ -10,7 +10,13 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { withClient } from "../client/rpc-client.js";
+import {
+  ContextSearchContract,
+  ContextInspectContract,
+  MemoryStatsContract,
+  MemoryFlushContract,
+} from "@comis/core";
+import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
@@ -62,15 +68,20 @@ export function registerMemoryCommand(program: Command): void {
       }
 
       try {
+        // Routed via ContextSearchContract — the daemon exposes
+        // `memory.search_files` + `context.search` (no `memory.search`);
+        // ContextSearchContract is the closest semantic match (full-text
+        // search over message + summary content).
         const result = await withSpinner("Searching memory...", () =>
           withClient(async (client) => {
-            return (await client.call("memory.search", { query, limit })) as {
-              results: MemorySearchResult[];
-            };
+            return await callTyped(client, ContextSearchContract, {
+              query,
+              limit,
+            });
           }),
         );
 
-        const results = result.results ?? [];
+        const results = (result.results ?? []) as unknown as MemorySearchResult[];
 
         if (results.length === 0) {
           info("No matching entries found");
@@ -107,20 +118,24 @@ export function registerMemoryCommand(program: Command): void {
     .option("--format <format>", "Output format (detail|json)", "detail")
     .action(async (id: string, options: { format: string }) => {
       try {
+        // Routed via ContextInspectContract — there is no `memory.inspect`
+        // daemon handler. ContextInspectContract retrieves a single entry
+        // by id (the closest semantic match). The response is a loose
+        // record; we coerce to MemoryEntry shape for rendering.
         const result = await withSpinner("Fetching entry...", () =>
           withClient(async (client) => {
-            return (await client.call("memory.inspect", { id })) as {
-              entry?: Record<string, unknown>;
-            };
+            return await callTyped(client, ContextInspectContract, { id });
           }),
         );
 
-        if (!result.entry) {
+        // ContextInspectContract returns the entry directly as a loose
+        // record (no `entry` wrapper). Treat empty record as "not found".
+        if (!result || Object.keys(result).length === 0) {
           warn(`No entry found with ID: ${id}`);
           return;
         }
 
-        const entry = result.entry as unknown as MemoryEntry;
+        const entry = result as unknown as MemoryEntry;
 
         if (options.format === "json") {
           json(entry);
@@ -159,15 +174,16 @@ export function registerMemoryCommand(program: Command): void {
     .option("--format <format>", "Output format (detail|json)", "detail")
     .action(async (options: { format: string }) => {
       try {
+        // Routed via MemoryStatsContract — the daemon's
+        // memory-statistics surface. Response is a loose record; the
+        // values matter, not the precise shape.
         const result = await withSpinner("Fetching memory stats...", () =>
           withClient(async (client) => {
-            return (await client.call("memory.inspect", {})) as {
-              stats?: Record<string, unknown>;
-            };
+            return await callTyped(client, MemoryStatsContract, {});
           }),
         );
 
-        const stats = result.stats;
+        const stats = result as Record<string, unknown>;
         if (!stats || Object.keys(stats).length === 0) {
           info("No memory statistics available");
           return;
@@ -255,13 +271,17 @@ export function registerMemoryCommand(program: Command): void {
       }
 
       try {
+        // Routed via MemoryFlushContract — the actual flush surface.
+        // The tenant filter maps to `tenant_id`; the generic
+        // `--filter key=value` flag is a no-op here (there is no
+        // `config.set` handler with section=memory).
         await withSpinner("Clearing memory entries...", () =>
           withClient(async (client) => {
-            return await client.call("config.set", {
-              section: "memory",
-              key: "clear",
-              value: params,
-            });
+            const flushParams: { tenant_id?: string } = {};
+            if (typeof params.tenantId === "string") {
+              flushParams.tenant_id = params.tenantId;
+            }
+            return await callTyped(client, MemoryFlushContract, flushParams);
           }),
         );
 

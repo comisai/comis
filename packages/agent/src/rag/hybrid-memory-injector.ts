@@ -11,6 +11,7 @@
  */
 
 import type { MemorySearchResult, WrapExternalContentOptions } from "@comis/core";
+import { systemDateFrom } from "@comis/core";
 import { sanitizeToolOutput } from "../safety/tool-output-safety.js";
 import { formatMemorySection } from "./rag-retriever.js";
 
@@ -69,7 +70,7 @@ export function createHybridMemoryInjector(opts?: {
       // Check if top-1 qualifies for inline injection
       if (topScore >= inlineMinScore) {
         // Format top-1 as inline memory
-        const date = new Date(top.entry.createdAt).toISOString().split("T")[0];
+        const date = systemDateFrom(top.entry.createdAt).toISOString().split("T")[0];
         const sanitized = sanitizeToolOutput(top.entry.content);
         const inlineMemory = `\n[Relevant context from memory: ${sanitized} (recorded ${date})]\n`;
 

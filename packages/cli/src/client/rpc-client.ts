@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: CLI helper consumed by command entry points; throws caught at Commander.js boundary per AGENTS.md §2.1.
 /**
  * WebSocket JSON-RPC 2.0 client for communicating with the Comis daemon gateway.
  *
@@ -6,13 +7,27 @@
  * responses via a pending request map. Handles connection timeouts, ECONNREFUSED
  * with descriptive error, and message parse errors.
  *
+ * **Typed RPC wrapper:**
+ * `callTyped(client, contract, params)` is the typed entry point. It runs
+ * `contract.request.parse(...)` + `contract.response.parse(...)` under the
+ * `VALIDATE` gate (the gate location is THIS file specifically, not a
+ * sibling `typed-rpc.ts`). VALIDATE is on when `NODE_ENV === "development"`
+ * OR `COMIS_CLI_VALIDATE === "1"`; production builds skip the parse hop
+ * for cold-start budget compliance. The daemon side ALWAYS parses — the
+ * trust boundary lives there.
+ *
+ * `test/architecture/cli-uses-typed-rpc.test.ts` allowlists this file as
+ * the sole CLI source that may invoke `client.call(...)` directly; every
+ * other CLI call site must go through `callTyped(...)`.
+ *
  * @module
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import WebSocket from "ws";
-import { loadEnvFile } from "@comis/core";
+import type { z, ZodTypeAny } from "zod";
+import { loadEnvFile, systemClearTimeout, systemGetEnv, systemSetTimeout, type ApiContract } from "@comis/core";
 
 /**
  * JSON-RPC client interface for making RPC calls to the daemon.
@@ -24,6 +39,55 @@ export interface RpcClient {
   close(): void;
   /** Register a handler for server-pushed JSON-RPC notifications. */
   onNotification(handler: (method: string, params: unknown) => void): void;
+}
+
+// ---------------------------------------------------------------------------
+// VALIDATE gate + typed-RPC wrapper
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `callTyped` runs `contract.request/response.parse(...)`.
+ *
+ * Production builds skip Zod parse to keep the CLI cold-start budget
+ * (<= 50ms median regression). Development AND opt-in
+ * `COMIS_CLI_VALIDATE=1` runs always validate. The daemon side always
+ * parses regardless of this flag (trust boundary — gate does not apply
+ * server-side).
+ *
+ * The gate (and the `callTyped` wrapper below) lives in
+ * `packages/cli/src/client/rpc-client.ts` specifically; the architecture
+ * test allowlists this path so a future split into a sibling
+ * `typed-rpc.ts` remains permitted.
+ *
+ * The contract-parse cost is sub-ms per call at the current registry
+ * scale, so the 50 ms budget is satisfied with a large negative margin.
+ * The gate is not load-bearing for the budget today; it remains in place
+ * as defense-in-depth for any future expansion of the registry.
+ */
+const VALIDATE_DEV = systemGetEnv("NODE_ENV") === "development";
+const VALIDATE_OPT_IN = systemGetEnv("COMIS_CLI_VALIDATE") === "1";
+const VALIDATE = VALIDATE_DEV || VALIDATE_OPT_IN;
+
+/**
+ * Typed RPC wrapper. Send a contract-defined RPC call and parse the
+ * response under the `VALIDATE` gate.
+ *
+ * Consumers replace `client.call("<method>", <params>)` with
+ * `callTyped(client, <DomainContract>, params)`. The `cli-uses-typed-rpc`
+ * architecture test prevents regressions by forbidding raw `client.call(`
+ * anywhere in `packages/cli/src/` outside this file.
+ */
+export async function callTyped<Req extends ZodTypeAny, Res extends ZodTypeAny>(
+  client: RpcClient,
+  contract: ApiContract<Req, Res>,
+  params: z.input<Req>,
+): Promise<z.output<Res>> {
+  const validatedReq = VALIDATE ? contract.request.parse(params) : params;
+  const raw = await client.call(
+    contract.method,
+    validatedReq as Record<string, unknown>,
+  );
+  return VALIDATE ? contract.response.parse(raw) : (raw as z.output<Res>);
 }
 
 /** Default connection timeout in milliseconds. */
@@ -58,8 +122,7 @@ function ensureEnvFileLoaded(): void {
 function resolveEnvRef(value: string): string {
   const match = value.match(/^\$\{([A-Z_][A-Z0-9_]*)\}$/);
   if (!match) return value;
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const resolved = process.env[match[1]!];
+  const resolved = systemGetEnv(match[1]!);
   return resolved ?? value;
 }
 
@@ -250,7 +313,7 @@ export async function createRpcClient(url: string, token?: string): Promise<RpcC
     const notificationHandlers: Array<(method: string, params: unknown) => void> = [];
 
     // Connection timeout
-    const timeout = setTimeout(() => {
+    const timeout = systemSetTimeout(() => {
       ws.terminate();
       reject(
         new Error(
@@ -260,7 +323,7 @@ export async function createRpcClient(url: string, token?: string): Promise<RpcC
     }, CONNECTION_TIMEOUT_MS);
 
     ws.on("open", () => {
-      clearTimeout(timeout);
+      systemClearTimeout(timeout);
 
       resolve({
         call(method: string, params?: unknown): Promise<unknown> {
@@ -331,7 +394,7 @@ export async function createRpcClient(url: string, token?: string): Promise<RpcC
     });
 
     ws.on("error", (error: Error & { code?: string }) => {
-      clearTimeout(timeout);
+      systemClearTimeout(timeout);
 
       if (error.code === "ECONNREFUSED") {
         reject(
@@ -347,7 +410,7 @@ export async function createRpcClient(url: string, token?: string): Promise<RpcC
     });
 
     ws.on("close", () => {
-      clearTimeout(timeout);
+      systemClearTimeout(timeout);
       closed = true;
       // Reject all pending requests on unexpected close
       for (const [, p] of pending) {
@@ -370,14 +433,11 @@ export async function createRpcClient(url: string, token?: string): Promise<RpcC
 export async function withClient<T>(fn: (client: RpcClient) => Promise<T>): Promise<T> {
   ensureEnvFileLoaded();
   const configDefaults = resolveFromConfig();
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const url = process.env["COMIS_GATEWAY_URL"] ?? configDefaults.url;
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const token = process.env["COMIS_GATEWAY_TOKEN"] ?? configDefaults.token;
+  const url = systemGetEnv("COMIS_GATEWAY_URL") ?? configDefaults.url;
+  const token = systemGetEnv("COMIS_GATEWAY_TOKEN") ?? configDefaults.token;
 
   // Hard-fail if sending bearer token over cleartext WebSocket to non-localhost (H-3)
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const allowInsecure = process.env["COMIS_INSECURE"] === "1";
+  const allowInsecure = systemGetEnv("COMIS_INSECURE") === "1";
   checkTransportSecurity(url, token, allowInsecure);
 
   const client = await createRpcClient(url, token);

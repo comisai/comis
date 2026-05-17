@@ -4,7 +4,8 @@
  *
  * Verifies that the tool schema cache leaf module provides byte-identical
  * references for unchanged tools, proper invalidation on schema changes,
- * session-scoped clearing, and zero imports from request-body-injector.ts.
+ * session-scoped clearing, and zero imports from request-body/ (the
+ * payload-reshape module that was split out of request-body-injector.ts).
  *
  * @module
  */
@@ -122,7 +123,7 @@ describe("tool-schema-cache leaf module", () => {
   // -------------------------------------------------------------------------
 
   describe("module isolation", () => {
-    it("tool-schema-cache.ts has zero imports from request-body-injector.ts", async () => {
+    it("tool-schema-cache.ts has zero imports from request-body/", async () => {
       const fs = await import("node:fs");
       const path = await import("node:path");
       const filePath = path.default.resolve(
@@ -130,7 +131,11 @@ describe("tool-schema-cache leaf module", () => {
         "tool-schema-cache.ts",
       );
       const content = fs.default.readFileSync(filePath, "utf-8");
-      const matches = content.match(/from\s+["'].*request-body-injector/g);
+      // The request-body payload-reshape module previously lived in
+      // request-body-injector.ts and now lives under request-body/. Match both
+      // path prefixes to preserve the invariant (zero imports from the
+      // payload-reshape module).
+      const matches = content.match(/from\s+["'].*request-body(-injector|\/)/g);
       expect(matches).toBeNull();
     });
   });

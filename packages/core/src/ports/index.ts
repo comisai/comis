@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Port interfaces - Hexagonal architecture boundaries
+// Runtime values that previously lived alongside the type-only port
+// declarations were moved out of core/src/ports/. The curated re-exports at
+// ../exports/ports.ts retarget consumers to the new homes; this file
+// re-exports types only.
 
 export type {
   ChannelPort,
@@ -23,6 +27,29 @@ export type {
   SkillManifest,
 } from "./skill.js";
 export type { EmbeddingPort } from "./embedding.js";
+export type { ContextStorePort } from "./context-store.js";
+export type {
+  CtxConversationRow,
+  CtxMessageRow,
+  CtxMessagePartRow,
+  CtxSummaryRow,
+  CtxSummaryMessageRow,
+  CtxSummaryParentRow,
+  CtxContextItemRow,
+  CtxLargeFileRow,
+  CtxExpansionGrantRow,
+} from "./context-store-types.js";
+export type { SessionStorePort } from "./session-store.js";
+export type {
+  SessionData,
+  SessionListEntry,
+  SessionDetailedEntry,
+} from "./session-store-types.js";
+export type { FileLockPort, LockOptions, LockError } from "./file-lock.js";
+export type { ClockPort } from "./clock.js";
+export type { EnvPort } from "./env.js";
+export type { TimerPort, TimerHandle } from "./timer.js";
+export type { ComputeDailyResetNextRun } from "./schedule-callback.js";
 export type {
   TranscriptionPort,
   TranscriptionOptions,
@@ -94,7 +121,6 @@ export type {
   PluginToolDefinition,
   PluginHttpRoute,
 } from "./plugin.js";
-export { ChannelCapabilitySchema } from "./channel-plugin.js";
 export type {
   ChannelPluginPort,
   ChannelCapability,
@@ -117,7 +143,6 @@ export type {
 } from "./secret-store.js";
 export type { CredentialMappingPort } from "./credential-mapping.js";
 export type { OAuthCredentialStorePort, OAuthProfile } from "./oauth-credential-store.js";
-export { validateProfileId, PROFILE_ID_RE } from "./oauth-credential-store.js";
 export type { Provider, ImageGenInput, ImageGenOutput, ImageGenerationPort } from "./provider.js";
 export type {
   DeliveryQueuePort,
@@ -125,13 +150,11 @@ export type {
   DeliveryQueueEnqueueInput,
   DeliveryQueueStatusCounts,
 } from "./delivery-queue.js";
-export { createNoOpDeliveryQueue } from "./delivery-queue.js";
 export type {
   DeliveryMirrorPort,
   DeliveryMirrorEntry,
   DeliveryMirrorRecordInput,
 } from "./delivery-mirror.js";
-export { createNoOpDeliveryMirror } from "./delivery-mirror.js";
 export type {
   ToolCapabilityPort,
   PromptSkillCapability,
@@ -140,7 +163,6 @@ export type {
   McpServerHint,
   SkillHint,
 } from "./tool-capability.js";
-export { createNoOpCapabilityPort } from "./no-op-tool-capability.js";
 // NOTE: the test-only stub factory in `__test-helpers/` is intentionally NOT
 // re-exported here. It must NEVER appear on this barrel (the architecture-grep
 // test enforces this).

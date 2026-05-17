@@ -182,7 +182,7 @@ describe("createLineAdapter", () => {
       expect(result.ok).toBe(true);
     });
 
-    it("logs info on stop", async () => {
+    it("logs info-level message when adapter stop() is invoked", async () => {
       const deps = makeDeps();
       const adapter = createLineAdapter(deps);
       await adapter.stop();

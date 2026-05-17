@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { getHealthVisual, normalizeChannelStatus, showUptime } from "../utils/health-status.js";
+import { systemNowMs } from "@comis/core";
 import "./display/ic-platform-icon.js";
 
 /**
@@ -163,7 +164,7 @@ export class IcChannelCard extends LitElement {
   /** Format relative time for stale warning. */
   private _formatTimeAgo(epochMs: number): string {
     if (epochMs <= 0) return "unknown";
-    const diffMs = Date.now() - epochMs;
+    const diffMs = systemNowMs() - epochMs;
     const diffSec = Math.floor(diffMs / 1000);
     if (diffSec < 60) return "just now";
     const diffMin = Math.floor(diffSec / 60);

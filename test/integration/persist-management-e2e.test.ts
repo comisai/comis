@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PERSIST-MANAGEMENT-E2E: Management Action YAML Persistence E2E Tests
+ * Management Action YAML Persistence E2E Tests
  *
  * Validates that management RPC actions (agents, tokens, channels) persist
- * expected YAML content to config.yaml on disk (TEST-02):
+ * expected YAML content to config.yaml on disk:
  *   - agents.create writes new agent entry to YAML
  *   - agents.update writes updated fields to YAML
  *   - agents.delete removes agent entry from YAML
@@ -63,7 +63,7 @@ function readConfigYaml(tmpConfigPath: string): Record<string, unknown> {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("PERSIST-MANAGEMENT-E2E: Management Action YAML Persistence", () => {
+describe("Management Action YAML Persistence", () => {
   let handle: TestDaemonHandle;
   let rpcCall: RpcCall;
   let tmpDir: string;
@@ -135,10 +135,10 @@ describe("PERSIST-MANAGEMENT-E2E: Management Action YAML Persistence", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Agent persistence (TEST-02)
+  // Agent persistence
   // -------------------------------------------------------------------------
 
-  describe("Agent persistence (TEST-02)", () => {
+  describe("Agent persistence", () => {
     it(
       "agents.create persists new agent to config.yaml on disk",
       async () => {
@@ -207,10 +207,10 @@ describe("PERSIST-MANAGEMENT-E2E: Management Action YAML Persistence", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Token persistence (TEST-02)
+  // Token persistence
   // -------------------------------------------------------------------------
 
-  describe("Token persistence (TEST-02)", () => {
+  describe("Token persistence", () => {
     let createdTokenId: string;
 
     it(
@@ -264,10 +264,10 @@ describe("PERSIST-MANAGEMENT-E2E: Management Action YAML Persistence", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Channel persistence (TEST-02)
+  // Channel persistence
   // -------------------------------------------------------------------------
 
-  describe("Channel persistence (TEST-02)", () => {
+  describe("Channel persistence", () => {
     it(
       "channels.disable persists enabled: false to config.yaml",
       async () => {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createCircuitBreaker } from "./circuit-breaker.js";
+import type { ClockPort } from "@comis/core";
+const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 /**
  * Circuit breaker full lifecycle integration tests.
@@ -26,7 +28,7 @@ describe("circuit breaker full lifecycle", () => {
       failureThreshold: 3,
       resetTimeoutMs: 5000,
       halfOpenTimeoutMs: 2000,
-    });
+    }, testClock);
 
     // Initial state is closed
     expect(cb.getState()).toBe("closed");
@@ -49,7 +51,7 @@ describe("circuit breaker full lifecycle", () => {
       failureThreshold: 2,
       resetTimeoutMs: 10000,
       halfOpenTimeoutMs: 5000,
-    });
+    }, testClock);
 
     // Open the circuit
     cb.recordFailure();
@@ -70,7 +72,7 @@ describe("circuit breaker full lifecycle", () => {
       failureThreshold: 3,
       resetTimeoutMs: 5000,
       halfOpenTimeoutMs: 2000,
-    });
+    }, testClock);
 
     // Open the circuit
     cb.recordFailure();
@@ -93,7 +95,7 @@ describe("circuit breaker full lifecycle", () => {
       failureThreshold: 3,
       resetTimeoutMs: 5000,
       halfOpenTimeoutMs: 2000,
-    });
+    }, testClock);
 
     // Open the circuit, then advance to halfOpen
     cb.recordFailure();
@@ -114,7 +116,7 @@ describe("circuit breaker full lifecycle", () => {
       failureThreshold: 3,
       resetTimeoutMs: 5000,
       halfOpenTimeoutMs: 2000,
-    });
+    }, testClock);
 
     // Open the circuit, then advance to halfOpen
     cb.recordFailure();
@@ -140,7 +142,7 @@ describe("circuit breaker full lifecycle", () => {
       failureThreshold: 3,
       resetTimeoutMs: 5000,
       halfOpenTimeoutMs: 2000,
-    });
+    }, testClock);
 
     // closed -> open
     expect(cb.getState()).toBe("closed");
@@ -168,7 +170,7 @@ describe("circuit breaker full lifecycle", () => {
       failureThreshold: 3,
       resetTimeoutMs: 5000,
       halfOpenTimeoutMs: 2000,
-    });
+    }, testClock);
 
     // First cycle: closed -> open -> halfOpen -> closed
     cb.recordFailure();
@@ -205,7 +207,7 @@ describe("circuit breaker full lifecycle", () => {
       failureThreshold: 3,
       resetTimeoutMs: 5000,
       halfOpenTimeoutMs: 2000,
-    });
+    }, testClock);
 
     // Record 2 failures (below threshold of 3)
     cb.recordFailure();

@@ -29,8 +29,8 @@ import type {
 } from "@comis/core";
 import { wrapExternalContent, safePath, formatSessionKey, generateCanaryToken } from "@comis/core";
 import { suppressError } from "@comis/shared";
-import type { ComisLogger } from "@comis/infra";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ComisLogger } from "@comis/core";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { PromptMode, RuntimeInfo, InboundMetadata, BootstrapContextFile } from "../bootstrap/types.js";
 import {
   loadWorkspaceBootstrapFiles,
@@ -247,6 +247,8 @@ export interface PromptAssemblyParams {
      * statically enforce this restriction.
      */
     toolCapabilityPort: ToolCapabilityPort;
+    /** Wall-clock + monotonic time reads. */
+    clock: import("@comis/core").ClockPort;
   };
   msg: NormalizedMessage;
   sessionKey: SessionKey;
@@ -595,7 +597,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   let memorySections: string[] = [];
   let inlineMemory: string | undefined;
   if (deps.memoryPort && config.rag?.enabled && !params.skipRag) {
-    const ragStart = Date.now();
+    const ragStart = deps.clock.now();
     try {
       logger.debug({ agentId, queryLength: msg.text.length }, "RAG search started");
       const searchResults = await deps.memoryPort.search(sessionKey, msg.text, {
@@ -622,12 +624,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           inlineMemory = injection.inlineMemory;
           memorySections = injection.systemPromptSections;
         }
-        logger.debug({ agentId, resultCount: deduped.length, durationMs: Date.now() - ragStart }, "RAG search complete");
+        logger.debug({ agentId, resultCount: deduped.length, durationMs: deps.clock.now() - ragStart }, "RAG search complete");
       } else {
-        logger.debug({ agentId, resultCount: 0, durationMs: Date.now() - ragStart }, "RAG search complete");
+        logger.debug({ agentId, resultCount: 0, durationMs: deps.clock.now() - ragStart }, "RAG search complete");
       }
     } catch (err) {
-      logger.warn({ agentId, err, durationMs: Date.now() - ragStart, hint: "RAG search failed — agent will proceed without memory context", errorKind: "retrieval_failure" as const }, "RAG retrieval failed (non-fatal)");
+      logger.warn({ agentId, err, durationMs: deps.clock.now() - ragStart, hint: "RAG search failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG retrieval failed (non-fatal)");
     }
   }
 
@@ -707,7 +709,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         trustLevel: currentSenderTrust,
         displayMode: senderTrustDisplayMode,
         sessionKey: formatSessionKey(sessionKey),
-        timestamp: Date.now(),
+        timestamp: deps.clock.now(),
       });
     }
   }
@@ -804,13 +806,6 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     subagentRole: undefined, // relocated to dynamic preamble for sub-agent cache sharing
     excludeBootstrapFromContext: true, // BOOTSTRAP.md is either elevated (onboarding) or dead weight (post-onboarding); never useful in Project Context
     workspaceProfile: config.workspace?.profile,
-    /**
-     * Read once per call. The value is config-derived / restart-required,
-     * so it's stable across all turns in this session. Reading it via the
-     * port (rather than from config directly) isolates this code from the
-     * config-schema shape and matches the live adapter contract.
-     */
-    capabilityIndexEnabled: deps.toolCapabilityPort.isCapabilityIndexEnabled(),
     sepEnabled: params.sepEnabled,
   };
 
@@ -866,7 +861,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           bootstrapPercent,
           threshold: BOOTSTRAP_BUDGET_WARN_PERCENT,
           hint: `Bootstrap files consume ${bootstrapPercent}% of system prompt; consider trimming AGENTS.md or reducing maxChars`,
-          errorKind: "performance" as const,
+          errorKind: "resource" as const,
         },
         "Bootstrap content exceeds budget threshold",
       );
@@ -1095,7 +1090,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         model: config.model,
         provider: config.provider,
         cacheRetention: config.cacheRetention,
-        cacheWriteTimestamp: Date.now(),
+        cacheWriteTimestamp: deps.clock.now(),
         toolHash: currentToolHash,
       });
     }

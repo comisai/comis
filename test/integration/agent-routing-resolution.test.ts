@@ -14,7 +14,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { resolveAgent, createMessageRouter } from "@comis/agent";
+// resolveAgent + createMessageRouter live in @comis/orchestrator.
+import { resolveAgent, createMessageRouter } from "@comis/orchestrator";
 import type { RoutingConfig } from "@comis/core";
 
 // ---------------------------------------------------------------------------

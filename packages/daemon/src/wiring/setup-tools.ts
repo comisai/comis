@@ -8,7 +8,7 @@
 
 import { isAbsolute, resolve } from "node:path";
 import type { AppContainer, SkillsConfig, ApprovalGate, CredentialMappingPort, WrapExternalContentOptions, SessionKey, ToolCapabilityPort } from "@comis/core";
-import { enterConfigMutationFence, leaveConfigMutationFence } from "../rpc/persist-to-config.js";
+import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
   SkillsConfigSchema,
@@ -18,72 +18,63 @@ import {
   safePath,
   formatSessionKey,
 } from "@comis/core";
+import { sessionKeyToPath } from "@comis/agent";
+import type { SessionTrackerRegistry } from "@comis/agent";
+// Workspace helpers live in @comis/core.
 import {
-  sessionKeyToPath,
   WORKSPACE_FILE_NAMES,
   DEFAULT_TEMPLATES,
   registerWorkspaceFilesInTracker,
-} from "@comis/agent";
-import type { SessionTrackerRegistry } from "@comis/agent";
+} from "@comis/core";
 import { stat as fsStat } from "node:fs/promises";
 import type { PerAgentConfig } from "@comis/core";
 import type { ImageGenerationPort } from "@comis/core";
-import type { SandboxProvider, ExecSandboxConfig, LazyPaths, FileStateTracker } from "@comis/skills";
+// Skills-concern symbols staying on the `.` subpath (policy, pipeline, MCP
+// bridge, credential injection, link understanding). These symbols live
+// in packages/skills/src/skills/index.ts.
 import {
+  TOOL_PROFILES,
+  TOOL_GROUPS,
   assembleToolPipeline,
-  createFileStateTracker,
-  createCronTool,
-  createUnifiedMemoryTool,
-  createUnifiedSessionTool,
-  createUnifiedContextTool,
-  createMessageTool,
-  createDiscordActionTool,
-  createTelegramActionTool,
-  createSlackActionTool,
-  createWhatsAppActionTool,
-  createSessionsSendTool,
-  createSessionsSpawnTool,
-  createSubagentsTool,
-  createPipelineTool,
-  createImageTool,
-  createTTSTool,
-  createTranscribeAudioTool,
-  createDescribeVideoTool,
-  createExtractDocumentTool,
-  createGatewayTool,
-  createBrowserTool,
-  createAgentsManageTool,
-  createObsQueryTool,
-  createSessionsManageTool,
-  createModelsManageTool,
-  createTokensManageTool,
-  createChannelsManageTool,
-  createSkillsManageTool,
-  createMcpManageTool,
-  createHeartbeatManageTool,
-  createProvidersManageTool,
-  createNotifyTool,
-  createImageGenerateTool,
-  createBackgroundTasksTool,
+  mcpToolsToAgentTools,
+  createCredentialInjector,
+  type RpcCall,
+  type LinkRunner,
+  type McpClientManager,
+  type ToolSourceProfile,
+  type PlatformToolProvider,
+  type CredentialInjector,
+} from "@comis/skills";
+
+// Tool capability adapters + factories live on the `./tools` subpath.
+// Exec / process / apply-patch tool factories, file-state tracker,
+// media-persistence / image-sanitizer all live under
+// packages/skills/src/tools/. Daemon imports them from the dedicated
+// subpath to surface the architectural boundary in the type system.
+import {
   createExecTool,
   createProcessTool,
   createProcessRegistry,
   createApplyPatchTool,
+  createFileStateTracker,
   sanitizeImageForApi,
   createMediaPersistenceService,
-  createCredentialInjector,
-  mcpToolsToAgentTools,
-  TOOL_PROFILES,
-  TOOL_GROUPS,
+  type SandboxProvider,
+  type ExecSandboxConfig,
+  type LazyPaths,
+  type FileStateTracker,
   type ProcessRegistry,
   type MediaPersistenceService,
-  type PlatformToolProvider,
-  type RpcCall,
-  type LinkRunner,
-  type CredentialInjector,
-  type McpClientManager,
-  type ToolSourceProfile,
-} from "@comis/skills";
+} from "@comis/skills/tools";
+
+// Descriptor registry on the `./platform-tools` subpath. Replaces the
+// prior inline 38-call enumeration of `createXTool(agentRpc, ...)`
+// factories.
+import {
+  createPlatformToolRegistry,
+  type PlatformToolBuildContext,
+} from "@comis/skills/platform-tools";
+
 
 // ---------------------------------------------------------------------------
 // Deps / Result types
@@ -234,6 +225,19 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
    * daemon startup (detectSandboxProvider runs once). */
   const warnedNoSandboxAgents = new Set<string>();
 
+  /**
+   * Platform-tool descriptor registry -- single source of truth for the 45
+   * platform-tools. Constructed once at `setupTools` invocation (the set is
+   * static at module-load time). Daemon's per-agent assembly filters the
+   * registry by `conditional` predicates and invokes each surviving
+   * descriptor's `build(ctx)` callback with a runtime context. This replaces
+   * the prior 175-line `agentPlatformTools` closure that hand-enumerated
+   * 38 `createXTool(agentRpc, ...)` factory calls. The exec / process /
+   * apply-patch tools stay enumerated inline below — they are `./tools`
+   * subpath (built-in non-platform).
+   */
+  const PLATFORM_TOOL_REGISTRY = createPlatformToolRegistry();
+
   function getOrCreateRegistry(agentId: string): ProcessRegistry {
     let registry = processRegistries.get(agentId);
     if (!registry) {
@@ -352,7 +356,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
     const agentConfig = agents[agentId] ?? agents[defaultAgentId];
 
-    // Use the agent's own skills config (SkillsConfigSchema defaults apply if not specified)
+    // Use the agent's own skills config (SkillsConfigSchema defaults apply if not specified).
     const skillsConfig: SkillsConfig = agentConfig?.skills ?? SkillsConfigSchema.parse({});
 
     // Resolve relative discoveryPaths against dataDir so ./skills -> ~/.comis/skills
@@ -373,102 +377,88 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       readOnlyPaths.push(logsDir);
     }
 
-    // Create per-agent rpcCall that injects _agentId
+    // Create per-agent rpcCall that injects _agentId.
     const agentRpc = createAgentRpcCall(agentId);
+    // Per-agent build context for the descriptor registry. The platform-tool
+    // factory calls live in packages/skills/src/platform-tools/registry.ts.
+    // The 4 truly-conditional tools (background_tasks, image_generate,
+    // unified_context, browser) carry `conditional` predicates on the
+    // registry side; daemon filters via .filter(d => !d.conditional ||
+    // d.conditional(ctx)) BEFORE invoking d.build(ctx).
+    //
+    // The agents-manage callbacks (onMutationStart / onMutationEnd /
+    // onAgentCreated) are NOT a conditional -- they're complex args passed
+    // unconditionally via the build context.
+    //
+    // The exec/process/apply-patch tools remain enumerated inline below the
+    // registry call (their per-call config involves the sandbox provider,
+    // workspace dir, tool-results dir resolver, and capability port -- too
+    // complex to fit the descriptor `build(ctx)` shape; they're `./tools`
+    // subpath, not platform-tools, so they don't belong in the platform-tool
+    // registry).
     const agentPlatformTools: PlatformToolProvider = () => {
-      const tools: ReturnType<PlatformToolProvider> = [
-        createCronTool(agentRpc),
-        createUnifiedMemoryTool(agentRpc, approvalGate),
-        createUnifiedSessionTool(agentRpc),
-        createMessageTool(agentRpc),
-        createDiscordActionTool(agentRpc, skillsLogger),
-        createTelegramActionTool(agentRpc),
-        createSlackActionTool(agentRpc),
-        createWhatsAppActionTool(agentRpc),
-        createSessionsSendTool(agentRpc),
-        createSessionsSpawnTool(agentRpc),
-        createSubagentsTool(agentRpc, skillsLogger),
-        createPipelineTool(agentRpc, skillsLogger, approvalGate),
-        createImageTool(agentRpc),
-        createTTSTool(agentRpc),
-        createTranscribeAudioTool(agentRpc),
-        createDescribeVideoTool(agentRpc),
-        createExtractDocumentTool(agentRpc),
-        createGatewayTool(agentRpc, skillsLogger),
-        createAgentsManageTool(agentRpc, skillsLogger, approvalGate, {
-          onMutationStart: enterConfigMutationFence,
-          onMutationEnd: leaveConfigMutationFence,
-          // After agents.create seeds the new workspace's template files
-          // (IDENTITY.md, ROLE.md, etc.) via ensureWorkspace, register those
-          // seeded paths in THIS session's tracker so the caller LLM can
-          // overwrite them via `write` without hitting the [not_read] gate.
-          // Each file path is absolute; the seeded content is deterministic
-          // (DEFAULT_TEMPLATES[name]), so we register the known mtime + content.
-          onAgentCreated: async ({ workspaceDir }) => {
-            if (!workspaceDir) return;
-            for (const name of WORKSPACE_FILE_NAMES) {
-              const filePath = safePath(workspaceDir, name);
-              try {
-                const st = await fsStat(filePath);
-                // Idempotency: skip when tracker already records this path at
-                // the same mtime -- avoids redundant recordRead work when the
-                // same admin session creates the same agent twice (e.g. create,
-                // delete, re-create within one turn).
-                const existing = fileStateTracker.getReadState(filePath);
-                if (existing && existing.mtime === st.mtimeMs) continue;
-                fileStateTracker.recordRead(
-                  filePath,
-                  st.mtimeMs,
-                  0,
-                  undefined,
-                  Buffer.from(DEFAULT_TEMPLATES[name], "utf-8"),
-                );
-              } catch {
-                /* file absent or stat failed -- skip registration */
-              }
+      const ctx: PlatformToolBuildContext = {
+        agentId,
+        rpcCall: agentRpc,
+        skillsLogger,
+        approvalGate,
+        eventBus,
+        imageGenProvider: deps.imageGenProvider,
+        backgroundTaskManager: deps.backgroundTaskManager,
+        toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
+        contextEngineVersion: agentConfig?.contextEngine?.version ?? "pipeline",
+        builtinToolsBrowserEnabled: skillsConfig.builtinTools.browser,
+        onConfigMutationStart: enterConfigMutationFence,
+        onConfigMutationEnd: leaveConfigMutationFence,
+        // After agents.create seeds the new workspace's template files
+        // (IDENTITY.md, ROLE.md, etc.) via ensureWorkspace, register those
+        // seeded paths in THIS session's tracker so the caller LLM can
+        // overwrite them via `write` without hitting the [not_read] gate.
+        // Each file path is absolute; the seeded content is deterministic
+        // (DEFAULT_TEMPLATES[name]), so we register the known mtime + content.
+        onAgentCreated: async ({ workspaceDir }) => {
+          if (!workspaceDir) return;
+          for (const name of WORKSPACE_FILE_NAMES) {
+            const filePath = safePath(workspaceDir, name);
+            try {
+              const st = await fsStat(filePath);
+              // Idempotency: skip when tracker already records this path at
+              // the same mtime -- avoids redundant recordRead work when the
+              // same admin session creates the same agent twice (e.g. create,
+              // delete, re-create within one turn).
+              const existing = fileStateTracker.getReadState(filePath);
+              if (existing && existing.mtime === st.mtimeMs) continue;
+              fileStateTracker.recordRead(
+                filePath,
+                st.mtimeMs,
+                0,
+                undefined,
+                Buffer.from(DEFAULT_TEMPLATES[name], "utf-8"),
+              );
+            } catch {
+              /* file absent or stat failed -- skip registration */
             }
-          },
-        }),
-        createObsQueryTool(agentRpc),
-        createSessionsManageTool(agentRpc, approvalGate),
-        createModelsManageTool(agentRpc),
-        createProvidersManageTool(agentRpc, approvalGate, {
-          onMutationStart: enterConfigMutationFence,
-          onMutationEnd: leaveConfigMutationFence,
-        }),
-        createTokensManageTool(agentRpc, approvalGate),
-        createChannelsManageTool(agentRpc, approvalGate),
-        createSkillsManageTool(agentRpc, approvalGate),
-        createMcpManageTool(agentRpc, approvalGate),
-        createHeartbeatManageTool(agentRpc),
-        createNotifyTool(agentRpc),
-      ];
+          }
+        },
+        browserSanitizeImage: sanitizeImageForApi,
+        browserPersistMedia: getOrCreateScreenshotPersistence(agentId),
+        browserWorkspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir,
+      };
 
-      // Background tasks tool -- always registered (any user can check their tasks)
-      if (deps.backgroundTaskManager) {
-        tools.push(createBackgroundTasksTool({ manager: deps.backgroundTaskManager, agentId }));
-      }
-
-      // Image generation tool only when provider available (API key present)
-      if (deps.imageGenProvider) {
-        tools.push(createImageGenerateTool(agentRpc));
-      }
-
-      // Conditional: DAG context tools
-      const ceVersion = agentConfig?.contextEngine?.version ?? "pipeline";
-      if (ceVersion === "dag") {
-        tools.push(createUnifiedContextTool(agentRpc));
-      }
-
-      // Browser tool is conditional on builtinTools.browser config toggle
-      if (skillsConfig.builtinTools.browser) {
-        tools.push(createBrowserTool({
-          rpcCall: agentRpc,
-          sanitizeImage: sanitizeImageForApi,
-          persistMedia: getOrCreateScreenshotPersistence(agentId),
-          workspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir,
-        }));
-      }
+      // Registry-driven platform tools (45 descriptors; 4 conditional gates
+      // filter out background_tasks, image_generate, unified_context, browser
+      // when their predicate fails). Order is the descriptor declaration
+      // order in registry.ts (alphabetical by category then by name).
+      //
+      // The double `.filter` is intentional: the first drops descriptors
+      // whose `conditional` predicate fails; the second drops `undefined`
+      // build-returns (a defensive guard -- in practice every descriptor
+      // whose conditional passes returns a non-undefined AgentTool).
+      type PlatformTool = ReturnType<PlatformToolProvider>[number];
+      const tools: ReturnType<PlatformToolProvider> = PLATFORM_TOOL_REGISTRY
+        .filter((d) => !d.conditional || d.conditional(ctx))
+        .map((d) => d.build(ctx))
+        .filter((t): t is PlatformTool => t !== undefined);
 
       // Build per-agent sandbox config from daemon provider + agent config
       const sandboxCfg: ExecSandboxConfig | undefined =
@@ -491,7 +481,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           );
         } else {
           skillsLogger.warn(
-            { agentId, hint: "Sandbox enabled in config but no provider available -- exec tool will run without OS sandbox", errorKind: "config" },
+            { agentId, hint: "Sandbox enabled in config but no provider available -- exec tool will run without OS sandbox", errorKind: "config" as const },
             "Exec tool running without OS sandbox",
           );
           warnedNoSandboxAgents.add(agentId);
@@ -505,10 +495,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
         // Getter for session tool-results dir, resolved at call time via ALS context.
         // Matches session path pattern from comis-session-manager + microcompaction-guard.
+        // Renamed local from `ctx` to `alsCtx` to avoid shadowing the outer
+        // `PlatformToolBuildContext` variable created for the registry call.
         const getToolResultsDir = (): string | undefined => {
-          const ctx = tryGetContext();
-          if (!ctx?.sessionKey) return undefined;
-          const parsed = parseFormattedSessionKey(ctx.sessionKey);
+          const alsCtx = tryGetContext();
+          if (!alsCtx?.sessionKey) return undefined;
+          const parsed = parseFormattedSessionKey(alsCtx.sessionKey);
           if (!parsed) return undefined;
           const sessionBaseDir = safePath(agentWorkspaceDir, "sessions");
           const sessionDir = sessionKeyToPath(parsed, sessionBaseDir);

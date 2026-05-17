@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: MemoryApi.clear() requires non-empty scope to prevent accidental blanket wipe; throw is a guard rail consumed by the daemon RPC handler boundary (memory-handlers is @allow-throw).
 /**
  * MemoryApi: Programmatic interface for memory inspection, search,
  * management, and guardrail enforcement.
@@ -10,12 +11,16 @@
  * inspection, search, and management operations.
  */
 
-import type { MemoryEntry, MemorySearchResult, MemoryConfig, SessionKey } from "@comis/core";
+import type { MemoryEntry, MemorySearchResult, MemoryConfig, SessionKey, SessionStorePort } from "@comis/core";
 import type Database from "better-sqlite3";
-import type { SessionStore } from "./session-store.js";
 import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
-import type { MemoryRow } from "./types.js";
-import { rowToEntry, buildFilterClause, countRows, groupCountRows } from "./row-mapper.js";
+import { rowToEntry, buildFilterClause, countRows, groupCountRows, createRowMapper } from "./row-mapper.js";
+import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
+import { systemNowMs } from "@comis/core";
+
+// Row mappers
+const memoryRowMapper = createRowMapper(MemoryRowSchema);
+const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
 
 // ── Filter & Scope Types ─────────────────────────────────────────────
 
@@ -104,7 +109,7 @@ export interface MemoryApi {
 export function createMemoryApi(
   db: Database.Database,
   adapter: SqliteMemoryAdapter,
-  sessionStore: SessionStore,
+  sessionStore: SessionStorePort,
   config: MemoryConfig,
 ): MemoryApi {
   return {
@@ -132,17 +137,23 @@ export function createMemoryApi(
       } else {
         fullClause = `WHERE ${expiryCondition}`;
       }
-      params.push(Date.now());
+      params.push(systemNowMs());
 
       const sql = `SELECT * FROM memories ${fullClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
       params.push(limit, offset);
 
-      const rows = db.prepare(sql).all(...params) as MemoryRow[];
+      const parsed = memoryRowMapper.parseRows(db.prepare(sql).all(...params));
+      // Degrade-on-validation-error: inspection query → empty result.
+      const rows = parsed.ok ? parsed.value : [];
       let entries = rows.map((row) => rowToEntry(row));
 
-      // Post-filter by tags if specified (tags are JSON-encoded in DB)
+      // Post-filter by tags if specified (tags are JSON-encoded in DB).
+      // Pin the narrowed value to drop the non-null assertion. TypeScript
+      // can't carry the `filters?.tags && ...` narrowing into the filter
+      // callback's closure scope; the pinned local does.
       if (filters?.tags && filters.tags.length > 0) {
-        entries = entries.filter((entry) => filters.tags!.every((tag) => entry.tags.includes(tag)));
+        const requiredTags = filters.tags;
+        entries = entries.filter((entry) => requiredTags.every((tag) => entry.tags.includes(tag)));
       }
 
       return entries;
@@ -234,9 +245,13 @@ export function createMemoryApi(
       const whereClause = conditions.join(" AND ");
 
       // First get IDs for vec_memories cleanup
-      const ids = db
-        .prepare(`SELECT id FROM memories WHERE ${whereClause}`)
-        .all(...params) as Array<{ id: string }>;
+      const idsParsed = idProjectionMapper.parseRows(
+        db
+          .prepare(`SELECT id FROM memories WHERE ${whereClause}`)
+          .all(...params),
+      );
+      // Degrade-on-validation-error: clear scope → no rows to delete.
+      const ids = idsParsed.ok ? idsParsed.value : [];
 
       if (ids.length === 0) return 0;
 
@@ -333,9 +348,13 @@ export function createMemoryApi(
         : "WHERE trust_level != 'system'";
 
       // Get IDs of entries to remove (oldest first)
-      const idsToRemove = db
-        .prepare(`SELECT id FROM memories ${tenantAndSystem} ORDER BY created_at ASC LIMIT ?`)
-        .all(...tenantParams, excess) as Array<{ id: string }>;
+      const idsToRemoveParsed = idProjectionMapper.parseRows(
+        db
+          .prepare(`SELECT id FROM memories ${tenantAndSystem} ORDER BY created_at ASC LIMIT ?`)
+          .all(...tenantParams, excess),
+      );
+      // Degrade-on-validation-error: eviction → empty list (eviction skipped).
+      const idsToRemove = idsToRemoveParsed.ok ? idsToRemoveParsed.value : [];
 
       if (idsToRemove.length === 0) {
         return null; // Only system entries remain, can't remove

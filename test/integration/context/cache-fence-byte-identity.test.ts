@@ -42,7 +42,7 @@ import { computeCacheContentHash, extractGeminiPromptState } from "@comis/agent"
 import {
   createCacheBreakDetector,
   extractAnthropicPromptState,
-} from "../../../packages/agent/dist/executor/cache-break-detection.js";
+} from "../../../packages/agent/dist/executor/cache-detection/index.js";
 
 // ---------------------------------------------------------------------------
 // Stub logger (the detector accepts duck-typed { debug, info, warn? })
@@ -55,6 +55,9 @@ function silentLogger() {
     warn: () => undefined,
   };
 }
+
+// Test clock stub for createCacheBreakDetector.
+const testClock = { now: () => Date.now(), nowDate: () => new Date() };
 
 // ---------------------------------------------------------------------------
 // Anthropic-style payload fixture
@@ -213,7 +216,7 @@ describe("Cache fence byte-identity -- detector flags real changes only", () => 
   });
 
   it("two identical turns: no cache break event when reads are stable", () => {
-    const detector = createCacheBreakDetector(silentLogger());
+    const detector = createCacheBreakDetector(silentLogger(), { clock: testClock });
     const sk = `${SESSION_KEY}:identical`;
 
     const turn1 = extractAnthropicPromptState(
@@ -253,7 +256,7 @@ describe("Cache fence byte-identity -- detector flags real changes only", () => 
   });
 
   it("system change + low cacheRead reports system_changed", () => {
-    const detector = createCacheBreakDetector(silentLogger());
+    const detector = createCacheBreakDetector(silentLogger(), { clock: testClock });
     const sk = `${SESSION_KEY}:sys-change`;
 
     detector.recordPromptState(
@@ -303,7 +306,7 @@ describe("Cache fence byte-identity -- detector flags real changes only", () => 
   });
 
   it("retention change is recorded as retention_changed when cache misses", () => {
-    const detector = createCacheBreakDetector(silentLogger());
+    const detector = createCacheBreakDetector(silentLogger(), { clock: testClock });
     const sk = `${SESSION_KEY}:ret-change`;
 
     detector.recordPromptState(
@@ -346,7 +349,7 @@ describe("Cache fence byte-identity -- detector flags real changes only", () => 
   });
 
   it("tool change with stable system: changes.toolsChanged is true", () => {
-    const detector = createCacheBreakDetector(silentLogger());
+    const detector = createCacheBreakDetector(silentLogger(), { clock: testClock });
     const sk = `${SESSION_KEY}:tools-change`;
 
     detector.recordPromptState(

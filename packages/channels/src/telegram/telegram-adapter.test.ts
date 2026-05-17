@@ -132,7 +132,7 @@ import { ok, err } from "@comis/shared";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { validateBotToken, validateWebhookSecret } from "./credential-validator.js";
 import { mapGrammyToNormalized } from "./message-mapper.js";
-import { createTelegramAdapter, type TelegramAdapterDeps } from "./telegram-adapter.js";
+import { createTelegramAdapter, type TelegramAdapterDeps } from "./telegram-adapter/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -182,7 +182,9 @@ describe("createTelegramAdapter", () => {
       const result = await adapter.start();
 
       expect(result.ok).toBe(true);
-      expect(validateBotToken).toHaveBeenCalledWith("123456:ABC-DEF");
+      // validateBotToken takes (token, apiRoot?); production path
+      // (no deps.apiRoot) passes undefined for the 2nd arg.
+      expect(validateBotToken).toHaveBeenCalledWith("123456:ABC-DEF", undefined);
     });
 
     it("returns err on invalid token", async () => {
@@ -323,7 +325,7 @@ describe("createTelegramAdapter", () => {
   });
 
   describe("channelType", () => {
-    it("returns 'telegram'", () => {
+    it("returns 'telegram' string for TelegramAdapter channelType getter", () => {
       const adapter = createTelegramAdapter(makeDeps());
       expect(adapter.channelType).toBe("telegram");
     });

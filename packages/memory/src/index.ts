@@ -7,7 +7,6 @@ export { initSchema, isVecAvailable } from "./schema.js";
 
 // Session store
 export { createSessionStore } from "./session-store.js";
-export type { SessionStore, SessionData, SessionListEntry, SessionDetailedEntry } from "./session-store.js";
 
 // SQLite memory adapter (MemoryPort implementation)
 export { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
@@ -77,7 +76,7 @@ export { createSqliteDeliveryQueue } from "./delivery-queue-adapter.js";
 export { createSqliteDeliveryMirror } from "./delivery-mirror-adapter.js";
 
 // Observability store
-export { createObservabilityStore } from "./observability-store.js";
+export { createObservabilityStore } from "./observability-store/index.js";
 export type {
   ObservabilityStore,
   TokenUsageRow,
@@ -92,24 +91,22 @@ export type {
   ObsTableName,
   ResetResult,
   PruneResult,
-} from "./observability-store.js";
+} from "./observability-store/index.js";
 
 // Context store schema (DAG mode)
 export { initContextSchema } from "./context-schema.js";
 
 // Context store (DAG mode CRUD)
 export { createContextStore } from "./context-store.js";
-export type { ContextStore } from "./context-store.js";
 
-// Context store row types
-export type {
-  CtxConversationRow,
-  CtxMessageRow,
-  CtxMessagePartRow,
-  CtxSummaryRow,
-  CtxSummaryMessageRow,
-  CtxSummaryParentRow,
-  CtxContextItemRow,
-  CtxLargeFileRow,
-  CtxExpansionGrantRow,
-} from "./types.js";
+// Generic Row mapper factory.
+// Consumed via createRowMapper(schema) at every SQLite call-site to
+// replace `db.prepare(...).all() as Foo[]` casts.
+export { createRowMapper } from "./row-mapper.js";
+export type { RowMapper, MapperError } from "./row-mapper.js";
+
+// Per-row Zod schemas.
+// One schema per memory-package SQLite row interface. Consumer-side only
+// (NOT in @comis/core/ports — preserves core's zero-runtime-Zod boundary).
+// Consumed as the argument to createRowMapper(schema).
+export * from "./row-schemas.js";

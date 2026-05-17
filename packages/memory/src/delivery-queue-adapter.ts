@@ -11,37 +11,29 @@
 
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import type { DeliveryQueuePort, DeliveryQueueEntry, DeliveryQueueEnqueueInput, DeliveryQueueStatusCounts, TypedEventBus } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
+import { createRowMapper } from "./row-mapper.js";
+import {
+  DeliveryQueueDbRowSchema,
+  CountProjectionRowSchema,
+} from "./row-schemas.js";
 
 // ---------------------------------------------------------------------------
-// Internal DB row type (snake_case -- what SQLite returns)
+// Internal DB row type (SSOT: DeliveryQueueDbRowSchema in row-schemas.ts).
 // ---------------------------------------------------------------------------
 
-interface DeliveryQueueDbRow {
-  id: string;
-  text: string;
-  channel_type: string;
-  channel_id: string;
-  tenant_id: string;
-  options_json: string;
-  origin: string;
-  format_applied: number;
-  chunking_applied: number;
-  status: string;
-  attempt_count: number;
-  max_attempts: number;
-  created_at: number;
-  scheduled_at: number;
-  expire_at: number;
-  last_attempt_at: number | null;
-  next_retry_at: number | null;
-  last_error: string | null;
-  markdown_fallback_applied: number;
-  delivered_message_id: string | null;
-  trace_id: string | null;
-}
+type DeliveryQueueDbRow = z.infer<typeof DeliveryQueueDbRowSchema>;
+
+// Row mappers
+const deliveryQueueMapper = createRowMapper(DeliveryQueueDbRowSchema);
+const countProjectionMapper = createRowMapper(CountProjectionRowSchema);
+const statusCountMapper = createRowMapper(
+  z.strictObject({ status: z.string(), count: z.number() }),
+);
 
 // ---------------------------------------------------------------------------
 // Row mapper (snake_case -> camelCase with boolean casts)
@@ -154,9 +146,17 @@ export function createSqliteDeliveryQueue(
     WHERE status IN ('pending', 'in_flight')
   `);
 
-  const statusCountsStmt = db.prepare(`
+  // Two distinct statements (no channelType filter vs. with filter) because
+  // better-sqlite3 does not support SQLite's `?1` named-positional syntax
+  // for repeated parameters in `.all(value)` calls — passing one value
+  // raises "Too many parameter values were provided".
+  const statusCountsAllStmt = db.prepare(`
     SELECT status, COUNT(*) as count FROM delivery_queue
-    WHERE (?1 IS NULL OR channel_type = ?1)
+    GROUP BY status
+  `);
+  const statusCountsByChannelStmt = db.prepare(`
+    SELECT status, COUNT(*) as count FROM delivery_queue
+    WHERE channel_type = ?
     GROUP BY status
   `);
 
@@ -188,7 +188,7 @@ export function createSqliteDeliveryQueue(
           channelId: entry.channelId,
           channelType: entry.channelType,
           origin: entry.origin,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
         return Promise.resolve(ok(id));
       } catch (e) {
@@ -221,7 +221,7 @@ export function createSqliteDeliveryQueue(
           channelId: entry.channelId,
           channelType: entry.channelType,
           origin: entry.origin,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
         return Promise.resolve(ok(id));
       } catch (e) {
@@ -240,7 +240,7 @@ export function createSqliteDeliveryQueue(
 
     nack(id: string, error: string, nextRetryAt: number): Promise<Result<void, Error>> {
       try {
-        nackStmt.run(Date.now(), nextRetryAt, error, id);
+        nackStmt.run(systemNowMs(), nextRetryAt, error, id);
         return Promise.resolve(ok(undefined));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
@@ -258,8 +258,13 @@ export function createSqliteDeliveryQueue(
 
     pendingEntries(): Promise<Result<DeliveryQueueEntry[], Error>> {
       try {
-        const rows = pendingStmt.all(Date.now()) as DeliveryQueueDbRow[];
-        return Promise.resolve(ok(rows.map(rowToEntry)));
+        const parsed = deliveryQueueMapper.parseRows(pendingStmt.all(systemNowMs()));
+        if (!parsed.ok) {
+          return Promise.resolve(
+            err(new Error(`Row validation failed: ${parsed.error.message}`)),
+          );
+        }
+        return Promise.resolve(ok(parsed.value.map(rowToEntry)));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
       }
@@ -267,7 +272,7 @@ export function createSqliteDeliveryQueue(
 
     pruneExpired(): Promise<Result<number, Error>> {
       try {
-        const result = pruneStmt.run(Date.now());
+        const result = pruneStmt.run(systemNowMs());
         return Promise.resolve(ok(result.changes));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
@@ -276,8 +281,13 @@ export function createSqliteDeliveryQueue(
 
     depth(): Promise<Result<number, Error>> {
       try {
-        const row = depthStmt.get() as { count: number };
-        return Promise.resolve(ok(row.count));
+        const parsed = countProjectionMapper.parseOptionalRow(depthStmt.get());
+        if (!parsed.ok) {
+          return Promise.resolve(
+            err(new Error(`Row validation failed: ${parsed.error.message}`)),
+          );
+        }
+        return Promise.resolve(ok(parsed.value?.count ?? 0));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
       }
@@ -285,9 +295,17 @@ export function createSqliteDeliveryQueue(
 
     statusCounts(channelType?: string): Promise<Result<DeliveryQueueStatusCounts, Error>> {
       try {
-        const rows = statusCountsStmt.all(channelType ?? null) as Array<{ status: string; count: number }>;
+        const rawRows = channelType === undefined
+          ? statusCountsAllStmt.all()
+          : statusCountsByChannelStmt.all(channelType);
+        const parsed = statusCountMapper.parseRows(rawRows);
+        if (!parsed.ok) {
+          return Promise.resolve(
+            err(new Error(`Row validation failed: ${parsed.error.message}`)),
+          );
+        }
         const counts: DeliveryQueueStatusCounts = { pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 };
-        for (const row of rows) {
+        for (const row of parsed.value) {
           switch (row.status) {
             case "pending": (counts as { pending: number }).pending = row.count; break;
             case "in_flight": (counts as { inFlight: number }).inFlight = row.count; break;

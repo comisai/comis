@@ -26,6 +26,8 @@
  * block from config.yaml, and bwrap exec children live behind the sandbox.
  */
 
+import { systemEnvSnapshot } from "@comis/core";
+
 const SYSTEMD_NOTIFY_VARS = [
   "NOTIFY_SOCKET",
   "MAINPID",
@@ -38,7 +40,7 @@ const SYSTEMD_NOTIFY_VARS = [
  * Use as the `env` option of execFile / spawn for monitoring commands.
  */
 export function envWithoutSystemdNotify(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: NodeJS.ProcessEnv = systemEnvSnapshot();
   for (const key of SYSTEMD_NOTIFY_VARS) {
     delete env[key];
   }

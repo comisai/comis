@@ -15,8 +15,8 @@ import type {
   TrustLevel,
   WrapExternalContentOptions,
 } from "@comis/core";
-import { wrapExternalContent } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import { wrapExternalContent, systemNowMs, systemDateFrom } from "@comis/core";
+import type { ComisLogger } from "@comis/core";
 import { sanitizeToolOutput } from "../safety/tool-output-safety.js";
 
 /**
@@ -65,7 +65,7 @@ export function formatMemorySection(
     const { entry } = result;
 
     // Format date as YYYY-MM-DD
-    const date = new Date(entry.createdAt).toISOString().split("T")[0];
+    const date = systemDateFrom(entry.createdAt).toISOString().split("T")[0];
 
     // Format trust tag -- external gets explicit untrusted warning
     const trustTag =
@@ -145,7 +145,7 @@ export function createRagRetriever(deps: RagRetrieverDeps): RagRetriever {
         return [];
       }
 
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       deps.logger?.debug(
         { query: query.slice(0, 100), agentId: options?.agentId },
         "RAG search started",
@@ -176,7 +176,7 @@ export function createRagRetriever(deps: RagRetrieverDeps): RagRetriever {
       // No results found
       if (results.value.length === 0) {
         deps.logger?.debug(
-          { resultCount: 0, durationMs: Date.now() - startMs, agentId: options?.agentId },
+          { resultCount: 0, durationMs: systemNowMs() - startMs, agentId: options?.agentId },
           "RAG search complete",
         );
         return [];
@@ -195,7 +195,7 @@ export function createRagRetriever(deps: RagRetrieverDeps): RagRetriever {
 
       if (deduped.length === 0) {
         deps.logger?.debug(
-          { resultCount: 0, durationMs: Date.now() - startMs, agentId: options?.agentId },
+          { resultCount: 0, durationMs: systemNowMs() - startMs, agentId: options?.agentId },
           "RAG search complete",
         );
         return [];
@@ -206,7 +206,7 @@ export function createRagRetriever(deps: RagRetrieverDeps): RagRetriever {
           resultCount: deduped.length,
           rawCount: results.value.length,
           filteredCount: filtered.length,
-          durationMs: Date.now() - startMs,
+          durationMs: systemNowMs() - startMs,
           agentId: options?.agentId,
         },
         "RAG search complete",

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // @comis/core exports — Port interfaces (hexagonal architecture boundaries)
+// Runtime values that previously lived under core/src/ports/ now live in
+// non-ports/ home modules. The public surface stays byte-identical — only
+// the re-export targets shifted.
 
-export {
-  ChannelCapabilitySchema,
-  createNoOpDeliveryQueue,
-  createNoOpDeliveryMirror,
-  createNoOpCapabilityPort,
-  validateProfileId,
-  PROFILE_ID_RE,
-} from "../ports/index.js";
+export { ChannelCapabilitySchema } from "../domain/channel-capability.js";
+export { createNoOpDeliveryQueue } from "../delivery/no-op-delivery-queue.js";
+export { createNoOpDeliveryMirror } from "../delivery/no-op-delivery-mirror.js";
+export { createNoOpCapabilityPort } from "../tool-capability/no-op-tool-capability.js";
+export { validateProfileId, PROFILE_ID_RE } from "../security/profile-id.js";
 export type {
   ChannelPort,
   MessageHandler,
@@ -29,6 +29,24 @@ export type {
   SkillOutput,
   SkillManifest,
   EmbeddingPort,
+  ContextStorePort,
+  CtxConversationRow,
+  CtxMessageRow,
+  CtxMessagePartRow,
+  CtxSummaryRow,
+  CtxSummaryMessageRow,
+  CtxSummaryParentRow,
+  CtxContextItemRow,
+  CtxLargeFileRow,
+  CtxExpansionGrantRow,
+  SessionStorePort,
+  SessionData,
+  SessionListEntry,
+  SessionDetailedEntry,
+  FileLockPort,
+  LockOptions,
+  LockError,
+  ComputeDailyResetNextRun,
   TranscriptionPort,
   TranscriptionOptions,
   TranscriptionResult,
@@ -113,4 +131,8 @@ export type {
   ClusterConfig,
   McpServerHint,
   SkillHint,
+  ClockPort,
+  EnvPort,
+  TimerPort,
+  TimerHandle,
 } from "../ports/index.js";

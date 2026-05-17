@@ -48,11 +48,14 @@ DAG reconciliation syncs the JSONL conversation log to a directed acyclic graph 
 - **Model catalog** -- Pricing, capabilities, context window resolution
 - **Vision routing** -- Image-capable model selection with fallback chains
 
-### Sub-agent Spawning
+### Sub-agent Spawning (`src/spawn/`)
 
+- **`createSubAgentRunner()`** -- Manages sub-agent spawn lifecycle: enforces concurrency limits, tracks active runs, sweeps result files from disk
 - **`SpawnPacketBuilder`** -- Constructs sub-agent execution packets with isolated sessions, budgets, and tool policies
 - **Result condensing** -- Summarizes sub-agent output for parent context
+- **Result processor** -- Reads sub-agent result files and feeds them back into the parent session
 - **Spawn staggering** -- 4-second delays between concurrent sub-agents for prompt cache sharing
+- **Lifecycle hooks + narrative caster** -- Per-spawn observability events; parent-side summary generation
 
 ### Prompt Caching
 

@@ -31,7 +31,7 @@ describe("createAgentDriver", () => {
   const driver = createAgentDriver();
 
   describe("metadata", () => {
-    it("has typeId 'agent'", () => {
+    it("declares typeId 'agent' for AgentDriver per graph-driver contract", () => {
       expect(driver.typeId).toBe("agent");
     });
 
@@ -106,7 +106,7 @@ describe("createAgentDriver", () => {
   });
 
   describe("estimateDurationMs", () => {
-    it("returns 90_000", () => {
+    it("returns 90000 ms as default duration estimate per AgentDriver contract", () => {
       expect(driver.estimateDurationMs({})).toBe(90_000);
     });
   });

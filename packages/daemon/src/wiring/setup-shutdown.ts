@@ -12,7 +12,7 @@ import type { GatewayServerHandle } from "@comis/gateway";
 import type { HeartbeatRunner, CronScheduler, WakeCoalescer, PerAgentHeartbeatRunner } from "@comis/scheduler";
 import type { BrowserService, MediaTempManager } from "@comis/skills";
 import type { SessionResetScheduler } from "@comis/agent";
-import { join } from "node:path";
+import { safePath, systemNowMs, systemSetTimeout, systemClearInterval } from "@comis/core";
 import { writeFileSync } from "node:fs";
 import type { ProcessMonitor } from "../process/process-monitor.js";
 import { registerGracefulShutdown, type ShutdownHandle } from "../process/graceful-shutdown.js";
@@ -91,7 +91,7 @@ export interface ShutdownDeps {
   /** Injection rate limiter for clearing timers on shutdown (optional). */
   injectionRateLimiter?: { destroy: () => void };
   /** Periodic lock cleanup timer (from setupAgents). */
-  lockCleanupTimer?: ReturnType<typeof setInterval>;
+  lockCleanupTimer?: import("@comis/core").TimerHandle;
   /** Data directory for restart continuation file (optional). */
   dataDir?: string;
   /** Restart continuation tracker for capturing active sessions before shutdown (optional). */
@@ -113,7 +113,7 @@ export interface ShutdownResult {
 }
 
 // ---------------------------------------------------------------------------
-// Per-step timeout helper (quick-164)
+// Per-step timeout helper
 // ---------------------------------------------------------------------------
 
 /** Per-step timeout budget (5s). The outer 30s hard timeout in graceful-shutdown.ts remains unchanged. */
@@ -128,7 +128,7 @@ async function withStepTimeout(
     await Promise.race([
       Promise.resolve(fn()),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Shutdown step "${component}" timed out after ${STEP_TIMEOUT_MS}ms`)), STEP_TIMEOUT_MS),
+        systemSetTimeout(() => reject(new Error(`Shutdown step "${component}" timed out after ${STEP_TIMEOUT_MS}ms`)), STEP_TIMEOUT_MS),
       ),
     ]);
   } catch (err) {
@@ -211,7 +211,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         totalExecutions: allUsage.length,
         totalCostUsd,
         totalTokens,
-        uptimeMs: Date.now() - startupTimestamp,
+        uptimeMs: systemNowMs() - startupTimestamp,
       }, "Daemon session summary");
 
       // Log in-flight gateway executions (channel adapter and sub-agent paths are future work)
@@ -220,7 +220,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           activeCount: activeExecutions.size,
           executions: Array.from(activeExecutions.values()).map(e => ({
             agentId: e.agentId,
-            elapsedMs: Date.now() - e.startedAt,
+            elapsedMs: systemNowMs() - e.startedAt,
           })),
           hint: "These executions will be interrupted by shutdown",
           errorKind: "internal" as const,
@@ -231,50 +231,50 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       // Gateway stop FIRST -- prevent new HTTP/WS connections while tearing down
       // -----------------------------------------------------------------------
       if (gatewayHandle) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await gatewayHandle.stop();
-          daemonLogger.info({ component: "gateway", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "gateway", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "gateway", daemonLogger);
       }
 
       // Shutdown graph coordinator -- before subAgentRunner so coordinator
       // unsubscribes from events and cancels graphs before runner stops
       if (graphCoordinator) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await graphCoordinator.shutdown();
-          daemonLogger.info({ component: "graph-coordinator", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "graph-coordinator", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "graph-coordinator", daemonLogger);
       }
 
       // Drain active sub-agent runs before stopping other services
       {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await subAgentRunner.shutdown();
-          daemonLogger.info({ component: "sub-agent-runner", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "sub-agent-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "sub-agent-runner", daemonLogger);
       }
 
       // Clear periodic lock cleanup timer
       if (lockCleanupTimer) {
         await withStepTimeout(() => {
-          clearInterval(lockCleanupTimer);
+          lockCleanupTimer.cancel();
           daemonLogger.info({ component: "lock-cleanup-timer", shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "lock-cleanup-timer", daemonLogger);
       }
 
       // Serialize and dispose approval gate
       if (approvalGate) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
           // Serialize pending approvals for restart restoration
           if (dataDir) {
             const serialized = approvalGate.serializePending();
             if (serialized.length > 0) {
               writeFileSync(
-                join(dataDir, "restart-approvals.json"),
+                safePath(dataDir, "restart-approvals.json"),
                 JSON.stringify(serialized, null, 2),
                 "utf-8",
               );
@@ -289,7 +289,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
             const cachedApprovals = approvalGate.serializeApprovalCache();
             if (cachedApprovals.length > 0) {
               writeFileSync(
-                join(dataDir, "restart-approval-cache.json"),
+                safePath(dataDir, "restart-approval-cache.json"),
                 JSON.stringify(cachedApprovals, null, 2),
                 "utf-8",
               );
@@ -300,54 +300,54 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
             }
           }
           approvalGate.dispose();
-          daemonLogger.info({ component: "approval-gate", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "approval-gate", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "approval-gate", daemonLogger);
       }
 
       // Stop skill file watchers
       if (skillWatcherHandles) {
         for (const [agentId, handle] of skillWatcherHandles) {
-          const stopMs = Date.now();
+          const stopMs = systemNowMs();
           await withStepTimeout(async () => {
             await handle.close();
-            daemonLogger.info({ component: "skill-watcher", agentId, durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+            daemonLogger.info({ component: "skill-watcher", agentId, durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
           }, "skill-watcher", daemonLogger);
         }
       }
 
       for (const [agentId, scheduler] of cronSchedulers) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
           scheduler.stop();
-          daemonLogger.info({ component: "cron-scheduler", agentId, durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "cron-scheduler", agentId, durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "cron-scheduler", daemonLogger);
       }
       // Stop reset schedulers
       for (const [agentId, scheduler] of resetSchedulers) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
           scheduler.stop();
-          daemonLogger.info({ component: "session-reset-scheduler", agentId, durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "session-reset-scheduler", agentId, durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "session-reset-scheduler", daemonLogger);
       }
       // Stop browser services (Chrome processes)
       for (const [agentId, service] of browserServices) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await service.stop();
-          daemonLogger.info({ component: "browser-service", agentId, durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "browser-service", agentId, durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "browser-service", daemonLogger);
       }
       // Capture active sessions for restart continuation (before adapters stop)
       if (continuationTracker && dataDir) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
           const captured = continuationTracker.capture(
-            join(dataDir, "restart-continuations.json"),
+            safePath(dataDir, "restart-continuations.json"),
             5 * 60_000, // sessions active in last 5 minutes
           );
           if (captured > 0) {
-            daemonLogger.info({ component: "restart-continuation", captured, durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Active sessions captured for restart");
+            daemonLogger.info({ component: "restart-continuation", captured, durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Active sessions captured for restart");
           }
         }, "restart-continuation", daemonLogger);
       }
@@ -364,81 +364,81 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
 
       // Stop channel adapters
       if (channelManager) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await channelManager.stopAll();
-          daemonLogger.info({ component: "channel-manager", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "channel-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "channel-manager", daemonLogger);
       }
       if (heartbeatRunner) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
           heartbeatRunner.stop();
-          daemonLogger.info({ component: "heartbeat-runner", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "heartbeat-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "heartbeat-runner", daemonLogger);
       }
       if (perAgentRunner) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
           perAgentRunner.stop();
-          daemonLogger.info({ component: "per-agent-heartbeat-runner", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "per-agent-heartbeat-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "per-agent-heartbeat-runner", daemonLogger);
       }
       if (wakeCoalescer) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
           wakeCoalescer.shutdown();
-          daemonLogger.info({ component: "wake-coalescer", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "wake-coalescer", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "wake-coalescer", daemonLogger);
       }
       // Dispose all active Gemini caches on shutdown
       if (geminiCacheManager) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await geminiCacheManager.disposeAll();
-          daemonLogger.info({ component: "gemini-cache", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "gemini-cache", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "gemini-cache", daemonLogger);
       }
       if (mediaTempManager) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
           mediaTempManager.stopCleanupInterval();
-          daemonLogger.info({ component: "media-temp-manager", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "media-temp-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "media-temp-manager", daemonLogger);
       }
       // Drain observability write buffers BEFORE collector dispose and db.close
       if (obsPersistence) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
-          clearInterval(obsPersistence.snapshotTimer);
+          systemClearInterval(obsPersistence.snapshotTimer);
           obsPersistence.drainAll();
-          daemonLogger.info({ component: "obs-persistence", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "obs-persistence", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "obs-persistence", daemonLogger);
       }
       // Dispose observability modules (remove EventBus subscriptions)
       {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
           deps.contextPipelineCollector?.dispose();
           diagnosticCollector.dispose();
           channelActivityTracker.dispose();
           deliveryTracer.dispose();
-          daemonLogger.info({ component: "observability", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "observability", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "observability", daemonLogger);
       }
       // Wait for background embedding indexing to finish (with timeout -- has its own 5s race)
       if (backgroundIndexingPromise) {
         await Promise.race([
           backgroundIndexingPromise,
-          new Promise((resolve) => setTimeout(resolve, 5_000)),
+          new Promise((resolve) => systemSetTimeout(() => resolve(undefined), 5_000)),
         ]);
       }
       // Dispose embedding cache chain (L1 -> L2 flush -> provider dispose) -- after indexing finishes, before db.close
       if (disposeEmbedding) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await disposeEmbedding();
-          daemonLogger.info({ component: "embedding-cache", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "embedding-cache", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "embedding-cache", daemonLogger);
       }
       // Destroy audit aggregator timers
@@ -457,10 +457,10 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       }
       // Close secret store database
       if (secretStore) {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         await withStepTimeout(() => {
           secretStore.close();
-          daemonLogger.info({ component: "secret-store", durationMs: Date.now() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "secret-store", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "secret-store", daemonLogger);
       }
       // Context pipeline collector dispose (already disposed above via observability block;
@@ -468,10 +468,10 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
 
       // DB close is ALWAYS last -- no withStepTimeout (must complete or the outer 30s hard timeout handles it)
       {
-        const stopMs = Date.now();
+        const stopMs = systemNowMs();
         try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch { /* best-effort flush before close */ }
         db.close();
-        daemonLogger.info({ component: "memory-database", durationMs: Date.now() - stopMs, shutdownOrder: shutdownOrder + 1 }, "Component stopped");
+        daemonLogger.info({ component: "memory-database", durationMs: systemNowMs() - stopMs, shutdownOrder: shutdownOrder + 1 }, "Component stopped");
       }
     },
   });

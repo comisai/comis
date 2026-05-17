@@ -26,8 +26,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { TypedEventBus } from "@comis/core";
 import type { PriorityLaneConfig } from "@comis/core";
-import { createPriorityScheduler } from "@comis/agent";
-import type { PriorityScheduler } from "@comis/agent";
+import { createPriorityScheduler } from "@comis/orchestrator";
+import type { PriorityScheduler } from "@comis/orchestrator";
 
 // ---------------------------------------------------------------------------
 // Helpers

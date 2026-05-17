@@ -7,7 +7,8 @@
  */
 
 import { existsSync, readFileSync, copyFileSync, chmodSync } from "node:fs";
-import { dirname, basename, join } from "node:path";
+import { dirname, basename } from "node:path";
+import { safePath } from "@comis/core";
 
 /** Suffix appended to the config filename for the last-known-good snapshot. */
 const LKG_SUFFIX = ".last-good.yaml";
@@ -19,7 +20,7 @@ const LKG_SUFFIX = ".last-good.yaml";
 export function lastKnownGoodPath(configPath: string): string {
   const dir = dirname(configPath);
   const base = basename(configPath, ".yaml");
-  return join(dir, `${base}${LKG_SUFFIX}`);
+  return safePath(dir, `${base}${LKG_SUFFIX}`);
 }
 
 /**

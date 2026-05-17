@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Session Lifecycle: Lifecycle wrapper around @comis/memory SessionStore.
+ * Session Lifecycle: Lifecycle wrapper around the SessionStorePort.
  *
- * Wraps @comis/memory SessionStore for expiry/cleanup operations,
+ * Wraps SessionStorePort for expiry/cleanup operations,
  * NOT for JSONL persistence (see comis-session-manager.ts for that).
  *
  * Provides convenience operations for agent session management:
@@ -12,14 +12,15 @@
  * - expire: delete a session
  * - cleanStale: remove sessions older than a threshold
  *
- * Does NOT own the database connection -- receives a pre-existing SessionStore.
+ * Does NOT own the database connection -- receives a pre-existing SessionStorePort.
  *
  * @module
  */
 
 import type { SessionKey, HookRunner } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
-import type { SessionStore } from "@comis/memory";
+import { systemNowMs } from "@comis/core";
+import type { ComisLogger } from "@comis/core";
+import type { SessionStorePort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -67,13 +68,13 @@ const DEFAULT_IDLE_TIMEOUT_MS = 14_400_000;
 // ---------------------------------------------------------------------------
 
 /**
- * Create a SessionLifecycle wrapping the given SessionStore.
+ * Create a SessionLifecycle wrapping the given SessionStorePort.
  *
  * The session lifecycle manager adds lifecycle semantics (load-or-create, expiry
- * detection, stale cleanup) on top of the raw CRUD provided by SessionStore.
+ * detection, stale cleanup) on top of the raw CRUD provided by SessionStorePort.
  */
 export function createSessionLifecycle(
-  store: SessionStore,
+  store: SessionStorePort,
   options?: SessionLifecycleOptions,
 ): SessionLifecycle {
   const defaultTimeout = options?.defaultIdleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
@@ -112,7 +113,7 @@ export function createSessionLifecycle(
       if (data === undefined) {
         return true;
       }
-      return data.updatedAt + timeout < Date.now();
+      return data.updatedAt + timeout < systemNowMs();
     },
 
     expire(key: SessionKey): boolean {

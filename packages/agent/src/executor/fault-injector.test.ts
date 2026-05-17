@@ -4,6 +4,21 @@ import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { tryInjectSilentFailure } from "./fault-injector.js";
+import type { EnvPort } from "@comis/core";
+
+// Test EnvPort that reads from process.env so the existing
+// process.env-based test setup keeps working.
+// eslint-disable-next-line no-restricted-syntax -- test-only env stub
+const testEnv: EnvPort = {
+  // eslint-disable-next-line no-restricted-syntax -- test-only env stub
+  get: (k) => process.env[k],
+  snapshot: (keys) => {
+    const snap: Record<string, string | undefined> = {};
+    // eslint-disable-next-line no-restricted-syntax -- test-only env stub
+    for (const key of keys) snap[key] = process.env[key];
+    return Object.freeze(snap);
+  },
+};
 
 describe("fault-injector", () => {
   let tmp: string;
@@ -36,7 +51,7 @@ describe("fault-injector", () => {
     delete process.env.COMIS_TEST_SILENT_FAIL_FLAG;
     // Even if the file exists, without the env var the injector is inert.
     writeFileSync(flagPath, "");
-    expect(tryInjectSilentFailure(logger)).toBeUndefined();
+    expect(tryInjectSilentFailure(logger, testEnv)).toBeUndefined();
     expect(existsSync(flagPath)).toBe(true); // file untouched
     expect(logger.warn).not.toHaveBeenCalled();
   });
@@ -44,7 +59,7 @@ describe("fault-injector", () => {
   it("returns undefined (no fault) when env var is set but flag file does not exist", () => {
     process.env.COMIS_TEST_SILENT_FAIL_FLAG = flagPath;
     // Flag not armed.
-    expect(tryInjectSilentFailure(logger)).toBeUndefined();
+    expect(tryInjectSilentFailure(logger, testEnv)).toBeUndefined();
     expect(logger.warn).not.toHaveBeenCalled();
     // Debug log only fires on unexpected FS errors, not ENOENT.
     expect(logger.debug).not.toHaveBeenCalled();
@@ -55,7 +70,7 @@ describe("fault-injector", () => {
     writeFileSync(flagPath, "");
     expect(existsSync(flagPath)).toBe(true);
 
-    const result = tryInjectSilentFailure(logger, { agentId: "test-agent" });
+    const result = tryInjectSilentFailure(logger, testEnv, { agentId: "test-agent" });
 
     expect(result).toEqual({
       finishReason: "error",
@@ -81,11 +96,11 @@ describe("fault-injector", () => {
 
     // Simulate 5 parallel execute() calls racing for the same flag.
     const results = [
-      tryInjectSilentFailure(logger),
-      tryInjectSilentFailure(logger),
-      tryInjectSilentFailure(logger),
-      tryInjectSilentFailure(logger),
-      tryInjectSilentFailure(logger),
+      tryInjectSilentFailure(logger, testEnv),
+      tryInjectSilentFailure(logger, testEnv),
+      tryInjectSilentFailure(logger, testEnv),
+      tryInjectSilentFailure(logger, testEnv),
+      tryInjectSilentFailure(logger, testEnv),
     ];
 
     const winners = results.filter((r) => r !== undefined);
@@ -104,11 +119,11 @@ describe("fault-injector", () => {
     process.env.COMIS_TEST_SILENT_FAIL_FLAG = flagPath;
     writeFileSync(flagPath, "");
 
-    const first = tryInjectSilentFailure(logger);
+    const first = tryInjectSilentFailure(logger, testEnv);
     expect(first).toBeDefined();
 
     // Second call should see ENOENT, return undefined.
-    const second = tryInjectSilentFailure(logger);
+    const second = tryInjectSilentFailure(logger, testEnv);
     expect(second).toBeUndefined();
 
     // Only the first call should have WARN-logged.
@@ -118,7 +133,7 @@ describe("fault-injector", () => {
   it("falls through to real execution when flag path points to a directory (EISDIR)", () => {
     process.env.COMIS_TEST_SILENT_FAIL_FLAG = tmp; // tmp is the directory itself, not a file
 
-    const result = tryInjectSilentFailure(logger);
+    const result = tryInjectSilentFailure(logger, testEnv);
 
     // Unexpected FS error → debug log, no fault injection, no WARN.
     expect(result).toBeUndefined();
@@ -134,7 +149,7 @@ describe("fault-injector", () => {
       process.env.COMIS_TEST_SILENT_FAIL_SCOPE = "subagent";
       writeFileSync(flagPath, "");
 
-      const result = tryInjectSilentFailure(logger, { sessionKey: "default:web-user:probe-1" });
+      const result = tryInjectSilentFailure(logger, testEnv, { sessionKey: "default:web-user:probe-1" });
 
       expect(result).toBeUndefined();
       expect(logger.warn).not.toHaveBeenCalled();
@@ -147,7 +162,7 @@ describe("fault-injector", () => {
       process.env.COMIS_TEST_SILENT_FAIL_SCOPE = "subagent";
       writeFileSync(flagPath, "");
 
-      const result = tryInjectSilentFailure(logger, {
+      const result = tryInjectSilentFailure(logger, testEnv, {
         sessionKey: "default:sub-agent-abc123:sub-agent:abc123",
       });
 
@@ -166,13 +181,13 @@ describe("fault-injector", () => {
       process.env.COMIS_TEST_SILENT_FAIL_SCOPE = "parent";
       writeFileSync(flagPath, "");
 
-      const subResult = tryInjectSilentFailure(logger, {
+      const subResult = tryInjectSilentFailure(logger, testEnv, {
         sessionKey: "default:sub-agent-abc:sub-agent:abc",
       });
       expect(subResult).toBeUndefined();
       expect(existsSync(flagPath)).toBe(true); // preserved for parent
 
-      const parentResult = tryInjectSilentFailure(logger, { sessionKey: "default:web-user:probe" });
+      const parentResult = tryInjectSilentFailure(logger, testEnv, { sessionKey: "default:web-user:probe" });
       expect(parentResult).toBeDefined();
       expect(existsSync(flagPath)).toBe(false);
     });
@@ -182,7 +197,7 @@ describe("fault-injector", () => {
       delete process.env.COMIS_TEST_SILENT_FAIL_SCOPE;
       writeFileSync(flagPath, "");
 
-      const result = tryInjectSilentFailure(logger, { sessionKey: "default:web-user:probe" });
+      const result = tryInjectSilentFailure(logger, testEnv, { sessionKey: "default:web-user:probe" });
       expect(result).toBeDefined();
     });
   });

@@ -4,6 +4,18 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import type { RpcClient } from "../../api/rpc-client.js";
+import { systemDateFrom } from "@comis/core";
+import {
+  createWorkspaceManagerController,
+  type WorkspaceManagerController,
+  // Canonical DTOs -- single source of truth shared with the controller.
+  // If the daemon contract evolves, the controller's exports surface a
+  // compile error at the view boundary rather than silently drifting.
+  type WorkspaceStatusDto,
+  type WorkspaceDirEntry,
+  type GitStatusDto,
+  type GitCommitDto,
+} from "./workspace-manager-controller.js";
 
 // Side-effect imports to register custom elements used in template
 import "../../components/nav/ic-breadcrumb.js";
@@ -13,43 +25,6 @@ import "../../components/feedback/ic-confirm-dialog.js";
 import "../../components/feedback/ic-empty-state.js";
 import "../../components/shell/ic-skeleton-view.js";
 import "../../components/data/ic-relative-time.js";
-
-/** Workspace status returned by workspace.status RPC. */
-interface WorkspaceStatusDto {
-  dir: string;
-  exists: boolean;
-  files: Array<{ name: string; present: boolean; sizeBytes?: number }>;
-  hasGitRepo: boolean;
-  isBootstrapped: boolean;
-  state?: { version: number; bootstrapSeededAt?: number; onboardingCompletedAt?: number };
-}
-
-/** Single entry in a workspace subdirectory listing. */
-interface WorkspaceDirEntry {
-  name: string;
-  type: "file" | "directory";
-  sizeBytes?: number;
-  modifiedAt?: number;
-}
-
-/** Git status returned by workspace.git.status RPC. */
-interface GitStatusDto {
-  branch: string;
-  clean: boolean;
-  entries: Array<{
-    path: string;
-    status: "modified" | "added" | "deleted" | "untracked" | "renamed" | "copied";
-    staged: boolean;
-  }>;
-}
-
-/** Single commit entry returned by workspace.git.log RPC. */
-interface GitCommitDto {
-  sha: string;
-  author: string;
-  date: string;
-  message: string;
-}
 
 /** Known workspace subdirectories. */
 const WORKSPACE_SUBDIRS = ["projects", "scripts", "documents", "media", "data", "output"] as const;
@@ -659,7 +634,20 @@ export class IcWorkspaceManager extends LitElement {
   @state() private _committing = false;
   @state() private _restoreTarget: string | null = null;
 
+  /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
+  private _controller: WorkspaceManagerController | null = null;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    if (this.rpcClient) {
+      this._controller = createWorkspaceManagerController(this, this.rpcClient);
+    }
+  }
+
   override updated(changed: Map<string, unknown>): void {
+    if (changed.has("rpcClient") && this.rpcClient && !this._controller) {
+      this._controller = createWorkspaceManagerController(this, this.rpcClient);
+    }
     if ((changed.has("agentId") || changed.has("rpcClient")) && this.agentId && this.rpcClient) {
       this._loadStatus();
     }
@@ -668,16 +656,13 @@ export class IcWorkspaceManager extends LitElement {
   // --- Data loading ---
 
   private async _loadStatus(): Promise<void> {
-    if (!this.rpcClient || !this.agentId) return;
+    if (!this._controller || !this.agentId) return;
 
     this._loadState = "loading";
     this._error = "";
 
     try {
-      this._status = await this.rpcClient.call<WorkspaceStatusDto>(
-        "workspace.status",
-        { agentId: this.agentId },
-      );
+      this._status = await this._controller.getStatus(this.agentId);
       this._loadState = "loaded";
     } catch (e) {
       this._error = e instanceof Error ? e.message : "Failed to load workspace status";
@@ -686,7 +671,7 @@ export class IcWorkspaceManager extends LitElement {
   }
 
   private async _selectFile(name: string): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     // Warn about unsaved changes before switching
     if (this._dirty) {
@@ -694,10 +679,7 @@ export class IcWorkspaceManager extends LitElement {
     }
 
     try {
-      const result = await this.rpcClient.call<{ content: string }>(
-        "workspace.readFile",
-        { agentId: this.agentId, filePath: name },
-      );
+      const result = await this._controller.readFile(this.agentId, name);
       this._selectedFile = name;
       this._fileContent = result.content;
       this._editedContent = result.content;
@@ -713,7 +695,7 @@ export class IcWorkspaceManager extends LitElement {
   }
 
   private async _selectSubdir(name: string): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     // Warn about unsaved changes before switching
     if (this._dirty) {
@@ -721,10 +703,7 @@ export class IcWorkspaceManager extends LitElement {
     }
 
     try {
-      const result = await this.rpcClient.call<{ entries: WorkspaceDirEntry[] }>(
-        "workspace.listDir",
-        { agentId: this.agentId, subdir: name },
-      );
+      const result = await this._controller.listDir(this.agentId, name);
       this._selectedSubdir = name;
       this._dirEntries = result.entries;
       this._selectedFile = null;
@@ -748,15 +727,12 @@ export class IcWorkspaceManager extends LitElement {
   // --- Git data loading ---
 
   private async _loadGitData(): Promise<void> {
-    if (!this.rpcClient || !this.agentId) return;
+    if (!this._controller || !this.agentId) return;
 
     try {
       const [statusResult, logResult] = await Promise.all([
-        this.rpcClient.call<GitStatusDto>("workspace.git.status", { agentId: this.agentId }),
-        this.rpcClient.call<{ commits: GitCommitDto[] }>("workspace.git.log", {
-          agentId: this.agentId,
-          limit: 20,
-        }),
+        this._controller.getGitStatus(this.agentId),
+        this._controller.getGitLog(this.agentId, 20),
       ]);
       this._gitStatus = statusResult;
       this._gitLog = logResult.commits;
@@ -771,13 +747,10 @@ export class IcWorkspaceManager extends LitElement {
   }
 
   private async _loadFileDiff(filePath: string): Promise<void> {
-    if (!this.rpcClient || !this.agentId) return;
+    if (!this._controller || !this.agentId) return;
 
     try {
-      const result = await this.rpcClient.call<{ diff: string }>(
-        "workspace.git.diff",
-        { agentId: this.agentId, filePath },
-      );
+      const result = await this._controller.getFileDiff(this.agentId, filePath);
       this._gitDiff = result.diff;
       this._gitDiffFile = filePath;
     } catch (e) {
@@ -791,13 +764,14 @@ export class IcWorkspaceManager extends LitElement {
   // --- Action handlers ---
 
   private async _handleSave(): Promise<void> {
-    if (!this.rpcClient || this._saving || !this._selectedFile) return;
+    if (!this._controller || this._saving || !this._selectedFile) return;
 
     this._saving = true;
     try {
-      await this.rpcClient.call(
-        "workspace.writeFile",
-        { agentId: this.agentId, filePath: this._selectedFile, content: this._editedContent },
+      await this._controller.writeFile(
+        this.agentId,
+        this._selectedFile,
+        this._editedContent,
       );
       IcToast.show("File saved", "success");
       this._fileContent = this._editedContent;
@@ -813,15 +787,12 @@ export class IcWorkspaceManager extends LitElement {
   }
 
   private async _handleReset(): Promise<void> {
-    if (!this.rpcClient || !this._selectedFile) return;
+    if (!this._controller || !this._selectedFile) return;
 
     this._confirmAction = null;
     this._actionPending = true;
     try {
-      await this.rpcClient.call(
-        "workspace.resetFile",
-        { agentId: this.agentId, fileName: this._selectedFile },
-      );
+      await this._controller.resetFile(this.agentId, this._selectedFile);
       IcToast.show("File reset to default", "success");
       // Reload the file content
       await this._selectFile(this._selectedFile);
@@ -836,15 +807,12 @@ export class IcWorkspaceManager extends LitElement {
   }
 
   private async _handleDelete(): Promise<void> {
-    if (!this.rpcClient || !this._selectedFile) return;
+    if (!this._controller || !this._selectedFile) return;
 
     this._confirmAction = null;
     this._actionPending = true;
     try {
-      await this.rpcClient.call(
-        "workspace.deleteFile",
-        { agentId: this.agentId, filePath: this._selectedFile },
-      );
+      await this._controller.deleteFile(this.agentId, this._selectedFile);
       IcToast.show("File deleted", "success");
       this._selectedFile = null;
       this._fileContent = "";
@@ -863,14 +831,11 @@ export class IcWorkspaceManager extends LitElement {
   }
 
   private async _handleInit(): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call(
-        "workspace.init",
-        { agentId: this.agentId },
-      );
+      await this._controller.initWorkspace(this.agentId);
       IcToast.show("Workspace initialized", "success");
       await this._loadStatus();
     } catch (e) {
@@ -898,15 +863,12 @@ export class IcWorkspaceManager extends LitElement {
   }
 
   private async _handleRestore(): Promise<void> {
-    if (!this.rpcClient || !this._restoreTarget) return;
+    if (!this._controller || !this._restoreTarget) return;
 
     this._confirmAction = null;
     this._actionPending = true;
     try {
-      await this.rpcClient.call(
-        "workspace.git.restore",
-        { agentId: this.agentId, filePath: this._restoreTarget },
-      );
+      await this._controller.restoreFile(this.agentId, this._restoreTarget);
       IcToast.show("File restored to HEAD", "success");
       this._restoreTarget = null;
       await this._loadGitData();
@@ -921,14 +883,14 @@ export class IcWorkspaceManager extends LitElement {
   }
 
   private async _handleCommit(): Promise<void> {
-    if (!this.rpcClient || !this.agentId || this._committing) return;
+    if (!this._controller || !this.agentId || this._committing) return;
 
     this._committing = true;
     try {
-      await this.rpcClient.call("workspace.git.commit", {
-        agentId: this.agentId,
-        message: this._commitMessage || undefined,
-      });
+      await this._controller.commitChanges(
+        this.agentId,
+        this._commitMessage || undefined,
+      );
       IcToast.show("Changes committed", "success");
       this._commitMessage = "";
       await this._loadGitData();
@@ -1328,7 +1290,7 @@ export class IcWorkspaceManager extends LitElement {
                   <span class="commit-sha">${commit.sha.slice(0, 7)}</span>
                   <span class="commit-message">${commit.message}</span>
                   <span class="commit-time">
-                    <ic-relative-time .timestamp=${new Date(commit.date).getTime()}></ic-relative-time>
+                    <ic-relative-time .timestamp=${systemDateFrom(commit.date).getTime()}></ic-relative-time>
                   </span>
                 </div>
               `,

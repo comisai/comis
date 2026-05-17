@@ -12,7 +12,7 @@ provider has a hiccup.
 covers picking a default; the reference section covers per-agent overrides,
 fallback chains, and key rotation.
 
-Comis ships with native support for **every provider in the [`@mariozechner/pi-ai`](https://www.npmjs.com/package/@mariozechner/pi-ai) catalog** — currently 27 hosted providers (Anthropic, OpenAI, Google, Mistral, Groq, OpenRouter, DeepSeek, xAI, Cerebras, Amazon Bedrock, Azure OpenAI Responses, Vercel AI Gateway, Cloudflare AI Gateway / Workers AI, GitHub Copilot, Hugging Face, Fireworks, Together (via OpenRouter), Moonshot, Minimax, Z.ai, Kimi, OpenCode, and more). The catalog is queried at runtime — adding a new provider to pi-ai automatically lights it up across the daemon, web wizard, CLI wizard, and `comis models list` with **zero comis code changes**.
+Comis ships with native support for **every provider in the [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) catalog** — currently 27 hosted providers (Anthropic, OpenAI, Google, Mistral, Groq, OpenRouter, DeepSeek, xAI, Cerebras, Amazon Bedrock, Azure OpenAI Responses, Vercel AI Gateway, Cloudflare AI Gateway / Workers AI, GitHub Copilot, Hugging Face, Fireworks, Together (via OpenRouter), Moonshot, Minimax, Z.ai, Kimi, OpenCode, and more). The catalog is queried at runtime — adding a new provider to pi-ai automatically lights it up across the daemon, web wizard, CLI wizard, and `comis models list` with **zero comis code changes**.
 
 Plus you can register custom OpenAI-compatible endpoints (any HTTP service that speaks the OpenAI chat-completions API) for proxies and self-hosted gateways.
 
@@ -45,7 +45,7 @@ In the web dashboard, the same catalog drives:
 - **Models view › Catalog tab** — full searchable model catalog
 - **Agents view › Edit agent** — provider and model dropdowns
 
-There is no hardcoded provider/model list in comis source. The pi-ai catalog is the single source of truth, accessed via `getProviders()` and `getModels(provider)` from `@mariozechner/pi-ai`.
+There is no hardcoded provider/model list in comis source. The pi-ai catalog is the single source of truth, accessed via `getProviders()` and `getModels(provider)` from `@earendil-works/pi-ai`.
 
 ## Custom providers (proxies and self-hosted)
 

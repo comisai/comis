@@ -5,13 +5,21 @@
  * Provides `comis sessions [list|inspect|delete]` subcommands
  * for managing conversation sessions via the daemon RPC interface.
  *
+ * Uses typed `callTyped(client, <Contract>, params)` for the three
+ * surfaces: session.list, session.status, session.delete.
+ *
  * @module
  */
 
 import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { withClient } from "../client/rpc-client.js";
+import {
+  SessionListContract,
+  SessionStatusContract,
+  SessionDeleteContract,
+} from "@comis/core";
+import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
@@ -84,19 +92,19 @@ export function registerSessionsCommand(program: Command): void {
     .option("--format <format>", "Output format (table|json)", "table")
     .action(async (options: { tenant?: string; format: string }) => {
       try {
+        // The CLI's --tenant flag is a no-op against the contract surface:
+        // tenant scoping flows through the dispatcher-injected `_tenantId`
+        // internal (which is auth-context-derived), not the public request.
+        // The contract's `kind`/`since_minutes` fields are optional; the empty
+        // request matches the default-list-all behavior.
         const result = await withSpinner("Fetching sessions...", () =>
           withClient(async (client) => {
-            return await client.call("session.list", {
-              tenantId: options.tenant,
-            });
+            return await callTyped(client, SessionListContract, {});
           }),
         );
 
-        // RPC may return { sessions: [...] } or a bare array
-        const raw = result as SessionEntry[] | { sessions: SessionEntry[] } | null;
-        const entries: SessionEntry[] = Array.isArray(raw)
-          ? raw
-          : (raw as { sessions: SessionEntry[] })?.sessions ?? [];
+        // The contract response shape is { sessions: [...], total }.
+        const entries: SessionEntry[] = result.sessions as unknown as SessionEntry[];
 
         if (entries.length === 0) {
           info("No sessions found");
@@ -139,54 +147,41 @@ export function registerSessionsCommand(program: Command): void {
     .option("--format <format>", "Output format (table|json)", "table")
     .action(async (key: string, options: { format: string }) => {
       try {
-        const result = await withSpinner("Fetching session...", () =>
+        // session.status returns agent/session runtime stats. The CLI's
+        // `key` argument is currently a no-op against the contract — the
+        // handler reads the agent context from the dispatcher-injected
+        // `_agentId` internal, not from a user-supplied key.
+        const statusResult = await withSpinner("Fetching session...", () =>
           withClient(async (client) => {
-            return (await client.call("session.status", { key })) as {
-              session?: SessionEntry;
-            };
+            return await callTyped(client, SessionStatusContract, {});
           }),
         );
 
-        if (!result.session) {
-          error(`Session not found: ${key}`);
-          return;
-        }
-
-        const session = result.session;
-
         if (options.format === "json") {
-          json(session);
+          json(statusResult);
           return;
         }
 
-        // Parse session key components (tenantId:userId:channelId)
-        const sKey = session.sessionKey ?? session.key ?? "-";
-        const keyParts = sKey.split(":");
-        const tenant = keyParts.length >= 3 ? keyParts[0]! : "-";
-        const user = keyParts.length >= 3 ? keyParts[1]! : session.userId ?? session.user ?? "-";
-        const channel = keyParts.length >= 3 ? keyParts[2]! : session.channelId ?? session.channel ?? "-";
-
+        // Render the actual status response (model + agentName + counters)
+        // alongside the user-supplied session key string for context.
         const pairs: [string, string][] = [
-          [chalk.bold("Session Key"), sKey],
-          [chalk.bold("Tenant"), tenant],
-          [chalk.bold("User"), user],
-          [chalk.bold("Channel"), channel],
+          [chalk.bold("Session Key"), key],
+          [chalk.bold("Model"), statusResult.model],
+          [chalk.bold("Agent"), statusResult.agentName],
+          [chalk.bold("Tokens Used"), String(statusResult.tokensUsed.totalTokens)],
+          [chalk.bold("Total Cost"), `$${statusResult.tokensUsed.totalCost.toFixed(4)}`],
+          [chalk.bold("Steps Executed"), String(statusResult.stepsExecuted)],
+          [chalk.bold("Max Steps"), String(statusResult.maxSteps)],
         ];
 
-        if (session.createdAt) {
-          pairs.push([chalk.bold("Created"), new Date(session.createdAt).toLocaleString()]);
-        }
-        if (session.lastActive) {
-          pairs.push([
-            chalk.bold("Last Active"),
-            `${new Date(session.lastActive).toLocaleString()} (${formatRelativeTime(session.lastActive)})`,
-          ]);
-        }
-        if (session.messageCount != null) {
-          pairs.push([chalk.bold("Message Count"), String(session.messageCount)]);
-        }
-        if (session.metadata && Object.keys(session.metadata).length > 0) {
-          pairs.push([chalk.bold("Metadata"), JSON.stringify(session.metadata, null, 2)]);
+        // Parse session key components (tenantId:userId:channelId) when shape matches.
+        const keyParts = key.split(":");
+        if (keyParts.length >= 3) {
+          pairs.push(
+            [chalk.bold("Tenant"), keyParts[0]!],
+            [chalk.bold("User"), keyParts[1]!],
+            [chalk.bold("Channel"), keyParts[2]!],
+          );
         }
 
         renderKeyValue(pairs);
@@ -217,7 +212,11 @@ export function registerSessionsCommand(program: Command): void {
       try {
         await withSpinner("Deleting session...", () =>
           withClient(async (client) => {
-            return await client.call("session.delete", { key });
+            // The contract uses `session_key` (snake_case — matches the
+            // daemon handler parameter name).
+            return await callTyped(client, SessionDeleteContract, {
+              session_key: key,
+            });
           }),
         );
 

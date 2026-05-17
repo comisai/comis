@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: media-resolver throw inside fromPromise(); converted to Result.err by ssrfFetcher boundary adapter.
 /**
  * Discord MediaResolverPort adapter.
  *
@@ -18,6 +19,7 @@
 import type { Attachment, MediaResolverPort, ResolvedMedia } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -65,9 +67,9 @@ export function createDiscordResolver(deps: DiscordResolverDeps): MediaResolverP
           }
 
           // Download via SSRF-guarded fetcher
-          const startMs = Date.now();
+          const startMs = systemNowMs();
           const fetchResult = await deps.ssrfFetcher.fetch(attachment.url);
-          const durationMs = Date.now() - startMs;
+          const durationMs = systemNowMs() - startMs;
 
           if (!fetchResult.ok) {
             throw fetchResult.error;

@@ -10,7 +10,7 @@
 
 import type { ChannelCapability, ChannelPluginPort, MediaResolverPort, PluginRegistryApi } from "@comis/core";
 import { ok, type Result } from "@comis/shared";
-import { createTelegramAdapter, type TelegramAdapterDeps } from "./telegram-adapter.js";
+import { createTelegramAdapter, type TelegramAdapterDeps } from "./telegram-adapter/index.js";
 import { createTelegramResolver } from "./telegram-resolver.js";
 
 // ---------------------------------------------------------------------------

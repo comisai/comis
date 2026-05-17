@@ -743,6 +743,247 @@ install_build_tools_linux() {
     return 1
 }
 
+# install_browser_deps_linux
+# --------------------------
+# Install the Chromium runtime that packages/skills/src/tools/browser uses.
+# Idempotent — apt/dnf/yum/apk skip already-installed packages. The browser is
+# off-by-default; only runs when --with-browser is set.
+#
+# Stock-Chromium path. If you adopt CloakBrowser instead, swap the Chromium
+# package out for `cloakbrowser` (npm/pip) — the shared libs below are still
+# required either way (CloakBrowser is a patched Chromium, not a static AppImage).
+install_browser_deps_linux() {
+    [[ "$WITH_BROWSER" == "1" ]] || return 0
+    [[ "$OS" == "linux" ]] || return 0
+
+    export DEBIAN_FRONTEND=noninteractive
+    local sudo_cmd=""
+    is_root || sudo_cmd="sudo"
+
+    if command -v apt-get &> /dev/null; then
+        wait_for_apt_lock
+        # Headless shared libs needed regardless of which browser we end up
+        # with. Ubuntu 24.04 (noble) renamed several libs in the time_t-64bit
+        # transition: libasound2 → libasound2t64, libatk1.0-0 → libatk1.0-0t64,
+        # libatk-bridge2.0-0 → ...t64, libatspi2.0-0 → ...t64, libcups2 → ...t64.
+        # Provides: works for *resolving* old names already-depended-on but
+        # `apt install libasound2` directly fails on noble (no such package).
+        # Pick the actual installable name for each.
+        local _pick_pkg
+        _pick_pkg() {
+            local base="$1"
+            local cand
+            cand="$(apt-cache policy "$base" 2>/dev/null | awk '/Candidate:/{print $2; exit}')"
+            if [[ -n "$cand" && "$cand" != "(none)" ]]; then
+                printf '%s' "$base"
+                return
+            fi
+            cand="$(apt-cache policy "${base}t64" 2>/dev/null | awk '/Candidate:/{print $2; exit}')"
+            if [[ -n "$cand" && "$cand" != "(none)" ]]; then
+                printf '%s' "${base}t64"
+            fi
+            # Empty output if neither exists — apt-get drops it from the list.
+        }
+        local apt_browser_libs=""
+        for base in libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+                    libatspi2.0-0 libcups2 libxkbcommon0 libxcomposite1 \
+                    libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 \
+                    libpango-1.0-0 libcairo2 libdrm2 fonts-liberation \
+                    fonts-noto-color-emoji libasound2; do
+            local resolved
+            resolved="$(_pick_pkg "$base")"
+            [[ -n "$resolved" ]] && apt_browser_libs="${apt_browser_libs} ${resolved}"
+        done
+        run_quiet_step "Installing browser shared libs" \
+            $sudo_cmd apt-get install -y -qq $apt_browser_libs || \
+            ui_warn "Browser shared-lib install had errors"
+
+        local installed_browser=""
+
+        # When --with-cloakbrowser is set, skip the Chrome install — the
+        # binary will come from CloakBrowser via npm, installed for the
+        # service user by install_cloakbrowser() after the user exists.
+        # We still need the headless shared libs (installed above) and Xvfb
+        # if requested.
+        if [[ "$WITH_CLOAKBROWSER" == "1" ]]; then
+            ui_info "CloakBrowser mode — Chrome install skipped (binary comes via npm later)"
+            if [[ "$WITH_XVFB" == "1" ]]; then
+                run_quiet_step "Installing Xvfb" $sudo_cmd apt-get install -y -qq xvfb || \
+                    ui_warn "Xvfb install failed — headed mode will not work"
+            fi
+            return 0
+        fi
+
+        # Browser binary. On Ubuntu 24.04 (noble) and newer, the `chromium`
+        # deb is gone — only a snap-shim `chromium-browser` exists. Snap
+        # chromium under systemd ProtectHome=read-only is unreliable, so on
+        # apt systems we prefer the real Google Chrome deb (which Comis's
+        # findChrome() probes at /usr/bin/google-chrome*).
+        local chromium_candidate=""
+        chromium_candidate="$(apt-cache policy chromium 2>/dev/null | awk '/Candidate:/{print $2; exit}')"
+        if [[ -n "$chromium_candidate" && "$chromium_candidate" != "(none)" ]]; then
+            if run_quiet_step "Installing Chromium" \
+                $sudo_cmd apt-get install -y -qq chromium; then
+                installed_browser="chromium"
+            fi
+        fi
+        if [[ -z "$installed_browser" ]]; then
+            ui_info "No real Chromium deb available; installing Google Chrome"
+            # Pin the apt repo via a signed-by keyring so we don't pollute the
+            # global trust store. The systemd unit's findChrome() walks Chrome,
+            # Brave, Edge, Chromium in that order — Chrome wins.
+            $sudo_cmd install -d -m 0755 /etc/apt/keyrings
+            if curl -fsSL --proto '=https' --tlsv1.2 \
+                https://dl.google.com/linux/linux_signing_key.pub \
+                | $sudo_cmd gpg --dearmor --yes -o /etc/apt/keyrings/google-chrome.gpg 2>/dev/null; then
+                echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+                    | $sudo_cmd tee /etc/apt/sources.list.d/google-chrome.list >/dev/null
+                $sudo_cmd apt-get update -qq 2>/dev/null || true
+                if run_quiet_step "Installing Google Chrome" \
+                    $sudo_cmd apt-get install -y -qq google-chrome-stable; then
+                    installed_browser="google-chrome"
+                fi
+            fi
+        fi
+        if [[ -z "$installed_browser" ]]; then
+            ui_warn "No Chromium/Chrome could be installed — browser tool will not start"
+        fi
+        # Some Debian/Ubuntu releases ship the binary as `chromium-browser`;
+        # chrome-detection.ts probes both, but keep a symlink for predictability.
+        if [[ ! -x /usr/bin/chromium && -x /usr/bin/chromium-browser ]]; then
+            $sudo_cmd ln -sf /usr/bin/chromium-browser /usr/bin/chromium || true
+        fi
+        if [[ "$WITH_XVFB" == "1" ]]; then
+            run_quiet_step "Installing Xvfb" $sudo_cmd apt-get install -y -qq xvfb || \
+                ui_warn "Xvfb install failed — headed mode will not work"
+        fi
+        return 0
+    fi
+
+    if command -v dnf &> /dev/null; then
+        run_quiet_step "Installing browser runtime" $sudo_cmd dnf install -y \
+            chromium nss nspr atk at-spi2-atk at-spi2-core cups-libs libdrm \
+            libxkbcommon mesa-libgbm pango cairo alsa-lib liberation-fonts \
+            google-noto-emoji-color-fonts || \
+            ui_warn "Browser dep install had errors"
+        [[ "$WITH_XVFB" == "1" ]] && run_quiet_step "Installing Xvfb" \
+            $sudo_cmd dnf install -y xorg-x11-server-Xvfb
+        return 0
+    fi
+
+    if command -v yum &> /dev/null; then
+        run_quiet_step "Installing browser runtime" $sudo_cmd yum install -y \
+            chromium nss nspr atk at-spi2-atk at-spi2-core cups-libs libdrm \
+            libxkbcommon mesa-libgbm pango cairo alsa-lib liberation-fonts || \
+            ui_warn "Browser dep install had errors"
+        [[ "$WITH_XVFB" == "1" ]] && run_quiet_step "Installing Xvfb" \
+            $sudo_cmd yum install -y xorg-x11-server-Xvfb
+        return 0
+    fi
+
+    if command -v apk &> /dev/null; then
+        run_quiet_step "Installing browser runtime" $sudo_cmd apk add --no-cache \
+            chromium nss freetype harfbuzz ca-certificates ttf-freefont \
+            font-noto-emoji || ui_warn "Browser dep install had errors"
+        [[ "$WITH_XVFB" == "1" ]] && run_quiet_step "Installing Xvfb" \
+            $sudo_cmd apk add --no-cache xvfb
+        return 0
+    fi
+
+    ui_warn "No supported package manager for browser deps; install Chromium + libs manually"
+    return 1
+}
+
+# install_cloakbrowser
+# --------------------
+# Install the CloakBrowser npm wrapper + stealth Chromium binary into the
+# current user's $HOME. Only meaningful when --with-cloakbrowser is set.
+# Must run AS the user the daemon will run as so the cache lands at the
+# right ~/.cloakbrowser/ path that chrome-detection.ts probes.
+#
+# Skipped when:
+#   * --with-cloakbrowser not set
+#   * Running as root in the root-with-dedicated-user flow (deferred to
+#     the reexec'd child running as the comis user)
+#
+# Lazy fallback: if the npm install or binary download fails, we warn but
+# don't fatal — the daemon would still come up; the browser tool would just
+# error on first use. Operator can rerun: npx cloakbrowser install
+install_cloakbrowser() {
+    [[ "$WITH_CLOAKBROWSER" == "1" ]] || return 0
+    [[ "$OS" == "linux" ]] || return 0
+
+    # When root in the dedicated-user flow, defer — the reexec'd comis-user
+    # invocation will hit this function from the non-root branch and do the
+    # install with the right HOME.
+    if is_root; then
+        local target_user="${COMIS_USER:-comis}"
+        if getent passwd "$target_user" >/dev/null 2>&1; then
+            ui_info "CloakBrowser install deferred to '${target_user}' user phase"
+            return 0
+        fi
+        # No target user — root install is fine (rare path: --no-user).
+    fi
+
+    if ! command -v npm >/dev/null 2>&1; then
+        ui_warn "npm not on PATH; cannot install CloakBrowser"
+        return 1
+    fi
+
+    # Pin the wrapper to a dedicated dir so we don't tangle with the global
+    # comisai install or any other npm prefix the user has set. Skip
+    # `npm init -y` because it derives the package name from the dirname
+    # and rejects names starting with "." — write a minimal package.json
+    # directly so the dotted hidden path works.
+    local cloak_pkg_dir="$HOME/.cloakbrowser-wrapper"
+    mkdir -p "$cloak_pkg_dir" 2>/dev/null || true
+    if [[ ! -f "$cloak_pkg_dir/package.json" ]]; then
+        cat > "$cloak_pkg_dir/package.json" <<'JSON'
+{
+  "name": "cloakbrowser-wrapper",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Installer-managed CloakBrowser wrapper for the Comis browser tool."
+}
+JSON
+    fi
+    local cloak_log
+    cloak_log="$(mktempfile)"
+    if ! (cd "$cloak_pkg_dir" && npm install --no-audit --no-fund --silent \
+              cloakbrowser playwright-core >"$cloak_log" 2>&1); then
+        ui_warn "CloakBrowser npm install failed"
+        if [[ "$VERBOSE" == "1" ]]; then
+            tail -n 20 "$cloak_log" >&2 || true
+        fi
+        return 1
+    fi
+    ui_success "CloakBrowser npm wrapper installed at ${cloak_pkg_dir}"
+
+    # Pre-pull the stealth Chromium binary (~140-210 MB). Lands at
+    # $HOME/.cloakbrowser/chromium-<version>/. Filter the verbose download
+    # progress lines so the install output stays readable.
+    local cloak_bin="${cloak_pkg_dir}/node_modules/.bin/cloakbrowser"
+    if [[ ! -x "$cloak_bin" ]]; then
+        ui_warn "CloakBrowser CLI not found after npm install"
+        return 1
+    fi
+    if "$cloak_bin" install 2>&1 \
+        | grep -vE "Download progress:" \
+        | grep -E "Downloading|Download complete|Checksum|Binary ready|Newer Chromium|Background update|Extracting|Cache|already|installed" \
+        | head -10; then
+        :
+    fi
+    if "$cloak_bin" info 2>/dev/null | grep -q 'Installed:[[:space:]]*true'; then
+        local cloak_version
+        cloak_version="$("$cloak_bin" info 2>/dev/null | awk '/Version:/{print $2; exit}')"
+        ui_success "CloakBrowser binary cached at \$HOME/.cloakbrowser/ (v${cloak_version})"
+        return 0
+    fi
+
+    ui_warn "CloakBrowser binary did not finalize; will lazy-download on first use"
+    return 1
+}
+
 # apply_apparmor_bwrap_profile
 # ----------------------------
 # Ubuntu 23.10+ ships with `kernel.apparmor_restrict_unprivileged_userns=1`,
@@ -1280,6 +1521,15 @@ NO_AUTOSTART="${COMIS_NO_AUTOSTART:-0}"
 # Install + enable but do not start the service yet
 NO_SERVICE_START="${COMIS_NO_SERVICE_START:-0}"
 
+# Browser-tool provisioning (optional — disabled by default to keep the
+# minimal-VPS footprint small). WITH_XVFB and WITH_CLOAKBROWSER imply
+# WITH_BROWSER (both share the headless shared-libs install).
+WITH_BROWSER="${COMIS_WITH_BROWSER:-0}"
+WITH_XVFB="${COMIS_WITH_XVFB:-0}"
+WITH_CLOAKBROWSER="${COMIS_WITH_CLOAKBROWSER:-0}"
+[[ "$WITH_XVFB" == "1" ]] && WITH_BROWSER=1
+[[ "$WITH_CLOAKBROWSER" == "1" ]] && WITH_BROWSER=1
+
 # Uninstall flags
 UNINSTALL=0
 PURGE="${COMIS_PURGE:-0}"
@@ -1336,6 +1586,31 @@ Service options (how to run the daemon):
                                        pm2 startup). Useful when you lack admin rights.
   --no-service-start                   Register + enable but do not start the daemon yet.
 
+Browser tool (optional):
+  --with-browser                       Install Chromium + headless shared libs and widen
+                                       the systemd sandbox so the agent browser tool can
+                                       run on this host. Off by default.
+  --with-xvfb                          Implies --with-browser. Also installs Xvfb and
+                                       registers a virtual-display companion unit so the
+                                       browser tool can run headed for sites that detect
+                                       headless (DataDome, Kasada, Turnstile managed).
+  --with-cloakbrowser                  Implies --with-browser. Installs CloakBrowser
+                                       (stealth Chromium with source-level fingerprint
+                                       patches) instead of Google Chrome. Bypasses
+                                       Cloudflare Turnstile, FingerprintJS, BrowserScan,
+                                       and Reddit's secondary fingerprint check on non-
+                                       datacenter IPs.
+                                       Caveat: datacenter IPs (AWS, DigitalOcean,
+                                       Hetzner, Hostinger, etc.) are pre-blocked by
+                                       Reddit/X/LinkedIn at the IP layer regardless of
+                                       browser fingerprint. CloakBrowser does not
+                                       provide a proxy — pair it with a residential
+                                       proxy if your host is on a datacenter ASN.
+                                       License: free for self-hosted use. Bundling
+                                       into a service distributed to third parties
+                                       requires an OEM license from CloakHQ. See
+                                       https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md
+
 Uninstall:
   --uninstall                          Remove Comis (keeps data by default)
   --purge                              With --uninstall: also delete ~/.comis, /etc/comis, /var/log/comis
@@ -1353,6 +1628,9 @@ Environment variables:
   COMIS_SERVICE=auto|systemd|systemd-user|pm2|none
   COMIS_NO_AUTOSTART=1
   COMIS_NO_SERVICE_START=1
+  COMIS_WITH_BROWSER=0|1
+  COMIS_WITH_XVFB=0|1
+  COMIS_WITH_CLOAKBROWSER=0|1
   COMIS_PURGE=1
   COMIS_REMOVE_USER=1
   COMIS_NO_PROMPT=1
@@ -1457,6 +1735,20 @@ parse_args() {
                 ;;
             --no-service-start)
                 NO_SERVICE_START=1
+                shift
+                ;;
+            --with-browser)
+                WITH_BROWSER=1
+                shift
+                ;;
+            --with-xvfb)
+                WITH_BROWSER=1
+                WITH_XVFB=1
+                shift
+                ;;
+            --with-cloakbrowser)
+                WITH_BROWSER=1
+                WITH_CLOAKBROWSER=1
                 shift
                 ;;
             --uninstall)
@@ -2166,6 +2458,9 @@ install_system_deps_as_root() {
     if [[ "$OS" == "linux" ]]; then
         install_uv
         install_rust
+        # No-op unless --with-browser was passed. Runs here so the comis user
+        # (created next) inherits a host with Chromium already in /usr/bin.
+        install_browser_deps_linux || true
     fi
 
     ui_success "System dependencies ready"
@@ -2185,6 +2480,12 @@ reexec_as_comis_user() {
     [[ "$COMIS_VERSION" != "latest" ]] && forwarded_args+=(--version "$COMIS_VERSION")
     [[ "$USE_BETA" == "1" ]] && forwarded_args+=(--beta)
     [[ -n "$COMIS_TARBALL" ]] && forwarded_args+=(--tarball "$COMIS_TARBALL")
+    # Browser-tool flags need to propagate so the reexec'd child's run of
+    # install_cloakbrowser() (in the main flow) and register_service can see
+    # them. `su -` strips most env so we forward as explicit args.
+    [[ "$WITH_BROWSER" == "1" ]] && forwarded_args+=(--with-browser)
+    [[ "$WITH_XVFB" == "1" ]] && forwarded_args+=(--with-xvfb)
+    [[ "$WITH_CLOAKBROWSER" == "1" ]] && forwarded_args+=(--with-cloakbrowser)
 
     # Copy the install script to a location the comis user can read
     local script_copy="${comis_home}/.comis-install.sh"
@@ -3130,6 +3431,86 @@ resolve_service_template_vars() {
 
 # Write the rendered unit with a managed-by header + sha256 of the body.
 # The header lets us detect user edits on upgrade without clobbering them.
+render_xvfb_unit() {
+    [[ "$WITH_XVFB" == "1" ]] || return 0
+    # User-scope systemd-user installs can't write to /etc/systemd/system; in
+    # that case the operator owns Xvfb (or runs --with-xvfb under --service systemd).
+    # Skip and warn rather than mis-installing a system unit from a non-root run.
+    if ! is_root; then
+        ui_warn "--with-xvfb requires root to register comis-xvfb.service; skipping"
+        ui_info "Start Xvfb manually: Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp &"
+        return 0
+    fi
+
+    local target="/etc/systemd/system/comis-xvfb.service"
+    if [[ -f "$target" ]] && ! unit_is_managed "$target"; then
+        ui_warn "Existing unit at ${target} has been hand-edited; leaving untouched."
+        return 0
+    fi
+
+    ui_info "Writing Xvfb companion unit to ${target}"
+    local xvfb_body
+    xvfb_body="$(cat <<XVFB
+[Unit]
+Description=Comis virtual display for the browser tool
+After=network.target
+
+[Service]
+Type=simple
+User=${COMIS_SVC_USER}
+Group=${COMIS_SVC_GROUP}
+# -ac disables host-based access control; safe because -nolisten tcp keeps
+# the X server on a Unix-domain socket only. /tmp/.X11-unix/X99 is owned by
+# COMIS_SVC_USER, so only the comis daemon (running as the same user, joined
+# to the /tmp namespace of this service) can connect.
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp
+Restart=on-failure
+RestartSec=2s
+# Xvfb needs almost nothing.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target
+XVFB
+)"
+
+    local xvfb_checksum
+    if command -v sha256sum >/dev/null 2>&1; then
+        xvfb_checksum="$(printf '%s' "$xvfb_body" | sha256sum | cut -d' ' -f1)"
+    elif command -v shasum >/dev/null 2>&1; then
+        xvfb_checksum="$(printf '%s' "$xvfb_body" | shasum -a 256 | cut -d' ' -f1)"
+    else
+        xvfb_checksum="unknown"
+    fi
+
+    local tmp
+    tmp="$(mktempfile)"
+    cat > "$tmp" <<HDR
+# managed-by: comis-installer
+# template-version: 1
+# checksum: ${xvfb_checksum}
+# Do not edit by hand — the installer will refuse to overwrite a modified unit.
+HDR
+    printf '%s\n' "$xvfb_body" >> "$tmp"
+
+    maybe_sudo install -m 0644 "$tmp" "$target"
+
+    maybe_sudo systemctl daemon-reload
+    if [[ "$NO_AUTOSTART" != "1" ]]; then
+        run_quiet_step "Enabling comis-xvfb.service" maybe_sudo systemctl enable comis-xvfb.service
+    fi
+    if [[ "$NO_SERVICE_START" != "1" ]]; then
+        run_quiet_step "Starting comis-xvfb.service" maybe_sudo systemctl start comis-xvfb.service
+    fi
+    ui_success "Xvfb companion unit installed"
+}
+
 render_systemd_unit() {
     local target_path="$1"
     local scope="$2"  # "system" or "user"
@@ -3142,13 +3523,61 @@ render_systemd_unit() {
         group_line="# Group= (user scope)"
     fi
 
+    # Browser-tool template variants. All empty by default — only populated
+    # when --with-browser (and optionally --with-xvfb) is set. Computed pre-
+    # heredoc so the checksum baked at the top of the unit file matches the
+    # rendered body without post-render rewrites.
+    local COMIS_BROWSER_FS_WRITE_FLAGS=""
+    local COMIS_BROWSER_RW_PATHS=""
+    local COMIS_BROWSER_ENV_LINES=""
+    local COMIS_XVFB_AFTER=""
+    local COMIS_XVFB_WANTS=""
+    local COMIS_PRIVATE_TMP_LINE="PrivateTmp=yes"
+    if [[ "$WITH_BROWSER" == "1" ]]; then
+        # chrome-detection.ts:154 resolves the profile dir to
+        # $XDG_CONFIG_HOME/comis/browser/<profile>/user-data. Allow the daemon
+        # to write there at both the Node permission layer (--allow-fs-write)
+        # and the systemd sandbox layer (ReadWritePaths).
+        if [[ "$WITH_CLOAKBROWSER" == "1" ]]; then
+            # CloakBrowser writes to a different set of paths than Google Chrome:
+            #   ~/.cloakbrowser/        — binary cache + auto-update workspace
+            #                             (also extensions/ inside each version)
+            #   ~/.config/chromium/     — crashpad (vendor string is "Chromium",
+            #                             not "google-chrome")
+            # CloakBrowser does NOT write ~/.local/share/applications/mimeapps —
+            # the upstream Chromium default-browser registration is patched out.
+            # Tighter sandbox than the Chrome path.
+            COMIS_BROWSER_FS_WRITE_FLAGS=" --allow-fs-write=${COMIS_SVC_HOME}/.config/comis/browser --allow-fs-write=${COMIS_SVC_HOME}/.cloakbrowser --allow-fs-write=${COMIS_SVC_HOME}/.config/chromium"
+            COMIS_BROWSER_RW_PATHS=" ${COMIS_SVC_HOME}/.config/comis/browser ${COMIS_SVC_HOME}/.cloakbrowser ${COMIS_SVC_HOME}/.config/chromium"
+        else
+            # Stock Google Chrome writes outside the user-data-dir:
+            #   ~/.config/google-chrome/        — crashpad database, GCM store
+            #   ~/.local/share/applications/    — mimeapps.list (default-browser
+            #                                     registration; no flag disables)
+            # Without these, Chrome dies before opening the CDP socket on its
+            # first run under ProtectHome=read-only.
+            COMIS_BROWSER_FS_WRITE_FLAGS=" --allow-fs-write=${COMIS_SVC_HOME}/.config/comis/browser --allow-fs-write=${COMIS_SVC_HOME}/.config/google-chrome --allow-fs-write=${COMIS_SVC_HOME}/.local/share/applications"
+            COMIS_BROWSER_RW_PATHS=" ${COMIS_SVC_HOME}/.config/comis/browser ${COMIS_SVC_HOME}/.config/google-chrome ${COMIS_SVC_HOME}/.local/share/applications"
+        fi
+    fi
+    if [[ "$WITH_XVFB" == "1" ]]; then
+        # comis-xvfb.service owns the virtual display. JoinsNamespaceOf= shares
+        # /tmp with that service so the X11 socket at /tmp/.X11-unix/X99 is
+        # reachable from the daemon despite PrivateTmp=yes still being on.
+        COMIS_BROWSER_ENV_LINES="Environment=DISPLAY=:99"
+        COMIS_XVFB_AFTER=" comis-xvfb.service"
+        COMIS_XVFB_WANTS=" comis-xvfb.service"
+        COMIS_PRIVATE_TMP_LINE="PrivateTmp=yes
+JoinsNamespaceOf=comis-xvfb.service"
+    fi
+
     local body
     body="$(cat <<UNIT
 [Unit]
 Description=Comis AI Agent Daemon
 Documentation=https://docs.comis.ai/operations/systemd
-After=network-online.target
-Wants=network-online.target
+After=network-online.target${COMIS_XVFB_AFTER}
+Wants=network-online.target${COMIS_XVFB_WANTS}
 # StartLimit: after 3 restarts in 60s, enter 'failed' state instead of the
 # 9+ restart cascade seen in F1 (2026-04-19) when a broken native dep made
 # every boot attempt crash. Paired with the preflight doctor that exits 78
@@ -3182,7 +3611,7 @@ WorkingDirectory=${COMIS_WORKING_DIR}
 # --allow-addons + --allow-worker: native deps like sharp and better-sqlite3.
 # --jitless and MemoryDenyWriteExecute are intentionally NOT set: both break
 # WebAssembly, which bundled undici uses for HTTP parsing.
-ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=${COMIS_DATA_DIR} --allow-fs-write=${COMIS_SVC_HOME}/.npm --allow-fs-write=${COMIS_SVC_HOME}/.pi --allow-fs-write=/tmp --allow-child-process ${COMIS_DAEMON_JS}
+ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=${COMIS_DATA_DIR} --allow-fs-write=${COMIS_SVC_HOME}/.npm --allow-fs-write=${COMIS_SVC_HOME}/.pi --allow-fs-write=/tmp${COMIS_BROWSER_FS_WRITE_FLAGS} --allow-child-process ${COMIS_DAEMON_JS}
 
 Restart=on-failure
 RestartSec=5s
@@ -3224,18 +3653,19 @@ StandardError=journal
 SyslogIdentifier=comis
 
 Environment=NODE_ENV=production
+${COMIS_BROWSER_ENV_LINES}
 EnvironmentFile=-${COMIS_ENV_FILE}
 
 # --- Security hardening ---
 ProtectSystem=strict
 ProtectHome=read-only
-PrivateTmp=yes
+${COMIS_PRIVATE_TMP_LINE}
 # ReadWritePaths punches through ProtectHome=read-only for each of the runtime
 # write paths declared in --allow-fs-write above. Must match them or the Node
 # permission model will pass and the kernel will still deny.
 # ~/.cache is carved out for uv/uvx (Python-based MCP servers) — uv stores its
 # tool cache there and spawns as a non-Node child not subject to --allow-fs-write.
-ReadWritePaths=${COMIS_DATA_DIR} ${COMIS_SVC_HOME}/.npm ${COMIS_SVC_HOME}/.pi ${COMIS_SVC_HOME}/.cache
+ReadWritePaths=${COMIS_DATA_DIR} ${COMIS_SVC_HOME}/.npm ${COMIS_SVC_HOME}/.pi ${COMIS_SVC_HOME}/.cache${COMIS_BROWSER_RW_PATHS}
 
 # Privilege escalation prevention
 NoNewPrivileges=yes
@@ -3371,6 +3801,75 @@ ENV
     ui_success "Env file written to ${target}"
 }
 
+# Seed a `browser:` block into ~/.comis/config.yaml when --with-browser is set
+# and no browser block exists yet. Safe to call repeatedly: existing user
+# config is never overwritten.
+#
+# noSandbox=true is required when the daemon runs under a systemd-confined
+# user with NoNewPrivileges=yes: Chromium's setuid sandbox cannot elevate
+# anyway, so passing --no-sandbox is the supported path. With --with-xvfb we
+# also default headless=false so the agent uses the virtual display.
+maybe_seed_browser_config() {
+    [[ "$WITH_BROWSER" == "1" ]] || return 0
+    local cfg="$COMIS_CONFIG_FILE"
+    [[ -n "$cfg" ]] || return 0
+
+    if [[ -f "$cfg" ]] && grep -q '^browser:' "$cfg" 2>/dev/null; then
+        ui_info "browser: block already present in ${cfg}; leaving untouched"
+        return 0
+    fi
+
+    local headless_value="true"
+    local source_flag="--with-browser"
+    [[ "$WITH_CLOAKBROWSER" == "1" ]] && source_flag="--with-cloakbrowser"
+    if [[ "$WITH_XVFB" == "1" ]]; then
+        headless_value="false"
+        source_flag="${source_flag} --with-xvfb"
+    fi
+
+    local block
+    block="$(cat <<YAML
+
+# Browser tool — installed via ${source_flag}
+# noSandbox: required under systemd NoNewPrivileges=yes (the Chrome setuid
+# sandbox cannot elevate anyway; --no-sandbox is the supported path).
+# headless=false when Xvfb is present so the daemon uses the virtual display.
+browser:
+  enabled: true
+  noSandbox: true
+  headless: ${headless_value}
+YAML
+)"
+
+    local tmp
+    tmp="$(mktempfile)"
+    if [[ -f "$cfg" ]]; then
+        cat "$cfg" > "$tmp"
+    else
+        : > "$tmp"
+    fi
+    printf '%s\n' "$block" >> "$tmp"
+
+    # Two paths:
+    #   * Non-root install (operator or reexec'd comis user, or --service
+    #     none / Docker): write directly. Do NOT route through maybe_sudo —
+    #     that would unnecessarily escalate via sudo and create a root-owned
+    #     file in the user's own HOME (broken under Docker, and surprising
+    #     elsewhere). Plain `install` inherits the current user's ownership.
+    #   * Root install with a dedicated COMIS_USER (systemd dedicated-user
+    #     flow): write as root with -o $COMIS_SVC_USER so the daemon can
+    #     read it.
+    if ! is_root; then
+        install -m 0600 "$tmp" "$cfg"
+    elif [[ -n "${COMIS_SVC_USER:-}" ]] && comis_user_exists; then
+        install -m 0600 -o "$COMIS_SVC_USER" -g "${COMIS_SVC_GROUP:-$COMIS_SVC_USER}" "$tmp" "$cfg" 2>/dev/null || \
+            install -m 0600 "$tmp" "$cfg"
+    else
+        install -m 0600 "$tmp" "$cfg"
+    fi
+    ui_success "Seeded browser config block in ${cfg}"
+}
+
 # Poll the gateway health endpoint after service start.
 wait_for_daemon_ready() {
     local host="localhost"
@@ -3407,6 +3906,10 @@ register_service_systemd() {
 
     cleanup_legacy_daemon_state
 
+    # Xvfb companion unit must exist before comis.service is enabled so its
+    # Wants=/After=comis-xvfb.service dependency resolves on first boot.
+    render_xvfb_unit || ui_warn "Xvfb companion unit setup encountered errors"
+
     if [[ -f "$unit_path" ]] && ! unit_is_managed "$unit_path"; then
         ui_warn "Existing unit at ${unit_path} has been hand-edited; leaving untouched."
         ui_info "To regenerate, remove it first: sudo rm ${unit_path} && rerun the installer."
@@ -3428,7 +3931,32 @@ register_service_systemd() {
     maybe_sudo mkdir -p "${COMIS_SVC_HOME}/.npm" "${COMIS_SVC_HOME}/.pi" "${COMIS_SVC_HOME}/.cache"
     maybe_sudo chown "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" "${COMIS_SVC_HOME}/.npm" "${COMIS_SVC_HOME}/.pi" "${COMIS_SVC_HOME}/.cache"
 
+    # Browser profile dir (only when --with-browser). chrome-detection.ts
+    # resolves the user data dir to $XDG_CONFIG_HOME/comis/browser/<profile>;
+    # render_systemd_unit adds the path to ReadWritePaths so the systemd
+    # sandbox lets the browser write here. We also pre-create the paths
+    # the binary touches outside the user-data-dir — set differs for
+    # stock Chrome vs CloakBrowser (see render_systemd_unit for rationale).
+    if [[ "$WITH_BROWSER" == "1" ]]; then
+        if [[ "$WITH_CLOAKBROWSER" == "1" ]]; then
+            maybe_sudo mkdir -p \
+                "${COMIS_SVC_HOME}/.config/comis/browser" \
+                "${COMIS_SVC_HOME}/.cloakbrowser" \
+                "${COMIS_SVC_HOME}/.config/chromium"
+            maybe_sudo chown -R "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" \
+                "${COMIS_SVC_HOME}/.config" "${COMIS_SVC_HOME}/.cloakbrowser"
+        else
+            maybe_sudo mkdir -p \
+                "${COMIS_SVC_HOME}/.config/comis/browser" \
+                "${COMIS_SVC_HOME}/.config/google-chrome" \
+                "${COMIS_SVC_HOME}/.local/share/applications"
+            maybe_sudo chown -R "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" \
+                "${COMIS_SVC_HOME}/.config" "${COMIS_SVC_HOME}/.local"
+        fi
+    fi
+
     render_env_file
+    maybe_seed_browser_config
 
     # Allow the comis user to manage its own systemd service without a password.
     local sudoers_file="/etc/sudoers.d/comis"
@@ -3485,6 +4013,20 @@ register_service_systemd_user() {
     # data dir must exist before rendering the unit (so render sees a valid
     # path and so systemd can bind-mount it via ReadWritePaths).
     mkdir -p "$COMIS_DATA_DIR"
+    if [[ "$WITH_BROWSER" == "1" ]]; then
+        if [[ "$WITH_CLOAKBROWSER" == "1" ]]; then
+            mkdir -p \
+                "${HOME}/.config/comis/browser" \
+                "${HOME}/.cloakbrowser" \
+                "${HOME}/.config/chromium"
+        else
+            mkdir -p \
+                "${HOME}/.config/comis/browser" \
+                "${HOME}/.config/google-chrome" \
+                "${HOME}/.local/share/applications"
+        fi
+    fi
+    maybe_seed_browser_config
     local user_env="${COMIS_DATA_DIR}/env"
     if [[ ! -f "$user_env" ]]; then
         cat > "$user_env" <<ENV
@@ -3861,6 +4403,30 @@ uninstall_systemd_unit() {
     ui_success "Removed systemd unit (${scope} scope)"
 }
 
+uninstall_xvfb_unit() {
+    # Companion unit installed by --with-xvfb. System-scope only (the
+    # render_xvfb_unit function refuses to write a user-scope unit).
+    local unit_path="/etc/systemd/system/comis-xvfb.service"
+    [[ -f "$unit_path" ]] || return 0
+
+    if ! unit_is_managed "$unit_path"; then
+        ui_warn "${unit_path} was hand-edited; leaving in place."
+        ui_info "Remove manually if desired: rm ${unit_path}"
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: systemctl disable --now comis-xvfb.service"
+        ui_info "[dry-run] would: rm ${unit_path} && systemctl daemon-reload"
+        return 0
+    fi
+    maybe_sudo systemctl disable --now comis-xvfb.service 2>/dev/null || true
+    maybe_sudo rm -f "$unit_path"
+    maybe_sudo systemctl daemon-reload
+    maybe_sudo systemctl reset-failed comis-xvfb.service 2>/dev/null || true
+    ui_success "Removed comis-xvfb.service"
+}
+
 uninstall_pm2() {
     if ! command -v pm2 >/dev/null 2>&1; then
         return 0
@@ -3928,16 +4494,37 @@ uninstall_purge_data() {
     [[ "$PURGE" == "1" ]] || return 0
 
     local data_dir="${HOME}/.comis"
-    # If running as root for a service user, also clean ~comis/.comis
+    # If running as root for a service user, also clean ~comis/.comis (and the
+    # cloakbrowser cache + wrapper, both written by install_cloakbrowser()).
     local comis_user_home=""
     if is_root && id "$COMIS_USER" &>/dev/null; then
         comis_user_home="$(getent passwd "$COMIS_USER" | cut -d: -f6)"
+    fi
+
+    # Cloakbrowser artifacts (created by --with-cloakbrowser installs):
+    #   .cloakbrowser/           — stealth Chromium binary cache (~200MB per
+    #                              version, auto-update may keep ≥1 version)
+    #   .cloakbrowser-wrapper/   — installer-managed npm wrapper dir
+    # Both belong to the daemon's user; safe to purge with the rest of the
+    # daemon's data when --purge is set.
+    local cloak_paths=(
+        "${HOME}/.cloakbrowser"
+        "${HOME}/.cloakbrowser-wrapper"
+    )
+    if [[ -n "$comis_user_home" ]]; then
+        cloak_paths+=(
+            "${comis_user_home}/.cloakbrowser"
+            "${comis_user_home}/.cloakbrowser-wrapper"
+        )
     fi
 
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_info "[dry-run] would: rm -rf ${data_dir}"
         [[ -n "$comis_user_home" ]] && ui_info "[dry-run] would: rm -rf ${comis_user_home}/.comis"
         ui_info "[dry-run] would: rm -rf /etc/comis /var/log/comis"
+        for p in "${cloak_paths[@]}"; do
+            [[ -d "$p" ]] && ui_info "[dry-run] would: rm -rf ${p}"
+        done
         return 0
     fi
 
@@ -3960,6 +4547,20 @@ uninstall_purge_data() {
         maybe_sudo rm -rf /var/log/comis
         ui_success "Removed /var/log/comis"
     fi
+
+    # CloakBrowser cache + wrapper. Use maybe_sudo for paths owned by the
+    # service user; current-user paths fall through to a plain rm.
+    for p in "${cloak_paths[@]}"; do
+        [[ -d "$p" ]] || continue
+        local owner_uid
+        owner_uid="$(stat -c %u "$p" 2>/dev/null || stat -f %u "$p" 2>/dev/null || echo "")"
+        if [[ "$owner_uid" == "$(id -u)" ]]; then
+            rm -rf "$p"
+        else
+            maybe_sudo rm -rf "$p"
+        fi
+        ui_success "Removed ${p}"
+    done
 }
 
 uninstall_remove_user() {
@@ -4012,6 +4613,7 @@ uninstall_main() {
     # Try all three paths — they're all idempotent no-ops if nothing matches
     uninstall_systemd_unit "system"
     [[ "$OS" == "linux" ]] && [[ "${HOME}" != "/root" ]] && uninstall_systemd_unit "user"
+    uninstall_xvfb_unit
     uninstall_pm2
     uninstall_direct_daemon
 
@@ -4241,10 +4843,42 @@ main() {
         run_doctor
     fi
 
+    # CloakBrowser binary provisioning (per-user; runs in both the reexec'd
+    # child and the non-root operator flow). No-op unless --with-cloakbrowser
+    # is set. Must happen before register_service so the daemon's first start
+    # finds the binary at ~/.cloakbrowser/.
+    if [[ "$OS" == "linux" && "$WITH_CLOAKBROWSER" == "1" ]]; then
+        install_cloakbrowser || true
+    fi
+
+    # Seed the browser config block here (in addition to the systemd-scope
+    # call inside register_service_systemd) so that --service none / Docker
+    # paths also get config.yaml populated. maybe_seed_browser_config is
+    # idempotent: it skips when a `browser:` block already exists, and runs
+    # only when --with-browser / --with-cloakbrowser / --with-xvfb is set.
+    if [[ "$WITH_BROWSER" == "1" ]] && [[ "$COMIS_REEXEC" != "1" ]]; then
+        # In the dedicated-user root flow, COMIS_CONFIG_FILE is set by
+        # resolve_service_template_vars (called from register_service). When
+        # --service none is in play that doesn't run, so we resolve the
+        # config path here too. Default to the current user's ~/.comis path.
+        if [[ -z "${COMIS_CONFIG_FILE:-}" ]]; then
+            COMIS_CONFIG_FILE="${HOME}/.comis/config.yaml"
+            mkdir -p "${HOME}/.comis" 2>/dev/null || true
+        fi
+        maybe_seed_browser_config
+    fi
+
     # Register the daemon with the selected service manager.
     # For re-exec'd children (SERVICE_MANAGER=none), this is a silent no-op —
     # service registration and the success banner are the root parent's job.
     if [[ "$COMIS_REEXEC" != "1" ]]; then
+        # Browser runtime — no-op unless --with-browser was passed. Runs here
+        # so the non-root install path also gets Chromium provisioned (root +
+        # dedicated-user installs hit install_browser_deps_linux earlier via
+        # install_system_deps_as_root).
+        if [[ "$OS" == "linux" ]]; then
+            install_browser_deps_linux || true
+        fi
         register_service || ui_warn "Service registration encountered errors (see above)"
     fi
 

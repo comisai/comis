@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import { extractJidPhone, isWhatsAppGroupJid } from "./jid-utils.js";
 import { buildWhatsAppAttachments } from "./media-handler.js";
 import { normalizeLocation } from "../shared/location-normalizer.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Baileys message type (minimal subset)
@@ -78,7 +79,7 @@ export interface BaileysMessage {
  */
 function toMillis(ts: BaileysMessage["messageTimestamp"]): number {
   if (ts == null) {
-    return Date.now();
+    return systemNowMs();
   }
   if (typeof ts === "number") {
     return ts * 1000;

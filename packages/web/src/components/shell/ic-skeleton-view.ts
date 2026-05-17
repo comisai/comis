@@ -2,6 +2,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "../../styles/shared.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // Side-effect import to register ic-loading custom element
 import "../feedback/ic-loading.js";
@@ -133,7 +134,7 @@ export class IcSkeletonView extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this._delayTimer = setTimeout(() => {
+    this._delayTimer = systemSetTimeout(() => {
       this._showSkeleton = true;
     }, 150);
   }
@@ -141,7 +142,7 @@ export class IcSkeletonView extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._delayTimer) {
-      clearTimeout(this._delayTimer);
+      systemClearTimeout(this._delayTimer);
       this._delayTimer = null;
     }
   }

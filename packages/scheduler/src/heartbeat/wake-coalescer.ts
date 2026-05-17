@@ -20,6 +20,7 @@ import type {
   WakeCoalescer,
 } from "./wake-types.js";
 import { WAKE_PRIORITY } from "./wake-types.js";
+import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 /**
  * Create a wake coalescer that debounces rapid heartbeat wake requests.
@@ -81,7 +82,7 @@ export function createWakeCoalescer(deps: WakeCoalescerDeps): WakeCoalescer {
       }
 
       // Schedule a single retry after busyRetryMs
-      const retryTimer = setTimeout(() => {
+      const retryTimer = systemSetTimeout(() => {
         // Remove the retry entry and re-request
         const entry = pending.get(key);
         if (entry) {
@@ -113,13 +114,13 @@ export function createWakeCoalescer(deps: WakeCoalescerDeps): WakeCoalescer {
     if (existingPending) {
       if (priority > existingPending.priority) {
         // Higher priority: replace reason and reset debounce timer
-        clearTimeout(existingPending.debounceTimer);
+        systemClearTimeout(existingPending.debounceTimer);
         const oldReason = existingPending.reason;
 
         existingPending.reason = reason;
         existingPending.priority = priority;
 
-        const debounceTimer = setTimeout(() => {
+        const debounceTimer = systemSetTimeout(() => {
           const entry = pending.get(key);
           if (!entry) return;
           pending.delete(key);
@@ -143,7 +144,7 @@ export function createWakeCoalescer(deps: WakeCoalescerDeps): WakeCoalescer {
     }
 
     // ---- New pending entry with debounce timer ----
-    const debounceTimer = setTimeout(() => {
+    const debounceTimer = systemSetTimeout(() => {
       const entry = pending.get(key);
       if (!entry) return;
       pending.delete(key);
@@ -161,9 +162,9 @@ export function createWakeCoalescer(deps: WakeCoalescerDeps): WakeCoalescer {
 
   function shutdown(): void {
     for (const [, entry] of pending) {
-      clearTimeout(entry.debounceTimer);
+      systemClearTimeout(entry.debounceTimer);
       if (entry.retryTimer !== undefined) {
-        clearTimeout(entry.retryTimer);
+        systemClearTimeout(entry.retryTimer);
       }
     }
     pending.clear();

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: background task persistence re-raise (line 147) inside try/catch wrapper; outer caller (executor) catches at PiExecutor boundary which is itself consumed by daemon RPC handlers.
 /**
  * File-based persistence for background tasks.
  *
@@ -8,7 +9,7 @@
  * @module
  */
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, unlinkSync, existsSync } from "node:fs";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import type { BackgroundTask, PersistedTaskState } from "./background-task-types.js";
 
 /** Directory name under data dir for background task state files. */
@@ -122,7 +123,7 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
         if (task.status === "running") {
           task.status = "failed";
           task.error = "Daemon restarted while task was running";
-          task.completedAt = Date.now();
+          task.completedAt = systemNowMs();
           writeFileSync(filePath, JSON.stringify(task, null, 2), "utf-8");
         }
         recovered.push(task);

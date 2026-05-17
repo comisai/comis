@@ -16,7 +16,8 @@
  * @module
  */
 
-import type { ContextStore } from "@comis/memory";
+import type { ContextStorePort } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import type {
   TokenBudget,
   DagCompactionConfig,
@@ -50,7 +51,7 @@ const MAX_TRAVERSAL_DEPTH = 10;
  * @returns Whether the conversation should be compacted
  */
 export function shouldCompact(
-  store: ContextStore,
+  store: ContextStorePort,
   conversationId: string,
   config: { contextThreshold: number },
   budget: TokenBudget,
@@ -83,7 +84,7 @@ export function shouldCompact(
  * @param depth - Current recursion depth (default 0, internal use)
  */
 export function markAncestorsDirty(
-  store: ContextStore,
+  store: ContextStorePort,
   summaryId: string,
   depth = 0,
 ): void {
@@ -120,7 +121,7 @@ export function markAncestorsDirty(
  * @returns Aggregated message and summary counts for this subtree
  */
 export function recomputeDescendantCounts(
-  store: ContextStore,
+  store: ContextStorePort,
   summaryId: string,
   depth = 0,
 ): { messageCount: number; summaryCount: number } {
@@ -197,7 +198,7 @@ export async function runDagCompaction(
   deps: DagCompactionDeps,
 ): Promise<CompactionResult> {
   // Step 1: Record start time
-  const startTime = Date.now();
+  const startTime = systemNowMs();
 
   // Step 2: Run leaf pass
   const leafResult = await runLeafPass(conversationId, {
@@ -237,7 +238,7 @@ export async function runDagCompaction(
   }
 
   // Step 5: Compute duration
-  const durationMs = Date.now() - startTime;
+  const durationMs = systemNowMs() - startTime;
 
   // Step 6: Build CompactionResult
   const totalCondensedCreated = condensedResults.reduce((sum, r) => sum + r.created, 0);
@@ -269,7 +270,7 @@ export async function runDagCompaction(
     maxDepthReached,
     totalSummariesCreated: totalCreated,
     durationMs,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   } satisfies DagCompactionEvent);
 
   // Step 8: Log INFO with overall compaction stats

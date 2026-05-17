@@ -26,8 +26,11 @@ import {
   afterEach,
   vi,
 } from "vitest";
-import type { TypedEventBus } from "@comis/core";
-import { createOAuthCredentialStoreFile } from "@comis/agent";
+import {
+  type TypedEventBus,
+  createFileLock,
+  createOAuthCredentialStoreFile,
+} from "@comis/core";
 import {
   createOAuthCallbackRoute,
   insertPendingFlow,
@@ -37,6 +40,8 @@ import {
   createMockOAuthServer,
   type MockOAuthServer,
 } from "../support/mock-oauth-server.js";
+
+const fileLock = createFileLock();
 
 let mockServer: MockOAuthServer;
 let mockBaseUrl: string;
@@ -108,7 +113,7 @@ describe("gateway callback end-to-end", () => {
   it("validates state, exchanges code, stores profile, emits auth:profile_bootstrapped, returns 200 HTML", async () => {
     const tmpDir = freshTmpDataDir();
     try {
-      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
       const emittedEvents: Array<{ name: string; payload: unknown }> = [];
       const eventBus = {
         emit: vi.fn((name: string, payload: unknown) => {
@@ -166,7 +171,7 @@ describe("pending-flow cleanup", () => {
       // Force the existing /oauth/token branch to error.
       mockServer.setNextResponse({ status: 500, body: { error: "server_error" } });
 
-      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
       const eventBus = { emit: vi.fn() } as unknown as TypedEventBus;
       const logger = makeMockLogger();
       const pendingFlows = new Map<string, PendingFlow>();
@@ -225,7 +230,7 @@ describe("state validation 400 paths", () => {
   it("returns 400 with no store mutation when state is unknown", async () => {
     const tmpDir = freshTmpDataDir();
     try {
-      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
       const eventBus = { emit: vi.fn() } as unknown as TypedEventBus;
       const logger = makeMockLogger();
       const pendingFlows = new Map<string, PendingFlow>();
@@ -262,7 +267,7 @@ describe("state validation 400 paths", () => {
   it("returns 400 when state and provider mismatch (preserves entry for legitimate provider)", async () => {
     const tmpDir = freshTmpDataDir();
     try {
-      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
       const eventBus = { emit: vi.fn() } as unknown as TypedEventBus;
       const logger = makeMockLogger();
       const pendingFlows = new Map<string, PendingFlow>();

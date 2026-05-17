@@ -10,9 +10,8 @@
  * no LLM, no network). Follows the established pattern from
  * test/integration/subagent-pipeline.test.ts.
  *
- * Covers:
- * - TEST-03 (partial): Prompt timeout to error delivery E2E
- * - OBSV-03 (partial): ERROR with errorKind:'internal' verified via mock logger
+ * Covers prompt-timeout to error-delivery end-to-end, plus an ERROR-level
+ * log with errorKind:'internal' verified via mock logger.
  *
  * @module
  */
@@ -24,11 +23,43 @@ import { join } from "node:path";
 
 import {
   createSubAgentRunner,
+  PromptTimeoutError,
   type SubAgentRunnerDeps,
-} from "@comis/daemon";
-
-import { PromptTimeoutError } from "@comis/agent";
+} from "@comis/agent";
 import { TypedEventBus } from "@comis/core";
+import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Lightweight port wrappers that delegate to globals.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 // ---------------------------------------------------------------------------
 // Shared temp directory
@@ -101,6 +132,8 @@ function buildIntegrationDeps(
     tenantId: "test-prompt-timeout",
     dataDir: tmpDir,
     logger: mockLogger,
+    clock: testClock,
+    timers: testTimers,
     ...overrides,
   } as SubAgentRunnerDeps & { eventBus: TypedEventBus };
 }
@@ -182,7 +215,7 @@ describe("resilience E2E: prompt timeout pipeline", () => {
     expect(completedEvents[0]!.runId).toBe(runId);
     expect(completedEvents[0]!.success).toBe(false);
 
-    // OBSV-03: Verify ERROR log with errorKind:'internal' (runner catch-all)
+    // Verify ERROR log with errorKind:'internal' (runner catch-all)
     expect(deps.logger!.error).toHaveBeenCalledWith(
       expect.objectContaining({
         errorKind: "internal",

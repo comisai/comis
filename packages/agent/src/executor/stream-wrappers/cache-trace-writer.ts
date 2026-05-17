@@ -11,8 +11,8 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, statSync, renameSync, unlinkSync } from "node:fs";
 
-import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { ComisLogger } from "@comis/infra";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import type { ComisLogger } from "@comis/core";
 
 import type { StreamFnWrapper } from "./types.js";
 
@@ -34,6 +34,8 @@ export interface CacheTraceConfig {
   maxSize?: string;
   /** Number of rotated files to keep. Undefined = no rotation. */
   maxFiles?: number;
+  /** Wall-clock + monotonic time reads. */
+  clock: import("@comis/core").ClockPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +180,7 @@ export function createCacheTraceWriter(
       appendJsonlLine(
         config.filePath,
         {
-          ts: new Date().toISOString(),
+          ts: config.clock.nowDate().toISOString(),
           type: "cache_trace",
           agentId: config.agentId,
           sessionId: config.sessionId,

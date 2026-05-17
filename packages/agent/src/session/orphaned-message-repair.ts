@@ -34,7 +34,8 @@ import type {
   SessionManager,
   SessionEntry,
   SessionMessageEntry,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -192,13 +193,13 @@ function createSyntheticMessage(role: "user" | "assistant", text: string): any {
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
       stopReason: "stop" as const,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     };
   }
   return {
     role: "user",
     content: text,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   };
 }
 

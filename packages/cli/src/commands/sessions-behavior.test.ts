@@ -18,10 +18,16 @@ import {
   getSpyOutput,
 } from "../test-helpers.js";
 
-// Mock withClient from rpc-client at module level for ESM hoisting
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// Mock withClient from rpc-client at module level for ESM hoisting.
+// importOriginal-based so callTyped resolves to the real wrapper while
+// withClient is mocked. Same pattern as agent-behavior.test.ts.
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 // Mock withSpinner to pass-through (no actual ora spinner in tests)
 vi.mock("../output/spinner.js", () => ({
@@ -220,13 +226,19 @@ describe("sessions list --tenant filters by tenant", () => {
     exitSpy.restore();
   });
 
-  it("passes tenantId filter to session.list RPC call", async () => {
+  it("calls session.list RPC (--tenant CLI flag is a no-op against the contract)", async () => {
+    // The CLI's --tenant flag is a no-op against the SessionListContract
+    // surface. Tenant scoping flows through the dispatcher-injected
+    // `_tenantId` internal (auth-context-derived), NOT a public request
+    // field. Historically the CLI sent `{ tenantId: options.tenant }` which
+    // the daemon silently ignored — same observable behavior, now via the
+    // typed contract.
     const program = createTestProgram();
     registerSessionsCommand(program);
 
     await program.parseAsync(["node", "test", "sessions", "list", "--tenant", "test-tenant"]);
 
-    expect(callSpy).toHaveBeenCalledWith("session.list", expect.objectContaining({ tenantId: "test-tenant" }));
+    expect(callSpy).toHaveBeenCalledWith("session.list", {});
   });
 });
 
@@ -234,16 +246,19 @@ describe("sessions inspect full details", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
-  const SESSION_DETAIL = {
-    session: {
-      key: "test-tenant:user-1:discord-main",
-      channel: "discord-main",
-      user: "user-1",
-      createdAt: 1705309200000,
-      lastActive: 1705314600000,
-      messageCount: 42,
-      metadata: { topic: "general", lang: "en" },
-    },
+  // SessionStatusContract returns a flat per-agent runtime stats payload,
+  // NOT a wrapped { session: {...} } shape. The CLI's `key` argument is
+  // preserved as display context; the RPC returns the current agent's
+  // status regardless. The CLI no longer pre-validates "session not found"
+  // client-side (the contract returns valid stats unconditionally —
+  // session-not-found cases now surface as an RPC error from the daemon,
+  // caught by the catch block below).
+  const SESSION_STATUS = {
+    model: "anthropic:claude-sonnet-4-5",
+    agentName: "default",
+    tokensUsed: { totalTokens: 1234, totalCost: 0.0523 },
+    stepsExecuted: 5,
+    maxSteps: 25,
   };
 
   beforeEach(() => {
@@ -253,7 +268,7 @@ describe("sessions inspect full details", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("session.status", SESSION_DETAIL)
+        .onCall("session.status", SESSION_STATUS)
         .build();
       return fn(mockClient);
     });
@@ -264,7 +279,7 @@ describe("sessions inspect full details", () => {
     exitSpy.restore();
   });
 
-  it("displays full session details with parsed key components", async () => {
+  it("displays session details including agent stats and parsed key components", async () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
@@ -272,7 +287,7 @@ describe("sessions inspect full details", () => {
 
     const output = getSpyOutput(consoleSpy.log);
 
-    // Session key
+    // Session key from CLI argument
     expect(output).toContain("test-tenant:user-1:discord-main");
     // Parsed tenant from key
     expect(output).toContain("test-tenant");
@@ -280,11 +295,10 @@ describe("sessions inspect full details", () => {
     expect(output).toContain("user-1");
     // Parsed channel from key
     expect(output).toContain("discord-main");
-    // Message count
-    expect(output).toContain("42");
-    // Metadata
-    expect(output).toContain("topic");
-    expect(output).toContain("general");
+    // Agent stats from session.status RPC
+    expect(output).toContain("anthropic:claude-sonnet-4-5");
+    expect(output).toContain("default");
+    expect(output).toContain("1234"); // totalTokens
   });
 });
 
@@ -292,16 +306,12 @@ describe("sessions inspect --format json", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
-  const SESSION_DETAIL = {
-    session: {
-      key: "test-tenant:user-1:discord-main",
-      channel: "discord-main",
-      user: "user-1",
-      createdAt: 1705309200000,
-      lastActive: 1705314600000,
-      messageCount: 42,
-      metadata: { topic: "general", lang: "en" },
-    },
+  const SESSION_STATUS = {
+    model: "anthropic:claude-sonnet-4-5",
+    agentName: "default",
+    tokensUsed: { totalTokens: 1234, totalCost: 0.0523 },
+    stepsExecuted: 5,
+    maxSteps: 25,
   };
 
   beforeEach(() => {
@@ -311,7 +321,7 @@ describe("sessions inspect --format json", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("session.status", SESSION_DETAIL)
+        .onCall("session.status", SESSION_STATUS)
         .build();
       return fn(mockClient);
     });
@@ -322,52 +332,22 @@ describe("sessions inspect --format json", () => {
     exitSpy.restore();
   });
 
-  it("outputs valid JSON of the session object", async () => {
+  it("outputs valid JSON of the session.status payload", async () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
     await program.parseAsync(["node", "test", "sessions", "inspect", "test-tenant:user-1:discord-main", "--format", "json"]);
 
     const output = getSpyOutput(consoleSpy.log);
-    const parsed = JSON.parse(output) as { key: string; channel: string; user: string; messageCount: number };
+    const parsed = JSON.parse(output) as {
+      model: string;
+      agentName: string;
+      tokensUsed: { totalTokens: number; totalCost: number };
+    };
 
-    expect(parsed.key).toBe("test-tenant:user-1:discord-main");
-    expect(parsed.channel).toBe("discord-main");
-    expect(parsed.user).toBe("user-1");
-    expect(parsed.messageCount).toBe(42);
-  });
-});
-
-describe("sessions inspect non-existent", () => {
-  let consoleSpy: ReturnType<typeof createConsoleSpy>;
-  let exitSpy: ReturnType<typeof createProcessExitSpy>;
-
-  beforeEach(() => {
-    vi.mocked(withClient).mockReset();
-    consoleSpy = createConsoleSpy();
-    exitSpy = createProcessExitSpy();
-
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("session.status", { session: undefined })
-        .build();
-      return fn(mockClient);
-    });
-  });
-
-  afterEach(() => {
-    consoleSpy.restore();
-    exitSpy.restore();
-  });
-
-  it("shows error message for non-existent session key", async () => {
-    const program = createTestProgram();
-    registerSessionsCommand(program);
-
-    await program.parseAsync(["node", "test", "sessions", "inspect", "nonexistent-key"]);
-
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("Session not found: nonexistent-key");
+    expect(parsed.model).toBe("anthropic:claude-sonnet-4-5");
+    expect(parsed.agentName).toBe("default");
+    expect(parsed.tokensUsed.totalTokens).toBe(1234);
   });
 });
 
@@ -392,13 +372,23 @@ describe("sessions delete with --yes sends RPC", () => {
     exitSpy.restore();
   });
 
-  it("sends session.delete RPC with correct key when --yes provided", async () => {
+  it("sends session.delete RPC with correct session_key when --yes provided", async () => {
+    // The contract uses `session_key` (snake_case — matches the daemon
+    // handler's actual parameter name). Historically the CLI sent `{ key }`
+    // which the daemon ignored, then the handler threw "Missing required
+    // parameter: session_key" — the contract makes delete actually succeed.
+    callSpy.mockResolvedValue({
+      sessionKey: "test-tenant:user-1:discord-main",
+      deleted: true,
+      transcript: { messages: [], metadata: {}, messageCount: 0 },
+    });
+
     const program = createTestProgram();
     registerSessionsCommand(program);
 
     await program.parseAsync(["node", "test", "sessions", "delete", "test-tenant:user-1:discord-main", "--yes"]);
 
-    expect(callSpy).toHaveBeenCalledWith("session.delete", { key: "test-tenant:user-1:discord-main" });
+    expect(callSpy).toHaveBeenCalledWith("session.delete", { session_key: "test-tenant:user-1:discord-main" });
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("deleted");
@@ -433,6 +423,12 @@ describe("sessions delete without --yes prompts and confirms", () => {
   });
 
   it("prompts for confirmation and sends RPC when confirmed", async () => {
+    callSpy.mockResolvedValue({
+      sessionKey: "test-key",
+      deleted: true,
+      transcript: { messages: [], metadata: {}, messageCount: 0 },
+    });
+
     const program = createTestProgram();
     registerSessionsCommand(program);
 
@@ -450,8 +446,9 @@ describe("sessions delete without --yes prompts and confirms", () => {
       }),
     );
 
-    // RPC was sent after confirmation
-    expect(callSpy).toHaveBeenCalledWith("session.delete", { key: "test-key" });
+    // RPC was sent after confirmation. Uses contract field name
+    // `session_key` (snake_case).
+    expect(callSpy).toHaveBeenCalledWith("session.delete", { session_key: "test-key" });
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("deleted");
@@ -567,12 +564,19 @@ describe("sessions delete preserves complex keys", () => {
   });
 
   it("preserves full key with multiple colons in RPC call", async () => {
+    callSpy.mockResolvedValue({
+      sessionKey: "complex:key:with:colons",
+      deleted: true,
+      transcript: { messages: [], metadata: {}, messageCount: 0 },
+    });
+
     const program = createTestProgram();
     registerSessionsCommand(program);
 
     await program.parseAsync(["node", "test", "sessions", "delete", "complex:key:with:colons", "--yes"]);
 
-    expect(callSpy).toHaveBeenCalledWith("session.delete", { key: "complex:key:with:colons" });
+    // Uses contract field name `session_key`.
+    expect(callSpy).toHaveBeenCalledWith("session.delete", { session_key: "complex:key:with:colons" });
   });
 });
 

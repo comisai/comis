@@ -12,7 +12,8 @@
 
 import { ImapFlow } from "imapflow";
 import { ok, err, fromPromise, type Result } from "@comis/shared";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
+import { systemClearInterval, systemClearTimeout, systemNowMs, systemSetInterval, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -120,7 +121,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       }
     } catch (e) {
       opts.logger.warn(
-        { err: e, channelType: "email", submodule: "imap", hint: "Fetch failed, will retry on next event", errorKind: "network" },
+        { err: e, channelType: "email", submodule: "imap", hint: "Fetch failed, will retry on next event", errorKind: "network" as const },
         "Failed to fetch new messages",
       );
     }
@@ -138,7 +139,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       "Scheduling IMAP reconnect",
     );
 
-    reconnectTimer = setTimeout(() => {
+    reconnectTimer = systemSetTimeout(() => {
       if (stopped) return;
       void connectAndListen();
     }, delay);
@@ -172,7 +173,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       // Check if this is an IDLE-related error for polling fallback
       if (e.message && /idle/i.test(e.message)) {
         opts.logger.warn(
-          { channelType: "email", submodule: "imap", hint: "Falling back to polling", errorKind: "capability" },
+          { channelType: "email", submodule: "imap", hint: "Falling back to polling", errorKind: "platform" as const },
           "IDLE not supported, switching to polling fallback",
         );
         startPolling();
@@ -182,18 +183,18 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
     const connectResult = await fromPromise(client.connect());
     if (!connectResult.ok) {
       opts.logger.error(
-        { err: connectResult.error, channelType: "email", submodule: "imap", hint: "Check IMAP credentials and host", errorKind: "network" },
+        { err: connectResult.error, channelType: "email", submodule: "imap", hint: "Check IMAP credentials and host", errorKind: "network" as const },
         "IMAP connection failed",
       );
       scheduleReconnect();
       return err(connectResult.error instanceof Error ? connectResult.error : new Error(String(connectResult.error)));
     }
 
-    connectedAt = Date.now();
+    connectedAt = systemNowMs();
 
     // Reset backoff if stable
-    setTimeout(() => {
-      if (connectedAt > 0 && Date.now() - connectedAt >= STABLE_CONNECTION_MS) {
+    systemSetTimeout(() => {
+      if (connectedAt > 0 && systemNowMs() - connectedAt >= STABLE_CONNECTION_MS) {
         reconnectDelay = RECONNECT_BASE_MS;
       }
     }, STABLE_CONNECTION_MS + 1000);
@@ -201,7 +202,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
     const lockResult = await fromPromise(client.getMailboxLock("INBOX"));
     if (!lockResult.ok) {
       opts.logger.error(
-        { err: lockResult.error, channelType: "email", submodule: "imap", hint: "Could not lock INBOX", errorKind: "network" },
+        { err: lockResult.error, channelType: "email", submodule: "imap", hint: "Could not lock INBOX", errorKind: "network" as const },
         "Failed to get INBOX lock",
       );
       return err(lockResult.error instanceof Error ? lockResult.error : new Error(String(lockResult.error)));
@@ -218,7 +219,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
 
   function startPolling(): void {
     if (pollingTimer || stopped) return;
-    pollingTimer = setInterval(() => {
+    pollingTimer = systemSetInterval(() => {
       if (client) {
         void fetchNewMessages(client, prevCount + 1);
       }
@@ -239,12 +240,12 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       stopped = true;
 
       if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
+        systemClearTimeout(reconnectTimer);
         reconnectTimer = undefined;
       }
 
       if (pollingTimer) {
-        clearInterval(pollingTimer);
+        systemClearInterval(pollingTimer);
         pollingTimer = undefined;
       }
 

@@ -16,12 +16,53 @@ import Database from "better-sqlite3";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { initSchema, createSessionStore, type SessionStore } from "@comis/memory";
 import { formatSessionKey, type SessionKey, type TypedEventBus } from "@comis/core";
-import type { SessionResetPolicyConfig } from "@comis/core";
+import type { SessionResetPolicyConfig, ComputeDailyResetNextRun, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Lightweight TimerPort wrapper that delegates to globals.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
+// Test-only @comis/scheduler import — see session-reset-policy.test.ts for
+// rationale. Production agent source no longer imports scheduler.
+import { computeNextRunAtMs } from "@comis/scheduler";
 import { createSessionLifecycle, type SessionLifecycle } from "./session-lifecycle.js";
 import {
   createSessionResetScheduler,
   type SessionResetScheduler,
 } from "./session-reset-policy.js";
+
+const computeDailyResetNextRun: ComputeDailyResetNextRun = (
+  updatedAt: number,
+  hour: number,
+  timezone: string,
+): number | undefined => {
+  return computeNextRunAtMs(
+    { kind: "cron", expr: `0 ${hour} * * *`, tz: timezone || undefined },
+    updatedAt,
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -70,7 +111,9 @@ function createTestHarness(config: Partial<SessionResetPolicyConfig> = {}): Test
     eventBus,
     logger: createMockLogger(),
     getConfig: () => currentConfig,
+    computeDailyResetNextRun,
     nowMs: () => currentNowMs,
+    timers: testTimers,
   });
 
   return {

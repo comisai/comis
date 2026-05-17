@@ -10,7 +10,8 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { withClient } from "../client/rpc-client.js";
+import { ConfigReadContract } from "@comis/core";
+import { callTyped, withClient } from "../client/rpc-client.js";
 import { error, info, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable } from "../output/table.js";
@@ -60,10 +61,9 @@ export function registerChannelCommand(program: Command): void {
       try {
         const config = await withSpinner("Fetching channel status...", () =>
           withClient(async (client) => {
-            return (await client.call("config.get", { section: "channels" })) as Record<
-              string,
-              unknown
-            >;
+            return await callTyped(client, ConfigReadContract, {
+              section: "channels",
+            }) as Record<string, unknown>;
           }),
         );
 

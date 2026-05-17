@@ -3,8 +3,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ok, err } from "@comis/shared";
 import type { ModelOperationType } from "@comis/core";
 import { BudgetError } from "../budget/budget-guard.js";
-import { createPiEventBridge, sanitizeToolArgs, extractErrorText } from "./pi-event-bridge.js";
+import { createPiEventBridge } from "./pi-event-bridge.js";
 import type { PiEventBridgeDeps } from "./pi-event-bridge.js";
+import { sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import type { ExecutionResult } from "../executor/types.js";
 import type { ExecutionPlan } from "../planner/types.js";
@@ -361,7 +362,7 @@ describe("createPiEventBridge", () => {
       );
       expect(endEmit).toBeDefined();
       expect(endEmit![1].success).toBe(false);
-      expect(endEmit![1].errorKind).toBe("nonzero-exit");
+      expect(endEmit![1].errorKind).toBe("dependency");
     });
 
     it("emits tool:executed with success=true when result has exitCode 0", () => {
@@ -4173,7 +4174,7 @@ describe("drain at bridge call site", () => {
   });
 
   it("drain helper is removed from pi-executor.ts (the OLD home)", async () => {
-    const { stripped } = await readSrcRelative("../executor/pi-executor.ts");
+    const { stripped } = await readSrcRelative("../executor/pi-executor/pi-executor.ts");
     // NO drainQueue / drainSession / drainAt definition or call in
     // pi-executor.ts.
     expect(stripped).not.toMatch(/drainQueue/);

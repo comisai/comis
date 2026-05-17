@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: quiet-hours time-format validation guards; consumed via setup-heartbeat daemon-wiring (daemon.ts bootstrap).
 /**
  * Quiet hours notification suppression.
  *
@@ -6,6 +7,8 @@
  * window. Supports overnight windows (e.g., 22:00-07:00) and same-day
  * windows (e.g., 13:00-17:00). Start time is inclusive, end time exclusive.
  */
+
+import { systemDateFrom } from "@comis/core";
 
 /** Configuration for quiet hours notification suppression. */
 export interface QuietHoursConfig {
@@ -44,7 +47,7 @@ export function parseTimeToMinutes(time: string): number {
  * If timezone is empty string, system local timezone is used.
  */
 export function getCurrentMinutesInTimezone(nowMs: number, timezone: string): number {
-  const date = new Date(nowMs);
+  const date = systemDateFrom(nowMs);
   const options: Intl.DateTimeFormatOptions = {
     hour: "numeric",
     minute: "numeric",

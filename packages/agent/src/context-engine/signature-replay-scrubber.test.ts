@@ -26,9 +26,9 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createSignatureReplayScrubber } from "./signature-replay-scrubber.js";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TokenBudget } from "./types.js";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -160,9 +160,6 @@ describe("createSignatureReplayScrubber", () => {
       blocksAffected: 1,
       toolCallsAffected: 0,
       latestAssistantIdx: 0,
-      dropped: 1,
-      signaturesStripped: 0,
-      reason: undefined,
     });
   });
 
@@ -220,9 +217,6 @@ describe("createSignatureReplayScrubber", () => {
       blocksAffected: 2,
       toolCallsAffected: 0,
       latestAssistantIdx: 3,
-      dropped: 2,
-      signaturesStripped: 0,
-      reason: undefined,
     });
   });
 
@@ -338,9 +332,6 @@ describe("createSignatureReplayScrubber", () => {
       blocksAffected: 0,
       toolCallsAffected: 1,
       latestAssistantIdx: 0,
-      dropped: 0,
-      signaturesStripped: 1,
-      reason: undefined,
     });
   });
 
@@ -367,9 +358,6 @@ describe("createSignatureReplayScrubber", () => {
       blocksAffected: 0,
       toolCallsAffected: 0,
       latestAssistantIdx: 2,
-      dropped: 0,
-      signaturesStripped: 0,
-      reason: undefined,
     });
   });
 
@@ -428,9 +416,6 @@ describe("createSignatureReplayScrubber", () => {
       blocksAffected: 4,
       toolCallsAffected: 0,
       latestAssistantIdx: 3,
-      dropped: 4,
-      signaturesStripped: 0,
-      reason: undefined,
     });
   });
 
@@ -574,9 +559,6 @@ describe("createSignatureReplayScrubber", () => {
       blocksAffected: 0,
       toolCallsAffected: 0,
       latestAssistantIdx: 0,
-      dropped: 0,
-      signaturesStripped: 0,
-      reason: undefined,
     });
   });
 

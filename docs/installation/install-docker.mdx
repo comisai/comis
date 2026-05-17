@@ -118,6 +118,68 @@ recommended way to get started.
   </Step>
 </Steps>
 
+## Browser tool (optional)
+
+The published image is browser-free. To use the agent browser tool, rebuild from the repo with one of three build args mirroring the bare-VPS install flags. Image-size impact in parentheses.
+
+```bash
+# Stock Chrome (+400 MB)
+docker build \
+  --build-arg COMIS_WITH_BROWSER=1 \
+  -t comisai/comis:browser .
+
+# Headed via Xvfb — for sites that detect headless mode (+15 MB on top)
+docker build \
+  --build-arg COMIS_WITH_XVFB=1 \
+  -t comisai/comis:xvfb .
+
+# Stealth Chromium (CloakBrowser, +500 MB) — bypasses Cloudflare Turnstile,
+# FingerprintJS, BrowserScan, and Reddit's secondary fingerprint check
+docker build \
+  --build-arg COMIS_WITH_CLOAKBROWSER=1 \
+  -t comisai/comis:cloak .
+
+# Full stack
+docker build \
+  --build-arg COMIS_WITH_CLOAKBROWSER=1 \
+  --build-arg COMIS_WITH_XVFB=1 \
+  -t comisai/comis:cloak-xvfb .
+```
+
+The entrypoint shim (`/usr/local/bin/comis-entrypoint.sh`) starts Xvfb on `:99` automatically when the image was built with `COMIS_WITH_XVFB=1`. The daemon's `findChrome()` probes `~/.cloakbrowser/chromium-*/chrome` first, so when the cloak binary is baked in it wins over stock Chrome with no config change.
+
+Run the stealth image identically to the no-browser one — same volumes, same ports, same env vars:
+
+```bash
+docker run -d \
+  --name comis \
+  --restart unless-stopped \
+  -p 127.0.0.1:4766:4766 \
+  -v comis-data:/home/comis/.comis \
+  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  comisai/comis:cloak
+```
+
+### Alternative: installer-based image
+
+The repo also ships `Dockerfile.install` — a fresh Ubuntu 24.04 base that runs `install.sh` end-to-end inside the container. Same build args, same end state, but exercises the installer code path verbatim. Useful for CI testing or when you want strict parity with a bare-VPS deploy.
+
+```bash
+docker build -f Dockerfile.install \
+  --build-arg COMIS_WITH_CLOAKBROWSER=1 \
+  -t comis-installed:cloak .
+```
+
+The main `Dockerfile` is the production path (multi-stage, smaller, faster). `Dockerfile.install` is the validation/parity path.
+
+<Warning>
+**Datacenter IPs (AWS, DigitalOcean, Hetzner, Hostinger, …) are pre-blocked by Reddit, X/Twitter, LinkedIn, and many anti-bot services at the network layer** — independent of browser fingerprint. The browser flags fix fingerprint detection, not IP reputation. If your container runs on a datacenter ASN and you need Reddit/social scraping, pair `--with-cloakbrowser` with a residential proxy.
+
+CloakBrowser's binary is free for self-hosted use; bundling into a service distributed to third-party customers requires an OEM license from CloakHQ. See the [binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md).
+</Warning>
+
+See [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection) for the full flag matrix, verified detection-evasion outcomes, and security model.
+
 ## Optional services
 
 The daemon is the only service that starts by default. The web dashboard and

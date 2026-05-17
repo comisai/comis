@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
-  READ_ONLY_TOOLS,
   isReadOnlyTool,
   isConcurrencySafe,
   createMutationSerializer,
@@ -48,70 +47,85 @@ function makeTool(
 
 // ---------------------------------------------------------------------------
 // isReadOnlyTool classification
+//
+// Production tool descriptors are seeded via `registerAllToolMetadata()` in
+// `@comis/skills/bridge/tool-metadata-registry.ts` at daemon boot. For this
+// co-located unit test the metadata is registered explicitly so the
+// descriptor-driven classifier path (Priority 1) returns the expected verdict
+// without any legacy fallback.
 // ---------------------------------------------------------------------------
 
-describe("isReadOnlyTool", () => {
-  const readOnlyTools = [
-    "read",
-    "grep",
-    "find",
-    "ls",
-    "web_search",
-    "web_fetch",
-    "memory_search",
-    "memory_get",
-    "session_search",
-    "ctx_search",
-    "ctx_inspect",
-    "ctx_expand",
-    "ctx_recall",
-    "image_analyze",
-    "obs_query",
-    "discover_tools",
-    "models_manage",
-    "sessions_list",
-    "session_status",
-    "sessions_history",
-    "describe_video",
-    "extract_document",
-    "transcribe_audio",
-    "browser",
-  ];
+const READ_ONLY_TOOL_NAMES = [
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "web_search",
+  "web_fetch",
+  "browser",
+  "memory_search",
+  "memory_get",
+  "session_search",
+  "sessions_list",
+  "session_status",
+  "sessions_history",
+  "ctx_search",
+  "ctx_inspect",
+  "ctx_expand",
+  "ctx_recall",
+  "image_analyze",
+  "describe_video",
+  "extract_document",
+  "transcribe_audio",
+  "obs_query",
+  "models_manage",
+  "discover_tools",
+] as const;
 
-  it.each(readOnlyTools)("returns true for read-only tool: %s", (name) => {
+const MUTATING_TOOL_NAMES = [
+  "exec",
+  "process",
+  "edit",
+  "write",
+  "apply_patch",
+  "memory_store",
+  "memory_manage",
+  "sessions_manage",
+  "sessions_send",
+  "sessions_spawn",
+  "subagents",
+  "pipeline",
+  "cron",
+  "gateway",
+  "heartbeat_manage",
+  "channels_manage",
+  "tokens_manage",
+  "skills_manage",
+  "mcp_manage",
+  "agents_manage",
+  "tts_synthesize",
+  "whatsapp_action",
+  "discord_action",
+  "telegram_action",
+  "slack_action",
+] as const;
+
+for (const name of READ_ONLY_TOOL_NAMES) {
+  registerToolMetadata(name, { isReadOnly: true });
+}
+for (const name of MUTATING_TOOL_NAMES) {
+  registerToolMetadata(name, { isReadOnly: false });
+}
+// `message` is mutating-but-concurrency-safe — registered here so the test's
+// "mutating tool" expectation holds without depending on the larger registry.
+registerToolMetadata("message", { isReadOnly: false, isConcurrencySafe: true });
+
+describe("isReadOnlyTool", () => {
+  it.each(READ_ONLY_TOOL_NAMES)("returns true for read-only tool: %s", (name) => {
     expect(isReadOnlyTool(name)).toBe(true);
   });
 
-  const mutatingTools = [
-    "exec",
-    "process",
-    "edit",
-    "write",
-    "apply_patch",
-    "message",
-    "memory_store",
-    "memory_manage",
-    "sessions_manage",
-    "sessions_send",
-    "sessions_spawn",
-    "subagents",
-    "pipeline",
-    "cron",
-    "gateway",
-    "heartbeat_manage",
-    "channels_manage",
-    "tokens_manage",
-    "skills_manage",
-    "mcp_manage",
-    "agents_manage",
-    "tts_synthesize",
-    "whatsapp_action",
-    "discord_action",
-    "telegram_action",
-    "slack_action",
-  ];
-
-  it.each(mutatingTools)("returns false for mutating tool: %s", (name) => {
+  it.each([...MUTATING_TOOL_NAMES, "message"])("returns false for mutating tool: %s", (name) => {
     expect(isReadOnlyTool(name)).toBe(false);
   });
 
@@ -125,20 +139,6 @@ describe("isReadOnlyTool", () => {
     expect(isReadOnlyTool("unknown_tool")).toBe(false);
     expect(isReadOnlyTool("some_new_tool")).toBe(false);
     expect(isReadOnlyTool("")).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// READ_ONLY_TOOLS set
-// ---------------------------------------------------------------------------
-
-describe("READ_ONLY_TOOLS", () => {
-  it("contains at least 24 tool names", () => {
-    expect(READ_ONLY_TOOLS.size).toBeGreaterThanOrEqual(24);
-  });
-
-  it("does NOT contain process (kill action is mutating)", () => {
-    expect(READ_ONLY_TOOLS.has("process")).toBe(false);
   });
 });
 
@@ -398,23 +398,25 @@ describe("isReadOnlyTool fallback chain", () => {
     expect(isReadOnlyTool("mcp__par_test_unregistered__tool")).toBe(true);
   });
 
-  it("priority 3: legacy set returns true for known read-only tool", () => {
-    // Unknown tool with no metadata -- should be false
+  it("unknown tool with no metadata returns false (safe default)", () => {
     expect(isReadOnlyTool("par_test_no_metadata_tool")).toBe(false);
-    // "read" is in READ_ONLY_TOOLS (may also have metadata, either path returns true)
-    expect(isReadOnlyTool("read")).toBe(true);
   });
 
-  it("priority 3: returns false for unknown tool with no metadata", () => {
+  it("returns false for unknown tool with no metadata", () => {
     expect(isReadOnlyTool("par_test_unknown_xyz")).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// isReadOnlyTool legacy fallback warning
+// isReadOnlyTool optional logger
+//
+// The classifier has no warn-on-legacy-fallback path; the `logger` parameter
+// remains for forward-compatibility with future descriptor-level diagnostics.
+// These tests pin the no-op behavior so a future addition does not silently
+// change call semantics.
 // ---------------------------------------------------------------------------
 
-describe("isReadOnlyTool legacy fallback warning", () => {
+describe("isReadOnlyTool optional logger", () => {
   it("does not warn when metadata is present", () => {
     registerToolMetadata("par_test_no_warn", { isReadOnly: true });
     const logger = { warn: vi.fn() };
@@ -422,8 +424,7 @@ describe("isReadOnlyTool legacy fallback warning", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("does not warn when no logger provided", () => {
-    // Smoke test: should not throw even without logger
+  it("does not throw when no logger provided", () => {
     expect(() => isReadOnlyTool("par_test_no_logger")).not.toThrow();
   });
 
@@ -433,9 +434,8 @@ describe("isReadOnlyTool legacy fallback warning", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("does not warn when tool is not in legacy set and has no metadata", () => {
+  it("does not warn for unknown tools with no metadata", () => {
     const logger = { warn: vi.fn() };
-    // par_test_not_legacy has no metadata and is not in READ_ONLY_TOOLS
     isReadOnlyTool("par_test_not_legacy", logger);
     expect(logger.warn).not.toHaveBeenCalled();
   });

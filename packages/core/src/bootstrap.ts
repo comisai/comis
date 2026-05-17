@@ -13,7 +13,6 @@ import { TypedEventBus } from "./event-bus/index.js";
 import { createSecretManager, safePath } from "./security/index.js";
 import { createPluginRegistry } from "./hooks/plugin-registry.js";
 import { createHookRunner } from "./hooks/hook-runner.js";
-import { setGlobalHookRunner, clearGlobalHookRunner } from "./hooks/hook-runner-global.js";
 
 /** Default base directory: ~/.comis */
 const DEFAULT_DATA_DIR = safePath(os.homedir(), ".comis");
@@ -41,8 +40,8 @@ function resolveConfigPaths(config: AppConfig): AppConfig {
 export interface BootstrapOptions {
   /** Config file paths in layer priority order (later overrides earlier) */
   configPaths: string[];
-  /** Environment variables to seed the SecretManager (defaults to process.env) */
-  env?: Record<string, string | undefined>;
+  /** Environment variables to seed the SecretManager (required — no process.env fallback). */
+  env: Record<string, string | undefined>;
 }
 
 /**
@@ -87,7 +86,7 @@ export interface AppContainer {
  */
 export function bootstrap(options: BootstrapOptions): Result<AppContainer, ConfigError> {
   // 1. Create SecretManager
-  const env = options.env ?? process.env;
+  const env = options.env;
   const secretManager = createSecretManager(env);
 
   // 2. Load layered config (with env var substitution via SecretManager).
@@ -119,9 +118,6 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   const pluginRegistry = createPluginRegistry({ eventBus });
   const hookRunner = createHookRunner(pluginRegistry, { eventBus, catchErrors: true });
 
-  // Set global hook runner for deliverToChannel() access
-  setGlobalHookRunner(hookRunner);
-
   // 4. Return container
   const container: AppContainer = {
     config,
@@ -131,7 +127,6 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
     pluginRegistry,
     hookRunner,
     shutdown: async () => {
-      clearGlobalHookRunner();
       await pluginRegistry.deactivateAll();
       eventBus.removeAllListeners();
     },

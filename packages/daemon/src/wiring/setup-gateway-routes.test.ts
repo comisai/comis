@@ -28,6 +28,7 @@ vi.mock("@comis/gateway", () => ({
 vi.mock("@comis/core", () => ({
   safePath: vi.fn((...args: string[]) => args.join("/")),
   generateStrongToken: vi.fn(() => "mock-generated-token"),
+  systemNowMs: () => Date.now(),
 }));
 
 import { mountGatewayRoutes, type GatewayRouteDeps } from "./setup-gateway-routes.js";

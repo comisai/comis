@@ -24,13 +24,13 @@ function buildTask(overrides: Partial<BackgroundTask> = {}): BackgroundTask {
 }
 
 describe("formatCompletionAnnouncement", () => {
-  it("success header tag", () => {
+  it("renders [Background Task: exec] header for completed task", () => {
     const task = buildTask({ status: "completed", result: "ok" });
     const out = formatCompletionAnnouncement(task);
     expect(out.startsWith("[Background Task: exec]")).toBe(true);
   });
 
-  it("failure header tag", () => {
+  it("renders [Background Task Failed: exec] header for failed task", () => {
     const task = buildTask({ status: "failed", error: "boom", result: undefined });
     const out = formatCompletionAnnouncement(task);
     expect(out.startsWith("[Background Task Failed: exec]")).toBe(true);

@@ -16,6 +16,7 @@
  */
 
 import type { ContextEngineConfig, SubagentContextConfig } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,7 +78,7 @@ export function createLifecycleHooks(deps: LifecycleHooksDeps) {
           depth: params.depth,
           maxDepth: params.maxDepth,
           artifactCount: 0,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
 
         deps.logger.info(
@@ -93,7 +94,7 @@ export function createLifecycleHooks(deps: LifecycleHooksDeps) {
             runId: params.runId,
             err: hookErr,
             hint: "prepareSubagentSpawn hook internal error",
-            errorKind: "internal",
+            errorKind: "internal" as const,
           },
           "Lifecycle hook: prepareSpawn internal error",
         );
@@ -129,7 +130,7 @@ export function createLifecycleHooks(deps: LifecycleHooksDeps) {
           tokensUsed: params.tokensUsed,
           cost: params.cost,
           condensationLevel: params.condensedResult?.level,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
 
         deps.logger.info(
@@ -143,7 +144,7 @@ export function createLifecycleHooks(deps: LifecycleHooksDeps) {
             runId: params.runId,
             err: hookErr,
             hint: "onSubagentEnded hook internal error",
-            errorKind: "internal",
+            errorKind: "internal" as const,
           },
           "Lifecycle hook: onEnded internal error",
         );

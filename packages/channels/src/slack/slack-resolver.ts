@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: media-resolver throws inside fromPromise(); converted to Result.err at the boundary.
 /**
  * Slack MediaResolverPort adapter.
  *
@@ -16,6 +17,7 @@ import type { Attachment, MediaResolverPort, ResolvedMedia } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";
 import { fetchWithSlackAuth } from "./media-handler.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -105,9 +107,9 @@ export function createSlackResolver(deps: SlackResolverDeps): MediaResolverPort 
           }
 
           // Download with Slack auth + redirect handling
-          const startMs = Date.now();
+          const startMs = systemNowMs();
           const response = await fetchWithSlackAuth(downloadUrl, deps.botToken);
-          const durationMs = Date.now() - startMs;
+          const durationMs = systemNowMs() - startMs;
 
           if (!response.ok) {
             throw new Error(`Slack file download failed: HTTP ${response.status}`);

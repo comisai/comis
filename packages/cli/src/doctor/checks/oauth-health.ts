@@ -31,12 +31,9 @@
  */
 
 import { stat, readFile } from "node:fs/promises";
-import {
-  selectOAuthCredentialStore,
-  redactEmailForLog,
-  runOAuthTlsPreflight,
-  rewriteOAuthError,
-} from "@comis/agent";
+// All OAuth helpers + file-lock adapter consumed from @comis/core so the CLI
+// has zero @comis/agent imports.
+import { createFileLock, redactEmailForLog, rewriteOAuthError, runOAuthTlsPreflight, selectOAuthCredentialStore, systemGetEnv, systemNowMs } from "@comis/core";
 import type {
   OAuthProfile,
   OAuthCredentialStorePort,
@@ -128,6 +125,7 @@ async function checkProfiles(
     store = selectOAuthCredentialStore({
       storage: "file",
       dataDir: context.dataDir,
+      fileLock: createFileLock(),
     });
   } catch (e) {
     return [
@@ -191,7 +189,7 @@ async function checkProfiles(
  * the human-readable message.
  */
 function profileExpiryFinding(profile: OAuthProfile): DoctorFinding {
-  const msUntilExpiry = profile.expires - Date.now();
+  const msUntilExpiry = profile.expires - systemNowMs();
   const secsUntilExpiry = Math.floor(msUntilExpiry / 1000);
   const identityLabel = redactEmailForLog(profile.email) ?? profile.profileId;
   // CRITICAL: NEVER include profile.access or profile.refresh in any
@@ -278,7 +276,11 @@ async function refreshTestFinding(
         category: CATEGORY,
         check: `Profile ${profile.profileId} refresh test`,
         status: "fail",
-        message: `Refresh test for ${identityLabel} failed (${rewritten.errorKind}): ${rewritten.userMessage}`,
+        // `code` is the OAuth domain discriminator (refresh_token_reused |
+        // invalid_grant | …) — the CLI message surfaces it for the operator.
+        // RewrittenOAuthError separates `code` (domain discriminator) from
+        // `logErrorKind` ("auth", used for log routing).
+        message: `Refresh test for ${identityLabel} failed (${rewritten.code}): ${rewritten.userMessage}`,
         suggestion: rewritten.hint,
         repairable: false,
       };
@@ -395,8 +397,7 @@ function caCertificatesInstallHint(os: OsRelease | null): string {
 // ---------------------------------------------------------------------------
 
 function checkHttpsProxyHeuristic(): DoctorFinding {
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const httpsProxy = process.env["HTTPS_PROXY"] ?? process.env["https_proxy"];
+  const httpsProxy = systemGetEnv("HTTPS_PROXY") ?? systemGetEnv("https_proxy");
   if (!httpsProxy) {
     return {
       category: CATEGORY,

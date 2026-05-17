@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { createDagAnnotatorLayer } from "./dag-annotator.js";
 import type { TokenBudget } from "./types.js";
 
@@ -154,7 +154,9 @@ describe("createDagAnnotatorLayer", () => {
     expect(result[3]).toBe(messages[3]); // recent tool result (within keep window)
   });
 
-  it("protects memory_search and file_read tools from annotation", async () => {
+  it("protects memory_search and read tools from annotation", async () => {
+    // `file_read` is no longer a protected-tier alias; use the canonical
+    // `read` tool name (also protected-tier).
     const annotator = createDagAnnotatorLayer(
       { annotationKeepWindow: 0, annotationTriggerChars: 0, ephemeralAnnotationKeepWindow: 0 }, // annotate all beyond window
       { estimateTokens },
@@ -162,7 +164,7 @@ describe("createDagAnnotatorLayer", () => {
 
     const messages = [
       makeToolResult("memory_search", "Found 3 relevant memories"),
-      makeToolResult("file_read", "/etc/config.yaml contents here"),
+      makeToolResult("read", "/etc/config.yaml contents here"),
       makeToolResult("memory_get", "Retrieved specific memory"),
       makeToolResult("bash", "command output that should be annotated"),
       makeToolResult("web_search", "web results that should be annotated"),
@@ -346,11 +348,12 @@ describe("createDagAnnotatorLayer", () => {
         { estimateTokens },
       );
 
-      // Protected tools at various positions
+      // Protected tools at various positions. Use canonical `read` (also
+      // protected-tier) in place of the deleted `file_read` alias.
       const messages: AgentMessage[] = [
         makeToolResult("memory_search", "Memory search result 1"),
         makeToolResult("memory_get", "Memory get result"),
-        makeToolResult("file_read", "File read content"),
+        makeToolResult("read", "File read content"),
         makeToolResult("session_search", "Session search result"),
         makeToolResult("memory_store", "Memory stored"),
       ];
@@ -397,18 +400,19 @@ describe("createDagAnnotatorLayer", () => {
         { estimateTokens },
       );
 
-      // Interleaved: [bash, file_read, bash, file_read, bash]
+      // Interleaved: [bash, read, bash, read, bash]. Use canonical `read`
+      // (also protected-tier) in place of the deleted `file_read` alias.
       const messages: AgentMessage[] = [
         makeToolResult("bash", "Oldest bash output"),
-        makeToolResult("file_read", "File content 1"),
+        makeToolResult("read", "File content 1"),
         makeToolResult("bash", "Middle bash output"),
-        makeToolResult("file_read", "File content 2"),
+        makeToolResult("read", "File content 2"),
         makeToolResult("bash", "Newest bash output"),
       ];
 
       const result = await annotator.apply(messages, defaultBudget);
 
-      // file_read: all preserved (protected)
+      // read: all preserved (protected)
       expect(getTextFromMessage(result[1])).toBe("File content 1");
       expect(getTextFromMessage(result[3])).toBe("File content 2");
 

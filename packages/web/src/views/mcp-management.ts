@@ -10,6 +10,10 @@ import type {
   McpServerListEntry,
   McpServerDetail,
 } from "../api/types/mcp-types.js";
+import {
+  createMcpManagementController,
+  type McpManagementController,
+} from "./mcp-management-controller.js";
 
 // Side-effect imports for sub-components
 import "../components/feedback/ic-loading.js";
@@ -456,10 +460,34 @@ export class IcMcpManagement extends LitElement {
 
   private _rpcStatusUnsub: (() => void) | null = null;
 
+  /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
+  private _controller: McpManagementController | null = null;
+
+  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
+   *  Wave-4 pattern so test code that bypasses Lit's reactive cycle
+   *  (priv(el).rpcClient = mock then immediately call methods) still
+   *  constructs the controller. Detects rpcClient swaps and recreates. */
+  private _ensureController(): McpManagementController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
+    if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
+      this._controller = createMcpManagementController(this, this.rpcClient);
+    }
+    return this._controller;
+  }
+
   /* ---- Lifecycle ---- */
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this._ensureController();
   }
 
   override disconnectedCallback(): void {
@@ -470,6 +498,7 @@ export class IcMcpManagement extends LitElement {
 
   override willUpdate(changedProperties: Map<string, unknown>): void {
     if (changedProperties.has("rpcClient") && this.rpcClient) {
+      this._ensureController();
       this._tryLoad();
     }
   }
@@ -494,25 +523,15 @@ export class IcMcpManagement extends LitElement {
   /* ---- Data loading ---- */
 
   private async _loadData(): Promise<void> {
-    if (!this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!controller) return;
     try {
       const [mcpResp, configResp] = await Promise.all([
-        this.rpcClient.call("mcp.list") as Promise<{
-          servers: McpServerListEntry[];
-          total: number;
-        }>,
-        this.rpcClient.call("config.read") as Promise<{
-          config: {
-            integrations?: {
-              mcp?: {
-                servers?: McpServerEntry[];
-              };
-            };
-          };
-        }>,
+        controller.listServers(),
+        controller.readConfig(),
       ]);
       this._servers = mcpResp.servers ?? [];
-      this._mcpConfig = configResp.config?.integrations?.mcp?.servers ?? [];
+      this._mcpConfig = (configResp.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
       this._loadState = "loaded";
     } catch {
       this._loadState = "error";
@@ -520,10 +539,11 @@ export class IcMcpManagement extends LitElement {
   }
 
   private async _loadServerDetail(name: string): Promise<void> {
-    if (!this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!controller) return;
     this._detailLoading = true;
     try {
-      const detail = await this.rpcClient.call("mcp.status", { server_name: name }) as McpServerDetail;
+      const detail = await controller.getServerStatus(name);
       this._serverDetail = detail;
       this._expandedServer = name;
     } catch {
@@ -538,9 +558,10 @@ export class IcMcpManagement extends LitElement {
   /* ---- Config mutation helpers ---- */
 
   private async _patchConfig(section: string, key: string, value: unknown): Promise<boolean> {
-    if (!this.rpcClient) return false;
+    const controller = this._ensureController();
+    if (!controller) return false;
     try {
-      await this.rpcClient.call("config.patch", { section, key, value });
+      await controller.patchConfig(section, key, value);
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to update configuration";
@@ -570,9 +591,10 @@ export class IcMcpManagement extends LitElement {
   private async _confirmDisconnect(): Promise<void> {
     const name = this._disconnectTarget;
     this._disconnectTarget = null;
-    if (!name || !this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!name || !controller) return;
     try {
-      await this.rpcClient.call("mcp.disconnect", { server_name: name });
+      await controller.disconnectServer(name);
       IcToast.show(`Disconnected ${name}`, "success");
       if (this._expandedServer === name) {
         this._expandedServer = null;
@@ -589,9 +611,10 @@ export class IcMcpManagement extends LitElement {
   }
 
   private async _handleReconnect(name: string): Promise<void> {
-    if (!this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!controller) return;
     try {
-      await this.rpcClient.call("mcp.reconnect", { server_name: name });
+      await controller.reconnectServer(name);
       IcToast.show(`Reconnected ${name}`, "success");
       void this._loadData();
     } catch {
@@ -600,12 +623,10 @@ export class IcMcpManagement extends LitElement {
   }
 
   private async _handleTest(name: string): Promise<void> {
-    if (!this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!controller) return;
     try {
-      const result = await this.rpcClient.call("mcp.test", { name }) as {
-        success: boolean;
-        message?: string;
-      };
+      const result = await controller.testServer({ name });
       if (result.success) {
         IcToast.show(`${name}: test passed`, "success");
       } else {
@@ -745,13 +766,22 @@ export class IcMcpManagement extends LitElement {
   }
 
   private async _testServerConfig(server: McpServerEntry): Promise<void> {
-    if (!this.rpcClient || this._testingServer) return;
+    const controller = this._ensureController();
+    if (!controller || this._testingServer) return;
 
     this._testingServer = server.name;
     this._testResult = null;
 
     try {
-      const params: Record<string, unknown> = {
+      const params: {
+        name: string;
+        transport: "stdio" | "sse" | "http";
+        command?: string;
+        args?: string[];
+        url?: string;
+        env?: Record<string, string>;
+        headers?: Record<string, string>;
+      } = {
         name: server.name,
         transport: server.transport,
       };
@@ -768,12 +798,7 @@ export class IcMcpManagement extends LitElement {
         params.headers = server.headers;
       }
 
-      const result = await this.rpcClient.call("mcp.test", params) as {
-        success: boolean;
-        toolCount?: number;
-        tools?: string[];
-        error?: string;
-      };
+      const result = await controller.testServer(params);
 
       this._testResult = { name: server.name, ...result };
     } catch (err) {

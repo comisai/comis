@@ -8,11 +8,10 @@
  * @module
  */
 
-import type { SessionKey } from "@comis/core";
+import { safePath, type SessionKey, systemNowMs, systemDateFrom, systemScheduleTimeout } from "@comis/core";
 import { withTimeout } from "@comis/shared";
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { ANNOUNCE_PARENT_TIMEOUT_MS } from "../sub-agent-runner.js";
+import { ANNOUNCE_PARENT_TIMEOUT_MS } from "@comis/agent";
 import { clearAllTimers } from "./graph-cleanup.js";
 import type {
   CoordinatorSharedState,
@@ -52,7 +51,7 @@ export function handleGraphCompletion(
   }
 
   // 1. Mark completion time
-  gs.completedAt = Date.now();
+  gs.completedAt = systemNowMs();
 
   // 1b. Clean up event-driven spawn gate on completion
   gs.cacheWarmCleanup?.();
@@ -102,7 +101,7 @@ export function handleGraphCompletion(
     nodesFailed,
     nodesSkipped,
     ...(gs.cancelReason !== undefined && { cancelReason: gs.cancelReason }),
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
     // 3.3: Graph-level cache aggregation
     ...cacheRollupFields,
   });
@@ -128,7 +127,7 @@ export function handleGraphCompletion(
         );
         deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, announcement, buttonOpts).catch((sendErr: unknown) => {
           deps.logger?.warn(
-            { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel after parent-gone detection", errorKind: "network" },
+            { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel after parent-gone detection", errorKind: "network" as const },
             "Graph announcement delivery failed",
           );
         });
@@ -159,15 +158,16 @@ export function handleGraphCompletion(
               gs.announceChannelId,
             ),
             ANNOUNCE_PARENT_TIMEOUT_MS,
+            systemScheduleTimeout,
             "graph announceToParent",
           ).catch((announceErr: unknown) => {
             deps.logger?.warn(
-              { graphId: gs.graphId, err: announceErr, hint: "Parent announcement failed; falling back to direct channel send", errorKind: "internal" },
+              { graphId: gs.graphId, err: announceErr, hint: "Parent announcement failed; falling back to direct channel send", errorKind: "internal" as const },
               "Graph parent announcement failed",
             );
             deps.sendToChannel(gs.announceChannelType!, gs.announceChannelId!, announcement, buttonOpts).catch((sendErr: unknown) => {
               deps.logger?.warn(
-                { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel", errorKind: "network" },
+                { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel", errorKind: "network" as const },
                 "Graph announcement delivery failed",
               );
             });
@@ -175,7 +175,7 @@ export function handleGraphCompletion(
         } else {
           deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, announcement, buttonOpts).catch((sendErr: unknown) => {
             deps.logger?.warn(
-              { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel", errorKind: "network" },
+              { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel", errorKind: "network" as const },
               "Graph announcement delivery failed",
             );
           });
@@ -184,7 +184,7 @@ export function handleGraphCompletion(
     } else {
       deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, announcement, buttonOpts).catch((sendErr: unknown) => {
         deps.logger?.warn(
-          { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel", errorKind: "network" },
+          { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel", errorKind: "network" as const },
           "Graph announcement delivery failed",
         );
       });
@@ -303,7 +303,7 @@ export function buildGraphAnnouncement(gs: GraphRunState): GraphAnnouncement {
   const maxAnnouncementChars = gs.maxAnnouncementChars ?? 3000;
   const snap = gs.stateMachine.snapshot();
   const label = gs.graph.graph.label ?? gs.graphId;
-  const durationMs = (gs.completedAt ?? Date.now()) - gs.startedAt;
+  const durationMs = (gs.completedAt ?? systemNowMs()) - gs.startedAt;
 
   // Identify leaf nodes — nodes that no other node depends on
   const depTargets = new Set(gs.graph.graph.nodes.flatMap(n => n.dependsOn));
@@ -438,7 +438,7 @@ export function handleBudgetExceeded(
   handleGraphCompletion(state, deps, gs);
 
   deps.logger?.warn(
-    { graphId: gs.graphId, cumulativeTokens: gs.cumulativeTokens, cumulativeCost: gs.cumulativeCost, hint: "Graph budget is configurable via graph.budget.maxTokens/maxCost", errorKind: "budget" },
+    { graphId: gs.graphId, cumulativeTokens: gs.cumulativeTokens, cumulativeCost: gs.cumulativeCost, hint: "Graph budget is configurable via graph.budget.maxTokens/maxCost", errorKind: "resource" as const },
     "Graph execution budget exceeded",
   );
 }
@@ -489,7 +489,7 @@ export function handleGraphTimeout(
   handleGraphCompletion(state, deps, gs);
 
   deps.logger?.warn(
-    { graphId: gs.graphId, timeoutMs: gs.graph.graph.timeoutMs, hint: "Graph timeout is configurable via graph.timeoutMs", errorKind: "timeout" },
+    { graphId: gs.graphId, timeoutMs: gs.graph.graph.timeoutMs, hint: "Graph timeout is configurable via graph.timeoutMs", errorKind: "timeout" as const },
     "Graph execution timed out",
   );
 }
@@ -585,9 +585,9 @@ export function writeRunMetadata(
     const metadata = {
       graphId: gs.graphId,
       graphName: gs.graph.graph.label ?? gs.graphId,
-      startedAt: new Date(gs.startedAt).toISOString(),
-      completedAt: new Date(gs.completedAt ?? Date.now()).toISOString(),
-      durationMs: (gs.completedAt ?? Date.now()) - gs.startedAt,
+      startedAt: systemDateFrom(gs.startedAt).toISOString(),
+      completedAt: systemDateFrom(gs.completedAt ?? systemNowMs()).toISOString(),
+      durationMs: (gs.completedAt ?? systemNowMs()) - gs.startedAt,
       status: gs.stateMachine.getGraphStatus(),
       traceId: gs.graphTraceId,
       nodesTotal: gs.graph.graph.nodes.length,
@@ -603,7 +603,7 @@ export function writeRunMetadata(
     };
 
     writeFileSync(
-      join(gs.sharedDir, "_run-metadata.json"),
+      safePath(gs.sharedDir, "_run-metadata.json"),
       JSON.stringify(metadata, null, 2),
       "utf8",
     );

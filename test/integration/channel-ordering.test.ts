@@ -18,11 +18,39 @@
 import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { EchoChannelAdapter } from "@comis/channels";
-import { createChannelManager, type ChannelManagerDeps } from "@comis/channels";
-import { createCommandQueue, coalesceMessages } from "@comis/agent";
-import { QueueConfigSchema } from "@comis/core";
+// createChannelManager + ChannelManagerDeps live in @comis/orchestrator
+// alongside processInboundMessage. The dep-inject indirection is preserved
+// (daemon + this integration test wire processInboundMessage explicitly).
+import {
+  createChannelManager,
+  processInboundMessage,
+  type ChannelManagerDeps,
+  createCommandQueue,
+  coalesceMessages,
+} from "@comis/orchestrator";
+import {
+  QueueConfigSchema,
+  createDeliveryService,
+  createNoOpDeliveryQueue,
+  createHookRunner,
+  createPluginRegistry,
+} from "@comis/core";
 import type { NormalizedMessage, ChannelPort } from "@comis/core";
 import { ASYNC_SETTLE_MS } from "../support/timeouts.js";
+
+/**
+ * Build a real DeliveryService for integration: empty plugin registry +
+ * no-op queue. ChannelManagerDeps requires a DeliveryService. The
+ * DeliveryService captures these in closure and is shared across all
+ * makeMinimalDeps callers below.
+ */
+function makeRealDeliveryService(eventBus: any) {
+  return createDeliveryService({
+    hookRunner: createHookRunner(createPluginRegistry(), { eventBus, catchErrors: true }),
+    deliveryQueue: createNoOpDeliveryQueue(),
+    eventBus,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -89,8 +117,9 @@ function makeMinimalDeps(
     })),
   };
 
+  const eventBus = makeEventBus();
   return {
-    eventBus: makeEventBus(),
+    eventBus,
     messageRouter: { resolve: vi.fn(() => "default"), updateConfig: vi.fn() },
     sessionManager: {
       loadOrCreate: vi.fn(() => []),
@@ -107,6 +136,14 @@ function makeMinimalDeps(
       error: vi.fn(),
       debug: vi.fn(),
     },
+    // DeliveryService is required on ChannelManagerDeps. Constructed once
+    // per deps object so the inbound pipeline closes over a working service
+    // when it delivers responses (and rejects gracefully when no hooks/queue
+    // are wired — both empty in this integration test).
+    deliveryService: makeRealDeliveryService(eventBus),
+    // processInboundMessage is dep-injected to avoid back-edges between
+    // packages. Integration test wires the real implementation.
+    processInboundMessage: processInboundMessage as unknown as ChannelManagerDeps["processInboundMessage"],
   };
 }
 

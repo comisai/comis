@@ -2,12 +2,17 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
-import type { AgentInfo, EnrichedAgentInfo, AgentBilling, DataTableColumn } from "../../api/types/index.js";
+import type { AgentInfo, EnrichedAgentInfo, DataTableColumn } from "../../api/types/index.js";
 import type { RpcClient } from "../../api/rpc-client.js";
 import type { ApiClient } from "../../api/api-client.js";
 import type { EventDispatcher } from "../../state/event-dispatcher.js";
 import { SseController } from "../../state/sse-controller.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
+import {
+  createAgentListController,
+  type AgentListController,
+} from "./agent-list-controller.js";
 
 // Side-effect imports to register custom elements used in template
 import "../../components/data/ic-data-table.js";
@@ -454,16 +459,42 @@ export class IcAgentList extends LitElement {
   @state() private _wizardToolProfile = "full";
   @state() private _catalogProviders: CatalogProvider[] = [];
 
+  /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
+  private _controller: AgentListController | null = null;
+
+  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
+   *  Wave-4 pattern so test code that bypasses Lit's reactive cycle still
+   *  constructs the controller. Detects rpcClient swaps and recreates. */
+  private _ensureController(): AgentListController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
+    if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
+      this._controller = createAgentListController(this, this.rpcClient);
+    }
+    return this._controller;
+  }
+
   override connectedCallback(): void {
     super.connectedCallback();
     // Note: _loadAgents() is NOT called here -- apiClient is typically
     // null at this point. The updated() callback handles loading once
     // the client property is set.
+    this._ensureController();
     this._initSse();
     if (this.rpcClient) this._loadModelCatalog();
   }
 
   override updated(changed: Map<string, unknown>): void {
+    if (changed.has("rpcClient")) {
+      this._ensureController();
+    }
     if (changed.has("apiClient") && this.apiClient) {
       this._loadAgents();
     }
@@ -478,7 +509,7 @@ export class IcAgentList extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
   }
@@ -493,8 +524,8 @@ export class IcAgentList extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadAgents();
     }, delayMs);
@@ -502,14 +533,12 @@ export class IcAgentList extends LitElement {
 
   /** Fetch the model catalog from the backend. */
   private async _loadModelCatalog(): Promise<void> {
-    if (!this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!controller) return;
     try {
-      const result = await this.rpcClient.call<{
-        providers?: CatalogProvider[];
-        totalModels?: number;
-      }>("models.list");
+      const result = await controller.listModels();
       if (result.providers) {
-        this._catalogProviders = result.providers;
+        this._catalogProviders = result.providers as CatalogProvider[];
       }
     } catch {
       // Non-fatal - wizard will show empty lists until catalog loads
@@ -642,7 +671,8 @@ export class IcAgentList extends LitElement {
 
   /** Enrich agents with billing data via RPC. */
   private async _enrichAgents(agents: AgentInfo[]): Promise<EnrichedAgentInfo[]> {
-    if (!this.rpcClient || agents.length === 0) {
+    const controller = this._ensureController();
+    if (!controller || agents.length === 0) {
       return agents.map((a) => ({
         ...a,
         costToday: 0,
@@ -655,9 +685,7 @@ export class IcAgentList extends LitElement {
     // Cap at 50 agents for billing calls
     const billingAgents = agents.slice(0, 50);
     const billingResults = await Promise.allSettled(
-      billingAgents.map((a) =>
-        this.rpcClient!.call<AgentBilling>("obs.billing.byAgent", { agentId: a.id }),
-      ),
+      billingAgents.map((a) => controller.getAgentBilling(a.id)),
     );
 
     const billingMap = new Map<string, Record<string, unknown>>();
@@ -726,15 +754,19 @@ export class IcAgentList extends LitElement {
 
   private async _handleSuspendResume(agent: EnrichedAgentInfo, e: Event): Promise<void> {
     e.stopPropagation();
-    if (!this.rpcClient || this._actionPending) return;
+    const controller = this._ensureController();
+    if (!controller || this._actionPending) return;
 
     this._actionPending = agent.id;
     const isSuspended = agent.suspended || agent.status === "suspended";
-    const method = isSuspended ? "agents.resume" : "agents.suspend";
     const label = isSuspended ? "resumed" : "suspended";
 
     try {
-      await this.rpcClient.call(method, { agentId: agent.id });
+      if (isSuspended) {
+        await controller.resumeAgent(agent.id);
+      } else {
+        await controller.suspendAgent(agent.id);
+      }
       IcToast.show(`Agent ${agent.id} ${label}`, "success");
       await this._loadAgents();
     } catch (err) {
@@ -753,13 +785,14 @@ export class IcAgentList extends LitElement {
   }
 
   private async _confirmDelete(): Promise<void> {
-    if (!this.rpcClient || !this._deleteTarget) return;
+    const controller = this._ensureController();
+    if (!controller || !this._deleteTarget) return;
 
     const id = this._deleteTarget.id;
     this._deleteTarget = null;
 
     try {
-      await this.rpcClient.call("agents.delete", { agentId: id });
+      await controller.deleteAgent(id);
       IcToast.show(`Agent ${id} deleted`, "success");
       await this._loadAgents();
     } catch (err) {
@@ -830,13 +863,14 @@ export class IcAgentList extends LitElement {
   }
 
   private async _wizardCreate(): Promise<void> {
-    if (!this.rpcClient || this._wizardCreating) return;
+    const controller = this._ensureController();
+    if (!controller || this._wizardCreating) return;
 
     this._wizardCreating = true;
     this._wizardError = "";
 
     try {
-      await this.rpcClient.call("agents.create", {
+      await controller.createAgent({
         agentId: this._wizardAgentId,
         config: {
           name: this._wizardAgentName || undefined,

@@ -7,14 +7,13 @@
  */
 
 import { createGraphStateMachine, type GraphExecutionSnapshot } from "./graph-state-machine.js";
-import type { GraphStatus } from "@comis/core";
+import { safePath, type GraphStatus, systemNowMs, systemSetInterval, systemClearInterval, systemSetTimeout } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { ok, err, type Result } from "@comis/shared";
 import { computeGraphToolSuperset } from "./graph-tool-superset.js";
 import { preWarmGraphCache, type PreWarmSdk } from "./graph-prewarm.js";
-import { getModel, completeSimple } from "@mariozechner/pi-ai";
+import { getModel, completeSimple } from "@earendil-works/pi-ai";
 
 // Module imports
 import { globalCompletionHandler, releaseAndDrainQueue } from "./graph-concurrency.js";
@@ -165,7 +164,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   deps.eventBus.on("session:sub_agent_completed", onSubAgentCompleted);
 
   // Sweep interval: remove expired completed graphs
-  const sweepInterval = setInterval(() => {
+  const sweepInterval = systemSetInterval(() => {
     sweepExpiredGraphs(state, config);
   }, config.sweepIntervalMs);
   sweepInterval.unref();
@@ -175,7 +174,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     const graphId = randomUUID();
     const graphTraceId = randomUUID();
 
-    const sharedDir = join(deps.dataDir, "graph-runs", graphId);
+    const sharedDir = safePath(deps.dataDir, "graph-runs", graphId);
     mkdirSync(sharedDir, { recursive: true, mode: 0o700 });
 
     if (state.graphs.size >= config.maxGraphs) {
@@ -197,7 +196,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       nodeTimers: new Map(),
       retryTimers: new Map(),
       graphTimer: undefined,
-      startedAt: Date.now(),
+      startedAt: systemNowMs(),
       runningCount: 0,
       callerSessionKey: params.callerSessionKey,
       callerAgentId: params.callerAgentId,
@@ -254,7 +253,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         graphId,
         callerSessionKey: params.callerSessionKey,
         hint: "Graph has no announce channel — completion results will not be delivered to user",
-        errorKind: "configuration",
+        errorKind: "config" as const,
       }, "Graph created without announce channel");
     }
 
@@ -262,7 +261,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       graphId,
       label: params.graph.graph.label,
       nodeCount: params.graph.graph.nodes.length,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
 
     deps.logger?.info(
@@ -271,7 +270,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     );
 
     if (params.graph.graph.timeoutMs !== undefined && params.graph.graph.timeoutMs > 0) {
-      gs.graphTimer = setTimeout(() => handleGraphTimeoutFn(state, deps, gs), params.graph.graph.timeoutMs);
+      gs.graphTimer = systemSetTimeout(() => handleGraphTimeoutFn(state, deps, gs), params.graph.graph.timeoutMs);
       if (typeof gs.graphTimer === "object" && "unref" in gs.graphTimer) {
         gs.graphTimer.unref();
       }
@@ -391,7 +390,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
   function listGraphs(recentMinutes?: number): GraphRunSummary[] {
     const cutoff = recentMinutes && recentMinutes > 0
-      ? Date.now() - recentMinutes * 60_000
+      ? systemNowMs() - recentMinutes * 60_000
       : 0;
 
     return [...state.graphs.values()]
@@ -438,7 +437,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
         gs.stateMachine.cancel();
         clearAllTimers(deps, gs);
-        gs.completedAt = Date.now();
+        gs.completedAt = systemNowMs();
       }
     }
 
@@ -446,7 +445,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     state.spawnQueue.length = 0;
     state.globalActiveSubAgents = 0;
 
-    clearInterval(sweepInterval);
+    systemClearInterval(sweepInterval);
   }
 
   function getConcurrencyStats(): { globalActiveSubAgents: number; maxGlobalSubAgents: number; queueDepth: number } {

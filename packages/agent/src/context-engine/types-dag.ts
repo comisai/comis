@@ -5,8 +5,7 @@
  * @module
  */
 
-import type { ComisLogger } from "@comis/infra";
-import type { ContextStore } from "@comis/memory";
+import type { ComisLogger, ContextStorePort } from "@comis/core";
 import type { ContextEngineDeps } from "./types-core.js";
 
 // ---------------------------------------------------------------------------
@@ -21,7 +20,7 @@ import type { ContextEngineDeps } from "./types-core.js";
  */
 export interface CompactionDeps {
   /** Context store for all DAG read/write operations. */
-  store: ContextStore;
+  store: ContextStorePort;
   /** Structured logger for the compaction module. */
   logger: ComisLogger;
   /**
@@ -210,7 +209,7 @@ export interface DagCompactionEvent {
  */
 export interface DagAssemblerDeps {
   /** Context store for all DAG read operations. */
-  store: ContextStore;
+  store: ContextStorePort;
   /** Structured logger for the assembler module. */
   logger: ComisLogger;
   /** Active conversation ID for context item lookup. */
@@ -258,7 +257,7 @@ export interface ReconciliationResult {
  */
 export interface DagContextEngineDeps extends ContextEngineDeps {
   /** Context store for DAG read/write operations. */
-  contextStore: ContextStore;
+  contextStore: ContextStorePort;
   /** Raw better-sqlite3 Database handle for transactions and raw SQL. */
   db: unknown;
   /** Active conversation ID for this session. */

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: validation throw inside tryCatch() boundary wrapper (CredentialMappingPort.set); SQLite-backed adapter rethrows are caught and converted to Result by the port-internal tryCatch + caller via daemon RPC handler @allow-throw boundary.
 /**
  * CredentialMappingStore — CredentialMappingPort implementation with SQLite storage.
  *
@@ -10,21 +11,19 @@
  */
 
 import type Database from "better-sqlite3";
-import { tryCatch } from "@comis/shared";
+import type { z } from "zod";
+import { err, tryCatch } from "@comis/shared";
 import type { CredentialMappingPort, CredentialMapping } from "@comis/core";
 import { initCredentialMappingSchema } from "./credential-mapping-schema.js";
+import { createRowMapper } from "./row-mapper.js";
+import { CredentialMappingRowSchema } from "./row-schemas.js";
 
 /**
  * Row shape returned by SELECT queries on the credential_mappings table.
+ * SSOT is `CredentialMappingRowSchema` in row-schemas.ts.
  */
-interface CredentialMappingRow {
-  id: string;
-  secret_name: string;
-  injection_type: string;
-  injection_key: string | null;
-  url_pattern: string;
-  tool_name: string | null;
-}
+type CredentialMappingRow = z.infer<typeof CredentialMappingRowSchema>;
+const credentialMappingMapper = createRowMapper(CredentialMappingRowSchema);
 
 /**
  * Convert a snake_case database row to a camelCase CredentialMapping domain object.
@@ -103,8 +102,12 @@ export function createCredentialMappingStore(db: Database.Database): CredentialM
     },
 
     get(id: string) {
+      const parsed = credentialMappingMapper.parseOptionalRow(getByIdStmt.get(id));
+      if (!parsed.ok) {
+        return err(new Error(`Row validation failed: ${parsed.error.message}`));
+      }
       return tryCatch(() => {
-        const row = getByIdStmt.get(id) as CredentialMappingRow | undefined;
+        const row = parsed.value;
         if (!row) {
           return undefined;
         }
@@ -113,23 +116,32 @@ export function createCredentialMappingStore(db: Database.Database): CredentialM
     },
 
     listAll() {
+      const parsed = credentialMappingMapper.parseRows(listAllStmt.all());
+      if (!parsed.ok) {
+        return err(new Error(`Row validation failed: ${parsed.error.message}`));
+      }
       return tryCatch(() => {
-        const rows = listAllStmt.all() as CredentialMappingRow[];
-        return rows.map(rowToMapping);
+        return parsed.value.map(rowToMapping);
       });
     },
 
     listBySecret(secretName: string) {
+      const parsed = credentialMappingMapper.parseRows(listBySecretStmt.all(secretName));
+      if (!parsed.ok) {
+        return err(new Error(`Row validation failed: ${parsed.error.message}`));
+      }
       return tryCatch(() => {
-        const rows = listBySecretStmt.all(secretName) as CredentialMappingRow[];
-        return rows.map(rowToMapping);
+        return parsed.value.map(rowToMapping);
       });
     },
 
     listByTool(toolName: string) {
+      const parsed = credentialMappingMapper.parseRows(listByToolStmt.all(toolName));
+      if (!parsed.ok) {
+        return err(new Error(`Row validation failed: ${parsed.error.message}`));
+      }
       return tryCatch(() => {
-        const rows = listByToolStmt.all(toolName) as CredentialMappingRow[];
-        return rows.map(rowToMapping);
+        return parsed.value.map(rowToMapping);
       });
     },
 

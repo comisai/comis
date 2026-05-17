@@ -131,7 +131,7 @@ For an MCP hint, the prompt seeds context with the MCP's `command` and `args` fr
 
 The response is parsed defensively:
 
-1. Anything outside the two contracted lines is stripped (the agent cannot inject `cluster`, schema changes, or any other field — D-5 in the design).
+1. Anything outside the two contracted lines is stripped (the agent cannot inject `cluster`, schema changes, or any other field).
 2. Package names are validated against `/^@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?$/i` (npm scoped + pip name shape). Names that fail are silently dropped with a warning.
 3. If all package names are dropped, the parser surfaces a hard failure and the orchestrator exits 1 without touching the file.
 
@@ -236,7 +236,7 @@ journalctl -u comis -f | grep "Dynamic preamble assembled"
     # Should be: -rw------- comis comis
     ```
 
-    If owned by root, the file was written before Phase 26.1 shipped. Restore from the most recent backup or `chown comis:comis ~/.comis/config.yaml`.
+    If owned by root, restore from the most recent backup or `chown comis:comis ~/.comis/config.yaml`.
   </Accordion>
 
   <Accordion title="systemctl: 'Start request repeated too quickly'">

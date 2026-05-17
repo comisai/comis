@@ -5,6 +5,7 @@ import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
+import { systemClearInterval, systemClearTimeout, systemSetInterval, systemSetTimeout } from "@comis/core";
 import type {
   BillingDrillLevel,
   BillingByProvider,
@@ -261,8 +262,8 @@ export class IcBillingView extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadData();
     }, delayMs);
@@ -271,11 +272,11 @@ export class IcBillingView extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
     if (this._refreshInterval !== null) {
-      clearInterval(this._refreshInterval);
+      systemClearInterval(this._refreshInterval);
       this._refreshInterval = null;
     }
     this._rpcStatusUnsub?.();
@@ -311,7 +312,7 @@ export class IcBillingView extends LitElement {
   private _startLoading(): void {
     this._loadData();
     if (this._refreshInterval === null) {
-      this._refreshInterval = setInterval(() => {
+      this._refreshInterval = systemSetInterval(() => {
         this._loadData();
       }, RPC_REFRESH_INTERVAL_MS);
     }

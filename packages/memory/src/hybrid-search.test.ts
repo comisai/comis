@@ -463,7 +463,7 @@ describe("hybridSearch", () => {
     expect(results[0]!.id).toBe("m1");
   });
 
-  it("filters by tenantId", () => {
+  it("filters hybrid-search results by tenantId for tenant isolation", () => {
     insertMemory(db, "m1", "tenant A cat", { tenantId: "tenantA" });
     insertMemory(db, "m2", "tenant B cat", { tenantId: "tenantB" });
 

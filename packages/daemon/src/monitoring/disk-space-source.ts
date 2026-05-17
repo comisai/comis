@@ -10,6 +10,7 @@ import type { DiskMonitorConfig } from "@comis/core";
 import type { HeartbeatSourcePort, HeartbeatCheckResult } from "@comis/scheduler";
 import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
 import { statfs } from "node:fs/promises";
+import { systemNowMs } from "@comis/core";
 
 const SOURCE_ID = "monitor:disk-space";
 const SOURCE_NAME = "Disk Space Monitor";
@@ -47,7 +48,7 @@ export function createDiskSpaceSource(config: DiskMonitorConfig): HeartbeatSourc
     name: SOURCE_NAME,
 
     async check(): Promise<HeartbeatCheckResult> {
-      const now = Date.now();
+      const now = systemNowMs();
       const results: DiskPathResult[] = [];
 
       for (const fsPath of config.paths) {

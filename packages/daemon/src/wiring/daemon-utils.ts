@@ -6,6 +6,7 @@
  */
 
 import type { ChannelPort } from "@comis/core";
+import type { CronSchedule } from "@comis/scheduler";
 
 /** Resolve a channel adapter by type, throwing if not found. */
 export function resolveAdapter(channelType: string, registry: Map<string, ChannelPort>): ChannelPort {
@@ -40,11 +41,18 @@ export function authorizeChannelAccess(
 
 /**
  * Build a CronSchedule from rpcCall params.
+ *
+ * `kind` is the canonical closed-union discriminator from @comis/scheduler's
+ * CronSchedule type. The switch's default branch uses
+ * `const _exhaustive: never = kind;` (inline exhaustive check, no shared
+ * assertNever helper).
+ *
+ * The throw is permanent: this function is called from daemon RPC handlers
+ * (cron-handlers.ts) which classify as @allow-throw boundaries — the
+ * rpc-dispatch.ts wrapper (lines 306-321) converts thrown errors into
+ * JSON-RPC error responses.
  */
-export function buildCronSchedule(kind: string, params: Record<string, unknown>):
-  | { kind: "cron"; expr: string; tz: string | undefined }
-  | { kind: "every"; everyMs: number }
-  | { kind: "at"; at: string } {
+export function buildCronSchedule(kind: CronSchedule["kind"], params: Record<string, unknown>): CronSchedule {
   switch (kind) {
     case "cron":
       return {
@@ -56,8 +64,11 @@ export function buildCronSchedule(kind: string, params: Record<string, unknown>)
       return { kind: "every" as const, everyMs: params.schedule_every_ms as number };
     case "at":
       return { kind: "at" as const, at: params.schedule_at as string };
-    default:
-      throw new Error(`Unknown schedule kind: ${kind}`);
+    default: {
+      const _exhaustive: never = kind;
+      // @allow-throw: called from daemon RPC handlers (cron-handlers.ts); RPC dispatcher converts to JSON-RPC error response.
+      throw new Error(`Unknown schedule kind: ${String(_exhaustive)}`);
+    }
   }
 }
 

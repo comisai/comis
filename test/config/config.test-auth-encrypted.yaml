@@ -1,0 +1,91 @@
+# Comis Test Configuration -- Auth-State Matrix, encrypted storage
+#
+# Dedicated config for test/integration/auth-state-matrix.test.ts (encrypted rows).
+# Configures `oauth.storage: encrypted` so the CLI's auth list/logout/status
+# subcommands take the daemon-RPC path. The matrix test verifies:
+#   - (encrypted, up)   -> CLI succeeds via auth.list / auth.logout RPC.
+#   - (encrypted, down) -> CLI exits 4 + REMEDIATION_MESSAGE (plan 31-09).
+#
+# Uses port 8563 to avoid conflicts with other test suites.
+#
+# SECRETS_MASTER_KEY (required for encrypted OAuth credential store) is
+# supplied at runtime by the test (NOT this file).
+
+tenantId: "auth-encrypted-test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "AuthEncryptedTestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8563
+  tokens:
+    - id: "admin-token"
+      secret: "admin-secret-key-for-auth-encrypted-test"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+oauth:
+  storage: "encrypted"
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-auth-encrypted.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic

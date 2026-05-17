@@ -8,7 +8,8 @@ Hexagonal (ports + adapters). Core defines port interfaces; adapters implement t
 
 Extension points in `packages/core/src/`:
 
-- `ports/` — port interfaces (`*Port` suffix): `ChannelPort`, `ChannelPluginPort`, `MemoryPort`, `SkillPort`, `EmbeddingPort`, `MediaResolverPort`, `TranscriptionPort`, `TTSPort`, `ImageAnalysisPort`, `VisionPort`, `FileExtractionPort`, `OutputGuardPort`, `SecretStorePort`, `DeviceIdentityPort`, `CredentialMappingPort`, `PluginPort`, `DeliveryQueuePort`, `DeliveryMirrorPort`, hook types.
+- `ports/` — port interfaces (`*Port` suffix): `ChannelPort`, `ChannelPluginPort`, `MemoryPort`, `SkillPort`, `EmbeddingPort`, `MediaResolverPort`, `TranscriptionPort`, `TTSPort`, `ImageAnalysisPort`, `VisionPort`, `FileExtractionPort`, `OutputGuardPort`, `SecretStorePort`, `DeviceIdentityPort`, `CredentialMappingPort`, `PluginPort`, `DeliveryQueuePort`, `DeliveryMirrorPort`, `ClockPort`, `EnvPort`, `TimerPort` (+ `TimerHandle`), `ContextStorePort`, `SessionStorePort`, `FileLockPort`, hook types. Adapters live in the consumer package (e.g., `@comis/memory` for store ports) or `@comis/infra` for runtime adapters (`createSystemClock`, `createSystemEnv`, `createSystemTimers`).
+- `runtime/` — sanctioned-root in-package helpers (`system-time.ts`: `systemNowMs`, `systemNowDate`, `systemDateFrom`, `systemSleep`, `systemSetTimeout`/`systemClearTimeout`, `systemSetInterval`/`systemClearInterval`, `systemScheduleTimeout`, `systemGetEnv`, `systemEnvSnapshot`). Use these only at trust-boundary call sites that genuinely cannot accept an injected port (top-level loggers, OAuth poll loops). Secrets must still go through `SecretManager`.
 - `domain/` — Zod-validated domain types (`NormalizedMessage`, `MemoryEntry`, `AgentResponse`, `ExecutionGraph`, `SubagentResult`, `ApprovalRequest`, `CredentialMapping`, `SecretRef`, etc.). Define schema → infer type with `z.infer`.
 - `security/` — security primitives: `safePath`, `validateUrl` (SSRF), `SecretManager`, `SecretsCrypto` (AES-256-GCM), `ScopedSecretManager`, `SecretRefResolver`, `ActionClassifier`, `AuditAggregator`, `InputSecurityGuard`, `validateInput`, `OutputGuard`, `MemoryWriteValidator`, `wrapExternalContent`, `sanitizeLogString`, `CanaryToken`, injection patterns + rate limiter.
 - `config/` — Zod schemas, layered config (defaults → YAML files → env overrides). Paths via `COMIS_CONFIG_PATHS` (comma-separated). Runtime changes via `config.write` RPC (in-memory only).
@@ -21,15 +22,19 @@ Extension points in `packages/core/src/`:
 
 ```
 shared        Result type, utilities — zero runtime deps
-core          domain, ports, event bus, security, config, hooks, bootstrap
-infra         Pino structured logging
-memory        SQLite + FTS5 + vector search (MemoryPort, SecretStorePort, CredentialMappingPort,
-              DeliveryQueuePort, DeliveryMirrorPort adapters)
+core          domain, ports, event bus, security, config, hooks, bootstrap, ComisLogger structural contract, FileLockPort, ContextStorePort + SessionStorePort + row DTOs (CtxConversationRow..CtxExpansionGrantRow, SessionData, SessionListEntry, SessionDetailedEntry), OAuth helpers, master-key helpers
+infra         Pino structured logging implementation (assignable to core's ComisLogger contract)
+memory        SQLite-backed ContextStorePort + SessionStorePort impls (return types
+              from core) + MemoryApi + FTS5 + vector search (MemoryPort, SecretStorePort,
+              CredentialMappingPort, DeliveryQueuePort, DeliveryMirrorPort, OAuth-store,
+              observability/embedding adapters). Row DTOs re-exported from core (single
+              source of truth). Daemon consumes; agent + cli consume port types from @comis/core.
 gateway       Hono HTTP, JSON-RPC, WebSocket, mTLS
 skills        manifest, prompt skills, MCP, built-in tools, media, STT/TTS/vision/image-gen integrations
-scheduler     cron, heartbeat, task extraction
-agent         orchestration: executor, planner, RAG, sessions, model, safety, response-filter
-channels      platform adapters (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email, Echo)
+scheduler     cron, heartbeat, task extraction; createFileLock(): FileLockPort factory backed by proper-lockfile
+agent         orchestration: executor, planner, RAG, sessions, model, safety, response-filter (no longer references @comis/infra; OAuth helpers moved to @comis/core)
+channels      platform adapters (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email, Echo) (no longer references @comis/infra)
+orchestrator  inbound pipeline, execution coordination, channel-manager, command queue, routing, cross-session messaging
 cli           Commander.js, JSON-RPC client
 daemon        orchestrator, observability, systemd (DeviceIdentityPort adapter)
 comis         umbrella package — namespace re-exports
@@ -45,11 +50,11 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 - Chain by early-return: `if (!result.ok) return result;`. No `Result.map`/`flatMap` helpers exist. Use `tryCatch`/`fromPromise` only at boundaries with throwing APIs (Node fs, `new URL()`, third-party SDKs).
 - `err()` for unsupported/unsafe states — never silently succeed, never silently broaden permissions.
 - ERROR/WARN logs require `hint` (operator-actionable next step) and `errorKind`.
-- `errorKind` is the closed union from `LogFields.ErrorKind` in `@comis/infra`: `config | network | auth | validation | timeout | resource | dependency | internal | platform`. Write literals as `"validation" as const`. Heuristic: bad input → `validation`; external API → `dependency`; chat platform → `platform`; bad config → `config`; assertion → `internal`.
+- `errorKind` is the closed union from `LogFields.ErrorKind` in `@comis/core`: `config | network | auth | validation | timeout | resource | dependency | internal | platform`. Write literals as `"validation" as const`. Heuristic: bad input → `validation`; external API → `dependency`; chat platform → `platform`; bad config → `config`; assertion → `internal`.
 
 ### 2.2 Security (ESLint-enforced — violations fail CI; rules apply to `packages/*/src/**` only)
 - No `path.join()` — use `safePath(base, ...segments)` from `@comis/core/security`. `base` must be absolute; every dynamic segment (including filenames) goes through `safePath`. Compose: `safePath(safePath(dataDir, agentId), file)`.
-- No `process.env` — use `SecretManager`. To seed config from env, extend `buildGatewayEnvLayer()` plus the schema; never read env at the consumer. Exception: top-level entry points (CLI commands, daemon entrypoint, env-layer projection, test fault injectors) may read `process.env` with `eslint-disable-next-line` and a one-line rationale.
+- No `process.env` — secrets go through `SecretManager`; non-secret env reads go through `EnvPort` (`env.get(KEY)`). `BootstrapOptions.env` is required at the composition root and is the only sanctioned `process.env` consumer; everywhere else accepts an injected `EnvPort` or — at narrow trust-boundary call sites that cannot accept DI — calls `systemGetEnv()` from `packages/core/src/runtime/system-time.ts`. To seed config from env, extend `buildGatewayEnvLayer()` plus the schema; never read env at the consumer. The architecture test `test/architecture/globals.test.ts` enforces this — `globalsAllowlist` is empty modulo the WEB-CONTRACTS-15 `packages/web/src/api/` carve-outs.
 - No `eval()` or `Function()` constructor.
 - No empty `.catch(() => {})` — use `suppressError(promise, reason, logger?)` from `@comis/shared`. `reason` is logged verbatim; include the handler name.
 - No `module:` in log payloads — bind via `getLogger("…")`, scope further with `submodule:` at call sites.
@@ -75,7 +80,9 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 - Unit tests co-located: `src/component.ts` + `src/component.test.ts`. No real network calls.
 - Mock external modules at file top with `vi.mock(...)`. For partial internal types, use hand-built objects with `as unknown as T` — only the methods the SUT calls.
 - Local `make<X>(overrides: Partial<X> = {}): X` factories at file top for `Deps`, config, domain objects. Cross-package test helpers live in `test/support/`.
+- Time / env / timers in tests: use the fixtures in `test/support/` — `createFakeClock(initialMs)`, `createFakeEnv(seed)`, `createFakeTimers()`. `FakeTimers` exposes `unrefRecord()` for shutdown assertions. Daemon-harness opts in via `useFakeTimers: true` and surfaces `handle.getTimerRecord()` (see `test/integration/daemon-shutdown.test.ts`).
 - Integration tests in `test/integration/` import from `dist/` — `pnpm build` first. They run sequentially (`pool: "forks"`, `maxConcurrency: 1`) because daemon-based tests bind real ports.
+- Test naming: behavior-named (≥20 chars); `test/architecture/test-naming.test.ts` rejects generic names like `"works"`, `"happy path"`, `"sanity"`, `"test N"`.
 
 ### 2.6 Request context propagation
 - `RequestContext` propagates via AsyncLocalStorage. `runWithContext(ctx, fn)` once per inbound request at channel/gateway/scheduler entry — never inside business logic.
@@ -95,6 +102,37 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 - Once-per-request → INFO. N-per-request → DEBUG (aggregate count in the INFO summary).
 - Pipeline stages tag log lines with `step: "<stage-name>"` (canonical examples in `packages/channels/src/shared/`) — per-step analogue of `submodule:`.
 - Events vs logs: emit on `eventBus` for state transitions, lifecycle outcomes, observability snapshots, and safety/health signals (e.g., `tool:executed`, `execution:aborted`, `provider:degraded`). Logs describe; events announce. Logging supplements events — it does not replace them.
+
+**Contract vs implementation.** `ComisLogger`, `LogFields`, and `ErrorKind` are **structural type contracts** that live in `@comis/core/src/logging/log-fields.ts`. The Pino-backed runtime implementation lives in `@comis/infra` and is assignable to the contract (`expectTypeOf<PinoComisLogger>().toExtend<ComisLogger>()` proves this in `packages/infra/src/logging/__tests__/logger-contract.test.ts`). Type-only consumers (agent, channels, gateway, skills, scheduler) import the contract from `@comis/core`. Only the daemon (composition root) and infra itself import the Pino runtime. Pino's auto-redaction (`apiKey`, `token`, `password`, etc., 3 levels deep) is a runtime feature of the Pino implementation; the structural contract does not (and cannot) enforce redaction.
+
+### 2.8 Source Rules (architecture tests — shrink-only allowlists)
+
+Eight allowlist arrays live in `test/support/architecture-allowlist.ts` and are enforced by `test/architecture/*.test.ts`. The arrays are **shrink-only** (`allowlist-shrink.test.ts` gates a base..head git-ref comparison) and entries carry a `removedIn: "phase-X" | "permanent" | "deferred"` template-literal tag that fails `tsc` if stale.
+
+| Rule | Test | What it forbids | Escape hatches |
+|------|------|------------------|----------------|
+| `ALLOWLIST` (v2.0 boundary) | `source-rules.test.ts` and friends | Cross-package internal imports and other boundary violations | Empty — closed set. New L-ID requires shrink-test allowance. |
+| `fileSizeAllowlist` | `file-size.test.ts` | Production `.ts` files >800 lines (and tighter caps inside `agent/executor/`: request-body ≤600L, pi-executor ≤400L, prompt-runner ≤500L, cache-detection ≤350L) | `*.generated.ts` rule (excludes `web/src/api/contracts.generated.ts`); allowlist entry tagged with closing phase |
+| `rawThrowAllowlist` | `raw-throw.test.ts` | `throw new Error(...)` / `throw err` outside `security/`, `safety/`, `error-mapper.ts` boundary modules | `// @allow-throw: <reason>` file-level annotation for sanctioned boundary throws |
+| `untypedSqliteAllowlist` | `untyped-sqlite.test.ts` | `db.prepare(...).all() as Foo[]` and similar untyped SQLite casts in `packages/memory/` | None — go through `createRowMapper(schema)` instead (see §6.8) |
+| `optionalFieldAllowlist` | `optional-field-bloat.test.ts` | Interfaces with ≥12 optional fields without justification | Allowlist entry classifying each as (a) genuinely conditional or (b) cluster-split candidate |
+| `globalsAllowlist` | `globals.test.ts` (AST-classified) | `Date.now()`, `new Date()`, `setTimeout`/`setInterval`/`clearTimeout`/`clearInterval`, `process.env[…]` outside sanctioned roots | Sanctioned roots only: `packages/core/src/bootstrap.ts`, `packages/core/src/runtime/`, `packages/infra/src/runtime/`, daemon composition root, WEB-CONTRACTS-15 `packages/web/src/api/` carve-outs |
+| `noBackwardCompatAllowlist` | `no-backward-compat.test.ts` | `/backward.?compat\|backcompat\|legacy.?(alias\|mode\|fallback)/i` text and `@deprecated` JSDoc in production source | Permanent allowlist entries for annotated migration code and historical-reference comments |
+| `coverageWaiver` | `coverage-gate.test.ts` | Production files with no test neighbor | Test-impractical files only, with permanent documented reason |
+
+**File-level annotations** (override architecture rules; cite reason on the same line):
+- `// @allow-throw: <reason>` — file may throw at boundary; expected at `security/`, `safety/`, `error-mapper.ts`, daemon RPC handlers, and Lit `requireGlobalState()` (caught at framework boundary).
+- `// eslint-disable-next-line no-restricted-syntax, security/detect-object-injection -- <reason>` — narrow per-line escape for sanctioned-root helpers (see `packages/core/src/runtime/system-time.ts:120`).
+
+**Closed-union discriminators.** New `kind:` fields use closed string-literal unions plus an exhaustive `const _exhaustive: never = kind;` at switch defaults — never `kind: string`. See `packages/scheduler/src/heartbeat/agent-heartbeat-source.ts:82`, `packages/daemon/src/wiring/daemon-utils.ts:54`, `packages/skills/src/tools/browser/playwright-actions.ts:328`.
+
+**Non-null clusters.** No `identifier!.method()` chains in production source. In Lit views, replace `this._globalState!.X` with `requireGlobalState(this).X` (typed `GlobalStateNotInitializedError` from `packages/web/src/state/global-state.ts`).
+
+**`SubAgentRunnerDeps` audit pattern.** When a `Deps` interface accumulates >10 optional fields, write a co-located `AUDIT.md` (mirror `packages/agent/AUDIT.md` and `packages/orchestrator/AUDIT.md`) classifying each field as `required` / `optional` with a `when-absent` cell and an evidence-link to the source line. CI sync test enforces bidirectional set equality between the audit table and the interface.
+
+### 2.9 Backward compatibility
+
+Not supported. Per the project's no-BC policy, never add migration code, default-to-old-behavior fallbacks, alias re-exports, deprecated-parameter shims, or `@deprecated` JSDoc — `no-backward-compat.test.ts` keeps them out. Intentional behavior breaks are released in the changelog, not absorbed by a shim. When a rename or signature change is needed, change the call sites in the same diff.
 
 ## 3) Naming Contract
 
@@ -142,11 +180,19 @@ Define interface in `core/src/ports/` → export from core index → add to `App
 
 `bootstrap()` returns `Result<AppContainer, ConfigError>` (never throws); register cleanup in the existing `shutdown:` closure — single shutdown path. SQLite-owning adapters use `openSqliteDatabase()` from `@comis/memory` (handles `0o700` dir, WAL pragmas, `0o600` chmod); adapters receiving a pre-opened `db` skip it.
 
+**Runtime ports (`ClockPort` / `EnvPort` / `TimerPort`).** These are the canonical precedent for hexagonal time/env/timer access:
+
+- Type-only interfaces in `packages/core/src/ports/{clock,env,timer}.ts`.
+- Adapters in `packages/infra/src/runtime/` (`createSystemClock`, `createSystemEnv`, `createSystemTimers`) plus contract tests in `packages/infra/src/__tests__/runtime.contract.test.ts`.
+- Test fakes in `test/support/{fake-clock,fake-env,fake-timers}.ts` (`createFakeClock(initialMs).advance(ms)`; `FakeTimers.unrefRecord()` for leak assertions).
+- `TimerHandle` is opaque: `cancelled` / `cancel()` / `unref()` only. **Never** reach inside it to call raw `clearTimeout`; that breaks `.unref()` accounting and cancel-safety. In retargets, `clearTimeout/clearInterval` becomes `handle.cancel()`; `.unref()` is preserved on the handle.
+- In-package consumers that cannot accept DI (top-level loggers, OAuth poll loops) use `packages/core/src/runtime/system-time.ts` helpers (`systemNowMs`, `systemScheduleTimeout`, `systemSetInterval(...).unref()`, `systemGetEnv`). Adding new sanctioned-root call sites must be justified — the architecture test only exempts the listed roots.
+
 ### 6.3 Add a Domain Type
 `z.strictObject({...})` schema in `core/src/domain/` (domain layer is strict — loosening is a compat break) → infer type with `z.infer<typeof Schema>` → export schema, type, and a paired `parseX(raw): Result<T, z.ZodError>` helper wrapping `safeParse()`. Call sites use `parseX()` — never `.parse()` (throws) or raw `.safeParse()`.
 
 ### 6.4 Add a Config Schema
-`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`. New top-level sections also need entries in the `SECTION_SCHEMAS` maps in `schema-serializer.ts` and `field-metadata.ts` (mirrored — used for agent introspection and CLI/UI editors), plus `managed-sections.ts` if a tool manages the section.
+`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`. New top-level sections register a single entry in the `SECTION_REGISTRY` in `core/src/config/section-registry.ts` (the consolidated source of truth). Per-view derivations (`SECTION_SCHEMAS` in `schema-serializer.ts`, the metadata map in `field-metadata.ts`, the managed-section redirect map in `managed-sections.ts`) are derived from the registry — no per-file edit needed beyond the registry entry.
 
 ### 6.5 Add a Skill
 Skills are Markdown files with manifest frontmatter. Add to `packages/skills/`, validate frontmatter against manifest Zod schema, test loading + manifest validation.
@@ -156,6 +202,12 @@ Include threat/risk notes in commit message. Add boundary + failure-mode tests. 
 
 ### 6.7 Add or Change an Agent Tool
 Register metadata via `registerToolMetadata(name, meta)` in `packages/skills/src/bridge/tool-metadata-registry.ts`. The `ComisToolMetadata` shape (`packages/core/src/tool-metadata.ts`) covers: `maxResultSizeChars` (result cap), `isReadOnly` / `isConcurrencySafe` (parallel-execution safety), `searchHint` (BM25 deferred-discovery), `validActions` / `validKeys` / `requiredByAction` (action-discriminated tool gating — shape mirrors `ManagedSectionRedirect.schemaFragment` in `config/managed-sections.ts`), `validateInput` (pre-flight validator), `outputSchema` (structured output), `coDiscoverWith` (paired discovery). When the tool manages a config section, add the redirect to `config/managed-sections.ts` so immutable-path rejections include a parameter-correct example.
+
+### 6.8 SQLite reads / discord.js narrowing
+
+**SQLite rows go through `createRowMapper(schema)`** (`packages/memory/src/row-mapper.ts`). Define a Zod schema in `row-schemas.ts`, build the mapper once at module top, call `mapper.parseRow` / `mapper.parseOptionalRow` / `mapper.parseRows` on statement results. The mapper returns `Result<TRow, MapperError>` (path-indexed errors) — chain with early-return per §2.1. No `as Foo[]` / `as Foo | undefined` casts in `packages/memory/src/`.
+
+**discord.js narrowing uses `asTextLike()`** (`packages/channels/src/discord/discord-adapter-types.ts`). `DiscordTextLikeChannel` is a structural subset of the discord.js channel union covering the runtime methods `discord-actions.ts` actually uses. Returns `null` (not a `Result`) when the channel isn't text-like — `null` is the correct "not text-like" signal that callers branch on. No `as any` in discord adapter files.
 
 ## 7) Validation
 
@@ -170,14 +222,22 @@ By change type:
 - Channel adapters: test credential validation, message mapping, lifecycle.
 - Config schemas: test defaults, valid inputs, validation errors.
 - Injection patterns: test detection accuracy and false positives.
-- Integration tests: `pnpm build` first; run via `pnpm test:integration` (or `:mock` / `test:orchestrate`).
+- Integration tests: `pnpm build` first; run via `pnpm test:integration` (or `:mock` / `test:orchestrate`). Required per-commit when retargeting a production caller from a global to a port, and when splitting executor files.
+
+Coverage: `pnpm test --coverage` enforces `lines: 90 / branches: 85 / functions: 90` on `packages/*/src/**/*.ts` via `@vitest/coverage-v8`; integration tier ≥80% line. `coverageWaiver` is for test-impractical files only.
 
 If full validation is impractical, document what was run and what was skipped.
 
 ## 8) Anti-Patterns (Do Not)
 
 - Use `path.join()`, `process.env`, `eval()` / `Function()`, or empty `.catch(() => {})`.
-- Throw exceptions — return `Result` with `err()`.
+- Use `Date.now()` / `new Date()` / `setTimeout` / `setInterval` / `clearTimeout` / `clearInterval` directly — go through `ClockPort` / `TimerPort` or the sanctioned-root `packages/core/src/runtime/system-time.ts` helpers. `clearTimeout/clearInterval` is `handle.cancel()` on a `TimerHandle`.
+- Cast SQLite results — `db.prepare(...).all() as Foo[]` is banned in `packages/memory/`. Use `createRowMapper(schema)`.
+- Use `as any` in the Discord adapter — use `asTextLike()` from `discord-adapter-types.ts`.
+- Use `identifier!.method()` non-null clusters in production source. In Lit views, use `requireGlobalState(this)`.
+- Declare `kind: string` discriminators — use closed string-literal unions with an `assertNever` / `const _exhaustive: never = kind;` default branch.
+- Add backward-compatibility shims, alias re-exports, deprecated-parameter wrappers, or `@deprecated` JSDoc — change call sites in the same diff.
+- Throw exceptions — return `Result` with `err()`. Sanctioned boundary throws are file-tagged with `// @allow-throw: <reason>`.
 - Import `@comis/infra` directly — inject logger via `Deps`.
 - Use `console.log` outside `packages/cli`.
 - Import cross-package internals — use public exports only.
@@ -186,6 +246,7 @@ If full validation is impractical, document what was run and what was skipped.
 - Add speculative config keys or feature flags "just in case".
 - Use string interpolation in structured log calls — Pino object-first only.
 - Include personal identity or sensitive data in tests, examples, docs, or commits.
+- Add entries to architecture allowlists (`test/support/architecture-allowlist.ts`) — they are shrink-only. Closing a violation requires deleting the entry, not adding a new one.
 
 ## 9) Conventions
 

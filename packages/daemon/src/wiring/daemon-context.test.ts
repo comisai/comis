@@ -124,7 +124,9 @@ describe("DaemonContext", () => {
       "@comis/scheduler",
       "@comis/gateway",
       "@comis/skills",
-      "@comis/channels",
+      // ChannelManager type is sourced from @comis/orchestrator;
+      // daemon-context.ts does not import from @comis/channels.
+      "@comis/orchestrator",
     ];
 
     for (const pkg of expectedImports) {

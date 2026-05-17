@@ -9,9 +9,9 @@
  * @module
  */
 
-import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { Context, Message } from "@mariozechner/pi-ai";
-import type { ComisLogger } from "@comis/infra";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import type { Context, Message } from "@earendil-works/pi-ai";
+import type { ComisLogger } from "@comis/core";
 
 import type { StreamFnWrapper } from "./types.js";
 import { createToolResultSizeGuard, type ContentBlock } from "../../safety/tool-result-size-guard.js";

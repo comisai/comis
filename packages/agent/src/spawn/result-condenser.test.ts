@@ -22,8 +22,8 @@ import type { ResultCondenserDeps, CondenseParams } from "./result-condenser.js"
 // Module-level mocks
 // ---------------------------------------------------------------------------
 
-// Mock @mariozechner/pi-coding-agent
-vi.mock("@mariozechner/pi-coding-agent", () => ({
+// Mock @earendil-works/pi-coding-agent
+vi.mock("@earendil-works/pi-coding-agent", () => ({
   generateSummary: vi.fn(),
   truncateHead: vi.fn((text: string, opts: { maxBytes: number }) => ({
     content: text.slice(0, opts.maxBytes),
@@ -52,7 +52,7 @@ vi.mock("@comis/core", async (importOriginal) => {
 
 // Import after mocks
 import { createResultCondenser } from "./result-condenser.js";
-import { generateSummary } from "@mariozechner/pi-coding-agent";
+import { generateSummary } from "@earendil-works/pi-coding-agent";
 import { mkdir, writeFile } from "node:fs/promises";
 
 // ---------------------------------------------------------------------------

@@ -494,7 +494,7 @@ describe("getToolGuideWithSchema", () => {
 
 describe("providers_manage TOOL_GUIDE catalog interpolation", () => {
   it("Built-in providers list contains every name from getProviders()", async () => {
-    const { getProviders } = await import("@mariozechner/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai");
     const guide = TOOL_GUIDES.providers_manage!;
     for (const p of getProviders()) {
       expect(guide, `provider "${p}" missing from providers_manage TOOL_GUIDE`).toContain(p);

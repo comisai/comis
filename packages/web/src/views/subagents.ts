@@ -8,6 +8,7 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import type { SubAgentRunDto } from "../api/types/agent-types.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // Side-effect imports for sub-components
 import "../components/feedback/ic-loading.js";
@@ -190,8 +191,8 @@ export class IcSubagentsView extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadData();
     }, delayMs);
@@ -200,7 +201,7 @@ export class IcSubagentsView extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
     this._rpcStatusUnsub?.();

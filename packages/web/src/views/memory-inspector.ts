@@ -5,6 +5,7 @@ import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { ApiClient, BrowseMemoryParams } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { MemoryEntry, MemoryStats, EmbeddingCacheStats } from "../api/types/index.js";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 import "../components/memory-table.js";
 import "../components/memory-detail.js";
 import "../components/data/ic-stat-card.js";
@@ -12,6 +13,10 @@ import "../components/data/ic-tag.js";
 import "../components/form/ic-search-input.js";
 import "../components/layout/ic-detail-panel.js";
 import "../components/feedback/ic-confirm-dialog.js";
+import {
+  createMemoryInspectorController,
+  type MemoryInspectorController,
+} from "./memory-inspector-controller.js";
 
 /** Memory type filter options. */
 const MEMORY_TYPES = ["working", "episodic", "semantic", "procedural"] as const;
@@ -637,11 +642,17 @@ export class IcMemoryInspector extends LitElement {
   @state() private _flushAgentId = "";
   @state() private _flushSubmitting = false;
 
+  /** Controller owns RPC orchestration (thin façade pattern — view keeps @state). */
+  private _controller: MemoryInspectorController | null = null;
+
   override connectedCallback(): void {
     super.connectedCallback();
     // Note: _loadStats() and _loadAgents() are NOT called here --
     // apiClient is typically null at this point. The updated() callback
     // handles loading once the client property is set.
+    if (this.rpcClient) {
+      this._controller = createMemoryInspectorController(this, this.rpcClient);
+    }
   }
 
   override updated(changed: Map<string, unknown>): void {
@@ -650,6 +661,9 @@ export class IcMemoryInspector extends LitElement {
       this._loadAgents();
     }
     if (changed.has("rpcClient") && this.rpcClient) {
+      if (!this._controller) {
+        this._controller = createMemoryInspectorController(this, this.rpcClient);
+      }
       this._loadEmbeddingStats();
     }
   }
@@ -673,7 +687,7 @@ export class IcMemoryInspector extends LitElement {
       score: typeof raw.score === "number" ? raw.score : undefined,
       hasEmbedding: Boolean(raw.hasEmbedding ?? false),
       embeddingDims: typeof raw.embeddingDims === "number" ? raw.embeddingDims : undefined,
-      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : systemNowMs(),
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : undefined,
     };
   }
@@ -716,10 +730,10 @@ export class IcMemoryInspector extends LitElement {
   }
 
   private async _loadEmbeddingStats(): Promise<void> {
-    if (!this.rpcClient || this._embeddingLoading) return;
+    if (!this._controller || this._embeddingLoading) return;
     this._embeddingLoading = true;
     try {
-      const result = await this.rpcClient.call("memory.embeddingCache");
+      const result = await this._controller.getEmbeddingCache();
       this._embeddingStats = result as unknown as EmbeddingCacheStats;
     } catch {
       // Non-critical -- embedding may be disabled
@@ -780,10 +794,10 @@ export class IcMemoryInspector extends LitElement {
         params.agentId = this._agentFilter;
       }
       if (this._dateFrom) {
-        params.from = new Date(this._dateFrom).getTime();
+        params.from = systemDateFrom(this._dateFrom).getTime();
       }
       if (this._dateTo) {
-        params.to = new Date(this._dateTo).getTime();
+        params.to = systemDateFrom(this._dateTo).getTime();
       }
 
       const result = await this.apiClient.browseMemory(params as unknown as BrowseMemoryParams);
@@ -809,11 +823,11 @@ export class IcMemoryInspector extends LitElement {
       if (!this._trustFilter.has(entry.trustLevel)) return false;
       if (this._agentFilter && entry.agentId !== this._agentFilter) return false;
       if (this._dateFrom) {
-        const from = new Date(this._dateFrom).getTime();
+        const from = systemDateFrom(this._dateFrom).getTime();
         if (entry.createdAt < from) return false;
       }
       if (this._dateTo) {
-        const to = new Date(this._dateTo).getTime() + 86400000; // End of day
+        const to = systemDateFrom(this._dateTo).getTime() + 86400000; // End of day
         if (entry.createdAt > to) return false;
       }
       return true;
@@ -923,7 +937,7 @@ export class IcMemoryInspector extends LitElement {
 
   private async _submitCreate(): Promise<void> {
     const content = this._createContent.trim();
-    if (!content || !this.rpcClient || this._createSubmitting) return;
+    if (!content || !this._controller || this._createSubmitting) return;
 
     this._createSubmitting = true;
     this._createMessage = "";
@@ -937,9 +951,9 @@ export class IcMemoryInspector extends LitElement {
         tags.push(`provenance:${this._createProvenance.trim()}`);
       }
 
-      await this.rpcClient.call("memory.store", {
+      await this._controller.storeEntry({
         content,
-        tags: tags.length > 0 ? tags : undefined,
+        tags,
         trustLevel: this._createTrustLevel,
       });
 
@@ -972,14 +986,12 @@ export class IcMemoryInspector extends LitElement {
 
   private async _confirmFlush(): Promise<void> {
     this._flushDialogOpen = false;
-    if (!this.rpcClient || this._flushSubmitting) return;
+    if (!this._controller || this._flushSubmitting) return;
 
     this._flushSubmitting = true;
 
     try {
-      await this.rpcClient.call("memory.flush", {
-        agent_id: this._flushAgentId || undefined,
-      });
+      await this._controller.flushMemory(this._flushAgentId);
 
       // Reload data
       this._loadStats();
@@ -1035,7 +1047,7 @@ export class IcMemoryInspector extends LitElement {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `memory-export-${Date.now()}.jsonl`;
+      a.download = `memory-export-${systemNowMs()}.jsonl`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -1096,7 +1108,7 @@ export class IcMemoryInspector extends LitElement {
   }
 
   private _formatRelativeTime(timestamp: number): string {
-    const now = Date.now();
+    const now = systemNowMs();
     const diffMs = now - timestamp;
     const diffSec = Math.floor(diffMs / 1000);
     const diffMin = Math.floor(diffSec / 60);
@@ -1118,7 +1130,7 @@ export class IcMemoryInspector extends LitElement {
   }
 
   private _formatFullDate(timestamp: number): string {
-    return new Date(timestamp).toLocaleString();
+    return systemDateFrom(timestamp).toLocaleString();
   }
 
   /** Render byAgent horizontal bar chart sorted by count descending. */

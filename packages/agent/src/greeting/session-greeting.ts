@@ -14,7 +14,8 @@
  */
 
 import { ok, err, type Result } from "@comis/shared";
-import { completeSimple, getModel } from "@mariozechner/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -75,7 +76,7 @@ export function createGreetingGenerator(deps: GreetingGeneratorDeps): GreetingGe
       }
 
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const timer = systemSetTimeout(() => controller.abort(), timeoutMs);
 
       try {
         const response = await completeSimple(
@@ -86,7 +87,7 @@ export function createGreetingGenerator(deps: GreetingGeneratorDeps): GreetingGe
               {
                 role: "user" as const,
                 content: "Generate a greeting for a new conversation session.",
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               },
             ],
           },
@@ -125,7 +126,7 @@ export function createGreetingGenerator(deps: GreetingGeneratorDeps): GreetingGe
         }
         return err(new Error(`Greeting generation failed: ${callErr instanceof Error ? callErr.message : String(callErr)}`));
       } finally {
-        clearTimeout(timer);
+        systemClearTimeout(timer);
       }
     },
   };

@@ -7,4 +7,4 @@ userInvocable: true
 
 # Operator Config Skill
 
-Phase 24 fixture A. The cluster assignment for this skill comes from the operator YAML in `tooling-config.yaml` (`tooling.skills.capabilityHints['operator-config-skill']`). The skill manifest itself carries no `comis.capability` metadata.
+Fixture: the cluster assignment for this skill comes from the operator YAML in `tooling-config.yaml` (`tooling.skills.capabilityHints['operator-config-skill']`). The skill manifest itself carries no `comis.capability` metadata.

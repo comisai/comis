@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { CircuitBreakerConfig } from "@comis/core";
+import type { CircuitBreakerConfig, ClockPort } from "@comis/core";
 
 /** Three-state circuit breaker state */
 export type CircuitState = "closed" | "open" | "halfOpen";
@@ -28,9 +28,9 @@ export interface CircuitBreaker {
  * - **halfOpen**: A single probe call is allowed. `recordSuccess()` transitions to
  *   `closed`; `recordFailure()` transitions back to `open`.
  *
- * Uses synchronous `Date.now()` comparisons for timer checks (no setTimeout).
+ * Uses synchronous `clock.now()` comparisons for timer checks (no setTimeout).
  */
-export function createCircuitBreaker(config: CircuitBreakerConfig): CircuitBreaker {
+export function createCircuitBreaker(config: CircuitBreakerConfig, clock: ClockPort): CircuitBreaker {
   const { failureThreshold, resetTimeoutMs } = config;
 
   let state: CircuitState = "closed";
@@ -38,7 +38,7 @@ export function createCircuitBreaker(config: CircuitBreakerConfig): CircuitBreak
   let openedAt = 0;
 
   function tryTransitionToHalfOpen(): void {
-    if (state === "open" && Date.now() - openedAt >= resetTimeoutMs) {
+    if (state === "open" && clock.now() - openedAt >= resetTimeoutMs) {
       state = "halfOpen";
     }
   }
@@ -61,14 +61,14 @@ export function createCircuitBreaker(config: CircuitBreakerConfig): CircuitBreak
     recordFailure(): void {
       if (state === "halfOpen") {
         state = "open";
-        openedAt = Date.now();
+        openedAt = clock.now();
         return;
       }
 
       consecutiveFailures++;
       if (consecutiveFailures >= failureThreshold) {
         state = "open";
-        openedAt = Date.now();
+        openedAt = clock.now();
       }
     },
 

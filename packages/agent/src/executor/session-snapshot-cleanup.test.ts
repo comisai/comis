@@ -51,7 +51,7 @@ vi.mock("./discovery-tracker.js", () => ({
   clearDiscoveryTracker: mockClearDiscoveryTracker,
 }));
 
-vi.mock("./cache-break-detection.js", () => ({
+vi.mock("./cache-detection/index.js", () => ({
   clearCacheBreakDetectorSession: mockClearCacheBreakDetectorSession,
 }));
 
@@ -59,7 +59,7 @@ vi.mock("./ttl-guard.js", () => ({
   clearSessionLastResponseTs: mockClearSessionLastResponseTs,
 }));
 
-vi.mock("./stream-wrappers/request-body-injector.js", () => ({
+vi.mock("./stream-wrappers/request-body/index.js", () => ({
   clearSessionBetaHeaderLatches: mockClearSessionBetaHeaderLatches,
   clearSessionPrefixStability: mockClearSessionPrefixStability,
   clearSessionCadenceTracker: mockClearSessionCadenceTracker,
@@ -184,7 +184,7 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionLastResponseTs).toHaveBeenCalledWith(expectedKey);
     });
 
-    it("formats session key with agentId prefix when present", () => {
+    it("formats session key without agent prefix even when agentId is set", () => {
       let capturedHandler: ((payload: { sessionKey: { agentId: string; tenantId: string; userId: string; channelId: string }; reason: string }) => void) | undefined;
       const eventBus = {
         on: vi.fn((_event: string, handler: typeof capturedHandler) => {
@@ -199,7 +199,10 @@ describe("session-snapshot-cleanup", () => {
         reason: "manual-reset",
       });
 
-      const expectedKey = "agent:bot1:t1:u1:c1";
+      // formatSessionKey no longer emits the `agent:<agentId>:` prefix even
+      // when `key.agentId` is set — the field is retained on the schema for
+      // caller ergonomics but is intentionally not serialized.
+      const expectedKey = "t1:u1:c1";
 
       expect(mockClearSessionDeliveredGuides).toHaveBeenCalledWith(expectedKey);
       expect(mockClearSessionToolSchemaSnapshotHash).toHaveBeenCalledWith(expectedKey);

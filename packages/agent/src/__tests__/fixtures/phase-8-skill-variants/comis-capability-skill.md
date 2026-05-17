@@ -13,4 +13,4 @@ comis:
 
 # Comis Capability Skill
 
-Phase 24 fixture B. The cluster assignment comes from the `comis.capability` block in this manifest's frontmatter (no operator hint exists for this skill in `tooling-config.yaml`).
+The cluster assignment comes from the `comis.capability` block in this manifest's frontmatter (no operator hint exists for this skill in `tooling-config.yaml`).

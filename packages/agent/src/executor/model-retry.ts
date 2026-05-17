@@ -24,11 +24,11 @@
  * @module
  */
 
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
-import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
-import type { ImageContent } from "@mariozechner/pi-ai";
-import type { TypedEventBus } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { ImageContent } from "@earendil-works/pi-ai";
+import type { TypedEventBus, ClockPort, TimerPort } from "@comis/core";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";
 import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js";
 import type { LastKnownModelTracker } from "../model/last-known-model.js";
@@ -76,6 +76,10 @@ export interface ModelRetryParams {
     lastKnownModel?: LastKnownModelTracker;
     /** Callback to receive the resetTimer function from the resettable prompt timeout. */
     onResetTimer?: (resetFn: () => void) => void;
+    /** Wall-clock + monotonic time reads. */
+    clock: ClockPort;
+    /** Timer scheduling. Short-retry uses timers.setTimeout. */
+    timers: TimerPort;
   };
 }
 
@@ -88,7 +92,7 @@ export interface ModelRetryResult {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers (moved from pi-executor.ts -- only used by fallback loop)
+// Helpers used by the fallback loop
 // ---------------------------------------------------------------------------
 
 /**
@@ -122,7 +126,7 @@ function getErrorStatus(error: unknown): number {
  * Checks for `headers["retry-after"]` on the error object (pi-ai SDK errors
  * expose response headers). Returns milliseconds, or null if not available.
  */
-function parseRetryAfterMs(error: unknown): number | null {
+function parseRetryAfterMs(error: unknown, clock: ClockPort): number | null {
   if (!(error instanceof Error)) return null;
 
   const errObj = error as unknown as Record<string, unknown>;
@@ -150,7 +154,7 @@ function parseRetryAfterMs(error: unknown): number | null {
   // Try HTTP-date format
   const dateMs = Date.parse(retryAfter);
   if (!Number.isNaN(dateMs)) {
-    return Math.max(0, dateMs - Date.now());
+    return Math.max(0, dateMs - clock.now());
   }
 
   return null;
@@ -193,12 +197,12 @@ export function isAuthError(error: unknown): boolean {
  */
 export async function runWithModelRetry(params: ModelRetryParams): Promise<ModelRetryResult> {
   const { session, messageText, promptImages, config, deps, timeoutConfig } = params;
-  const { eventBus, logger, authRotation, modelRegistry } = deps;
+  const { eventBus, logger, authRotation, modelRegistry, clock, timers } = deps;
   const fallbackModels = deps.fallbackModels ?? [];
   // Use session-resolved model for diagnostic logs, falling back to agent config default
   const displayModel = params.resolvedModel ?? `${config.provider}:${config.model}`;
   // Track total elapsed time across all retry attempts
-  const retryStartMs = Date.now();
+  const retryStartMs = clock.now();
   const maxRetries = 1 + (authRotation?.hasProfiles(config.provider) ? 1 : 0) + fallbackModels.length;
 
   let promptError: unknown = undefined;
@@ -215,6 +219,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
       }),
       timeoutConfig.promptTimeoutMs,
       () => session.abort(),
+      timers,
     );
     // Expose resetTimer to the caller (pi-executor) for wiring to tool execution events
     deps.onResetTimer?.(resettable.resetTimer);
@@ -233,7 +238,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         model: displayModel,
         attempt: 1,
         maxRetries,
-        totalElapsedMs: Date.now() - retryStartMs,
+        totalElapsedMs: clock.now() - retryStartMs,
         hint: "Primary model failed, attempting fallback",
         errorKind: "dependency" as ErrorKind,
       },
@@ -246,7 +251,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         agentId: deps.agentId ?? "unknown",
         sessionKey: deps.sessionKey ?? "unknown",
         timeoutMs: primaryError.timeoutMs,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
     }
 
@@ -259,18 +264,19 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
     if (!promptSucceeded) {
       const status = getErrorStatus(primaryError);
       if (status === 429 || status === 529) {
-        const retryAfterMs = parseRetryAfterMs(primaryError);
+        const retryAfterMs = parseRetryAfterMs(primaryError, clock);
         if (retryAfterMs !== null && retryAfterMs < SHORT_RETRY_THRESHOLD_MS) {
           logger.debug(
             { retryAfterMs, model: displayModel, sessionKey: deps.sessionKey },
             "Short retry -- preserving model for cache hit",
           );
-          await new Promise(r => setTimeout(r, retryAfterMs));
+          await new Promise<void>(r => { const h = timers.setTimeout(() => r(), retryAfterMs); void h; });
           try {
             await withPromptTimeout(
               session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
               timeoutConfig.retryPromptTimeoutMs,
               () => session.abort(),
+              timers,
             );
             promptSucceeded = true;
             promptError = undefined;
@@ -309,6 +315,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
             timeoutConfig.retryPromptTimeoutMs,
             () => session.abort(),
+            timers,
           );
           promptSucceeded = true;
           promptError = undefined;
@@ -325,7 +332,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
               err: rotatedKeyError,
               attempt: 2,
               maxRetries,
-              totalElapsedMs: Date.now() - retryStartMs,
+              totalElapsedMs: clock.now() - retryStartMs,
               hint: "Rotated key also failed, proceeding to model fallback",
               errorKind: "auth" as ErrorKind,
             },
@@ -337,7 +344,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
               agentId: deps.agentId ?? "unknown",
               sessionKey: deps.sessionKey ?? "unknown",
               timeoutMs: rotatedKeyError.timeoutMs,
-              timestamp: Date.now(),
+              timestamp: clock.now(),
             });
           }
           // Feed rotation failure into provider health monitor
@@ -360,7 +367,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           toModel: parsed?.modelId ?? fallbackModelStr,
           error: promptError instanceof Error ? promptError.message : "unknown",
           attemptNumber: i + 1,
-          timestamp: Date.now(),
+          timestamp: clock.now(),
         });
         logger.info(
           { fallbackModel: fallbackModelStr },
@@ -387,6 +394,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           }),
           timeoutConfig.retryPromptTimeoutMs,
           () => session.abort(),
+          timers,
         );
         promptSucceeded = true;
         promptError = undefined;
@@ -408,7 +416,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             fallbackModel: fallbackModelStr,
             attempt: attemptNum,
             maxRetries,
-            totalElapsedMs: Date.now() - retryStartMs,
+            totalElapsedMs: clock.now() - retryStartMs,
             hint: "Fallback model also failed",
             errorKind: "dependency" as ErrorKind,
           },
@@ -420,7 +428,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             agentId: deps.agentId ?? "unknown",
             sessionKey: deps.sessionKey ?? "unknown",
             timeoutMs: fallbackError.timeoutMs,
-            timestamp: Date.now(),
+            timestamp: clock.now(),
           });
         }
         // Feed fallback failure into provider health monitor
@@ -435,7 +443,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         provider: config.provider,
         model: config.model,
         totalAttempts: fallbackModels.length + 1,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
     }
 
@@ -453,7 +461,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           fromModel: config.model,
           toProvider: lkw.provider,
           toModel: lkw.model,
-          timestamp: Date.now(),
+          timestamp: clock.now(),
         });
         logger.info(
           { lkwProvider: lkw.provider, lkwModel: lkw.model },
@@ -474,6 +482,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             }),
             timeoutConfig.retryPromptTimeoutMs,
             () => session.abort(),
+            timers,
           );
           promptSucceeded = true;
           promptError = undefined;
@@ -482,7 +491,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           eventBus.emit("model:lkw_fallback_succeeded", {
             provider: lkw.provider,
             model: lkw.model,
-            timestamp: Date.now(),
+            timestamp: clock.now(),
           });
           logger.info(
             { lkwProvider: lkw.provider, lkwModel: lkw.model },

@@ -183,14 +183,19 @@ describe("SessionKey", () => {
       expect(formatSessionKey(key)).toBe("acme-corp:admin:ops");
     });
 
-    it("prepends agent prefix when agentId is set", () => {
+    // `formatSessionKey` does not emit an `agent:<agentId>:` prefix when
+    // `key.agentId` is set. The `SessionKey.agentId` field is retained on
+    // the schema for caller ergonomics but is intentionally not serialized
+    // — agent isolation happens out-of-band (per-agent workspace dirs,
+    // watermark files, etc.).
+    it("does NOT emit agent prefix when agentId is set", () => {
       const key: SessionKey = {
         tenantId: "default",
         userId: "user-42",
         channelId: "general",
         agentId: "myAgent",
       };
-      expect(formatSessionKey(key)).toBe("agent:myAgent:default:user-42:general");
+      expect(formatSessionKey(key)).toBe("default:user-42:general");
     });
 
     it("appends thread suffix when threadId is set", () => {
@@ -203,8 +208,8 @@ describe("SessionKey", () => {
       expect(formatSessionKey(key)).toBe("default:user-42:general:thread:t123");
     });
 
-    it("includes both agentId and threadId", () => {
-      const key: SessionKey = {
+    it("emits identical output for agentId-set and agentId-unset keys", () => {
+      const withAgent: SessionKey = {
         tenantId: "default",
         userId: "u1",
         channelId: "c1",
@@ -212,7 +217,15 @@ describe("SessionKey", () => {
         agentId: "dash",
         threadId: "th-7",
       };
-      expect(formatSessionKey(key)).toBe("agent:dash:default:u1:c1:peer:p1:thread:th-7");
+      const withoutAgent: SessionKey = {
+        tenantId: "default",
+        userId: "u1",
+        channelId: "c1",
+        peerId: "p1",
+        threadId: "th-7",
+      };
+      expect(formatSessionKey(withAgent)).toBe(formatSessionKey(withoutAgent));
+      expect(formatSessionKey(withAgent)).toBe("default:u1:c1:peer:p1:thread:th-7");
     });
 
     it("produces identical output without agentId/threadId", () => {
@@ -265,16 +278,6 @@ describe("SessionKey", () => {
       expect(parseFormattedSessionKey("")).toBeUndefined();
     });
 
-    it("parses agent-prefixed key", () => {
-      const key = parseFormattedSessionKey("agent:dash:default:user-1:chan-1");
-      expect(key).toEqual({
-        tenantId: "default",
-        userId: "user-1",
-        channelId: "chan-1",
-        agentId: "dash",
-      });
-    });
-
     it("parses thread-suffixed key", () => {
       const key = parseFormattedSessionKey("default:user-1:chan-1:thread:t-42");
       expect(key).toEqual({
@@ -285,27 +288,25 @@ describe("SessionKey", () => {
       });
     });
 
-    it("parses key with agent prefix, peer, guild, and thread", () => {
-      const key = parseFormattedSessionKey("agent:coder:acme:u1:c1:peer:p1:guild:g1:thread:th7");
+    it("parses key with peer, guild, and thread (no agent prefix)", () => {
+      const key = parseFormattedSessionKey("acme:u1:c1:peer:p1:guild:g1:thread:th7");
       expect(key).toEqual({
         tenantId: "acme",
         userId: "u1",
         channelId: "c1",
         peerId: "p1",
         guildId: "g1",
-        agentId: "coder",
         threadId: "th7",
       });
     });
 
-    it("roundtrips with new fields (agentId + threadId)", () => {
+    it("roundtrips with threadId (no agentId)", () => {
       const original: SessionKey = {
         tenantId: "t",
         userId: "u",
         channelId: "c",
         peerId: "p",
         guildId: "g",
-        agentId: "bot",
         threadId: "th",
       };
       const formatted = formatSessionKey(original);
@@ -313,8 +314,7 @@ describe("SessionKey", () => {
       expect(parsed).toEqual(original);
     });
 
-    it("still handles old format without agent/thread (regression)", () => {
-      // Old format keys must parse identically to original behavior
+    it("parses 3+optional-segment key (regression)", () => {
       const key = parseFormattedSessionKey("default:user-1:chan-1:peer:p1:guild:g1");
       expect(key).toEqual({
         tenantId: "default",

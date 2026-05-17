@@ -85,50 +85,21 @@ const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
 // Module mocks
 // ---------------------------------------------------------------------------
 
+// Daemon imports from THREE @comis/skills subpaths.
+// - "." subpath: policy, pipeline, MCP bridge, credential injector (no longer
+//   includes the 38+ platform-tool factories -- those live in the registry).
+// - "./tools" subpath: exec/process/apply-patch + helpers (media-persistence,
+//   image sanitizer, file-state tracker).
+// - "./platform-tools" subpath: createPlatformToolRegistry -- the descriptor
+//   list daemon iterates.
+//
+// We mock all three so the unit tests don't load the real factories (which
+// would pull in @comis/core symbols we deliberately don't stub).
+
 vi.mock("@comis/skills", () => ({
   assembleToolPipeline: mockAssembleToolPipeline,
-  createFileStateTracker: mockCreateFileStateTracker,
-  createCronTool: mockCreateCronTool,
-  createUnifiedMemoryTool: mockCreateUnifiedMemoryTool,
-  createUnifiedSessionTool: mockCreateUnifiedSessionTool,
-  createUnifiedContextTool: mockCreateUnifiedContextTool,
-  createMessageTool: mockCreateMessageTool,
-  createDiscordActionTool: mockCreateDiscordActionTool,
-  createTelegramActionTool: mockCreateTelegramActionTool,
-  createSlackActionTool: mockCreateSlackActionTool,
-  createWhatsAppActionTool: mockCreateWhatsAppActionTool,
-  createSessionsSendTool: mockCreateSessionsSendTool,
-  createSessionsSpawnTool: mockCreateSessionsSpawnTool,
-  createSubagentsTool: mockCreateSubagentsTool,
-  createPipelineTool: mockCreatePipelineTool,
-  createImageTool: mockCreateImageTool,
-  createTTSTool: mockCreateTTSTool,
-  createTranscribeAudioTool: mockCreateTranscribeAudioTool,
-  createDescribeVideoTool: mockCreateDescribeVideoTool,
-  createExtractDocumentTool: mockCreateExtractDocumentTool,
-  createGatewayTool: mockCreateGatewayTool,
-  createBrowserTool: mockCreateBrowserTool,
-  createAgentsManageTool: mockCreateAgentsManageTool,
-  createObsQueryTool: mockCreateObsQueryTool,
-  createSessionsManageTool: mockCreateSessionsManageTool,
-  createModelsManageTool: mockCreateModelsManageTool,
-  createTokensManageTool: mockCreateTokensManageTool,
-  createChannelsManageTool: mockCreateChannelsManageTool,
-  createSkillsManageTool: mockCreateSkillsManageTool,
-  createMcpManageTool: mockCreateMcpManageTool,
-  createProvidersManageTool: mockCreateProvidersManageTool,
-  createExecTool: mockCreateExecTool,
-  createProcessTool: mockCreateProcessTool,
-  createApplyPatchTool: mockCreateApplyPatchTool,
-  createHeartbeatManageTool: mockCreateHeartbeatManageTool,
-  createNotifyTool: mockCreateNotifyTool,
-  createImageGenerateTool: mockCreateImageGenerateTool,
-  createProcessRegistry: mockCreateProcessRegistry,
-  createMediaPersistenceService: mockCreateMediaPersistenceService,
   createCredentialInjector: mockCreateCredentialInjector,
   mcpToolsToAgentTools: mockMcpToolsToAgentTools,
-  sanitizeImageForApi: mockSanitizeImageForApi,
-  sanitizeLogString: mockSanitizeLogString,
   TOOL_PROFILES: {
     minimal: ["exec", "read", "write"],
     coding: ["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"],
@@ -143,6 +114,73 @@ vi.mock("@comis/skills", () => ({
   },
 }));
 
+vi.mock("@comis/skills/tools", () => ({
+  createExecTool: mockCreateExecTool,
+  createProcessTool: mockCreateProcessTool,
+  createProcessRegistry: mockCreateProcessRegistry,
+  createApplyPatchTool: mockCreateApplyPatchTool,
+  createFileStateTracker: mockCreateFileStateTracker,
+  sanitizeImageForApi: mockSanitizeImageForApi,
+  createMediaPersistenceService: mockCreateMediaPersistenceService,
+}));
+
+// `createPlatformToolRegistry` mock returns descriptors that delegate back
+// to the existing hoisted mock factories. Each descriptor's `build(ctx)`
+// invokes the corresponding mock so existing `mockCreate*Tool.toHaveBeenCalled`
+// expectations still fire when daemon iterates the registry. The 4 truly-
+// conditional descriptors (background_tasks, image_generate, unified_context,
+// browser) carry the same `conditional` predicates that the real registry
+// uses -- daemon filters on those before invoking `build`.
+vi.mock("@comis/skills/platform-tools", () => ({
+  createPlatformToolRegistry: vi.fn(() => [
+    { name: "agents_manage", category: "agent", build: (ctx: any) => mockCreateAgentsManageTool(ctx.rpcCall, ctx.skillsLogger, ctx.approvalGate, { onMutationStart: ctx.onConfigMutationStart, onMutationEnd: ctx.onConfigMutationEnd, onAgentCreated: ctx.onAgentCreated }) },
+    { name: "pipeline", category: "agent", build: (ctx: any) => mockCreatePipelineTool(ctx.rpcCall, ctx.skillsLogger, ctx.approvalGate) },
+    { name: "subagents", category: "agent", build: (ctx: any) => mockCreateSubagentsTool(ctx.rpcCall, ctx.skillsLogger) },
+    { name: "background_tasks", category: "background", conditional: (ctx: any) => ctx.backgroundTaskManager !== undefined, build: (ctx: any) => mockCreateBackgroundTasksTool({ manager: ctx.backgroundTaskManager, agentId: ctx.agentId }) },
+    { name: "browser", category: "browser", conditional: (ctx: any) => ctx.builtinToolsBrowserEnabled === true, build: (ctx: any) => mockCreateBrowserTool({ rpcCall: ctx.rpcCall, sanitizeImage: ctx.browserSanitizeImage, persistMedia: ctx.browserPersistMedia, workspaceDir: ctx.browserWorkspaceDir }) },
+    { name: "ctx_expand", category: "context", build: (ctx: any) => ({ name: "ctx_expand", rpcCall: ctx.rpcCall }) },
+    { name: "ctx_inspect", category: "context", build: (ctx: any) => ({ name: "ctx_inspect", rpcCall: ctx.rpcCall }) },
+    { name: "ctx_recall", category: "context", build: (ctx: any) => ({ name: "ctx_recall", rpcCall: ctx.rpcCall }) },
+    { name: "ctx_search", category: "context", build: (ctx: any) => ({ name: "ctx_search", rpcCall: ctx.rpcCall }) },
+    { name: "unified_context", category: "context", conditional: (ctx: any) => ctx.contextEngineVersion === "dag", build: (ctx: any) => mockCreateUnifiedContextTool(ctx.rpcCall) },
+    { name: "gateway", category: "gateway", build: (ctx: any) => mockCreateGatewayTool(ctx.rpcCall, ctx.skillsLogger) },
+    { name: "obs_query", category: "observability", build: (ctx: any) => mockCreateObsQueryTool(ctx.rpcCall) },
+    { name: "heartbeat_manage", category: "heartbeat", build: (ctx: any) => mockCreateHeartbeatManageTool(ctx.rpcCall) },
+    { name: "mcp_manage", category: "mcp", build: (ctx: any) => mockCreateMcpManageTool(ctx.rpcCall, ctx.approvalGate) },
+    { name: "describe_video", category: "media", build: (ctx: any) => mockCreateDescribeVideoTool(ctx.rpcCall) },
+    { name: "extract_document", category: "media", build: (ctx: any) => mockCreateExtractDocumentTool(ctx.rpcCall) },
+    { name: "image", category: "media", build: (ctx: any) => mockCreateImageTool(ctx.rpcCall) },
+    { name: "image_generate", category: "media", conditional: (ctx: any) => ctx.imageGenProvider !== undefined, build: (ctx: any) => mockCreateImageGenerateTool(ctx.rpcCall) },
+    { name: "transcribe_audio", category: "media", build: (ctx: any) => mockCreateTranscribeAudioTool(ctx.rpcCall) },
+    { name: "tts", category: "media", build: (ctx: any) => mockCreateTTSTool(ctx.rpcCall) },
+    { name: "memory_get", category: "memory", build: (_ctx: any) => ({ name: "memory_get" }) },
+    { name: "memory_manage", category: "memory", build: (_ctx: any) => ({ name: "memory_manage" }) },
+    { name: "memory_search", category: "memory", build: (_ctx: any) => ({ name: "memory_search" }) },
+    { name: "memory_store", category: "memory", build: (_ctx: any) => ({ name: "memory_store" }) },
+    { name: "unified_memory", category: "memory", build: (ctx: any) => mockCreateUnifiedMemoryTool(ctx.rpcCall, ctx.approvalGate) },
+    { name: "discord_action", category: "messaging", build: (ctx: any) => mockCreateDiscordActionTool(ctx.rpcCall, ctx.skillsLogger) },
+    { name: "message", category: "messaging", build: (ctx: any) => mockCreateMessageTool(ctx.rpcCall) },
+    { name: "notify", category: "messaging", build: (ctx: any) => mockCreateNotifyTool(ctx.rpcCall) },
+    { name: "slack_action", category: "messaging", build: (ctx: any) => mockCreateSlackActionTool(ctx.rpcCall) },
+    { name: "telegram_action", category: "messaging", build: (ctx: any) => mockCreateTelegramActionTool(ctx.rpcCall) },
+    { name: "whatsapp_action", category: "messaging", build: (ctx: any) => mockCreateWhatsAppActionTool(ctx.rpcCall) },
+    { name: "channels_manage", category: "platform-admin", build: (ctx: any) => mockCreateChannelsManageTool(ctx.rpcCall, ctx.approvalGate) },
+    { name: "models_manage", category: "platform-admin", build: (ctx: any) => mockCreateModelsManageTool(ctx.rpcCall) },
+    { name: "providers_manage", category: "platform-admin", build: (ctx: any) => mockCreateProvidersManageTool(ctx.rpcCall, ctx.approvalGate, { onMutationStart: ctx.onConfigMutationStart, onMutationEnd: ctx.onConfigMutationEnd }) },
+    { name: "skills_manage", category: "platform-admin", build: (ctx: any) => mockCreateSkillsManageTool(ctx.rpcCall, ctx.approvalGate) },
+    { name: "tokens_manage", category: "platform-admin", build: (ctx: any) => mockCreateTokensManageTool(ctx.rpcCall, ctx.approvalGate) },
+    { name: "cron", category: "scheduling", build: (ctx: any) => mockCreateCronTool(ctx.rpcCall) },
+    { name: "session_search", category: "session", build: (_ctx: any) => ({ name: "session_search" }) },
+    { name: "session_status", category: "session", build: (_ctx: any) => ({ name: "session_status" }) },
+    { name: "sessions_history", category: "session", build: (_ctx: any) => ({ name: "sessions_history" }) },
+    { name: "sessions_list", category: "session", build: (_ctx: any) => ({ name: "sessions_list" }) },
+    { name: "sessions_manage", category: "session", build: (ctx: any) => mockCreateSessionsManageTool(ctx.rpcCall, ctx.approvalGate) },
+    { name: "sessions_send", category: "session", build: (ctx: any) => mockCreateSessionsSendTool(ctx.rpcCall) },
+    { name: "sessions_spawn", category: "session", build: (ctx: any) => mockCreateSessionsSpawnTool(ctx.rpcCall) },
+    { name: "unified_session", category: "session", build: (ctx: any) => mockCreateUnifiedSessionTool(ctx.rpcCall) },
+  ]),
+}));
+
 vi.mock("@comis/core", () => ({
   SkillsConfigSchema: { parse: mockSkillsConfigSchemaParse },
   tryGetContext: mockTryGetContext,
@@ -153,10 +191,8 @@ vi.mock("@comis/core", () => ({
   // in @comis/core/session-key; this test only needs a deterministic string.
   formatSessionKey: (k: { tenantId: string; channelId: string; userId: string }) =>
     `${k.tenantId}:${k.channelId}:${k.userId}`,
-}));
-
-vi.mock("@comis/agent", () => ({
-  sessionKeyToPath: mockSessionKeyToPath,
+  // Workspace helpers live in @comis/core; setup-tools.ts imports them
+  // via @comis/core, so tests must mock them on the @comis/core surface.
   // Consumed by setup-tools at assembleToolsForAgent time to pre-register
   // the agent's own workspace files in the per-turn tracker. Tests don't
   // exercise real workspace files, so a no-op stub is sufficient.
@@ -166,6 +202,10 @@ vi.mock("@comis/agent", () => ({
   // imported at module load, so they must exist on the mock.
   WORKSPACE_FILE_NAMES: [] as string[],
   DEFAULT_TEMPLATES: {} as Record<string, string>,
+}));
+
+vi.mock("@comis/agent", () => ({
+  sessionKeyToPath: mockSessionKeyToPath,
 }));
 
 // ---------------------------------------------------------------------------

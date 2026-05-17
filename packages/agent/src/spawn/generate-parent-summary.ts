@@ -3,14 +3,14 @@
  * Wrapper around SDK `generateSummary()` for parent context summarization.
  *
  * This wrapper exists so the daemon can call parent summary generation via
- * `@comis/agent` without adding `@mariozechner/pi-coding-agent` as a direct
+ * `@comis/agent` without adding `@earendil-works/pi-coding-agent` as a direct
  * daemon dependency. The daemon must not import the SDK directly (see
  * `packages/daemon/src/wiring/setup-agents.ts` lines 43-44).
  *
  * @module
  */
 
-import { generateSummary } from "@mariozechner/pi-coding-agent";
+import { generateSummary } from "@earendil-works/pi-coding-agent";
 
 // ---------------------------------------------------------------------------
 // Types

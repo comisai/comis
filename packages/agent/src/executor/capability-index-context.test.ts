@@ -14,7 +14,7 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { buildCapabilityIndexContext } from "./capability-index-context.js";
 import type { ExcludeDeferralResult, DeferredToolEntry } from "./tool-deferral.js";
 import type { ToolCapabilityPort, PromptSkillCapability, ClusterConfig } from "@comis/core";

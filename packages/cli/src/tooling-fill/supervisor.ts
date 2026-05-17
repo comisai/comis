@@ -29,6 +29,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ok, err, type Result } from "@comis/shared";
+import { systemNowMs, systemSetTimeout } from "@comis/core";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_CMD_TIMEOUT_MS = 10_000;
@@ -260,9 +261,9 @@ export async function waitForDaemonAlive(
   totalTimeoutMs: number = 15_000,
   pollIntervalMs: number = 500,
 ): Promise<Result<void, SupervisorError>> {
-  const deadline = Date.now() + totalTimeoutMs;
+  const deadline = systemNowMs() + totalTimeoutMs;
   // First check is immediate — daemon may already be up.
-  while (Date.now() < deadline) {
+  while (systemNowMs() < deadline) {
     let alive = false;
     try {
       alive = await livenessProbe();
@@ -270,7 +271,7 @@ export async function waitForDaemonAlive(
       // Probe threw (network glitch, etc) — treat as not-alive and retry.
     }
     if (alive) return ok(undefined);
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    await new Promise<void>((resolve) => systemSetTimeout(() => resolve(), pollIntervalMs));
   }
   // One last probe after the loop, in case the timing aligned awkwardly.
   try {

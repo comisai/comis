@@ -2,6 +2,9 @@
 // @comis/core exports — Security utilities
 
 export { safePath, PathTraversalError } from "../security/index.js";
+// Master-key file helpers (daemon-free `secrets init` body)
+export { writeMasterKeyIfAbsent, generateMasterKey } from "../security/index.js";
+export type { MasterKeyWriteResult } from "../security/index.js";
 export { createSecretManager, envSubset } from "../security/index.js";
 export type { SecretManager } from "../security/index.js";
 export { classifyAction, requiresConfirmation } from "../security/index.js";
@@ -120,3 +123,14 @@ export {
   WORKSPACE_SCANNER_PATTERNS,
 } from "../security/index.js";
 export type { StripResult } from "../security/index.js";
+
+// OAuth helpers
+export {
+  decodeCodexJwtPayload,
+  resolveCodexAuthIdentity,
+  resolveCodexStableSubject,
+  resolveCodexAccessTokenExpiry,
+  redactEmailForLog,
+  rewriteOAuthError,
+} from "../security/index.js";
+export type { OAuthErrorCode, RewrittenOAuthError } from "../security/index.js";

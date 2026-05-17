@@ -3,14 +3,14 @@
  * Session Label Store: Human-readable labels for sessions.
  *
  * Provides a thin facade for reading/writing session labels through the
- * existing `metadata.label` field in SessionStore's metadata JSON column.
+ * existing `metadata.label` field in SessionStorePort's metadata JSON column.
  * No schema migration required -- labels are stored as a regular metadata key.
  *
  * @module
  */
 
 import type { SessionKey } from "@comis/core";
-import type { SessionStore } from "@comis/memory";
+import type { SessionStorePort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -35,12 +35,12 @@ export interface SessionLabelStore {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a SessionLabelStore wrapping the given SessionStore.
+ * Create a SessionLabelStore wrapping the given SessionStorePort.
  *
  * Labels are stored in `metadata.label` -- no schema migration needed.
- * All operations delegate to the underlying SessionStore for persistence.
+ * All operations delegate to the underlying SessionStorePort for persistence.
  */
-export function createSessionLabelStore(store: SessionStore): SessionLabelStore {
+export function createSessionLabelStore(store: SessionStorePort): SessionLabelStore {
   return {
     getLabel(key: SessionKey): string | undefined {
       const data = store.load(key);

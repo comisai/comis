@@ -12,17 +12,80 @@
 
 import type Database from "better-sqlite3";
 import { randomBytes } from "node:crypto";
-import { initContextSchema } from "./context-schema.js";
-import { buildFtsQuery } from "./hybrid-search.js";
+import { z } from "zod";
 import type {
-  CtxConversationRow,
-  CtxContextItemRow,
-  CtxExpansionGrantRow,
-  CtxLargeFileRow,
+  ContextStorePort,
   CtxMessagePartRow,
   CtxMessageRow,
-  CtxSummaryRow,
-} from "./types.js";
+} from "@comis/core";
+import { initContextSchema } from "./context-schema.js";
+import { buildFtsQuery } from "./hybrid-search.js";
+import { createRowMapper } from "./row-mapper.js";
+import {
+  CtxConversationRowSchema,
+  CtxMessageRowSchema,
+  CtxMessagePartRowSchema,
+  CtxSummaryRowSchema,
+  CtxContextItemRowSchema,
+  CtxLargeFileRowSchema,
+  CtxExpansionGrantRowSchema,
+} from "./row-schemas.js";
+
+// ---------------------------------------------------------------------------
+// Row mappers
+//
+// Each mapper wraps a Zod schema and returns Result<TRow[]|TRow|undefined,
+// MapperError> from raw better-sqlite3 .all()/.get() output. On validation
+// failure the store DEGRADES SILENTLY (empty array / undefined), preserving
+// the ContextStorePort plain-return contract. Context-store read methods are
+// non-fatal — corrupt rows yield empty result sets, not crashes, which
+// preserves the agent's ability to make forward progress.
+// ---------------------------------------------------------------------------
+
+const conversationMapper = createRowMapper(CtxConversationRowSchema);
+const messageMapper = createRowMapper(CtxMessageRowSchema);
+const messagePartMapper = createRowMapper(CtxMessagePartRowSchema);
+const summaryMapper = createRowMapper(CtxSummaryRowSchema);
+const contextItemMapper = createRowMapper(CtxContextItemRowSchema);
+const largeFileMapper = createRowMapper(CtxLargeFileRowSchema);
+const expansionGrantMapper = createRowMapper(CtxExpansionGrantRowSchema);
+
+// Anonymous projection mappers (inline shapes — id-only projections, FTS hits).
+const messageIdProjectionMapper = createRowMapper(
+  z.strictObject({ message_id: z.number() }),
+);
+const summaryIdProjectionMapper = createRowMapper(
+  z.strictObject({ summary_id: z.string() }),
+);
+const parentSummaryIdProjectionMapper = createRowMapper(
+  z.strictObject({ parent_summary_id: z.string() }),
+);
+const ftsMessageHitMapper = createRowMapper(
+  z.strictObject({
+    messageId: z.number(),
+    content: z.string(),
+    rank: z.number(),
+  }),
+);
+const ftsSummaryHitMapper = createRowMapper(
+  z.strictObject({
+    summaryId: z.string(),
+    content: z.string(),
+    rank: z.number(),
+  }),
+);
+const regexMessageCandidateMapper = createRowMapper(
+  z.strictObject({ message_id: z.number(), content: z.string() }),
+);
+const regexSummaryCandidateMapper = createRowMapper(
+  z.strictObject({ summary_id: z.string(), content: z.string() }),
+);
+const lastSeqProjectionMapper = createRowMapper(
+  z.strictObject({ max_seq: z.number().nullable() }),
+);
+const grantCountProjectionMapper = createRowMapper(
+  z.strictObject({ cnt: z.number() }),
+);
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -32,166 +95,11 @@ import type {
 const CHUNK_SIZE = 500;
 
 // ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-/** Context store interface for CRUD operations on all DAG entities. */
-export interface ContextStore {
-  // --- Conversations ---
-  createConversation(params: {
-    tenantId: string;
-    agentId: string;
-    sessionKey: string;
-    title?: string;
-  }): string;
-  getConversation(conversationId: string): CtxConversationRow | undefined;
-  getConversationBySession(
-    tenantId: string,
-    sessionKey: string,
-  ): CtxConversationRow | undefined;
-  listConversations(
-    tenantId: string,
-    opts?: { limit?: number; offset?: number },
-  ): CtxConversationRow[];
-  touchConversation(conversationId: string): void;
-
-  // --- Messages ---
-  insertMessage(params: {
-    conversationId: string;
-    seq: number;
-    role: string;
-    content: string;
-    contentHash: string;
-    tokenCount: number;
-    toolName?: string;
-    toolCallId?: string;
-  }): number;
-  getMessagesByConversation(
-    conversationId: string,
-    opts?: { afterSeq?: number; limit?: number },
-  ): CtxMessageRow[];
-  getMessagesByIds(ids: number[]): CtxMessageRow[];
-  getMessageByHash(
-    conversationId: string,
-    contentHash: string,
-  ): CtxMessageRow | undefined;
-  getLastMessageSeq(conversationId: string): number;
-
-  // --- Message Parts ---
-  insertParts(
-    messageId: number,
-    parts: Array<{
-      ordinal: number;
-      partType: string;
-      content?: string;
-      metadata?: string;
-    }>,
-  ): void;
-  getPartsByMessage(messageId: number): CtxMessagePartRow[];
-  getPartsByMessages(messageIds: number[]): Map<number, CtxMessagePartRow[]>;
-
-  // --- Summaries ---
-  insertSummary(params: {
-    summaryId: string;
-    conversationId: string;
-    kind: "leaf" | "condensed";
-    depth: number;
-    content: string;
-    tokenCount: number;
-    fileIds?: string[];
-    earliestAt?: string;
-    latestAt?: string;
-    sourceTokenCount?: number;
-  }): string;
-  getSummary(summaryId: string): CtxSummaryRow | undefined;
-  getSummariesByConversation(
-    conversationId: string,
-    opts?: { depth?: number },
-  ): CtxSummaryRow[];
-  updateSummaryCountsDirty(summaryIds: string[], dirty: boolean): void;
-  deleteSummary(summaryId: string): void;
-
-  // --- Summary Links ---
-  linkSummaryMessages(summaryId: string, messageIds: number[]): void;
-  linkSummaryParents(
-    summaryId: string,
-    parentSummaryIds: string[],
-  ): void;
-  getSourceMessageIds(summaryId: string): number[];
-  getParentSummaryIds(summaryId: string): string[];
-  getChildSummaryIds(summaryId: string): string[];
-
-  // --- Context Items ---
-  replaceContextItems(
-    conversationId: string,
-    items: Array<{
-      ordinal: number;
-      itemType: "message" | "summary";
-      messageId?: number;
-      summaryId?: string;
-    }>,
-  ): void;
-  getContextItems(conversationId: string): CtxContextItemRow[];
-
-  // --- Large Files ---
-  insertLargeFile(params: {
-    fileId: string;
-    conversationId: string;
-    fileName?: string;
-    mimeType?: string;
-    byteSize?: number;
-    contentHash?: string;
-    storagePath: string;
-    explorationSummary?: string;
-  }): string;
-  getLargeFile(fileId: string): CtxLargeFileRow | undefined;
-  getLargeFileByHash(
-    conversationId: string,
-    contentHash: string,
-  ): CtxLargeFileRow | undefined;
-
-  // --- Expansion Grants ---
-  createGrant(params: {
-    grantId: string;
-    issuerSession: string;
-    conversationIds: string[];
-    summaryIds?: string[];
-    maxDepth?: number;
-    tokenCap?: number;
-    expiresAt: string;
-  }): string;
-  getGrant(grantId: string): CtxExpansionGrantRow | undefined;
-  getActiveGrants(issuerSession: string): CtxExpansionGrantRow[];
-  consumeGrantTokens(grantId: string, tokens: number): void;
-  revokeGrant(grantId: string): void;
-  cleanupExpiredGrants(): number;
-
-  // --- Quota ---
-  /** Count all grants created today by issuerSession (including revoked/expired). */
-  countGrantsToday(issuerSession: string): number;
-
-  // --- FTS5 Search ---
-  searchMessages(
-    conversationId: string,
-    query: string,
-    opts: { mode: "fts" | "regex"; limit: number },
-  ): Array<{ messageId: number; content: string; rank?: number }>;
-  searchSummaries(
-    conversationId: string,
-    query: string,
-    opts: { mode: "fts" | "regex"; limit: number },
-  ): Array<{ summaryId: string; content: string; rank?: number }>;
-
-  // --- Bulk Operations ---
-  deleteConversation(conversationId: string): void;
-}
-
-// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 /**
- * Create a ContextStore bound to the given database.
+ * Create a ContextStorePort bound to the given database.
  *
  * Calls initContextSchema (idempotent) to ensure all ctx_ tables,
  * indexes, and FTS5 virtual tables exist. Prepares all fixed-parameter
@@ -200,7 +108,7 @@ export interface ContextStore {
  * @param db - An open better-sqlite3 Database instance
  * @returns Frozen ContextStore implementation
  */
-export function createContextStore(db: Database.Database): ContextStore {
+export function createContextStore(db: Database.Database): ContextStorePort {
   // Idempotent schema initialization
   initContextSchema(db);
 
@@ -469,13 +377,17 @@ export function createContextStore(db: Database.Database): ContextStore {
 
   const deleteConversationTx = db.transaction(
     (conversationId: string): void => {
-      // 1. Get all message IDs and summary IDs for FTS cleanup
-      const msgRows = getMsgIdsByConvStmt.all(conversationId) as Array<{
-        message_id: number;
-      }>;
-      const sumRows = getSumIdsByConvStmt.all(conversationId) as Array<{
-        summary_id: string;
-      }>;
+      // 1. Get all message IDs and summary IDs for FTS cleanup.
+      // Degrade-on-validation-error: empty array → no FTS cleanup needed
+      // for the corrupt rows; the CASCADE on conversation delete still fires.
+      const msgIdsParsed = messageIdProjectionMapper.parseRows(
+        getMsgIdsByConvStmt.all(conversationId),
+      );
+      const msgRows = msgIdsParsed.ok ? msgIdsParsed.value : [];
+      const sumIdsParsed = summaryIdProjectionMapper.parseRows(
+        getSumIdsByConvStmt.all(conversationId),
+      );
+      const sumRows = sumIdsParsed.ok ? sumIdsParsed.value : [];
 
       // 2. Delete summary links first (RESTRICT on message_id and parent_summary_id)
       deleteSumMsgsByConvStmt.run(conversationId);
@@ -517,7 +429,7 @@ export function createContextStore(db: Database.Database): ContextStore {
   // Store implementation
   // -----------------------------------------------------------------------
 
-  const store: ContextStore = {
+  const store: ContextStorePort = {
     // --- Conversations ---
 
     createConversation(params) {
@@ -533,15 +445,18 @@ export function createContextStore(db: Database.Database): ContextStore {
     },
 
     getConversation(conversationId) {
-      return getConvStmt.get(conversationId) as
-        | CtxConversationRow
-        | undefined;
+      const parsed = conversationMapper.parseOptionalRow(
+        getConvStmt.get(conversationId),
+      );
+      // Degrade-on-validation-error → undefined (consistent with missing).
+      return parsed.ok ? parsed.value : undefined;
     },
 
     getConversationBySession(tenantId, sessionKey) {
-      return getConvBySessionStmt.get(tenantId, sessionKey) as
-        | CtxConversationRow
-        | undefined;
+      const parsed = conversationMapper.parseOptionalRow(
+        getConvBySessionStmt.get(tenantId, sessionKey),
+      );
+      return parsed.ok ? parsed.value : undefined;
     },
 
     touchConversation(conversationId) {
@@ -551,7 +466,11 @@ export function createContextStore(db: Database.Database): ContextStore {
     listConversations(tenantId, opts) {
       const limit = opts?.limit ?? 50;
       const offset = opts?.offset ?? 0;
-      return listConvStmt.all(tenantId, limit, offset) as CtxConversationRow[];
+      const parsed = conversationMapper.parseRows(
+        listConvStmt.all(tenantId, limit, offset),
+      );
+      // Degrade-on-validation-error → empty list.
+      return parsed.ok ? parsed.value : [];
     },
 
     // --- Messages ---
@@ -562,14 +481,12 @@ export function createContextStore(db: Database.Database): ContextStore {
 
     getMessagesByConversation(conversationId, opts) {
       const limit = opts?.limit ?? 1000;
-      if (opts?.afterSeq !== undefined) {
-        return getMsgsByConvAfterSeqStmt.all(
-          conversationId,
-          opts.afterSeq,
-          limit,
-        ) as CtxMessageRow[];
-      }
-      return getMsgsByConvStmt.all(conversationId, limit) as CtxMessageRow[];
+      const raw =
+        opts?.afterSeq !== undefined
+          ? getMsgsByConvAfterSeqStmt.all(conversationId, opts.afterSeq, limit)
+          : getMsgsByConvStmt.all(conversationId, limit);
+      const parsed = messageMapper.parseRows(raw);
+      return parsed.ok ? parsed.value : [];
     },
 
     getMessagesByIds(ids) {
@@ -578,27 +495,31 @@ export function createContextStore(db: Database.Database): ContextStore {
       for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
         const chunk = ids.slice(i, i + CHUNK_SIZE);
         const placeholders = chunk.map(() => "?").join(",");
-        const rows = db
+        const raw = db
           .prepare(
             `SELECT * FROM ctx_messages WHERE message_id IN (${placeholders}) ORDER BY seq ASC`,
           )
-          .all(...chunk) as CtxMessageRow[];
+          .all(...chunk);
+        const parsed = messageMapper.parseRows(raw);
+        const rows = parsed.ok ? parsed.value : [];
         results.push(...rows);
       }
       return results;
     },
 
     getMessageByHash(conversationId, contentHash) {
-      return getMsgByHashStmt.get(conversationId, contentHash) as
-        | CtxMessageRow
-        | undefined;
+      const parsed = messageMapper.parseOptionalRow(
+        getMsgByHashStmt.get(conversationId, contentHash),
+      );
+      return parsed.ok ? parsed.value : undefined;
     },
 
     getLastMessageSeq(conversationId) {
-      const row = getLastSeqStmt.get(conversationId) as {
-        max_seq: number | null;
-      };
-      return row.max_seq ?? 0;
+      const parsed = lastSeqProjectionMapper.parseOptionalRow(
+        getLastSeqStmt.get(conversationId),
+      );
+      const row = parsed.ok ? parsed.value : undefined;
+      return row?.max_seq ?? 0;
     },
 
     // --- Message Parts ---
@@ -616,7 +537,8 @@ export function createContextStore(db: Database.Database): ContextStore {
     },
 
     getPartsByMessage(messageId) {
-      return getPartsByMsgStmt.all(messageId) as CtxMessagePartRow[];
+      const parsed = messagePartMapper.parseRows(getPartsByMsgStmt.all(messageId));
+      return parsed.ok ? parsed.value : [];
     },
 
     getPartsByMessages(messageIds) {
@@ -625,11 +547,13 @@ export function createContextStore(db: Database.Database): ContextStore {
       for (let i = 0; i < messageIds.length; i += CHUNK_SIZE) {
         const chunk = messageIds.slice(i, i + CHUNK_SIZE);
         const placeholders = chunk.map(() => "?").join(",");
-        const rows = db
+        const raw = db
           .prepare(
             `SELECT * FROM ctx_message_parts WHERE message_id IN (${placeholders}) ORDER BY ordinal ASC`,
           )
-          .all(...chunk) as CtxMessagePartRow[];
+          .all(...chunk);
+        const parsed = messagePartMapper.parseRows(raw);
+        const rows = parsed.ok ? parsed.value : [];
         for (const row of rows) {
           let parts = result.get(row.message_id);
           if (!parts) {
@@ -649,17 +573,17 @@ export function createContextStore(db: Database.Database): ContextStore {
     },
 
     getSummary(summaryId) {
-      return getSumStmt.get(summaryId) as CtxSummaryRow | undefined;
+      const parsed = summaryMapper.parseOptionalRow(getSumStmt.get(summaryId));
+      return parsed.ok ? parsed.value : undefined;
     },
 
     getSummariesByConversation(conversationId, opts) {
-      if (opts?.depth !== undefined) {
-        return getSumsByConvDepthStmt.all(
-          conversationId,
-          opts.depth,
-        ) as CtxSummaryRow[];
-      }
-      return getSumsByConvStmt.all(conversationId) as CtxSummaryRow[];
+      const raw =
+        opts?.depth !== undefined
+          ? getSumsByConvDepthStmt.all(conversationId, opts.depth)
+          : getSumsByConvStmt.all(conversationId);
+      const parsed = summaryMapper.parseRows(raw);
+      return parsed.ok ? parsed.value : [];
     },
 
     updateSummaryCountsDirty(summaryIds, dirty) {
@@ -693,23 +617,26 @@ export function createContextStore(db: Database.Database): ContextStore {
     },
 
     getSourceMessageIds(summaryId) {
-      const rows = getSourceMsgIdsStmt.all(summaryId) as Array<{
-        message_id: number;
-      }>;
+      const parsed = messageIdProjectionMapper.parseRows(
+        getSourceMsgIdsStmt.all(summaryId),
+      );
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map((r) => r.message_id);
     },
 
     getParentSummaryIds(summaryId) {
-      const rows = getParentSumIdsStmt.all(summaryId) as Array<{
-        parent_summary_id: string;
-      }>;
+      const parsed = parentSummaryIdProjectionMapper.parseRows(
+        getParentSumIdsStmt.all(summaryId),
+      );
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map((r) => r.parent_summary_id);
     },
 
     getChildSummaryIds(summaryId) {
-      const rows = getChildSumIdsStmt.all(summaryId) as Array<{
-        summary_id: string;
-      }>;
+      const parsed = summaryIdProjectionMapper.parseRows(
+        getChildSumIdsStmt.all(summaryId),
+      );
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map((r) => r.summary_id);
     },
 
@@ -720,7 +647,10 @@ export function createContextStore(db: Database.Database): ContextStore {
     },
 
     getContextItems(conversationId) {
-      return getCtxItemsStmt.all(conversationId) as CtxContextItemRow[];
+      const parsed = contextItemMapper.parseRows(
+        getCtxItemsStmt.all(conversationId),
+      );
+      return parsed.ok ? parsed.value : [];
     },
 
     // --- Large Files ---
@@ -740,13 +670,15 @@ export function createContextStore(db: Database.Database): ContextStore {
     },
 
     getLargeFile(fileId) {
-      return getFileStmt.get(fileId) as CtxLargeFileRow | undefined;
+      const parsed = largeFileMapper.parseOptionalRow(getFileStmt.get(fileId));
+      return parsed.ok ? parsed.value : undefined;
     },
 
     getLargeFileByHash(conversationId, contentHash) {
-      return getFileByHashStmt.get(conversationId, contentHash) as
-        | CtxLargeFileRow
-        | undefined;
+      const parsed = largeFileMapper.parseOptionalRow(
+        getFileByHashStmt.get(conversationId, contentHash),
+      );
+      return parsed.ok ? parsed.value : undefined;
     },
 
     // --- Expansion Grants ---
@@ -765,13 +697,17 @@ export function createContextStore(db: Database.Database): ContextStore {
     },
 
     getGrant(grantId) {
-      return getGrantStmt.get(grantId) as CtxExpansionGrantRow | undefined;
+      const parsed = expansionGrantMapper.parseOptionalRow(
+        getGrantStmt.get(grantId),
+      );
+      return parsed.ok ? parsed.value : undefined;
     },
 
     getActiveGrants(issuerSession) {
-      return getActiveGrantsStmt.all(
-        issuerSession,
-      ) as CtxExpansionGrantRow[];
+      const parsed = expansionGrantMapper.parseRows(
+        getActiveGrantsStmt.all(issuerSession),
+      );
+      return parsed.ok ? parsed.value : [];
     },
 
     consumeGrantTokens(grantId, tokens) {
@@ -790,8 +726,11 @@ export function createContextStore(db: Database.Database): ContextStore {
     // --- Quota ---
 
     countGrantsToday(issuerSession) {
-      const row = countGrantsTodayStmt.get(issuerSession) as { cnt: number };
-      return row.cnt;
+      const parsed = grantCountProjectionMapper.parseOptionalRow(
+        countGrantsTodayStmt.get(issuerSession),
+      );
+      const row = parsed.ok ? parsed.value : undefined;
+      return row?.cnt ?? 0;
     },
 
     // --- FTS5 Search ---
@@ -800,7 +739,7 @@ export function createContextStore(db: Database.Database): ContextStore {
       if (opts.mode === "fts") {
         const ftsQuery = buildFtsQuery(query);
         if (!ftsQuery) return [];
-        const rows = db
+        const raw = db
           .prepare(
             `SELECT f.rowid AS messageId, m.content, f.rank
              FROM ctx_messages_fts f
@@ -810,12 +749,9 @@ export function createContextStore(db: Database.Database): ContextStore {
              ORDER BY f.rank
              LIMIT ?`,
           )
-          .all(ftsQuery, conversationId, opts.limit) as Array<{
-          messageId: number;
-          content: string;
-          rank: number;
-        }>;
-        return rows;
+          .all(ftsQuery, conversationId, opts.limit);
+        const parsed = ftsMessageHitMapper.parseRows(raw);
+        return parsed.ok ? parsed.value : [];
       }
 
       // Regex mode: LIKE pre-filter + JS regex post-filter
@@ -825,7 +761,7 @@ export function createContextStore(db: Database.Database): ContextStore {
         ? literalRuns.reduce((a, b) => (a.length >= b.length ? a : b))
         : "";
       const likePattern = likeSubstring ? `%${likeSubstring}%` : "%";
-      const candidates = db
+      const candidatesRaw = db
         .prepare(
           `SELECT message_id, content
            FROM ctx_messages
@@ -834,11 +770,9 @@ export function createContextStore(db: Database.Database): ContextStore {
            ORDER BY seq DESC
            LIMIT ?`,
         )
-        .all(
-          conversationId,
-          likePattern,
-          opts.limit * 3,
-        ) as Array<{ message_id: number; content: string }>;
+        .all(conversationId, likePattern, opts.limit * 3);
+      const candidatesParsed = regexMessageCandidateMapper.parseRows(candidatesRaw);
+      const candidates = candidatesParsed.ok ? candidatesParsed.value : [];
 
       try {
         const regex = new RegExp(query, "i");
@@ -859,7 +793,7 @@ export function createContextStore(db: Database.Database): ContextStore {
       if (opts.mode === "fts") {
         const ftsQuery = buildFtsQuery(query);
         if (!ftsQuery) return [];
-        const rows = db
+        const raw = db
           .prepare(
             `SELECT f.summary_id AS summaryId, s.content, f.rank
              FROM ctx_summaries_fts f
@@ -869,12 +803,9 @@ export function createContextStore(db: Database.Database): ContextStore {
              ORDER BY f.rank
              LIMIT ?`,
           )
-          .all(ftsQuery, conversationId, opts.limit) as Array<{
-          summaryId: string;
-          content: string;
-          rank: number;
-        }>;
-        return rows;
+          .all(ftsQuery, conversationId, opts.limit);
+        const parsed = ftsSummaryHitMapper.parseRows(raw);
+        return parsed.ok ? parsed.value : [];
       }
 
       // Regex mode
@@ -883,7 +814,7 @@ export function createContextStore(db: Database.Database): ContextStore {
         ? literalRuns.reduce((a, b) => (a.length >= b.length ? a : b))
         : "";
       const likePattern = likeSubstring ? `%${likeSubstring}%` : "%";
-      const candidates = db
+      const candidatesRaw = db
         .prepare(
           `SELECT summary_id, content
            FROM ctx_summaries
@@ -892,11 +823,9 @@ export function createContextStore(db: Database.Database): ContextStore {
            ORDER BY created_at DESC
            LIMIT ?`,
         )
-        .all(
-          conversationId,
-          likePattern,
-          opts.limit * 3,
-        ) as Array<{ summary_id: string; content: string }>;
+        .all(conversationId, likePattern, opts.limit * 3);
+      const candidatesParsed = regexSummaryCandidateMapper.parseRows(candidatesRaw);
+      const candidates = candidatesParsed.ok ? candidatesParsed.value : [];
 
       try {
         const regex = new RegExp(query, "i");

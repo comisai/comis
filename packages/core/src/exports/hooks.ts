@@ -14,9 +14,6 @@ export {
   mergeToolResultPersist,
   mergeBeforeCompaction,
   mergeBeforeDelivery,
-  setGlobalHookRunner,
-  getGlobalHookRunner,
-  clearGlobalHookRunner,
 } from "../hooks/index.js";
 export type {
   PluginRegistry,

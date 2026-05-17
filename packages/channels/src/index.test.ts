@@ -29,8 +29,9 @@ import {
   isWhatsAppGroupJid,
   isWhatsAppUserJid,
   extractJidPhone,
-  // Shared
-  createChannelManager,
+  // Shared (channels-side surface — channel-manager lives in
+  // @comis/orchestrator; createTypingController stays in channels)
+  createTypingController,
 } from "./index.js";
 
 describe("@comis/channels barrel exports", () => {
@@ -68,6 +69,8 @@ describe("@comis/channels barrel exports", () => {
   });
 
   it("exports shared infrastructure", () => {
-    expect(typeof createChannelManager).toBe("function");
+    // createChannelManager lives in @comis/orchestrator;
+    // createTypingController remains in @comis/channels public surface.
+    expect(typeof createTypingController).toBe("function");
   });
 });

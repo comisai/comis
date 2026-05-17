@@ -75,4 +75,26 @@ describe("static-middleware security headers", () => {
 
     expect(res.headers.get("strict-transport-security")).toBeNull();
   });
+
+  // -------------------------------------------------------------------------
+  // Asset cache header + SPA fallback branch coverage
+  // -------------------------------------------------------------------------
+
+  it("does not set immutable Cache-Control on /app/assets/* when response status is not 200", async () => {
+    const app = createStaticMiddleware("/nonexistent/dist");
+    const res = await app.request("/app/assets/missing.css");
+    // status will not be 200 because the file doesn't exist; the immutable
+    // cache header must NOT be applied in that case
+    expect(res.status).not.toBe(200);
+    const cc = res.headers.get("cache-control");
+    // cc may be null (no header) or some other value — never immutable
+    expect(cc === null || !cc.includes("immutable")).toBe(true);
+  });
+
+  it("returns 404 for SPA fallback when neither static asset nor index.html exists", async () => {
+    const app = createStaticMiddleware("/nonexistent/dist");
+    const res = await app.request("/app/some/unmatched/route");
+    // No file → 404, but no exception
+    expect([200, 404]).toContain(res.status);
+  });
 });

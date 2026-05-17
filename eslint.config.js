@@ -13,6 +13,20 @@ export default tseslint.config(
       "**/node_modules/**",
       "packages/*/dist/**",
       "website/.astro/**",
+      // Fixtures consumed as raw text by test helpers (e.g. parsed via
+      // ts.createSourceFile). They are not compiled; lint rules like
+      // no-unused-vars or ban-ts-comment do not apply meaningfully.
+      "test/support/__fixtures__/**",
+      // Secret-residency walker fixtures live under test/architecture/fixtures/;
+      // the walker's source-rule integration in source-rules.test.ts cites
+      // them alongside the other architecture-test fixtures. Same exemption
+      // rationale as test/support/__fixtures__/.
+      "test/architecture/fixtures/**",
+      // Generated artifact from `pnpm contracts:generate`. The file carries
+      // an `/* eslint-disable */` directive in its header banner, but adding
+      // it to global ignores is belt-and-suspenders + avoids the parser
+      // ever having to walk the 190-contract literal.
+      "packages/web/src/api/contracts.generated.ts",
     ],
   },
 
@@ -36,11 +50,16 @@ export default tseslint.config(
   },
 
   // Node build scripts (ESM/CJS) need node globals: process, console, require, etc.
+  // `.mjs` is included for scripts/smoke/tarball-smoke.mjs (and any future ESM
+  // Node scripts in the same locations).
   {
     files: [
       "packages/*/scripts/**/*.js",
+      "packages/*/scripts/**/*.mjs",
       "scripts/**/*.js",
+      "scripts/**/*.mjs",
       "skills/*/scripts/**/*.js",
+      "skills/*/scripts/**/*.mjs",
     ],
     languageOptions: {
       globals: {

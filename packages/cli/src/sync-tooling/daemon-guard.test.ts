@@ -9,16 +9,34 @@
  *   - returns false on "method not found" (regression — fail-closed)
  *   - returns false when the RPC hangs longer than the timeout (default 1000ms)
  *   - default timeout is 1000ms (asserted by the timeout case with no explicit arg)
- *   - the literal RPC method name is "system.ping"
+ *   - the literal RPC method name is "system.ping" — via SystemPingContract
+ *
+ * The probe uses `callTyped(client, SystemPingContract, {})`. The mock
+ * surface needs both `withClient` AND `callTyped` because `daemon-guard.ts`
+ * imports the typed-RPC wrapper from `../client/rpc-client.js`. The
+ * `callMock` argument check is `(method, params)` — `callTyped` always
+ * forwards an empty params object for parameterless RPCs.
  *
  * @module
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// Both `withClient` and `callTyped` are re-exported from rpc-client.js.
+// Mock both; callTyped delegates to the inner `client.call`, so we keep the
+// fake-`client.call` mock pattern but the test asserts via callMock.
+vi.mock("../client/rpc-client.js", async () => {
+  // Import the real callTyped so it propagates the call through to our
+  // injected client.call mock — that's what daemon-guard.ts depends on.
+  const actual =
+    await vi.importActual<typeof import("../client/rpc-client.js")>(
+      "../client/rpc-client.js",
+    );
+  return {
+    withClient: vi.fn(),
+    callTyped: actual.callTyped,
+  };
+});
 
 const { withClient } = await import("../client/rpc-client.js");
 const { isDaemonRunning } = await import("./daemon-guard.js");
@@ -35,8 +53,10 @@ describe("isDaemonRunning", () => {
   // returns true on RPC success
   it("returns true when withClient invokes the callback and call() resolves", async () => {
     vi.mocked(withClient).mockImplementation(
-      async (fn: (client: { call: (m: string) => Promise<unknown> }) => Promise<unknown>) => {
-        const callMock = vi.fn().mockResolvedValue({ pong: true });
+      async (fn: (client: { call: (m: string, p?: unknown) => Promise<unknown> }) => Promise<unknown>) => {
+        // Return the SystemPingContract-shaped response so callTyped's
+        // optional response.parse (when VALIDATE is on) accepts it.
+        const callMock = vi.fn().mockResolvedValue({ pong: true, ts: Date.now() });
         return fn({ call: callMock });
       },
     );
@@ -60,7 +80,7 @@ describe("isDaemonRunning", () => {
   // returns false on "method not found" (regression / fail-closed)
   it("returns false when the underlying call() rejects with method-not-found", async () => {
     vi.mocked(withClient).mockImplementation(
-      async (fn: (client: { call: (m: string) => Promise<unknown> }) => Promise<unknown>) => {
+      async (fn: (client: { call: (m: string, p?: unknown) => Promise<unknown> }) => Promise<unknown>) => {
         const callMock = vi
           .fn()
           .mockRejectedValue(new Error("method not found: system.ping"));
@@ -77,7 +97,7 @@ describe("isDaemonRunning", () => {
   it("returns false when the RPC hangs longer than the default 1000ms", async () => {
     vi.useFakeTimers();
     vi.mocked(withClient).mockImplementation(
-      async (fn: (client: { call: (m: string) => Promise<unknown> }) => Promise<unknown>) => {
+      async (fn: (client: { call: (m: string, p?: unknown) => Promise<unknown> }) => Promise<unknown>) => {
         // call() returns a never-resolving Promise; the only thing that can
         // resolve isDaemonRunning is the Promise.race timeout branch.
         const callMock = vi.fn(() => new Promise<unknown>(() => {}));
@@ -92,19 +112,21 @@ describe("isDaemonRunning", () => {
     await expect(promise).resolves.toBe(false);
   });
 
-  // the literal RPC method is "system.ping"
-  it("calls client.call('system.ping') exactly — not 'health.ping'", async () => {
-    const callMock = vi.fn().mockResolvedValue({ pong: true });
+  // the literal RPC method is "system.ping" (via SystemPingContract.method)
+  it("calls client.call('system.ping', {}) exactly — not 'health.ping'", async () => {
+    const callMock = vi.fn().mockResolvedValue({ pong: true, ts: Date.now() });
     vi.mocked(withClient).mockImplementation(
-      async (fn: (client: { call: (m: string) => Promise<unknown> }) => Promise<unknown>) => {
+      async (fn: (client: { call: (m: string, p?: unknown) => Promise<unknown> }) => Promise<unknown>) => {
         return fn({ call: callMock });
       },
     );
 
     await isDaemonRunning();
 
-    expect(callMock).toHaveBeenCalledWith("system.ping");
-    // Strict equality — must not be called with anything else.
+    // callTyped passes `(method, validatedReq)` — for the empty-request
+    // SystemPingContract that's `("system.ping", {})`. The method name
+    // assertion is the gate against accidental rename / typo.
+    expect(callMock).toHaveBeenCalledWith("system.ping", {});
     expect(callMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -12,6 +12,7 @@
  */
 
 import type { TypedEventBus } from "@comis/core";
+import { systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
 import { monitorEventLoopDelay, type IntervalHistogram } from "node:perf_hooks";
 
 // ---------------------------------------------------------------------------
@@ -92,7 +93,7 @@ export function createProcessMonitor(deps: ProcessMonitorDeps): ProcessMonitor {
       },
       activeHandles: process.getActiveResourcesInfo().length,
       uptimeSeconds: process.uptime(),
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     };
 
     // Reset histogram for next interval (per-interval metrics, not lifetime)
@@ -103,7 +104,7 @@ export function createProcessMonitor(deps: ProcessMonitorDeps): ProcessMonitor {
 
   function start(): void {
     if (timer) return; // already started
-    timer = setInterval(() => {
+    timer = systemSetInterval(() => {
       const metrics = collect();
       deps.eventBus.emit("observability:metrics", metrics);
     }, intervalMs);
@@ -113,7 +114,7 @@ export function createProcessMonitor(deps: ProcessMonitorDeps): ProcessMonitor {
 
   function stop(): void {
     if (timer) {
-      clearInterval(timer);
+      systemClearInterval(timer);
       timer = undefined;
     }
     histogram.disable();

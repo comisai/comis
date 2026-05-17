@@ -8,12 +8,13 @@
  *
  * Crash-Safe Delivery Queue.
  *
+ * The createNoOpDeliveryQueue() factory lives at ../delivery/no-op-delivery-queue.ts;
+ * this file is now type-only.
+ *
  * @module
  */
 
-import { randomUUID } from "node:crypto";
 import type { Result } from "@comis/shared";
-import { ok } from "@comis/shared";
 
 /**
  * Per-status count breakdown for delivery queue observability.
@@ -68,7 +69,8 @@ export type DeliveryQueueEnqueueInput = Omit<
 /**
  * DeliveryQueuePort: persistence boundary for outbound message durability.
  *
- * Adapters: SqliteDeliveryQueueAdapter (@comis/memory), NoOpDeliveryQueue (below).
+ * Adapters: SqliteDeliveryQueueAdapter (@comis/memory),
+ *           NoOpDeliveryQueue (createNoOpDeliveryQueue in ../delivery/no-op-delivery-queue.ts).
  */
 export interface DeliveryQueuePort {
   /**
@@ -146,26 +148,4 @@ export interface DeliveryQueuePort {
    * @returns The number of rows recovered (transitioned in_flight -> pending).
    */
   recoverInFlight(): Promise<Result<number, Error>>;
-}
-
-/**
- * No-op delivery queue for when the queue feature is disabled.
- *
- * All operations succeed immediately with no persistence.
- * enqueue returns a random UUID, ack/nack/fail return void,
- * pendingEntries returns [], pruneExpired/depth return 0.
- */
-export function createNoOpDeliveryQueue(): DeliveryQueuePort {
-  return Object.freeze({
-    enqueue: () => Promise.resolve(ok(randomUUID())),
-    enqueueInFlight: () => Promise.resolve(ok(randomUUID())),
-    ack: () => Promise.resolve(ok(undefined)),
-    nack: () => Promise.resolve(ok(undefined)),
-    fail: () => Promise.resolve(ok(undefined)),
-    pendingEntries: () => Promise.resolve(ok([] as DeliveryQueueEntry[])),
-    pruneExpired: () => Promise.resolve(ok(0)),
-    depth: () => Promise.resolve(ok(0)),
-    statusCounts: () => Promise.resolve(ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 })),
-    recoverInFlight: () => Promise.resolve(ok(0)),
-  });
 }

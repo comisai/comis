@@ -58,7 +58,7 @@ describe("normalizeTelegramPollResult", () => {
     expect(result.isClosed).toBe(true);
   });
 
-  it("handles zero votes", () => {
+  it("handles zero-vote Telegram polls by producing normalized result with empty counts", () => {
     const poll: TelegramPollData = {
       id: "tg-poll-3",
       question: "Empty poll",
@@ -208,7 +208,7 @@ describe("normalizeWhatsAppPollResult", () => {
     expect(result.options[2]!.voterCount).toBe(1);
   });
 
-  it("handles empty votes", () => {
+  it("handles empty WhatsApp poll votes by producing normalized result with zero counts", () => {
     const data: WhatsAppPollData = {
       pollMessageId: "wa-poll-3",
       question: "No votes yet",

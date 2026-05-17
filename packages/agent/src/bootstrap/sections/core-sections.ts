@@ -4,6 +4,7 @@
  * inbound metadata, and reasoning.
  */
 
+import { systemNowDate } from "@comis/core";
 import type { InboundMetadata, RuntimeInfo } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -65,7 +66,7 @@ export function buildLanguageSection(userLanguage?: string): string[] {
 // ---------------------------------------------------------------------------
 
 export function buildDateTimeSection(): string[] {
-  const now = new Date();
+  const now = systemNowDate();
   const isoTimestamp = now.toISOString();
   const localTime = now.toLocaleString("en-US", {
     dateStyle: "full",

@@ -8,7 +8,14 @@
 import { describe, it, expect } from "vitest";
 import { createSessionLatch, createAccumulativeLatch } from "./session-latch.js";
 import type { SessionLatch, AccumulativeLatch } from "./session-latch.js";
-import { _clearSessionLatchesForTest, _getOrCreateSessionLatchesForTest } from "./pi-executor.js";
+import {
+  clearSessionLatches as _clearSessionLatchesForTest,
+  getOrCreateSessionLatches as _getOrCreateSessionLatchesForTest,
+  setSessionStateClock,
+} from "./executor-session-state.js";
+
+// Initialize module-level clock provider for tests.
+setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
 
 describe("SessionLatch", () => {
   describe("createSessionLatch() with no args", () => {

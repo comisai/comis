@@ -2,8 +2,8 @@
 // @comis/channels - Channel adapters and messaging infrastructure
 
 // Telegram adapter
-export { createTelegramAdapter } from "./telegram/telegram-adapter.js";
-export type { TelegramAdapterDeps, TelegramAdapterHandle } from "./telegram/telegram-adapter.js";
+export { createTelegramAdapter } from "./telegram/telegram-adapter/index.js";
+export type { TelegramAdapterDeps, TelegramAdapterHandle } from "./telegram/telegram-adapter/index.js";
 
 // Telegram utilities
 export { mapGrammyToNormalized } from "./telegram/message-mapper.js";
@@ -28,6 +28,21 @@ export type { ChunkDiscordTextOpts } from "./discord/format-discord.js";
 // pre-download size checks for direct use outside CompositeResolver.
 export { createDiscordResolver } from "./discord/discord-resolver.js";
 export type { DiscordResolverDeps } from "./discord/discord-resolver.js";
+
+// Discord channel narrowing types + helpers. Structural subset of
+// discord.js runtime shape; no module augmentation. Narrowing helpers
+// return null (not a Result) because narrowing is a typed-cast, not
+// fallible computation.
+//   * asTextLike + DiscordTextLikeChannel — text-like channels (pin/send/
+//     edit/delete/setTopic/setRateLimitPerUser/sendTyping/threads).
+//   * asThreadInfo + DiscordThreadInfo — per-thread iteration objects
+//     emitted by the threadList action (id/name/archived/memberCount/
+//     messageCount).
+export { asTextLike, asThreadInfo } from "./discord/discord-adapter-types.js";
+export type {
+  DiscordTextLikeChannel,
+  DiscordThreadInfo,
+} from "./discord/discord-adapter-types.js";
 
 // Slack adapter
 export { createSlackAdapter } from "./slack/slack-adapter.js";
@@ -183,10 +198,6 @@ export { createApprovalNotifier } from "./shared/approval-notifier.js";
 export type { ApprovalNotifier, ApprovalNotifierDeps } from "./shared/approval-notifier.js";
 
 // Shared infrastructure
-export { createChannelManager } from "./shared/channel-manager.js";
-export type { ChannelManager, ChannelManagerDeps } from "./shared/channel-manager.js";
-export { createRetryEngine } from "./shared/retry-engine.js";
-export type { RetryEngine } from "./shared/retry-engine.js";
 export { createTypingController } from "./shared/typing-controller.js";
 export type {
   TypingController,
@@ -195,14 +206,14 @@ export type {
 } from "./shared/typing-controller.js";
 export { createTypingLifecycleController } from "./shared/typing-lifecycle-controller.js";
 export type { TypingLifecycleController, TypingLifecycleOptions } from "./shared/typing-lifecycle-controller.js";
-export { formatForChannel } from "./shared/format-for-channel.js";
-export { deliverToChannel, resolveChunkLimit, computeQueueBackoff, QUEUE_BACKOFF_SCHEDULE_MS } from "./shared/deliver-to-channel.js";
-export type { DeliverToChannelOptions, DeliverToChannelDeps, DeliveryResult, ChunkDeliveryResult, DeliveryAdapter } from "./shared/deliver-to-channel.js";
-export { chunkForDelivery } from "./shared/chunk-for-delivery.js";
-export type { ChunkForDeliveryOptions } from "./shared/chunk-for-delivery.js";
 
-// Permanent error classification
-export { isPermanentError, PERMANENT_ERROR_PATTERNS } from "./shared/permanent-errors.js";
+// The channel-platform-agnostic delivery helpers (formatForChannel,
+// chunkForDelivery, createRetryEngine, isPermanentError, and the
+// Markdown IR pipeline) live in `@comis/core` (export point:
+// core/src/exports/delivery.ts). The standalone `deliverToChannel`
+// function + `DeliverToChannelDeps` interface + queue-backoff helpers
+// and delivery-type re-exports also live in `@comis/core` (which owns
+// the types and the `createDeliveryService(deps)` factory).
 
 // Voice response pipeline
 export { executeVoiceResponse } from "./shared/voice-response-pipeline.js";
@@ -243,14 +254,8 @@ export { reactWithFallback, TELEGRAM_SAFE_EMOJI } from "./telegram/emoji-fallbac
 export { tokenizeTemplate, resolveTokens, applyPrefix, FORMATTERS } from "./shared/prefix-template.js";
 export type { TemplateToken } from "./shared/prefix-template.js";
 
-// Telegram file-ref guard
-export {
-  guardTelegramFileRefs,
-  initTelegramFileGuardConfig,
-  isTelegramFileGuardEnabled,
-  ALWAYS_GUARD_EXTENSIONS,
-  AMBIGUOUS_EXTENSIONS,
-} from "./shared/telegram-file-ref-guard.js";
+// Telegram file-ref guard lives in `@comis/core` alongside ir-renderer
+// (which depends on it). Imports must retarget to `@comis/core`.
 
 // Channel health monitor
 export { createChannelHealthMonitor } from "./shared/channel-health-monitor.js";
@@ -260,3 +265,55 @@ export type {
   ChannelHealthState,
   ChannelHealthEntry,
 } from "./shared/channel-health-monitor.js";
+
+// ---------------------------------------------------------------------------
+// Channels-side surface required by orchestrator A-files
+//
+// These symbols stay in channels/src/shared/ as either:
+//   (a) bucket-A internals (block-pacer, block-coalescer, abort-summary,
+//       send-policy, group-history-buffer) consumed by orchestrator-side
+//       channel-manager.ts, or
+//   (b) channels-internal helpers (regex-guard, media-compressor) consumed
+//       by orchestrator-side moved A-files via the @comis/channels public
+//       surface.
+//
+// SCOPE GUARD: only the symbols actually consumed by the orchestrator
+// A-files (inbound-* + execution-*) are exported here. Speculative full-
+// surface re-exports are rejected by test/architecture/public-export-
+// consumers.test.ts (dead exports forbidden).
+// ---------------------------------------------------------------------------
+
+// Regex safety guard (consumed by orchestrator inbound-pipeline.ts)
+export { isRegexSafe } from "./shared/regex-guard.js";
+
+// Media attachment compressor (consumed by orchestrator inbound-preprocess.ts)
+export { compressAttachments } from "./shared/media-compressor.js";
+
+// Block streaming primitives (consumed by orchestrator execution-deliver/
+// execution-pipeline / inbound-pipeline / inbound-route / execution-pipeline.test)
+export { createBlockPacer } from "./shared/block-pacer.js";
+export type { BlockPacer, PacerConfig } from "./shared/block-pacer.js";
+export { coalesceBlocks } from "./shared/block-coalescer.js";
+
+// Abort summary builder (consumed by orchestrator execution-filter.ts)
+export { buildAbortSummary } from "./shared/abort-summary.js";
+
+// Send policy primitives (consumed by orchestrator execution-policy.ts +
+// type-only by execution-pipeline / inbound-pipeline / inbound-gate / inbound-route +
+// commit 4: createSendOverrideStore needed by orchestrator channel-manager.ts)
+export {
+  evaluateSendPolicy,
+  applySessionOverride,
+  createSendOverrideStore,
+} from "./shared/send-policy.js";
+export type {
+  SendOverrideStore,
+  SendPolicyContext,
+} from "./shared/send-policy.js";
+
+// Group history buffer (consumed type-only by orchestrator inbound-pipeline.ts)
+export type { GroupHistoryBuffer } from "./shared/group-history-buffer.js";
+
+// Telegram thread propagation metadata keys (consumed by orchestrator
+// execution-pipeline.test.ts for cross-set equivalence assertion)
+export { TELEGRAM_THREAD_META_KEYS } from "./telegram/thread-context.js";

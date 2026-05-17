@@ -10,11 +10,11 @@
  * @module
  */
 
-import { ModelRegistry } from "@mariozechner/pi-coding-agent";
-import type { AuthStorage } from "@mariozechner/pi-coding-agent";
-import { getModels, getProviders } from "@mariozechner/pi-ai";
-import type { Api, Model, KnownProvider } from "@mariozechner/pi-ai";
-import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { AuthStorage } from "@earendil-works/pi-coding-agent";
+import { getModels, getProviders } from "@earendil-works/pi-ai";
+import type { Api, Model, KnownProvider } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { SecretManager } from "@comis/core";
 import type { ModelAllowlist } from "./model-allowlist.js";
 
@@ -290,7 +290,7 @@ export function registerCustomProviders(
           providerName,
           apiKeyName: entry.apiKeyName,
           hint: "Set the named secret in ~/.comis/.env, omit apiKeyName for type='ollama', or remove the provider entry from config.yaml",
-          errorKind: "config",
+          errorKind: "config" as const,
         },
         "Custom provider has models but no API key -- skipping registration",
       );
@@ -353,7 +353,7 @@ export function registerCustomProviders(
           providerName,
           err: error instanceof Error ? error.message : String(error),
           hint: "Check providers.entries config: baseUrl required when defining models; apiKey required unless oauth configured",
-          errorKind: "config",
+          errorKind: "config" as const,
         },
         "Custom provider registration failed",
       );

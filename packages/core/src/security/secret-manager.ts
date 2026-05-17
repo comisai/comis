@@ -17,6 +17,7 @@
 
 import type { TypedEventBus } from "../event-bus/index.js";
 import { isSecretAccessible } from "./secret-access.js";
+import { systemNowMs } from "../runtime/system-time.js";
 
 /**
  * Interface for centralized secret/credential access.
@@ -157,7 +158,7 @@ export function createScopedSecretManager(
       message:
         `Agent "${agentId}" accessed secret "${secretName}" without explicit secrets.allow configuration. ` +
         `Configure secrets.allow patterns to restrict access.`,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 
@@ -169,7 +170,7 @@ export function createScopedSecretManager(
       secretName,
       agentId,
       outcome,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 

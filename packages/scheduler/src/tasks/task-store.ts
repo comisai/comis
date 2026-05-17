@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: task-store SQLite adapter precondition guards; consumed via daemon heartbeat handlers (@allow-throw boundary, transitive).
 import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import { z } from "zod";
 import type { ExtractedTask } from "./task-types.js";
 import { ExtractedTaskSchema } from "./task-types.js";
@@ -61,7 +62,7 @@ export function createTaskStore(filePath: string): TaskStore {
     const dir = dirname(filePath);
     await mkdir(dir, { recursive: true });
 
-    const tmpPath = safePath(dir, `.task-store-${Date.now()}.tmp`);
+    const tmpPath = safePath(dir, `.task-store-${systemNowMs()}.tmp`);
     const data = JSON.stringify(tasks, null, 2);
     await writeFile(tmpPath, data, { encoding: "utf-8", mode: 0o600 });
     await rename(tmpPath, filePath);

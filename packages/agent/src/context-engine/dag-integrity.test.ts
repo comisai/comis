@@ -353,7 +353,7 @@ describe("checkCycles", () => {
     expect(mockLogger.error).toHaveBeenCalled();
     const errorCall = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(errorCall[0]).toHaveProperty("hint", "DAG integrity issue requires manual intervention");
-    expect(errorCall[0]).toHaveProperty("errorKind", "data");
+    expect(errorCall[0]).toHaveProperty("errorKind", "internal");
   });
 });
 

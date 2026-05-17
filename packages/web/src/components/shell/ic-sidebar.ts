@@ -427,10 +427,11 @@ export class IcSidebar extends LitElement {
     return html`
       <button
         class="nav-item"
+        aria-label=${item.label}
         aria-current=${active ? "page" : nothing}
         @click=${() => this._navigate(item.route)}
       >
-        <span class="nav-icon">${item.icon}</span>
+        <span class="nav-icon" aria-hidden="true">${item.icon}</span>
         <span class="nav-label">${item.label}</span>
         ${badgeValue > 0
           ? html`<span class="badge">${badgeValue}</span>`

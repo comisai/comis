@@ -3,13 +3,18 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+// Test-only @comis/core import — production session-write-lock module
+// receives its FileLockPort instance via daemon composition (setup-agents.ts).
+import { createFileLock, type FileLockPort } from "@comis/core";
 import { withSessionLock, cleanupStaleLocks } from "./session-write-lock.js";
 
 describe("session-write-lock", () => {
   let testDir: string;
+  let fileLock: FileLockPort;
 
   beforeEach(() => {
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-lock-test-"));
+    fileLock = createFileLock();
   });
 
   afterEach(() => {
@@ -21,7 +26,7 @@ describe("session-write-lock", () => {
     let lockFileSeen = "";
 
     // Call withSessionLock and check the lock directory was created with a deterministic sentinel file
-    await withSessionLock(testDir, sessionKey, () => {
+    await withSessionLock(fileLock, testDir, sessionKey, () => {
       // During execution, look for sentinel files in lock dir (exclude .lock directories created by proper-lockfile)
       const files = fs.readdirSync(testDir).filter(
         (f) => f.endsWith(".lock") && fs.statSync(path.join(testDir, f)).isFile(),
@@ -32,7 +37,7 @@ describe("session-write-lock", () => {
     });
 
     // Same key produces same path (deterministic)
-    await withSessionLock(testDir, sessionKey, () => {
+    await withSessionLock(fileLock, testDir, sessionKey, () => {
       const files = fs.readdirSync(testDir).filter(
         (f) => f.endsWith(".lock") && fs.statSync(path.join(testDir, f)).isFile(),
       );
@@ -45,13 +50,13 @@ describe("session-write-lock", () => {
   it("different session keys produce different lock paths", async () => {
     const seenFiles: string[] = [];
 
-    await withSessionLock(testDir, "tenant:userA:channel", () => {
+    await withSessionLock(fileLock, testDir, "tenant:userA:channel", () => {
       const files = fs.readdirSync(testDir).filter((f) => f.endsWith(".lock"));
       seenFiles.push(files[0]);
       return "ok";
     });
 
-    await withSessionLock(testDir, "tenant:userB:channel", () => {
+    await withSessionLock(fileLock, testDir, "tenant:userB:channel", () => {
       const files = fs.readdirSync(testDir).filter((f) => f.endsWith(".lock"));
       seenFiles.push(files[0]);
       return "ok";
@@ -65,7 +70,7 @@ describe("session-write-lock", () => {
     const seenFiles: string[] = [];
 
     for (let i = 0; i < 3; i++) {
-      await withSessionLock(testDir, key, () => {
+      await withSessionLock(fileLock, testDir, key, () => {
         const files = fs.readdirSync(testDir).filter((f) => f.endsWith(".lock"));
         seenFiles.push(files[0]);
         return "ok";
@@ -77,7 +82,7 @@ describe("session-write-lock", () => {
   });
 
   it("withSessionLock calls fn and returns result", async () => {
-    const result = await withSessionLock(testDir, "tenant:user:ch", () => 42);
+    const result = await withSessionLock(fileLock, testDir, "tenant:user:ch", () => 42);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value).toBe(42);
@@ -88,7 +93,7 @@ describe("session-write-lock", () => {
     const nestedDir = path.join(testDir, "deep", "nested");
     expect(fs.existsSync(nestedDir)).toBe(false);
 
-    const result = await withSessionLock(nestedDir, "tenant:user:ch", () => "ok");
+    const result = await withSessionLock(fileLock, nestedDir, "tenant:user:ch", () => "ok");
     expect(result.ok).toBe(true);
     expect(fs.existsSync(nestedDir)).toBe(true);
   });
@@ -97,7 +102,7 @@ describe("session-write-lock", () => {
     const key = "tenant:user:ch";
 
     // First, run once to create the sentinel file
-    await withSessionLock(testDir, key, () => "setup");
+    await withSessionLock(fileLock, testDir, key, () => "setup");
 
     // Find the sentinel file
     const lockFiles = fs.readdirSync(testDir).filter((f) => f.endsWith(".lock"));
@@ -111,7 +116,7 @@ describe("session-write-lock", () => {
     fs.utimesSync(lockDir, pastTime, pastTime);
 
     // With staleMs=2000, a 60s-old lock should be considered stale and recoverable
-    const result = await withSessionLock(testDir, key, () => "recovered", {
+    const result = await withSessionLock(fileLock, testDir, key, () => "recovered", {
       staleMs: 2000,
     });
 
@@ -126,7 +131,7 @@ describe("session-write-lock", () => {
     const order: string[] = [];
 
     // First lock holds for a bit
-    const first = withSessionLock(testDir, key, async () => {
+    const first = withSessionLock(fileLock, testDir, key, async () => {
       order.push("first-start");
       await new Promise((r) => setTimeout(r, 200));
       order.push("first-end");
@@ -138,6 +143,7 @@ describe("session-write-lock", () => {
 
     // Second lock should wait (retry) until first releases
     const second = withSessionLock(
+      fileLock,
       testDir,
       key,
       async () => {
@@ -159,9 +165,9 @@ describe("session-write-lock", () => {
   describe("cleanupStaleLocks", () => {
     it("removes stale sentinel files older than maxAgeMs", async () => {
       // Create some sentinel files by locking different sessions
-      await withSessionLock(testDir, "session-a", () => "ok");
-      await withSessionLock(testDir, "session-b", () => "ok");
-      await withSessionLock(testDir, "session-c", () => "ok");
+      await withSessionLock(fileLock, testDir, "session-a", () => "ok");
+      await withSessionLock(fileLock, testDir, "session-b", () => "ok");
+      await withSessionLock(fileLock, testDir, "session-c", () => "ok");
 
       const sentinelsBefore = fs.readdirSync(testDir).filter(
         (f) => f.endsWith(".lock") && fs.statSync(path.join(testDir, f)).isFile(),
@@ -175,7 +181,7 @@ describe("session-write-lock", () => {
       }
 
       // Cleanup with 1-hour threshold should remove all 3
-      const removed = await cleanupStaleLocks(testDir, 3_600_000);
+      const removed = await cleanupStaleLocks(fileLock, testDir, 3_600_000);
       expect(removed).toBe(3);
 
       const sentinelsAfter = fs.readdirSync(testDir).filter(
@@ -185,10 +191,10 @@ describe("session-write-lock", () => {
     });
 
     it("skips sentinel files newer than maxAgeMs", async () => {
-      await withSessionLock(testDir, "fresh-session", () => "ok");
+      await withSessionLock(fileLock, testDir, "fresh-session", () => "ok");
 
       // Don't backdate — file is fresh
-      const removed = await cleanupStaleLocks(testDir, 3_600_000);
+      const removed = await cleanupStaleLocks(fileLock, testDir, 3_600_000);
       expect(removed).toBe(0);
 
       const sentinels = fs.readdirSync(testDir).filter(
@@ -198,7 +204,7 @@ describe("session-write-lock", () => {
     });
 
     it("returns 0 for non-existent directory", async () => {
-      const removed = await cleanupStaleLocks(path.join(testDir, "nonexistent"));
+      const removed = await cleanupStaleLocks(fileLock, path.join(testDir, "nonexistent"));
       expect(removed).toBe(0);
     });
 
@@ -209,7 +215,7 @@ describe("session-write-lock", () => {
       });
 
       // Start a lock that will be held during cleanup
-      const lockPromise = withSessionLock(testDir, "held-session", () => hold);
+      const lockPromise = withSessionLock(fileLock, testDir, "held-session", () => hold);
 
       // Wait for lock to acquire
       await new Promise((r) => setTimeout(r, 100));
@@ -223,7 +229,7 @@ describe("session-write-lock", () => {
       fs.utimesSync(path.join(testDir, sentinels[0]), pastTime, pastTime);
 
       // Cleanup should skip it because it's actively locked
-      const removed = await cleanupStaleLocks(testDir, 3_600_000);
+      const removed = await cleanupStaleLocks(fileLock, testDir, 3_600_000);
       expect(removed).toBe(0);
 
       // Clean up
@@ -240,13 +246,13 @@ describe("session-write-lock", () => {
       releaseHold = resolve;
     });
 
-    const first = withSessionLock(testDir, key, () => hold);
+    const first = withSessionLock(fileLock, testDir, key, () => hold);
 
     // Wait for first lock to acquire
     await new Promise((r) => setTimeout(r, 100));
 
     // Second attempt with no retries should fail
-    const second = await withSessionLock(testDir, key, async () => "nope", {
+    const second = await withSessionLock(fileLock, testDir, key, async () => "nope", {
       retries: 0,
     });
 

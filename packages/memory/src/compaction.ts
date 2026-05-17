@@ -21,9 +21,9 @@
  */
 
 import type Database from "better-sqlite3";
-import type { HookRunner, SessionKey } from "@comis/core";
-import type { SessionStore } from "./session-store.js";
+import type { HookRunner, SessionKey, SessionStorePort } from "@comis/core";
 import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { systemNowMs } from "@comis/core";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -93,7 +93,7 @@ const DEFAULT_OPTIONS: CompactionOptions = {
  * memory adapter, and summarizer function.
  *
  * @param db - An open better-sqlite3 Database with initialized schema (including archives table)
- * @param sessionStore - SessionStore for listing/deleting sessions
+ * @param sessionStore - SessionStorePort for listing/deleting sessions
  * @param adapter - SqliteMemoryAdapter for storing episodic/semantic memories
  * @param summarizer - Pluggable function to summarize messages and extract facts
  * @param hookRunner - Optional hook runner for lifecycle hooks (no-op when absent)
@@ -101,7 +101,7 @@ const DEFAULT_OPTIONS: CompactionOptions = {
  */
 export function createCompactionService(
   db: Database.Database,
-  sessionStore: SessionStore,
+  sessionStore: SessionStorePort,
   adapter: SqliteMemoryAdapter,
   summarizer: Summarizer,
   hookRunner?: HookRunner,
@@ -117,7 +117,7 @@ export function createCompactionService(
   return {
     async compact(options?: Partial<CompactionOptions>): Promise<CompactionResult> {
       const opts: CompactionOptions = { ...DEFAULT_OPTIONS, ...options };
-      const now = Date.now();
+      const now = systemNowMs();
       const cutoff = now - opts.minIdleMs;
 
       // List sessions, optionally scoped by tenant
@@ -161,7 +161,7 @@ export function createCompactionService(
           continue;
         }
 
-        const compactionStartMs = Date.now();
+        const compactionStartMs = systemNowMs();
 
         // Call the pluggable summarizer
         const { summary, facts } = await summarizer(sessionData.messages);
@@ -234,7 +234,7 @@ export function createCompactionService(
             sessionKey: parts as SessionKey,
             removedCount: sessionData.messages.length,
             retainedCount: 0,
-            durationMs: Date.now() - compactionStartMs,
+            durationMs: systemNowMs() - compactionStartMs,
           },
           { agentId: agentId ?? "default" },
         );
@@ -244,7 +244,7 @@ export function createCompactionService(
     },
 
     purgeArchives(): number {
-      const now = Date.now();
+      const now = systemNowMs();
       const info = purgeStmt.run(now);
       return info.changes;
     },

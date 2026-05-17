@@ -6,6 +6,8 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import type { FetchedMessage, PlatformCapabilities } from "../api/types/index.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
+import { systemSetTimeout } from "@comis/core";
+import { createMessageCenterController, type MessageCenterController } from "./message-center-controller.js";
 
 // Side-effect registrations for sub-components
 import "../components/nav/ic-breadcrumb.js";
@@ -163,501 +165,88 @@ export class IcMessageCenter extends LitElement {
     sharedStyles,
     focusStyles,
     css`
-      :host {
-        display: block;
-      }
-
-      .message-center {
-        display: flex;
-        flex-direction: column;
-        gap: var(--ic-space-md, 1rem);
-      }
-
+      :host { display: block; }
+      .message-center { display: flex; flex-direction: column; gap: var(--ic-space-md, 1rem); }
       /* Header */
-      .header-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: var(--ic-space-md, 1rem);
-        flex-wrap: wrap;
-      }
-
-      .header-left {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm, 0.5rem);
-      }
-
-      .page-title {
-        font-size: 1.5rem;
-        font-weight: 700;
-        margin: 0;
-      }
-
+      .header-row { display: flex; align-items: center; justify-content: space-between; gap: var(--ic-space-md, 1rem); flex-wrap: wrap; }
+      .header-left { display: flex; align-items: center; gap: var(--ic-space-sm, 0.5rem); }
+      .page-title { font-size: 1.5rem; font-weight: 700; margin: 0; }
       /* Channel selector */
-      .channel-selector {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm, 0.5rem);
-      }
-
-      .channel-selector label {
-        font-size: var(--ic-text-sm, 0.875rem);
-        color: var(--ic-text-muted, #9ca3af);
-      }
-
-      .channel-select {
-        padding: 0.375rem 0.5rem;
-        background: var(--ic-surface-2, #1f2937);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-md, 0.5rem);
-        color: var(--ic-text, #f3f4f6);
-        font-size: var(--ic-text-sm, 0.875rem);
-        outline: none;
-        cursor: pointer;
-      }
-
-      .channel-select:focus {
-        border-color: var(--ic-accent, #3b82f6);
-      }
-
+      .channel-selector { display: flex; align-items: center; gap: var(--ic-space-sm, 0.5rem); }
+      .channel-selector label { font-size: var(--ic-text-sm, 0.875rem); color: var(--ic-text-muted, #9ca3af); }
+      .channel-select { padding: 0.375rem 0.5rem; background: var(--ic-surface-2, #1f2937); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-md, 0.5rem); color: var(--ic-text, #f3f4f6); font-size: var(--ic-text-sm, 0.875rem); outline: none; cursor: pointer; }
+      .channel-select:focus { border-color: var(--ic-accent, #3b82f6); }
       /* Section card */
-      .section {
-        background: var(--ic-surface, #111827);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-md, 0.5rem);
-        padding: var(--ic-space-md, 1rem);
-      }
-
-      .section-title {
-        font-size: var(--ic-text-sm, 0.875rem);
-        font-weight: 600;
-        color: var(--ic-text-muted, #9ca3af);
-        margin: 0 0 var(--ic-space-sm, 0.5rem) 0;
-      }
-
+      .section { background: var(--ic-surface, #111827); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-md, 0.5rem); padding: var(--ic-space-md, 1rem); }
+      .section-title { font-size: var(--ic-text-sm, 0.875rem); font-weight: 600; color: var(--ic-text-muted, #9ca3af); margin: 0 0 var(--ic-space-sm, 0.5rem) 0; }
       /* Message list */
-      .message-list {
-        overflow-y: auto;
-        max-height: 60vh;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-
-      .msg-row {
-        display: flex;
-        align-items: baseline;
-        gap: var(--ic-space-sm, 0.5rem);
-        padding: var(--ic-space-xs, 0.25rem) var(--ic-space-sm, 0.5rem);
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        font-size: var(--ic-text-sm, 0.875rem);
-      }
-
-      .msg-row:nth-child(odd) {
-        background: var(--ic-surface-2, #1f2937);
-      }
-
-      .msg-row:nth-child(even) {
-        background: transparent;
-      }
-
-      .msg-sender {
-        color: var(--ic-text-dim, #6b7280);
-        font-size: var(--ic-text-xs, 0.75rem);
-        flex-shrink: 0;
-        min-width: 6rem;
-        max-width: 10rem;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .msg-text {
-        flex: 1;
-        min-width: 0;
-        color: var(--ic-text, #f3f4f6);
-        word-break: break-word;
-      }
-
-      .msg-time {
-        flex-shrink: 0;
-        font-size: var(--ic-text-xs, 0.75rem);
-        color: var(--ic-text-dim, #6b7280);
-      }
-
+      .message-list { overflow-y: auto; max-height: 60vh; display: flex; flex-direction: column; gap: 2px; }
+      .msg-row { display: flex; align-items: baseline; gap: var(--ic-space-sm, 0.5rem); padding: var(--ic-space-xs, 0.25rem) var(--ic-space-sm, 0.5rem); border-radius: var(--ic-radius-sm, 0.25rem); font-size: var(--ic-text-sm, 0.875rem); }
+      .msg-row:nth-child(odd) { background: var(--ic-surface-2, #1f2937); }
+      .msg-row:nth-child(even) { background: transparent; }
+      .msg-sender { color: var(--ic-text-dim, #6b7280); font-size: var(--ic-text-xs, 0.75rem); flex-shrink: 0; min-width: 6rem; max-width: 10rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .msg-text { flex: 1; min-width: 0; color: var(--ic-text, #f3f4f6); word-break: break-word; }
+      .msg-time { flex-shrink: 0; font-size: var(--ic-text-xs, 0.75rem); color: var(--ic-text-dim, #6b7280); }
       /* Send form */
-      .send-form {
-        display: flex;
-        gap: var(--ic-space-sm, 0.5rem);
-        align-items: flex-end;
-      }
-
-      .send-input {
-        flex: 1;
-        padding: 0.625rem 0.75rem;
-        background: var(--ic-surface-2, #1f2937);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-md, 0.5rem);
-        color: var(--ic-text, #f3f4f6);
-        font-size: var(--ic-text-sm, 0.875rem);
-        outline: none;
-        resize: vertical;
-        min-height: 2.5rem;
-        max-height: 8rem;
-        font-family: inherit;
-      }
-
-      .send-input:focus {
-        border-color: var(--ic-accent, #3b82f6);
-      }
-
-      .send-input::placeholder {
-        color: var(--ic-text-dim, #6b7280);
-      }
-
-      .btn {
-        padding: 0.5rem 1rem;
-        font-size: var(--ic-text-sm, 0.875rem);
-        font-weight: 500;
-        border-radius: var(--ic-radius-md, 0.5rem);
-        border: 1px solid transparent;
-        cursor: pointer;
-        transition: background var(--ic-transition, 150ms);
-      }
-
-      .btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      .btn-primary {
-        background: var(--ic-accent, #3b82f6);
-        color: white;
-      }
-
-      .btn-primary:hover:not(:disabled) {
-        background: var(--ic-accent-hover, #2563eb);
-      }
-
+      .send-form { display: flex; gap: var(--ic-space-sm, 0.5rem); align-items: flex-end; }
+      .send-input { flex: 1; padding: 0.625rem 0.75rem; background: var(--ic-surface-2, #1f2937); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-md, 0.5rem); color: var(--ic-text, #f3f4f6); font-size: var(--ic-text-sm, 0.875rem); outline: none; resize: vertical; min-height: 2.5rem; max-height: 8rem; font-family: inherit; }
+      .send-input:focus { border-color: var(--ic-accent, #3b82f6); }
+      .send-input::placeholder { color: var(--ic-text-dim, #6b7280); }
+      .btn { padding: 0.5rem 1rem; font-size: var(--ic-text-sm, 0.875rem); font-weight: 500; border-radius: var(--ic-radius-md, 0.5rem); border: 1px solid transparent; cursor: pointer; transition: background var(--ic-transition, 150ms); }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .btn-primary { background: var(--ic-accent, #3b82f6); color: white; }
+      .btn-primary:hover:not(:disabled) { background: var(--ic-accent-hover, #2563eb); }
       /* Message action buttons (hover-visible) */
-      .msg-actions {
-        display: none;
-        gap: 4px;
-        align-items: center;
-        flex-shrink: 0;
-      }
-
-      .msg-row:hover .msg-actions {
-        display: flex;
-      }
-
-      .msg-action-btn {
-        padding: 2px 6px;
-        font-size: var(--ic-text-xs, 0.75rem);
-        background: transparent;
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        color: var(--ic-text-dim, #6b7280);
-        cursor: pointer;
-        white-space: nowrap;
-        transition: background var(--ic-transition, 150ms), color var(--ic-transition, 150ms);
-      }
-
-      .msg-action-btn:hover {
-        background: var(--ic-surface-raised, #1e293b);
-        color: var(--ic-text, #f3f4f6);
-      }
-
+      .msg-actions { display: none; gap: 4px; align-items: center; flex-shrink: 0; }
+      .msg-row:hover .msg-actions { display: flex; }
+      .msg-action-btn { padding: 2px 6px; font-size: var(--ic-text-xs, 0.75rem); background: transparent; border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-sm, 0.25rem); color: var(--ic-text-dim, #6b7280); cursor: pointer; white-space: nowrap; transition: background var(--ic-transition, 150ms), color var(--ic-transition, 150ms); }
+      .msg-action-btn:hover { background: var(--ic-surface-raised, #1e293b); color: var(--ic-text, #f3f4f6); }
       /* Inline reply / edit forms */
-      .inline-form {
-        background: var(--ic-surface-raised, #1e293b);
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        padding: var(--ic-space-sm, 0.5rem);
-        margin: 2px var(--ic-space-sm, 0.5rem);
-      }
-
-      .inline-form-label {
-        font-size: var(--ic-text-xs, 0.75rem);
-        color: var(--ic-text-muted, #9ca3af);
-        margin-bottom: 4px;
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm, 0.5rem);
-      }
-
-      .inline-form-cancel {
-        background: none;
-        border: none;
-        color: var(--ic-text-dim, #6b7280);
-        cursor: pointer;
-        font-size: var(--ic-text-xs, 0.75rem);
-        padding: 0 2px;
-      }
-
-      .inline-form-cancel:hover {
-        color: var(--ic-text, #f3f4f6);
-      }
-
-      .inline-form-row {
-        display: flex;
-        gap: var(--ic-space-sm, 0.5rem);
-        align-items: flex-end;
-      }
-
-      .inline-form-input {
-        flex: 1;
-        padding: 0.375rem 0.5rem;
-        background: var(--ic-surface-2, #1f2937);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        color: var(--ic-text, #f3f4f6);
-        font-size: var(--ic-text-sm, 0.875rem);
-        font-family: inherit;
-        outline: none;
-        resize: vertical;
-        min-height: 2rem;
-        max-height: 6rem;
-      }
-
-      .inline-form-input:focus {
-        border-color: var(--ic-accent, #3b82f6);
-      }
-
-      .btn-sm {
-        padding: 0.25rem 0.5rem;
-        font-size: var(--ic-text-xs, 0.75rem);
-        font-weight: 500;
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        border: 1px solid transparent;
-        cursor: pointer;
-        transition: background var(--ic-transition, 150ms);
-      }
-
-      .btn-sm:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      .btn-sm-primary {
-        background: var(--ic-accent, #3b82f6);
-        color: white;
-      }
-
-      .btn-sm-primary:hover:not(:disabled) {
-        background: var(--ic-accent-hover, #2563eb);
-      }
-
-      .btn-sm-ghost {
-        background: transparent;
-        border-color: var(--ic-border, #374151);
-        color: var(--ic-text-muted, #9ca3af);
-      }
-
-      .btn-sm-ghost:hover:not(:disabled) {
-        background: var(--ic-surface-2, #1f2937);
-        color: var(--ic-text, #f3f4f6);
-      }
-
+      .inline-form { background: var(--ic-surface-raised, #1e293b); border-radius: var(--ic-radius-sm, 0.25rem); padding: var(--ic-space-sm, 0.5rem); margin: 2px var(--ic-space-sm, 0.5rem); }
+      .inline-form-label { font-size: var(--ic-text-xs, 0.75rem); color: var(--ic-text-muted, #9ca3af); margin-bottom: 4px; display: flex; align-items: center; gap: var(--ic-space-sm, 0.5rem); }
+      .inline-form-cancel { background: none; border: none; color: var(--ic-text-dim, #6b7280); cursor: pointer; font-size: var(--ic-text-xs, 0.75rem); padding: 0 2px; }
+      .inline-form-cancel:hover { color: var(--ic-text, #f3f4f6); }
+      .inline-form-row { display: flex; gap: var(--ic-space-sm, 0.5rem); align-items: flex-end; }
+      .inline-form-input { flex: 1; padding: 0.375rem 0.5rem; background: var(--ic-surface-2, #1f2937); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-sm, 0.25rem); color: var(--ic-text, #f3f4f6); font-size: var(--ic-text-sm, 0.875rem); font-family: inherit; outline: none; resize: vertical; min-height: 2rem; max-height: 6rem; }
+      .inline-form-input:focus { border-color: var(--ic-accent, #3b82f6); }
+      .btn-sm { padding: 0.25rem 0.5rem; font-size: var(--ic-text-xs, 0.75rem); font-weight: 500; border-radius: var(--ic-radius-sm, 0.25rem); border: 1px solid transparent; cursor: pointer; transition: background var(--ic-transition, 150ms); }
+      .btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
+      .btn-sm-primary { background: var(--ic-accent, #3b82f6); color: white; }
+      .btn-sm-primary:hover:not(:disabled) { background: var(--ic-accent-hover, #2563eb); }
+      .btn-sm-ghost { background: transparent; border-color: var(--ic-border, #374151); color: var(--ic-text-muted, #9ca3af); }
+      .btn-sm-ghost:hover:not(:disabled) { background: var(--ic-surface-2, #1f2937); color: var(--ic-text, #f3f4f6); }
       /* Danger action button variant */
-      .msg-action-btn--danger:hover {
-        color: var(--ic-error, #f87171);
-        border-color: var(--ic-error, #f87171);
-        background: transparent;
-      }
-
+      .msg-action-btn--danger:hover { color: var(--ic-error, #f87171); border-color: var(--ic-error, #f87171); background: transparent; }
       /* Emoji picker floating panel */
-      .emoji-picker-anchor {
-        position: relative;
-      }
-
-      .emoji-picker {
-        position: absolute;
-        top: 100%;
-        right: 0;
-        z-index: 100;
-        background: var(--ic-surface, #111827);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-md, 0.5rem);
-        box-shadow: var(--ic-shadow-lg, 0 10px 15px rgba(0,0,0,0.25));
-        padding: var(--ic-space-sm, 0.5rem);
-        display: grid;
-        grid-template-columns: repeat(6, 1fr);
-        gap: 2px;
-        width: max-content;
-        min-width: 12rem;
-      }
-
-      .emoji-btn {
-        font-size: 1.25rem;
-        padding: 4px;
-        cursor: pointer;
-        border: none;
-        background: none;
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        line-height: 1;
-        text-align: center;
-      }
-
-      .emoji-btn:hover {
-        background: var(--ic-surface-raised, #1e293b);
-      }
-
+      .emoji-picker-anchor { position: relative; }
+      .emoji-picker { position: absolute; top: 100%; right: 0; z-index: 100; background: var(--ic-surface, #111827); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-md, 0.5rem); box-shadow: var(--ic-shadow-lg, 0 10px 15px rgba(0,0,0,0.25)); padding: var(--ic-space-sm, 0.5rem); display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; width: max-content; min-width: 12rem; }
+      .emoji-btn { font-size: 1.25rem; padding: 4px; cursor: pointer; border: none; background: none; border-radius: var(--ic-radius-sm, 0.25rem); line-height: 1; text-align: center; }
+      .emoji-btn:hover { background: var(--ic-surface-raised, #1e293b); }
       /* Selected message highlight */
-      .msg-row--selected {
-        border-left: 3px solid var(--ic-accent, #3b82f6);
-        cursor: pointer;
-      }
-
-      .msg-row:not(.msg-row--selected) {
-        cursor: pointer;
-        border-left: 3px solid transparent;
-      }
-
+      .msg-row--selected { border-left: 3px solid var(--ic-accent, #3b82f6); cursor: pointer; }
+      .msg-row:not(.msg-row--selected) { cursor: pointer; border-left: 3px solid transparent; }
       /* Attachment form */
-      .attach-form {
-        display: flex;
-        flex-direction: column;
-        gap: var(--ic-space-sm, 0.5rem);
-        padding: var(--ic-space-sm, 0.5rem);
-        background: var(--ic-surface-raised, #1e293b);
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        margin-top: var(--ic-space-xs, 0.25rem);
-      }
-
-      .attach-form-row {
-        display: flex;
-        gap: var(--ic-space-sm, 0.5rem);
-        align-items: center;
-        flex-wrap: wrap;
-      }
-
-      .attach-input {
-        flex: 1;
-        min-width: 12rem;
-        padding: 0.375rem 0.5rem;
-        background: var(--ic-surface-2, #1f2937);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        color: var(--ic-text, #f3f4f6);
-        font-size: var(--ic-text-sm, 0.875rem);
-        font-family: inherit;
-        outline: none;
-      }
-
-      .attach-input:focus {
-        border-color: var(--ic-accent, #3b82f6);
-      }
-
-      .attach-select {
-        padding: 0.375rem 0.5rem;
-        background: var(--ic-surface-2, #1f2937);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        color: var(--ic-text, #f3f4f6);
-        font-size: var(--ic-text-sm, 0.875rem);
-        outline: none;
-        cursor: pointer;
-      }
-
-      .attach-select:focus {
-        border-color: var(--ic-accent, #3b82f6);
-      }
-
+      .attach-form { display: flex; flex-direction: column; gap: var(--ic-space-sm, 0.5rem); padding: var(--ic-space-sm, 0.5rem); background: var(--ic-surface-raised, #1e293b); border-radius: var(--ic-radius-sm, 0.25rem); margin-top: var(--ic-space-xs, 0.25rem); }
+      .attach-form-row { display: flex; gap: var(--ic-space-sm, 0.5rem); align-items: center; flex-wrap: wrap; }
+      .attach-input { flex: 1; min-width: 12rem; padding: 0.375rem 0.5rem; background: var(--ic-surface-2, #1f2937); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-sm, 0.25rem); color: var(--ic-text, #f3f4f6); font-size: var(--ic-text-sm, 0.875rem); font-family: inherit; outline: none; }
+      .attach-input:focus { border-color: var(--ic-accent, #3b82f6); }
+      .attach-select { padding: 0.375rem 0.5rem; background: var(--ic-surface-2, #1f2937); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-sm, 0.25rem); color: var(--ic-text, #f3f4f6); font-size: var(--ic-text-sm, 0.875rem); outline: none; cursor: pointer; }
+      .attach-select:focus { border-color: var(--ic-accent, #3b82f6); }
       /* Platform actions */
-      .platform-actions {
-        background: var(--ic-surface, #111827);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-md, 0.5rem);
-        padding: var(--ic-space-md, 1rem);
-      }
-
-      .platform-actions-title {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm, 0.5rem);
-        font-size: 1rem;
-        font-weight: 600;
-        color: var(--ic-text, #f3f4f6);
-        margin: 0 0 var(--ic-space-md, 1rem) 0;
-      }
-
-      .action-group-header {
-        font-weight: 600;
-        font-size: var(--ic-text-sm, 0.875rem);
-        color: var(--ic-text-muted, #9ca3af);
-        margin-top: var(--ic-space-md, 1rem);
-        margin-bottom: var(--ic-space-xs, 0.25rem);
-      }
-
-      .action-group-header:first-of-type {
-        margin-top: 0;
-      }
-
-      .action-buttons {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--ic-space-xs, 0.25rem);
-        align-items: center;
-      }
-
-      .action-input {
-        padding: 0.25rem 0.5rem;
-        background: var(--ic-surface-2, #1f2937);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        color: var(--ic-text, #f3f4f6);
-        font-size: var(--ic-text-xs, 0.75rem);
-        outline: none;
-        width: 8rem;
-      }
-
-      .action-input:focus {
-        border-color: var(--ic-accent, #3b82f6);
-      }
-
-      .action-input::placeholder {
-        color: var(--ic-text-dim, #6b7280);
-      }
-
-      .action-result {
-        margin-top: var(--ic-space-sm, 0.5rem);
-        padding: var(--ic-space-sm, 0.5rem);
-        background: var(--ic-surface-2, #1f2937);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-sm, 0.25rem);
-        font-size: var(--ic-text-xs, 0.75rem);
-        color: var(--ic-text-muted, #9ca3af);
-        max-height: 8rem;
-        overflow-y: auto;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-
+      .platform-actions { background: var(--ic-surface, #111827); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-md, 0.5rem); padding: var(--ic-space-md, 1rem); }
+      .platform-actions-title { display: flex; align-items: center; gap: var(--ic-space-sm, 0.5rem); font-size: 1rem; font-weight: 600; color: var(--ic-text, #f3f4f6); margin: 0 0 var(--ic-space-md, 1rem) 0; }
+      .action-group-header { font-weight: 600; font-size: var(--ic-text-sm, 0.875rem); color: var(--ic-text-muted, #9ca3af); margin-top: var(--ic-space-md, 1rem); margin-bottom: var(--ic-space-xs, 0.25rem); }
+      .action-group-header:first-of-type { margin-top: 0; }
+      .action-buttons { display: flex; flex-wrap: wrap; gap: var(--ic-space-xs, 0.25rem); align-items: center; }
+      .action-input { padding: 0.25rem 0.5rem; background: var(--ic-surface-2, #1f2937); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-sm, 0.25rem); color: var(--ic-text, #f3f4f6); font-size: var(--ic-text-xs, 0.75rem); outline: none; width: 8rem; }
+      .action-input:focus { border-color: var(--ic-accent, #3b82f6); }
+      .action-input::placeholder { color: var(--ic-text-dim, #6b7280); }
+      .action-result { margin-top: var(--ic-space-sm, 0.5rem); padding: var(--ic-space-sm, 0.5rem); background: var(--ic-surface-2, #1f2937); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-sm, 0.25rem); font-size: var(--ic-text-xs, 0.75rem); color: var(--ic-text-muted, #9ca3af); max-height: 8rem; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
       /* Error retry */
-      .error-container {
-        text-align: center;
-        padding: var(--ic-space-lg, 1.5rem);
-      }
-
-      .error-text {
-        color: var(--ic-error, #f87171);
-        margin-bottom: var(--ic-space-sm, 0.5rem);
-      }
-
-      .retry-btn {
-        padding: 0.375rem 0.75rem;
-        background: var(--ic-surface-2, #1f2937);
-        border: 1px solid var(--ic-border, #374151);
-        border-radius: var(--ic-radius-md, 0.5rem);
-        color: var(--ic-text, #f3f4f6);
-        cursor: pointer;
-        font-size: var(--ic-text-sm, 0.875rem);
-      }
-
-      .retry-btn:hover {
-        background: var(--ic-border, #374151);
-      }
+      .error-container { text-align: center; padding: var(--ic-space-lg, 1.5rem); }
+      .error-text { color: var(--ic-error, #f87171); margin-bottom: var(--ic-space-sm, 0.5rem); }
+      .retry-btn { padding: 0.375rem 0.75rem; background: var(--ic-surface-2, #1f2937); border: 1px solid var(--ic-border, #374151); border-radius: var(--ic-radius-md, 0.5rem); color: var(--ic-text, #f3f4f6); cursor: pointer; font-size: var(--ic-text-sm, 0.875rem); }
+      .retry-btn:hover { background: var(--ic-border, #374151); }
     `,
   ];
 
@@ -725,9 +314,15 @@ export class IcMessageCenter extends LitElement {
   /** Bound click-outside handler for emoji picker. */
   private _boundEmojiOutsideClick: ((e: MouseEvent) => void) | null = null;
 
-  // -------------------------------------------------------------------------
-  // Lifecycle
-  // -------------------------------------------------------------------------
+  /** RPC-orchestration controller — created when rpcClient becomes available. */
+  @state() private _controller: MessageCenterController | null = null;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    if (this.rpcClient && !this._controller) {
+      this._controller = createMessageCenterController(this, this.rpcClient);
+    }
+  }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
@@ -736,6 +331,9 @@ export class IcMessageCenter extends LitElement {
 
   override updated(changedProperties: Map<string, unknown>): void {
     const rpcReady = this.rpcClient && this.rpcClient.status === "connected";
+    if (changedProperties.has("rpcClient") && this.rpcClient && !this._controller) {
+      this._controller = createMessageCenterController(this, this.rpcClient);
+    }
 
     // Sync effective channel from parent-provided channelType
     if (changedProperties.has("channelType") && this.channelType) {
@@ -778,7 +376,7 @@ export class IcMessageCenter extends LitElement {
         const check = () => {
           if (rpc.status === "connected") { resolve(); return; }
           if (rpc.status === "disconnected") { resolve(); return; }
-          setTimeout(check, 100);
+          systemSetTimeout(check, 100);
         };
         check();
       });
@@ -820,28 +418,21 @@ export class IcMessageCenter extends LitElement {
 
     try {
       // Load channel list, capabilities, and channel config in parallel
+      const ctrl = this._controller!;
       const [listResult, capResult, configResult] = await Promise.allSettled([
-        this.rpcClient.call<{ channels: ChannelListEntry[]; total: number }>(
-          "channels.list",
-        ),
-        this.rpcClient.call<{ channelType: string; features: PlatformCapabilities }>(
-          "channels.capabilities",
-          { channel_type: channel },
-        ),
-        this.rpcClient.call<Record<string, unknown>>(
-          "channels.get",
-          { channel_type: channel },
-        ),
+        ctrl.listChannels(),
+        ctrl.getChannelCapabilities(channel),
+        ctrl.getChannelConfig(channel),
       ]);
 
       // Channel list
-      if (listResult.status === "fulfilled" && listResult.value?.channels) {
-        this._channelList = listResult.value.channels;
+      if (listResult.status === "fulfilled" && listResult.value) {
+        this._channelList = listResult.value;
       }
 
-      // Capabilities -- IMPORTANT: unpack features field
-      if (capResult.status === "fulfilled" && capResult.value?.features) {
-        this._capabilities = capResult.value.features;
+      // Capabilities
+      if (capResult.status === "fulfilled" && capResult.value) {
+        this._capabilities = capResult.value;
       }
 
       // Bot name from channel config
@@ -874,14 +465,10 @@ export class IcMessageCenter extends LitElement {
    * (channel activity tracker) which tracks actual chat IDs the bot has interacted with.
    */
   private async _loadChats(): Promise<void> {
-    if (!this.rpcClient || !this._effectiveChannel) return;
+    if (!this._controller || !this._effectiveChannel) return;
 
     try {
-      const result = await this.rpcClient.call<{
-        channels: Array<{ channelId: string; channelType: string; messagesSent: number; messagesReceived: number; lastActiveAt: number }>;
-      }>("obs.channels.all");
-
-      const channels = result?.channels ?? [];
+      const channels = await this._controller.listObsChannels();
       const chatMap = new Map<string, string>(); // chatId -> label
 
       // Filter for the current channel type and extract chat IDs
@@ -914,16 +501,16 @@ export class IcMessageCenter extends LitElement {
   /** Re-fetch message list - uses message.fetch when the platform supports fetchHistory,
    *  otherwise falls back to stored session history via session.list + session.history. */
   private async _refetchMessages(): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     // Path 1: Platform supports native fetchHistory - use message.fetch as before
     if (this._capabilities?.fetchHistory) {
       try {
-        const fetchResult = await this.rpcClient.call<{ messages: FetchedMessage[]; channelId: string }>(
-          "message.fetch",
-          { channel_type: this._effectiveChannel, channel_id: this._selectedChatId || this._effectiveChannel, limit: 50 },
-        );
-        this._messages = fetchResult?.messages ?? [];
+        this._messages = await this._controller.fetchMessages({
+          channel_type: this._effectiveChannel,
+          channel_id: this._selectedChatId || this._effectiveChannel,
+          limit: 50,
+        });
       } catch {
         // Non-fatal
       }
@@ -932,12 +519,7 @@ export class IcMessageCenter extends LitElement {
 
     // Path 2: No fetchHistory - fall back to stored session data
     try {
-      // Find sessions matching the selected chat ID
-      const listResult = await this.rpcClient.call<{
-        sessions: Array<{ sessionKey: string; channelId: string; updatedAt: number }>;
-      }>("session.list", { kind: "all" });
-
-      const sessions = listResult?.sessions ?? [];
+      const sessions = await this._controller.listSessions({ kind: "all" });
       // Filter to sessions whose channelId matches the currently selected chat
       const chatId = this._selectedChatId;
       const matching = chatId
@@ -954,12 +536,10 @@ export class IcMessageCenter extends LitElement {
       const bestSession = matching[0]!;
 
       // Fetch conversation history from session store
-      const histResult = await this.rpcClient.call<{
-        messages: Array<{ role: string; content: string; timestamp: number }>;
-        total: number;
-      }>("session.history", { session_key: bestSession.sessionKey, limit: 50 });
-
-      const histMessages = histResult?.messages ?? [];
+      const histMessages = await this._controller.loadSessionHistory({
+        session_key: bestSession.sessionKey,
+        limit: 50,
+      });
 
       // Map session history messages to FetchedMessage shape
       this._messages = histMessages.map((msg, idx) => ({
@@ -1003,14 +583,15 @@ export class IcMessageCenter extends LitElement {
 
   private async _handleSendConfirm(): Promise<void> {
     this._showSendConfirm = false;
-    if (!this.rpcClient || !this._sendText.trim()) return;
+    if (!this._controller || !this._sendText.trim()) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call(
-        "message.send",
-        { channel_type: this._effectiveChannel, channel_id: this._selectedChatId || this._effectiveChannel, text: this._sendText.trim() },
-      );
+      await this._controller.sendMessage({
+        channel_type: this._effectiveChannel,
+        channel_id: this._selectedChatId || this._effectiveChannel,
+        text: this._sendText.trim(),
+      });
       IcToast.show("Message sent", "success");
       this._sendText = "";
       await this._refetchMessages();
@@ -1059,19 +640,16 @@ export class IcMessageCenter extends LitElement {
 
   private async _handleReplyConfirm(): Promise<void> {
     this._showReplyConfirm = false;
-    if (!this.rpcClient || !this._replyText.trim() || !this._replyToId) return;
+    if (!this._controller || !this._replyText.trim() || !this._replyToId) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call(
-        "message.reply",
-        {
-          channel_type: this._effectiveChannel,
-          channel_id: this._selectedChatId || this._effectiveChannel,
-          text: this._replyText.trim(),
-          message_id: this._replyToId,
-        },
-      );
+      await this._controller.replyMessage({
+        channel_type: this._effectiveChannel,
+        channel_id: this._selectedChatId || this._effectiveChannel,
+        text: this._replyText.trim(),
+        message_id: this._replyToId,
+      });
       IcToast.show("Reply sent", "success");
       this._replyToId = "";
       this._replyText = "";
@@ -1116,19 +694,16 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleEditSave(): Promise<void> {
-    if (!this.rpcClient || !this._editText.trim() || !this._editingId) return;
+    if (!this._controller || !this._editText.trim() || !this._editingId) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call(
-        "message.edit",
-        {
-          channel_type: this._effectiveChannel,
-          channel_id: this._selectedChatId || this._effectiveChannel,
-          message_id: this._editingId,
-          text: this._editText.trim(),
-        },
-      );
+      await this._controller.editMessage({
+        channel_type: this._effectiveChannel,
+        channel_id: this._selectedChatId || this._effectiveChannel,
+        message_id: this._editingId,
+        text: this._editText.trim(),
+      });
       IcToast.show("Message edited", "success");
       this._editingId = "";
       this._editText = "";
@@ -1160,18 +735,15 @@ export class IcMessageCenter extends LitElement {
 
   private async _handleDeleteConfirm(): Promise<void> {
     this._showDeleteConfirm = false;
-    if (!this.rpcClient || !this._deleteTargetId) return;
+    if (!this._controller || !this._deleteTargetId) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call(
-        "message.delete",
-        {
-          channel_type: this._effectiveChannel,
-          channel_id: this._selectedChatId || this._effectiveChannel,
-          message_id: this._deleteTargetId,
-        },
-      );
+      await this._controller.deleteMessage({
+        channel_type: this._effectiveChannel,
+        channel_id: this._selectedChatId || this._effectiveChannel,
+        message_id: this._deleteTargetId,
+      });
       IcToast.show("Message deleted", "success");
       // Optimistic local removal
       this._messages = this._messages.filter((m) => m.id !== this._deleteTargetId);
@@ -1207,20 +779,17 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleEmojiSelect(emoji: string): Promise<void> {
-    if (!this.rpcClient || !this._reactTargetId) return;
+    if (!this._controller || !this._reactTargetId) return;
 
     this._closeEmojiPicker();
     this._actionPending = true;
     try {
-      await this.rpcClient.call(
-        "message.react",
-        {
-          channel_type: this._effectiveChannel,
-          channel_id: this._selectedChatId || this._effectiveChannel,
-          message_id: this._reactTargetId,
-          emoji,
-        },
-      );
+      await this._controller.reactMessage({
+        channel_type: this._effectiveChannel,
+        channel_id: this._selectedChatId || this._effectiveChannel,
+        message_id: this._reactTargetId,
+        emoji,
+      });
       IcToast.show("Reaction added", "success");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add reaction";
@@ -1270,20 +839,17 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleAttachSend(): Promise<void> {
-    if (!this.rpcClient || !this._attachUrl.trim()) return;
+    if (!this._controller || !this._attachUrl.trim()) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call(
-        "message.attach",
-        {
-          channel_type: this._effectiveChannel,
-          channel_id: this._selectedChatId || this._effectiveChannel,
-          attachment_url: this._attachUrl.trim(),
-          attachment_type: this._attachType,
-          caption: this._attachCaption.trim() || undefined,
-        },
-      );
+      await this._controller.attachMessage({
+        channel_type: this._effectiveChannel,
+        channel_id: this._selectedChatId || this._effectiveChannel,
+        attachment_url: this._attachUrl.trim(),
+        attachment_type: this._attachType,
+        caption: this._attachCaption.trim() || undefined,
+      });
       IcToast.show("Attachment sent", "success");
       this._attachUrl = "";
       this._attachType = "file";
@@ -1314,7 +880,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handlePlatformAction(platformAction: PlatformAction): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     const rpcMethod = PLATFORM_RPC_METHOD[this._effectiveChannel];
     if (!rpcMethod) return;
@@ -1348,7 +914,7 @@ export class IcMessageCenter extends LitElement {
     this._platformActionPending = true;
     this._actionResult = "";
     try {
-      const result = await this.rpcClient.call(rpcMethod, params);
+      const result = await this._controller.invokePlatformAction(rpcMethod, params);
       IcToast.show("Action completed", "success");
       this._actionResult = typeof result === "string" ? result : JSON.stringify(result, null, 2);
     } catch (err) {

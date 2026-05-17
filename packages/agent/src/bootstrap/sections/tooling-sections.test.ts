@@ -10,10 +10,13 @@ import {
   buildTaskDelegationSection,
   buildPrivilegedToolsSection,
 } from "./tooling-sections.js";
-import { TOOL_SUMMARIES } from "./tool-descriptions.js";
 
 // ---------------------------------------------------------------------------
 // buildToolingSection
+//
+// The function unconditionally emits the residual one-liner pointing at the
+// per-turn `## Capabilities` block. The legacy `## Available Tools` flat block
+// + the static-prompt capability-index gate parameter have been removed.
 // ---------------------------------------------------------------------------
 
 describe("buildToolingSection", () => {
@@ -21,47 +24,27 @@ describe("buildToolingSection", () => {
     expect(buildToolingSection([], "large")).toEqual([]);
   });
 
-  it("returns Available Tools heading with summaries from TOOL_SUMMARIES", () => {
+  it("emits the residual one-liner regardless of model tier", () => {
     const result = buildToolingSection(["read", "exec"], "large");
     const joined = result.join("\n");
-    expect(joined).toContain("## Available Tools");
-    expect(joined).toContain("- read:");
-    expect(joined).toContain("- exec:");
+    expect(joined).toContain("When this turn includes a `Capabilities` context");
+    expect(joined).toContain("authoritative for parameter shapes");
   });
 
-  it("orders known tools per TOOL_ORDER (read before exec)", () => {
-    const result = buildToolingSection(["exec", "read"], "large");
-    const readIdx = result.findIndex((l) => l.startsWith("- read"));
-    const execIdx = result.findIndex((l) => l.startsWith("- exec"));
-    expect(readIdx).toBeLessThan(execIdx);
+  it("does NOT emit the deleted legacy `## Available Tools` block", () => {
+    const result = buildToolingSection(["read", "exec"], "large");
+    const joined = result.join("\n");
+    expect(joined).not.toContain("## Available Tools");
+    expect(joined).not.toContain("- read");
+    expect(joined).not.toContain("- exec");
+    expect(joined).not.toContain("Always use tools to gather real data");
   });
 
-  it("places unknown extras alphabetically after known tools", () => {
-    const result = buildToolingSection(["read", "zzz_tool", "aaa_tool"], "large");
-    const readIdx = result.findIndex((l) => l.startsWith("- read"));
-    const aaaIdx = result.findIndex((l) => l.startsWith("- aaa_tool"));
-    const zzzIdx = result.findIndex((l) => l.startsWith("- zzz_tool"));
-    expect(readIdx).toBeLessThan(aaaIdx);
-    expect(aaaIdx).toBeLessThan(zzzIdx);
-  });
-
-  it("merges custom toolSummaries with defaults", () => {
+  it("ignores custom toolSummaries (the legacy flat block consumer is gone)", () => {
     const result = buildToolingSection(["read"], "large", { read: "Custom read description" });
     const joined = result.join("\n");
-    expect(joined).toContain("Custom read description");
-    expect(joined).not.toContain(TOOL_SUMMARIES["read"]);
-  });
-
-  it("renders tools without description as just the name", () => {
-    const result = buildToolingSection(["my_custom_tool"], "large");
-    const line = result.find((l) => l.includes("my_custom_tool"));
-    expect(line).toBe("- my_custom_tool");
-  });
-
-  it("includes guidance about using tools", () => {
-    const result = buildToolingSection(["read"], "large");
-    const joined = result.join("\n");
-    expect(joined).toContain("Never guess or fabricate tool results");
+    expect(joined).not.toContain("Custom read description");
+    expect(joined).toContain("When this turn includes a `Capabilities` context");
   });
 });
 
@@ -434,26 +417,13 @@ describe("deferred parameter on section builders", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TOOL_SUMMARIES: session_search entry (migrated from TOOL_DESCRIPTIONS)
-// ---------------------------------------------------------------------------
-
-describe("TOOL_SUMMARIES integration", () => {
-  it("session_search appears in buildToolingSection output", () => {
-    const result = buildToolingSection(["session_search"], "large");
-    const joined = result.join("\n");
-    expect(joined).toContain("- session_search:");
-    expect(joined).toContain(TOOL_SUMMARIES["session_search"]);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // buildPrivilegedToolsSection "Built-in first" bullet rendered from the live
 // pi-ai catalog
 // ---------------------------------------------------------------------------
 
 describe("buildPrivilegedToolsSection catalog interpolation", () => {
   it("rendered Built-in first bullet contains every name from getProviders()", async () => {
-    const { getProviders } = await import("@mariozechner/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai");
     const result = buildPrivilegedToolsSection(["providers_manage"], false);
     const joined = result.join("\n");
     for (const p of getProviders()) {
@@ -478,70 +448,15 @@ describe("buildPrivilegedToolsSection catalog interpolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Capability-index gate. The residual one-liner and the mutual-exclusion
-// contract with the legacy `## Available Tools` block are normative — DO NOT
-// auto-update inline snapshots via `vitest -u` without re-checking the
-// rendered wording.
-// ---------------------------------------------------------------------------
-
-describe("buildToolingSection — capability-index gate", () => {
-  it("gate-on emits residual one-liner only (snapshot + behavior pair)", () => {
-    const result = buildToolingSection(["read", "exec"], "large", undefined, true);
-    const joined = result.join("\n");
-
-    // Shape lock — verbatim. Hand-verified at authoring time.
-    expect(joined).toMatchInlineSnapshot(`
-      "When this turn includes a \`Capabilities\` context, refer to it for grouped tool guidance before invoking tools or running installs. Tool schemas in your active toolspace are authoritative for parameter shapes."
-    `);
-
-    // Behavior assertions:
-    expect(joined).toContain("When this turn includes a `Capabilities` context");
-    expect(joined).toContain("authoritative for parameter shapes");
-
-    // Mutual exclusion — gate-on path MUST NOT emit the legacy block.
-    expect(joined).not.toContain("## Available Tools");
-    expect(joined).not.toContain("- read");
-    expect(joined).not.toContain("- exec");
-    expect(joined).not.toContain("Always use tools to gather real data");
-
-    // Forbidden literals.
-    expect(joined).not.toContain("discover_tools");
-    expect(joined).not.toContain("tool_search_tool_regex");
-  });
-
-  it("gate-off (false) is byte-identical to undefined-default", () => {
-    // Byte-identical-to-baseline assertion.
-    const baseline = buildToolingSection(["read", "exec"], "large", undefined, undefined);
-    const explicit = buildToolingSection(["read", "exec"], "large", undefined, false);
-    expect(explicit).toEqual(baseline);
-  });
-
-  it("gate-off does NOT contain the residual one-liner", () => {
-    const result = buildToolingSection(["read", "exec"], "large", undefined, false);
-    const joined = result.join("\n");
-    expect(joined).toContain("## Available Tools");
-    expect(joined).not.toContain("When this turn includes a `Capabilities` context");
-  });
-
-  it("gate-on output is shorter than gate-off (static-prompt token delta)", () => {
-    // Gate-on must NOT increase static systemPromptTokens. For a
-    // representative tool set, the residual one-liner is shorter than the
-    // legacy flat block + trailing guidance.
-    const gateOn = buildToolingSection(["read", "exec", "edit", "grep", "find"], "large", undefined, true);
-    const gateOff = buildToolingSection(["read", "exec", "edit", "grep", "find"], "large", undefined, false);
-    expect(gateOn.join("\n").length).toBeLessThan(gateOff.join("\n").length);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Tool-first counterweight. Snapshot + behavior + forbidden-literal triple
-// guards the rendered bullet wording; DO NOT auto-update via `vitest -u`
-// without verifying the rendered text by hand.
+// Tool-first counterweight. The bullet now emits unconditionally when `exec`
+// is in `toolNames`; the previous static-prompt capability-index gate has been
+// removed. The bullet wording is normative — DO NOT auto-update via
+// `vitest -u` without verifying the rendered text by hand.
 // ---------------------------------------------------------------------------
 
 describe("buildToolCallStyleSection — tool-first counterweight", () => {
-  it("gate-on (exec + enabled=true) emits the tool-first bullet immediately before the Python venv rule (snapshot + behavior pair)", () => {
-    const result = buildToolCallStyleSection(false, ["exec"], true);
+  it("emits the tool-first bullet immediately before the Python venv rule when exec is present (snapshot + behavior pair)", () => {
+    const result = buildToolCallStyleSection(false, ["exec"]);
     const joined = result.join("\n");
 
     // Shape lock — verbatim bullet text. Hand-verified at authoring time.
@@ -585,8 +500,8 @@ describe("buildToolCallStyleSection — tool-first counterweight", () => {
     // this check deterministically.
     expect(joined.indexOf("Tool-first principle")).toBeLessThan(joined.indexOf("Python projects"));
 
-    // The venv rule is still emitted because `exec` is present (the inner if
-    // is structurally inside the outer if(has("exec")) block).
+    // The venv rule is still emitted because `exec` is present (the venv
+    // rule and the tool-first bullet share the outer if(has("exec")) block).
     expect(joined).toContain("Python projects");
 
     // Forbidden literals (defense in depth at the rendered-output level; the
@@ -595,46 +510,19 @@ describe("buildToolCallStyleSection — tool-first counterweight", () => {
     expect(joined).not.toContain("tool_search_tool_regex");
   });
 
-  it("gate-off via enabled=false (exec present, enabled=false) does NOT emit the tool-first bullet", () => {
-    const result = buildToolCallStyleSection(false, ["exec"], false);
+  it("does NOT emit the tool-first bullet OR the venv rule when exec is absent", () => {
+    const result = buildToolCallStyleSection(false, ["read", "write"]);
     const joined = result.join("\n");
 
-    // The new bullet must be absent.
+    // Both the tool-first bullet and the venv rule live inside the same
+    // outer if(has("exec")) block — both are absent when exec is not in
+    // toolNames.
     expect(joined).not.toContain("Tool-first principle");
     expect(joined).not.toContain("When this turn includes a `Capabilities` context");
-
-    // The venv rule is still emitted because `exec` is present (the inner if is
-    // skipped but the outer if(has("exec")) block still runs).
-    expect(joined).toContain("Python projects");
-  });
-
-  it("gate-off via enabled=undefined (no third arg) is byte-identical to enabled=false", () => {
-    // Byte-identical-to-baseline assertion: the optional `?` parameter and
-    // the strict-equals `=== true` gate collapse `undefined` and `false` to
-    // the same gate-off path. Mirrors the byte-identical idiom used by the
-    // capability-index gate test above.
-    const baseline = buildToolCallStyleSection(false, ["exec"]);
-    const explicit = buildToolCallStyleSection(false, ["exec"], false);
-    expect(explicit).toEqual(baseline);
-
-    // Sanity: both omit the new bullet.
-    expect(baseline.join("\n")).not.toContain("Tool-first principle");
-  });
-
-  it("gate-off via exec absent (enabled=true, exec NOT in toolNames) does NOT emit the tool-first bullet AND skips the venv rule wholesale", () => {
-    const result = buildToolCallStyleSection(false, ["read", "write"], true);
-    const joined = result.join("\n");
-
-    // The new bullet must be absent — the inner if(capabilityIndexEnabled === true)
-    // is unreachable because the outer if(has("exec")) block is skipped wholesale.
-    expect(joined).not.toContain("Tool-first principle");
-    expect(joined).not.toContain("When this turn includes a `Capabilities` context");
-
-    // The venv rule is also absent for the same structural reason.
     expect(joined).not.toContain("Python projects");
 
-    // Sanity: the rest of the section still renders (the function did not return
-    // empty — it just skipped the inner exec-gated block).
+    // Sanity: the rest of the section still renders (the function did not
+    // return empty — it just skipped the inner exec-gated block).
     expect(joined).toContain("## Tool Call Style");
   });
 });

@@ -12,10 +12,13 @@ import {
   type SessionKey,
   type NormalizedMessage,
   parseFormattedSessionKey,
+  safePath,
+  systemNowMs,
+  systemSetTimeout,
+  systemClearTimeout,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { gatedSpawn } from "./graph-concurrency.js";
 import { resolveFileReferenceOutput, persistArtifacts } from "./graph-node-lifecycle.js";
 import type {
@@ -103,7 +106,7 @@ export function handleDriverTurnCompleted(
       gs.driverStates.delete(nodeId);
       gs.runningCount--;
       const timer = gs.nodeTimers.get(nodeId);
-      if (timer) { clearTimeout(timer); gs.nodeTimers.delete(nodeId); }
+      if (timer) { systemClearTimeout(timer); gs.nodeTimers.delete(nodeId); }
       callbacks.handleBudgetExceeded(gs, tokenExceeded ? "tokens" : "cost");
       return;
     }
@@ -137,7 +140,7 @@ export function handleDriverTurnCompleted(
       // Persist partial output to shared dir
       if (gs.sharedDir) {
         try {
-          writeFileSync(join(gs.sharedDir, `${nodeId}-output.md`), partialOutput, "utf8");
+          writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), partialOutput, "utf8");
         } catch { /* best-effort */ }
       }
 
@@ -146,7 +149,7 @@ export function handleDriverTurnCompleted(
       gs.runningCount--;
 
       const timer = gs.nodeTimers.get(nodeId);
-      if (timer) { clearTimeout(timer); gs.nodeTimers.delete(nodeId); }
+      if (timer) { systemClearTimeout(timer); gs.nodeTimers.delete(nodeId); }
 
       deps.eventBus.emit("graph:driver_lifecycle", {
         graphId: gs.graphId,
@@ -161,7 +164,7 @@ export function handleDriverTurnCompleted(
         graphId: gs.graphId,
         nodeId,
         status: "completed" as const,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       if (gs.stateMachine.isTerminal()) {
@@ -182,7 +185,7 @@ export function handleDriverTurnCompleted(
     gs.driverStates.delete(nodeId);
     gs.runningCount--;
     const timer = gs.nodeTimers.get(nodeId);
-    if (timer) { clearTimeout(timer); gs.nodeTimers.delete(nodeId); }
+    if (timer) { systemClearTimeout(timer); gs.nodeTimers.delete(nodeId); }
     gs.nodeOutputs.set(nodeId, output || undefined);
     callbacks.markNodeFailed(gs, nodeId, run?.error ?? "Driver turn failed");
     return;
@@ -247,8 +250,8 @@ export function handleDriverTurnCompleted(
   const timeoutMs = node?.timeoutMs ?? ds.driver.defaultTimeoutMs;
   if (timeoutMs > 0) {
     const existingTimer = gs.nodeTimers.get(nodeId);
-    if (existingTimer) clearTimeout(existingTimer);
-    const newTimer = setTimeout(() => handleDriverTimeout(state, deps, config, gs, nodeId, callbacks), timeoutMs);
+    if (existingTimer) systemClearTimeout(existingTimer);
+    const newTimer = systemSetTimeout(() => handleDriverTimeout(state, deps, config, gs, nodeId, callbacks), timeoutMs);
     if (typeof newTimer === "object" && "unref" in newTimer) {
       newTimer.unref();
     }
@@ -323,7 +326,7 @@ export function handleDriverTimeout(
     // Persist partial output to shared dir
     if (gs.sharedDir) {
       try {
-        writeFileSync(join(gs.sharedDir, `${nodeId}-output.md`), partialOutput, "utf8");
+        writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), partialOutput, "utf8");
       } catch { /* best-effort */ }
     }
 
@@ -353,7 +356,7 @@ export function handleDriverTimeout(
       graphId: gs.graphId,
       nodeId,
       status: "completed" as const,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
 
     if (gs.stateMachine.isTerminal()) {
@@ -394,7 +397,7 @@ export function handleDriverTimeout(
     nodeId,
     status: "failed" as const,
     error: "Driver node timeout",
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   });
 
   if (gs.stateMachine.isTerminal()) {
@@ -462,12 +465,12 @@ export function handleWaitForInput(
     // Clear timeout and reminder timers
     const timeoutTimer = gs.nodeTimers.get(`${nodeId}:wait_timeout`);
     if (timeoutTimer) {
-      clearTimeout(timeoutTimer);
+      systemClearTimeout(timeoutTimer);
       gs.nodeTimers.delete(`${nodeId}:wait_timeout`);
     }
     const reminderTimer = gs.nodeTimers.get(`${nodeId}:wait_reminder`);
     if (reminderTimer) {
-      clearTimeout(reminderTimer);
+      systemClearTimeout(reminderTimer);
       gs.nodeTimers.delete(`${nodeId}:wait_reminder`);
     }
 
@@ -489,7 +492,7 @@ export function handleWaitForInput(
   // 2. Send the prompt to the channel
   deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, action.message).catch((sendErr: unknown) => {
     deps.logger?.warn(
-      { graphId: gs.graphId, nodeId, err: sendErr, hint: "Failed to send wait_for_input prompt", errorKind: "network" },
+      { graphId: gs.graphId, nodeId, err: sendErr, hint: "Failed to send wait_for_input prompt", errorKind: "network" as const },
       "wait_for_input prompt delivery failed",
     );
   });
@@ -497,7 +500,7 @@ export function handleWaitForInput(
   // 3. Set up 50% reminder timer
   const reminderMs = Math.floor(action.timeoutMs * 0.5);
   if (reminderMs > 0) {
-    const reminderTimer = setTimeout(() => {
+    const reminderTimer = systemSetTimeout(() => {
       if (!gs.waitHandlers.has(nodeId)) return;
       if (gs.announceChannelType && gs.announceChannelId) {
         const remainingSeconds = Math.ceil((action.timeoutMs - reminderMs) / 1000);
@@ -518,7 +521,7 @@ export function handleWaitForInput(
   }
 
   // 4. Set up timeout timer
-  const timeoutTimer = setTimeout(() => {
+  const timeoutTimer = systemSetTimeout(() => {
     if (!gs.waitHandlers.has(nodeId)) return;
 
     deps.eventBus.off("message:received", handler);
@@ -526,7 +529,7 @@ export function handleWaitForInput(
 
     const rTimer = gs.nodeTimers.get(`${nodeId}:wait_reminder`);
     if (rTimer) {
-      clearTimeout(rTimer);
+      systemClearTimeout(rTimer);
       gs.nodeTimers.delete(`${nodeId}:wait_reminder`);
     }
     gs.nodeTimers.delete(`${nodeId}:wait_timeout`);
@@ -641,7 +644,7 @@ export function executeDriverAction(
       let spawns = action.spawns;
       if (spawns.length > config.maxParallelSpawns) {
         deps.logger?.warn(
-          { graphId: gs.graphId, nodeId, requested: spawns.length, max: config.maxParallelSpawns, hint: "spawn_all array truncated to maxParallelSpawns", errorKind: "limit" },
+          { graphId: gs.graphId, nodeId, requested: spawns.length, max: config.maxParallelSpawns, hint: "spawn_all array truncated to maxParallelSpawns", errorKind: "resource" as const },
           "spawn_all exceeded maxParallelSpawns, truncating",
         );
         spawns = spawns.slice(0, config.maxParallelSpawns);
@@ -688,7 +691,7 @@ export function executeDriverAction(
       // Persist output to shared dir
       if (gs.sharedDir && output) {
         try {
-          writeFileSync(join(gs.sharedDir, `${nodeId}-output.md`), output, "utf8");
+          writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), output, "utf8");
         } catch { /* best-effort */ }
       }
 
@@ -697,7 +700,7 @@ export function executeDriverAction(
       gs.runningCount--;
 
       const timer = gs.nodeTimers.get(nodeId);
-      if (timer) { clearTimeout(timer); gs.nodeTimers.delete(nodeId); }
+      if (timer) { systemClearTimeout(timer); gs.nodeTimers.delete(nodeId); }
 
       deps.eventBus.emit("graph:driver_lifecycle", {
         graphId: gs.graphId,
@@ -713,7 +716,7 @@ export function executeDriverAction(
         graphId: gs.graphId,
         nodeId,
         status: "completed" as const,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       deps.logger?.debug(
@@ -743,7 +746,7 @@ export function executeDriverAction(
       gs.driverStates.delete(nodeId);
       gs.runningCount--;
       const timer = gs.nodeTimers.get(nodeId);
-      if (timer) { clearTimeout(timer); gs.nodeTimers.delete(nodeId); }
+      if (timer) { systemClearTimeout(timer); gs.nodeTimers.delete(nodeId); }
 
       callbacks.markNodeFailed(gs, nodeId, action.error);
       break;
@@ -773,7 +776,7 @@ export function executeDriverAction(
       if (gs.announceChannelType && gs.announceChannelId) {
         deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, progressMsg).catch((sendErr: unknown) => {
           deps.logger?.warn(
-            { graphId: gs.graphId, nodeId, err: sendErr, hint: "Progress message delivery failed", errorKind: "network" },
+            { graphId: gs.graphId, nodeId, err: sendErr, hint: "Progress message delivery failed", errorKind: "network" as const },
             "Driver progress delivery failed",
           );
         });

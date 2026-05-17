@@ -225,9 +225,9 @@ describe("atomicWriteFile (failure injection via mocked fs)", () => {
     const realUid = fs.statSync(configPath).uid;
     const realGid = fs.statSync(configPath).gid;
 
-    // First statSync call (Phase 0 — pre-write capture) returns a fake
+    // First statSync call (pre-write capture) returns a fake
     // "original owner" uid:gid different from current process. Second
-    // statSync call (Phase 5 — post-rename verification) returns the
+    // statSync call (post-rename verification) returns the
     // current-process uid so the orchestrator decides chown is needed.
     let statCallNo = 0;
     vi.mocked(fs.statSync).mockImplementation(((path: fs.PathLike) => {

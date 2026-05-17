@@ -9,7 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { ok, err, type Result } from "@comis/shared";
-import type { TypedEventBus } from "@comis/core";
+import type { TypedEventBus, ClockPort, TimerPort } from "@comis/core";
 import { persistTaskSync, recoverTasks, removeTaskFile } from "./background-task-persistence.js";
 import type {
   BackgroundTask,
@@ -34,6 +34,10 @@ export interface BackgroundTaskManagerOpts {
     warn(obj: Record<string, unknown>, msg: string): void;
     debug(obj: Record<string, unknown>, msg: string): void;
   };
+  /** Wall-clock + monotonic time reads. */
+  clock: ClockPort;
+  /** Timer scheduling. Hard-timeout setTimeout uses .unref(). */
+  timers: TimerPort;
   maxPerAgent?: number;
   maxTotal?: number;
   maxBackgroundDurationMs?: number;
@@ -50,18 +54,16 @@ export interface BackgroundTaskManager {
   /**
    * Mark a task as completed.
    *
-   * The legacy `notifyFn` argument is preserved for backward compatibility but
-   * unused — the completion-dispatcher subscribes to the
-   * `background_task:completed` event emitted here and decides whether to fire
-   * the user-visible fallback notification. Single-owner contract eliminates
-   * double-notify.
+   * The completion-dispatcher subscribes to the `background_task:completed`
+   * event emitted here and decides whether to fire the user-visible fallback
+   * notification. Single-owner contract eliminates double-notify.
    */
-  complete(taskId: string, result: unknown, notifyFn?: NotifyFn): void;
+  complete(taskId: string, result: unknown): void;
   /**
-   * Mark a task as failed. See `complete` for the single-owner note — the
-   * `notifyFn` argument is unused; the dispatcher routes notification.
+   * Mark a task as failed. See `complete` for the single-owner note —
+   * the dispatcher routes notification via the emitted event.
    */
-  fail(taskId: string, error: unknown, notifyFn?: NotifyFn): void;
+  fail(taskId: string, error: unknown): void;
   cancel(taskId: string): Result<void, Error>;
   getTask(taskId: string): BackgroundTask | undefined;
   getTasks(agentId: string): BackgroundTask[];
@@ -84,6 +86,8 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     dataDir,
     eventBus,
     logger,
+    clock,
+    timers,
     maxPerAgent = 5,
     maxTotal = 20,
     maxBackgroundDurationMs = 300_000,
@@ -148,7 +152,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         id: taskId,
         toolName,
         status: "running",
-        startedAt: Date.now(),
+        startedAt: clock.now(),
         origin,
         // Seed the dispatch state machine. Default policy is "deferred" —
         // the dispatcher inspects dispatchState before firing fallback notify
@@ -160,13 +164,13 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       };
 
       // Hard-timeout abort
-      const timer = setTimeout(() => {
+      const timer = timers.setTimeout(() => {
         if (task.status === "running") {
           ac.abort();
           manager.fail(taskId, new Error("Hard timeout exceeded"));
         }
       }, maxBackgroundDurationMs);
-      timer.unref();
+      timer.unref();   // TimerHandle exposes .unref() by contract.
       task._hardTimeoutTimer = timer;
 
       tasks.set(taskId, task);
@@ -177,21 +181,21 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         agentId,
         taskId,
         toolName,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
 
       return ok(taskId);
     },
 
-    complete(taskId, result, _notifyFn?) {
+    complete(taskId, result) {
       const task = tasks.get(taskId);
       if (!task || task.status !== "running") return;
 
       task.status = "completed";
-      task.completedAt = Date.now();
+      task.completedAt = clock.now();
       task.result = truncateResult(result);
 
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
       decrementCounters(task.origin.agentId);
       persistTaskSync(dataDir, task);
 
@@ -202,26 +206,25 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         toolName: task.toolName,
         durationMs,
         origin: task.origin,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
 
       // Notification routing lives in the completion-dispatcher (subscribed
-      // to background_task:completed above). The legacy `notifyFn` argument
-      // is kept for backward compatibility but unused here — the dispatcher
-      // inspects task.dispatchState before firing the user-visible fallback,
-      // and the runner skips when state is "notified" (single-owner contract,
-      // zero spurious outbound).
+      // to background_task:completed above). The dispatcher inspects
+      // task.dispatchState before firing the user-visible fallback, and the
+      // runner skips when state is "notified" (single-owner contract, zero
+      // spurious outbound).
     },
 
-    fail(taskId, error, _notifyFn?) {
+    fail(taskId, error) {
       const task = tasks.get(taskId);
       if (!task || task.status !== "running") return;
 
       task.status = "failed";
-      task.completedAt = Date.now();
+      task.completedAt = clock.now();
       task.error = error instanceof Error ? error.message : String(error);
 
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
       decrementCounters(task.origin.agentId);
       persistTaskSync(dataDir, task);
 
@@ -233,10 +236,10 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         error: task.error,
         durationMs,
         origin: task.origin,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
 
-      // See complete() above — notifyFn arg is unused; dispatcher owns routing.
+      // See complete() above — the dispatcher owns notification routing.
     },
 
     cancel(taskId) {
@@ -245,10 +248,10 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       if (task.status !== "running") return err(new Error(`Task ${taskId} is not running (status: ${task.status})`));
 
       task.status = "cancelled";
-      task.completedAt = Date.now();
+      task.completedAt = clock.now();
 
       if (task._abortController) task._abortController.abort();
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
       decrementCounters(task.origin.agentId);
       persistTaskSync(dataDir, task);
 
@@ -256,7 +259,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         agentId: task.origin.agentId,
         taskId,
         toolName: task.toolName,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
 
       return ok(undefined);
@@ -298,7 +301,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
               {
                 taskId: task.id,
                 dispatchState: task.dispatchState,
-                hint: "Pre-restart dispatch state preserved; skipping re-emit (D-S2 recovery-without-events)",
+                hint: "Pre-restart dispatch state preserved; skipping re-emit (recovery-without-events)",
               },
               "Recovery: skipped re-emit",
             );
@@ -310,9 +313,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             taskId: task.id,
             toolName: task.toolName,
             error: persisted.error,
-            durationMs: (persisted.completedAt ?? Date.now()) - persisted.startedAt,
+            durationMs: (persisted.completedAt ?? clock.now()) - persisted.startedAt,
             origin: task.origin,
-            timestamp: Date.now(),
+            timestamp: clock.now(),
           });
         }
       }
@@ -338,7 +341,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     },
 
     cleanup(maxAgeMs = 86_400_000) {
-      const cutoff = Date.now() - maxAgeMs;
+      const cutoff = clock.now() - maxAgeMs;
       for (const [taskId, task] of tasks) {
         if (task.status !== "running" && (task.completedAt ?? task.startedAt) < cutoff) {
           tasks.delete(taskId);

@@ -14,6 +14,7 @@ import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { writeFileSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
 import type { DoctorFinding } from "../types.js";
+import { systemGetEnv, systemNowDate } from "@comis/core";
 
 /** Default minimal config YAML content. */
 const DEFAULT_CONFIG = `# Comis configuration
@@ -29,7 +30,7 @@ logLevel: info
  */
 function createBackup(filePath: string): string | null {
   try {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace("T", "T").slice(0, 15) + "Z";
+    const timestamp = systemNowDate().toISOString().replace(/[:.]/g, "").replace("T", "T").slice(0, 15) + "Z";
     const backupPath = `${filePath}.backup.${timestamp}`;
     copyFileSync(filePath, backupPath);
     return backupPath;
@@ -65,8 +66,7 @@ export async function repairConfig(
 
   try {
     // Determine target config path
-    // eslint-disable-next-line no-restricted-syntax -- CLI repair reads env directly for home directory
-    const homedir = process.env["HOME"] || process.env["USERPROFILE"] || "/root";
+    const homedir = systemGetEnv("HOME") || systemGetEnv("USERPROFILE") || "/root";
     const targetPath = configPaths.length > 0
       ? configPaths[0]
       : homedir + "/.comis/config.yaml";

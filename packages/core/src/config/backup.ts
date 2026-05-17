@@ -14,6 +14,7 @@
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import type { ConfigError } from "./types.js";
+import { systemNowDate } from "../runtime/system-time.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -67,7 +68,7 @@ function formatTimestamp(date: Date): string {
 /**
  * Extract the directory portion of a file path.
  *
- * Uses simple string manipulation to avoid path.join() per security rules.
+ * Uses simple string manipulation to avoid raw path.join per security rules.
  */
 function dirname(filePath: string): string {
   const lastSlash = filePath.lastIndexOf("/");
@@ -120,7 +121,7 @@ export function createTimestampedBackup(
   }
 
   // Generate backup path
-  const timestamp = formatTimestamp(deps.now?.() ?? new Date());
+  const timestamp = formatTimestamp(deps.now?.() ?? systemNowDate());
   const backupPath = `${configPath}.backup.${timestamp}`;
 
   // Copy file

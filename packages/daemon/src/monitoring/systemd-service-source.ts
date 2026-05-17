@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: monitoring source systemctl invocation error; consumed via monitoring-source aggregator try/catch chain.
 /**
  * systemd Service HeartbeatSourcePort implementation.
  * Monitors systemd service health by checking for failed services
@@ -13,6 +14,7 @@ import { execFile as execFileCb } from "node:child_process";
 import { access, constants } from "node:fs/promises";
 import { promisify } from "node:util";
 import { envWithoutSystemdNotify } from "./exec-helpers.js";
+import { systemNowMs } from "@comis/core";
 
 const execFile = promisify(execFileCb);
 
@@ -72,7 +74,7 @@ export function createSystemdServiceSource(config: SystemdMonitorConfig): Heartb
     name: SOURCE_NAME,
 
     async check(): Promise<HeartbeatCheckResult> {
-      const now = Date.now();
+      const now = systemNowMs();
 
       const available = await isSystemdAvailable();
       if (!available) {

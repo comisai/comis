@@ -5,9 +5,12 @@
  * Architecture:
  * - Reads + writes credentials through OAuthCredentialStorePort (no in-memory map
  *   as source of truth; refreshed credentials persist to disk and survive restart).
- * - Per-profile-ID file lock via withExecutionLock from @comis/scheduler — concurrent
- *   refresh attempts from multiple processes serialize; different profiles refresh
- *   in parallel.
+ * - Per-profile-ID file lock via injected FileLockPort.withLock (the daemon
+ *   composition root wires the canonical `createFileLock()` adapter from
+ *   `@comis/core`) — concurrent refresh attempts from multiple processes
+ *   serialize; different profiles refresh in parallel. The factory is
+ *   injected as a deps field so agent's production source does not depend
+ *   on `@comis/core` at the value-import level.
  * - 30s timeout wrapper around pi-ai's getOAuthApiKey to prevent indefinite hang
  *   when auth.openai.com is unreachable.
  * - Real-refresh detection via newCredentials.refresh !== profile.refresh — the
@@ -41,23 +44,26 @@ import type { SecretManager } from "@comis/core";
 import {
   TypedEventBus,
   safePath,
+  systemNowMs,
+  systemSetTimeout,
+  systemClearTimeout,
   type OAuthCredentialStorePort,
   type OAuthProfile,
+  type FileLockPort,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
-import { withExecutionLock } from "@comis/scheduler";
-import type { OAuthCredentials } from "@mariozechner/pi-ai";
+import type { ComisLogger } from "@comis/core";
+import type { OAuthCredentials } from "@earendil-works/pi-ai";
 import {
   getOAuthProvider,
   getOAuthApiKey,
   getOAuthProviders,
-} from "@mariozechner/pi-ai/oauth";
+} from "@earendil-works/pi-ai/oauth";
 import { watch, type FSWatcher } from "chokidar";
 import {
   resolveCodexAuthIdentity,
   redactEmailForLog,
-} from "./oauth-identity.js";
-import { rewriteOAuthError } from "./oauth-errors.js";
+  rewriteOAuthError,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -100,6 +106,13 @@ export interface OAuthTokenManagerDeps {
   logger: ComisLogger;
   /** Data directory for lock-file path resolution — REQUIRED. */
   dataDir: string;
+  /**
+   * Cross-process filesystem mutex for per-profile refresh serialization.
+   * Injected by the composition root (`@comis/core`'s `createFileLock()`
+   * in production). Stateless port — sharing one instance across token
+   * managers is safe.
+   */
+  fileLock: FileLockPort;
   /** Prefix for SecretManager key names (default: "OAUTH_"). */
   keyPrefix?: string;
   /**
@@ -242,7 +255,7 @@ async function withTimeout<T>(
 ): Promise<{ ok: true; value: T } | { ok: false; reason: "timeout" }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<{ ok: false; reason: "timeout" }>((resolve) => {
-    timer = setTimeout(() => resolve({ ok: false, reason: "timeout" }), timeoutMs);
+    timer = systemSetTimeout(() => resolve({ ok: false, reason: "timeout" }), timeoutMs);
   });
   try {
     const winner = await Promise.race([
@@ -251,7 +264,7 @@ async function withTimeout<T>(
     ]);
     return winner;
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    if (timer !== undefined) systemClearTimeout(timer);
   }
 }
 
@@ -376,7 +389,7 @@ async function refreshOpenAICodexTokenLocal(
     value: {
       access: json.access_token,
       refresh: json.refresh_token,
-      expires: Date.now() + json.expires_in * 1000,
+      expires: systemNowMs() + json.expires_in * 1000,
       accountId,
     },
   };
@@ -477,6 +490,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     credentialStore,
     logger,
     dataDir,
+    fileLock,
     keyPrefix = "OAUTH_",
   } = deps;
 
@@ -509,14 +523,37 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   const { watchPath } = deps;
   let watcher: FSWatcher | undefined;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // In-flight reload promise. The debounce callback dispatched by setTimeout
+  // can already be executing inside `await credentialStore.list()` when
+  // dispose() is called — clearing the timer does nothing for an
+  // already-fired callback. Track the promise so dispose() can await it
+  // and avoid emitting events / clearing cache against a disposed manager
+  // (WR-04).
+  let inflightReload: Promise<void> | undefined;
   // Snapshot of profileIds the manager has seen — used to diff against
   // store.list() after a watcher fire to emit auth:profile_added for new
   // profiles only.
   const seenProfileIds = new Set<string>();
+  // First-fire guard: seed seenProfileIds from the store on the first
+  // watcher fire, and SKIP emission for that fire. Without this, the
+  // first fire treats every existing profile as "new" and floods
+  // subscribers with N spurious auth:profile_added events.
+  let profileIdsSeeded = false;
 
   async function emitProfileAddedEventsAfterReload(): Promise<void> {
     const listResult = await credentialStore.list();
     if (!listResult.ok) return;
+    // First fire: seed only, do NOT emit. The pre-existing profiles were
+    // present at construction time and are not "added" by this watcher
+    // event; they were already there.
+    if (!profileIdsSeeded) {
+      profileIdsSeeded = true;
+      seenProfileIds.clear();
+      for (const profile of listResult.value) {
+        seenProfileIds.add(profile.profileId);
+      }
+      return;
+    }
     const before = new Set(seenProfileIds);
     seenProfileIds.clear();
     for (const profile of listResult.value) {
@@ -531,15 +568,15 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               ? (redactEmailForLog(profile.email) ?? profile.profileId)
               : profile.profileId,
           source: "external",
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
       }
     }
   }
 
   function scheduleCacheInvalidation(): void {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
+    if (debounceTimer) systemClearTimeout(debounceTimer);
+    debounceTimer = systemSetTimeout(() => {
       debounceTimer = null;
       // Invalidate the ENTIRE hot cache (file is rewritten as a whole;
       // per-profile diffing is YAGNI for a sub-1MB JSON).
@@ -555,17 +592,22 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       // Emit auth:profile_added for newly-discovered profiles.
       // Best-effort — failure is logged inside the helper but not surfaced
       // (the next getApiKey call will repopulate cache from store anyway).
-      void emitProfileAddedEventsAfterReload().catch((emitErr: unknown) => {
-        logger.warn(
-          {
-            submodule: "oauth-store-watcher",
-            hint: "profile_added_emit_failed",
-            errorKind: "event_emit",
-            err: emitErr,
-          },
-          "Failed to emit auth:profile_added after watcher fire",
-        );
-      });
+      // Track the promise on inflightReload so dispose() can await it.
+      inflightReload = emitProfileAddedEventsAfterReload()
+        .catch((emitErr: unknown) => {
+          logger.warn(
+            {
+              submodule: "oauth-store-watcher",
+              hint: "profile_added_emit_failed",
+              errorKind: "internal" as const,
+              err: emitErr,
+            },
+            "Failed to emit auth:profile_added after watcher fire",
+          );
+        })
+        .finally(() => {
+          inflightReload = undefined;
+        });
     }, 100);
   }
 
@@ -587,7 +629,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         {
           submodule: "oauth-store-watcher",
           hint: "watcher_failed",
-          errorKind: "fs_watch",
+          errorKind: "internal" as const,
           err: watchErr,
         },
         "OAuth profile watcher errored",
@@ -657,7 +699,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         profileId: storedProfile.profileId,
         submodule: "oauth-token-manager",
         hint: "env-override-ignored",
-        errorKind: "config_drift",
+        errorKind: "auth" as const,
       },
       "OAuth env var refresh token differs from stored profile; stored profile is canonical",
     );
@@ -685,7 +727,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           profileId,
           submodule: "oauth-token-manager",
           hint: "store_write_failed",
-          errorKind: "store_failed",
+          errorKind: "auth" as const,
           err: writeResult.error,
         },
         "OAuth bootstrap failed: credentialStore.set rejected",
@@ -715,7 +757,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         provider: providerId,
         profileId,
         identity,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     }
 
@@ -734,12 +776,12 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     initialProfile: OAuthProfile,
   ): Promise<Result<string, OAuthError>> {
     const lockPath = lockSentinelPath(dataDir, initialProfile.profileId);
-    const lockStart = Date.now();
+    const lockStart = systemNowMs();
 
-    const lockResult = await withExecutionLock(
+    const lockResult = await fileLock.withLock(
       lockPath,
       async (): Promise<Result<string, OAuthError>> => {
-        const acquireMs = Date.now() - lockStart;
+        const acquireMs = systemNowMs() - lockStart;
         logger.debug(
           {
             provider: providerId,
@@ -750,7 +792,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           "Lock acquired",
         );
 
-        const heldStart = Date.now();
+        const heldStart = systemNowMs();
         try {
           // TOCTOU re-read inside lock to avoid acting on stale cache.
           const reread = await credentialStore.get(initialProfile.profileId);
@@ -795,7 +837,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             // from racing the actual expiry.
             const REFRESH_EXPIRY_BUFFER_MS = 60_000;
             if (typeof profile.expires === "number"
-              && profile.expires > Date.now() + REFRESH_EXPIRY_BUFFER_MS
+              && profile.expires > systemNowMs() + REFRESH_EXPIRY_BUFFER_MS
             ) {
               cache.set(profile.profileId, profile);
               // Mirror the post-refresh lastGood update so subsequent calls
@@ -806,7 +848,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   provider: providerId,
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
-                  remainingMs: profile.expires - Date.now(),
+                  remainingMs: profile.expires - systemNowMs(),
                 },
                 "OAuth token still valid — skipping refresh",
               );
@@ -828,7 +870,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
                   hint: "auth_endpoint_unreachable",
-                  errorKind: "timeout",
+                  errorKind: "timeout" as const,
                 },
                 "OAuth refresh timed out after 30s",
               );
@@ -837,7 +879,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 profileId: profile.profileId,
                 errorKind: "timeout",
                 hint: "auth_endpoint_unreachable",
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
               return err({
                 code: "REFRESH_FAILED",
@@ -867,7 +909,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
                   hint: rewritten.hint,
-                  errorKind: rewritten.errorKind,
+                  errorKind: "auth" as const,
                   err: classifyInput,
                   status: localResult.error.status,
                 },
@@ -876,15 +918,23 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               eventBus.emit("auth:refresh_failed", {
                 provider: providerId,
                 profileId: profile.profileId,
-                errorKind: rewritten.errorKind,
+                // Carry the OAuth domain discriminator (refresh_token_reused |
+                // invalid_grant | …) into the event payload. The
+                // auth:refresh_failed event's `errorKind` field documents
+                // coarse classification — NOT the closed Pino ErrorKind union.
+                // The discriminator flows via `rewritten.code`.
+                errorKind: rewritten.code,
                 hint: rewritten.hint,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
               return err({
                 code: "REFRESH_FAILED",
                 message: rewritten.userMessage,
                 providerId,
-                errorKind: rewritten.errorKind,
+                // OAuthError.errorKind carries the discriminator for CLI
+                // pattern-matching (`err.errorKind === "refresh_token_reused"`
+                // in cli/src/commands/auth.ts). Read from `rewritten.code`.
+                errorKind: rewritten.code,
                 profileId: profile.profileId,
                 hint: rewritten.hint,
               });
@@ -919,7 +969,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
                   hint: "auth_endpoint_unreachable",
-                  errorKind: "timeout",
+                  errorKind: "timeout" as const,
                 },
                 "OAuth refresh timed out after 30s",
               );
@@ -928,7 +978,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 profileId: profile.profileId,
                 errorKind: "timeout",
                 hint: "auth_endpoint_unreachable",
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
               return err({
                 code: "REFRESH_FAILED",
@@ -952,7 +1002,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
                   hint: rewritten.hint,
-                  errorKind: rewritten.errorKind,
+                  errorKind: "auth" as const,
                   err: apiKeyResult.error,
                 },
                 "OAuth refresh failed",
@@ -960,15 +1010,21 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               eventBus.emit("auth:refresh_failed", {
                 provider: providerId,
                 profileId: profile.profileId,
-                errorKind: rewritten.errorKind,
+                // See comment at the codex bypass branch above:
+                // event payload `errorKind` carries the OAuth domain
+                // discriminator, not the closed Pino ErrorKind union. The
+                // discriminator flows via `rewritten.code`.
+                errorKind: rewritten.code,
                 hint: rewritten.hint,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
               return err({
                 code: "REFRESH_FAILED",
                 message: rewritten.userMessage,
                 providerId,
-                errorKind: rewritten.errorKind,
+                // OAuthError.errorKind carries the discriminator for CLI
+                // pattern-matching; read from `rewritten.code`.
+                errorKind: rewritten.code,
                 profileId: profile.profileId,
                 hint: rewritten.hint,
               });
@@ -1000,7 +1056,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
                   hint: "store_write_failed",
-                  errorKind: "store_failed",
+                  errorKind: "auth" as const,
                   err: writeResult.error,
                 },
                 "OAuth refresh persisted-write failed",
@@ -1019,14 +1075,14 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               profileName: toSecretKey(providerId, keyPrefix),
               profileId: profile.profileId,
               expiresAtMs: newProfile.expires,
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
             });
           } else {
             // Cache the unrotated profile for the next read (no DB roundtrip needed).
             cache.set(profile.profileId, profile);
           }
 
-          const completeStart = Date.now();
+          const completeStart = systemNowMs();
           logger.info(
             {
               provider: providerId,
@@ -1063,7 +1119,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               provider: providerId,
               profileId: initialProfile.profileId,
               submodule: "oauth-token-manager",
-              heldMs: Date.now() - heldStart,
+              heldMs: systemNowMs() - heldStart,
             },
             "Lock released",
           );
@@ -1073,9 +1129,8 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     );
 
     if (!lockResult.ok) {
-      const lockKind = lockResult.error;
+      const lockKind = lockResult.error.kind;
       const hint = lockKind === "locked" ? "lock_contention" : "lock_error";
-      const errorKind = lockKind === "locked" ? "lock_contention" : "lock_error";
       logger.warn(
         {
           provider: providerId,
@@ -1083,7 +1138,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           submodule: "oauth-token-manager",
           retries: 0,
           hint,
-          errorKind,
+          errorKind: "auth" as const,
         },
         lockKind === "locked"
           ? "OAuth refresh lock contention"
@@ -1092,9 +1147,9 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       eventBus.emit("auth:refresh_failed", {
         provider: providerId,
         profileId: initialProfile.profileId,
-        errorKind,
+        errorKind: "auth",
         hint,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
       return err({
         code: "REFRESH_FAILED",
@@ -1147,7 +1202,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               provider: providerId,
               configuredProfileId: configured,
               hint: "configured-profile-missing",
-              errorKind: "profile_not_found",
+              errorKind: "auth" as const,
               submodule: "oauth-resolver",
             },
             "Configured OAuth profile not found in store",
@@ -1261,7 +1316,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       }
 
       // Env-bootstrap fallback: tiers (a)/(b)/(c) all came up empty.
-      // Discover candidate profileId + env-var seed from the legacy resolver.
+      // Discover candidate profileId + env-var seed for the env-bootstrap tier.
       const { profileId: candidateProfileId, envSeed } =
         await resolveCandidateProfileId(providerId);
 
@@ -1293,7 +1348,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         const expiresAt =
           typeof profile.expires === "number" ? profile.expires : undefined;
         const secsUntilExpiry =
-          expiresAt !== undefined ? Math.floor((expiresAt - Date.now()) / 1000) : undefined;
+          expiresAt !== undefined ? Math.floor((expiresAt - systemNowMs()) / 1000) : undefined;
         logger.debug(
           {
             provider: providerId,
@@ -1359,12 +1414,18 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
 
     async dispose(): Promise<void> {
       if (debounceTimer) {
-        clearTimeout(debounceTimer);
+        systemClearTimeout(debounceTimer);
         debounceTimer = null;
       }
       if (watcher) {
         await watcher.close();
         watcher = undefined;
+      }
+        // Wait for any debounce callback that fired between clearTimeout
+      // and now to finish — otherwise cache.clear() / eventBus.emit()
+      // races against a disposed manager.
+      if (inflightReload) {
+        await inflightReload;
       }
     },
   };

@@ -11,6 +11,7 @@
 
 import type { DoctorCheck, DoctorFinding } from "../types.js";
 import { CHANNEL_ENV_KEYS } from "../../wizard/index.js";
+import { systemGetEnv } from "@comis/core";
 
 const CATEGORY = "channels";
 
@@ -67,8 +68,7 @@ export const channelHealthCheck: DoctorCheck = {
       const missingVars: string[] = [];
       for (const varName of requiredVars) {
         // Check env var format (non-empty string)
-        // eslint-disable-next-line no-restricted-syntax -- CLI doctor check reads env directly
-        const value = process.env[varName];
+        const value = systemGetEnv(varName);
         if (!value || value.trim().length === 0) {
           missingVars.push(varName);
         }

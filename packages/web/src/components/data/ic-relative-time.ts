@@ -2,6 +2,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles } from "../../styles/shared.js";
+import { systemClearInterval, systemDateFrom, systemNowMs, systemSetInterval } from "@comis/core";
 
 /**
  * Format a timestamp as a relative time string.
@@ -26,7 +27,7 @@ function formatRelative(timestampMs: number, now: number): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
 
-  return new Date(timestampMs).toISOString().slice(0, 10);
+  return systemDateFrom(timestampMs).toISOString().slice(0, 10);
 }
 
 /**
@@ -37,7 +38,7 @@ function formatRelative(timestampMs: number, now: number): string {
  *
  * @example
  * ```html
- * <ic-relative-time .timestamp=${Date.now() - 300000}></ic-relative-time>
+ * <ic-relative-time .timestamp=${systemNowMs() - 300000}></ic-relative-time>
  * ```
  */
 @customElement("ic-relative-time")
@@ -76,14 +77,14 @@ export class IcRelativeTime extends LitElement {
 
   private _startTimer(): void {
     this._clearTimer();
-    this._intervalId = setInterval(() => {
+    this._intervalId = systemSetInterval(() => {
       this.requestUpdate();
     }, this.updateInterval);
   }
 
   private _clearTimer(): void {
     if (this._intervalId !== null) {
-      clearInterval(this._intervalId);
+      systemClearInterval(this._intervalId);
       this._intervalId = null;
     }
   }
@@ -93,9 +94,9 @@ export class IcRelativeTime extends LitElement {
       return html``;
     }
 
-    const now = Date.now();
-    const isoString = new Date(this.timestamp).toISOString();
-    const fullDate = new Date(this.timestamp).toLocaleString();
+    const now = systemNowMs();
+    const isoString = systemDateFrom(this.timestamp).toISOString();
+    const fullDate = systemDateFrom(this.timestamp).toLocaleString();
     const relative = formatRelative(this.timestamp, now);
 
     return html`

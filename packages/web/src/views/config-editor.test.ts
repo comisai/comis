@@ -225,7 +225,7 @@ describe("serializeToYaml", () => {
     expect(result).toContain("  child: value");
   });
 
-  it("serializes arrays", () => {
+  it("serializes array values to YAML dash-list syntax when calling serializeToYaml()", () => {
     const result = serializeToYaml({ items: ["a", "b", "c"] });
     expect(result).toContain("- a");
     expect(result).toContain("- b");
@@ -236,7 +236,7 @@ describe("serializeToYaml", () => {
     expect(result).toContain('"has: colon"');
   });
 
-  it("serializes null", () => {
+  it("serializes null values as literal 'null' in YAML output via serializeToYaml()", () => {
     const result = serializeToYaml({ empty: null });
     expect(result).toContain("empty: null");
   });
@@ -255,7 +255,7 @@ describe("parseYaml", () => {
     expect(data).toEqual({ parent: { child: "value" } });
   });
 
-  it("parses arrays", () => {
+  it("parses YAML dash-list syntax into JavaScript array via parseYaml()", () => {
     const { data, error } = parseYaml("items:\n  - a\n  - b");
     expect(error).toBeNull();
     expect(data).toEqual({ items: ["a", "b"] });
@@ -267,7 +267,7 @@ describe("parseYaml", () => {
     expect(data).toEqual({ name: "hello world" });
   });
 
-  it("parses null values", () => {
+  it("parses literal 'null' YAML value into JavaScript null via parseYaml()", () => {
     const { data, error } = parseYaml("empty: null");
     expect(error).toBeNull();
     expect(data).toEqual({ empty: null });

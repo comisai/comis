@@ -23,23 +23,34 @@ import {
 // Module-level mocks (ESM hoisting)
 // ---------------------------------------------------------------------------
 
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// importOriginal-based mock so callTyped resolves to the real wrapper while
+// withClient is mocked.
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 vi.mock("../output/spinner.js", () => ({
   withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
 }));
 
-vi.mock("@comis/agent", () => ({
-  ensureWorkspace: vi.fn(async () => ({ dir: "/tmp/test", configFile: "", memoryDir: "" })),
-  resolveWorkspaceDir: vi.fn((_config: unknown, name: string) => `/tmp/test-workspace/${name}`),
-  createModelCatalog: vi.fn(() => ({
-    loadStatic: vi.fn(),
-    getAll: vi.fn(() => []),
-    getByProvider: vi.fn(() => []),
-  })),
-}));
+// createModelCatalog + ensureWorkspace + resolveWorkspaceDir live in @comis/core.
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    ensureWorkspace: vi.fn(async () => ({ dir: "/tmp/test", configFile: "", memoryDir: "" })),
+    resolveWorkspaceDir: vi.fn((_config: unknown, name: string) => `/tmp/test-workspace/${name}`),
+    createModelCatalog: vi.fn(() => ({
+      loadStatic: vi.fn(),
+      getAll: vi.fn(() => []),
+      getByProvider: vi.fn(() => []),
+    })),
+  };
+});
 
 vi.mock("@clack/prompts", () => ({
   confirm: vi.fn(),
@@ -259,7 +270,7 @@ describe("RPC failure exit code 1", () => {
     // so loadModels will return [] rather than throw. We mock loadModels to
     // actually throw by making withClient reject AND making createModelCatalog
     // throw an error as well.
-    const { createModelCatalog } = await import("@comis/agent");
+    const { createModelCatalog } = await import("@comis/core");
     vi.mocked(createModelCatalog).mockImplementation(() => {
       throw new Error("Catalog unavailable");
     });
@@ -310,7 +321,7 @@ describe("null/empty RPC response handling", () => {
   it("agent list with empty agents object shows 'No agents configured'", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", { agents: {} })
+        .onCall("config.read", { agents: {} })
         .build();
       return fn(mockClient);
     });
@@ -328,7 +339,7 @@ describe("null/empty RPC response handling", () => {
     // client.call returns null; spreading null produces {}, extractAgents({}) returns []
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", null)
+        .onCall("config.read", null)
         .build();
       return fn(mockClient);
     });
@@ -345,7 +356,7 @@ describe("null/empty RPC response handling", () => {
   it("agent list with { agents: null } does not crash", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", { agents: null })
+        .onCall("config.read", { agents: null })
         .build();
       return fn(mockClient);
     });
@@ -380,9 +391,14 @@ describe("null/empty RPC response handling", () => {
 
   it("sessions list with { sessions: null } does not crash", async () => {
     // result.sessions ?? [] → null ?? [] → [] — shows "No sessions found"
+    // SessionListContract.response guarantees
+    // `{ sessions: SessionInfo[], total }` — the old `{ sessions: null }`
+    // bug shape can no longer be returned (the contract response.parse
+    // would reject it in dev mode; the production code path uses the
+    // typed result directly). Use a valid empty response instead.
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("session.list", { sessions: null })
+        .onCall("session.list", { sessions: [], total: 0 })
         .build();
       return fn(mockClient);
     });
@@ -396,12 +412,13 @@ describe("null/empty RPC response handling", () => {
     expect(output).toContain("No sessions found");
   });
 
-  it("sessions list with null RPC response shows 'No sessions found'", async () => {
-    // client.call returns null; new code uses optional chaining so null?.sessions ?? []
-    // produces empty array → graceful "No sessions found" message
+  it("sessions list with empty list shows 'No sessions found'", async () => {
+    // SessionListContract.response guarantees a non-null sessions array.
+    // Previous defensive code for `null` RPC responses is no longer needed
+    // because the typed contract surface establishes a shape contract.
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("session.list", null)
+        .onCall("session.list", { sessions: [], total: 0 })
         .build();
       return fn(mockClient);
     });
@@ -415,33 +432,18 @@ describe("null/empty RPC response handling", () => {
     expect(output).toContain("No sessions found");
   });
 
-  // -- Sessions inspect null ------------------------------------------------
-
-  it("sessions inspect with { session: null } shows 'Session not found'", async () => {
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("session.status", { session: null })
-        .build();
-      return fn(mockClient);
-    });
-
-    const program = createTestProgram();
-    registerSessionsCommand(program);
-    await program.parseAsync(["node", "test", "sessions", "inspect", "test:key:1"]);
-
-    // Session not found is logged via error() (stderr)
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("Session not found");
-    // Should not crash/exit -- the command handles missing sessions gracefully
-    expect(exitSpy.spy).not.toHaveBeenCalled();
-  });
+  // -- Sessions inspect: the { session: null } code path is gone because
+  //    SessionStatusContract.response is non-nullable (always returns
+  //    runtime stats for the caller's agent). Inspect failure modes now
+  //    surface as RPC errors (caught by the catch block) — see
+  //    sessions-behavior.test.ts for the inspect tests.
 
   // -- Memory search empty/null ---------------------------------------------
 
   it("memory search with empty results shows 'No matching entries found'", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("memory.search", { results: [] })
+        .onCall("context.search", { results: [] })
         .build();
       return fn(mockClient);
     });
@@ -459,7 +461,7 @@ describe("null/empty RPC response handling", () => {
     // result.results ?? [] → null ?? [] → [] — shows "No matching entries found"
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("memory.search", { results: null })
+        .onCall("context.search", { results: null })
         .build();
       return fn(mockClient);
     });
@@ -475,10 +477,12 @@ describe("null/empty RPC response handling", () => {
 
   // -- Memory inspect null --------------------------------------------------
 
-  it("memory inspect with { entry: null } shows 'No entry found'", async () => {
+  it("memory inspect with empty response shows 'No entry found'", async () => {
+    // Targets context.inspect (returns the entry directly; empty record
+    // = not found).
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("memory.inspect", { entry: null })
+        .onCall("context.inspect", {})
         .build();
       return fn(mockClient);
     });
@@ -494,27 +498,11 @@ describe("null/empty RPC response handling", () => {
 
   // -- Memory stats null/empty ----------------------------------------------
 
-  it("memory stats with { stats: null } shows 'No memory statistics available'", async () => {
+  it("memory stats with empty record shows 'No memory statistics available'", async () => {
+    // Targets memory.stats. Empty record = no stats.
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("memory.inspect", { stats: null })
-        .build();
-      return fn(mockClient);
-    });
-
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-    await program.parseAsync(["node", "test", "memory", "stats"]);
-
-    expect(exitSpy.spy).not.toHaveBeenCalled();
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("No memory statistics available");
-  });
-
-  it("memory stats with { stats: {} } shows 'No memory statistics available'", async () => {
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("memory.inspect", { stats: {} })
+        .onCall("memory.stats", {})
         .build();
       return fn(mockClient);
     });

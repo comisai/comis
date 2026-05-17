@@ -13,7 +13,7 @@
  */
 
 import { fromPromise, ok, err, type Result } from "@comis/shared";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types

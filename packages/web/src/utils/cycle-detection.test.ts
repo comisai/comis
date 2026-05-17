@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { wouldCreateCycle } from "./cycle-detection.js";
 
 describe("wouldCreateCycle", () => {
-  it("detects self-loop", () => {
+  it("detects self-loop edge (A->A) as a cycle even on empty initial graph", () => {
     expect(wouldCreateCycle([], "A", "A")).toBe(true);
   });
 

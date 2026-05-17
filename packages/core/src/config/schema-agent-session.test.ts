@@ -6,7 +6,7 @@ import {
   DmScopeConfigSchema,
   PruningConfigSchema,
   SessionCompactionConfigSchema,
-} from "./schema-agent.js";
+} from "./schema-agent/index.js";
 
 describe("SessionResetPolicySchema", () => {
   it("parses valid reset policy", () => {
@@ -115,13 +115,11 @@ describe("DmScopeConfigSchema", () => {
   it("parses valid DM scope config", () => {
     const result = DmScopeConfigSchema.safeParse({
       mode: "per-peer",
-      agentPrefix: true,
       threadIsolation: true,
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.mode).toBe("per-peer");
-      expect(result.data.agentPrefix).toBe(true);
       expect(result.data.threadIsolation).toBe(true);
     }
   });
@@ -129,7 +127,6 @@ describe("DmScopeConfigSchema", () => {
   it("applies defaults for empty object", () => {
     const result = DmScopeConfigSchema.parse({});
     expect(result.mode).toBe("per-channel-peer");
-    expect(result.agentPrefix).toBe(false);
     expect(result.threadIsolation).toBe(true);
   });
 
@@ -141,6 +138,18 @@ describe("DmScopeConfigSchema", () => {
   it("accepts per-account-channel-peer mode", () => {
     const result = DmScopeConfigSchema.safeParse({ mode: "per-account-channel-peer" });
     expect(result.success).toBe(true);
+  });
+
+  // The `agentPrefix` field was removed because session-key emission no
+  // longer includes the prefix. strictObject ensures operators with
+  // `agentPrefix: true` in their YAML get a loud validation error at
+  // config load.
+  it("rejects the removed agentPrefix field", () => {
+    const result = DmScopeConfigSchema.safeParse({
+      mode: "per-peer",
+      agentPrefix: true,
+    });
+    expect(result.success).toBe(false);
   });
 });
 

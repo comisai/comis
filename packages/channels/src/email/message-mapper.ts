@@ -13,7 +13,7 @@
 
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import type { NormalizedMessage, Attachment } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -141,7 +141,7 @@ export async function mapEmailToNormalized(
     }
   }
 
-  const timestamp = parsed.date ? Math.floor(parsed.date.getTime() / 1000) : Math.floor(Date.now() / 1000);
+  const timestamp = parsed.date ? Math.floor(parsed.date.getTime() / 1000) : Math.floor(systemNowMs() / 1000);
 
   return {
     id,

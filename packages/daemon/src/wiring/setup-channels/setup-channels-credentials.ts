@@ -1,0 +1,493 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Cron-delivery event listener registration. Hosts the two `scheduler:job_*`
+ * event handlers: `scheduler:job_result` (cron-driven memory review,
+ * agent_turn dispatch, raw delivery) and `scheduler:job_suspended`
+ * (consecutive-failure suspension notification).
+ *
+ * Per-agent API-key resolution + cron operation-model resolution live here
+ * because each cron tick re-derives credentials from the daemon container
+ * (no per-cron-job cache); this leaf is the credentials-resolution + event
+ * dispatch concern boundary that the registry orchestrates.
+ *
+ * @module
+ */
+
+import { randomUUID } from "node:crypto";
+import type { Attachment, AppContainer, ChannelPort, MemoryPort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
+import type { ComisLogger } from "@comis/infra";
+import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
+import type { createSessionStore } from "@comis/memory";
+import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
+import { applyToolPolicy } from "@comis/skills";
+import { filterResponse } from "@comis/channels";
+import type { ExecutionLogEntry } from "@comis/scheduler";
+
+/**
+ * Closure-captured dependencies for the cron delivery listeners.
+ */
+export interface CronEventListenerDeps {
+  container: AppContainer;
+  executors: Map<string, AgentExecutor>;
+  defaultAgentId: string;
+  sessionManager: ReturnType<typeof createSessionLifecycle>;
+  sessionStore: ReturnType<typeof createSessionStore>;
+  logger: ComisLogger;
+  adaptersByType: Map<string, ChannelPort>;
+  deliveryService: DeliveryService;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
+  assembleToolsForAgent?: (agentId: string, options?: { sessionKey?: SessionKey }) => Promise<any[]>;
+  transcriber?: TranscriptionPort;
+  workspaceDirs?: Map<string, string>;
+  memoryAdapter?: MemoryPort;
+  tenantId?: string;
+  piSessionAdapters?: Map<string, {
+    getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
+    destroySession(key: SessionKey): Promise<void>;
+  }>;
+  cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
+  // ChannelsDeps fields that flow through from the registry caller — used by
+  // the agent_turn execution branch for tool-policy application + execution-
+  // tracker bookkeeping.
+  activeRunRegistry?: ActiveRunRegistry;
+}
+
+/**
+ * Register the cron-driven event listeners on the daemon event bus.
+ *
+ * Two listeners are attached:
+ *   1. `scheduler:job_result` — delivers cron job output back to the
+ *      originating channel. Supports three payload kinds:
+ *      - `__MEMORY_REVIEW__` sentinel → run memory review for the agent
+ *      - `payloadKind === "agent_turn"` → execute the agent and deliver the
+ *        sanitized response (with rolling/fresh/accumulate session strategy)
+ *      - else (systemEvent) → deliver raw text
+ *   2. `scheduler:job_suspended` — notify the channel when a cron job is
+ *      auto-suspended after consecutive failures.
+ */
+export function registerCronEventListeners(deps: CronEventListenerDeps): void {
+  const {
+    container,
+    executors,
+    defaultAgentId,
+    sessionManager,
+    logger,
+    adaptersByType,
+    deliveryService,
+  } = deps;
+
+  const agents = container.config.agents;
+
+  container.eventBus.on("scheduler:job_result", async (payload) => {
+    // -- Memory review sentinel intercept --
+    const resultText = payload.result;
+    if (resultText === "__MEMORY_REVIEW__") {
+      const { agentId } = payload;
+      if (!agentId) {
+        logger.warn({ hint: "Memory review job fired without agentId", errorKind: "config" as const }, "Skipping memory review -- no agentId");
+        payload.onComplete?.({ status: "error", error: "No agentId for memory review" });
+        return;
+      }
+
+      const agentConfig = agents[agentId];
+      const memReviewConfig = agentConfig?.memoryReview;
+      if (!memReviewConfig?.enabled) {
+        logger.debug({ agentId }, "Memory review disabled for agent, skipping");
+        payload.onComplete?.({ status: "ok" });
+        return;
+      }
+
+      // Resolve cheap model for review via "cron" operation type
+      const resolved = resolveOperationModel({
+        operationType: "cron",
+        agentProvider: agentConfig.provider ?? "anthropic",
+        agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
+        operationModels: agentConfig.operationModels ?? {},
+        providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
+      });
+
+      // Resolve API key for the provider
+      const providerEntry = container.config.providers?.entries?.[resolved.provider];
+      const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
+      const apiKey = container.secretManager.get(apiKeyName) ?? "";
+      if (!apiKey) {
+        logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for memory review`, errorKind: "config" as const }, "Skipping memory review -- no API key");
+        payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+        return;
+      }
+
+      const workspacePath = deps.workspaceDirs?.get(agentId) ?? "";
+
+      const reviewLogger = logger.child({ agentId, submodule: "memory-review" });
+      const reviewResult = await runMemoryReview({
+        agentId,
+        tenantId: deps.tenantId ?? container.config.tenantId ?? "default",
+        agentName: agentConfig.name ?? agentId,
+        config: memReviewConfig,
+        memoryPort: deps.memoryAdapter!,
+        sessionStore: deps.sessionStore as unknown as {
+          listDetailed(tenantId?: string): Array<{ sessionKey: string; tenantId: string; userId: string; channelId: string; metadata: Record<string, unknown> | null; createdAt: number; updatedAt: number; messageCount: number }>;
+          loadByFormattedKey(sessionKey: string): { messages: unknown[]; metadata: Record<string, unknown>; createdAt: number; updatedAt: number } | undefined;
+        },
+        eventBus: container.eventBus,
+        workspacePath,
+        provider: resolved.provider,
+        modelId: resolved.modelId,
+        apiKey,
+        logger: reviewLogger,
+      });
+
+      if (!reviewResult.ok) {
+        logger.error({ agentId, err: reviewResult.error, hint: "Memory review failed -- will retry next cycle", errorKind: "internal" as const }, "Memory review error");
+      }
+      payload.onComplete?.({ status: reviewResult.ok ? "ok" : "error", error: reviewResult.ok ? undefined : reviewResult.error?.message });
+      return;
+    }
+
+    const { deliveryTarget, jobName, payloadKind } = payload;
+    if (!deliveryTarget?.channelType) {
+      logger.warn(
+        { jobName, hint: "Delivery target missing channelType — ensure cron job was created from a channel context", errorKind: "config" as const },
+        "Cron job result has no delivery target channel type, skipping delivery",
+      );
+      payload.onComplete?.({ status: "error", error: "No delivery target channel type" });
+      return;
+    }
+    const adapter = adaptersByType.get(deliveryTarget.channelType);
+    if (!adapter) {
+      logger.warn(
+        { channelType: deliveryTarget.channelType, jobName, hint: "Ensure the target channel adapter is started and registered", errorKind: "config" as const },
+        "No adapter found for cron delivery target",
+      );
+      payload.onComplete?.({ status: "error", error: `No adapter for ${deliveryTarget.channelType}` });
+      return;
+    }
+
+    // --- agentTurn: execute agent and deliver response ---
+    if (payloadKind === "agent_turn") {
+      const executor = executors.get(payload.agentId) ?? executors.get(defaultAgentId);
+      if (!executor) {
+        logger.error(
+          { agentId: payload.agentId, jobName, hint: "Ensure executor is created for the agent referenced by the cron job", errorKind: "config" as const },
+          "No executor found for cron agentTurn",
+        );
+        // Fallback: send raw text so the user at least gets something
+        await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined);
+        payload.onComplete?.({ status: "error", error: "No executor found for agent" });
+        return;
+      }
+
+      // Extract session strategy from event payload (defaults: fresh, 3 turns)
+      const sessionStrategy = payload.sessionStrategy ?? "fresh";
+      const maxHistoryTurns = payload.maxHistoryTurns ?? 3;
+
+      // Cadence-aware cache-waste guard: rolling/accumulate strategies on long cadences
+      // guarantee cache-write waste because the prompt cache TTL is short (5 min for "cron"
+      // operations — see OPERATION_CACHE_DEFAULTS.cron in @comis/agent). Threshold = 2x TTL
+      // so we don't warn on borderline-useful 6-9 min cadences. Operator intent is preserved
+      // (no auto-downgrade) — this is informational only. Scoped to schedule.kind === "every"
+      // because cron-expression cadence is not threaded through the event payload.
+      const CRON_CACHE_TTL_2X_MS = 600_000;
+      if (
+        sessionStrategy !== "fresh" &&
+        payload.cadenceMs !== undefined &&
+        payload.cadenceMs > CRON_CACHE_TTL_2X_MS
+      ) {
+        logger.warn(
+          {
+            jobName,
+            agentId: payload.agentId,
+            sessionStrategy,
+            cadenceMs: payload.cadenceMs,
+            hint: "Cadence exceeds cache TTL by 2x; rolling/accumulate guarantees per-tick cache-write waste. Set sessionStrategy:'fresh' unless cross-tick session memory is essential.",
+            errorKind: "config" as const,
+          },
+          "Cron sessionStrategy may waste cache writes at this cadence",
+        );
+      }
+
+      // Resolve cron operation model via 5-level priority chain
+      const agentConfig = agents[payload.agentId];
+      let cronOverrides: { model: string; operationType: "cron"; promptTimeout: { promptTimeoutMs: number }; cacheRetention?: "none" | "short" | "long" } | undefined;
+      if (agentConfig) {
+        const resolution = resolveOperationModel({
+          operationType: "cron",
+          agentProvider: agentConfig.provider,
+          agentModel: agentConfig.model,
+          operationModels: agentConfig.operationModels ?? {},
+          providerFamily: resolveProviderFamily(agentConfig.provider),
+          invocationOverride: payload.cronJobModel,
+          agentPromptTimeoutMs: agentConfig.promptTimeout?.promptTimeoutMs,
+        });
+        cronOverrides = {
+          model: resolution.model,
+          operationType: "cron",
+          promptTimeout: { promptTimeoutMs: resolution.timeoutMs },
+          cacheRetention: payload.cacheRetention ?? resolution.cacheRetention,
+        };
+        logger.info(
+          { jobName, model: resolution.model, source: resolution.source, agentId: payload.agentId },
+          "Cron model resolved",
+        );
+      }
+
+      const sessionKey: SessionKey = {
+        tenantId: deliveryTarget.tenantId,
+        userId: deliveryTarget.userId,
+        channelId: `cron:${payload.jobId}`,
+      };
+
+      // Fresh strategy — expire existing session before each execution
+      if (sessionStrategy === "fresh") {
+        sessionManager.expire(sessionKey);
+
+        const piAdapter = deps.piSessionAdapters?.get(payload.agentId)
+                       ?? deps.piSessionAdapters?.get(defaultAgentId);
+        if (piAdapter) {
+          await piAdapter.destroySession(sessionKey);
+        } else {
+          logger.warn(
+            { agentId: payload.agentId, jobName, hint: "No piSessionAdapter found — JSONL may accumulate", errorKind: "config" as const },
+            "Cron fresh strategy could not destroy JSONL",
+          );
+        }
+
+        container.eventBus.emit("session:expired", { sessionKey, reason: "cron-fresh" });
+      }
+
+      const syntheticMsg: NormalizedMessage = {
+        id: `cron-${payload.jobId}-${systemNowMs()}`,
+        channelId: deliveryTarget.channelId,
+        channelType: deliveryTarget.channelType,
+        senderId: "system",
+        text: resultText,
+        timestamp: systemNowMs(),
+        attachments: [],
+        metadata: { isCronAgentTurn: true, jobId: payload.jobId, jobName },
+      };
+
+      const execStartTs = systemNowMs();
+      try {
+        const allTools = deps.assembleToolsForAgent
+          ? await deps.assembleToolsForAgent(payload.agentId)
+          : [];
+        // Resolve effective tool policy: job > agent > passthrough `{ profile: "full" }`.
+        // Opt-in per job — omitting payload.toolPolicy preserves the agent's interactive
+        // tool set. The explicit "full" fallback makes the no-silent-default contract
+        // readable in the call site.
+        const effectivePolicy =
+          payload.toolPolicy ??
+          agentConfig?.skills?.toolPolicy ??
+          { profile: "full" as const, allow: [] as string[], deny: [] as string[] };
+        const { tools, filtered: policyFiltered } = applyToolPolicy(
+          allTools as Parameters<typeof applyToolPolicy>[0],
+          effectivePolicy,
+        );
+        if (policyFiltered.length > 0) {
+          logger.debug(
+            {
+              jobName,
+              agentId: payload.agentId,
+              profile: effectivePolicy.profile,
+              filteredCount: policyFiltered.length,
+              filtered: policyFiltered.map((f) => ({ tool: f.toolName, reason: f.reason.kind })),
+            },
+            "Cron tool policy applied",
+          );
+        }
+        logger.info(
+          { jobName, agentId: payload.agentId, channelType: deliveryTarget.channelType, toolCount: Array.isArray(tools) ? tools.length : 0 },
+          "Executing cron agentTurn",
+        );
+        const execResult = await runWithContext({
+          traceId: randomUUID(),
+          tenantId: sessionKey.tenantId,
+          userId: sessionKey.userId,
+          sessionKey: formatSessionKey(sessionKey),
+          startedAt: systemNowMs(),
+          trustLevel: "user",
+          channelType: deliveryTarget.channelType,
+          deliveryOrigin: deliveryTarget ? createDeliveryOrigin({
+            channelType: deliveryTarget.channelType,
+            channelId: deliveryTarget.channelId,
+            userId: deliveryTarget.userId,
+            tenantId: deliveryTarget.tenantId,
+          }) : undefined,
+        }, () => executor.execute(syntheticMsg, sessionKey, tools, undefined, payload.agentId,
+          undefined, undefined, cronOverrides));
+
+        // Sanitize raw executor response: strip thinking tags, provider artifacts, unwrap <final>
+        const rawResponse = execResult.response;
+        const cleaned = sanitizeAssistantResponse(rawResponse);
+
+        // Rolling strategy — prune to last N turns after execution
+        if (sessionStrategy === "rolling") {
+          const messages = sessionManager.loadOrCreate(sessionKey);
+          if (messages.length > 0) {
+            // Find the start index of the last N turns.
+            // A "turn" starts at a user message and includes all following non-user messages.
+            // Walk backwards, counting user messages as turn boundaries.
+            let turnCount = 0;
+            let keepFromIndex = 0; // default: keep all
+            for (let i = messages.length - 1; i >= 0; i--) {
+              const msg = messages[i] as { role?: string };
+              if (msg.role === "user") {
+                turnCount++;
+                if (turnCount <= maxHistoryTurns) {
+                  keepFromIndex = i; // this user message starts a turn we want to keep
+                } else {
+                  break; // found more turns than maxHistoryTurns, stop
+                }
+              }
+            }
+            if (turnCount > maxHistoryTurns) {
+              const pruned = messages.slice(keepFromIndex);
+              sessionManager.save(sessionKey, pruned);
+            }
+          }
+        }
+
+        // Enriched completion log with token/cost/tool metrics
+        logger.info(
+          {
+            jobName,
+            agentId: payload.agentId,
+            durationMs: systemNowMs() - execStartTs,
+            responseLen: cleaned.length,
+            totalTokens: execResult.tokensUsed.total,
+            costUsd: execResult.cost.total,
+            toolCalls: execResult.stepsExecuted,
+            llmCalls: execResult.llmCalls,
+          },
+          "Cron agentTurn execution complete",
+        );
+
+        // Record enriched execution entry with token/cost metrics
+        const execTracker = deps.cronExecutionTrackers?.get(payload.agentId);
+        if (execTracker) {
+          await execTracker.record({
+            ts: systemNowMs(),
+            jobId: payload.jobId,
+            status: "ok",
+            durationMs: systemNowMs() - execStartTs,
+            summary: cleaned.slice(0, 200),
+            totalTokens: execResult.tokensUsed.total,
+            costUsd: execResult.cost.total,
+            toolCalls: execResult.stepsExecuted,
+            llmCalls: execResult.llmCalls,
+          });
+        }
+
+        // Report execution result back to scheduler for consecutiveErrors tracking.
+        // errorContext is set when the executor caught a classified error (overloaded, auth, etc.)
+        // and returned the user-friendly message as the response instead of throwing.
+        if (execResult.errorContext) {
+          payload.onComplete?.({ status: "error", error: execResult.errorContext.originalError ?? execResult.errorContext.errorType });
+        } else {
+          payload.onComplete?.({ status: "ok" });
+        }
+
+        // Suppress error message delivery for cron jobs.
+        // When errorContext is set, the executor caught a classified error
+        // (timeout, overloaded, auth, etc.) and set result.response to a
+        // user-facing error message. For cron jobs this is nonsensical.
+        // The error is already reported via onComplete above.
+        if (execResult.errorContext) {
+          logger.info(
+            { jobName, errorType: execResult.errorContext.errorType, hint: "Error already reported to scheduler — suppressing channel delivery" },
+            "Cron agentTurn error response suppressed",
+          );
+          return;
+        }
+
+        // Filter out NO_REPLY / HEARTBEAT_OK / empty responses
+        const filtered = filterResponse(cleaned);
+        if (!filtered.shouldDeliver) {
+          logger.debug({ jobName, suppressedBy: filtered.suppressedBy }, "Cron agentTurn response suppressed");
+          return;
+        }
+
+        const sendResult = await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, filtered.cleanedText, undefined);
+        if (!sendResult.ok || !sendResult.value.ok) {
+          logger.error(
+            { err: sendResult.ok ? undefined : sendResult.error, jobName, hint: "Verify channel adapter is running and channel ID is valid", errorKind: "platform" as const },
+            "Cron agentTurn delivery failed",
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { err, jobName, hint: "Agent execution failed, delivering raw text as fallback", errorKind: "internal" as const },
+          "Cron agentTurn execution failed",
+        );
+        // Record error execution entry
+        const execTracker = deps.cronExecutionTrackers?.get(payload.agentId);
+        if (execTracker) {
+          await execTracker.record({
+            ts: systemNowMs(),
+            jobId: payload.jobId,
+            status: "error",
+            durationMs: systemNowMs() - execStartTs,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined);
+        payload.onComplete?.({ status: "error", error: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
+
+    // --- systemEvent (or undefined): send raw text (existing behavior) ---
+    const sendResult = await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined);
+    if (!sendResult.ok || !sendResult.value.ok) {
+      logger.error(
+        { err: sendResult.ok ? undefined : sendResult.error, target: deliveryTarget, jobName, hint: "Verify channel adapter is running and channel ID is valid", errorKind: "platform" as const },
+        "Cron delivery failed",
+      );
+    } else {
+      logger.debug({ jobName, channelId: deliveryTarget.channelId }, "Cron result delivered");
+    }
+  });
+
+  // Notify user when a cron job is auto-suspended
+  container.eventBus.on("scheduler:job_suspended", async (payload) => {
+    const { deliveryTarget, jobName, jobId, consecutiveErrors, lastError } = payload;
+    if (!deliveryTarget?.channelType) {
+      logger.warn(
+        { jobName, hint: "Suspended job has no delivery target for notification", errorKind: "config" as const },
+        "Cannot notify user of job suspension — no delivery target",
+      );
+      return;
+    }
+    const adapter = adaptersByType.get(deliveryTarget.channelType);
+    if (!adapter) {
+      logger.warn(
+        { channelType: deliveryTarget.channelType, jobName, hint: "Ensure the target channel adapter is started", errorKind: "config" as const },
+        "No adapter found for job suspension notification",
+      );
+      return;
+    }
+
+    const classified = classifyError(lastError);
+    const message = [
+      `Scheduled task "${jobName}" was suspended after ${consecutiveErrors} consecutive failures.`,
+      `Reason: ${classified.userMessage}`,
+      `Re-enable with /cron enable ${jobId}`,
+    ].join("\n");
+
+    try {
+      await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, message, undefined);
+      logger.info({ jobName, jobId, channelType: deliveryTarget.channelType }, "Job suspension notification delivered");
+    } catch (err: unknown) {
+      logger.error(
+        { jobName, jobId, err, hint: "Failed to deliver job suspension notification", errorKind: "internal" as const },
+        "Job suspension notification delivery failed",
+      );
+    }
+  });
+}
+
+// Re-export the unused Attachment type to silence lint and document the
+// public-surface boundary: the registry caller consumes the same node:crypto
+// and core attachment types when constructing synthetic messages.
+export type { Attachment };

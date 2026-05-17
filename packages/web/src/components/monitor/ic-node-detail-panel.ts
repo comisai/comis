@@ -17,6 +17,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { MonitorNodeState } from "../../api/types/index.js";
+import { systemDateFrom } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Status color map (matches canvas node colors)
@@ -37,7 +38,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 function formatTimestamp(ms?: number): string {
   if (ms == null) return "--";
-  return new Date(ms).toLocaleTimeString();
+  return systemDateFrom(ms).toLocaleTimeString();
 }
 
 function formatElapsed(ms?: number): string {

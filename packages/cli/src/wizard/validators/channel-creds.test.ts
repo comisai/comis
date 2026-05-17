@@ -203,7 +203,7 @@ describe("getChannelCredentialTypes", () => {
     expect(getChannelCredentialTypes("signal")).toEqual([]);
   });
 
-  it("returns [] for irc", () => {
+  it("returns empty credential-types array for IRC channel which has no credential fields", () => {
     expect(getChannelCredentialTypes("irc")).toEqual([]);
   });
 
@@ -211,7 +211,7 @@ describe("getChannelCredentialTypes", () => {
     expect(getChannelCredentialTypes("unknown-channel")).toEqual([]);
   });
 
-  it("is case insensitive", () => {
+  it("getChannelCredentialTypes matches channel name case-insensitively against canonical channels", () => {
     expect(getChannelCredentialTypes("Telegram")).toEqual(["botToken"]);
     expect(getChannelCredentialTypes("SLACK")).toEqual([
       "botToken",

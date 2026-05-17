@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, systemNowMs } from "@comis/core";
 import type { TypedEventBus, EventMap, EventHandler } from "@comis/core";
 import type { HandlerRef } from "./index.js";
 
@@ -83,7 +83,7 @@ export function createDiagnosticCollector(deps: {
         id: randomUUID(),
         category,
         eventType: eventName,
-        timestamp: extracted.timestamp ?? Date.now(),
+        timestamp: extracted.timestamp ?? systemNowMs(),
         agentId: extracted.agentId,
         channelId: extracted.channelId,
         sessionKey: extracted.sessionKey,
@@ -157,7 +157,7 @@ export function createDiagnosticCollector(deps: {
       }
 
       if (sinceMs !== undefined) {
-        const cutoff = Date.now() - sinceMs;
+        const cutoff = systemNowMs() - sinceMs;
         filtered = filtered.filter((e) => e.timestamp >= cutoff);
       }
 
@@ -183,7 +183,7 @@ export function createDiagnosticCollector(deps: {
     },
 
     prune(maxAgeMs: number): number {
-      const cutoff = Date.now() - maxAgeMs;
+      const cutoff = systemNowMs() - maxAgeMs;
       let removed = 0;
       let i = 0;
       while (i < events.length) {

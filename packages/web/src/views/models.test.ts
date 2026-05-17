@@ -228,7 +228,7 @@ describe("IcModelsView", () => {
       ]);
     });
 
-    it("renders view title", () => {
+    it("renders the 'Models & Providers' view title inside the models view shadow-DOM", () => {
       const title = el.shadowRoot?.querySelector(".view-title");
       expect(title).not.toBeNull();
       expect(title?.textContent).toContain("Models & Providers");
@@ -476,7 +476,7 @@ describe("IcModelsView", () => {
       expect(content).not.toContain("gpt-4o");
     });
 
-    it("shows filter count", async () => {
+    it("shows filter-count badge inside models view when provider filter is set", async () => {
       priv(el)._modelsProviderFilter = "anthropic";
       await el.updateComplete;
 

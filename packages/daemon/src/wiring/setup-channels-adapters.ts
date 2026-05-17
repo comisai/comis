@@ -100,13 +100,20 @@ export async function bootstrapAdapters(deps: {
   if (channelConfig.telegram.enabled) {
     const token = (channelConfig.telegram.botToken as string | undefined) || getSecret("TELEGRAM_BOT_TOKEN");
     if (token) {
-      const validation = await validateBotToken(token);
+      // E2E redirection seam: when channels.telegram.apiRoot is set,
+      // point grammy's Bot constructor at the override URL. Production
+      // leaves it unset.
+      const telegramApiRoot = channelConfig.telegram.apiRoot && channelConfig.telegram.apiRoot.length > 0
+        ? channelConfig.telegram.apiRoot
+        : undefined;
+      const validation = await validateBotToken(token, telegramApiRoot);
       if (validation.ok) {
         const plugin = createTelegramPlugin({
           botToken: token,
           webhookSecret: channelConfig.telegram.webhookUrl ? (getSecret("TELEGRAM_WEBHOOK_SECRET") ?? undefined) : undefined,
           webhookUrl: channelConfig.telegram.webhookUrl,
           logger: channelsLogger,
+          ...(telegramApiRoot ? { apiRoot: telegramApiRoot } : {}),
         });
         tgPlugin = plugin as TelegramPluginHandle;
         adaptersByType.set("telegram", plugin.adapter);
@@ -125,11 +132,19 @@ export async function bootstrapAdapters(deps: {
   if (channelConfig.discord.enabled) {
     const token = (channelConfig.discord.botToken as string | undefined) || getSecret("DISCORD_BOT_TOKEN");
     if (token) {
-      const validation = await validateDiscordToken(token);
+      // E2E redirection seam: when discord.apiRoot is set, both validation
+      // (/users/@me) and runtime traffic (REST + gateway-discovery via
+      // /gateway/bot) hit the override URL. Production leaves it unset and
+      // discord.js uses https://discord.com/api.
+      const discordApiRoot = channelConfig.discord.apiRoot && channelConfig.discord.apiRoot.length > 0
+        ? channelConfig.discord.apiRoot
+        : undefined;
+      const validation = await validateDiscordToken(token, discordApiRoot);
       if (validation.ok) {
         const plugin = createDiscordPlugin({
           botToken: token,
           logger: channelsLogger,
+          ...(discordApiRoot ? { apiRoot: discordApiRoot } : {}),
         });
         adaptersByType.set("discord", plugin.adapter);
         channelCapabilities.set("discord", { supportsReactions: true, replyToMetaKey: "discordMessageId" });
@@ -150,7 +165,20 @@ export async function bootstrapAdapters(deps: {
     if (token) {
       const appToken = mode === "socket" ? ((channelConfig.slack.appToken as string | undefined) || getSecret("SLACK_APP_TOKEN")) : undefined;
       const signingSecret = mode === "http" ? ((channelConfig.slack.signingSecret as string | undefined) || getSecret("SLACK_SIGNING_SECRET")) : undefined;
-      const validation = await validateSlackCredentials({ botToken: token, mode, appToken, signingSecret });
+      // E2E redirection seam: when slack.apiRoot is set, both auth.test()
+      // validation and runtime WebClient traffic hit the override URL via
+      // clientOptions.slackApiUrl. Socket-mode WebSocket connections cannot
+      // be redirected — E2E tests use mode='http'.
+      const slackApiRoot = channelConfig.slack.apiRoot && channelConfig.slack.apiRoot.length > 0
+        ? channelConfig.slack.apiRoot
+        : undefined;
+      const validation = await validateSlackCredentials({
+        botToken: token,
+        mode,
+        appToken,
+        signingSecret,
+        ...(slackApiRoot ? { apiRoot: slackApiRoot } : {}),
+      });
       if (validation.ok) {
         const plugin = createSlackPlugin({
           botToken: token,
@@ -158,6 +186,7 @@ export async function bootstrapAdapters(deps: {
           appToken,
           signingSecret,
           logger: channelsLogger,
+          ...(slackApiRoot ? { apiRoot: slackApiRoot } : {}),
         });
         adaptersByType.set("slack", plugin.adapter);
         channelCapabilities.set("slack", { supportsReactions: true, replyToMetaKey: "slackTs" });
@@ -175,11 +204,18 @@ export async function bootstrapAdapters(deps: {
   if (channelConfig.whatsapp.enabled) {
     const authDir = channelConfig.whatsapp.authDir || safePath(safePath(os.homedir(), ".comis"), "whatsapp-auth");
     const validation = await validateWhatsAppAuth({ authDir, printQR: channelConfig.whatsapp.printQR });
+    // E2E redirection seam: when whatsapp.apiRoot is set, Baileys's
+    // WebSocket connects to the override URL instead of
+    // wss://web.whatsapp.com/ws/chat. Production leaves unset.
+    const whatsappApiRoot = channelConfig.whatsapp.apiRoot && channelConfig.whatsapp.apiRoot.length > 0
+      ? channelConfig.whatsapp.apiRoot
+      : undefined;
     if (validation.ok) {
       const plugin = createWhatsAppPlugin({
         authDir,
         printQR: channelConfig.whatsapp.printQR,
         logger: channelsLogger,
+        ...(whatsappApiRoot ? { apiRoot: whatsappApiRoot } : {}),
       });
       adaptersByType.set("whatsapp", plugin.adapter);
       channelCapabilities.set("whatsapp", { supportsReactions: true, replyToMetaKey: "whatsappMessageId" });
@@ -214,13 +250,24 @@ export async function bootstrapAdapters(deps: {
     const accessToken = (channelConfig.line.botToken as string | undefined) || getSecret("LINE_CHANNEL_ACCESS_TOKEN");
     const channelSecret = (channelConfig.line.channelSecret as string | undefined) || getSecret("LINE_CHANNEL_SECRET");
     if (accessToken && channelSecret) {
-      const validation = await validateLineCredentials({ channelAccessToken: accessToken, channelSecret });
+      // E2E redirection seam: when line.apiRoot is set, the LINE SDK
+      // client targets the override URL (instead of api.line.me).
+      // Production leaves unset.
+      const lineApiRoot = channelConfig.line.apiRoot && channelConfig.line.apiRoot.length > 0
+        ? channelConfig.line.apiRoot
+        : undefined;
+      const validation = await validateLineCredentials({
+        channelAccessToken: accessToken,
+        channelSecret,
+        ...(lineApiRoot ? { apiRoot: lineApiRoot } : {}),
+      });
       if (validation.ok) {
         const plugin = createLinePlugin({
           channelAccessToken: accessToken,
           channelSecret,
           webhookPath: channelConfig.line.webhookPath,
           logger: channelsLogger,
+          ...(lineApiRoot ? { apiRoot: lineApiRoot } : {}),
         });
         linePlugin = plugin as LinePluginHandle;
         adaptersByType.set("line", plugin.adapter);

@@ -74,7 +74,7 @@ describe("setupChannelHealthLogging", () => {
         currentState: "disconnected",
         connectionMode: "polling",
         hint: "Check adapter credentials and network connectivity",
-        errorKind: "connection",
+        errorKind: "network",
         submodule: "channel-health",
       });
     });
@@ -97,7 +97,7 @@ describe("setupChannelHealthLogging", () => {
         currentState: "errored",
         err: { message: "WebSocket closed unexpectedly" },
         hint: "Adapter reports error. Check adapter logs for root cause: WebSocket closed unexpectedly",
-        errorKind: "adapter",
+        errorKind: "platform",
         submodule: "channel-health",
       });
     });

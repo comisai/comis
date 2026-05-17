@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 /**
  * Extract the first text block's content from a tool result message.
@@ -32,9 +32,10 @@ export function isAlreadyOffloaded(msg: AgentMessage): boolean {
   return getToolResultText(msg).startsWith("[Tool result offloaded to disk:");
 }
 
-/** Check if a tool result has already been cleared/masked by observation masker.
- *  Recognizes both legacy "[Tool result cleared:" and new "[Tool result summarized:" prefixes. */
+/** Check if a tool result has already been masked by the observation masker.
+ *  Returns true iff the text starts with the canonical
+ *  `[Tool result summarized:` prefix. */
 export function isAlreadyMasked(msg: AgentMessage): boolean {
   const text = getToolResultText(msg);
-  return text.startsWith("[Tool result cleared:") || text.startsWith("[Tool result summarized:");
+  return text.startsWith("[Tool result summarized:");
 }

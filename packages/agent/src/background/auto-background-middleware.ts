@@ -10,8 +10,9 @@
  */
 import { suppressError } from "@comis/shared";
 import type { BackgroundTasksConfig } from "@comis/core";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-import type { BackgroundTaskManager, NotifyFn } from "./background-task-manager.js";
+import { systemSetTimeout, systemClearTimeout } from "@comis/core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { BackgroundTaskManager } from "./background-task-manager.js";
 import type { BackgroundTaskOrigin } from "./background-task-types.js";
 
 /**
@@ -57,7 +58,6 @@ export function wrapToolForAutoBackground(
   tool: ToolDefinition,
   manager: BackgroundTaskManager,
   config: BackgroundTasksConfig,
-  notifyFn: NotifyFn,
   originResolver: () => BackgroundTaskOrigin | undefined,
 ): ToolDefinition {
   // `exec` opts out of the generic auto-background wrapper to enforce
@@ -101,11 +101,11 @@ export function wrapToolForAutoBackground(
 
       // Race: tool result vs. timeout
       const timeoutPromise = new Promise<"timeout">((resolve) => {
-        const timer = setTimeout(() => resolve("timeout"), config.autoBackgroundMs);
+        const timer = systemSetTimeout(() => resolve("timeout"), config.autoBackgroundMs);
         // Clean up timer if tool finishes first (prevents leak)
         taskPromise.then(
-          () => clearTimeout(timer),
-          () => clearTimeout(timer),
+          () => systemClearTimeout(timer),
+          () => systemClearTimeout(timer),
         );
       });
 
@@ -142,8 +142,8 @@ export function wrapToolForAutoBackground(
       // Wire completion/failure handlers (fire-and-forget)
       suppressError(
         taskPromise.then(
-          (result) => manager.complete(taskId, result, notifyFn),
-          (error) => manager.fail(taskId, error, notifyFn),
+          (result) => manager.complete(taskId, result),
+          (error) => manager.fail(taskId, error),
         ),
         "background task completion handler",
       );

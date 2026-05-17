@@ -32,8 +32,8 @@ import {
   type SsrfGuardedFetcher,
 } from "@comis/skills";
 import type { LinkRunner, MediaPersistenceService, PersistedFile } from "@comis/skills";
-import { getModel } from "@mariozechner/pi-ai";
-import { safePath } from "@comis/core";
+import { getModel } from "@earendil-works/pi-ai";
+import { safePath, systemNowMs } from "@comis/core";
 import os from "node:os";
 
 // ---------------------------------------------------------------------------
@@ -369,7 +369,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           chars: fe.extractedChars,
           truncated: fe.truncated,
           durationMs: fe.durationMs,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
       }
 
@@ -400,7 +400,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
               trustLevel: "learned",
               source: { who: senderInfo, channel: channelType },
               tags: ["media-file", pf.mediaKind],
-              createdAt: Date.now(),
+              createdAt: systemNowMs(),
             });
             if (storeResult.ok && deps.embeddingQueue) {
               deps.embeddingQueue.enqueue(entryId, content);
@@ -425,7 +425,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
             sizeBytes: pf.sizeBytes,
             mediaKind: pf.mediaKind,
             agentId,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
         }
 

@@ -21,12 +21,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const packagesDir = resolve(__dirname, "../../packages");
 
-// Dynamic imports from dist to work with integration test alias resolution
+// Dynamic imports from dist to work with integration test alias resolution.
+// Source tree is regrouped under `src/skills/`, so dist paths are
+// `skills/dist/skills/{manifest,prompt}/`.
 const { SkillManifestSchema, SkillNameSchema, ComisNamespaceSchema } = await import(
-  resolve(packagesDir, "skills/dist/manifest/schema.js")
+  resolve(packagesDir, "skills/dist/skills/manifest/schema.js")
 );
 const { CONTENT_SCAN_RULES } = await import(
-  resolve(packagesDir, "skills/dist/prompt/content-scanner.js")
+  resolve(packagesDir, "skills/dist/skills/prompt/content-scanner.js")
 );
 
 // Read and parse the bundled Python validator. The validator is shipped with

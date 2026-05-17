@@ -6,16 +6,25 @@
  * on host connect and unsubscribing on host disconnect. This prevents
  * memory leaks and ensures clean component teardown.
  *
- * NOTE: This controller is scaffolding for future WebSocket push support.
- * It is not currently instantiated — only PollingController is used for badge counts.
+ * Child views consume events via `document.addEventListener(type, ...)`
+ * because `EventDispatcher.deliver()` re-dispatches every SSE event as a
+ * document CustomEvent (see EventDispatcher channel 2). Listening on
+ * `document` is also what makes test event injection
+ * (`document.dispatchEvent(new CustomEvent(...))`) work end-to-end without
+ * needing access to the dispatcher instance.
  */
 
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import type { EventDispatcher } from "./event-dispatcher.js";
 
 /**
- * ReactiveController that bridges SSE events from EventDispatcher
- * to a Lit host component's lifecycle.
+ * ReactiveController that bridges SSE events to a Lit host component's
+ * lifecycle by listening on `document` (the EventDispatcher's second
+ * delivery channel). The `eventDispatcher` parameter is retained for API
+ * compatibility with the ~14 call sites that still pass it; it is unused
+ * inside this controller because the dispatcher already re-fires every
+ * event on `document`. The parameter is not stored as a field so it does
+ * not pin the dispatcher reference for the controller's lifetime.
  *
  * Usage:
  * ```ts
@@ -27,32 +36,37 @@ import type { EventDispatcher } from "./event-dispatcher.js";
  */
 export class SseController implements ReactiveController {
   private readonly _host: ReactiveControllerHost;
-  private readonly _eventDispatcher: EventDispatcher;
   private readonly _events: Record<string, (data: unknown) => void>;
-  private _unsubs: Array<() => void> = [];
+  private readonly _docHandlers: Array<{ type: string; handler: (e: Event) => void }> = [];
 
   constructor(
     host: ReactiveControllerHost,
-    eventDispatcher: EventDispatcher,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- API-stability shim; dispatcher already re-fires on `document`
+    _eventDispatcher: EventDispatcher,
     events: Record<string, (data: unknown) => void>,
   ) {
     this._host = host;
-    this._eventDispatcher = eventDispatcher;
     this._events = events;
     this._host.addController(this);
   }
 
   hostConnected(): void {
     for (const [type, handler] of Object.entries(this._events)) {
-      const unsub = this._eventDispatcher.addEventListener(type, handler);
-      this._unsubs.push(unsub);
+      const docHandler = (e: Event): void => {
+        // CustomEvent carries the event payload on .detail; non-custom
+        // listeners receive {} so handlers stay defensive.
+        const detail = (e as CustomEvent).detail;
+        handler(detail);
+      };
+      document.addEventListener(type, docHandler);
+      this._docHandlers.push({ type, handler: docHandler });
     }
   }
 
   hostDisconnected(): void {
-    for (const unsub of this._unsubs) {
-      unsub();
+    for (const { type, handler } of this._docHandlers) {
+      document.removeEventListener(type, handler);
     }
-    this._unsubs = [];
+    this._docHandlers.length = 0;
   }
 }

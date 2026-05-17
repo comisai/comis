@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: media-resolver throws inside fromPromise(); converted to Result.err.
 /**
  * LINE MediaResolverPort adapter.
  *
@@ -14,6 +15,7 @@
 import type { Attachment, MediaResolverPort, ResolvedMedia } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,7 +58,7 @@ export function createLineResolver(deps: LineResolverDeps): MediaResolverPort {
           }
 
           // Download via LINE blob client
-          const startMs = Date.now();
+          const startMs = systemNowMs();
           let buffer: Buffer;
           try {
             buffer = await deps.getBlobContent(messageId);
@@ -76,7 +78,7 @@ export function createLineResolver(deps: LineResolverDeps): MediaResolverPort {
             }
             throw downloadErr;
           }
-          const durationMs = Date.now() - startMs;
+          const durationMs = systemNowMs() - startMs;
 
           // Reject downloads exceeding size limit
           if (buffer.length > deps.maxBytes) {

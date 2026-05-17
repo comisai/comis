@@ -46,7 +46,7 @@ describe("wrapInEnvelope", () => {
     expect(result).toMatch(/^user123 \(2:35\sPM\):\nHello$/);
   });
 
-  it("formats in 24h mode", () => {
+  it("formats envelope timestamp as 14:35 when timeFormat is 24h mode", () => {
     const msg = makeMsg();
     const config = makeConfig({ timeFormat: "24h" });
     const result = wrapInEnvelope(msg, config);

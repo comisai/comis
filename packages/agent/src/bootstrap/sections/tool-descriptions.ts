@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: bootstrap-time invariant assertion (LEAN_TOOL_DESCRIPTIONS / TOOL_SUMMARIES / NATIVE_TOOLS keys must match); consumed at daemon.ts bootstrap catch boundary.
 /**
  * Lean tool descriptions (LEAN_TOOL_DESCRIPTIONS) and summaries (TOOL_SUMMARIES)
  * for the dual-summary description layer.
@@ -20,7 +21,7 @@
 
 import type { ModelTier } from "./tooling-sections.js";
 import { getToolMetadata } from "@comis/core";
-import { getProviders } from "@mariozechner/pi-ai";
+import { getProviders } from "@earendil-works/pi-ai";
 
 // ---------------------------------------------------------------------------
 // Live native-catalog provider list

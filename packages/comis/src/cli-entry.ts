@@ -11,9 +11,10 @@
  */
 
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { safePath } from "@comis/core";
 
 // Resolve @comis/cli index via ESM, then derive cli.js from the same dist/ dir
 const cliIndexUrl = import.meta.resolve("@comis/cli");
 const cliDistDir = dirname(fileURLToPath(cliIndexUrl));
-await import(join(cliDistDir, "cli.js"));
+await import(safePath(cliDistDir, "cli.js"));

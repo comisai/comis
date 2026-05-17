@@ -3,9 +3,41 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { safePath, type BackgroundTaskOrigin } from "@comis/core";
+import { safePath, type BackgroundTaskOrigin, type ClockPort, type TimerPort, type TimerHandle } from "@comis/core";
 import { createBackgroundTaskManager } from "@comis/agent";
 import { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
+
+// ---------------------------------------------------------------------------
+// Lightweight port wrappers that delegate to globals.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 /**
  * Recording event bus that captures handler subscription order so tests
@@ -289,6 +321,8 @@ describe("setupBackgroundCompletionRunner", () => {
         dataDir,
         eventBus,
         logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+        clock: testClock,
+        timers: testTimers,
         maxPerAgent: 5,
         maxTotal: 20,
         maxBackgroundDurationMs: 60_000,
@@ -312,10 +346,10 @@ describe("setupBackgroundCompletionRunner", () => {
     });
 
     it("recovered task WITHOUT preserved state DOES re-emit background_task:failed (regression)", () => {
-      // Seed a task file representing the legacy / pre-Phase-2 case (no
-      // dispatchState on disk). The manager assigns the default
-      // dispatchState='pending' on recovery, and re-emits because the
-      // dispatcher must be given a chance to route post-restart.
+      // Seed a task file representing the legacy case (no dispatchState on
+      // disk). The manager assigns the default dispatchState='pending' on
+      // recovery, and re-emits because the dispatcher must be given a chance
+      // to route post-restart.
       const origin = buildOrigin({ agentId: "regression-agent" });
       const seeded: Record<string, unknown> = {
         id: "regression-task-1",
@@ -325,7 +359,7 @@ describe("setupBackgroundCompletionRunner", () => {
         completedAt: Date.now() - 4000,
         error: "Daemon restarted while task was running",
         origin,
-        // No dispatchState — represents pre-Phase-2 file format.
+        // No dispatchState — represents legacy file format.
       };
       const agentDir = safePath(dataDir, origin.agentId);
       mkdirSync(agentDir, { recursive: true });
@@ -345,6 +379,8 @@ describe("setupBackgroundCompletionRunner", () => {
         dataDir,
         eventBus,
         logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+        clock: testClock,
+        timers: testTimers,
         maxPerAgent: 5,
         maxTotal: 20,
         maxBackgroundDurationMs: 60_000,

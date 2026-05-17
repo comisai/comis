@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { normalizePollDurationHours } from "@comis/core";
@@ -17,8 +17,18 @@ import {
   ActivityType,
   ChannelType,
   type Client,
+  type GuildChannelManager,
   type TextChannel,
 } from "discord.js";
+// Discord channel narrowing helpers replace untyped-cast call sites.
+// asTextLike returns a structural-subset DiscordTextLikeChannel for
+// text-like channels (messages/send/edit/delete/setTopic/setRateLimitPerUser/
+// sendTyping/threads.*); asThreadInfo returns DiscordThreadInfo for the
+// threadList iteration sites. The DiscordTextLikeChannel type is imported
+// for one site (channel_info) that extends it with optional read-only
+// metadata fields (name/topic) at a single local-projection cast site.
+import { asTextLike, asThreadInfo } from "./discord-adapter-types.js";
+import type { DiscordTextLikeChannel, DiscordThreadInfo } from "./discord-adapter-types.js";
 
 /**
  * Execute a Discord platform action by delegating to the appropriate
@@ -36,8 +46,9 @@ export async function executeDiscordAction(
         const channelId = String(params.channel_id);
         const messageId = String(params.message_id);
         const channel = await client.channels.fetch(channelId);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const msg = await (channel as any).messages.fetch(messageId);
+        const tc = asTextLike(channel);
+        if (!tc) return err(new Error(`Channel ${channelId} is not a text-based channel`));
+        const msg = await tc.messages.fetch(messageId);
         await msg.pin();
         return ok({ pinned: true, channelId, messageId });
       }
@@ -45,8 +56,9 @@ export async function executeDiscordAction(
         const channelId = String(params.channel_id);
         const messageId = String(params.message_id);
         const channel = await client.channels.fetch(channelId);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const msg = await (channel as any).messages.fetch(messageId);
+        const tc = asTextLike(channel);
+        if (!tc) return err(new Error(`Channel ${channelId} is not a text-based channel`));
+        const msg = await tc.messages.fetch(messageId);
         await msg.unpin();
         return ok({ unpinned: true, channelId, messageId });
       }
@@ -98,16 +110,18 @@ export async function executeDiscordAction(
         const channelId = String(params.channel_id);
         const topic = String(params.topic);
         const channel = await client.channels.fetch(channelId);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (channel as any).setTopic(topic);
+        const tc = asTextLike(channel);
+        if (!tc) return err(new Error(`Channel ${channelId} is not a text-based channel`));
+        await tc.setTopic(topic);
         return ok({ topicSet: true, channelId, topic });
       }
       case "set_slowmode": {
         const channelId = String(params.channel_id);
         const seconds = Number(params.seconds);
         const channel = await client.channels.fetch(channelId);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (channel as any).setRateLimitPerUser(seconds);
+        const tc = asTextLike(channel);
+        if (!tc) return err(new Error(`Channel ${channelId} is not a text-based channel`));
+        await tc.setRateLimitPerUser(seconds);
         return ok({ slowmodeSet: true, channelId, seconds });
       }
       case "guild_info": {
@@ -118,15 +132,26 @@ export async function executeDiscordAction(
           name: guild.name,
           memberCount: guild.memberCount,
           ownerId: guild.ownerId,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          iconURL: (guild as any).iconURL?.() ?? null,
+          // discord.js@14.x types Guild.iconURL() correctly — no cast needed.
+          iconURL: guild.iconURL() ?? null,
         });
       }
       case "channel_info": {
         const channelId = String(params.channel_id);
         const channel = await client.channels.fetch(channelId);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const ch = channel as any;
+        const tc = asTextLike(channel);
+        if (!tc) return err(new Error(`Channel ${channelId} is not a text-based channel`));
+        // Read-only metadata projection — discord.js@14.x text-like channels
+        // (TextChannel, NewsChannel, ThreadChannel, DMChannel) all have `name`
+        // on GuildChannel / DMChannel and `topic: string | null` on
+        // BaseGuildTextChannel (DMs / forum threads omit topic — handled via
+        // the `undefined` check below). The structural projection is local to
+        // this site; the canonical DiscordTextLikeChannel contract intentionally
+        // omits these read-only metadata fields.
+        const ch = tc as DiscordTextLikeChannel & {
+          readonly name?: string;
+          readonly topic?: string | null;
+        };
         const info: Record<string, unknown> = {
           id: ch.id,
           name: ch.name,
@@ -178,17 +203,15 @@ export async function executeDiscordAction(
             : 1440;
 
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textCh = channel as any;
-        if (!textCh.threads?.create) {
+        if (!tc.threads?.create) {
           return err(new Error(`Channel ${channelId} does not support threads`));
         }
 
-        const thread = await textCh.threads.create({
+        const thread = await tc.threads.create({
           name,
           autoArchiveDuration,
           ...(messageId ? { startMessage: messageId } : {}),
@@ -205,31 +228,24 @@ export async function executeDiscordAction(
         const channelId = String(params.channel_id);
 
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textCh = channel as any;
-        if (!textCh.threads?.fetchActive) {
+        if (!tc.threads?.fetchActive) {
           return err(new Error(`Channel ${channelId} does not support threads`));
         }
 
-        const fetched = await textCh.threads.fetchActive();
-        const threads: Array<Record<string, unknown>> = [];
+        const fetched = await tc.threads.fetchActive();
+        const threads: DiscordThreadInfo[] = [];
         for (const [, t] of fetched.threads) {
-          threads.push({
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            id: (t as any).id,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            name: (t as any).name,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            archived: (t as any).archived ?? false,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            memberCount: (t as any).memberCount ?? 0,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            messageCount: (t as any).messageCount ?? 0,
-          });
+          // asThreadInfo() returns null for thread objects with unexpected
+          // shape (missing/wrong-typed id/name/archived/memberCount/messageCount).
+          // Skip those rather than emitting partial / `?? 0` placeholders —
+          // the helper enforces a strict per-field type guard.
+          const info = asThreadInfo(t);
+          if (!info) continue;
+          threads.push(info);
         }
 
         logger.debug(
@@ -247,9 +263,14 @@ export async function executeDiscordAction(
         if (!channel || !channel.isThread()) {
           return err(new Error(`Channel ${threadId} is not a thread`));
         }
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const sent = await (channel as any).send({ content: text });
+        // A thread channel is also a text-like channel — asTextLike's runtime
+        // isTextBased() check covers thread channels too (discord.js@14.x
+        // AnyThreadChannel implements TextBasedChannel).
+        const tc = asTextLike(channel);
+        if (!tc) {
+          return err(new Error(`Channel ${threadId} is not a text-based thread channel`));
+        }
+        const sent = await tc.send({ content: text });
 
         logger.debug(
           { channelType: "discord", toolName: "discord_action", action: "threadReply" },
@@ -269,17 +290,27 @@ export async function executeDiscordAction(
         const parentId = params.parent_id ? String(params.parent_id) : undefined;
         const topic = params.topic ? String(params.topic) : undefined;
 
-        const channelTypeMap: Record<string, number> = {
+        // Narrow channel-type keys to discord.js's `GuildChannelTypes` so the
+        // `GuildChannelManager.create<Type>` overload resolves to its specific
+        // `MappedGuildChannelTypes[Type]` return (rather than the loose
+        // non-generic overload that returns `unknown` for arbitrary numeric `type`).
+        const channelTypeMap = {
           text: ChannelType.GuildText,
           voice: ChannelType.GuildVoice,
           category: ChannelType.GuildCategory,
           announcement: ChannelType.GuildAnnouncement,
-        };
-        const mappedType = channelTypeMap[typeStr] ?? ChannelType.GuildText;
+        } as const;
+        type SupportedTypeKey = keyof typeof channelTypeMap;
+        const mappedType =
+          typeStr in channelTypeMap
+            ? channelTypeMap[typeStr as SupportedTypeKey]
+            : ChannelType.GuildText;
 
         const guild = await client.guilds.fetch(guildId);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const newChannel = await (guild.channels as any).create({
+        // discord.js@14.x types guild.channels.create() via GuildChannelManager.
+        // The cast narrows the polymorphic union (which can be a partial fetch
+        // collection in some code paths) to the manager's create-supporting shape.
+        const newChannel = await (guild.channels as GuildChannelManager).create({
           name,
           type: mappedType,
           ...(parentId ? { parent: parentId } : {}),
@@ -300,14 +331,17 @@ export async function executeDiscordAction(
         if (!channel) {
           return err(new Error(`Channel ${channelId} not found`));
         }
+        const tc = asTextLike(channel);
+        if (!tc) {
+          return err(new Error(`Channel ${channelId} is not a text-based channel`));
+        }
 
         const editOptions: Record<string, unknown> = {};
         if (params.name !== undefined) editOptions.name = String(params.name);
         if (params.topic !== undefined) editOptions.topic = String(params.topic);
         if (params.position !== undefined) editOptions.position = Number(params.position);
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (channel as any).edit(editOptions);
+        await tc.edit(editOptions);
 
         logger.debug(
           { channelType: "discord", toolName: "discord_action", action: "channelEdit" },
@@ -323,9 +357,12 @@ export async function executeDiscordAction(
         if (!channel) {
           return err(new Error(`Channel ${channelId} not found`));
         }
+        const tc = asTextLike(channel);
+        if (!tc) {
+          return err(new Error(`Channel ${channelId} is not a text-based channel`));
+        }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (channel as any).delete("Agent-requested channel deletion");
+        await tc.delete("Agent-requested channel deletion");
 
         logger.info(
           { channelType: "discord", action: "channelDelete", chatId: channelId },
@@ -398,9 +435,9 @@ export async function executeDiscordAction(
       case "sendTyping": {
         const chatId = String(params.chatId);
         const channel = await client.channels.fetch(chatId);
-        if (channel?.isTextBased()) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (channel as any).sendTyping();
+        const tc = asTextLike(channel);
+        if (tc) {
+          await tc.sendTyping();
         }
         return ok({ typing: true });
       }

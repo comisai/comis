@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { ContextPruningConfigSchema, SourceGateConfigSchema } from "./schema-agent.js";
+import { ContextPruningConfigSchema, SourceGateConfigSchema } from "./schema-agent/index.js";
 
 // ---------------------------------------------------------------------------
 // ContextPruningConfigSchema

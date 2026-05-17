@@ -21,6 +21,7 @@ import { renderMarkdown, sanitizeHtml } from "../../components/domain/ic-chat-me
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/nav/ic-breadcrumb.js";
 import type { BreadcrumbItem } from "../../components/nav/ic-breadcrumb.js";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 import "../../components/feedback/ic-confirm-dialog.js";
 import "../../components/feedback/ic-toast.js";
 import "../../components/shell/ic-skeleton-view.js";
@@ -40,7 +41,7 @@ const STATUS_COLORS: Record<string, string> = {
 function formatRelativeTime(epochMs: number | undefined): string {
   if (!epochMs) return "Never";
 
-  const diff = Date.now() - epochMs;
+  const diff = systemNowMs() - epochMs;
   if (diff < 0) return "just now";
 
   const seconds = Math.floor(diff / 1000);
@@ -55,7 +56,7 @@ function formatRelativeTime(epochMs: number | undefined): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
 
-  return new Date(epochMs).toISOString().slice(0, 10);
+  return systemDateFrom(epochMs).toISOString().slice(0, 10);
 }
 
 /** Clean up a nodeId into a display-friendly name: replace underscores with spaces, title case. */
@@ -424,7 +425,7 @@ export class IcPipelineHistoryDetail extends LitElement {
     }
 
     const d = this._detail;
-    const dateMs = new Date(d.date).getTime();
+    const dateMs = systemDateFrom(d.date).getTime();
     const color = STATUS_COLORS[d.status] ?? "#6b7280";
     const statusLabel = d.status.charAt(0).toUpperCase() + d.status.slice(1);
 

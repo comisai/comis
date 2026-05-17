@@ -7,8 +7,8 @@
  * executeAgent/sendToChannel boundaries. No daemon, no LLM, no network.
  *
  * Covers:
- * - TEST-06: Full pipeline (spawn -> condense -> cast -> announce -> lifecycle hooks)
- * - TEST-07: Concurrent spawn limit enforcement (children + depth + graph bypass)
+ * - Full pipeline (spawn -> condense -> cast -> announce -> lifecycle hooks)
+ * - Concurrent spawn limit enforcement (children + depth + graph bypass)
  * - Lifecycle hook failure graceful degradation
  *
  * @module
@@ -22,16 +22,46 @@ import { join } from "node:path";
 
 import {
   createSubAgentRunner,
-  type SubAgentRunnerDeps,
-} from "@comis/daemon";
-
-import {
   createResultCondenser,
   createNarrativeCaster,
   createLifecycleHooks,
+  type SubAgentRunnerDeps,
 } from "@comis/agent";
 
 import { TypedEventBus } from "@comis/core";
+import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Lightweight port wrappers that delegate to globals.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 // ---------------------------------------------------------------------------
 // Shared temp directory
@@ -124,6 +154,8 @@ function buildIntegrationDeps(overrides?: Partial<SubAgentRunnerDeps>): SubAgent
     resultCondenser: condenser,
     narrativeCaster,
     lifecycleHooks,
+    clock: testClock,
+    timers: testTimers,
     ...overrides,
   } as SubAgentRunnerDeps & { eventBus: TypedEventBus };
 }
@@ -135,7 +167,7 @@ function buildIntegrationDeps(overrides?: Partial<SubAgentRunnerDeps>): SubAgent
 describe("subagent pipeline integration", () => {
 
   // -------------------------------------------------------------------------
-  // TEST-06: Full pipeline
+  // Full pipeline
   // -------------------------------------------------------------------------
 
   it("full pipeline: spawn -> condense -> cast -> announce -> lifecycle hooks", async () => {
@@ -250,7 +282,7 @@ describe("subagent pipeline integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // TEST-07: Concurrent spawn children limit enforcement
+  // Concurrent spawn children limit enforcement
   // -------------------------------------------------------------------------
 
   it("concurrent spawns: children limit enforcement", () => {
@@ -393,7 +425,7 @@ describe("subagent pipeline integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Graph spawns bypass children limit (LIMIT-05)
+  // Graph spawns bypass children limit
   // -------------------------------------------------------------------------
 
   it("graph spawns bypass children limit", () => {

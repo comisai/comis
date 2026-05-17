@@ -31,7 +31,7 @@ describe("createDebateDriver", () => {
   const driver = createDebateDriver();
 
   describe("metadata", () => {
-    it("has typeId 'debate'", () => {
+    it("declares typeId 'debate' for DebateDriver per graph-driver contract", () => {
       expect(driver.typeId).toBe("debate");
     });
 

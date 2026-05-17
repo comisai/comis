@@ -2,6 +2,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TimeoutError } from "@comis/shared";
 import { withPromptTimeout, withResettablePromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
+import type { TimerPort, TimerHandle } from "@comis/core";
+
+// Test TimerPort that delegates to globals.
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() { if (cancelled) return; cancelled = true; clearTimeout(t); },
+    unref() { if (cancelled || unrefCalled) return; unrefCalled = true; t.unref(); },
+  };
+}
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 describe("PromptTimeoutError", () => {
   it("extends TimeoutError", () => {
@@ -32,7 +48,7 @@ describe("withPromptTimeout", () => {
       setTimeout(() => resolve("result"), 10);
     });
 
-    const resultPromise = withPromptTimeout(promise, 1000, vi.fn());
+    const resultPromise = withPromptTimeout(promise, 1000, vi.fn(), testTimers);
 
     await vi.advanceTimersByTimeAsync(10);
 
@@ -45,7 +61,7 @@ describe("withPromptTimeout", () => {
       setTimeout(() => resolve("too late"), 10_000);
     });
 
-    const resultPromise = withPromptTimeout(promise, 50, vi.fn());
+    const resultPromise = withPromptTimeout(promise, 50, vi.fn(), testTimers);
 
     // Attach catch BEFORE advancing timers to prevent unhandled rejection
     const caught = resultPromise.catch((e: unknown) => e);
@@ -63,7 +79,7 @@ describe("withPromptTimeout", () => {
       setTimeout(() => resolve("too late"), 10_000);
     });
 
-    const resultPromise = withPromptTimeout(promise, 50, abort);
+    const resultPromise = withPromptTimeout(promise, 50, abort, testTimers);
     const caught = resultPromise.catch((e: unknown) => e);
 
     await vi.advanceTimersByTimeAsync(50);
@@ -80,7 +96,7 @@ describe("withPromptTimeout", () => {
       setTimeout(() => resolve("fast"), 10);
     });
 
-    const resultPromise = withPromptTimeout(promise, 1000, vi.fn());
+    const resultPromise = withPromptTimeout(promise, 1000, vi.fn(), testTimers);
 
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
@@ -97,7 +113,7 @@ describe("withPromptTimeout", () => {
       setTimeout(() => reject(new Error("late rejection")), 200);
     });
 
-    const resultPromise = withPromptTimeout(promise, 50, vi.fn());
+    const resultPromise = withPromptTimeout(promise, 50, vi.fn(), testTimers);
     const caught = resultPromise.catch((e: unknown) => e);
 
     await vi.advanceTimersByTimeAsync(50);
@@ -117,7 +133,7 @@ describe("withPromptTimeout", () => {
       setTimeout(() => resolve("too late"), 10_000);
     });
 
-    const resultPromise = withPromptTimeout(promise, 50, abort);
+    const resultPromise = withPromptTimeout(promise, 50, abort, testTimers);
     const caught = resultPromise.catch((e: unknown) => e);
 
     await vi.advanceTimersByTimeAsync(50);
@@ -135,7 +151,7 @@ describe("withPromptTimeout", () => {
       setTimeout(() => resolve("too late"), 10_000);
     });
 
-    const resultPromise = withPromptTimeout(promise, 50, abort);
+    const resultPromise = withPromptTimeout(promise, 50, abort, testTimers);
     const caught = resultPromise.catch((e: unknown) => e);
 
     await vi.advanceTimersByTimeAsync(50);
@@ -161,7 +177,7 @@ describe("withResettablePromptTimeout", () => {
       setTimeout(() => resolve("result"), 10);
     });
 
-    const { promise: racedPromise } = withResettablePromptTimeout(promise, 1000, vi.fn());
+    const { promise: racedPromise } = withResettablePromptTimeout(promise, 1000, vi.fn(), testTimers);
 
     await vi.advanceTimersByTimeAsync(10);
 
@@ -175,7 +191,7 @@ describe("withResettablePromptTimeout", () => {
       setTimeout(() => resolve("too late"), 10_000);
     });
 
-    const { promise: racedPromise } = withResettablePromptTimeout(promise, 50, abort);
+    const { promise: racedPromise } = withResettablePromptTimeout(promise, 50, abort, testTimers);
     const caught = racedPromise.catch((e: unknown) => e);
 
     await vi.advanceTimersByTimeAsync(50);
@@ -192,7 +208,7 @@ describe("withResettablePromptTimeout", () => {
     });
 
     // Timeout is 100ms -- without reset, promise at 150ms would timeout
-    const { promise: racedPromise, resetTimer } = withResettablePromptTimeout(promise, 100, abort);
+    const { promise: racedPromise, resetTimer } = withResettablePromptTimeout(promise, 100, abort, testTimers);
 
     // At 80ms, reset the timer. New deadline: 80+100=180ms
     await vi.advanceTimersByTimeAsync(80);
@@ -212,7 +228,7 @@ describe("withResettablePromptTimeout", () => {
       setTimeout(() => resolve("too late"), 10_000);
     });
 
-    const { promise: racedPromise, resetTimer } = withResettablePromptTimeout(promise, 50, abort);
+    const { promise: racedPromise, resetTimer } = withResettablePromptTimeout(promise, 50, abort, testTimers);
     const caught = racedPromise.catch((e: unknown) => e);
 
     // Timeout fires at 50ms
@@ -233,7 +249,7 @@ describe("withResettablePromptTimeout", () => {
     });
 
     // Timeout 100ms -- needs two resets to survive 200ms promise
-    const { promise: racedPromise, resetTimer } = withResettablePromptTimeout(promise, 100, abort);
+    const { promise: racedPromise, resetTimer } = withResettablePromptTimeout(promise, 100, abort, testTimers);
 
     // Reset at 80ms -> new deadline 180ms
     await vi.advanceTimersByTimeAsync(80);

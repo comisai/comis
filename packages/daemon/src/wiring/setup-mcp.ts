@@ -95,7 +95,7 @@ function resolveDefaultMcpCwd(
         dir,
         err: err instanceof Error ? err.message : String(err),
         hint: "Falling back to workspace root cwd for MCP server",
-        errorKind: "io" as const,
+        errorKind: "internal" as const,
       },
       "Failed to create MCP server output dir",
     );

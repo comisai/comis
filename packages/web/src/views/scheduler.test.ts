@@ -89,20 +89,17 @@ async function flush(el: IcSchedulerView): Promise<void> {
 }
 
 function createMockEventDispatcher(): EventDispatcher & { _fire: (type: string, data?: unknown) => void } {
-  const handlers = new Map<string, Set<(data: unknown) => void>>();
+  // SseController listens for SSE events on `document` (EventDispatcher's
+  // channel-2 delivery path). The mock dispatcher therefore just needs to
+  // satisfy the EventDispatcher shape; _fire routes via document.dispatchEvent
+  // so SseController-driven views observe the event.
   return {
     connected: true,
     start: vi.fn(),
     stop: vi.fn(),
-    addEventListener(type: string, handler: (data: unknown) => void): () => void {
-      if (!handlers.has(type)) handlers.set(type, new Set());
-      handlers.get(type)!.add(handler);
-      return () => {
-        handlers.get(type)?.delete(handler);
-      };
-    },
+    addEventListener: vi.fn(() => vi.fn()),
     _fire(type: string, data: unknown = {}) {
-      handlers.get(type)?.forEach((h) => h(data));
+      document.dispatchEvent(new CustomEvent(type, { detail: data }));
     },
   };
 }
@@ -140,7 +137,7 @@ afterEach(() => {
 /* ------------------------------------------------------------------ */
 
 describe("IcSchedulerView", () => {
-  it("1 - renders 3 tabs", async () => {
+  it("renders ic-tabs with 3 tab elements inside the IcSchedulerView shadow-DOM", async () => {
     const rpc = createSchedulerMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);

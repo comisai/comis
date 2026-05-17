@@ -7,7 +7,7 @@ const { mockGetModel, mockCompleteSimple } = vi.hoisted(() => ({
   mockCompleteSimple: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", () => ({
   getModel: mockGetModel,
   completeSimple: mockCompleteSimple,
 }));

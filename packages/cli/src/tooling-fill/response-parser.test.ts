@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { parseFillResponse } from "./response-parser.js";
 
-describe("parseFillResponse — happy paths", () => {
+describe("parseFillResponse — successful parse cases for valid AI tool responses", () => {
   it("parses the canonical 2-line contract", () => {
     const raw = [
       "DESCRIPTION: Yahoo Finance market data MCP",

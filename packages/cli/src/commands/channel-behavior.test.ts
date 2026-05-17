@@ -20,10 +20,16 @@ import {
   getSpyOutput,
 } from "../test-helpers.js";
 
-// Mock withClient from rpc-client at module level for ESM hoisting
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// Mock withClient from rpc-client at module level for ESM hoisting.
+// importOriginal-based mock so callTyped resolves to the real wrapper
+// while withClient is mocked.
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 // Mock withSpinner to pass-through (no actual ora spinner in tests)
 vi.mock("../output/spinner.js", () => ({
@@ -64,7 +70,7 @@ describe("channel status displays all configured channels", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", CHANNELS_DATA)
+        .onCall("config.read", CHANNELS_DATA)
         .build();
       return fn(mockClient);
     });
@@ -115,7 +121,7 @@ describe("channel status --format json outputs valid JSON", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", CHANNELS_DATA)
+        .onCall("config.read", CHANNELS_DATA)
         .build();
       return fn(mockClient);
     });
@@ -184,7 +190,7 @@ describe("channel status color-codes status", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", CHANNELS_DATA_WITH_DISABLED)
+        .onCall("config.read", CHANNELS_DATA_WITH_DISABLED)
         .build();
       return fn(mockClient);
     });
@@ -283,7 +289,7 @@ describe("channel status shows no channels message", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", {})
+        .onCall("config.read", {})
         .build();
       return fn(mockClient);
     });

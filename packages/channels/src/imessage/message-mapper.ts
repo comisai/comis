@@ -13,6 +13,7 @@
 import type { NormalizedMessage } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { buildImsgAttachments, type ImsgAttachment } from "./media-handler.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -70,15 +71,15 @@ export interface ImsgNotificationPayload {
 export function mapImsgToNormalized(params: ImsgMessageParams): NormalizedMessage {
   const chatId = params.chatId != null ? String(params.chatId) : (params.chatGuid ?? "unknown");
 
-  // Resolve timestamp: prefer explicit timestamp, fall back to createdAt, then Date.now()
+  // Resolve timestamp: prefer explicit timestamp, fall back to createdAt, then systemNowMs()
   let timestamp: number;
   if (typeof params.timestamp === "number" && params.timestamp > 0) {
     timestamp = params.timestamp;
   } else if (params.createdAt) {
     const parsed = Date.parse(params.createdAt);
-    timestamp = Number.isNaN(parsed) ? Date.now() : parsed;
+    timestamp = Number.isNaN(parsed) ? systemNowMs() : parsed;
   } else {
-    timestamp = Date.now();
+    timestamp = systemNowMs();
   }
 
   const metadata: Record<string, unknown> = {

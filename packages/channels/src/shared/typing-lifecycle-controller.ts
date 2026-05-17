@@ -23,6 +23,7 @@
  */
 
 import type { TypingController } from "./typing-controller.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,7 +79,7 @@ export function createTypingLifecycleController(
   function maybeStop(): void {
     if (runComplete && dispatchIdle) {
       if (graceTimer !== null) {
-        clearTimeout(graceTimer);
+        systemClearTimeout(graceTimer);
         graceTimer = null;
       }
       controller.stop();
@@ -97,7 +98,7 @@ export function createTypingLifecycleController(
       // If dispatch-idle hasn't arrived yet and the controller is still active,
       // start the grace timer as a safety net.
       if (!dispatchIdle && controller.isActive) {
-        graceTimer = setTimeout(() => {
+        graceTimer = systemSetTimeout(() => {
           if (controller.isActive) {
             logger?.warn(
               {
@@ -120,7 +121,7 @@ export function createTypingLifecycleController(
 
     dispose(): void {
       if (graceTimer !== null) {
-        clearTimeout(graceTimer);
+        systemClearTimeout(graceTimer);
         graceTimer = null;
       }
       if (controller.isActive) {

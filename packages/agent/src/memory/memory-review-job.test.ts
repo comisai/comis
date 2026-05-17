@@ -5,7 +5,7 @@ import type { MemoryReviewConfig } from "@comis/core";
 import type { MemoryReviewDeps } from "./memory-review-job.js";
 
 // Mock pi-ai
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", () => ({
   getModel: vi.fn(() => ({ id: "mock-model" })),
   completeSimple: vi.fn(),
 }));
@@ -18,7 +18,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import { runMemoryReview } from "./memory-review-job.js";
-import { completeSimple, getModel } from "@mariozechner/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import { readFile, writeFile, rename } from "node:fs/promises";
 
 function makeConfig(overrides: Partial<MemoryReviewConfig> = {}): MemoryReviewConfig {
@@ -341,11 +341,18 @@ describe("runMemoryReview", () => {
     }));
   });
 
-  it("filters sessions by agentId prefix in session key", async () => {
+  // The "filters sessions by agentId prefix in session key" test was removed
+  // when the session-key formatter stopped emitting `agent:<agentId>:` (no
+  // live session keys carry the prefix anymore). Memory review now iterates
+  // every session in the agent's tenant; per-agent isolation happens
+  // out-of-band via the per-agent workspace-scoped watermark file.
+
+  it("reviews all sessions in the tenant (no agent-prefix filter)", async () => {
     const deps = makeDeps({ agentId: "my-agent" });
     (deps.sessionStore.listDetailed as Mock).mockReturnValue([
-      makeSession("agent:my-agent:default:user1:ch1", 10, 2000),
-      makeSession("agent:other-agent:default:user1:ch1", 10, 3000),
+      // Both sessions are in the same tenant; no agent prefix in either key.
+      makeSession("default:user1:ch1", 10, 2000),
+      makeSession("default:user2:ch1", 10, 3000),
     ]);
     (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
       messages: [{ role: "user", content: "hello" }],
@@ -358,9 +365,9 @@ describe("runMemoryReview", () => {
     });
 
     await runMemoryReview(deps);
-    // Only my-agent session should be reviewed
+    // Both tenant sessions reviewed (no per-agent prefix filter).
     expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
-      sessionsReviewed: 1,
+      sessionsReviewed: 2,
     }));
   });
 });

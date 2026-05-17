@@ -35,7 +35,7 @@ describe("extractVariables", () => {
     ).toEqual(["A", "B"]);
   });
 
-  it("handles empty input", () => {
+  it("handles empty input array by returning an empty variables array", () => {
     expect(extractVariables([])).toEqual([]);
   });
 

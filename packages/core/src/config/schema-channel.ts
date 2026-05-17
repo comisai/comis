@@ -46,6 +46,25 @@ export const ChannelEntrySchema = z.strictObject({
     webhookUrl: z.url().optional(),
     /** Allowed sender IDs (empty = allow all) */
     allowFrom: z.array(z.string()).default([]),
+    /**
+     * Optional platform API root URL override.
+     *
+     * E2E redirection seam: when set (e.g. `http://127.0.0.1:54321`), the
+     * platform adapter constructs its underlying SDK client to call this URL
+     * instead of the production cloud endpoint. Production deployments leave
+     * this unset (or empty string) and SDKs use their built-in defaults
+     * (`api.telegram.org`, `discord.com/api/v10`, `slack.com/api`,
+     * `graph.facebook.com`, `api.line.me`).
+     *
+     * Used by `test/e2e/mocks/<channel>/` mock servers. See also
+     * `discordGatewayUrl` (Discord-only, WebSocket counterpart) on
+     * `DiscordChannelEntrySchema`.
+     *
+     * Note: channels that already have a structured host config (`signal.baseUrl`,
+     * `irc.host`+`port`, `email.smtpHost`+`smtpPort`) ignore this field and use
+     * their dedicated config keys instead.
+     */
+    apiRoot: z.string().optional(),
 
     // Slack-specific (Socket Mode needs appToken, HTTP mode needs signingSecret)
     /** Slack app-level token for Socket Mode (xapp-..., string or SecretRef) */
@@ -68,6 +87,20 @@ export const ChannelEntrySchema = z.strictObject({
 // ---------------------------------------------------------------------------
 // Platform-specific entry schemas (extend base ChannelEntrySchema)
 // ---------------------------------------------------------------------------
+
+/**
+ * Discord channel — adds an optional WebSocket gateway URL override.
+ *
+ * Discord uses two distinct endpoints: REST (configured via the base
+ * `apiRoot` field — `discord.com/api/v10`) and WebSocket gateway
+ * (`gatewayUrl` — `wss://gateway.discord.gg`). E2E tests need to redirect
+ * both independently. Production leaves both unset and discord.js uses its
+ * defaults.
+ */
+export const DiscordChannelEntrySchema = ChannelEntrySchema.extend({
+  /** Discord gateway WebSocket URL override. Empty/unset → discord.js default. */
+  gatewayUrl: z.string().optional(),
+});
 
 /** Signal via signal-cli REST API */
 export const SignalChannelEntrySchema = ChannelEntrySchema.extend({
@@ -175,7 +208,7 @@ export type ChannelHealthCheckConfig = z.infer<typeof ChannelHealthCheckSchema>;
 
 export const ChannelConfigSchema = z.strictObject({
     telegram: ChannelEntrySchema.default(() => ChannelEntrySchema.parse({})),
-    discord: ChannelEntrySchema.default(() => ChannelEntrySchema.parse({})),
+    discord: DiscordChannelEntrySchema.default(() => DiscordChannelEntrySchema.parse({})),
     slack: ChannelEntrySchema.default(() => ChannelEntrySchema.parse({})),
     whatsapp: ChannelEntrySchema.default(() => ChannelEntrySchema.parse({})),
     signal: SignalChannelEntrySchema.default(() => SignalChannelEntrySchema.parse({})),
@@ -188,6 +221,7 @@ export const ChannelConfigSchema = z.strictObject({
   });
 
 export type ChannelEntry = z.infer<typeof ChannelEntrySchema>;
+export type DiscordChannelEntry = z.infer<typeof DiscordChannelEntrySchema>;
 export type SignalChannelEntry = z.infer<typeof SignalChannelEntrySchema>;
 export type IMessageChannelEntry = z.infer<typeof IMessageChannelEntrySchema>;
 export type LineChannelEntry = z.infer<typeof LineChannelEntrySchema>;

@@ -1,60 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // @comis/cli — CLI management tool for Comis daemon
+//
+// Public surface is narrowed to the embedding-code helpers. All
+// register*Command factories and output utilities (success/error/warn/
+// info/json/renderTable/renderKeyValue/withSpinner) remain importable from
+// their source modules (./commands/*.js, ./output/*.js) for the bin entry
+// point cli.ts and are NOT part of the documented @comis/cli external API.
+// The bin-only pattern: cli.ts imports every register*Command from
+// ./commands/X.js directly.
 
-// RPC client
-export { createRpcClient, withClient } from "./client/rpc-client.js";
+// RPC client (embedding-code helper for daemon connections)
+export { withClient } from "./client/rpc-client.js";
 export type { RpcClient } from "./client/rpc-client.js";
 
-// Output utilities
-export { success, error, warn, info, json } from "./output/format.js";
-export { renderTable, renderKeyValue } from "./output/table.js";
-export { withSpinner } from "./output/spinner.js";
-
-// Command registration
-export { registerDaemonCommand } from "./commands/daemon.js";
-export { registerConfigCommand } from "./commands/config.js";
-export { registerAgentCommand } from "./commands/agent.js";
-export { registerChannelCommand } from "./commands/channel.js";
-export { registerMemoryCommand } from "./commands/memory.js";
-export { registerSecurityCommand } from "./commands/security.js";
-export { registerDoctorCommand } from "./commands/doctor.js";
-export { registerInitCommand } from "./commands/init.js";
-export { registerConfigureCommand } from "./commands/configure.js";
-export { registerStatusCommand } from "./commands/status.js";
-export { registerHealthCommand } from "./commands/health.js";
-export { registerModelsCommand } from "./commands/models.js";
-export { registerPm2Command } from "./commands/pm2.js";
-export { registerSessionsCommand } from "./commands/sessions.js";
-export { registerResetCommand } from "./commands/reset.js";
-export { registerSignalSetupCommand } from "./commands/signal-setup.js";
-export { registerSecretsCommand } from "./commands/secrets.js";
-export { registerUninstallCommand } from "./commands/uninstall.js";
-
-// Wizard steps — exported for integration tests in
+// Wizard step — exported for integration tests in
 // test/integration/oauth-login.test.ts which dynamically imports
-// `credentialsStep` to drive the wizard-state assertion end-to-end
-// against the mock OAuth server.
+// credentialsStep to drive the wizard-state assertion end-to-end.
 export { credentialsStep } from "./wizard/steps/04-credentials.js";
-
-// ── Dead Export Audit ─────────────────────────────────────────────────
-// Total exports: 30 (29 value, 1 type)
-// Exports with external consumers: 2
-//   - withClient (test/integration/env-vars-unit.test.ts, test/integration/env-vars-daemon.test.ts)
-//   - credentialsStep (consumed by test/integration/oauth-login.test.ts)
-// Exports with zero external consumers: 28
-//   All register* command exports and output utilities are consumed only by the CLI's
-//   own main.ts binary (not importable as @comis/cli by other packages).
-//   Preserved for public API stability.
-//
-// Types (1):
-//   RpcClient
-//
-// Values (29):
-//   createRpcClient, withClient, success, error, warn, info, json,
-//   renderTable, renderKeyValue, withSpinner, registerDaemonCommand,
-//   registerConfigCommand, registerAgentCommand, registerChannelCommand,
-//   registerMemoryCommand, registerSecurityCommand, registerDoctorCommand,
-//   registerInitCommand, registerConfigureCommand, registerStatusCommand,
-//   registerHealthCommand, registerModelsCommand, registerPm2Command,
-//   registerSessionsCommand, registerResetCommand, registerSignalSetupCommand,
-//   registerSecretsCommand, credentialsStep

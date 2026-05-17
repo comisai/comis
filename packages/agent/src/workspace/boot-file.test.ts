@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "./boot-file.js";
 
 describe("BOOT_FILE_NAME", () => {
-  it("equals 'BOOT.md'", () => {
+  it("equals 'BOOT.md' per workspace boot-file convention", () => {
     expect(BOOT_FILE_NAME).toBe("BOOT.md");
   });
 });

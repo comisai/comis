@@ -4,7 +4,7 @@ import { createTTLCache } from "./ttl-cache.js";
 
 describe("TTLCache", () => {
   it("get() returns undefined for missing key", () => {
-    const cache = createTTLCache<string>({ ttlMs: 1000 });
+    const cache = createTTLCache<string>({ ttlMs: 1000, nowMs: () => Date.now() });
     expect(cache.get("missing")).toBeUndefined();
   });
 
@@ -34,7 +34,7 @@ describe("TTLCache", () => {
   });
 
   it("delete() removes entry and returns true; returns false for missing", () => {
-    const cache = createTTLCache<string>({ ttlMs: 1000 });
+    const cache = createTTLCache<string>({ ttlMs: 1000, nowMs: () => Date.now() });
     cache.set("a", "val");
     expect(cache.delete("a")).toBe(true);
     expect(cache.get("a")).toBeUndefined();
@@ -43,7 +43,7 @@ describe("TTLCache", () => {
   });
 
   it("clear() empties all entries", () => {
-    const cache = createTTLCache<number>({ ttlMs: 1000 });
+    const cache = createTTLCache<number>({ ttlMs: 1000, nowMs: () => Date.now() });
     cache.set("a", 1);
     cache.set("b", 2);
     cache.set("c", 3);
@@ -54,7 +54,11 @@ describe("TTLCache", () => {
   });
 
   it("evicts oldest entry when maxEntries reached", () => {
-    const cache = createTTLCache<string>({ ttlMs: 10_000, maxEntries: 3 });
+    const cache = createTTLCache<string>({
+      ttlMs: 10_000,
+      maxEntries: 3,
+      nowMs: () => Date.now(),
+    });
     cache.set("a", "1");
     cache.set("b", "2");
     cache.set("c", "3");
@@ -87,5 +91,31 @@ describe("TTLCache", () => {
     expect(cache.size()).toBe(2);
     now = 200; // Both expired but not yet evicted lazily
     expect(cache.size()).toBe(2);
+  });
+});
+
+describe("createTTLCache: nowMs required", () => {
+  it("uses the injected nowMs for expiry timing", () => {
+    let synthetic = 0;
+    const cache = createTTLCache<string>({ ttlMs: 100, nowMs: () => synthetic });
+    cache.set("a", "1");
+    synthetic = 50;
+    expect(cache.get("a")).toBe("1");
+    synthetic = 150;
+    expect(cache.get("a")).toBeUndefined();
+  });
+
+  it("invokes nowMs on set() to stamp expiresAt", () => {
+    const stamps: number[] = [];
+    let synthetic = 1000;
+    const cache = createTTLCache<string>({
+      ttlMs: 50,
+      nowMs: () => {
+        stamps.push(synthetic);
+        return synthetic;
+      },
+    });
+    cache.set("k", "v");
+    expect(stamps.length).toBeGreaterThanOrEqual(1);
   });
 });

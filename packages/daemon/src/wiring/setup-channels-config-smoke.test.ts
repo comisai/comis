@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
 import { loadConfigFile, validateConfig } from "@comis/core";
 
-describe("daemon config parse smoke test", () => {
+describe("daemon config parse — smoke-level YAML→runtime-config round-trip", () => {
   const tmpDirs: string[] = [];
 
   function makeTmpDir(): string {

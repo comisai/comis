@@ -75,8 +75,8 @@ const { atomicWriteFile, writeBackup, isDaemonRunning } = await import(
   "../sync-tooling/index.js"
 );
 const core = await import("@comis/core");
-const { runToolingFill } = await import("./orchestrator.js");
-import type { OrchestratorOpts, PromptIO } from "./orchestrator.js";
+const { runToolingFill } = await import("./orchestrator/index.js");
+import type { OrchestratorOpts, PromptIO } from "./orchestrator/index.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures + helpers
@@ -288,7 +288,7 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("runToolingFill — happy path single hint --yes --restart", () => {
+describe("runToolingFill — successful single-hint flow with --yes --restart flags", () => {
   it("returns exit 0, calls boundary helpers in correct order, mutates yfinance hint", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -640,7 +640,7 @@ describe("runToolingFill — skills hint", () => {
 });
 
 describe("runToolingFill — call-order strict invariant", () => {
-  it("stopDaemon < writeBackup < atomicWriteFile < startDaemon (happy path)", async () => {
+  it("executes runToolingFill steps in order: stopDaemon < writeBackup < atomicWriteFile < startDaemon", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
       ok({

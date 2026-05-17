@@ -16,181 +16,50 @@
  * @module
  */
 
-/** A single redirect entry: which tool, and a parameter-correct example. */
-export interface ManagedSectionRedirect {
-  /** Path prefix that triggers this redirect (e.g., "agents", "integrations.mcp.servers"). */
-  pathPrefix: string;
-  /** Tool name (matches the registered AgentTool name). */
-  tool: string;
-  /** One-line description that includes the tool's full action list. */
-  description: string;
-  /**
-   * Concrete example arguments for the most common create-equivalent action.
-   * Shape MUST match the tool's TypeBox parameter schema exactly -- verified
-   * against the tool source as of this commit. Omit when the tool has no
-   * "create" semantics (e.g., channels_manage cannot add new platform types).
-   */
-  exampleArgs?: Record<string, unknown>;
-  /**
-   * True when the tool fully replaces gateway-patch for this section
-   * (create + update + delete). False when it can only operate on entries
-   * already present in config.
-   */
-  fullyManaged: boolean;
-  /**
-   * Compact schema fragment so the LLM can call the tool without a separate
-   * discover_tools round-trip. Populated when the action enum + required
-   * fields fit in < 20 lines of hint text. Verified against the tool's
-   * TypeBox parameter schema as of this commit.
-   *
-   * Bug B: production trace c7b91328 showed the agent burning
-   * ~30s × 4 LLM calls re-loading the agents_manage schema after an
-   * immutable-path rejection. Surfacing the fragment inline closes that
-   * round-trip tax.
-   */
-  schemaFragment?: {
-    /** Valid `action` enum values (pinned to the tool's TypeBox Union literals). */
-    actions: readonly string[];
-    /**
-     * Required field names per action -- only entries that are strictly
-     * required by the tool's handler (omitting Type.Optional fields with
-     * sensible defaults). Omit the whole property when no action has
-     * required-beyond-action fields (e.g., channels_manage operates on
-     * existing entries only).
-     */
-    requiredByAction?: Record<string, readonly string[]>;
-  };
-}
+// ManagedSectionRedirect interface is declared in section-registry.ts so the
+// registry can own its own type without importing back from this file (which
+// would re-introduce the section-registry.ts <-> managed-sections.ts source-
+// level cycle that the architecture no-cycles invariant rejects). Re-exported
+// here so existing consumers reading `import type { ManagedSectionRedirect }
+// from "./managed-sections.js"` (or via the public config index) keep working
+// unchanged.
+import {
+  SECTION_REGISTRY,
+  SUB_PATH_MANAGED_REDIRECTS,
+  type ManagedSectionRedirect,
+} from "./section-registry.js";
+
+export type { ManagedSectionRedirect } from "./section-registry.js";
 
 /**
  * Registered managed sections.
  *
+ * Derived from the single SECTION_REGISTRY source of truth: top-level
+ * redirects live on each section entry's `managedRedirect` field (3:
+ * providers, channels, agents), sub-path redirects whose keys are NOT
+ * top-level section names live in `SUB_PATH_MANAGED_REDIRECTS` (2:
+ * integrations.mcp.servers, gateway.tokens).
+ *
  * Order matters: longest pathPrefix first, so getManagedSectionRedirect picks
  * the most specific match (e.g., "integrations.mcp.servers" wins over a
- * hypothetical "integrations" entry).
+ * hypothetical "integrations" entry). The sort below guarantees that
+ * ordering regardless of registry insertion order.
  */
-export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = [
-  {
-    pathPrefix: "integrations.mcp.servers",
-    tool: "mcp_manage",
-    description:
-      "Manage MCP server connections (list, status, connect, disconnect, reconnect).",
-    // Flat parameter shape -- verified against mcp-manage-tool.ts McpManageToolParams.
-    exampleArgs: {
-      action: "connect",
-      server_name: "<server-name>",
-      transport: "stdio",
-      command: "<command>",
-      args: [],
-    },
-    fullyManaged: true,
-    // Action enum pinned to mcp-manage-tool.ts TypeBox Union (lines 25-31).
-    // requiredByAction.connect captures the stdio-transport happy path
-    // (transport="sse"|"http" requires `url` instead of `command` -- the
-    // exampleArgs above documents the stdio shape, the schema fragment
-    // documents required fields for that same shape).
-    schemaFragment: {
-      actions: ["list", "status", "connect", "disconnect", "reconnect"],
-      requiredByAction: {
-        connect: ["server_name", "transport", "command"],
-      },
-    },
-  },
-  {
-    pathPrefix: "gateway.tokens",
-    tool: "tokens_manage",
-    description: "Manage gateway tokens (list, create, revoke, rotate).",
-    // Verified against tokens-manage-tool.ts TokensManageToolParams.
-    exampleArgs: { action: "create", token_id: "<token-id>", scopes: ["rpc", "ws"] },
-    fullyManaged: true,
-    // Action enum pinned to tokens-manage-tool.ts TypeBox Union (lines 25-31).
-    // token_id is genuinely Type.Optional (auto-generated when omitted, per
-    // the schema description at L36); only `scopes` is strictly required for
-    // create.
-    schemaFragment: {
-      actions: ["list", "create", "revoke", "rotate"],
-      requiredByAction: {
-        create: ["scopes"],
-      },
-    },
-  },
-  {
-    pathPrefix: "providers",
-    tool: "providers_manage",
-    description:
-      "Manage LLM providers (list, get, create, update, delete, enable, disable).",
-    // Verified against providers-manage-tool.ts ProvidersManageToolParams.
-    exampleArgs: {
-      action: "create",
-      provider_id: "<any-name>",
-      config: {
-        type: "<sdk-type>",
-        name: "<display-name>",
-        baseUrl: "<api-base-url>",
-        apiKeyName: "<SECRET_KEY_NAME>",
-        models: [{ id: "<model-id>" }],
-      },
-    },
-    fullyManaged: true,
-    // Action enum pinned to providers-manage-tool.ts TypeBox Union.
-    // provider_id + config are required for create; other actions require
-    // only provider_id or nothing (list).
-    schemaFragment: {
-      actions: ["list", "get", "create", "update", "delete", "enable", "disable"],
-      requiredByAction: {
-        create: ["provider_id", "config"],
-      },
-    },
-  },
-  {
-    pathPrefix: "channels",
-    tool: "channels_manage",
-    description:
-      "Manage channel adapters (list, get, enable, disable, restart, configure).",
-    // No exampleArgs -- no create-equivalent action; channels are configured
-    // via operator config + media-setting toggles only.
-    fullyManaged: false,
-    // Action enum pinned to channels-manage-tool.ts TypeBox Union (lines 32-37).
-    // No requiredByAction -- channels_manage operates on existing entries; all
-    // fields beyond `action` are looked up from config or optional.
-    schemaFragment: {
-      actions: ["list", "get", "enable", "disable", "restart", "configure"],
-    },
-  },
-  {
-    pathPrefix: "agents",
-    tool: "agents_manage",
-    description: "Manage agent fleet (create, get, update, delete, suspend, resume).",
-    // Verified against agents-manage-tool.ts AgentsManageToolParams.
-    exampleArgs: {
-      action: "create",
-      agent_id: "<new-agent-id>",
-      config: {
-        name: "<display-name>",
-        model: "<model-id>",
-        provider: "<provider>",
-        maxSteps: 100,
-        // Advertise the per-agent OAuth profile preference to the LLM.
-        // Maps provider → "<provider>:<identity>" stored profile ID.
-        // Validated end-to-end by the Zod refine and daemon-side has()
-        // existence check.
-        oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
-      },
-    },
-    fullyManaged: true,
-    // Action enum pinned to agents-manage-tool.ts TypeBox Union (lines 27-32).
-    // agent_id is required on every action (Type.String, not Optional);
-    // config is required for create (the action handler rejects create
-    // without a config payload, even though the schema marks it Optional to
-    // accept the alternate JSON-string fallback shape).
-    schemaFragment: {
-      actions: ["create", "get", "update", "delete", "suspend", "resume"],
-      requiredByAction: {
-        create: ["agent_id", "config"],
-      },
-    },
-  },
-] as const;
+
+export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = Object.freeze(
+  [
+    // Top-level redirects from registry (3: providers, channels, agents).
+    ...Object.values(SECTION_REGISTRY)
+      .map((entry) => entry.managedRedirect)
+      .filter((r): r is ManagedSectionRedirect => r !== undefined),
+    // Sub-path redirects (2: integrations.mcp.servers, gateway.tokens).
+    ...SUB_PATH_MANAGED_REDIRECTS,
+  ]
+    // Longest-prefix-first ordering for correct getManagedSectionRedirect lookup.
+    // Stable across runs because pathPrefix lengths are all distinct in the
+    // current 5-entry set: 24, 14, 9, 8, 6.
+    .sort((a, b) => b.pathPrefix.length - a.pathPrefix.length),
+);
 
 /**
  * Resolve the management redirect for a given section/key path.
@@ -262,11 +131,11 @@ export function formatRedirectHint(
     );
   }
 
-  // Bug B: inline the dedicated tool's action enum + required
-  // fields so the LLM can call it without a separate discover_tools round-
-  // trip. Positioned AFTER the Recovery example (so the example is the first
-  // thing the model sees) and BEFORE the mutablePaths block (which is the
-  // alternative path for already-existing entries).
+  // Inline the dedicated tool's action enum + required fields so the LLM can
+  // call it without a separate discover_tools round-trip. Positioned AFTER
+  // the Recovery example (so the example is the first thing the model sees)
+  // and BEFORE the mutablePaths block (which is the alternative path for
+  // already-existing entries).
   if (redirect.schemaFragment) {
     parts.push(`Tool actions: ${redirect.schemaFragment.actions.join(", ")}.`);
     if (redirect.schemaFragment.requiredByAction) {

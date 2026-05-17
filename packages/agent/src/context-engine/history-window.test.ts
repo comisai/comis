@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { applyHistoryWindow, isCompactionSummary } from "./history-window.js";
 import type { HistoryWindowConfig } from "./history-window.js";
 

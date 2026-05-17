@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import type { Result } from "@comis/shared";
 import { ok } from "@comis/shared";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import type { SendMessageOptions, TtsAutoMode } from "@comis/core";
 import { prepareVoicePayload } from "./voice-sender.js";
 
@@ -185,7 +185,7 @@ export async function executeVoiceResponse(
   deps: VoiceResponsePipelineDeps,
   ctx: VoiceResponseContext,
 ): Promise<Result<VoiceResponseResult, Error>> {
-  const startMs = Date.now();
+  const startMs = systemNowMs();
 
   deps.logger.debug(
     { channelType: ctx.channelType },
@@ -206,7 +206,7 @@ export async function executeVoiceResponse(
 
   if (!decision.shouldSynthesize) {
     deps.logger.debug(
-      { channelType: ctx.channelType, durationMs: Date.now() - startMs, reason: "auto-tts-skip" },
+      { channelType: ctx.channelType, durationMs: systemNowMs() - startMs, reason: "auto-tts-skip" },
       "Voice response skipped",
     );
     return ok({ voiceSent: false });
@@ -230,7 +230,7 @@ export async function executeVoiceResponse(
         originalLength: text.length,
         maxTextLength: deps.ttsConfig.maxTextLength,
         hint: "Text truncated before TTS synthesis",
-        errorKind: "validation",
+        errorKind: "validation" as const,
       },
       "TTS text truncated",
     );
@@ -251,7 +251,7 @@ export async function executeVoiceResponse(
           err: synthResult.error.message,
           channelType: ctx.channelType,
           hint: "TTS synthesis failed; falling back to text-only response",
-          errorKind: "dependency",
+          errorKind: "dependency" as const,
         },
         "TTS synthesis failed",
       );
@@ -267,7 +267,7 @@ export async function executeVoiceResponse(
           mimeType: synthResult.value.mimeType,
           channelType: ctx.channelType,
           hint: "Install ffmpeg for voice response support with Edge TTS/ElevenLabs providers",
-          errorKind: "dependency",
+          errorKind: "dependency" as const,
         },
         "Audio converter unavailable for non-Opus TTS output",
       );
@@ -281,7 +281,7 @@ export async function executeVoiceResponse(
         {
           channelType: ctx.channelType,
           hint: "Media temp manager not initialized",
-          errorKind: "resource",
+          errorKind: "resource" as const,
         },
         "Media temp manager not initialized",
       );
@@ -309,7 +309,7 @@ export async function executeVoiceResponse(
           err: payloadResult.error.message,
           channelType: ctx.channelType,
           hint: "Voice payload preparation failed; falling back to text-only response",
-          errorKind: "dependency",
+          errorKind: "dependency" as const,
         },
         "Voice payload preparation failed",
       );
@@ -335,7 +335,7 @@ export async function executeVoiceResponse(
           err: sendResult.error.message,
           channelType: ctx.channelType,
           hint: "Voice attachment send failed; falling back to text-only response",
-          errorKind: "network",
+          errorKind: "network" as const,
         },
         "Voice attachment send failed",
       );
@@ -346,7 +346,7 @@ export async function executeVoiceResponse(
     deps.logger.info(
       {
         channelType: ctx.channelType,
-        durationMs: Date.now() - startMs,
+        durationMs: systemNowMs() - startMs,
         durationSecs: payload.durationSecs,
       },
       "Voice response sent",

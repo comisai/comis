@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: Canary encrypt / decrypt assertion: master-key mismatch must surface as a hard failure (not a Result.err that the caller might silently swallow). Encryption-correctness boundary per AGENTS.md §2.1 (security-critical assertion zone analog).
 /**
  * Secret store SQLite schema DDL and canary-based master key validation.
  *
@@ -14,6 +15,7 @@
 
 import type Database from "better-sqlite3";
 import type { SecretsCrypto, EncryptedSecret } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 /** Well-known canary row name -- excluded from list/decryptAll operations. */
 export const CANARY_NAME = "__comis_canary__";
@@ -83,7 +85,7 @@ export function validateCanary(db: Database.Database, crypto: SecretsCrypto): vo
       );
     }
     const encrypted = result.value;
-    const now = Date.now();
+    const now = systemNowMs();
 
     db.prepare(
       `INSERT INTO secrets (name, ciphertext, iv, auth_tag, salt, created_at, updated_at)

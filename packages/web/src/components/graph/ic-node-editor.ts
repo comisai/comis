@@ -22,6 +22,11 @@ import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { PipelineNode, PipelineEdge, NodeTypeId } from "../../api/types/index.js";
 import type { RpcClient } from "../../api/rpc-client.js";
 import { wouldCreateCycle } from "../../utils/cycle-detection.js";
+import { systemSetTimeout } from "@comis/core";
+import {
+  createIcNodeEditorController,
+  type IcNodeEditorController,
+} from "./ic-node-editor-controller.js";
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -448,10 +453,16 @@ export class IcNodeEditor extends LitElement {
   // Textarea ref for variable insertion
   private _textareaRef: HTMLTextAreaElement | null = null;
 
+  /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
+  private _controller: IcNodeEditorController | null = null;
+
   // -- Lifecycle ------------------------------------------------------------
 
   override connectedCallback(): void {
     super.connectedCallback();
+    if (this.rpcClient) {
+      this._controller = createIcNodeEditorController(this, this.rpcClient);
+    }
     this._loadAgents();
     this._loadModels();
     this._loadAllowList();
@@ -460,6 +471,9 @@ export class IcNodeEditor extends LitElement {
   override updated(changed: Map<string, unknown>): void {
     if (changed.has("rpcClient") && this.rpcClient) {
       // rpcClient was set after connectedCallback - retry loading
+      if (!this._controller) {
+        this._controller = createIcNodeEditorController(this, this.rpcClient);
+      }
       if (!this._agentsLoaded) this._loadAgents();
       if (!this._modelsLoaded) this._loadModels();
       if (!this._allowListLoaded) this._loadAllowList();
@@ -469,23 +483,17 @@ export class IcNodeEditor extends LitElement {
   // -- RPC Data Fetching ----------------------------------------------------
 
   private async _loadAgents(): Promise<void> {
-    if (this._agentsLoaded || !this.rpcClient) {
+    if (this._agentsLoaded || !this._controller) {
       this._agentsLoading = false;
       return;
     }
 
     try {
-      const listResult = await this.rpcClient.call<{ agents: string[] }>("agents.list");
+      const listResult = await this._controller.listAgents();
       const agentIds = listResult.agents ?? [];
 
       const settled = await Promise.allSettled(
-        agentIds.map((agentId) =>
-          this.rpcClient!.call<{
-            agentId: string;
-            config: { model?: string; provider?: string };
-            suspended?: boolean;
-          }>("agents.get", { agentId }),
-        ),
+        agentIds.map((agentId) => this._controller!.getAgent(agentId)),
       );
 
       this._agents = settled
@@ -514,18 +522,13 @@ export class IcNodeEditor extends LitElement {
   }
 
   private async _loadModels(): Promise<void> {
-    if (this._modelsLoaded || !this.rpcClient) {
+    if (this._modelsLoaded || !this._controller) {
       this._modelsLoading = false;
       return;
     }
 
     try {
-      const result = await this.rpcClient.call<{
-        providers: Array<{
-          name: string;
-          models: Array<string | { modelId: string }>;
-        }>;
-      }>("models.list", {});
+      const result = await this._controller.listModels();
 
       this._models = (result.providers ?? []).flatMap((p) =>
         (p.models ?? []).map((m) => ({
@@ -543,12 +546,10 @@ export class IcNodeEditor extends LitElement {
   }
 
   private async _loadAllowList(): Promise<void> {
-    if (this._allowListLoaded || !this.rpcClient) return;
+    if (this._allowListLoaded || !this._controller) return;
 
     try {
-      const result = await this.rpcClient.call<{
-        agentToAgent?: { allowAgents?: string[] };
-      }>("config.read", { section: "security" });
+      const result = await this._controller.readSecurityConfig();
 
       this._allowAgents = result?.agentToAgent?.allowAgents ?? [];
       this._allowListLoaded = true;
@@ -774,7 +775,7 @@ export class IcNodeEditor extends LitElement {
         this._cycleErrors = newErrors;
 
         // Clear error after 2 seconds
-        setTimeout(() => {
+        systemSetTimeout(() => {
           const cleared = new Map(this._cycleErrors);
           cleared.delete(depNodeId);
           this._cycleErrors = cleared;

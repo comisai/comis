@@ -4,11 +4,44 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { safePath } from "@comis/core";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { wrapToolForAutoBackground, type ToolDefinition } from "./auto-background-middleware.js";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
-import type { BackgroundTasksConfig } from "@comis/core";
+import type { BackgroundTasksConfig, ClockPort, TimerPort, TimerHandle } from "@comis/core";
 import type { BackgroundTaskOrigin } from "./background-task-types.js";
+
+// ---------------------------------------------------------------------------
+// Lightweight port wrappers that delegate to globals so vi.useFakeTimers()
+// continues to intercept Date.now / setTimeout below.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 function createMockEventBus() {
   return { emit: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
@@ -73,7 +106,6 @@ describe("wrapToolForAutoBackground", () => {
   let dataDir: string;
   let manager: BackgroundTaskManager;
   let config: BackgroundTasksConfig;
-  let notifyFn: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     dataDir = safePath(tmpdir(), `comis-bg-mw-test-${randomUUID()}`);
@@ -82,6 +114,8 @@ describe("wrapToolForAutoBackground", () => {
       dataDir,
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
+      clock: testClock,
+      timers: testTimers,
       maxPerAgent: 5,
       maxTotal: 20,
       maxBackgroundDurationMs: 60_000,
@@ -94,19 +128,18 @@ describe("wrapToolForAutoBackground", () => {
       maxBackgroundDurationMs: 60_000,
       excludeTools: [],
     };
-    notifyFn = vi.fn().mockResolvedValue(undefined);
   });
 
   afterEach(() => {
     for (const task of manager.getAllTasks()) {
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
     }
     rmSync(dataDir, { recursive: true, force: true });
   });
 
   it("returns result directly when tool completes before timeout", async () => {
     const tool = createMockTool({ resolveAfterMs: 5, result: toolOk("fast-result") });
-    const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+    const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
     const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
     expect(result).toEqual(toolOk("fast-result"));
@@ -115,7 +148,7 @@ describe("wrapToolForAutoBackground", () => {
 
   it("returns a well-formed AgentToolResult placeholder when tool exceeds timeout", async () => {
     const tool = createMockTool({ resolveAfterMs: 200, result: toolOk("slow-result") });
-    const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+    const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
     const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
 
@@ -145,7 +178,7 @@ describe("wrapToolForAutoBackground", () => {
 
   it("completes the background task when the tool eventually resolves", async () => {
     const tool = createMockTool({ resolveAfterMs: 100, result: toolOk("slow-result") });
-    const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+    const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
     const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
     const details = result.details as { taskId: string };
@@ -161,7 +194,7 @@ describe("wrapToolForAutoBackground", () => {
   it("excluded tools are not wrapped", () => {
     config.excludeTools = ["excluded_tool"];
     const tool = createMockTool({ name: "excluded_tool" });
-    const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+    const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
     // Should be the exact same object (not wrapped)
     expect(wrapped).toBe(tool);
@@ -183,7 +216,7 @@ describe("wrapToolForAutoBackground", () => {
       }),
     };
 
-    const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+    const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
     await wrapped.execute("call-1", {}, parentAc.signal, undefined, undefined);
 
     expect(receivedSignal).toBeDefined();
@@ -197,7 +230,7 @@ describe("wrapToolForAutoBackground", () => {
 
   it("survives in-place tool.execute mutation without infinite recursion", async () => {
     const tool = createMockTool({ resolveAfterMs: 5, result: toolOk("ok") });
-    const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+    const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
     // Simulate pi-executor in-place mutation (line 1172)
     tool.execute = wrapped.execute;
@@ -209,7 +242,7 @@ describe("wrapToolForAutoBackground", () => {
 
   it("backgrounds correctly after in-place mutation", async () => {
     const tool = createMockTool({ resolveAfterMs: 200, result: toolOk("slow") });
-    const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+    const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
     // Simulate pi-executor in-place mutation
     tool.execute = wrapped.execute;
@@ -225,6 +258,8 @@ describe("wrapToolForAutoBackground", () => {
       dataDir,
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
+      clock: testClock,
+      timers: testTimers,
       maxPerAgent: 1,
       maxTotal: 1,
       maxBackgroundDurationMs: 60_000,
@@ -234,7 +269,7 @@ describe("wrapToolForAutoBackground", () => {
     limitedManager.promote("t1", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
 
     const tool = createMockTool({ resolveAfterMs: 100, result: toolOk("foreground-result") });
-    const wrapped = wrapToolForAutoBackground(tool, limitedManager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+    const wrapped = wrapToolForAutoBackground(tool, limitedManager, config, () => buildOrigin({ agentId: "agent-1" }));
 
     // Should await normally since promotion will fail
     const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
@@ -242,7 +277,7 @@ describe("wrapToolForAutoBackground", () => {
 
     // Clean up the stuck task
     for (const task of limitedManager.getAllTasks()) {
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
     }
   });
 
@@ -253,7 +288,7 @@ describe("wrapToolForAutoBackground", () => {
   // generic "An error occurred while processing your request" Telegram reply.
   it("promoted tool result never collapses to empty content (regression)", async () => {
     const tool = createMockTool({ resolveAfterMs: 200, result: toolOk("slow-result") });
-    const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+    const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
     const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
 
@@ -269,7 +304,7 @@ describe("wrapToolForAutoBackground", () => {
     it("originResolver is called before manager.promote()", async () => {
       const originResolver = vi.fn().mockReturnValue(buildOrigin({ agentId: "resolver-agent" }));
       const tool = createMockTool({ resolveAfterMs: 200 });
-      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, originResolver);
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, originResolver);
 
       await wrapped.execute("call-1", {}, undefined, undefined, undefined);
 
@@ -280,7 +315,7 @@ describe("wrapToolForAutoBackground", () => {
       const originResolver = vi.fn().mockReturnValue(undefined);
       const promoteSpy = vi.spyOn(manager, "promote");
       const tool = createMockTool({ resolveAfterMs: 200, result: toolOk("foreground-result") });
-      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, originResolver);
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, originResolver);
 
       const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
 
@@ -293,7 +328,7 @@ describe("wrapToolForAutoBackground", () => {
       const originResolver = vi.fn().mockReturnValue(expectedOrigin);
       const promoteSpy = vi.spyOn(manager, "promote");
       const tool = createMockTool({ resolveAfterMs: 200, name: "bg_tool" });
-      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, originResolver);
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, originResolver);
 
       await wrapped.execute("call-1", {}, undefined, undefined, undefined);
 
@@ -307,7 +342,7 @@ describe("wrapToolForAutoBackground", () => {
 
     it("placeholder text contains \"I'll continue when it completes.\" and not \"user will be notified\"", async () => {
       const tool = createMockTool({ resolveAfterMs: 200 });
-      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-7" }));
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-7" }));
 
       const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
 
@@ -329,7 +364,7 @@ describe("wrapToolForAutoBackground", () => {
       // gate explicit.
       config.excludeTools = [];
       const tool = createMockTool({ name: "exec" });
-      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
       // Should be the exact same object (no-op wrap).
       expect(wrapped).toBe(tool);
@@ -339,7 +374,7 @@ describe("wrapToolForAutoBackground", () => {
       // Make the contract independent of config — exec is excluded regardless.
       config.excludeTools = [];
       const tool = createMockTool({ name: "exec" });
-      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
       expect(wrapped).toBe(tool);
     });
@@ -347,7 +382,7 @@ describe("wrapToolForAutoBackground", () => {
     it("a non-exec tool (e.g., 'sleep') is STILL wrapped when excludeTools does not list it (regression: only exec is narrowed)", () => {
       config.excludeTools = [];
       const tool = createMockTool({ name: "sleep" });
-      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
       // Non-exec tools must still receive the wrapper (the wrapper is a NEW object,
       // not the original tool).
@@ -366,7 +401,7 @@ describe("wrapToolForAutoBackground", () => {
         resolveAfterMs: config.autoBackgroundMs + 100,
         result: toolOk("foreground-exec-result"),
       });
-      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
       // Race the tool: it should run to completion in the foreground (no promote).
       const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);

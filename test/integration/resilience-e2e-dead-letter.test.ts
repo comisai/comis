@@ -11,10 +11,6 @@
  * with mock boundary dependencies (no daemon, no LLM, no network).
  * Follows the established pattern from test/integration/subagent-pipeline.test.ts.
  *
- * Covers:
- * - TEST-03 (partial): Dead-letter retry to delivery E2E
- * - OBSV-03 (partial): INFO for successful DLQ delivery verified
- *
  * @module
  */
 
@@ -23,13 +19,47 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createAnnouncementDeadLetterQueue } from "@comis/daemon";
+
 import {
-  createAnnouncementDeadLetterQueue,
   createSubAgentRunner,
   type SubAgentRunnerDeps,
-} from "@comis/daemon";
+} from "@comis/agent";
 
 import { TypedEventBus } from "@comis/core";
+import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Lightweight port wrappers that delegate to globals.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 // ---------------------------------------------------------------------------
 // Shared temp directory
@@ -279,6 +309,8 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       dataDir: tmpDir,
       logger,
       deadLetterQueue: dlq,
+      clock: testClock,
+      timers: testTimers,
     } as SubAgentRunnerDeps & { eventBus: TypedEventBus };
 
     const runner = createSubAgentRunner(runnerDeps);
@@ -318,7 +350,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
   });
 
   // -------------------------------------------------------------------------
-  // OBSV-03: Log level verification for DLQ delivery
+  // Log level verification for DLQ delivery
   // -------------------------------------------------------------------------
 
   it("successful DLQ delivery logs at DEBUG level (not ERROR)", async () => {
@@ -354,8 +386,8 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
 
     expect(dlq.size()).toBe(0);
 
-    // OBSV-03: Verify DEBUG log for successful delivery (not ERROR)
-    // The DLQ uses logger.debug for successful delivery
+    // Verify DEBUG log for successful delivery (not ERROR).
+    // The DLQ uses logger.debug for successful delivery.
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "run-4" }),
       expect.stringContaining("delivered successfully"),

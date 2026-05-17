@@ -107,7 +107,7 @@ describe("createAuthUsageTracker", () => {
   // ---------------------------------------------------------------------------
 
   describe("reset", () => {
-    it("clears all stats", () => {
+    it("clears all recorded per-key usage stats on reset()", () => {
       tracker.record("KEY_A", { tokensIn: 100, tokensOut: 50, cost: 0.01, success: true });
       tracker.record("KEY_B", { tokensIn: 200, tokensOut: 100, cost: 0.02, success: true });
 

@@ -24,9 +24,15 @@ import type Database from "better-sqlite3";
 import type { MemoryRow } from "./types.js";
 import { hybridSearch, searchByVector } from "./hybrid-search.js";
 import { initSchema } from "./schema.js";
-import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags } from "./row-mapper.js";
+import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags, createRowMapper } from "./row-mapper.js";
+import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
 import { truncateForEmbedding } from "./embedding-batch-indexer.js";
 import { openSqliteDatabase } from "./sqlite-adapter-base.js";
+import { systemNowMs } from "@comis/core";
+
+// Row mappers
+const memoryRowMapper = createRowMapper(MemoryRowSchema);
+const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
 
 /** Minimal pino-compatible logger interface for memory subsystem logging. */
 interface MemoryLogger {
@@ -74,7 +80,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
   // ── store ────────────────────────────────────────────────────────
 
   async store(entry: MemoryEntry): Promise<Result<MemoryEntry, Error>> {
-    const startMs = Date.now();
+    const startMs = systemNowMs();
     try {
       const memoryType = (entry as MemoryEntry & { memoryType?: string }).memoryType ?? "semantic";
 
@@ -87,8 +93,8 @@ export class SqliteMemoryAdapter implements MemoryPort {
       });
       tx();
 
-      const durationMs = Date.now() - startMs;
-      // Finding 14: hasEmbedding=false implies embedding will be queued for background generation
+      const durationMs = systemNowMs() - startMs;
+      // hasEmbedding=false implies embedding will be queued for background generation
       this.logger?.debug({ durationMs, op: "store", hasEmbedding: !!entry.embedding, embeddingQueued: !entry.embedding, memoryType }, "Memory store complete");
       return ok(entry);
     } catch (e: unknown) {
@@ -126,16 +132,16 @@ export class SqliteMemoryAdapter implements MemoryPort {
   // ── retrieve ─────────────────────────────────────────────────────
 
   async retrieve(id: string, tenantId?: string): Promise<Result<MemoryEntry | undefined, Error>> {
-    const startMs = Date.now();
+    const startMs = systemNowMs();
     try {
       const tid = tenantId ?? "default";
       // Filter expired entries at query time
       const row = this.db
         .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND (expires_at IS NULL OR expires_at > ?)")
-        .get(id, tid, Date.now()) as MemoryRow | undefined;
+        .get(id, tid, systemNowMs()) as MemoryRow | undefined;
 
       if (!row) {
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
         this.logger?.debug({ durationMs, op: "retrieve", resultCount: 0 }, "Memory retrieve complete");
         return ok(undefined);
       }
@@ -157,7 +163,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
         }
       }
 
-      const durationMs = Date.now() - startMs;
+      const durationMs = systemNowMs() - startMs;
       this.logger?.debug({ durationMs, op: "retrieve", resultCount: 1 }, "Memory retrieve complete");
       return ok(rowToEntry(row, embedding));
     } catch (e: unknown) {
@@ -172,7 +178,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
     query: string | number[],
     options?: MemorySearchOptions,
   ): Promise<Result<MemorySearchResult[], Error>> {
-    const startMs = Date.now();
+    const startMs = systemNowMs();
     const queryLen = typeof query === "string" ? query.length : 0;
     try {
       const limit = options?.limit ?? 10;
@@ -181,19 +187,22 @@ export class SqliteMemoryAdapter implements MemoryPort {
       if (Array.isArray(query)) {
         // Vector-only search (per-instance vec state)
         if (!this.vecAvailable) {
-          const durationMs = Date.now() - startMs;
+          const durationMs = systemNowMs() - startMs;
           this.logger?.debug({ durationMs, op: "search", resultCount: 0, queryLen, searchMode: "vector-only" }, "Memory search complete");
           return ok([]);
         }
 
         const vecResults = searchByVector(this.db, query, limit);
 
-        const now = Date.now();
+        const now = systemNowMs();
         const results: MemorySearchResult[] = [];
         for (const vr of vecResults) {
-          const row = this.db
-            .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
-            .get(vr.id, tenantId) as MemoryRow | undefined;
+          const parsed = memoryRowMapper.parseOptionalRow(
+            this.db
+              .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
+              .get(vr.id, tenantId),
+          );
+          const row = parsed.ok ? parsed.value : undefined;
 
           if (!row) continue;
 
@@ -215,7 +224,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
         }
 
         const sliced = results.slice(0, limit);
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
         this.logger?.debug({ durationMs, op: "search", resultCount: sliced.length, queryLen, searchMode: "vector-only" }, "Memory search complete");
         return ok(sliced);
       }
@@ -225,9 +234,9 @@ export class SqliteMemoryAdapter implements MemoryPort {
       let embedDurationMs: number | undefined;
 
       if (this.embeddingPort) {
-        const embedStartMs = Date.now();
+        const embedStartMs = systemNowMs();
         const embedResult = await this.embeddingPort.embed(truncateForEmbedding(query));
-        embedDurationMs = Date.now() - embedStartMs;
+        embedDurationMs = systemNowMs() - embedStartMs;
         if (embedResult.ok) {
           queryEmbedding = embedResult.value;
           // Zero-length embedding (short/emoji input) -> FTS-only fallback
@@ -259,12 +268,15 @@ export class SqliteMemoryAdapter implements MemoryPort {
       }, this.vecAvailable);
 
       // Build full MemorySearchResult with entries
-      const now = Date.now();
+      const now = systemNowMs();
       const results: MemorySearchResult[] = [];
       for (const hr of hybridResults) {
-        const row = this.db
-          .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
-          .get(hr.id, tenantId) as MemoryRow | undefined;
+        const parsed = memoryRowMapper.parseOptionalRow(
+          this.db
+            .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
+            .get(hr.id, tenantId),
+        );
+        const row = parsed.ok ? parsed.value : undefined;
 
         if (!row) continue;
 
@@ -287,7 +299,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
         });
       }
 
-      const durationMs = Date.now() - startMs;
+      const durationMs = systemNowMs() - startMs;
       this.logger?.debug(
         {
           durationMs,
@@ -301,7 +313,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
       );
       return ok(results);
     } catch (e: unknown) {
-      const durationMs = Date.now() - startMs;
+      const durationMs = systemNowMs() - startMs;
       this.logger?.warn(
         {
           err: e instanceof Error ? e : new Error(String(e)),
@@ -324,14 +336,20 @@ export class SqliteMemoryAdapter implements MemoryPort {
     fields: MemoryUpdateFields,
     tenantId?: string,
   ): Promise<Result<MemoryEntry, Error>> {
-    const startMs = Date.now();
+    const startMs = systemNowMs();
     try {
       const tid = tenantId ?? "default";
 
       // Verify entry exists
-      const existing = this.db
-        .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
-        .get(id, tid) as MemoryRow | undefined;
+      const existingParsed = memoryRowMapper.parseOptionalRow(
+        this.db
+          .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
+          .get(id, tid),
+      );
+      if (!existingParsed.ok) {
+        return err(new Error(`Row validation failed: ${existingParsed.error.message}`));
+      }
+      const existing = existingParsed.value;
 
       if (!existing) {
         return err(new Error(`Memory entry not found: ${id}`));
@@ -360,7 +378,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
 
       // Always update updated_at
       setClauses.push("updated_at = ?");
-      setParams.push(Date.now());
+      setParams.push(systemNowMs());
 
       const tx = this.db.transaction(() => {
         if (setClauses.length > 0) {
@@ -387,11 +405,21 @@ export class SqliteMemoryAdapter implements MemoryPort {
       tx();
 
       // Return updated entry
-      const updated = this.db
-        .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
-        .get(id, tid) as MemoryRow;
+      const updatedParsed = memoryRowMapper.parseOptionalRow(
+        this.db
+          .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
+          .get(id, tid),
+      );
+      if (!updatedParsed.ok) {
+        return err(new Error(`Row validation failed: ${updatedParsed.error.message}`));
+      }
+      const updated = updatedParsed.value;
+      if (!updated) {
+        // Should not happen — we just updated. Surface as internal error.
+        return err(new Error(`Updated memory entry vanished: ${id}`));
+      }
 
-      const durationMs = Date.now() - startMs;
+      const durationMs = systemNowMs() - startMs;
       this.logger?.debug({ durationMs, op: "update" }, "Memory update complete");
       return ok(rowToEntry(updated));
     } catch (e: unknown) {
@@ -402,7 +430,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
   // ── delete ───────────────────────────────────────────────────────
 
   async delete(id: string, tenantId?: string): Promise<Result<boolean, Error>> {
-    const startMs = Date.now();
+    const startMs = systemNowMs();
     try {
       const tid = tenantId ?? "default";
 
@@ -416,7 +444,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
         .prepare("DELETE FROM memories WHERE id = ? AND tenant_id = ?")
         .run(id, tid);
 
-      const durationMs = Date.now() - startMs;
+      const durationMs = systemNowMs() - startMs;
       this.logger?.debug({ durationMs, op: "delete" }, "Memory delete complete");
       return ok(result.changes > 0);
     } catch (e: unknown) {
@@ -427,15 +455,19 @@ export class SqliteMemoryAdapter implements MemoryPort {
   // ── clear ────────────────────────────────────────────────────────
 
   async clear(sessionKey: SessionKey): Promise<Result<number, Error>> {
-    const startMs = Date.now();
+    const startMs = systemNowMs();
     try {
       const tid = sessionKey.tenantId;
 
       // Get IDs to delete from vec_memories first (per-instance)
       if (this.vecAvailable) {
-        const ids = this.db
-          .prepare("SELECT id FROM memories WHERE tenant_id = ?")
-          .all(tid) as Array<{ id: string }>;
+        const idsParsed = idProjectionMapper.parseRows(
+          this.db
+            .prepare("SELECT id FROM memories WHERE tenant_id = ?")
+            .all(tid),
+        );
+        // Degrade-on-validation-error: clear scope → no vec rows to cascade.
+        const ids = idsParsed.ok ? idsParsed.value : [];
 
         for (const { id } of ids) {
           this.db.prepare("DELETE FROM vec_memories WHERE memory_id = ?").run(id);
@@ -445,7 +477,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
       // Delete all memories for tenant (FTS5 trigger handles cleanup)
       const result = this.db.prepare("DELETE FROM memories WHERE tenant_id = ?").run(tid);
 
-      const durationMs = Date.now() - startMs;
+      const durationMs = systemNowMs() - startMs;
       this.logger?.debug({ durationMs, op: "clear" }, "Memory clear complete");
       return ok(result.changes);
     } catch (e: unknown) {

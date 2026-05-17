@@ -8,8 +8,8 @@
  * @module
  */
 
-import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { ComisLogger } from "@comis/infra";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import type { ComisLogger, ClockPort } from "@comis/core";
 import { suppressError } from "@comis/shared";
 
 import type { StreamFnWrapper } from "./types.js";
@@ -33,6 +33,8 @@ export interface ApiPayloadTraceConfig {
   maxSize?: string;
   /** Number of rotated files to keep. Undefined = no rotation. */
   maxFiles?: number;
+  /** Wall-clock + monotonic time reads. */
+  clock: ClockPort;
 }
 
 /**
@@ -70,7 +72,7 @@ export function createApiPayloadTraceWriter(
       appendJsonlLine(
         config.filePath,
         {
-          ts: new Date().toISOString(),
+          ts: config.clock.nowDate().toISOString(),
           type: "api_payload",
           agentId: config.agentId,
           sessionId: config.sessionId,
@@ -85,7 +87,7 @@ export function createApiPayloadTraceWriter(
       );
 
       // TTFT measurement -- record start time before stream call
-      const streamStartMs = Date.now();
+      const streamStartMs = config.clock.now();
 
       const stream = next(model, context, options);
 
@@ -95,7 +97,7 @@ export function createApiPayloadTraceWriter(
       if (resultPromise && typeof resultPromise.then === "function") {
         const usageCapture = resultPromise.then((msg: unknown) => {
           // Capture TTFT when stream result resolves (first available timing point)
-          const ttftMs = Date.now() - streamStartMs;
+          const ttftMs = config.clock.now() - streamStartMs;
           logger.debug(
             {
               ttftMs,
@@ -112,7 +114,7 @@ export function createApiPayloadTraceWriter(
             appendJsonlLine(
               config.filePath,
               {
-                ts: new Date().toISOString(),
+                ts: config.clock.nowDate().toISOString(),
                 type: "api_usage",
                 agentId: config.agentId,
                 sessionId: config.sessionId,

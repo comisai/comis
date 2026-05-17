@@ -273,7 +273,7 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
         logger?.warn(
           {
             hint: "Config git repo was corrupted or missing, re-initialized",
-            errorKind: "internal",
+            errorKind: "internal" as const,
           },
           "Auto-reinitializing config git repo",
         );
@@ -448,10 +448,11 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
         if (!trimmed) continue;
 
         const lines = trimmed.split("\n");
-        if (lines.length < 2) continue;
+        const [shaLine, timestampLine] = lines;
+        if (shaLine === undefined || timestampLine === undefined) continue;
 
-        const sha = lines[0]!.trim();
-        const timestamp = lines[1]!.trim();
+        const sha = shaLine.trim();
+        const timestamp = timestampLine.trim();
         const bodyLines = lines.slice(2);
         const body = bodyLines.join("\n").trim();
         const firstLine = bodyLines[0]?.trim() ?? "";
@@ -609,7 +610,7 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
       const initResult = await initRepo();
       if (!initResult.ok) return err(initResult.error);
 
-      const thresholdMs = new Date(olderThan).getTime();
+      const thresholdMs = Date.parse(olderThan);
       if (isNaN(thresholdMs)) return err(`Invalid date: ${olderThan}`);
 
       // Get all commits oldest-first
@@ -621,14 +622,20 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
 
       const commits = lines.map((line) => {
         const spaceIdx = line.indexOf(" ");
-        return { sha: line.slice(0, spaceIdx), timestamp: new Date(line.slice(spaceIdx + 1)).getTime() };
+        return { sha: line.slice(0, spaceIdx), timestamp: Date.parse(line.slice(spaceIdx + 1)) };
       });
 
       const oldCommits = commits.filter((c) => c.timestamp < thresholdMs);
       if (oldCommits.length < 2) return ok({ squashedCount: 0, newRootSha: "" });
 
-      // Newest old commit becomes the squash boundary
-      const squashTarget = oldCommits[oldCommits.length - 1]!;
+      // Newest old commit becomes the squash boundary. Explicit length-
+      // check + Result.err in lieu of non-null assertion: the `length < 2`
+      // check above guarantees non-empty, but TypeScript can't narrow array
+      // indexing through that guard.
+      const squashTarget = oldCommits[oldCommits.length - 1];
+      if (!squashTarget) {
+        return err("Empty oldCommits despite length check");
+      }
 
       // Get the tree object of the squash target
       const treeResult = await execWithReinit(["rev-parse", `${squashTarget.sha}^{tree}`]);

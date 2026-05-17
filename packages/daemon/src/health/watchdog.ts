@@ -12,6 +12,7 @@
  */
 
 import type { ProcessMonitor } from "../process/process-monitor.js";
+import { systemGetEnv, systemSetInterval, systemClearInterval } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // sd-notify graceful import
@@ -88,11 +89,10 @@ export function startWatchdog(deps: WatchdogDeps): WatchdogHandle {
   let timer: ReturnType<typeof setInterval> | undefined;
 
   if (!notify) {
-    // eslint-disable-next-line no-restricted-syntax -- process.env access needed for systemd detection; NOTIFY_SOCKET is set by systemd, not a secret
-    if (process.env["NOTIFY_SOCKET"]) {
+    if (systemGetEnv("NOTIFY_SOCKET")) {
       deps.logger.warn(
         {
-          errorKind: "config",
+          errorKind: "config" as const,
           hint: "Reinstall comisai with libsystemd-dev + pkg-config available so the sd-notify native addon builds. Without it, systemd receives no READY/WATCHDOG signals and the unit will hang in 'activating' until TimeoutStartSec, then enter a respawn loop.",
           loadError: sdNotifyLoadError ?? "unknown",
         },
@@ -126,7 +126,7 @@ export function startWatchdog(deps: WatchdogDeps): WatchdogHandle {
     "systemd watchdog started",
   );
 
-  timer = setInterval(() => {
+  timer = systemSetInterval(() => {
     // Health gating: check event loop delay before pinging
     if (deps.processMonitor) {
       const metrics = deps.processMonitor.collect();
@@ -155,7 +155,7 @@ export function startWatchdog(deps: WatchdogDeps): WatchdogHandle {
   return {
     stop(): void {
       if (timer) {
-        clearInterval(timer);
+        systemClearInterval(timer);
         timer = undefined;
       }
     },

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { validateSlackCredentials } from "./credential-validator.js";
+import { WebClient } from "@slack/web-api";
 
 // Mock the @slack/web-api WebClient
 const mockAuthTest = vi.fn();
@@ -203,6 +204,40 @@ describe("credential-validator", () => {
         expect(result.value.teamId).toBe("");
         expect(result.value.botId).toBe("");
       }
+    });
+
+    it("passes slackApiUrl to WebClient when apiRoot is provided (E2E seam)", async () => {
+      // apiRoot threads through as WebClientOptions.slackApiUrl so
+      // auth.test() (and all other Web API calls) hit the 127.0.0.1 mock
+      // instead of slack.com/api.
+      mockAuthTest.mockResolvedValueOnce({ ok: true, user_id: "U", team_id: "T", bot_id: "B" });
+      const mockWebClient = vi.mocked(WebClient);
+      mockWebClient.mockClear();
+
+      await validateSlackCredentials({
+        botToken: "xoxb-test",
+        mode: "http",
+        signingSecret: "sig",
+        apiRoot: "http://127.0.0.1:54323",
+      });
+
+      expect(mockWebClient).toHaveBeenCalledWith("xoxb-test", {
+        slackApiUrl: "http://127.0.0.1:54323",
+      });
+    });
+
+    it("constructs WebClient with token only when apiRoot is omitted (production byte-identical)", async () => {
+      mockAuthTest.mockResolvedValueOnce({ ok: true, user_id: "U", team_id: "T", bot_id: "B" });
+      const mockWebClient = vi.mocked(WebClient);
+      mockWebClient.mockClear();
+
+      await validateSlackCredentials({
+        botToken: "xoxb-test",
+        mode: "http",
+        signingSecret: "sig",
+      });
+
+      expect(mockWebClient).toHaveBeenCalledWith("xoxb-test");
     });
   });
 });

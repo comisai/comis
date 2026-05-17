@@ -13,7 +13,8 @@
  * @module
  */
 
-import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
+import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
+import { systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -221,7 +222,7 @@ export function createModelScanner(deps: ModelScannerDeps): ModelScanner {
       config: ProviderScanConfig,
       apiKey: string,
     ): Promise<ScanResult> {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
 
       const endpoint = buildEndpoint(config.type, config.baseUrl, apiKey);
       if (!endpoint) {
@@ -230,13 +231,13 @@ export function createModelScanner(deps: ModelScannerDeps): ModelScanner {
           keyValid: false,
           modelsDiscovered: [],
           error: `Unsupported provider type: ${config.type}`,
-          durationMs: Date.now() - startMs,
+          durationMs: systemNowMs() - startMs,
         };
       }
 
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const timer = systemSetTimeout(() => controller.abort(), timeoutMs);
 
         let response: Response;
         try {
@@ -246,10 +247,10 @@ export function createModelScanner(deps: ModelScannerDeps): ModelScanner {
             signal: controller.signal,
           });
         } finally {
-          clearTimeout(timer);
+          systemClearTimeout(timer);
         }
 
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
 
         if (response.ok) {
           const body = (await response.json()) as Record<string, unknown>;
@@ -281,7 +282,7 @@ export function createModelScanner(deps: ModelScannerDeps): ModelScanner {
           durationMs,
         };
       } catch (error: unknown) {
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
         const message =
           error instanceof Error ? error.message : String(error);
         return {

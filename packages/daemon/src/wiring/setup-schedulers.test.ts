@@ -62,6 +62,8 @@ vi.mock("@comis/core", () => ({
   safePath: mockSafePath,
   SkillsConfigSchema: { parse: mockSkillsConfigSchemaParse },
   formatSessionKey: vi.fn(() => "test|heartbeat|hb-agent-1"),
+  systemNowMs: () => Date.now(),
+  systemSetTimeout: (cb: () => void, ms: number) => setTimeout(cb, ms),
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -124,6 +126,9 @@ function createMinimalDeps(overrides: Record<string, any> = {}) {
     schedulerLogger: createMockLogger() as any,
     agentLogger: createMockLogger() as any,
     skillsLogger: createMockLogger() as any,
+    // Stub clock + timers required by SetupSchedulersDeps.
+    clock: { now: () => Date.now(), nowDate: () => new Date() } as any,
+    timers: { setTimeout: vi.fn(), setInterval: vi.fn() } as any,
     ...overrides,
   };
 }

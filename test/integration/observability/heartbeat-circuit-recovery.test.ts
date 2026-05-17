@@ -28,6 +28,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createCircuitBreaker } from "@comis/agent";
+import type { ClockPort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Fixture
@@ -40,19 +41,21 @@ const CFG = {
   halfOpenTimeoutMs: 5_000,
 };
 
+const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
+
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
 
 describe("Circuit breaker -- closed -> open transition", () => {
   it("starts in 'closed' state with isOpen() false", () => {
-    const cb = createCircuitBreaker(CFG);
+    const cb = createCircuitBreaker(CFG, testClock);
     expect(cb.isOpen()).toBe(false);
     expect(cb.getState()).toBe("closed");
   });
 
   it("opens after exactly failureThreshold consecutive failures", () => {
-    const cb = createCircuitBreaker(CFG);
+    const cb = createCircuitBreaker(CFG, testClock);
     cb.recordFailure();
     cb.recordFailure();
     expect(cb.isOpen()).toBe(false);
@@ -62,7 +65,7 @@ describe("Circuit breaker -- closed -> open transition", () => {
   });
 
   it("a success resets the failure counter mid-streak", () => {
-    const cb = createCircuitBreaker(CFG);
+    const cb = createCircuitBreaker(CFG, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordSuccess(); // counter resets
@@ -83,7 +86,7 @@ describe("Circuit breaker -- open -> halfOpen transition under fake timers", () 
   });
 
   it("stays open until resetTimeoutMs elapses, then admits a probe", () => {
-    const cb = createCircuitBreaker(CFG);
+    const cb = createCircuitBreaker(CFG, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
@@ -101,7 +104,7 @@ describe("Circuit breaker -- open -> halfOpen transition under fake timers", () 
   });
 
   it("halfOpen + recordSuccess -> closed", () => {
-    const cb = createCircuitBreaker(CFG);
+    const cb = createCircuitBreaker(CFG, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
@@ -119,7 +122,7 @@ describe("Circuit breaker -- open -> halfOpen transition under fake timers", () 
   });
 
   it("halfOpen + recordFailure -> open and cooldown restarts", () => {
-    const cb = createCircuitBreaker(CFG);
+    const cb = createCircuitBreaker(CFG, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
@@ -143,7 +146,7 @@ describe("Circuit breaker -- open -> halfOpen transition under fake timers", () 
 
 describe("Circuit breaker -- reset()", () => {
   it("reset() returns to closed regardless of prior state", () => {
-    const cb = createCircuitBreaker(CFG);
+    const cb = createCircuitBreaker(CFG, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
@@ -171,7 +174,7 @@ describe("Circuit breaker -- repeated open/close lifecycle", () => {
   });
 
   it("survives multiple open->halfOpen->closed cycles", () => {
-    const cb = createCircuitBreaker(CFG);
+    const cb = createCircuitBreaker(CFG, testClock);
 
     for (let cycle = 0; cycle < 3; cycle++) {
       cb.recordFailure();

@@ -21,7 +21,7 @@ describe("normalizeModelId - Anthropic shortcuts", () => {
     expect(result.modelId).toMatch(/^claude-haiku-4/);
   });
 
-  it("is case insensitive", () => {
+  it("normalizes input case-insensitively when matching shortname to canonical model-id", () => {
     const result = normalizeModelId("anthropic", "SONNET");
     expect(result.normalized).toBe(true);
     expect(result.modelId).toMatch(/^claude-sonnet-4/);

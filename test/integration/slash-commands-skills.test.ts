@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createSkillRegistry, expandSkillForInvocation } from "@comis/skills";
-import { matchPromptSkillCommand, parseSlashCommand } from "@comis/agent";
+import { matchPromptSkillCommand, parseSlashCommand } from "@comis/orchestrator";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

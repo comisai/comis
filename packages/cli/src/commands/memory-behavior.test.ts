@@ -18,10 +18,16 @@ import {
   getSpyOutput,
 } from "../test-helpers.js";
 
-// Mock withClient from rpc-client at module level for ESM hoisting
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// Mock withClient from rpc-client at module level for ESM hoisting.
+// importOriginal-based mock so callTyped resolves to the real wrapper
+// while withClient is mocked.
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 // Mock withSpinner to pass-through (no actual ora spinner in tests)
 vi.mock("../output/spinner.js", () => ({
@@ -60,32 +66,30 @@ const SEARCH_RESULTS = {
 };
 
 /**
- * Full memory entry for inspect tests.
+ * Full memory entry for inspect tests. Targets ContextInspectContract,
+ * which returns the entry directly (no `entry: {...}` wrapper).
  */
 const INSPECT_ENTRY = {
-  entry: {
-    id: "mem-001",
-    content: "User prefers dark mode",
-    memoryType: "conversation",
-    trustLevel: "high",
-    tenantId: "test-tenant",
-    sessionKey: "discord:guild-123:chan-456:user-789",
-    createdAt: "2026-01-15T11:00:00Z",
-    updatedAt: "2026-01-15T12:00:00Z",
-    metadata: { source: "extraction" },
-  },
+  id: "mem-001",
+  content: "User prefers dark mode",
+  memoryType: "conversation",
+  trustLevel: "high",
+  tenantId: "test-tenant",
+  sessionKey: "discord:guild-123:chan-456:user-789",
+  createdAt: "2026-01-15T11:00:00Z",
+  updatedAt: "2026-01-15T12:00:00Z",
+  metadata: { source: "extraction" },
 };
 
 /**
- * Stats object for stats display tests.
+ * Stats object for stats display tests. Targets MemoryStatsContract,
+ * which returns the stats directly (no `stats: {...}` wrapper).
  */
 const STATS_DATA = {
-  stats: {
-    totalEntries: 150,
-    averageScore: 0.82,
-    oldestEntry: "2025-12-01",
-    byMemoryType: "conversation: 100, extraction: 50",
-  },
+  totalEntries: 150,
+  averageScore: 0.82,
+  oldestEntry: "2025-12-01",
+  byMemoryType: "conversation: 100, extraction: 50",
 };
 
 // ── memory search table output ──────────────────────────────────
@@ -101,7 +105,7 @@ describe("memory search table output", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("memory.search", SEARCH_RESULTS)
+        .onCall("context.search", SEARCH_RESULTS)
         .build();
       return fn(mockClient);
     });
@@ -150,7 +154,7 @@ describe("memory search no results", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("memory.search", { results: [] })
+        .onCall("context.search", { results: [] })
         .build();
       return fn(mockClient);
     });
@@ -238,7 +242,8 @@ describe("memory search --limit constrains result count", () => {
       "node", "test", "memory", "search", "test query", "--limit", "5",
     ]);
 
-    expect(callSpy).toHaveBeenCalledWith("memory.search", {
+    // `context.search` is the actual full-text search surface.
+    expect(callSpy).toHaveBeenCalledWith("context.search", {
       query: "test query",
       limit: 5,
     });
@@ -258,7 +263,7 @@ describe("memory search --format json", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("memory.search", SEARCH_RESULTS)
+        .onCall("context.search", SEARCH_RESULTS)
         .build();
       return fn(mockClient);
     });
@@ -308,8 +313,9 @@ describe("memory inspect full details", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
+      // context.inspect returns the entry directly (no `entry: {...}` wrapper).
       const mockClient = createMockRpcClient()
-        .onCall("memory.inspect", INSPECT_ENTRY)
+        .onCall("context.inspect", INSPECT_ENTRY)
         .build();
       return fn(mockClient);
     });
@@ -350,7 +356,7 @@ describe("memory inspect --format json", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("memory.inspect", INSPECT_ENTRY)
+        .onCall("context.inspect", INSPECT_ENTRY)
         .build();
       return fn(mockClient);
     });
@@ -394,8 +400,9 @@ describe("memory inspect non-existent", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
+      // context.inspect "not found" signal is an empty record.
       const mockClient = createMockRpcClient()
-        .onCall("memory.inspect", { entry: undefined })
+        .onCall("context.inspect", {})
         .build();
       return fn(mockClient);
     });
@@ -431,8 +438,9 @@ describe("memory stats display", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
+      // memory.stats is the actual daemon stats surface.
       const mockClient = createMockRpcClient()
-        .onCall("memory.inspect", STATS_DATA)
+        .onCall("memory.stats", STATS_DATA)
         .build();
       return fn(mockClient);
     });
@@ -474,7 +482,7 @@ describe("memory stats --format json", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("memory.inspect", STATS_DATA)
+        .onCall("memory.stats", STATS_DATA)
         .build();
       return fn(mockClient);
     });
@@ -513,8 +521,9 @@ describe("memory stats empty", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
+      // Empty record = no stats.
       const mockClient = createMockRpcClient()
-        .onCall("memory.inspect", { stats: {} })
+        .onCall("memory.stats", {})
         .build();
       return fn(mockClient);
     });
@@ -627,7 +636,10 @@ describe("memory clear with --yes and --filter sends RPC", () => {
     exitSpy.restore();
   });
 
-  it("sends config.set RPC with parsed filter params", async () => {
+  it("sends memory.flush RPC (--filter is dropped)", async () => {
+    // MemoryFlushContract is the actual flush surface. The contract's
+    // request only models tenant_id + agent_id (the daemon's actual flush
+    // params); arbitrary --filter key=value flags are dropped.
     const program = createTestProgram();
     registerMemoryCommand(program);
 
@@ -635,11 +647,7 @@ describe("memory clear with --yes and --filter sends RPC", () => {
       "node", "test", "memory", "clear", "--filter", "memoryType=conversation", "--yes",
     ]);
 
-    expect(callSpy).toHaveBeenCalledWith("config.set", {
-      section: "memory",
-      key: "clear",
-      value: { memoryType: "conversation" },
-    });
+    expect(callSpy).toHaveBeenCalledWith("memory.flush", {});
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("Memory entries cleared");
@@ -669,7 +677,9 @@ describe("memory clear with --yes and --tenant", () => {
     exitSpy.restore();
   });
 
-  it("sends config.set RPC with tenantId param", async () => {
+  it("sends memory.flush RPC with tenant_id param", async () => {
+    // --tenant flag maps to MemoryFlushContract's tenant_id request field
+    // (snake_case — matches the daemon's actual parameter).
     const program = createTestProgram();
     registerMemoryCommand(program);
 
@@ -677,10 +687,8 @@ describe("memory clear with --yes and --tenant", () => {
       "node", "test", "memory", "clear", "--tenant", "test-tenant", "--yes",
     ]);
 
-    expect(callSpy).toHaveBeenCalledWith("config.set", {
-      section: "memory",
-      key: "clear",
-      value: { tenantId: "test-tenant" },
+    expect(callSpy).toHaveBeenCalledWith("memory.flush", {
+      tenant_id: "test-tenant",
     });
 
     const output = getSpyOutput(consoleSpy.log);
@@ -711,7 +719,9 @@ describe("memory clear with both --filter and --tenant", () => {
     exitSpy.restore();
   });
 
-  it("sends config.set RPC with both filter and tenant params", async () => {
+  it("sends memory.flush RPC with tenant_id (--filter is dropped)", async () => {
+    // Only the --tenant flag maps to a real MemoryFlushContract request
+    // field; arbitrary --filter key=value flags are dropped.
     const program = createTestProgram();
     registerMemoryCommand(program);
 
@@ -722,10 +732,8 @@ describe("memory clear with both --filter and --tenant", () => {
       "--yes",
     ]);
 
-    expect(callSpy).toHaveBeenCalledWith("config.set", {
-      section: "memory",
-      key: "clear",
-      value: { memoryType: "conversation", tenantId: "test-tenant" },
+    expect(callSpy).toHaveBeenCalledWith("memory.flush", {
+      tenant_id: "test-tenant",
     });
   });
 });
@@ -788,7 +796,11 @@ describe("memory clear with filter containing = in value", () => {
     exitSpy.restore();
   });
 
-  it("correctly parses filter value containing = signs", async () => {
+  it("correctly parses filter value containing = signs (but --filter is dropped from RPC)", async () => {
+    // The CLI still parses --filter for the input-validation guard at the
+    // top of the action handler (at least one flag is required), but the
+    // resulting filter object no longer flows into the RPC call
+    // (MemoryFlushContract doesn't model arbitrary filters).
     const program = createTestProgram();
     registerMemoryCommand(program);
 
@@ -796,11 +808,7 @@ describe("memory clear with filter containing = in value", () => {
       "node", "test", "memory", "clear", "--filter", "content=has=equals", "--yes",
     ]);
 
-    expect(callSpy).toHaveBeenCalledWith("config.set", {
-      section: "memory",
-      key: "clear",
-      value: { content: "has=equals" },
-    });
+    expect(callSpy).toHaveBeenCalledWith("memory.flush", {});
   });
 });
 

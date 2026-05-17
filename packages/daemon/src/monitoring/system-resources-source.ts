@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: monitoring source /proc/meminfo parse guard; consumed via monitoring-source aggregator try/catch chain.
 /**
  * System Resources HeartbeatSourcePort implementation.
  * Monitors CPU and memory usage with OS-aware memory detection:
@@ -15,6 +16,7 @@ import { cpus, freemem, totalmem } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { systemNowMs } from "@comis/core";
 
 const execFile = promisify(execFileCb);
 
@@ -190,7 +192,7 @@ export function createSystemResourcesSource(config: ResourceMonitorConfig): Hear
     name: SOURCE_NAME,
 
     async check(): Promise<HeartbeatCheckResult> {
-      const now = Date.now();
+      const now = systemNowMs();
       const cpuPercent = getCpuUsagePercent();
       const mem = await getMemoryUsagePercent();
 

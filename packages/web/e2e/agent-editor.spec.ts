@@ -96,34 +96,43 @@ test.describe("Agent editor view", () => {
     await page.locator("ic-agent-editor").waitFor({ timeout: 10_000 });
   });
 
-  test("editor shows all 9 tabs", async ({ page }) => {
+  test("editor shows expected accordion sections", async ({ page }) => {
     const editor = page.locator("ic-agent-editor");
 
-    // The 9 tab labels as defined in EDITOR_TABS in agent-editor.ts
-    const tabLabels = [
-      "General",
-      "Budgets & Safety",
-      "Model Failover",
-      "RAG",
+    // The editor was refactored from a 9-tab layout into a single
+    // long-form page with an Essential section on top and the rest
+    // grouped into <details> accordions. Verify each accordion summary
+    // is rendered.
+    const sectionLabels = [
+      "Budget",
       "Session Policy",
-      "Concurrency",
       "Skills",
-      "Broadcast",
+      "Heartbeat",
       "Advanced",
+      "Context Engine",
+      "Streaming (System-Wide)",
+      "Delivery (System-Wide)",
+      "Queue / Overflow (System-Wide)",
+      "Auto-Reply (System-Wide)",
+      "Send Policy (System-Wide)",
+      "Log Levels (Runtime)",
     ];
 
-    for (const label of tabLabels) {
-      await expect(editor.getByText(label, { exact: true })).toBeVisible();
+    for (const label of sectionLabels) {
+      await expect(
+        editor.locator(".section-label").getByText(label, { exact: true }),
+      ).toBeVisible();
     }
   });
 
-  test("General tab shows agent identity fields", async ({ page }) => {
+  test("Essential section shows agent identity fields", async ({ page }) => {
     const editor = page.locator("ic-agent-editor");
 
     // Verify title shows edit mode with agent ID
     await expect(editor.getByText("Edit Agent: agent-default")).toBeVisible();
 
-    // Agent ID field should be readonly in edit mode
+    // Agent ID field should be readonly in edit mode (renders as a plain
+    // input rather than a text-field control).
     const idInput = editor.locator("#field-id");
     await expect(idInput).toBeVisible();
     await expect(idInput).toHaveAttribute("readonly", "");
@@ -141,13 +150,19 @@ test.describe("Agent editor view", () => {
     await expect(modelInput).toHaveValue("claude-sonnet-4-20250514");
   });
 
-  test("Budgets & Safety tab shows token budgets and circuit breaker", async ({ page }) => {
+  test("Budget section shows token budget fields", async ({ page }) => {
     const editor = page.locator("ic-agent-editor");
 
-    // Click the Budgets & Safety tab
-    await editor.getByText("Budgets & Safety", { exact: true }).click();
+    // Expand the Budget accordion section by setting the details element
+    // open. Clicking the summary span doesn't always synthesise the
+    // native toggle in Playwright, so flip the open property explicitly.
+    const budgetSection = editor.locator(".section-card", { hasText: "Budget" }).first();
+    await budgetSection.evaluate((card) => {
+      const details = card.querySelector("details");
+      if (details && !details.open) details.open = true;
+    });
 
-    // Verify budget fields appear with values from mock
+    // Verify budget fields appear with values from mock.
     const perExecutionInput = editor.locator("#field-budgets-perExecution");
     await expect(perExecutionInput).toBeVisible();
     await expect(perExecutionInput).toHaveValue("10000");
@@ -157,96 +172,62 @@ test.describe("Agent editor view", () => {
 
     const perDayInput = editor.locator("#field-budgets-perDay");
     await expect(perDayInput).toHaveValue("500000");
-
-    // Circuit breaker threshold
-    const cbThreshold = editor.locator("#field-cb-threshold");
-    await expect(cbThreshold).toHaveValue("5");
   });
 
-  test("switching between tabs preserves form state", async ({ page }) => {
+  test("changes to the Essential section persist when accordions are expanded", async ({ page }) => {
     const editor = page.locator("ic-agent-editor");
 
-    // On General tab, change agent name
+    // Change the agent name in the Essential section
     const nameInput = editor.locator("#field-name");
     await nameInput.fill("UpdatedAgent");
     await expect(nameInput).toHaveValue("UpdatedAgent");
 
-    // Switch to Budgets & Safety tab
-    await editor.getByText("Budgets & Safety", { exact: true }).click();
-
-    // Verify we are on budgets tab (budget fields visible)
+    // Expand the Budget accordion (does not unmount Essential).
+    const budgetSection = editor.locator(".section-card", { hasText: "Budget" }).first();
+    await budgetSection.evaluate((card) => {
+      const details = card.querySelector("details");
+      if (details && !details.open) details.open = true;
+    });
     await expect(editor.locator("#field-budgets-perDay")).toBeVisible();
 
-    // Switch back to General tab
-    await editor.getByText("General", { exact: true }).click();
-
-    // Verify name field still shows "UpdatedAgent"
+    // Name field still carries the change (no unmount happens when
+    // expanding accordions; this guards against future regressions to a
+    // tab-based layout that would unmount inactive panels).
     await expect(nameInput).toHaveValue("UpdatedAgent");
   });
 
-  test("RAG tab shows enable toggle and settings", async ({ page }) => {
+  test("Skills section is reachable and renders the skills editor", async ({ page }) => {
     const editor = page.locator("ic-agent-editor");
 
-    // Click RAG tab
-    await editor.getByText("RAG", { exact: true }).click();
+    await editor.locator(".section-label").getByText("Skills", { exact: true }).click();
 
-    // RAG enabled checkbox should be checked (mock has enabled: true)
-    const ragEnabled = editor.locator("#field-rag-enabled");
-    await expect(ragEnabled).toBeVisible();
-    await expect(ragEnabled).toBeChecked();
-
-    // Max results field should show "5" from mock
-    const maxResults = editor.locator("#field-rag-maxResults");
-    await expect(maxResults).toHaveValue("5");
-
-    // Min score field should show "0.5"
-    const minScore = editor.locator("#field-rag-minScore");
-    await expect(minScore).toHaveValue("0.5");
-
-    // Trust level checkboxes: system and learned should be checked
-    await expect(editor.locator("#field-rag-trust-system")).toBeChecked();
-    await expect(editor.locator("#field-rag-trust-learned")).toBeChecked();
-    await expect(editor.locator("#field-rag-trust-external")).not.toBeChecked();
+    // The Skills sub-editor sub-component mounts on expand.
+    await expect(editor.locator("ic-agent-skills-editor")).toBeVisible();
   });
 
-  test("Session Policy tab shows reset mode and timeout fields", async ({ page }) => {
+  test("Session Policy section shows reset mode and timeout fields", async ({ page }) => {
     const editor = page.locator("ic-agent-editor");
 
-    // Click Session Policy tab
-    await editor.getByText("Session Policy", { exact: true }).click();
+    await editor.locator(".section-label").getByText("Session Policy", { exact: true }).click();
 
-    // Reset mode select should show "daily"
+    // Reset mode select should show "daily" (mapped from
+    // session.resetPolicy.mode = "daily").
     const resetMode = editor.locator("#field-sess-resetMode");
     await expect(resetMode).toBeVisible();
     await expect(resetMode).toHaveValue("daily");
 
-    // Idle timeout field should have value from mock
-    const idleTimeout = editor.locator("#field-sess-idleTimeout");
-    await expect(idleTimeout).toHaveValue("3600000");
-
-    // Timezone field
+    // Timezone select reflects the mock value.
     const timezone = editor.locator("#field-sess-timezone");
     await expect(timezone).toHaveValue("UTC");
   });
 
-  test("Concurrency tab shows concurrent runs and queue mode", async ({ page }) => {
+  test("Advanced section opens to expose the advanced editor", async ({ page }) => {
     const editor = page.locator("ic-agent-editor");
 
-    // Click Concurrency tab
-    await editor.getByText("Concurrency", { exact: true }).click();
+    await editor.locator(".section-label").getByText("Advanced", { exact: true }).click();
 
-    // Max concurrent should show "3" from mock
-    const maxConcurrent = editor.locator("#field-conc-maxConcurrent");
-    await expect(maxConcurrent).toBeVisible();
-    await expect(maxConcurrent).toHaveValue("3");
-
-    // Max queued should show "10"
-    const maxQueued = editor.locator("#field-conc-maxQueued");
-    await expect(maxQueued).toHaveValue("10");
-
-    // Queue mode should show "followup"
-    const queueMode = editor.locator("#field-conc-queueMode");
-    await expect(queueMode).toHaveValue("followup");
+    // Advanced sub-editor is rendered.
+    await expect(editor.locator("ic-agent-advanced-editor")).toBeVisible();
   });
 
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { NotificationConfigSchema } from "./schema-notification.js";
-import { PerAgentConfigSchema } from "./schema-agent.js";
+import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("NotificationConfigSchema", () => {
   it("returns defaults when parsing empty object", () => {

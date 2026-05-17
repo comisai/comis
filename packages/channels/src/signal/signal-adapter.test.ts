@@ -84,7 +84,7 @@ describe("createSignalAdapter", () => {
   });
 
   describe("stop()", () => {
-    it("stops successfully", async () => {
+    it("stops successfully and returns Result.ok when SignalAdapter shutdown completes", async () => {
       const adapter = createSignalAdapter(makeDeps());
       const result = await adapter.stop();
       expect(result.ok).toBe(true);
@@ -120,7 +120,7 @@ describe("createSignalAdapter", () => {
       );
     });
 
-    it("sends to group", async () => {
+    it("sends message to Signal group when channelId has group: prefix", async () => {
       mockRpcRequest.mockResolvedValue({
         ok: true,
         value: { timestamp: 1234567890 },
@@ -312,7 +312,7 @@ describe("createSignalAdapter", () => {
   });
 
   describe("onMessage()", () => {
-    it("registers handler", () => {
+    it("registers inbound-message handler on the SignalAdapter without throwing", () => {
       const adapter = createSignalAdapter(makeDeps());
       const handler = vi.fn();
       adapter.onMessage(handler);

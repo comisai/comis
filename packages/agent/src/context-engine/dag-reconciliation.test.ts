@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { createContextStore } from "@comis/memory";
 import type { ContextStore } from "@comis/memory";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   reconcileJsonlToDag,
   installDagIngestionHook,

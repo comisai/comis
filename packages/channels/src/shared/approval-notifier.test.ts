@@ -2,21 +2,39 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ApprovalNotifier } from "./approval-notifier.js";
 import { TypedEventBus } from "@comis/core";
-import type { ChannelPort } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ChannelPort, DeliveryService } from "@comis/core";
+import type { ComisLogger } from "@comis/core";
 import { ok } from "@comis/shared";
-
-// Mock deliverToChannel to delegate to adapter.sendMessage so existing
-// assertions on adapter.sendMessage still work (avoids formatForChannel HTML conversion)
-vi.mock("./deliver-to-channel.js", () => ({
-  deliverToChannel: vi.fn(async (adapter: any, channelId: string, text: string) => {
-    const result = await adapter.sendMessage(channelId, text);
-    return ok({ ok: true, totalChunks: 1, deliveredChunks: 1, failedChunks: 0, chunks: [{ ok: result.ok, messageId: result.ok ? result.value : undefined, charCount: text.length, retried: false }], totalChars: text.length });
-  }),
-}));
 
 import { createApprovalNotifier } from "./approval-notifier.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+
+// Uses an injected fake DeliveryService instead of vi.mock("./deliver-to-channel.js", ...).
+// The fake's deliverToChannel delegates to adapter.sendMessage so existing assertions on
+// adapter.sendMessage still work (avoids formatForChannel HTML conversion).
+// Aligns the test with the production DI shape and removes the implicit module-graph
+// coupling that vi.mock introduced.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake
+function makeFakeDeliveryService(): DeliveryService {
+  return {
+    deliverToChannel: vi.fn(async (adapter: any, channelId: string, text: string) => {
+      const result = await adapter.sendMessage(channelId, text);
+      return ok({
+        ok: true,
+        totalChunks: 1,
+        deliveredChunks: 1,
+        failedChunks: 0,
+        chunks: [{
+          ok: result.ok,
+          messageId: result.ok ? result.value : undefined,
+          charCount: text.length,
+          retried: false,
+        }],
+        totalChars: text.length,
+      });
+    }),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -87,6 +105,7 @@ describe("approval notifier", () => {
       eventBus,
       getAdapter: (ct) => ct === "telegram" ? telegramAdapter : undefined,
       logger,
+      deliveryService: makeFakeDeliveryService(),
     });
     notifier.start();
 
@@ -108,6 +127,7 @@ describe("approval notifier", () => {
       eventBus,
       getAdapter: () => telegramAdapter,
       logger,
+      deliveryService: makeFakeDeliveryService(),
     });
     notifier.start();
 
@@ -122,6 +142,7 @@ describe("approval notifier", () => {
       eventBus,
       getAdapter: () => undefined,
       logger,
+      deliveryService: makeFakeDeliveryService(),
     });
     notifier.start();
 
@@ -138,6 +159,7 @@ describe("approval notifier", () => {
       eventBus,
       getAdapter: () => failingAdapter,
       logger,
+      deliveryService: makeFakeDeliveryService(),
     });
     notifier.start();
 
@@ -158,6 +180,7 @@ describe("approval notifier", () => {
       eventBus,
       getAdapter: () => telegramAdapter,
       logger,
+      deliveryService: makeFakeDeliveryService(),
     });
     notifier.start();
     notifier.stop();
@@ -172,6 +195,7 @@ describe("approval notifier", () => {
       eventBus,
       getAdapter: () => telegramAdapter,
       logger,
+      deliveryService: makeFakeDeliveryService(),
     });
     notifier.start();
 

@@ -47,9 +47,15 @@ vi.mock("node:os", () => ({
   homedir: vi.fn(() => "/tmp/test-home"),
 }));
 
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// importOriginal-based mock so callTyped resolves to the real wrapper while
+// withClient is mocked.
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 // ---------- Dynamic imports after mocks ----------
 

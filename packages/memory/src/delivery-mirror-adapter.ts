@@ -14,24 +14,18 @@ import type Database from "better-sqlite3";
 import type { DeliveryMirrorPort, DeliveryMirrorEntry, DeliveryMirrorRecordInput } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
+import type { z } from "zod";
+import { createRowMapper } from "./row-mapper.js";
+import { DeliveryMirrorDbRowSchema } from "./row-schemas.js";
 
 // ---------------------------------------------------------------------------
-// Internal DB row type (snake_case -- what SQLite returns)
+// Internal DB row type — z.infer keeps row-schemas.ts as the SSOT.
 // ---------------------------------------------------------------------------
 
-interface DeliveryMirrorDbRow {
-  id: string;
-  session_key: string;
-  text: string;
-  media_urls: string;
-  channel_type: string;
-  channel_id: string;
-  origin: string;
-  idempotency_key: string;
-  status: string;
-  created_at: number;
-  acknowledged_at: number | null;
-}
+type DeliveryMirrorDbRow = z.infer<typeof DeliveryMirrorDbRowSchema>;
+
+const deliveryMirrorMapper = createRowMapper(DeliveryMirrorDbRowSchema);
 
 // ---------------------------------------------------------------------------
 // Row mapper (snake_case -> camelCase with JSON parse)
@@ -107,7 +101,7 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
           input.channelId,
           input.origin,
           input.idempotencyKey,
-          Date.now(),
+          systemNowMs(),
         );
         return Promise.resolve(ok(id));
       } catch (e) {
@@ -117,8 +111,13 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
 
     pending(sessionKey: string): Promise<Result<DeliveryMirrorEntry[], Error>> {
       try {
-        const rows = pendingStmt.all(sessionKey) as DeliveryMirrorDbRow[];
-        return Promise.resolve(ok(rows.map(rowToEntry)));
+        const parsed = deliveryMirrorMapper.parseRows(pendingStmt.all(sessionKey));
+        if (!parsed.ok) {
+          return Promise.resolve(
+            err(new Error(`Row validation failed: ${parsed.error.message}`)),
+          );
+        }
+        return Promise.resolve(ok(parsed.value.map(rowToEntry)));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
       }
@@ -126,7 +125,7 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
 
     acknowledge(ids: string[]): Promise<Result<void, Error>> {
       try {
-        const now = Date.now();
+        const now = systemNowMs();
         const ackTx = db.transaction((entryIds: string[]) => {
           for (const id of entryIds) {
             ackStmt.run(now, id);
@@ -141,7 +140,7 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
 
     pruneOld(maxAgeMs: number): Promise<Result<number, Error>> {
       try {
-        const cutoff = Date.now() - maxAgeMs;
+        const cutoff = systemNowMs() - maxAgeMs;
         const result = pruneStmt.run(cutoff);
         return Promise.resolve(ok(result.changes));
       } catch (e) {

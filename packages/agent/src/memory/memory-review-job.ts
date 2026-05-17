@@ -16,12 +16,12 @@
  */
 
 import { ok, err, fromPromise, type Result } from "@comis/shared";
-import { safePath, parseFormattedSessionKey } from "@comis/core";
+import { safePath, parseFormattedSessionKey, systemNowMs, systemDateFrom, systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { MemoryReviewConfig } from "@comis/core";
 import type { MemoryPort, MemorySearchOptions } from "@comis/core";
 import type { MemoryEntry } from "@comis/core";
-import type { SessionKey } from "@comis/core";
-import { completeSimple, getModel } from "@mariozechner/pi-ai";
+import type { SessionData, SessionKey } from "@comis/core";
+import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
@@ -29,7 +29,7 @@ import { randomUUID } from "node:crypto";
 // Public types
 // ---------------------------------------------------------------------------
 
-/** Session detail entry shape (matches SessionStore.listDetailed output). */
+/** Session detail entry shape (matches SessionStorePort.listDetailed output). */
 export interface SessionDetailedEntry {
   sessionKey: string;
   tenantId: string;
@@ -39,14 +39,6 @@ export interface SessionDetailedEntry {
   createdAt: number;
   updatedAt: number;
   messageCount: number;
-}
-
-/** Session data loaded by formatted key. */
-export interface SessionData {
-  messages: unknown[];
-  metadata: Record<string, unknown>;
-  createdAt: number;
-  updatedAt: number;
 }
 
 /** Dependencies injected into the memory review handler. */
@@ -130,23 +122,17 @@ async function saveWatermark(watermarkPath: string, watermark: ReviewWatermark):
 
 function filterSessions(
   sessions: SessionDetailedEntry[],
-  agentId: string,
   config: MemoryReviewConfig,
   watermark: ReviewWatermark,
 ): SessionDetailedEntry[] {
+  // Session keys do not carry an `agent:<agentId>:` prefix, so there is no
+  // per-agent prefix filter. Memory review iterates every session in the
+  // agent's tenant (the caller passes `tenantId` to
+  // `sessionStore.listDetailed`); per-agent isolation is handled by the
+  // per-agent workspace-scoped watermark file
+  // (`safePath(workspacePath, ".memory-review-watermark")`).
   return sessions
     .filter((s) => {
-      // Filter by agent prefix in session key
-      const agentPrefix = `agent:${agentId}:`;
-      if (!s.sessionKey.startsWith(agentPrefix)) {
-        // For default agent, accept sessions without agent: prefix
-        if (agentId === "default" && !s.sessionKey.startsWith("agent:")) {
-          // OK -- default agent owns unprefixed sessions
-        } else {
-          return false;
-        }
-      }
-
       // Skip sessions below minMessages threshold
       if (s.messageCount < config.minMessages) return false;
 
@@ -178,7 +164,7 @@ function buildSessionSummary(
   updatedAt: number,
   messages: unknown[],
 ): string {
-  const isoDate = new Date(updatedAt).toISOString();
+  const isoDate = systemDateFrom(updatedAt).toISOString();
   let lines = `=== Session: ${sessionKey} (messages: ${messageCount}, updated: ${isoDate}) ===\n`;
 
   if (messages.length <= 20) {
@@ -254,7 +240,7 @@ function extractResponseText(response: { content?: unknown[] }): string {
  * @returns Result<void, Error> -- ok on success (even if 0 memories extracted), err on fatal failure
  */
 export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<void, Error>> {
-  const startTime = Date.now();
+  const startTime = systemNowMs();
   const { config, agentId, tenantId, memoryPort, sessionStore, eventBus, logger } = deps;
 
   // Load watermark
@@ -263,7 +249,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
 
   // List and filter sessions
   const allSessions = sessionStore.listDetailed(tenantId);
-  const qualifyingSessions = filterSessions(allSessions, agentId, config, watermark);
+  const qualifyingSessions = filterSessions(allSessions, config, watermark);
 
   logger.debug({ agentId, totalSessions: allSessions.length, qualifying: qualifyingSessions.length }, "Memory review session filtering complete");
 
@@ -274,8 +260,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: 0,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: Date.now() - startTime,
-      timestamp: Date.now(),
+      durationMs: systemNowMs() - startTime,
+      timestamp: systemNowMs(),
     });
     return ok(undefined);
   }
@@ -310,8 +296,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: 0,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: Date.now() - startTime,
-      timestamp: Date.now(),
+      durationMs: systemNowMs() - startTime,
+      timestamp: systemNowMs(),
     });
     return ok(undefined);
   }
@@ -330,7 +316,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  const timer = systemSetTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
   let responseText: string;
   try {
@@ -342,7 +328,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
           {
             role: "user" as const,
             content: batchContent,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           },
         ],
       },
@@ -356,10 +342,10 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
 
     responseText = extractResponseText(response);
   } catch (llmErr) {
-    clearTimeout(timer);
+    systemClearTimeout(timer);
     return err(new Error(`Memory review LLM call failed: ${llmErr instanceof Error ? llmErr.message : String(llmErr)}`));
   } finally {
-    clearTimeout(timer);
+    systemClearTimeout(timer);
   }
 
   // Parse LLM response
@@ -376,8 +362,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: reviewedSessions.length,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: Date.now() - startTime,
-      timestamp: Date.now(),
+      durationMs: systemNowMs() - startTime,
+      timestamp: systemNowMs(),
     });
     return ok(undefined);
   }
@@ -424,7 +410,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       source: { who: "system", channel: "memory-review" },
       tags: ["auto-review", ...config.autoTags],
       sourceType: "conversation",
-      createdAt: Date.now(),
+      createdAt: systemNowMs(),
     };
 
     const storeResult = await memoryPort.store(entry);
@@ -447,8 +433,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     sessionsReviewed: reviewedSessions.length,
     memoriesExtracted,
     duplicatesSkipped,
-    durationMs: Date.now() - startTime,
-    timestamp: Date.now(),
+    durationMs: systemNowMs() - startTime,
+    timestamp: systemNowMs(),
   });
 
   logger.info({
@@ -456,7 +442,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     sessionsReviewed: reviewedSessions.length,
     memoriesExtracted,
     duplicatesSkipped,
-    durationMs: Date.now() - startTime,
+    durationMs: systemNowMs() - startTime,
   }, "Memory review completed");
 
   return ok(undefined);

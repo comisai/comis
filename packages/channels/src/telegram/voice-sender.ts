@@ -98,7 +98,7 @@ export function createTelegramVoiceSender(deps: TelegramVoiceSenderDeps): Telegr
               channelType: "telegram",
               chatId,
               hint: "Recipient has premium voice message privacy enabled; falling back to document",
-              errorKind: "platform",
+              errorKind: "platform" as const,
             },
             "Voice send forbidden, falling back to document",
           );
@@ -123,7 +123,7 @@ export function createTelegramVoiceSender(deps: TelegramVoiceSenderDeps): Telegr
             chatId,
             err: sendErr,
             hint: "Check Telegram bot token permissions",
-            errorKind: "platform",
+            errorKind: "platform" as const,
           },
           "Voice send failed",
         );

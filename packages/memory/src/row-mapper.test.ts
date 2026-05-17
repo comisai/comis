@@ -2,6 +2,7 @@
 import type { MemoryEntry } from "@comis/core";
 import Database from "better-sqlite3";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { z } from "zod";
 import {
   rowToEntry,
   insertMemoryRow,
@@ -11,6 +12,7 @@ import {
   groupCountRows,
   ALLOWED_TABLES,
   ALLOWED_GROUP_COLUMNS,
+  createRowMapper,
 } from "./row-mapper.js";
 import { initSchema, isVecAvailable } from "./schema.js";
 import type { MemoryRow } from "./types.js";
@@ -529,5 +531,68 @@ describe("whitelist exports", () => {
     expect(ALLOWED_GROUP_COLUMNS.has("trust_level")).toBe(true);
     expect(ALLOWED_GROUP_COLUMNS.has("agent_id")).toBe(true);
     expect(ALLOWED_GROUP_COLUMNS.size).toBe(3);
+  });
+});
+
+// ── createRowMapper — generic factory ───────────────────────────────
+
+describe("createRowMapper — generic factory", () => {
+  it("createRowMapper parseRow rejects mismatched schema with row-validation-failed code", () => {
+    const schema = z.strictObject({ id: z.string(), count: z.number() });
+    const mapper = createRowMapper(schema);
+    const result = mapper.parseRow({ id: "abc", count: "not-a-number" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("row-validation-failed");
+    expect(result.error.path).toMatch(/count/);
+    expect(result.error.issues.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("createRowMapper parseRows surfaces row index in error path on per-row failures", () => {
+    const schema = z.strictObject({ id: z.string() });
+    const mapper = createRowMapper(schema);
+    const result = mapper.parseRows([{ id: "a" }, { id: "b" }, { id: 42 }]);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.path).toContain("row[2]");
+    expect(result.error.path).toContain("id");
+    expect(result.error.code).toBe("row-validation-failed");
+  });
+
+  it("createRowMapper parseOptionalRow returns ok(undefined) for missing row", () => {
+    const schema = z.strictObject({ id: z.string() });
+    const mapper = createRowMapper(schema);
+    const result = mapper.parseOptionalRow(undefined);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBeUndefined();
+  });
+
+  it("createRowMapper parseOptionalRow returns err for malformed row even when present", () => {
+    const schema = z.strictObject({ id: z.string() });
+    const mapper = createRowMapper(schema);
+    const result = mapper.parseOptionalRow({ id: 42 });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("row-validation-failed");
+  });
+
+  it("createRowMapper parseRows returns ok with empty array for empty input", () => {
+    const schema = z.strictObject({ id: z.string() });
+    const mapper = createRowMapper(schema);
+    const result = mapper.parseRows([]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.length).toBe(0);
+  });
+
+  it("createRowMapper parseRow returns ok with typed value for valid row", () => {
+    const schema = z.strictObject({ id: z.string(), count: z.number() });
+    const mapper = createRowMapper(schema);
+    const result = mapper.parseRow({ id: "abc", count: 7 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.id).toBe("abc");
+    expect(result.value.count).toBe(7);
   });
 });

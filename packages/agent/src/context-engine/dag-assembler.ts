@@ -14,9 +14,13 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { CtxContextItemRow, CtxMessageRow, CtxSummaryRow } from "@comis/memory";
-import type { ContextStore } from "@comis/memory";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type {
+  CtxContextItemRow,
+  CtxMessageRow,
+  CtxSummaryRow,
+  ContextStorePort,
+} from "@comis/core";
 import type { ContextLayer, TokenBudget, DagAssemblerDeps, DagAssemblerConfig } from "./types.js";
 import { XML_WRAPPER_OVERHEAD_TOKENS, RECALL_GUIDANCE } from "./constants.js";
 import { resolveFreshTailBoundary } from "./dag-compaction.js";
@@ -53,7 +57,7 @@ interface ScoredItem extends ResolvedItem {
  * Items with missing backing data are filtered out.
  */
 function resolveContextItems(
-  store: ContextStore,
+  store: ContextStorePort,
   conversationId: string,
 ): ResolvedItem[] {
   const items = store.getContextItems(conversationId);

@@ -84,7 +84,7 @@ export async function deliverOutboundMedia(
     const fetchResult = await deps.fetchUrl(url);
     if (!fetchResult.ok) {
       deps.logger.warn(
-        { url, hint: "Check URL accessibility and SSRF guard rules", errorKind: "network" },
+        { url, hint: "Check URL accessibility and SSRF guard rules", errorKind: "network" as const },
         "Outbound media download failed",
       );
       failed++;
@@ -113,7 +113,7 @@ export async function deliverOutboundMedia(
           tempPath,
           err: writeErr,
           hint: "Check temp directory permissions",
-          errorKind: "resource",
+          errorKind: "resource" as const,
         },
         "Failed to write outbound media temp file",
       );
@@ -135,7 +135,7 @@ export async function deliverOutboundMedia(
         {
           url,
           hint: "Check channel adapter sendAttachment implementation",
-          errorKind: "network",
+          errorKind: "network" as const,
         },
         "Outbound media send failed",
       );

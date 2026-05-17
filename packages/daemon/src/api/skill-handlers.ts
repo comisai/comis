@@ -1,0 +1,623 @@
+// SPDX-License-Identifier: Apache-2.0
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
+/**
+ * Skill management RPC handler methods.
+ * Covers:
+ *   skills.list    -- List prompt skill descriptions for an agent
+ *   skills.upload  -- Create a skill folder from uploaded files
+ *   skills.import  -- Import a skill from a GitHub directory URL
+ *   skills.delete  -- Remove a skill folder
+ *   skills.create  -- Create a new skill from SKILL.md content
+ *   skills.update  -- Update an existing skill's content
+ *
+ * Uses the `@comis/core` contract registry. Method keys are
+ * computed-property names (`[SkillsListContract.method]:`) so the
+ * bidirectional 1:1 architecture test resolves them through
+ * `defineContract({ method, ... })` declarations in
+ * `packages/core/src/api-contracts/workspace.ts` (the workspace umbrella
+ * file groups all 5 handlers that share the `WorkspaceApiDeps` slice).
+ * The dispatcher-injected `_X` internal fields are stripped via
+ * `stripInternalFields` BEFORE `contract.request.parse(...)`.
+ *
+ * Two of the 6 methods (`skills.create` + `skills.update`) are NOT
+ * registered in setup-gateway-api.ts (gateway-tool / agent-tool
+ * dispatch path only). The bidirectional 1:1 architecture test walks
+ * handler-factory PropertyAssignment keys (registration-plane-agnostic)
+ * so contracts exist for all 6. The contract scope `["admin"]`
+ * documents the intended trust model regardless of registration plane
+ * (the create/update handlers gate destructive writes to the
+ * shared-skills directory via the `defaultAgentId` check).
+ *
+ * The bespoke pre-Zod validation (skill-name format, content scan,
+ * shared-scope default-agent guard, SKILL.md presence, no-overwrite
+ * guard) is intentionally retained for user-friendly error UX. The
+ * contract parse runs AFTER and serves as type narrowing +
+ * defense-in-depth.
+ *
+ * Note: the handler accepts `_agentId` (from internals) as a fallback
+ * for `agentId`. After `stripInternalFields(rawParams)` removes
+ * `_agentId`, the fallback must resolve from the RAW params BEFORE the
+ * strip step — `_agentId` is read from `rawParams` and threaded
+ * through as the calling-agent identity.
+ * @module
+ */
+
+import { scanSkillContent } from "@comis/skills";
+import {
+  safePath,
+  SkillsListContract,
+  SkillsUploadContract,
+  SkillsImportContract,
+  SkillsDeleteContract,
+  SkillsCreateContract,
+  SkillsUpdateContract,
+  stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
+} from "@comis/core";
+import { createLogger } from "@comis/infra";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import type { RpcHandler } from "./types.js";
+
+const logger = createLogger({ name: "skill-handlers" });
+
+/** Skill name validation regex: lowercase alphanumeric + hyphens, 1-64 chars. */
+const SKILL_NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+// ---------------------------------------------------------------------------
+// Dev-mode response parse helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Run `contract.response.parse(result)` only when NODE_ENV !== "production".
+ * Daemon side is the trust boundary; in production the trust check is
+ * the in-handler logic, not the contract parse.
+ */
+const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
+
+/**
+ * Parse a GitHub directory URL into API-friendly parts.
+ * Accepts: https://github.com/{owner}/{repo}/tree/{branch}/{path}
+ */
+function parseGitHubDirUrl(url: string): { owner: string; repo: string; branch: string; path: string } | null {
+  const m = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)$/);
+  if (!m) return null;
+  return { owner: m[1], repo: m[2], branch: m[3], path: m[4].replace(/\/$/, "") };
+}
+
+/** Recursively fetch all files in a GitHub directory via the Contents API. */
+async function fetchGitHubDir(
+  owner: string,
+  repo: string,
+  path: string,
+  branch: string,
+  rootPath?: string,
+): Promise<Array<{ path: string; content: string }>> {
+  const effectiveRoot = rootPath ?? path;
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
+  const resp = await fetch(apiUrl, {
+    headers: { Accept: "application/vnd.github.v3+json", "User-Agent": "Comis-Skill-Import" },
+  });
+  if (!resp.ok) {
+    throw new Error(`GitHub API error: ${resp.status} ${resp.statusText}`);
+  }
+  const entries = (await resp.json()) as Array<{
+    name: string;
+    type: "file" | "dir";
+    download_url: string | null;
+    path: string;
+  }>;
+
+  const files: Array<{ path: string; content: string }> = [];
+  for (const entry of entries) {
+    if (entry.type === "file" && entry.download_url) {
+      const fileResp = await fetch(entry.download_url);
+      if (!fileResp.ok) continue;
+      const content = await fileResp.text();
+      // Relative path within the skill folder: strip the ROOT directory prefix
+      const relativePath = entry.path.startsWith(effectiveRoot + "/")
+        ? entry.path.slice(effectiveRoot.length + 1)
+        : entry.name;
+      files.push({ path: relativePath, content });
+    } else if (entry.type === "dir") {
+      const subFiles = await fetchGitHubDir(owner, repo, entry.path, branch, effectiveRoot);
+      files.push(...subFiles);
+    }
+  }
+  return files;
+}
+
+// Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
+// approval, mcp, notification handlers).
+import type { WorkspaceApiDeps as SkillHandlerDeps } from "./types.js";
+export type { SkillHandlerDeps };
+
+/**
+ * Resolve the calling-agent identity from RAW params (the dispatcher
+ * injects `_agentId` as an internal field; `params.agentId` is the
+ * user-facing fallback). Reads BEFORE stripInternalFields removes
+ * `_agentId` from the strip output.
+ */
+function resolveCallingAgentId(rawParams: Record<string, unknown>): string | undefined {
+  if (typeof rawParams.agentId === "string") return rawParams.agentId;
+  if (typeof rawParams._agentId === "string") return rawParams._agentId;
+  return undefined;
+}
+
+/**
+ * Create skill management RPC handlers.
+ * @param deps - Injected dependencies
+ * @returns Record mapping method names to handler functions
+ */
+export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcHandler> {
+  return {
+    [SkillsListContract.method]: async (rawParams) => {
+      if (!deps.skillRegistries || deps.skillRegistries.size === 0) {
+        const empty = { skills: [] };
+        if (IS_DEV) SkillsListContract.response.parse(empty);
+        return empty;
+      }
+
+      // Resolve agentId from RAW params (covers the _agentId fallback path)
+      const agentId = resolveCallingAgentId(rawParams);
+
+      const userParams = stripInternalFields(rawParams);
+      SkillsListContract.request.parse(userParams);
+
+      // If agentId specified, return skills for that agent only
+      if (agentId) {
+        const registry = deps.skillRegistries.get(agentId);
+        if (!registry) {
+          const empty = { skills: [] };
+          if (IS_DEV) SkillsListContract.response.parse(empty);
+          return empty;
+        }
+        const result = { skills: registry.getPromptSkillDescriptions() };
+        if (IS_DEV) SkillsListContract.response.parse(result);
+        return result;
+      }
+
+      // Default: return skills from the default agent's registry (deterministic fallback)
+      const fallbackRegistry = deps.defaultAgentId
+        ? deps.skillRegistries.get(deps.defaultAgentId) ?? deps.skillRegistries.values().next().value
+        : deps.skillRegistries.values().next().value;
+      if (!fallbackRegistry) {
+        const empty = { skills: [] };
+        if (IS_DEV) SkillsListContract.response.parse(empty);
+        return empty;
+      }
+      const result = { skills: fallbackRegistry.getPromptSkillDescriptions() };
+      if (IS_DEV) SkillsListContract.response.parse(result);
+      return result;
+    },
+
+    [SkillsUploadContract.method]: async (rawParams) => {
+      // Resolve calling agent from RAW params (covers _agentId fallback)
+      const callingAgentId = resolveCallingAgentId(rawParams);
+
+      const userParams = stripInternalFields(rawParams);
+      const params = SkillsUploadContract.request.parse(userParams);
+
+      const scope = params.scope === "shared" ? "shared" : "local";
+
+      if (!callingAgentId) {
+        throw new Error("Agent ID is required for skill operations. Provide agentId or call via agent tool.");
+      }
+
+      // Validate skill folder name (bespoke for user-friendly error)
+      if (
+        !params.name ||
+        params.name.length > 64 ||
+        !SKILL_NAME_RE.test(params.name) ||
+        params.name.includes("--")
+      ) {
+        throw new Error("Invalid skill name: must be 1-64 chars, lowercase alphanumeric with hyphens, no leading/trailing/consecutive hyphens");
+      }
+
+      // Must have at least one file
+      if (params.files.length === 0) {
+        throw new Error("No files provided");
+      }
+
+      // Must include a SKILL.md
+      const hasSkillMd = params.files.some((f) => {
+        const segments = typeof f.path === "string" ? f.path.split("/") : [];
+        // The file's relative path within the skill folder -- accept SKILL.md at root of the folder
+        const filename = segments[segments.length - 1];
+        return filename === "SKILL.md";
+      });
+      if (!hasSkillMd) {
+        throw new Error("Skill folder must contain a SKILL.md file");
+      }
+
+      // Scope-based path resolution
+      const dataDir = deps.container.config.dataDir || ".";
+      let skillsBaseDir: string;
+
+      if (scope === "shared") {
+        // GUARD: Only the default agent may write to shared skills
+        if (callingAgentId !== deps.defaultAgentId) {
+          throw new Error(
+            `Only the default agent ("${deps.defaultAgentId}") can manage shared skills. ` +
+            `Agent "${callingAgentId}" must use scope: "local" to manage its own skills.`
+          );
+        }
+        skillsBaseDir = safePath(dataDir, "skills");
+      } else {
+        // Default: agent's own workspace skills directory
+        const wsDir = deps.workspaceDirs?.get(callingAgentId);
+        if (!wsDir) {
+          throw new Error(`No workspace directory found for agent: ${callingAgentId}`);
+        }
+        skillsBaseDir = safePath(wsDir, "skills");
+      }
+
+      const skillDir = safePath(skillsBaseDir, params.name);
+
+      // Prevent overwrite of existing skill
+      if (existsSync(skillDir)) {
+        throw new Error(`Skill directory already exists: ${params.name}`);
+      }
+
+      // Create skill directory
+      mkdirSync(skillDir, { recursive: true });
+
+      // Write each file
+      for (const file of params.files) {
+        if (typeof file.path !== "string" || typeof file.content !== "string") continue;
+        // file.path is relative within the skill folder (e.g. "SKILL.md" or "examples/foo.md")
+        const filePath = safePath(skillDir, file.path);
+        // Ensure parent directory exists for nested files
+        const parentDir = filePath.substring(0, filePath.lastIndexOf("/"));
+        if (parentDir && !existsSync(parentDir)) {
+          mkdirSync(parentDir, { recursive: true });
+        }
+        writeFileSync(filePath, file.content, "utf-8");
+      }
+
+      // Scope-aware re-discovery
+      if (scope === "shared" && deps.skillRegistries) {
+        for (const registry of deps.skillRegistries.values()) {
+          registry.init();
+        }
+      } else if (deps.skillRegistries) {
+        deps.skillRegistries.get(callingAgentId)?.init();
+      }
+
+      const result = { ok: true as const, path: skillDir };
+      if (IS_DEV) SkillsUploadContract.response.parse(result);
+      return result;
+    },
+
+    [SkillsImportContract.method]: async (rawParams) => {
+      const callingAgentId = resolveCallingAgentId(rawParams);
+
+      const userParams = stripInternalFields(rawParams);
+      const params = SkillsImportContract.request.parse(userParams);
+
+      const url = params.url.trim();
+      const scope = params.scope === "shared" ? "shared" : "local";
+
+      if (!callingAgentId) {
+        throw new Error("Agent ID is required for skill operations. Provide agentId or call via agent tool.");
+      }
+
+      // Scope guard: fail fast before expensive network fetch
+      if (scope === "shared" && callingAgentId !== deps.defaultAgentId) {
+        throw new Error(
+          `Only the default agent ("${deps.defaultAgentId}") can manage shared skills. ` +
+          `Agent "${callingAgentId}" must use scope: "local" to manage its own skills.`
+        );
+      }
+
+      if (!url) {
+        throw new Error("URL is required");
+      }
+
+      // Parse GitHub URL
+      const parsed = parseGitHubDirUrl(url);
+      if (!parsed) {
+        throw new Error("Invalid GitHub URL. Expected: https://github.com/{owner}/{repo}/tree/{branch}/{path}");
+      }
+
+      // Derive skill name from the last path segment
+      const segments = parsed.path.split("/").filter(Boolean);
+      const name = segments[segments.length - 1];
+      if (!name || name.length > 64 || !SKILL_NAME_RE.test(name) || name.includes("--")) {
+        throw new Error(`Invalid skill name derived from URL: "${name}". Must be lowercase alphanumeric with hyphens.`);
+      }
+
+      // Fetch all files from the GitHub directory
+      const fetchedFiles = await fetchGitHubDir(parsed.owner, parsed.repo, parsed.path, parsed.branch);
+      if (fetchedFiles.length === 0) {
+        throw new Error("No files found at the given URL");
+      }
+
+      // Must include a SKILL.md
+      const hasSkillMd = fetchedFiles.some((f) => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"));
+      if (!hasSkillMd) {
+        throw new Error("Repository folder must contain a SKILL.md file");
+      }
+
+      // Scope-based path resolution
+      const dataDir = deps.container.config.dataDir || ".";
+      let skillsBaseDir: string;
+
+      if (scope === "shared") {
+        skillsBaseDir = safePath(dataDir, "skills");
+      } else {
+        // Default: agent's own workspace skills directory
+        const wsDir = deps.workspaceDirs?.get(callingAgentId);
+        if (!wsDir) {
+          throw new Error(`No workspace directory found for agent: ${callingAgentId}`);
+        }
+        skillsBaseDir = safePath(wsDir, "skills");
+      }
+
+      const skillDir = safePath(skillsBaseDir, name);
+
+      // Prevent overwrite
+      if (existsSync(skillDir)) {
+        throw new Error(`Skill directory already exists: ${name}`);
+      }
+
+      // Create skill directory and write files
+      mkdirSync(skillDir, { recursive: true });
+      for (const file of fetchedFiles) {
+        const filePath = safePath(skillDir, file.path);
+        const parentDir = filePath.substring(0, filePath.lastIndexOf("/"));
+        if (parentDir && !existsSync(parentDir)) {
+          mkdirSync(parentDir, { recursive: true });
+        }
+        writeFileSync(filePath, file.content, "utf-8");
+      }
+
+      // Scope-aware re-discovery
+      if (scope === "shared" && deps.skillRegistries) {
+        for (const registry of deps.skillRegistries.values()) {
+          registry.init();
+        }
+      } else if (deps.skillRegistries) {
+        deps.skillRegistries.get(callingAgentId)?.init();
+      }
+
+      const result = { ok: true as const, path: skillDir, name, fileCount: fetchedFiles.length };
+      if (IS_DEV) SkillsImportContract.response.parse(result);
+      return result;
+    },
+
+    [SkillsDeleteContract.method]: async (rawParams) => {
+      const callingAgentId = resolveCallingAgentId(rawParams);
+
+      const userParams = stripInternalFields(rawParams);
+      const params = SkillsDeleteContract.request.parse(userParams);
+
+      const scope = params.scope === "shared" ? "shared" : "local";
+
+      if (!callingAgentId) {
+        throw new Error("Agent ID is required for skill operations. Provide agentId or call via agent tool.");
+      }
+
+      // Validate name
+      if (!params.name || params.name.length > 64 || !SKILL_NAME_RE.test(params.name) || params.name.includes("--")) {
+        throw new Error("Invalid skill name");
+      }
+
+      // Scope guard: only the default agent may delete shared skills
+      if (scope === "shared" && callingAgentId !== deps.defaultAgentId) {
+        throw new Error(
+          `Only the default agent ("${deps.defaultAgentId}") can manage shared skills. ` +
+          `Agent "${callingAgentId}" must use scope: "local" to manage its own skills.`
+        );
+      }
+
+      // Resolve registry using callingAgentId
+      const registry = deps.skillRegistries?.get(callingAgentId);
+      if (!registry) {
+        throw new Error("Skill registry not found for agent");
+      }
+
+      // Look up skill in registry descriptions
+      const descriptions = registry.getPromptSkillDescriptions();
+      const skill = descriptions.find((s) => s.name === params.name);
+      if (!skill) {
+        throw new Error(`Skill not found: ${params.name}`);
+      }
+
+      // Determine allowed base directories for deletion
+      const dataDir = deps.container.config.dataDir || ".";
+      const sharedSkillsDir = safePath(dataDir, "skills");
+      const wsDir = deps.workspaceDirs?.get(callingAgentId);
+      const agentSkillsDir = wsDir ? safePath(wsDir, "skills") : undefined;
+
+      // Fix: trailing separator for proper containment check
+      const sharedPrefix = sharedSkillsDir + "/";
+      const agentPrefix = agentSkillsDir ? agentSkillsDir + "/" : undefined;
+
+      const isInShared = skill.location === sharedSkillsDir || skill.location.startsWith(sharedPrefix);
+      const isInAgent = agentPrefix && (skill.location === agentSkillsDir || skill.location.startsWith(agentPrefix));
+
+      // Scope-aware delete validation
+      if (scope === "shared") {
+        if (!isInShared) {
+          throw new Error("Skill is not in the shared skills directory");
+        }
+      } else {
+        // scope: "local" -- must be in agent's own workspace
+        if (!isInAgent) {
+          throw new Error(
+            `Skill "${params.name}" is not in this agent's workspace skills directory. ` +
+            'Use scope: "shared" to manage shared skills (default agent only).'
+          );
+        }
+      }
+
+      // Use the skill's actual location (directory name may differ from skill name)
+      const skillDir = skill.location;
+
+      // Remove skill directory
+      rmSync(skillDir, { recursive: true, force: true });
+
+      // Scope-aware re-discovery
+      if (scope === "shared" && deps.skillRegistries) {
+        for (const reg of deps.skillRegistries.values()) {
+          reg.init();
+        }
+      } else if (deps.skillRegistries) {
+        deps.skillRegistries.get(callingAgentId)?.init();
+      }
+
+      const result = { ok: true as const };
+      if (IS_DEV) SkillsDeleteContract.response.parse(result);
+      return result;
+    },
+
+    [SkillsCreateContract.method]: async (rawParams) => {
+      const callingAgentId = resolveCallingAgentId(rawParams);
+
+      const userParams = stripInternalFields(rawParams);
+      const params = SkillsCreateContract.request.parse(userParams);
+
+      const scope = params.scope === "shared" ? "shared" : "local";
+
+      if (!callingAgentId) {
+        throw new Error("Agent ID is required for skill operations.");
+      }
+
+      // Validate skill name
+      if (!params.name || params.name.length > 64 || !SKILL_NAME_RE.test(params.name) || params.name.includes("--")) {
+        logger.warn({ skillName: params.name || "(empty)", agentId: callingAgentId, hint: "Skill name must be 1-64 chars, lowercase alphanumeric with single hyphens", errorKind: "validation" as const }, "Skill create rejected: invalid name");
+        deps.eventBus?.emit("skill:failed", { skillName: params.name || "(empty)", error: "Invalid skill name", phase: "create", agentId: callingAgentId, timestamp: systemNowMs() });
+        throw new Error("Invalid skill name: must be 1-64 chars, lowercase alphanumeric with hyphens, no leading/trailing/consecutive hyphens");
+      }
+
+      if (!params.content) {
+        throw new Error("Content is required for create action. Provide full SKILL.md content.");
+      }
+
+      // Security scan before write
+      const scanResult = scanSkillContent(params.content);
+      if (!scanResult.clean) {
+        const criticalFindings = scanResult.findings.filter((f) => f.severity === "CRITICAL");
+        if (criticalFindings.length > 0) {
+          const summary = criticalFindings.map((f) => f.description).join("; ");
+          logger.warn({ skillName: params.name, agentId: callingAgentId, scanSummary: summary, hint: "Remove injection patterns, crypto mining, or obfuscated content from skill body", errorKind: "validation" as const }, "Skill create rejected: content scan failed");
+          deps.eventBus?.emit("skill:failed", { skillName: params.name, error: `Content scan failed: ${summary}`, phase: "scan", agentId: callingAgentId, timestamp: systemNowMs() });
+          throw new Error(`Skill content rejected by security scan: ${summary}`);
+        }
+      }
+
+      // Scope guard
+      if (scope === "shared" && callingAgentId !== deps.defaultAgentId) {
+        throw new Error(`Only the default agent ("${deps.defaultAgentId}") can manage shared skills. Agent "${callingAgentId}" must use scope: "local".`);
+      }
+
+      // Resolve scope directory (reuse existing pattern from skills.upload)
+      const dataDir = deps.container.config.dataDir || ".";
+      let skillsBaseDir: string;
+      if (scope === "shared") {
+        skillsBaseDir = safePath(dataDir, "skills");
+      } else {
+        const wsDir = deps.workspaceDirs?.get(callingAgentId);
+        if (!wsDir) throw new Error(`No workspace directory found for agent: ${callingAgentId}`);
+        skillsBaseDir = safePath(wsDir, "skills");
+      }
+
+      const skillDir = safePath(skillsBaseDir, params.name);
+
+      // Prevent overwrite
+      if (existsSync(skillDir)) {
+        throw new Error(`Skill directory already exists: ${params.name}. Use update action to modify existing skills.`);
+      }
+
+      // Write SKILL.md
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(safePath(skillDir, "SKILL.md"), params.content, "utf-8");
+
+      // Re-discover
+      if (scope === "shared" && deps.skillRegistries) {
+        for (const registry of deps.skillRegistries.values()) registry.init();
+      } else if (deps.skillRegistries) {
+        deps.skillRegistries.get(callingAgentId)?.init();
+      }
+
+      // Emit skill:created event
+      deps.eventBus?.emit("skill:created", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: systemNowMs() });
+
+      const result = { ok: true as const, path: skillDir, name: params.name };
+      if (IS_DEV) SkillsCreateContract.response.parse(result);
+      return result;
+    },
+
+    [SkillsUpdateContract.method]: async (rawParams) => {
+      const callingAgentId = resolveCallingAgentId(rawParams);
+
+      const userParams = stripInternalFields(rawParams);
+      const params = SkillsUpdateContract.request.parse(userParams);
+
+      const scope = params.scope === "shared" ? "shared" : "local";
+
+      if (!callingAgentId) {
+        throw new Error("Agent ID is required for skill operations.");
+      }
+
+      // Validate name
+      if (!params.name || params.name.length > 64 || !SKILL_NAME_RE.test(params.name) || params.name.includes("--")) {
+        logger.warn({ skillName: params.name || "(empty)", agentId: callingAgentId, hint: "Skill name must be 1-64 chars, lowercase alphanumeric with single hyphens", errorKind: "validation" as const }, "Skill update rejected: invalid name");
+        throw new Error("Invalid skill name");
+      }
+
+      if (!params.content) {
+        throw new Error("Content is required for update action.");
+      }
+
+      // Resolve registry and validate skill exists
+      const registry = deps.skillRegistries?.get(callingAgentId);
+      if (!registry) throw new Error("Skill registry not found for agent");
+
+      const descriptions = registry.getPromptSkillDescriptions();
+      const skill = descriptions.find((s) => s.name === params.name);
+      if (!skill) throw new Error(`Skill not found: ${params.name}`);
+
+      // Scope guard
+      if (scope === "shared" && callingAgentId !== deps.defaultAgentId) {
+        throw new Error(`Only the default agent ("${deps.defaultAgentId}") can manage shared skills. Agent "${callingAgentId}" must use scope: "local".`);
+      }
+
+      // Security scan before write
+      const scanResult = scanSkillContent(params.content);
+      if (!scanResult.clean) {
+        const criticalFindings = scanResult.findings.filter((f) => f.severity === "CRITICAL");
+        if (criticalFindings.length > 0) {
+          const summary = criticalFindings.map((f) => f.description).join("; ");
+          logger.warn({ skillName: params.name, agentId: callingAgentId, scanSummary: summary, hint: "Remove injection patterns, crypto mining, or obfuscated content from skill body", errorKind: "validation" as const }, "Skill update rejected: content scan failed");
+          deps.eventBus?.emit("skill:failed", { skillName: params.name, error: `Content scan failed: ${summary}`, phase: "scan", agentId: callingAgentId, timestamp: systemNowMs() });
+          throw new Error(`Skill content rejected by security scan: ${summary}`);
+        }
+      }
+
+      // Resolve path from skill's actual location
+      const skillMdPath = safePath(skill.location, "SKILL.md");
+      if (!existsSync(skillMdPath)) {
+        throw new Error(`SKILL.md not found at expected location: ${skillMdPath}`);
+      }
+
+      // Overwrite SKILL.md
+      writeFileSync(skillMdPath, params.content, "utf-8");
+
+      // Re-discover
+      if (scope === "shared" && deps.skillRegistries) {
+        for (const reg of deps.skillRegistries.values()) reg.init();
+      } else if (deps.skillRegistries) {
+        deps.skillRegistries.get(callingAgentId)?.init();
+      }
+
+      // Emit skill:updated event
+      deps.eventBus?.emit("skill:updated", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: systemNowMs() });
+
+      const result = { ok: true as const, name: params.name };
+      if (IS_DEV) SkillsUpdateContract.response.parse(result);
+      return result;
+    },
+  };
+}

@@ -33,12 +33,9 @@ vi.mock("node:fs/promises", async () => {
   return { ...actual, stat: vi.fn(), readFile: vi.fn() };
 });
 
-// @comis/agent — selectOAuthCredentialStore (store IO) + runOAuthTlsPreflight.
-// decodeCodexJwtPayload, redactEmailForLog, and rewriteOAuthError pass through
-// untouched.
-vi.mock("@comis/agent", async () => {
+vi.mock("@comis/core", async () => {
   const actual =
-    await vi.importActual<typeof import("@comis/agent")>("@comis/agent");
+    await vi.importActual<typeof import("@comis/core")>("@comis/core");
   return {
     ...actual,
     selectOAuthCredentialStore: vi.fn(),
@@ -47,7 +44,7 @@ vi.mock("@comis/agent", async () => {
 });
 
 const fs = await import("node:fs/promises");
-const agent = await import("@comis/agent");
+const agent = await import("@comis/core");
 const { oauthHealthCheck } = await import("./oauth-health.js");
 
 // ---------------------------------------------------------------------------

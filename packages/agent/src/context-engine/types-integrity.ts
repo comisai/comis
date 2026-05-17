@@ -5,8 +5,7 @@
  * @module
  */
 
-import type { ComisLogger } from "@comis/infra";
-import type { ContextStore } from "@comis/memory";
+import type { ComisLogger, ContextStorePort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // DAG Integrity
@@ -53,7 +52,7 @@ export interface IntegrityReport {
  */
 export interface IntegrityCheckDeps {
   /** Context store for all DAG read/write operations. */
-  store: ContextStore;
+  store: ContextStorePort;
   /** Raw better-sqlite3 Database handle for direct SQL queries. */
   db: unknown;
   /** Structured logger for the integrity module. */

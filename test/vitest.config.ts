@@ -16,7 +16,17 @@ export default defineConfig({
       "@comis/gateway": resolve(packages, "gateway/dist/index.js"),
       "@comis/memory": resolve(packages, "memory/dist/index.js"),
       "@comis/scheduler": resolve(packages, "scheduler/dist/index.js"),
-      "@comis/skills": resolve(packages, "skills/dist/index.js"),
+      // Three skills subpath entries.
+      // ORDER MATTERS: Vite alias matching is prefix-based with `/` separator
+      // semantics, so the most-specific subpaths MUST come BEFORE the bare
+      // `@comis/skills` alias -- otherwise `@comis/skills/tools` would be
+      // matched as bare-prefix + `/tools` and routed to the `.` subpath
+      // target. Required for daemon's setup-tools.ts (which imports from
+      // `@comis/skills/tools`).
+      "@comis/skills/platform-tools": resolve(packages, "skills/dist/platform-tools/index.js"),
+      "@comis/skills/tools": resolve(packages, "skills/dist/tools/index.js"),
+      "@comis/skills": resolve(packages, "skills/dist/skills/index.js"),
+      "@comis/orchestrator": resolve(packages, "orchestrator/dist/index.js"),
       "@comis/cli": resolve(packages, "cli/dist/index.js"),
     },
   },
@@ -35,6 +45,36 @@ export default defineConfig({
       // so the integration suite is portable across CI runners, worktrees,
       // and contributor checkouts.
       COMIS_REPO_ROOT: resolve(__dirname, ".."),
+    },
+    // Integration-tier coverage threshold.
+    //
+    // Measures in-process imports the integration suite actually loads —
+    // `packages/*/dist/**/*.js` (the alias targets above). Subprocess daemon
+    // code is NOT measured here; that is the E2E tier's territory.
+    //
+    // Floor: Math.floor(measured) — same Math.floor protocol as the unit
+    // tier. The aspirational target is ≥80% line coverage.
+    //
+    // Branches/functions/statements deliberately omitted: the unit tier
+    // owns those at the unit level; integration focuses on line coverage
+    // of in-process seams only.
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json"],
+      include: ["packages/*/dist/**/*.js"],
+      exclude: [
+        "**/*.test.js",
+        "**/__tests__/**",
+        "**/__snapshots__/**",
+        "**/*.d.ts",
+        "**/*.d.js",
+        "**/*.generated.js",
+        "packages/web/dist/**",
+      ],
+      thresholds: {
+        // Math.floor(35.81) = 35. Locks in forward gain.
+        lines: 35,
+      },
     },
   },
 });

@@ -14,7 +14,7 @@ import { createOAuthTokenManager, type OAuthTokenManager, type OAuthError } from
 // Mock pi-ai OAuth module
 // ---------------------------------------------------------------------------
 
-vi.mock("@mariozechner/pi-ai/oauth", () => ({
+vi.mock("@earendil-works/pi-ai/oauth", () => ({
   getOAuthProvider: vi.fn(),
   getOAuthApiKey: vi.fn(),
   getOAuthProviders: vi.fn(),
@@ -24,24 +24,41 @@ import {
   getOAuthProvider,
   getOAuthApiKey,
   getOAuthProviders,
-} from "@mariozechner/pi-ai/oauth";
+} from "@earendil-works/pi-ai/oauth";
+import type { FileLockPort } from "@comis/core";
 
-// Mock @comis/scheduler at module level so withExecutionLock is controlled
-// across BOTH the original 13-test block and the port-backed manager block.
-vi.mock("@comis/scheduler", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@comis/scheduler")>();
+// The production OAuthTokenManager does not import `@comis/scheduler`'s
+// `createFileLock` directly — it consumes a `FileLockPort` from
+// `OAuthTokenManagerDeps.fileLock`. The shared `mockWithLock` spy is exposed
+// via the deps `fileLock` field constructed inside `legacyOAuthDeps()` and
+// `makeFileLockStub()`.
+//
+// `mockWithLock` invokes the supplied callback inline, so refresh-path tests
+// observe the same control flow they did under the previous scheduler-mock
+// regime: the fn runs in the same tick, the result Result-wraps the value.
+const mockWithLock = vi.fn(
+  async (_path: string, fn: () => Promise<unknown>, _opts?: unknown) => ({
+    ok: true as const,
+    value: await fn(),
+  }),
+);
+
+/** Mock FileLockPort — `withLock` invokes the fn inline; other methods are stubs. */
+function makeFileLockStub(): FileLockPort {
   return {
-    ...actual,
-    withExecutionLock: vi.fn(async (_path: string, fn: () => Promise<unknown>) => _ok(await fn())),
+    acquire: vi.fn(),
+    release: vi.fn(),
+    // Cast through unknown to satisfy the generic Result<T, LockError> shape
+    // without dragging in a separate per-test helper file.
+    withLock: mockWithLock as unknown as FileLockPort["withLock"],
+    isLocked: vi.fn(),
+    cleanupStaleLocks: vi.fn(),
   };
-});
-
-import { withExecutionLock } from "@comis/scheduler";
+}
 
 const mockGetOAuthProvider = vi.mocked(getOAuthProvider);
 const mockGetOAuthApiKey = vi.mocked(getOAuthApiKey);
 const mockGetOAuthProviders = vi.mocked(getOAuthProviders);
-const mockWithExecutionLock = vi.mocked(withExecutionLock);
 
 // ---------------------------------------------------------------------------
 // Shared helpers (used by both the original 13-test block and the port-backed
@@ -107,11 +124,13 @@ function legacyOAuthDeps(): {
   credentialStore: OAuthCredentialStorePort;
   logger: ReturnType<typeof makeMockLogger>;
   dataDir: string;
+  fileLock: FileLockPort;
 } {
   return {
     credentialStore: makeMockCredentialStore(),
     logger: makeMockLogger(),
     dataDir: "/tmp/comis-test-legacy",
+    fileLock: makeFileLockStub(),
   };
 }
 
@@ -400,7 +419,7 @@ describe("createOAuthTokenManager", () => {
 // =============================================================================
 // Port-backed manager block
 //
-// Helpers (makeMockCredentialStore, makeMockLogger, withExecutionLock
+// Helpers (makeMockCredentialStore, makeMockLogger, createFileLock/withLock
 // module-mock) are defined ONCE at the top of this file so both the original
 // 13-test block and this port-backed block can share them. legacyOAuthDeps()
 // supplies the required fields to the original 13 tests (which were authored
@@ -546,7 +565,7 @@ describe("OAuthTokenManager — port-backed", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     eventBus = new TypedEventBus();
-    mockWithExecutionLock.mockImplementation(async (_path: string, fn: () => Promise<unknown>) =>
+    mockWithLock.mockImplementation(async (_path: string, fn: () => Promise<unknown>) =>
       _ok(await fn()),
     );
     fetchShim = installCodexBypassFetchShim();
@@ -577,6 +596,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       expect(credentialStore.get).toHaveBeenCalled();
@@ -592,6 +612,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       const result = await manager.getApiKey("openai-codex");
       expect(result.ok).toBe(false);
@@ -609,6 +630,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       const result = await manager.getApiKey("openai-codex");
       expect(result.ok).toBe(false);
@@ -641,6 +663,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       expect(credentialStore.set).toHaveBeenCalledTimes(1);
@@ -668,6 +691,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       expect(credentialStore.set).not.toHaveBeenCalled();
@@ -693,6 +717,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       expect(events).toHaveLength(1);
@@ -721,6 +746,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       const result = await manager.getApiKey("openai-codex");
       expect(result.ok).toBe(false);
@@ -749,10 +775,11 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
-      expect(mockWithExecutionLock).toHaveBeenCalled();
-      const call = mockWithExecutionLock.mock.calls[0];
+      expect(mockWithLock).toHaveBeenCalled();
+      const call = mockWithLock.mock.calls[0];
       const opts = call?.[2] as { staleMs?: number; updateMs?: number } | undefined;
       expect(opts?.staleMs).toBe(30_000);
       expect(opts?.updateMs).toBe(5_000);
@@ -774,9 +801,10 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
-      const lockPathArg = mockWithExecutionLock.mock.calls[0]?.[0] as string;
+      const lockPathArg = mockWithLock.mock.calls[0]?.[0] as string;
       expect(lockPathArg).toContain(".locks");
       // The manager's lock-sentinel name is "auth-refresh__<sanitized>.lock" —
       // distinct from the file adapter's "auth-profile__<sanitized>.lock". Both
@@ -791,7 +819,9 @@ describe("OAuthTokenManager — port-backed", () => {
     it("when withExecutionLock returns err('locked'), manager logs WARN with hint='lock_contention' and returns err({code: 'REFRESH_FAILED'})", async () => {
       const credentialStore = makeMockCredentialStore();
       vi.mocked(credentialStore.get).mockResolvedValue(_ok(makeStoredProfile()));
-      mockWithExecutionLock.mockImplementationOnce(async () => _err("locked" as const));
+      mockWithLock.mockImplementationOnce(async () =>
+        _err({ kind: "locked", message: "test contention" } as const),
+      );
       const logger = makeMockLogger();
       const manager = createOAuthTokenManager({
         secretManager: makeSecretManager({}),
@@ -799,6 +829,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       const result = await manager.getApiKey("openai-codex");
       expect(result.ok).toBe(false);
@@ -806,7 +837,7 @@ describe("OAuthTokenManager — port-backed", () => {
       const warnCalls = logger._calls().filter((c) => c.level === "warn");
       const hasLockContention = warnCalls.some((c) => {
         const p = c.payload as Record<string, unknown>;
-        return p.hint === "lock_contention" && p.errorKind === "lock_contention";
+        return p.hint === "lock_contention" && p.errorKind === "auth";
       });
       expect(hasLockContention).toBe(true);
     });
@@ -815,7 +846,9 @@ describe("OAuthTokenManager — port-backed", () => {
     it("when withExecutionLock returns err('error'), manager logs WARN and returns err({code: 'REFRESH_FAILED'})", async () => {
       const credentialStore = makeMockCredentialStore();
       vi.mocked(credentialStore.get).mockResolvedValue(_ok(makeStoredProfile()));
-      mockWithExecutionLock.mockImplementationOnce(async () => _err("error" as const));
+      mockWithLock.mockImplementationOnce(async () =>
+        _err({ kind: "error", message: "test failure" } as const),
+      );
       const logger = makeMockLogger();
       const manager = createOAuthTokenManager({
         secretManager: makeSecretManager({}),
@@ -823,6 +856,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       const result = await manager.getApiKey("openai-codex");
       expect(result.ok).toBe(false);
@@ -867,6 +901,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       const result = await manager.getApiKey("openai-codex");
       expect(result.ok).toBe(true);
@@ -902,6 +937,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       const setCall = vi.mocked(credentialStore.set).mock.calls[0];
@@ -935,6 +971,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       // Second call: store now has the profile (the manager would normally read it).
@@ -973,6 +1010,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       const driftWarns = logger
@@ -980,7 +1018,7 @@ describe("OAuthTokenManager — port-backed", () => {
         .filter((c) => c.level === "warn")
         .filter((c) => {
           const p = c.payload as Record<string, unknown>;
-          return p.hint === "env-override-ignored" && p.errorKind === "config_drift";
+          return p.hint === "env-override-ignored" && p.errorKind === "auth";
         });
       expect(driftWarns).toHaveLength(1);
     });
@@ -1008,6 +1046,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       const driftWarns = logger._calls().filter((c) => {
@@ -1040,6 +1079,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       await manager.getApiKey("openai-codex");
@@ -1071,6 +1111,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       const result = await manager.getApiKey("openai-codex");
       expect(result.ok).toBe(false);
@@ -1102,6 +1143,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       const promise = manager.getApiKey("openai-codex");
       await vi.advanceTimersByTimeAsync(31_000);
@@ -1135,6 +1177,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       const debugCalls = logger._calls().filter((c) => c.level === "debug");
@@ -1161,6 +1204,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       const infoCalls = logger._calls().filter((c) => c.level === "info");
@@ -1191,6 +1235,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       const allCallsJson = JSON.stringify(logger._calls());
@@ -1223,6 +1268,7 @@ describe("OAuthTokenManager — port-backed", () => {
         credentialStore,
         logger,
         dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
       const allCalls = logger._calls();
@@ -1252,7 +1298,35 @@ describe("OAuthTokenManager — port-backed", () => {
   // ---------------------------------------------------------------------------
 
   describe("H. hot-path cache", () => {
-    it.todo("after persisted-write, in-process cache reflects new profile (no second store-read)");
+    // REMOVED: persisted-write cache-coherency is already exercised by two
+    // existing tests in this file and by the integration suite — adding a
+    // third assertion would duplicate coverage without strengthening the
+    // invariant.
+    //
+    //   1. Unit:        oauth-token-manager.test.ts line ~1920 "bypass success
+    //      path — cache.set, store.set called, auth:token_rotated emitted"
+    //      asserts the post-refresh write-and-cache path: store.set is invoked
+    //      with the rotated refresh token AND the cache is populated (the
+    //      subsequent fetchSpy/getOAuthApiKey call counts confirm no
+    //      redundant outbound traffic).
+    //
+    //   2. Unit:        oauth-token-manager.test.ts line ~2002 "bypass runs
+    //      inside withExecutionLock — every refresh path acquires the
+    //      per-profile lock" parallels two concurrent getApiKey() calls and
+    //      asserts they share a single refresh — the second call hitting
+    //      the warm cache is the implicit invariant.
+    //
+    //   3. Integration: test/integration/oauth-hot-reload.test.ts
+    //      "Watcher invalidates cache on external file change …" populates
+    //      the cache via getApiKey, externally rewrites auth-profiles.json,
+    //      and asserts the second getApiKey returns the NEW token AND that
+    //      no second refresh request fired (i.e. cache served the read).
+    //
+    // The original it.todo described an internal "no second store-read"
+    // accounting predicate that would only be observable by leaking the
+    // private hot-path cache through a test seam. The three tests above
+    // verify the same end-to-end invariant (post-refresh, the cache hot-paths
+    // subsequent reads) without that intrusion. No coverage regression.
   });
 });
 
@@ -1277,8 +1351,9 @@ describe("createOAuthTokenManager — watcher", () => {
       secretManager: makeSecretManager({}),
       eventBus: mockEventBus,
       credentialStore: mockStore,
-      logger: mockLogger as unknown as import("@comis/infra").ComisLogger,
+      logger: mockLogger as unknown as import("@comis/core").ComisLogger,
       dataDir: "/tmp/test-data-dir-no-watch",
+      fileLock: makeFileLockStub(),
       // watchPath: undefined  -- intentionally omitted
     });
     expect(manager).toBeDefined();
@@ -1304,8 +1379,9 @@ describe("createOAuthTokenManager — watcher", () => {
       secretManager: makeSecretManager({}),
       eventBus: mockEventBus,
       credentialStore: mockStore,
-      logger: mockLogger as unknown as import("@comis/infra").ComisLogger,
+      logger: mockLogger as unknown as import("@comis/core").ComisLogger,
       dataDir: tmpDir,
+      fileLock: makeFileLockStub(),
       watchPath,
     });
 
@@ -1332,8 +1408,9 @@ describe("createOAuthTokenManager — watcher", () => {
       secretManager: makeSecretManager({}),
       eventBus: mockEventBus,
       credentialStore: mockStore,
-      logger: mockLogger as unknown as import("@comis/infra").ComisLogger,
+      logger: mockLogger as unknown as import("@comis/core").ComisLogger,
       dataDir: tmpDir,
+      fileLock: makeFileLockStub(),
       watchPath,
     });
 
@@ -1357,8 +1434,9 @@ describe("createOAuthTokenManager — watcher", () => {
       secretManager: makeSecretManager({}),
       eventBus: mockEventBus,
       credentialStore: mockStore,
-      logger: mockLogger as unknown as import("@comis/infra").ComisLogger,
+      logger: mockLogger as unknown as import("@comis/core").ComisLogger,
       dataDir: tmpDir,
+      fileLock: makeFileLockStub(),
       watchPath,
     });
 
@@ -1449,7 +1527,7 @@ describe("OAuthTokenManager.getApiKey resolver chain", () => {
         };
       },
     );
-    mockWithExecutionLock.mockImplementation(
+    mockWithLock.mockImplementation(
       async (_path: string, fn: () => Promise<unknown>) => _ok(await fn()),
     );
     // The bypass shim translates mockGetOAuthApiKey calls into the
@@ -1485,6 +1563,7 @@ describe("OAuthTokenManager.getApiKey resolver chain", () => {
       credentialStore,
       logger,
       dataDir: "/tmp/comis-test-resolver",
+      fileLock: makeFileLockStub(),
       ...extraDeps,
     });
   }
@@ -1534,7 +1613,7 @@ describe("OAuthTokenManager.getApiKey resolver chain", () => {
         p.provider === PROVIDER &&
         p.configuredProfileId === configured &&
         p.hint === "configured-profile-missing" &&
-        p.errorKind === "profile_not_found" &&
+        p.errorKind === "auth" &&
         p.submodule === "oauth-resolver"
       );
     });
@@ -1671,7 +1750,7 @@ type OAuthTokenManagerDepsLike = Parameters<typeof createOAuthTokenManager>[0];
 // The token manager bypasses pi-ai's getOAuthApiKey for openai-codex so the
 // refresh-failure response body is available for clean classification. These
 // tests drive the bypass by mocking globalThis.fetch — the existing module-
-// level mock of @mariozechner/pi-ai/oauth (lines 17-21) keeps non-Codex
+// level mock of @earendil-works/pi-ai/oauth (lines 17-21) keeps non-Codex
 // providers on the pi-ai path so we can verify pure fall-through.
 // =============================================================================
 
@@ -1683,7 +1762,7 @@ describe("refresh_token_reused detection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     eventBus = new TypedEventBus();
-    mockWithExecutionLock.mockImplementation(
+    mockWithLock.mockImplementation(
       async (_p: string, fn: () => Promise<unknown>) => _ok(await fn()),
     );
     originalFetch = globalThis.fetch;
@@ -1722,6 +1801,7 @@ describe("refresh_token_reused detection", () => {
       credentialStore,
       logger,
       dataDir: "/tmp/comis-test",
+      fileLock: makeFileLockStub(),
     });
     return { manager, logger };
   }
@@ -1764,7 +1844,7 @@ describe("refresh_token_reused detection", () => {
         const p = c.payload as Record<string, unknown>;
         return (
           p.submodule === "oauth-token-manager" &&
-          p.errorKind === "refresh_token_reused"
+          p.errorKind === "auth"
         );
       });
     expect(warnHits.length).toBeGreaterThanOrEqual(1);
@@ -1819,7 +1899,7 @@ describe("refresh_token_reused detection", () => {
 
     const warnHit = logger._calls().find((c) => {
       const p = c.payload as Record<string, unknown>;
-      return c.level === "warn" && p.errorKind === "invalid_grant";
+      return c.level === "warn" && p.errorKind === "auth";
     });
     expect(warnHit).toBeDefined();
 
@@ -1977,11 +2057,11 @@ describe("refresh_token_reused detection", () => {
     expect(b.ok).toBe(true);
     if (a.ok && b.ok) expect(a.value).toBe(b.value);
 
-    // Lock contract: every refresh attempt invokes withExecutionLock with the
+    // Lock contract: every refresh attempt invokes fileLock.withLock with the
     // per-profile sentinel path. Two parallel callers → two lock acquisitions.
-    expect(mockWithExecutionLock).toHaveBeenCalledTimes(2);
-    const lockPath0 = mockWithExecutionLock.mock.calls[0]?.[0] as string;
-    const lockPath1 = mockWithExecutionLock.mock.calls[1]?.[0] as string;
+    expect(mockWithLock).toHaveBeenCalledTimes(2);
+    const lockPath0 = mockWithLock.mock.calls[0]?.[0] as string;
+    const lockPath1 = mockWithLock.mock.calls[1]?.[0] as string;
     expect(lockPath0).toContain("auth-refresh__openai-codex__user_a_at_example.com.lock");
     expect(lockPath1).toBe(lockPath0);
 

@@ -12,6 +12,7 @@ import type { NormalizedMessage } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import type { SignalEnvelope } from "./signal-client.js";
 import { buildSignalAttachments } from "./media-handler.js";
+import { systemNowMs } from "@comis/core";
 
 /**
  * Map a signal-cli SSE envelope to a NormalizedMessage.
@@ -58,7 +59,7 @@ export function mapSignalToNormalized(
       channelType: "signal",
       senderId,
       text: reaction.emoji,
-      timestamp: envelope.timestamp ?? Date.now(),
+      timestamp: envelope.timestamp ?? systemNowMs(),
       attachments: [],
       chatType: isGroup ? "group" as const : "dm" as const,
       metadata,
@@ -85,7 +86,7 @@ export function mapSignalToNormalized(
     channelType: "signal",
     senderId,
     text,
-    timestamp: envelope.timestamp ?? Date.now(),
+    timestamp: envelope.timestamp ?? systemNowMs(),
     attachments,
     chatType: isGroup ? "group" as const : "dm" as const,
     metadata,

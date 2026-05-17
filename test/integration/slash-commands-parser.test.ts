@@ -24,8 +24,8 @@ import {
   matchPromptSkillCommand,
   detectSkillCollisions,
   RESERVED_COMMAND_NAMES,
-} from "@comis/agent";
-import type { CommandHandlerDeps } from "@comis/agent";
+} from "@comis/orchestrator";
+import type { CommandHandlerDeps } from "@comis/orchestrator";
 
 // ---------------------------------------------------------------------------
 // Helpers

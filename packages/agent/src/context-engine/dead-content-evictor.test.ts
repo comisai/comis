@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createDeadContentEvictorLayer } from "./dead-content-evictor.js";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TokenBudget } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -534,26 +534,10 @@ describe("createDeadContentEvictorLayer", () => {
   // ---------------------------------------------------------------------------
 
   describe("H. Skip already-processed", () => {
-    it("tool result with [Tool result cleared: prefix: not double-evicted", async () => {
-      const onEvicted = vi.fn();
-      const layer = createDeadContentEvictorLayer({ evictionMinAge: 2 }, onEvicted);
-
-      const messages = buildPaddedConversation([
-        makeUserMessage("masked"),
-        makeAssistantWithToolCall("tc-masked", "bash", { command: "echo hi" }),
-        makeToolResult("bash", "tc-masked", "[Tool result cleared: bash -- see assistant analysis above]"),
-      ], 3);
-
-      const result = await layer.apply(messages, BUDGET);
-
-      // Already-masked content should pass through unchanged
-      const content = ((result[2] as Record<string, unknown>).content as Array<Record<string, string>>)[0];
-      expect(content.text).toBe("[Tool result cleared: bash -- see assistant analysis above]");
-
-      expect(onEvicted).toHaveBeenCalledWith(
-        expect.objectContaining({ evictedCount: 0 }),
-      );
-    });
+    // The legacy `[Tool result cleared:` prefix is no longer recognized by
+    // `isAlreadyMasked` (cleanup-helpers.ts), so the evictor no longer treats
+    // such content as already-processed. The canonical-prefix tests below
+    // cover the current behavior.
 
     it("tool result with [Tool result summarized: prefix: not double-evicted", async () => {
       const onEvicted = vi.fn();

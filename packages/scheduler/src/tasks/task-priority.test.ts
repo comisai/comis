@@ -44,38 +44,38 @@ describe("scorePriority", () => {
     expect(score.urgencyScore).toBe(37.5);
   });
 
-  it("overdue task -> urgencyScore=100", () => {
+  it("scores overdue task with urgencyScore=100 when due-date has passed NOW", () => {
     const yesterday = new Date(NOW - MS_PER_DAY).toISOString();
     const score = scorePriority(makeTask("medium", yesterday), NOW);
     expect(score.urgencyScore).toBe(100);
   });
 
-  it("due in 1 day -> urgencyScore=90", () => {
+  it("scores task due in 1 day with urgencyScore=90 per priority-tier table", () => {
     // 12 hours from now (within 1 day)
     const soon = new Date(NOW + MS_PER_DAY * 0.5).toISOString();
     const score = scorePriority(makeTask("medium", soon), NOW);
     expect(score.urgencyScore).toBe(90);
   });
 
-  it("due in 2 days -> urgencyScore=70", () => {
+  it("scores task due in 2 days with urgencyScore=70 per priority-tier table", () => {
     const twoDays = new Date(NOW + MS_PER_DAY * 2).toISOString();
     const score = scorePriority(makeTask("medium", twoDays), NOW);
     expect(score.urgencyScore).toBe(70);
   });
 
-  it("due in 5 days -> urgencyScore=50", () => {
+  it("scores task due in 5 days with urgencyScore=50 per priority-tier table", () => {
     const fiveDays = new Date(NOW + MS_PER_DAY * 5).toISOString();
     const score = scorePriority(makeTask("medium", fiveDays), NOW);
     expect(score.urgencyScore).toBe(50);
   });
 
-  it("due in 15 days -> urgencyScore=30", () => {
+  it("scores task due in 15 days with urgencyScore=30 per priority-tier table", () => {
     const fifteenDays = new Date(NOW + MS_PER_DAY * 15).toISOString();
     const score = scorePriority(makeTask("medium", fifteenDays), NOW);
     expect(score.urgencyScore).toBe(30);
   });
 
-  it("due in 60 days -> urgencyScore=10", () => {
+  it("scores task due in 60 days with urgencyScore=10 per priority-tier table", () => {
     const sixtyDays = new Date(NOW + MS_PER_DAY * 60).toISOString();
     const score = scorePriority(makeTask("medium", sixtyDays), NOW);
     expect(score.urgencyScore).toBe(10);
@@ -155,7 +155,7 @@ describe("rankTasks", () => {
     expect(rankTasks([], NOW)).toEqual([]);
   });
 
-  it("handles single task", () => {
+  it("handles single-task input by returning ranked list of length 1", () => {
     const tasks = [makeTask("medium")];
     const ranked = rankTasks(tasks, NOW);
     expect(ranked).toHaveLength(1);

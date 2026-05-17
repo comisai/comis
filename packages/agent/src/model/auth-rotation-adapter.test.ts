@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SecretManager } from "@comis/core";
-import type { AuthStorage } from "@mariozechner/pi-coding-agent";
+import type { AuthStorage } from "@earendil-works/pi-coding-agent";
 import { createAuthProfileManager } from "./auth-profile.js";
 import { createAuthRotationAdapter } from "./auth-rotation-adapter.js";
 

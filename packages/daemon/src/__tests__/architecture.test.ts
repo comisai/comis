@@ -21,12 +21,39 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
+import * as ts from "typescript";
 import { findInSourceFiles } from "../../../../test/support/source-grep.js";
+import { findForbiddenImports } from "../../../../test/support/import-checker.js";
+import { formatViolations } from "../../../../test/support/architecture-helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
+const DAEMON_TS_PATH = resolve(SRC_ROOT, "daemon.ts");
+const STAGE_LINE_CAP = 200;
+
+// Per-domain audit docs at packages/daemon/AUDIT-<domain>.md, one per
+// cluster slice in api/types.ts. The for-loop below generates 11 it()
+// blocks (one per domain) that each parse the audit Markdown table and
+// assert bidirectional set equality against the corresponding *ApiDeps
+// interface.
+const AUDIT_DOMAINS = [
+  "sessions",
+  "memory",
+  "channels",
+  "agents",
+  "orchestrator",
+  "workspace",
+  "config",
+  "auth",
+  "media",
+  "observability",
+  "daemon",
+] as const;
+const API_TYPES_PATH = resolve(SRC_ROOT, "api", "types.ts");
+const PKG_ROOT = resolve(SRC_ROOT, ".."); // packages/daemon/
 
 describe("@comis/daemon -- architecture invariants", () => {
   it("production source does NOT import createCapabilityPortStub (test/prod boundary)", () => {
@@ -118,4 +145,544 @@ describe("@comis/daemon -- architecture invariants", () => {
     ).toEqual([]);
     expect(result.checkedFiles, "sanity: helper walked at least one production source file in @comis/daemon").toBeGreaterThan(0);
   });
+
+  it("rpc/ directory does not exist; api/ is canonical", () => {
+    // Daemon API handlers live under api/, not rpc/. The rename surfaces
+    // the conceptual shift -- internal API seam, not transport-bound. The
+    // api/ location aligns with core/src/api-contracts/<domain>.ts.
+    //
+    // Failure-message phrasing note: the recovery hints below MUST NOT
+    // contain the pre-rename literal directory-path bytes -- if they did,
+    // the workspace-wide residual grep (run as part of the rename
+    // validation) would match this very file. Use the `<daemon-src>/rpc`
+    // placeholder instead.
+    const rpcPath = resolve(SRC_ROOT, "rpc");
+    const apiPath = resolve(SRC_ROOT, "api");
+    expect(
+      existsSync(rpcPath),
+      `<daemon-src>/rpc must not exist. ` +
+        `Found at ${rpcPath}. Run \`git mv <daemon-src>/rpc <daemon-src>/api\` ` +
+        `and retarget every internal import.`,
+    ).toBe(false);
+    expect(
+      existsSync(apiPath),
+      `<daemon-src>/api must exist as the canonical handler directory. ` +
+        `Expected at ${apiPath}.`,
+    ).toBe(true);
+  });
+
+  it("stageFoundation is ≤ 200 lines (AST-measured)", () => {
+    // Each runtime stage function must fit ≤ 200 lines hard (AST-measured
+    // via ts.createSourceFile + getLineAndCharacterOfPosition).
+    //
+    // stageFoundation owns the daemon-process foundation (data dir + secrets +
+    // bootstrap + logging + observability + memory + obs-persistence + context
+    // store + session mirroring + Gemini cache + background tasks + deferred
+    // refs). Helpers ≤50L can live in daemon.ts; larger helpers move to
+    // wiring/main-helpers.ts.
+    const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
+    const sf = ts.createSourceFile(
+      "daemon.ts",
+      sourceText,
+      ts.ScriptTarget.ES2023,
+      /* setParentNodes */ true,
+    );
+    let stageNode: ts.FunctionDeclaration | undefined;
+    function visit(node: ts.Node): void {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "stageFoundation") {
+        stageNode = node;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sf);
+    expect(
+      stageNode,
+      "stageFoundation function declaration not found in packages/daemon/src/daemon.ts",
+    ).toBeDefined();
+    const startLine = sf.getLineAndCharacterOfPosition(stageNode!.getStart()).line;
+    const endLine = sf.getLineAndCharacterOfPosition(stageNode!.getEnd()).line;
+    const lineCount = endLine - startLine + 1;
+    expect(
+      lineCount,
+      `stageFoundation is ${lineCount} lines (cap ${STAGE_LINE_CAP}). ` +
+        `Split a helper to fit -- candidates: seedBundledSkillCreator, ` +
+        `bootstrapSecretsAndEnv, wireConfigGitManager, env-merge logic, ` +
+        `obs-persistence init. Helpers ≤50L can stay in daemon.ts; ` +
+        `larger helpers move to wiring/main-helpers.ts.`,
+    ).toBeLessThanOrEqual(STAGE_LINE_CAP);
+  });
+
+  it("stageAgents is ≤ 200 lines (AST-measured)", () => {
+    // stageAgents owns the agent-runtime startup block (agents map,
+    // executors, mcpClientManager, schedulers, media, RPC bridge, approval
+    // gate with restore, delivery queue). Helpers ≤50L can live in
+    // daemon.ts; larger helpers move to wiring/main-helpers.ts.
+    const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
+    const sf = ts.createSourceFile(
+      "daemon.ts",
+      sourceText,
+      ts.ScriptTarget.ES2023,
+      /* setParentNodes */ true,
+    );
+    let stageNode: ts.FunctionDeclaration | undefined;
+    function visit(node: ts.Node): void {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "stageAgents") {
+        stageNode = node;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sf);
+    expect(
+      stageNode,
+      "stageAgents function declaration not found in packages/daemon/src/daemon.ts",
+    ).toBeDefined();
+    const startLine = sf.getLineAndCharacterOfPosition(stageNode!.getStart()).line;
+    const endLine = sf.getLineAndCharacterOfPosition(stageNode!.getEnd()).line;
+    const lineCount = endLine - startLine + 1;
+    expect(
+      lineCount,
+      `stageAgents is ${lineCount} lines (cap ${STAGE_LINE_CAP}). ` +
+        `Split a helper to fit -- already-extracted: restoreApprovalState, ` +
+        `setupMcpManager, wirePostAgentsCleanup, buildAuditBundle. ` +
+        `Next candidates: the setupAgents argument block (~30L), the ` +
+        `setupSchedulers argument block, or the delivery-queue construction ` +
+        `block. Helpers ≤50L can stay in daemon.ts; larger helpers move to ` +
+        `wiring/main-helpers.ts.`,
+    ).toBeLessThanOrEqual(STAGE_LINE_CAP);
+  });
+
+  it("stageChannels is ≤ 200 lines (AST-measured)", () => {
+    // stageChannels owns the channel-runtime startup block (channel
+    // adapters, notifications, bg completion runner, sandbox/image-gen,
+    // tools, cross-session, graph coordinator, monitoring, heartbeat, wake
+    // coalescer, agent management runtime state). Helpers ≤50L can live in
+    // daemon.ts; larger helpers move to wiring/main-helpers.ts.
+    const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
+    const sf = ts.createSourceFile(
+      "daemon.ts",
+      sourceText,
+      ts.ScriptTarget.ES2023,
+      /* setParentNodes */ true,
+    );
+    let stageNode: ts.FunctionDeclaration | undefined;
+    function visit(node: ts.Node): void {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "stageChannels") {
+        stageNode = node;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sf);
+    expect(
+      stageNode,
+      "stageChannels function declaration not found in packages/daemon/src/daemon.ts",
+    ).toBeDefined();
+    const startLine = sf.getLineAndCharacterOfPosition(stageNode!.getStart()).line;
+    const endLine = sf.getLineAndCharacterOfPosition(stageNode!.getEnd()).line;
+    const lineCount = endLine - startLine + 1;
+    expect(
+      lineCount,
+      `stageChannels is ${lineCount} lines (cap ${STAGE_LINE_CAP}). ` +
+        `Split a helper to fit -- already-extracted: buildChannelManagerDeps, ` +
+        `buildGraphCoordinatorDeps, buildGraphPreWarm, setupChannelHealthMonitor, ` +
+        `createCapabilityPortResolver, wirePostChannelsLifecycle, ` +
+        `buildImageGenBundle. Next candidates: the setupTools argument block, ` +
+        `the setupCrossSession argument block, the setupHeartbeat argument ` +
+        `block, or the channelConfig Object.fromEntries closure. Helpers ≤50L ` +
+        `can stay in daemon.ts; larger helpers move to wiring/main-helpers.ts.`,
+    ).toBeLessThanOrEqual(STAGE_LINE_CAP);
+  });
+
+  it("stageGateway is ≤ 200 lines (AST-measured)", () => {
+    // stageGateway owns the gateway-runtime startup block (token registry,
+    // session store bridge, shutdown ref, hot-add/hot-remove closures, RPC
+    // dispatch deps assembly, gateway server, restart continuation replay).
+    // shutdownRef is declared inside stageGateway and exposed via
+    // GatewayHandle.shutdownRef so stageShutdown can populate .value with
+    // the live shutdown handle. Helpers ≤50L can live in daemon.ts; larger
+    // helpers move to wiring/main-helpers.ts.
+    const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
+    const sf = ts.createSourceFile(
+      "daemon.ts",
+      sourceText,
+      ts.ScriptTarget.ES2023,
+      /* setParentNodes */ true,
+    );
+    let stageNode: ts.FunctionDeclaration | undefined;
+    function visit(node: ts.Node): void {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "stageGateway") {
+        stageNode = node;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sf);
+    expect(
+      stageNode,
+      "stageGateway function declaration not found in packages/daemon/src/daemon.ts",
+    ).toBeDefined();
+    const startLine = sf.getLineAndCharacterOfPosition(stageNode!.getStart()).line;
+    const endLine = sf.getLineAndCharacterOfPosition(stageNode!.getEnd()).line;
+    const lineCount = endLine - startLine + 1;
+    expect(
+      lineCount,
+      `stageGateway is ${lineCount} lines (cap ${STAGE_LINE_CAP}). ` +
+        `Split a helper to fit -- already-extracted: resolveGatewayTokens, ` +
+        `createHotAdd, createHotRemove, buildRpcDispatchDeps, ` +
+        `replayContinuationsIfAny, plus sub-helpers buildImageHandlerDeps, ` +
+        `buildTokenStoreMutators, buildContextEngineConfig, ` +
+        `buildSyntheticRestartMessage. Next candidates: the setupGateway ` +
+        `argument block (~12L), the session store bridge literal (~14L), or ` +
+        `the deferred-attachment block (~32L). Helpers ≤50L can stay in ` +
+        `daemon.ts; larger helpers move to wiring/main-helpers.ts.`,
+    ).toBeLessThanOrEqual(STAGE_LINE_CAP);
+  });
+
+  it("stageShutdown is ≤ 200 lines (AST-measured)", () => {
+    // stageShutdown constructs the shutdown handle, populates
+    // gateway.shutdownRef.value (cross-stage deferred-ref completion), wires
+    // the health-metrics event-bus subscription via wireHealthLogging, emits
+    // the startup banner via emitStartupBanner (canonical "Comis daemon
+    // started" log line 5), and returns the DaemonInstance.
+    const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
+    const sf = ts.createSourceFile(
+      "daemon.ts",
+      sourceText,
+      ts.ScriptTarget.ES2023,
+      /* setParentNodes */ true,
+    );
+    let stageNode: ts.FunctionDeclaration | undefined;
+    function visit(node: ts.Node): void {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "stageShutdown") {
+        stageNode = node;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sf);
+    expect(
+      stageNode,
+      "stageShutdown function declaration not found in packages/daemon/src/daemon.ts",
+    ).toBeDefined();
+    const startLine = sf.getLineAndCharacterOfPosition(stageNode!.getStart()).line;
+    const endLine = sf.getLineAndCharacterOfPosition(stageNode!.getEnd()).line;
+    const lineCount = endLine - startLine + 1;
+    expect(
+      lineCount,
+      `stageShutdown is ${lineCount} lines (cap ${STAGE_LINE_CAP}). ` +
+        `Helpers already extracted: wireHealthLogging, emitStartupBanner. ` +
+        `Sub-helpers: readDbSizeMetrics, computeAndKillStuckSubAgents, ` +
+        `buildStartupBannerManifest. Next candidates if stageShutdown grows: ` +
+        `the setupShutdown deps literal (~25L), or the last-known-good ` +
+        `snapshot block (~6L). Helpers ≤50L can stay in daemon.ts; ` +
+        `larger helpers move to wiring/main-helpers.ts.`,
+    ).toBeLessThanOrEqual(STAGE_LINE_CAP);
+  });
+
+  it("each non-stage top-level function in daemon.ts is ≤ 50 lines unless explicitly exempt", () => {
+    // Every top-level function in daemon.ts other than the five stages
+    // (stageFoundation/stageAgents/stageChannels/stageGateway/stageShutdown)
+    // must be ≤ 50 lines unless preceded by a `// daemon-line-cap: exempt --
+    // <reason>` comment. At most 3 such comments may exist; beyond that,
+    // refactor instead of exempting.
+    //
+    // The node.parent === sf filter excludes nested helpers inside stage
+    // functions (which are bounded by the per-stage ≤200L cap). The
+    // preceding-3-lines window is parsed verbatim to avoid header-prose
+    // false positives.
+    const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
+    const sf = ts.createSourceFile(
+      "daemon.ts",
+      sourceText,
+      ts.ScriptTarget.ES2023,
+      /* setParentNodes */ true,
+    );
+    const STAGE_NAMES = new Set([
+      "stageFoundation",
+      "stageAgents",
+      "stageChannels",
+      "stageGateway",
+      "stageShutdown",
+    ]);
+    const NON_STAGE_CAP = 50;
+    const EXEMPT_PATTERN = /\/\/ daemon-line-cap: exempt -- /;
+    const MAX_EXEMPTIONS = 3;
+    const offenders: string[] = [];
+    const exemptDetails: string[] = [];
+    let exemptCount = 0;
+    const sourceLines = sourceText.split("\n");
+
+    function visit(node: ts.Node): void {
+      if (
+        ts.isFunctionDeclaration(node) &&
+        node.name &&
+        !STAGE_NAMES.has(node.name.text) &&
+        node.parent === sf
+      ) {
+        const startLine = sf.getLineAndCharacterOfPosition(node.getStart()).line;
+        const endLine = sf.getLineAndCharacterOfPosition(node.getEnd()).line;
+        const lineCount = endLine - startLine + 1;
+        if (lineCount > NON_STAGE_CAP) {
+          const precedingText = sourceLines
+            .slice(Math.max(0, startLine - 3), startLine)
+            .join("\n");
+          if (EXEMPT_PATTERN.test(precedingText)) {
+            exemptCount++;
+            exemptDetails.push(`${node.name.text}: ${lineCount} lines (exempt)`);
+          } else {
+            offenders.push(`${node.name.text}: ${lineCount} lines (cap ${NON_STAGE_CAP})`);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sf);
+
+    expect(
+      offenders,
+      `Non-stage top-level functions in daemon.ts exceeding ${NON_STAGE_CAP} lines without ` +
+        `'// daemon-line-cap: exempt -- <reason>' comment:\n  ${offenders.join("\n  ")}\n` +
+        `Action: refactor to split a helper, OR add the exempt comment with an operator-actionable reason.`,
+    ).toEqual([]);
+    expect(
+      exemptCount,
+      `Too many exempt comments (max ${MAX_EXEMPTIONS}); refactor instead of exempting:\n  ${exemptDetails.join("\n  ")}`,
+    ).toBeLessThanOrEqual(MAX_EXEMPTIONS);
+  });
+
+  it("daemon.ts total line count is reported (soft cap ≤ 1200)", () => {
+    // Informational measurement. Soft cap target:
+    //   - ~1430 if helpers stay in daemon.ts
+    //   - ~1040 if helpers move to wiring/main-helpers.ts
+    // The hard caps (per-stage ≤200 and non-stage ≤50) are the binding
+    // constraints; this test only records the line count so the orchestrator
+    // and reviewers can track progress toward the soft cap. No assertion
+    // fails the gate on line count alone.
+    const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
+    const lineCount = sourceText.split("\n").length;
+    // eslint-disable-next-line no-console -- informational measurement
+    console.log(`[daemon.ts report] total lines: ${lineCount} (soft cap 1200)`);
+    expect(lineCount, "daemon.ts must contain code").toBeGreaterThan(100);
+  });
+
+  // 30s timeout (default 5s) — under v8 coverage instrumentation, the
+  // 27-handler AST walk slows enough to exceed the default budget. Without
+  // coverage the test runs in ~1.5s.
+  it(
+    "api/*-handlers.ts never imports another api/*-handlers.ts file",
+    () => {
+    // Handler files are siblings -- they MUST NOT import each other. Any
+    // cross-handler shared logic lives in api/shared/ (4 helpers:
+    // persist-to-config, credential-resolver, probe-provider-auth,
+    // builtin-provider-guard).
+    //
+    // This invariant is mechanically enforceable: every *-handlers.ts file
+    // imports either from external packages, from ./types.js, or from
+    // ./shared/*.js -- never from a sibling handler.
+    //
+    // Implementation: enumerate every *-handlers.ts file under api/, then
+    // for each (handler, otherHandler) pair, run findForbiddenImports
+    // looking for `./${otherHandler}.js`. To keep the run within vitest's
+    // default 5s per-test budget on a 27-handler workspace we do a SINGLE
+    // walk per other-handler (27 walks total) and post-filter the
+    // violations by importing-file basename in memory -- a strict
+    // optimization of the documented N × (N-1) walk shape. The AST-based
+    // scanner from test/support/import-checker.ts (not regex) produces
+    // verbose failure messages via formatViolations.
+    const apiDir = resolve(SRC_ROOT, "api");
+    const handlerFiles = readdirSync(apiDir)
+      .filter((f) => f.endsWith("-handlers.ts") && !f.endsWith(".test.ts"))
+      .map((f) => f.replace(/\.ts$/, ""));
+
+    expect(
+      handlerFiles.length,
+      "sanity: api/ should contain at least 20 *-handlers.ts files",
+    ).toBeGreaterThan(20);
+
+    const handlerSet = new Set(handlerFiles);
+    for (const other of handlerFiles) {
+      const { violations } = findForbiddenImports({
+        rootDir: apiDir,
+        forbiddenPackage: `./${other}.js`,
+      });
+      // Cross-handler edges only: keep offenders whose importing file is
+      // ALSO a *-handlers.ts sibling (not the helper itself, not a test,
+      // not api/shared/*).
+      const crossHandlerOffenders = violations.filter((v) => {
+        const m = /\/([^/]+)\.ts$/.exec(v.file);
+        if (!m) return false;
+        const importer = m[1];
+        return handlerSet.has(importer) && importer !== other;
+      });
+      expect(
+        crossHandlerOffenders,
+        formatViolations({
+          description: `No api/*-handlers.ts file may import api/${other}.js — handlers are siblings; shared logic goes to api/shared/.`,
+          violations: crossHandlerOffenders.map((v) => ({
+            file: v.file,
+            line: v.line,
+            column: v.column,
+            snippet: v.snippet,
+          })),
+          suggestedFix: `Move the shared symbol from ${other}.ts to packages/daemon/src/api/shared/ and import it from there. See packages/daemon/src/api/shared/ for the established pattern (4 cross-handler helpers).`,
+          designRef: "packages/daemon/src/api/shared/",
+        }),
+      ).toEqual([]);
+    }
+    },
+    30_000,
+  );
+
+  // Per-domain audit-coverage invariants. For each cluster slice in
+  // api/types.ts the matching AUDIT-<domain>.md doc at
+  // packages/daemon/AUDIT-<domain>.md must:
+  //   1. List every interface field as a row (set equality, both directions)
+  //   2. Classify each row as "required" or "optional" -- never the third
+  //      "stale-fallback" value (architecture-test invariant)
+  //   3. Match the interface's optional/required marker (`?:` vs `:`)
+  //   4. Provide a non-empty evidence-link cell on every row
+  //
+  // Pattern lifted from packages/orchestrator/src/__tests__/architecture.test.ts;
+  // generalized via the AUDIT_DOMAINS loop to produce 11 it() blocks at
+  // module load time.
+  for (const domain of AUDIT_DOMAINS) {
+    const interfaceName = `${domain.charAt(0).toUpperCase()}${domain.slice(1)}ApiDeps`;
+    const auditPath = resolve(PKG_ROOT, `AUDIT-${domain}.md`);
+
+    it(`every ${interfaceName} field appears in audit document at AUDIT-${domain}.md`, () => {
+      // 1. Parse the audit Markdown table.
+      const auditContent = readFileSync(auditPath, "utf8");
+      const tableLines = auditContent
+        .split("\n")
+        .filter((l) => l.startsWith("| ") && !l.startsWith("|-"));
+      // Skip the header row (first); subsequent lines are data rows.
+      // The header text uses bold markdown (`**Field**`, ...) so the
+      // `r.field.startsWith("**")` filter keeps ordinary identifiers from
+      // colliding with the header.
+      const rows = tableLines
+        .slice(1)
+        .map((l) => {
+          const cells = l.split("|").map((s) => s.trim());
+          return {
+            field: cells[1] ?? "",
+            classification: cells[2] ?? "",
+            whenAbsent: cells[3] ?? "",
+            evidenceLink: cells[4] ?? "",
+          };
+        })
+        .filter((r) => r.field.length > 0 && !r.field.startsWith("**"));
+
+      // 2. Parse the interface body via the TypeScript Compiler API.
+      //    Replaces the previous regex-based extractor, which was fragile
+      //    against indentation changes, inline object-literal types, and
+      //    continuation-line field declarations. The AST walker is robust
+      //    against all three. Note: heritage clauses (`extends X`) are
+      //    intentionally NOT followed -- AUDIT_DOMAINS slices MUST not
+      //    extend each other (see the guard test below).
+      const apiTypesContent = readFileSync(API_TYPES_PATH, "utf8");
+      const sf = ts.createSourceFile(
+        "types.ts",
+        apiTypesContent,
+        ts.ScriptTarget.ES2023,
+        /* setParentNodes */ true,
+      );
+      const interfaceFields = new Map<string, "required" | "optional">();
+      let interfaceFound = false;
+      let extendsAnotherInterface = false;
+      ts.forEachChild(sf, (node) => {
+        if (ts.isInterfaceDeclaration(node) && node.name.text === interfaceName) {
+          interfaceFound = true;
+          if (node.heritageClauses && node.heritageClauses.length > 0) {
+            extendsAnotherInterface = true;
+          }
+          for (const member of node.members) {
+            if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+              interfaceFields.set(
+                member.name.text,
+                member.questionToken ? "optional" : "required",
+              );
+            }
+          }
+        }
+      });
+      expect(
+        interfaceFound,
+        `${interfaceName} interface not found in ${API_TYPES_PATH}`,
+      ).toBe(true);
+      // Guard: leaf *ApiDeps slices in AUDIT_DOMAINS MUST NOT extend other
+      // interfaces. The audit-coverage check does not walk heritage clauses,
+      // so an inherited member set would silently miss fields. The
+      // aggregator `ApiDispatchDeps extends ...` is not in AUDIT_DOMAINS and
+      // is intentionally excluded.
+      expect(
+        extendsAnotherInterface,
+        `${interfaceName} extends another interface. AUDIT_DOMAINS slices ` +
+          `MUST be flat (no \`extends\` clause); the audit-coverage check ` +
+          `does not inherit fields. Either flatten the interface or remove ` +
+          `it from AUDIT_DOMAINS.`,
+      ).toBe(false);
+
+      const auditFieldNames = new Set(rows.map((r) => r.field));
+      const interfaceFieldNames = new Set(interfaceFields.keys());
+
+      // 3a. Every interface field appears in the audit
+      const inInterfaceOnly = [...interfaceFieldNames].filter(
+        (f) => !auditFieldNames.has(f),
+      );
+      expect(
+        inInterfaceOnly,
+        `Fields in ${interfaceName} but NOT in AUDIT-${domain}.md: ${inInterfaceOnly.join(", ")}. ` +
+          `Add a row to the audit table or remove the field from the interface.`,
+      ).toEqual([]);
+
+      // 3b. Every audit row matches an interface field
+      const inAuditOnly = [...auditFieldNames].filter(
+        (f) => !interfaceFieldNames.has(f),
+      );
+      expect(
+        inAuditOnly,
+        `Fields in AUDIT-${domain}.md but NOT in ${interfaceName}: ${inAuditOnly.join(", ")}. ` +
+          `Remove the stale audit row or add the field to the interface.`,
+      ).toEqual([]);
+
+      // 4. No stale-fallback classifications (terminal value forbidden;
+      //    every field must be required or optional).
+      const staleFallbackRows = rows.filter(
+        (r) => r.classification === "stale-fallback",
+      );
+      expect(
+        staleFallbackRows.map((r) => r.field),
+        `Stale-fallback classification rows in AUDIT-${domain}.md: ${staleFallbackRows
+          .map((r) => r.field)
+          .join(", ")}. ` +
+          `Delete the field from the interface and remove the row from the audit.`,
+      ).toEqual([]);
+
+      // 5. Classification matches interface optional marker
+      const classificationMismatches: string[] = [];
+      for (const row of rows) {
+        const interfaceClass = interfaceFields.get(row.field);
+        if (interfaceClass && row.classification !== interfaceClass) {
+          classificationMismatches.push(
+            `${row.field}: audit=${row.classification}, interface=${interfaceClass}`,
+          );
+        }
+      }
+      expect(
+        classificationMismatches,
+        `Classification mismatches (audit vs interface optional marker) in AUDIT-${domain}.md:\n  ${classificationMismatches.join("\n  ")}`,
+      ).toEqual([]);
+
+      // 6. Every row has non-empty evidence-link
+      const missingEvidence = rows.filter((r) => r.evidenceLink.length === 0);
+      expect(
+        missingEvidence.map((r) => r.field),
+        `Audit rows missing evidence-link in AUDIT-${domain}.md: ${missingEvidence
+          .map((r) => r.field)
+          .join(", ")}`,
+      ).toEqual([]);
+    });
+  }
 });

@@ -2,9 +2,10 @@
 /**
  * Approvals view e2e tests.
  *
- * Tests the 3-section approvals view: Pending Queue, History, Rules.
- * Covers approval queue rendering, approve/deny buttons, resolution flow,
- * rules configuration, and sidebar badge count.
+ * Approvals were merged into the Security view (Pending Approvals / Approval
+ * Rules tabs). The legacy ic-approvals-view now renders a redirect notice.
+ * These tests cover both the redirect surface and the live queue inside
+ * Security.
  */
 import { test, expect } from "@playwright/test";
 import { mockApiRoutes } from "./helpers/mock-api.js";
@@ -12,48 +13,59 @@ import { mockRpcRoutes, DEFAULT_RPC_HANDLERS } from "./helpers/mock-rpc.js";
 import { login, navigateTo } from "./helpers/login.js";
 
 /**
- * Mock approval requests matching the ApprovalRequest interface.
- *
- * Note: the interface uses `classification` (not `risk`) and requires
- * `context` field for the collapsible detail section.
+ * Mock approval requests in the backend shape consumed by the Security
+ * approval queue (admin.approval.pending returns { requests, total }).
  */
-const MOCK_APPROVALS = [
+const MOCK_BACKEND_REQUESTS = [
   {
-    id: "appr-001",
-    agentId: "agent-default",
+    requestId: "appr-001",
+    toolName: "exec",
     action: "exec:shell",
-    classification: "high",
-    context: "rm -rf /tmp/cache",
-    requestedAt: Date.now() - 120000,
+    params: { command: "rm -rf /tmp/cache" },
+    agentId: "agent-default",
+    sessionKey: "agent-default:cli:1",
+    trustLevel: "untrusted",
+    createdAt: Date.now() - 120000,
+    timeoutMs: 300000,
   },
   {
-    id: "appr-002",
-    agentId: "agent-coding",
+    requestId: "appr-002",
+    toolName: "file",
     action: "file:write",
-    classification: "medium",
-    context: "/home/agent/config.yaml",
-    requestedAt: Date.now() - 60000,
+    params: { path: "/home/agent/config.yaml" },
+    agentId: "agent-coding",
+    sessionKey: "agent-coding:cli:1",
+    trustLevel: "user",
+    createdAt: Date.now() - 60000,
+    timeoutMs: 300000,
   },
 ];
 
 /** Merged RPC handlers with approvals-specific responses. */
 const APPROVALS_RPC_HANDLERS: Record<string, unknown> = {
   ...DEFAULT_RPC_HANDLERS,
-  "admin.approval.pending": MOCK_APPROVALS,
+  "admin.approval.pending": {
+    requests: MOCK_BACKEND_REQUESTS,
+    total: MOCK_BACKEND_REQUESTS.length,
+  },
   "admin.approval.resolve": { success: true },
+  // The Security view reads configResult.config.security to populate its
+  // policy/rules tabs -- wrap the payload accordingly.
   "config.read": {
-    sections: {},
-    security: {
-      approvalRules: {
-        defaultMode: "auto-low",
-        timeoutMs: 300000,
+    config: {
+      security: {
+        approvalRules: {
+          defaultMode: "manual",
+          timeoutMs: 300000,
+        },
       },
     },
+    sections: ["security"],
   },
   "config.patch": { success: true },
 };
 
-test.describe("Approvals view", () => {
+test.describe("Approvals legacy redirect view", () => {
   test.beforeEach(async ({ page }) => {
     await mockApiRoutes(page);
     await mockRpcRoutes(page, APPROVALS_RPC_HANDLERS);
@@ -62,75 +74,78 @@ test.describe("Approvals view", () => {
     await navigateTo(page, "Approvals");
   });
 
-  test("approvals view shows pending approval queue", async ({ page }) => {
+  test("legacy Approvals route shows redirect notice to Security", async ({ page }) => {
     const approvalsView = page.locator("ic-approvals-view");
     await expect(approvalsView).toBeVisible({ timeout: 10_000 });
 
-    // Pending Queue tab should be active by default (first tab)
-    // Verify queue header with count badge (use exact match to avoid tab label collision)
-    await expect(approvalsView.getByText("Pending", { exact: true })).toBeVisible();
+    // The legacy view renders a single redirect card directing users to
+    // the Security view's Pending Approvals tab.
+    await expect(approvalsView.getByText("Approvals Moved")).toBeVisible();
+    await expect(
+      approvalsView.getByRole("button", { name: "Go to Security" }),
+    ).toBeVisible();
+  });
+});
 
-    // Approval cards should show agent IDs and actions
+test.describe("Approvals (in Security view)", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockApiRoutes(page);
+    await mockRpcRoutes(page, APPROVALS_RPC_HANDLERS);
+    await page.goto("/");
+    await login(page);
+    await navigateTo(page, "Security");
+    await page
+      .locator("ic-security-view")
+      .getByRole("tab", { name: "Pending Approvals" })
+      .click();
+  });
+
+  test("approvals view shows pending approval queue", async ({ page }) => {
+    const security = page.locator("ic-security-view");
+    await expect(security).toBeVisible({ timeout: 10_000 });
+
+    // Approval cards render inside the embedded ic-approval-queue.
     const approvalCards = page.locator("ic-approval-card");
     await expect(approvalCards).toHaveCount(2);
 
     // Verify agent IDs are visible
-    await expect(approvalsView.getByText("agent-default")).toBeVisible();
-    await expect(approvalsView.getByText("agent-coding")).toBeVisible();
+    await expect(security.getByText("agent-default")).toBeVisible();
+    await expect(security.getByText("agent-coding")).toBeVisible();
 
     // Verify actions are visible
-    await expect(approvalsView.getByText("exec:shell")).toBeVisible();
-    await expect(approvalsView.getByText("file:write")).toBeVisible();
-
-    // Verify risk classifications are indicated via ic-tag
-    await expect(approvalsView.getByText("high")).toBeVisible();
-    await expect(approvalsView.getByText("medium")).toBeVisible();
+    await expect(security.getByText("exec:shell")).toBeVisible();
+    await expect(security.getByText("file:write")).toBeVisible();
   });
 
   test("approval card shows action details", async ({ page }) => {
-    const approvalsView = page.locator("ic-approvals-view");
-    await expect(approvalsView).toBeVisible({ timeout: 10_000 });
+    // Approvals are sorted by createdAt descending (newest first).
+    // appr-002 (file:write, -60s) first, appr-001 (exec:shell, -120s) second.
 
-    // The context is hidden by default behind "Show details" toggle.
-    // Approvals are sorted by requestedAt descending (newest first).
-    // appr-002 (file:write, -60s) comes first, appr-001 (exec:shell, -120s) second.
-
-    // Click "Show details" on the first card (file:write) to reveal context.
     const firstCard = page.locator("ic-approval-card").first();
     await firstCard.getByText("Show details").click();
 
-    // The first card's context is "/home/agent/config.yaml"
-    await expect(firstCard.getByText("/home/agent/config.yaml")).toBeVisible();
+    // The first card's serialised params contain "config.yaml".
+    await expect(firstCard.getByText(/config\.yaml/)).toBeVisible();
 
-    // Click "Show details" on the second card (exec:shell)
     const secondCard = page.locator("ic-approval-card").nth(1);
     await secondCard.getByText("Show details").click();
 
-    // The second card's context is "rm -rf /tmp/cache"
-    await expect(secondCard.getByText("rm -rf /tmp/cache")).toBeVisible();
+    // The second card's serialised params contain "rm -rf /tmp/cache".
+    await expect(secondCard.getByText(/rm -rf \/tmp\/cache/)).toBeVisible();
   });
 
   test("approval card has approve and deny buttons", async ({ page }) => {
-    const approvalsView = page.locator("ic-approvals-view");
-    await expect(approvalsView).toBeVisible({ timeout: 10_000 });
-
     // Each approval card should have Approve and Deny buttons
-    const approveButtons = approvalsView.getByRole("button", { name: "Approve" });
-    const denyButtons = approvalsView.getByRole("button", { name: "Deny" });
+    const approveButtons = page.locator("ic-approval-card").getByRole("button", { name: "Approve" });
+    const denyButtons = page.locator("ic-approval-card").getByRole("button", { name: "Deny" });
 
     await expect(approveButtons).toHaveCount(2);
     await expect(denyButtons).toHaveCount(2);
   });
 
   test("approving an item removes it from queue", async ({ page }) => {
-    const approvalsView = page.locator("ic-approvals-view");
-    await expect(approvalsView).toBeVisible({ timeout: 10_000 });
-
-    // Verify 2 approval cards initially
     await expect(page.locator("ic-approval-card")).toHaveCount(2);
 
-    // Click "Approve" on the first card (sorted by requestedAt descending,
-    // so the most recent one appears first)
     const firstCard = page.locator("ic-approval-card").first();
     await firstCard.getByRole("button", { name: "Approve" }).click();
 
@@ -138,35 +153,17 @@ test.describe("Approvals view", () => {
     await expect(page.locator("ic-approval-card")).toHaveCount(1, { timeout: 5_000 });
   });
 
-  test("approval rules show default mode and timeout", async ({ page }) => {
-    const approvalsView = page.locator("ic-approvals-view");
-    await expect(approvalsView).toBeVisible({ timeout: 10_000 });
+  test("approval rules tab is reachable from Security", async ({ page }) => {
+    const security = page.locator("ic-security-view");
+    await expect(security).toBeVisible({ timeout: 10_000 });
 
-    // Click "Rules" tab
-    await approvalsView.locator("ic-tabs").getByRole("tab", { name: "Rules" }).click();
+    // Switch to the Approval Rules tab and assert it activates without error.
+    await security.getByRole("tab", { name: "Approval Rules" }).click();
 
-    // The rules section should show the Default Mode select
-    // with value "auto-low" (Auto-approve low risk)
-    await expect(approvalsView.getByText("Default Mode")).toBeVisible({ timeout: 5_000 });
-
-    // Timeout field should show the value in seconds (300000ms = 300s)
-    await expect(approvalsView.getByText("Timeout (seconds)")).toBeVisible();
-
-    // Save Rules button should be present
-    await expect(approvalsView.getByRole("button", { name: "Save Rules" })).toBeVisible();
-  });
-
-  test("sidebar badge count reflects pending approvals", async ({ page }) => {
-    // The sidebar renders badge counts for approvals.
-    // With 2 pending approvals, the sidebar Approvals nav item should show a badge.
-    // The sidebar uses the global state pendingApprovals count which is updated via SSE.
-    // In e2e test, the SSE dispatcher reads events from /api/events which is not mocked,
-    // so the badge count may not be populated via SSE. However, the sidebar receives
-    // pendingApprovals as a property from ic-app which tracks it via globalState.
-    //
-    // We verify the "Approvals" nav item exists in sidebar with its label.
-    const sidebar = page.locator("ic-sidebar");
-    await expect(sidebar).toBeVisible();
-    await expect(sidebar.getByRole("button", { name: "Approvals" })).toBeVisible();
+    // The Approval Rules tab is now active; the tab strip exposes both
+    // approval-related tabs at all times.
+    await expect(
+      security.getByRole("tab", { name: "Approval Rules" }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 });

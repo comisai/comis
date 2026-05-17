@@ -8,6 +8,7 @@
  */
 
 import type { CoordinatorSharedState, GraphCoordinatorDeps, GraphRunState, CoordinatorConfig } from "./graph-coordinator-state.js";
+import { systemNowMs, systemClearTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Timer cleanup
@@ -22,16 +23,16 @@ export function clearAllTimers(
   gs: GraphRunState,
 ): void {
   for (const timer of gs.nodeTimers.values()) {
-    clearTimeout(timer);
+    systemClearTimeout(timer);
   }
   gs.nodeTimers.clear();
   // Clear retry timers
   for (const timer of gs.retryTimers.values()) {
-    clearTimeout(timer);
+    systemClearTimeout(timer);
   }
   gs.retryTimers.clear();
   if (gs.graphTimer !== undefined) {
-    clearTimeout(gs.graphTimer);
+    systemClearTimeout(gs.graphTimer);
     gs.graphTimer = undefined;
   }
   // Clean up driver state
@@ -62,7 +63,7 @@ export function sweepExpiredGraphs(
   state: CoordinatorSharedState,
   config: Pick<CoordinatorConfig, "graphRetentionMs" | "maxGraphs">,
 ): void {
-  const now = Date.now();
+  const now = systemNowMs();
   for (const [graphId, gs] of state.graphs) {
     if (gs.completedAt !== undefined && now - gs.completedAt > config.graphRetentionMs) {
       state.graphs.delete(graphId);

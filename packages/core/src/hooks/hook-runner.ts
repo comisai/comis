@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { PluginRegistry } from "./plugin-registry.js";
 import type { TypedEventBus } from "../event-bus/index.js";
 import type { RegisteredHook } from "../ports/plugin.js";
+import { systemNowMs } from "../runtime/system-time.js";
 import type {
   HookName,
   HookBeforeAgentStartEvent,
@@ -142,10 +143,10 @@ export function createHookRunner(
       eventBus.emit("hook:executed", {
         hookName,
         pluginId,
-        durationMs: Date.now() - startMs,
+        durationMs: systemNowMs() - startMs,
         success,
         error,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     }
   }
@@ -160,7 +161,7 @@ export function createHookRunner(
   ): void {
     if (eventBus) {
       eventBus.emit("audit:event", {
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         agentId: "hook-runner",
         tenantId: "system",
         actionType: "hook_modification",
@@ -188,7 +189,7 @@ export function createHookRunner(
 
     await Promise.all(
       registeredHooks.map(async (hook: RegisteredHook<K>) => {
-        const startMs = Date.now();
+        const startMs = systemNowMs();
         try {
           await (hook.handler as (e: unknown, c: unknown) => Promise<void> | void)(event, ctx);
           emitHookEvent(hookName, hook.pluginId, startMs, true);
@@ -219,7 +220,7 @@ export function createHookRunner(
     let result: TResult | undefined;
 
     for (const hook of registeredHooks) {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       try {
         const r = await (
           hook.handler as (e: unknown, c: unknown) => Promise<TResult | void> | TResult | void
@@ -271,7 +272,7 @@ export function createHookRunner(
     let result: TResult | undefined;
 
     for (const hook of registeredHooks) {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       try {
         const r = (hook.handler as (e: unknown, c: unknown) => TResult | void)(event, ctx);
         if (r) {

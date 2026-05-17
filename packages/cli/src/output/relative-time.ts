@@ -15,6 +15,7 @@
  * @module
  */
 
+import { systemNowMs } from "@comis/core";
 const MS_PER_MIN = 60_000;
 const MS_PER_HOUR = 60 * MS_PER_MIN;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
@@ -23,12 +24,12 @@ const MS_PER_DAY = 24 * MS_PER_HOUR;
  * Format the time-until-expiry for an absolute epoch-ms expiry timestamp.
  *
  * @param expiresAtMs - Absolute epoch-ms when the credential expires
- * @param now - Reference "now" (defaulted to Date.now() — overridable for tests)
+ * @param now - Reference "now" (defaulted to systemNowMs() — overridable for tests)
  * @returns "expired" | "<n>m" | "<n>h" | "<n>d"
  */
 export function formatRelativeExpiry(
   expiresAtMs: number,
-  now: number = Date.now(),
+  now: number = systemNowMs(),
 ): string {
   const delta = expiresAtMs - now;
   if (delta <= 0) return "expired";

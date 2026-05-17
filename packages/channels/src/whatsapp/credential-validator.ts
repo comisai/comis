@@ -10,7 +10,7 @@
  */
 
 import { ok, err, type Result } from "@comis/shared";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import { constants } from "node:fs";
 import { access, mkdir, writeFile, unlink, readdir } from "node:fs/promises";
 import { createCredentialValidator } from "../shared/credential-validator-factory.js";
@@ -63,7 +63,7 @@ export const validateWhatsAppAuth: (opts: WhatsAppValidateOpts) => Promise<Resul
       }
 
       // Check if directory is writable (create+delete a temp file)
-      const probe = safePath(authDir, `.wa-probe-${Date.now()}`);
+      const probe = safePath(authDir, `.wa-probe-${systemNowMs()}`);
       try {
         await writeFile(probe, "");
         await unlink(probe);

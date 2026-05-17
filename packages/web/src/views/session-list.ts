@@ -9,6 +9,7 @@ import { SseController } from "../state/sse-controller.js";
 import type { SessionInfo, SessionSearchResult } from "../api/types/index.js";
 import { computeSessionStatus } from "../utils/session-key-parser.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
+import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 // Side-effect imports to register child custom elements
 import "../components/session/ic-session-list.js";
@@ -223,7 +224,7 @@ export class IcSessionListView extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
   }
@@ -237,8 +238,8 @@ export class IcSessionListView extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadSessions();
     }, delayMs);
@@ -322,7 +323,7 @@ export class IcSessionListView extends LitElement {
 
     // Clear previous debounce timer
     if (this._searchDebounceTimer !== null) {
-      clearTimeout(this._searchDebounceTimer);
+      systemClearTimeout(this._searchDebounceTimer);
       this._searchDebounceTimer = null;
     }
 
@@ -335,7 +336,7 @@ export class IcSessionListView extends LitElement {
 
     // If rpcClient is available, debounce the RPC search call
     if (this.rpcClient) {
-      this._searchDebounceTimer = setTimeout(() => {
+      this._searchDebounceTimer = systemSetTimeout(() => {
         this._performRpcSearch(this._searchQuery);
       }, 300);
     } else {
@@ -423,7 +424,7 @@ export class IcSessionListView extends LitElement {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `sessions-export-${Date.now()}.jsonl`;
+      a.download = `sessions-export-${systemNowMs()}.jsonl`;
       a.click();
       URL.revokeObjectURL(url);
       IcToast.show(`${this._selectedKeys.length} sessions exported`, "success");

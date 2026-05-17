@@ -2,6 +2,11 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
+import { systemDateFrom, systemNowDate } from "@comis/core";
+import {
+  createIcCronEditorController,
+  type IcCronEditorController,
+} from "./ic-cron-editor-controller.js";
 
 /* ------------------------------------------------------------------ */
 /*  Local types - DO NOT import from @comis/scheduler              */
@@ -125,7 +130,7 @@ export function computeNextCronRuns(
   const endTime = from.getTime() + maxMs;
 
   // Start one minute past `from`
-  const cursor = new Date(from);
+  const cursor = systemDateFrom(from);
   cursor.setSeconds(0, 0);
   cursor.setTime(cursor.getTime() + 60_000);
 
@@ -137,7 +142,7 @@ export function computeNextCronRuns(
     const dow = cursor.getDay();
 
     if (minuteSet.has(m) && hourSet.has(h) && domSet.has(dom) && monthSet.has(mon) && dowSet.has(dow)) {
-      results.push(new Date(cursor));
+      results.push(systemDateFrom(cursor));
     }
 
     cursor.setTime(cursor.getTime() + 60_000);
@@ -155,7 +160,7 @@ export function computeNextEveryRuns(everyMs: number, count: number, from: Date)
   let t = from.getTime();
   for (let i = 0; i < count; i++) {
     t += everyMs;
-    results.push(new Date(t));
+    results.push(systemDateFrom(t));
   }
   return results;
 }
@@ -165,9 +170,9 @@ export function computeNextEveryRuns(everyMs: number, count: number, from: Date)
  * Returns a single-element array if the datetime is in the future, empty otherwise.
  */
 export function computeNextAtRun(at: string, from?: Date): Date[] {
-  const d = new Date(at);
+  const d = systemDateFrom(at);
   if (isNaN(d.getTime())) return [];
-  const ref = from ?? new Date();
+  const ref = from ?? systemNowDate();
   return d.getTime() > ref.getTime() ? [d] : [];
 }
 
@@ -450,9 +455,23 @@ export class IcCronEditor extends LitElement {
   @state() private _deliveryChannelId = "";
   @state() private _nextRuns: string[] = [];
 
-  private _previewTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Controller owns preview-debounce orchestration + next-runs dispatch. */
+  private _controller: IcCronEditorController | null = null;
+
+  /** Lazily instantiate controller; matches the Wave-4/5 view pattern. */
+  private _ensureController(): IcCronEditorController {
+    if (!this._controller) {
+      this._controller = createIcCronEditorController(this);
+    }
+    return this._controller;
+  }
 
   /* ---- Lifecycle ---- */
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._ensureController();
+  }
 
   override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("job") && this.job) {
@@ -480,10 +499,9 @@ export class IcCronEditor extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
-    if (this._previewTimer !== null) {
-      clearTimeout(this._previewTimer);
-      this._previewTimer = null;
-    }
+    // Controller's hostDisconnected handles preview-timer teardown
+    // (Lit auto-fires it when the host disconnects). No manual call
+    // here — the addController() registration drives the cycle.
   }
 
   /* ---- Populate from job ---- */
@@ -515,30 +533,19 @@ export class IcCronEditor extends LitElement {
   /* ---- Preview ---- */
 
   private _schedulePreviewDebounced(): void {
-    if (this._previewTimer !== null) {
-      clearTimeout(this._previewTimer);
-    }
-    this._previewTimer = setTimeout(() => {
-      this._computePreview();
-    }, 500);
+    const controller = this._ensureController();
+    controller.schedulePreview(() => this._computePreview());
   }
 
   private _computePreview(): void {
-    const now = new Date();
-    let runs: Date[] = [];
-
-    switch (this._scheduleKind) {
-      case "cron":
-        runs = computeNextCronRuns(this._cronExpr, this._timezone, 5, now);
-        break;
-      case "every":
-        runs = computeNextEveryRuns(this._everyMs, 5, now);
-        break;
-      case "at":
-        runs = computeNextAtRun(this._atDateTime, now);
-        break;
-    }
-
+    const controller = this._ensureController();
+    const runs = controller.computeNextRuns({
+      scheduleKind: this._scheduleKind,
+      cronExpr: this._cronExpr,
+      timezone: this._timezone,
+      everyMs: this._everyMs,
+      atDateTime: this._atDateTime,
+    });
     this._nextRuns = runs.map((d) =>
       formatRunDate(d, this._scheduleKind === "cron" ? this._timezone : undefined),
     );

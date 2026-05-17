@@ -16,6 +16,7 @@
     { "path": "../scheduler" },
     { "path": "../agent" },
     { "path": "../channels" },
+    { "path": "../orchestrator" },
     { "path": "../cli" },
     { "path": "../daemon" }
   ]

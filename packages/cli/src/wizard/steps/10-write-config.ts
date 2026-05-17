@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.
 /**
  * Write-config step -- step 10 of the init wizard.
  *

@@ -26,6 +26,7 @@ import {
   SUPPORTED_CHANNELS,
   validateChannelCredential,
 } from "../index.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // ---------- Live Validation Functions ----------
 
@@ -38,7 +39,7 @@ async function validateTelegramLive(
   token: string,
 ): Promise<{ valid: boolean; username?: string; id?: number; error?: string }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  const timeout = systemSetTimeout(() => controller.abort(), 5000);
 
   try {
     const response = await fetch(
@@ -61,7 +62,7 @@ async function validateTelegramLive(
   } catch {
     return { valid: false, error: "Could not reach Telegram API" };
   } finally {
-    clearTimeout(timeout);
+    systemClearTimeout(timeout);
   }
 }
 
@@ -74,7 +75,7 @@ async function validateDiscordLive(
   token: string,
 ): Promise<{ valid: boolean; username?: string; discriminator?: string; error?: string }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  const timeout = systemSetTimeout(() => controller.abort(), 5000);
 
   try {
     const response = await fetch(
@@ -102,7 +103,7 @@ async function validateDiscordLive(
   } catch {
     return { valid: false, error: "Could not reach Discord API" };
   } finally {
-    clearTimeout(timeout);
+    systemClearTimeout(timeout);
   }
 }
 
@@ -115,7 +116,7 @@ async function validateSlackLive(
   botToken: string,
 ): Promise<{ valid: boolean; error?: string }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  const timeout = systemSetTimeout(() => controller.abort(), 5000);
 
   try {
     const response = await fetch("https://slack.com/api/auth.test", {
@@ -136,7 +137,7 @@ async function validateSlackLive(
   } catch {
     return { valid: false, error: "Could not reach Slack API" };
   } finally {
-    clearTimeout(timeout);
+    systemClearTimeout(timeout);
   }
 }
 
@@ -149,7 +150,7 @@ async function validateLineLive(
   channelToken: string,
 ): Promise<{ valid: boolean; displayName?: string; error?: string }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  const timeout = systemSetTimeout(() => controller.abort(), 5000);
 
   try {
     const response = await fetch("https://api.line.me/v2/bot/info", {
@@ -171,7 +172,7 @@ async function validateLineLive(
   } catch {
     return { valid: false, error: "Could not reach LINE API" };
   } finally {
-    clearTimeout(timeout);
+    systemClearTimeout(timeout);
   }
 }
 
@@ -185,7 +186,7 @@ async function fetchTelegramSenderId(
   token: string,
 ): Promise<{ userId: number; firstName: string } | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  const timeout = systemSetTimeout(() => controller.abort(), 5000);
 
   try {
     const response = await fetch(
@@ -215,7 +216,7 @@ async function fetchTelegramSenderId(
   } catch {
     return null;
   } finally {
-    clearTimeout(timeout);
+    systemClearTimeout(timeout);
   }
 }
 

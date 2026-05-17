@@ -2,24 +2,34 @@
 /**
  * `comis auth` CLI command tree.
  *
- * Four subcommands operating directly against the OAuthCredentialStorePort
- * (no daemon RPC — store is the IPC primitive between CLI and daemon, with
- * the daemon picking up changes via the chokidar watcher):
+ * Four subcommands with storage-mode-branching:
  *
  * - `comis auth login`   — interactive OAuth login (browser + manual paste).
- *                          Accepts `--profile <id>` to override the storage
- *                          key; the user-supplied id replaces the
- *                          JWT-derived `<provider>:<email>` while the
- *                          identity fields on the persisted profile remain
- *                          JWT-derived. Provider portion of `--profile` must
- *                          equal `--provider` or the command exits 2.
- * - `comis auth list`    — list stored profiles in a 5-column table; supports
- *                          `--provider <id>` filter — pure client-side string
- *                          match, no validation against pi-ai's known list.
- * - `comis auth logout`  — remove a profile by ID
- * - `comis auth status`  — per-provider summary (count + nextExpiry); supports
- *                          `--provider <id>` filter with the same semantics
- *                          as `auth list`.
+ *                          Runs locally for file-backed storage; encrypted
+ *                          storage fails fast (daemon-assisted login is not
+ *                          yet supported). Accepts `--profile <id>` to
+ *                          override the storage key.
+ * - `comis auth list`    — list stored profiles. File-mode reads the local
+ *                          file store; encrypted-mode calls daemon RPC
+ *                          `auth.list` (token-stripped projection).
+ * - `comis auth logout`  — remove a profile by ID. File-mode deletes from
+ *                          the local file store; encrypted-mode calls
+ *                          daemon RPC `auth.logout`.
+ * - `comis auth status`  — per-provider summary computed CLI-locally in
+ *                          BOTH modes. File-mode reads the local file
+ *                          store; encrypted-mode calls daemon RPC
+ *                          `auth.list` and runs the same grouping +
+ *                          `profileStatus(expires)` algorithm. The
+ *                          OAuthCredentialStorePort surface has no "active
+ *                          profile" concept — there is no `auth.status`
+ *                          daemon RPC method.
+ *
+ * Storage-mode branching: every store-backed subcommand reads
+ * `config.oauth.storage` via `loadOAuthStorageMode()` and either routes
+ * through `withClient` (after `requireDaemonOrExit`) or uses the existing
+ * `openOAuthStoreFromConfig` helper unchanged. The helper itself fails fast
+ * on encrypted storage (defense-in-depth) — encrypted mode never reaches
+ * `selectOAuthCredentialStore` from this file.
  *
  * Only `--provider openai-codex` is supported for `auth login` today. Other
  * providers ship later. The `--provider` filter on `list` / `status` is
@@ -40,6 +50,7 @@ import {
   validateConfig,
   safePath,
   validateProfileId,
+  redactEmailForLog,
   type OAuthCredentialStorePort,
   type OAuthProfile,
 } from "@comis/core";
@@ -47,14 +58,25 @@ import {
   selectOAuthCredentialStore,
   loginOpenAICodexOAuth,
   isRemoteEnvironment,
-  redactEmailForLog,
+  // createFileLock and OAuth helpers are consumed from @comis/core.
+  // CLI no longer routes through the @comis/agent barrel for these.
+  createFileLock,
+  // createConsoleLogger is the Pino-free logger for CLI use.
+  // CLI does not import from @comis/infra.
+  createConsoleLogger,
   type OAuthError,
-} from "@comis/agent";
-import { createLogger } from "@comis/infra";
+} from "@comis/core";
+// auth.list / auth.logout RPC calls go through
+// `callTyped(client, <Contract>, params)` so the typed RPC surface
+// validates this file. The contracts mirror `auth-handlers.ts` —
+// see `packages/core/src/api-contracts/auth.ts`.
+import { AuthListContract, AuthLogoutContract } from "@comis/core";
 import { error, info, success } from "../output/format.js";
 import { renderTable } from "../output/table.js";
 import { formatRelativeExpiry } from "../output/relative-time.js";
 import { createClackAdapter } from "../wizard/clack-adapter.js";
+import { callTyped, withClient } from "../client/rpc-client.js";
+import { requireDaemonOrExit } from "../util/daemon-required.js";
 
 const PROVIDER_OPENAI_CODEX = "openai-codex" as const;
 const ACTIVE_THRESHOLD_MS = 5 * 60_000; // 5 minutes — match status logic
@@ -132,7 +154,7 @@ function isOAuthError(value: unknown): value is OAuthError {
 // Module-scoped logger. The CLI process runs short-lived commands; one
 // logger instance is shared across all 4 subcommands. Per CLAUDE.md, every
 // log call also sets `submodule: "auth-cli"` for filterability.
-const logger = createLogger({ name: "auth-cli" });
+const logger = createConsoleLogger("info", { name: "auth-cli" });
 
 // ---------------------------------------------------------------------------
 // Internal: open the OAuth credential store using the same selector the
@@ -145,8 +167,46 @@ const logger = createLogger({ name: "auth-cli" });
 // freshly-installed CLI.
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolves the current OAuth storage mode from config, with the same
+ * fallback semantics as `openOAuthStoreFromConfig`: missing config defaults
+ * to "file"; invalid config exits 1 with the same diagnostic.
+ *
+ * Used by the auth list/logout/status subcommands to decide whether to
+ * route through daemon RPC (encrypted) or CLI-local (file).
+ *
+ * Returns synchronously today; declared async to leave headroom for a
+ * future config-fetch-via-RPC path without breaking call sites.
+ */
+async function loadOAuthStorageMode(): Promise<"file" | "encrypted"> {
+  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
+  const envPaths = process.env.COMIS_CONFIG_PATHS;
+  const configPath =
+    envPaths?.split(",")[0] ?? safePath(homedir(), ".comis", "config.yaml");
+  const loadResult = loadConfigFile(configPath);
+  if (!loadResult.ok) {
+    // No config file -> default to file storage (matches
+    // openOAuthStoreFromConfig's fallback path).
+    return "file";
+  }
+  const validateResult = validateConfig(loadResult.value);
+  if (!validateResult.ok) {
+    error(
+      `Failed to load config: ${validateResult.error.message}. ` +
+        "Hint: run `comis configure` or fix the YAML at " +
+        `${configPath} before retrying.`,
+    );
+    process.exit(1);
+  }
+  return validateResult.value.oauth.storage;
+}
+
 function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
   const dataDir = safePath(homedir(), ".comis");
+  // CLI composition root: construct the FileLockPort adapter here so agent's
+  // selectOAuthCredentialStore can stay scheduler-free. Single instance per
+  // CLI invocation — short-lived and stateless.
+  const fileLock = createFileLock();
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const envPaths = process.env.COMIS_CONFIG_PATHS;
   const configPath =
@@ -156,7 +216,7 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
   if (!loadResult.ok) {
     // No config file → default to file storage (the file adapter creates
     // ~/.comis/auth-profiles.json on first set).
-    return selectOAuthCredentialStore({ storage: "file", dataDir });
+    return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
   }
 
   const validateResult = validateConfig(loadResult.value);
@@ -188,7 +248,7 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
     process.exit(1);
   }
 
-  return selectOAuthCredentialStore({ storage: "file", dataDir });
+  return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +257,45 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
 
 function profileStatus(expiresAtMs: number): "active" | "expired" {
   return expiresAtMs - Date.now() > ACTIVE_THRESHOLD_MS ? "active" : "expired";
+}
+
+// ---------------------------------------------------------------------------
+// Internal: render the 5-column profile table used by `auth list` in both
+// file and encrypted modes. Profiles are typed as the token-free shape
+// returned by daemon RPC `auth.list` -- the file branch's OAuthProfile[] is
+// assignable structurally (it has all the same fields plus extras).
+// ---------------------------------------------------------------------------
+
+interface DisplayProfile {
+  provider: string;
+  profileId: string;
+  expires: number;
+  email?: string;
+  displayName?: string;
+}
+
+function renderAuthProfileTable(
+  profiles: DisplayProfile[],
+  providerFilter?: string,
+): void {
+  if (profiles.length === 0) {
+    if (providerFilter) {
+      info(`No OAuth profiles stored for provider "${providerFilter}".`);
+    } else {
+      info("No OAuth profiles stored.");
+    }
+    return;
+  }
+  renderTable(
+    ["Provider", "ProfileId", "Identity", "ExpiresIn", "Status"],
+    profiles.map((p) => [
+      p.provider,
+      p.profileId,
+      p.email ?? p.profileId.split(":")[1] ?? "—",
+      formatRelativeExpiry(p.expires),
+      profileStatus(p.expires),
+    ]),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +315,9 @@ export function registerAuthCommand(program: Command): void {
   // -------------------------------------------------------------------------
   auth
     .command("login")
-    .description("Log in to an OAuth-enabled provider")
+    .description(
+      "Log in to an OAuth-enabled provider. Runs locally for file-backed storage. Daemon-assisted login for encrypted storage is not yet supported.",
+    )
     .requiredOption(
       "--provider <id>",
       "OAuth provider id (must be 'openai-codex')",
@@ -361,9 +462,37 @@ export function registerAuthCommand(program: Command): void {
   // -------------------------------------------------------------------------
   auth
     .command("list")
-    .description("List stored OAuth profiles")
+    .description(
+      "List stored OAuth profiles. Requires the comis daemon to be running when oauth.storage is 'encrypted'.",
+    )
     .option("--provider <id>", "Filter to one provider")
     .action(async (opts: { provider?: string }) => {
+      const storage = await loadOAuthStorageMode();
+      // ----- Encrypted branch: daemon RPC ----------------------------------
+      if (storage === "encrypted") {
+        await requireDaemonOrExit();
+        try {
+          // callTyped enforces the AuthListContract request/response
+          // schemas under the VALIDATE gate (dev or
+          // COMIS_CLI_VALIDATE=1). Production skips the parse for
+          // cold-start budget compliance — the daemon side always parses.
+          const result = await withClient(async (client) =>
+            callTyped(
+              client,
+              AuthListContract,
+              opts.provider ? { provider: opts.provider } : {},
+            ),
+          );
+          renderAuthProfileTable(result.profiles, opts.provider);
+        } catch (err) {
+          if (isOAuthError(err)) exitOnOAuthError(err);
+          const msg = err instanceof Error ? err.message : String(err);
+          error(`Failed to list profiles: ${msg}`);
+          process.exit(1);
+        }
+        return;
+      }
+      // ----- File branch: existing CLI-local helper ------------------------
       try {
         const store = openOAuthStoreFromConfig();
         const listResult = await store.list();
@@ -378,24 +507,7 @@ export function registerAuthCommand(program: Command): void {
         const filtered = opts.provider
           ? profiles.filter((p) => p.provider === opts.provider)
           : profiles;
-        if (filtered.length === 0) {
-          if (opts.provider) {
-            info(`No OAuth profiles stored for provider "${opts.provider}".`);
-          } else {
-            info("No OAuth profiles stored.");
-          }
-          return;
-        }
-        renderTable(
-          ["Provider", "ProfileId", "Identity", "ExpiresIn", "Status"],
-          filtered.map((p) => [
-            p.provider,
-            p.profileId,
-            p.email ?? p.profileId.split(":")[1] ?? "—",
-            formatRelativeExpiry(p.expires),
-            profileStatus(p.expires),
-          ]),
-        );
+        renderAuthProfileTable(filtered, opts.provider);
       } catch (err) {
         // Structured OAuthError gets the re-login hint.
         if (isOAuthError(err)) {
@@ -412,12 +524,48 @@ export function registerAuthCommand(program: Command): void {
   // -------------------------------------------------------------------------
   auth
     .command("logout")
-    .description("Remove a stored OAuth profile")
+    .description(
+      "Remove a stored OAuth profile. Requires the comis daemon to be running when oauth.storage is 'encrypted'.",
+    )
     .requiredOption(
       "--profile <id>",
       "Profile ID to remove (e.g., openai-codex:user@example.com)",
     )
     .action(async (opts: { profile: string }) => {
+      const storage = await loadOAuthStorageMode();
+      // ----- Encrypted branch: daemon RPC ----------------------------------
+      if (storage === "encrypted") {
+        await requireDaemonOrExit();
+        try {
+          // callTyped enforces AuthLogoutContract under the VALIDATE gate.
+          const result = await withClient(async (client) =>
+            callTyped(client, AuthLogoutContract, {
+              profileId: opts.profile,
+            }),
+          );
+          if (result.deleted) {
+            logger.info(
+              {
+                profileId: opts.profile,
+                action: "logout",
+                submodule: "auth-cli",
+              },
+              "OAuth profile removed via daemon RPC",
+            );
+            success(`Logged out of ${result.profileId}`);
+          } else {
+            error(`profile ${opts.profile} not found`);
+            process.exit(1);
+          }
+        } catch (err) {
+          if (isOAuthError(err)) exitOnOAuthError(err);
+          const msg = err instanceof Error ? err.message : String(err);
+          error(`Failed to log out: ${msg}`);
+          process.exit(1);
+        }
+        return;
+      }
+      // ----- File branch: existing CLI-local helper ------------------------
       try {
         const store = openOAuthStoreFromConfig();
         const has = await store.has(opts.profile);
@@ -459,64 +607,92 @@ export function registerAuthCommand(program: Command): void {
   // -------------------------------------------------------------------------
   auth
     .command("status")
-    .description("Show per-provider OAuth status")
+    .description(
+      "Show per-provider OAuth status. Requires the comis daemon to be running when oauth.storage is 'encrypted'.",
+    )
     .option("--provider <id>", "Filter to one provider")
     .action(async (opts: { provider?: string }) => {
-      try {
-        const store = openOAuthStoreFromConfig();
-        const listResult = await store.list();
-        if (!listResult.ok) {
-          error(`Failed to read OAuth status: ${listResult.error.message}`);
-          process.exit(1);
-        }
-        const profiles = listResult.value;
-        if (profiles.length === 0) {
-          // Empty store — even with --provider filter, the operator's
-          // intended diagnostic is the same: nothing here, optionally for
-          // the named provider.
-          if (opts.provider) {
-            info(`No OAuth profiles stored for provider "${opts.provider}".`);
-          } else {
-            info("No OAuth profiles stored.");
-          }
-          return;
-        }
-        // Group by provider.
-        const byProvider = new Map<string, OAuthProfile[]>();
-        for (const p of profiles) {
-          const arr = byProvider.get(p.provider) ?? [];
-          arr.push(p);
-          byProvider.set(p.provider, arr);
-        }
-        // Empty filter case: store has profiles, but none for the requested
-        // provider. Print provider-specific empty-state and exit 0 (the
-        // standard `return` here, since a missing provider in a populated
-        // store is not an error).
-        if (opts.provider && !byProvider.has(opts.provider)) {
-          info(`No OAuth profiles stored for provider "${opts.provider}".`);
-          return;
-        }
-        for (const [provider, group] of byProvider) {
-          // Skip non-matching groups when filter is set.
-          if (opts.provider && provider !== opts.provider) continue;
-          info(
-            `${provider} (${group.length} profile${group.length !== 1 ? "s" : ""})`,
+      // BOTH branches compute status CLI-locally. There is no auth.status
+      // daemon RPC method because the OAuthCredentialStorePort surface has
+      // no "active profile" concept -- status is just `profileStatus(expires)`
+      // applied to each row of the profile list.
+      let profiles: DisplayProfile[];
+      const storage = await loadOAuthStorageMode();
+      if (storage === "encrypted") {
+        await requireDaemonOrExit();
+        try {
+          // callTyped enforces AuthListContract under the VALIDATE gate.
+          // The contract response shape (RedactedOAuthProfileSchema) is
+          // assignable to DisplayProfile (same fields plus structural
+          // optionality on email + displayName).
+          const result = await withClient(async (client) =>
+            callTyped(client, AuthListContract, {}),
           );
-          for (const p of group) {
-            const identity = p.email ?? p.profileId.split(":")[1] ?? "—";
-            info(
-              `  ${p.profileId} — expires in ${formatRelativeExpiry(p.expires)} (${profileStatus(p.expires)}) — identity: ${identity}`,
-            );
+          profiles = result.profiles;
+        } catch (err) {
+          if (isOAuthError(err)) exitOnOAuthError(err);
+          const msg = err instanceof Error ? err.message : String(err);
+          error(`Failed to check OAuth status: ${msg}`);
+          process.exit(1);
+          return; // unreachable; exit above
+        }
+      } else {
+        try {
+          const store = openOAuthStoreFromConfig();
+          const listResult = await store.list();
+          if (!listResult.ok) {
+            error(`Failed to read OAuth status: ${listResult.error.message}`);
+            process.exit(1);
           }
+          profiles = listResult.value.map((p) => ({
+            provider: p.provider,
+            profileId: p.profileId,
+            expires: p.expires,
+            email: p.email,
+            displayName: p.displayName,
+          }));
+        } catch (err) {
+          if (isOAuthError(err)) exitOnOAuthError(err);
+          const msg = err instanceof Error ? err.message : String(err);
+          error(`Failed to check OAuth status: ${msg}`);
+          process.exit(1);
+          return; // unreachable
         }
-      } catch (err) {
-        // Structured OAuthError gets the re-login hint.
-        if (isOAuthError(err)) {
-          exitOnOAuthError(err);
+      }
+
+      // From here down: BYTE-IDENTICAL to the pre-migration auth status
+      // grouping. The encrypted-branch profile rows have the same shape
+      // (provider/profileId/expires/email?/displayName?) as the file-branch
+      // projection, so a single grouping algorithm handles both.
+      if (profiles.length === 0) {
+        if (opts.provider) {
+          info(`No OAuth profiles stored for provider "${opts.provider}".`);
+        } else {
+          info("No OAuth profiles stored.");
         }
-        const msg = err instanceof Error ? err.message : String(err);
-        error(`Failed to check OAuth status: ${msg}`);
-        process.exit(1);
+        return;
+      }
+      const byProvider = new Map<string, DisplayProfile[]>();
+      for (const p of profiles) {
+        const arr = byProvider.get(p.provider) ?? [];
+        arr.push(p);
+        byProvider.set(p.provider, arr);
+      }
+      if (opts.provider && !byProvider.has(opts.provider)) {
+        info(`No OAuth profiles stored for provider "${opts.provider}".`);
+        return;
+      }
+      for (const [provider, group] of byProvider) {
+        if (opts.provider && provider !== opts.provider) continue;
+        info(
+          `${provider} (${group.length} profile${group.length !== 1 ? "s" : ""})`,
+        );
+        for (const p of group) {
+          const identity = p.email ?? p.profileId.split(":")[1] ?? "—";
+          info(
+            `  ${p.profileId} — expires in ${formatRelativeExpiry(p.expires)} (${profileStatus(p.expires)}) — identity: ${identity}`,
+          );
+        }
       }
     });
 }

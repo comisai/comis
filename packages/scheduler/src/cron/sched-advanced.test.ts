@@ -11,7 +11,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CronStore } from "./cron-store.js";
 import type { CronJob } from "./cron-types.js";
 import { createCronScheduler } from "./cron-scheduler.js";
-import { withExecutionLock, isLocked } from "../execution/execution-lock.js";
+// Use FileLockPort from @comis/core. The test helper below shims the old
+// withExecutionLock signature (Result<T, "locked" | "error">) to keep test
+// bodies stable — the underlying lockfile-based behavior is unchanged
+// because both withExecutionLock and FileLockPort.withLock() use the same
+// proper-lockfile primitives at the bottom.
+import { createFileLock } from "@comis/core";
+import type { Result } from "@comis/shared";
+const _fileLock = createFileLock();
+async function withExecutionLock<T>(
+  lockPath: string,
+  fn: () => Promise<T>,
+  opts: { staleMs?: number; updateMs?: number; retries?: number } = {},
+): Promise<Result<T, "locked" | "error">> {
+  const r = await _fileLock.withLock(lockPath, fn, opts);
+  return r.ok ? { ok: true as const, value: r.value } : { ok: false as const, error: r.error.kind };
+}
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------

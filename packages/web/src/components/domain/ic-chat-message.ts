@@ -4,6 +4,7 @@ import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { sharedStyles } from "../../styles/shared.js";
 import { IcToast } from "../feedback/ic-toast.js";
+import { systemDateFrom } from "@comis/core";
 
 // Side-effect imports to register child components
 import "./ic-code-block.js";
@@ -549,7 +550,7 @@ export class IcChatMessage extends LitElement {
   }
 
   private _formatTime(ts: number): string {
-    return new Date(ts).toLocaleTimeString(undefined, {
+    return systemDateFrom(ts).toLocaleTimeString(undefined, {
       hour: "2-digit",
       minute: "2-digit",
     });

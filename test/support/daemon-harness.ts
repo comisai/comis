@@ -5,8 +5,6 @@
  * Starts the real Comis daemon with test configuration, provides a handle
  * for interacting with the gateway, and ensures graceful cleanup after tests.
  *
- * Used by integration test suites across phases 27-36.
- *
  * @module
  */
 
@@ -17,6 +15,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanupDatabase } from "./db-cleanup.js";
 import { ASYNC_SETTLE_MS } from "./timeouts.js";
+import { createFakeTimers, type FakeTimers, type FakeTimerEntry } from "./fake-timers.js";
 import type { DaemonInstance } from "@comis/daemon";
 
 // ---------------------------------------------------------------------------
@@ -33,6 +32,30 @@ export interface TestDaemonOptions {
   gatewayPort?: number;
   /** Writable stream to capture daemon log output (e.g., from createLogCapture().stream). */
   logStream?: Writable;
+  /**
+   * Disable Pino redaction in the test daemon's logger. ONLY for residency
+   * tests (test/integration/secret-rpc-residency.test.ts). Production must
+   * never set this; the architecture rule in
+   * test/architecture/source-rules.test.ts enforces that
+   * `disableRedaction: true` never appears in `packages/*\/src/**`.
+   *
+   * When true, the in-process daemon's tracing logger is constructed with
+   * `LoggerOptions.disableRedaction = true` so the residency test can observe
+   * raw Pino payloads and assert no plaintext appears anywhere.
+   */
+  disableRedaction?: boolean;
+  /**
+   * Replace the production `createSystemTimers()` adapter at the daemon
+   * composition root with `createFakeTimers()` from
+   * `test/support/fake-timers.ts`. Exposes the underlying timer record via
+   * `handle.getTimerRecord()` so the integration test can assert every
+   * long-running interval registered during bootstrap was either cancelled
+   * or unref'd before shutdown completed.
+   *
+   * Default-mode tests should NOT set this — they rely on real timers so
+   * `setInterval`/`setTimeout` fire as the daemon expects.
+   */
+  useFakeTimers?: boolean;
 }
 
 /** Handle to a running test daemon instance. */
@@ -45,6 +68,13 @@ export interface TestDaemonHandle {
   authToken: string;
   /** Shut down the daemon gracefully */
   cleanup: () => Promise<void>;
+  /**
+   * Snapshot of fake-timer entries (cancel + unref state) when the harness
+   * was started with `useFakeTimers: true`. Returns `undefined` otherwise.
+   * The integration test reads this AFTER shutdown to assert every
+   * long-running interval was either cancelled or unref'd.
+   */
+  getTimerRecord(): ReadonlyArray<FakeTimerEntry> | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +190,7 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
   process.env["COMIS_CONFIG_PATHS"] = configPath;
 
   // Seed dummy provider API keys so the credential guard at agents.create
-  // (packages/daemon/src/rpc/agent-handlers.ts) does not reject test agents
+  // (packages/daemon/src/api/agent-handlers.ts) does not reject test agents
   // that never make real LLM calls. Real env values (set by the parent shell)
   // are preserved untouched.
   const restoreProviderEnv = seedDummyProviderApiKeys();
@@ -173,31 +203,44 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     },
   };
 
-  // If logStream provided, override createTracingLogger to tee output
-  if (options?.logStream) {
-    const logStream = options.logStream;
-    overrides.createTracingLogger = (opts: { name: string; level?: string }) => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic require in test harness
-      const pino = require("pino");
-      const streamLevel = opts.level ?? "debug";
-      const pinoMultistream = pino.multistream([
-        { stream: process.stdout, level: streamLevel },
-        { stream: logStream, level: streamLevel },
-      ]);
-      return pino(
-        {
-          name: opts.name,
-          level: opts.level ?? "debug",
-          timestamp: pino.stdTimeFunctions.isoTime,
-          formatters: {
-            level(label: string, number: number) {
-              return { level: label, levelValue: number };
-            },
-          },
-        },
-        pinoMultistream,
-      );
-    };
+  // Opt-in fake-timer wiring. When `useFakeTimers` is set, install a
+  // `createFakeTimers()` instance at the composition root via `overrides.timers`
+  // (the daemon honors this on the `timers` line in daemon.ts). The harness
+  // records the instance on the closure so the returned handle can expose the
+  // unrefRecord() snapshot via `getTimerRecord()` (used by the shutdown
+  // integration test). Default-mode tests leave `fakeTimers` undefined and the
+  // daemon falls back to `createSystemTimers()`.
+  const fakeTimers: FakeTimers | undefined = options?.useFakeTimers
+    ? createFakeTimers()
+    : undefined;
+  if (fakeTimers) {
+    overrides["timers"] = fakeTimers;
+  }
+
+  // Compose tracing-logger override based on logStream + disableRedaction.
+  //
+  // Routing rules (single call site — the harness must produce <= 1 invocation
+  // of the tracing-logger factory so the daemon's production code paths emit
+  // to the SAME logger instance the test observes):
+  //
+  //   * Neither set         -> no override; daemon uses production factory.
+  //   * disableRedaction    -> override with `{ disableRedaction: true }` so
+  //                            the @comis/infra LoggerOptions field threads to
+  //                            the SAME logger the daemon's secrets-handlers /
+  //                            auth-handlers / etc. emit to.
+  //   * logStream           -> tee log lines to a vitest-side Writable using
+  //                            pino.multistream. This branch already emits raw
+  //                            payloads (no `redact:` field set on the pino
+  //                            options object), so `disableRedaction` is
+  //                            implicit-true here.
+  //   * Both                -> tee AND raw payloads (residency test that also
+  //                            needs to capture log lines for cross-read
+  //                            isolation).
+  if (options?.logStream || options?.disableRedaction) {
+    overrides["createTracingLogger"] = buildTracingLoggerOverride({
+      logStream: options.logStream,
+      disableRedaction: options.disableRedaction === true,
+    });
   }
 
   // Ensure the gateway port is free before starting (prevents EADDRINUSE from zombie processes)
@@ -267,6 +310,11 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     gatewayUrl,
     authToken,
     cleanup,
+    // Expose the fake-timer record only when fake timers are in play.
+    // When `useFakeTimers` is false the daemon ran on `createSystemTimers()`
+    // (no record to expose); returning `undefined` is the correct signal that
+    // the integration assertion is not applicable.
+    getTimerRecord: () => fakeTimers?.unrefRecord(),
   };
 
   // Set double-start guard
@@ -329,6 +377,78 @@ export async function rpcRequest(
 // ---------------------------------------------------------------------------
 
 /**
+ * Build the tracing-logger override the daemon's `DaemonOverrides` accepts.
+ *
+ * Single point of invocation for the `@comis/daemon` tracing-logger factory --
+ * other branches (the tee path) bypass to raw pino so they can use
+ * pino.multistream. This co-locates the residency-test wiring with the
+ * existing log-tee wiring under one entry point.
+ */
+function buildTracingLoggerOverride(opts: {
+  logStream?: Writable;
+  disableRedaction: boolean;
+}): (loggerOpts: {
+  name: string;
+  level?: string;
+  transport?: import("pino").TransportMultiOptions | import("pino").TransportSingleOptions;
+}) => unknown {
+  const { logStream, disableRedaction } = opts;
+  return (loggerOpts) => {
+    if (logStream) {
+      // Tee path: raw pino with multistream destination. No `redact:` field,
+      // so payloads are emitted verbatim -- which is what the residency test
+      // wants when `disableRedaction` is also true. Pre-existing callers
+      // (e.g. secrets-lifecycle) likewise observe raw payloads here; this
+      // branch's behavior has not changed.
+      void disableRedaction; // Marker: tee path is implicit-disable-redact.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic require in test harness
+      const pino = require("pino");
+      const streamLevel = loggerOpts.level ?? "debug";
+      const pinoMultistream = pino.multistream([
+        { stream: process.stdout, level: streamLevel },
+        { stream: logStream, level: streamLevel },
+      ]);
+      return pino(
+        {
+          name: loggerOpts.name,
+          level: loggerOpts.level ?? "debug",
+          timestamp: pino.stdTimeFunctions.isoTime,
+          formatters: {
+            level(label: string, number: number) {
+              return { level: label, levelValue: number };
+            },
+          },
+        },
+        pinoMultistream,
+      );
+    }
+    // disableRedaction-only path: defer to the real factory so the
+    // AsyncLocalStorage tracing mixin is preserved (the daemon's production
+    // code paths rely on it for traceId injection). The
+    // LoggerOptions.disableRedaction field is the load-bearing toggle for
+    // the residency test.
+    //
+    // Dynamic require keeps the harness's literal-symbol count down to a
+    // single factory call site.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic require in test harness
+    const daemonModule = require("@comis/daemon") as {
+      createTracingLogger: (o: {
+        name: string;
+        level?: string;
+        disableRedaction?: boolean;
+        transport?: import("pino").TransportMultiOptions | import("pino").TransportSingleOptions;
+      }) => unknown;
+    };
+    return daemonModule.createTracingLogger({
+      name: loggerOpts.name,
+      level: loggerOpts.level,
+      disableRedaction: true,
+      ...(loggerOpts.transport ? { transport: loggerOpts.transport } : {}),
+    });
+  };
+}
+
+/**
  * Poll the gateway health endpoint until it responds successfully.
  */
 async function waitForHealth(gatewayUrl: string): Promise<void> {
@@ -359,7 +479,7 @@ async function waitForHealth(gatewayUrl: string): Promise<void> {
  * already export real provider keys.
  *
  * Why this exists: the daemon credential guard at
- * `packages/daemon/src/rpc/agent-handlers.ts` calls
+ * `packages/daemon/src/api/agent-handlers.ts` calls
  * `resolveProviderCredential(provider)` on `agents.create` and rejects the
  * RPC if no provider key is found in the env. Integration tests that
  * exercise agent CRUD do not make real LLM calls, so a non-empty placeholder

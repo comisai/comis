@@ -82,7 +82,7 @@ describe("IcEmptyState", () => {
     expect(slot).toBeTruthy();
   });
 
-  it("content is centered", async () => {
+  it("renders IcEmptyState content inside a centered container element", async () => {
     const el = await createElement<IcEmptyState>("ic-empty-state");
     const container = el.shadowRoot?.querySelector(".container");
     expect(container).toBeTruthy();

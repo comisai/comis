@@ -1,0 +1,185 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Heartbeat-handlers contract slice.
+ *
+ * Mirrors `packages/daemon/src/api/heartbeat-handlers.ts` (4 methods —
+ * heartbeat.*). Spread order in `HEARTBEAT_HANDLERS_CONTRACTS` matches
+ * the legacy `ORCHESTRATOR_CONTRACTS` array byte for byte to keep
+ * `contracts.generated.*` artifacts byte-identical.
+ *
+ * @module
+ */
+import { z } from "zod";
+import { defineContract } from "../types.js";
+
+// ===========================================================================
+// --- heartbeat-handlers.ts ---
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// heartbeat.states
+// ---------------------------------------------------------------------------
+
+/**
+ * `heartbeat.states` — Read-only DTO array of per-agent heartbeat states.
+ * Admin-scoped per setup-gateway-api.ts:327-329. Handler path:
+ * heartbeat-handlers.ts:42-77.
+ *
+ * Request: `{}` (no params consumed).
+ * Response: `{ agents: AgentHeartbeatState[] }`. Each entry: `{ agentId,
+ *   enabled, intervalMs, lastRunMs, nextDueMs, consecutiveErrors,
+ *   backoffUntilMs, tickStartedAtMs, lastAlertMs, lastErrorKind }`.
+ *   `lastErrorKind` is `"transient" | "permanent" | null`.
+ */
+export const HeartbeatStatesContract = defineContract({
+  method: "heartbeat.states",
+  request: z.object({}),
+  response: z.object({
+    agents: z.array(z.object({
+      agentId: z.string(),
+      enabled: z.boolean(),
+      intervalMs: z.number(),
+      lastRunMs: z.number(),
+      nextDueMs: z.number(),
+      consecutiveErrors: z.number(),
+      backoffUntilMs: z.number(),
+      tickStartedAtMs: z.number(),
+      lastAlertMs: z.number(),
+      lastErrorKind: z.nullable(z.enum(["transient", "permanent"])),
+    })),
+  }),
+  scopes: ["admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
+// heartbeat.get
+// ---------------------------------------------------------------------------
+
+/**
+ * `heartbeat.get` — Read per-agent + effective heartbeat config. Admin-scoped
+ * per setup-gateway-api.ts:327-329. Handler path: heartbeat-handlers.ts:82-110.
+ *
+ * Bespoke pre-Zod validation:
+ *   - Missing `agentId` (or `_agentId`) → `"Missing required parameter: agentId"`.
+ *   - Unknown agentId → `"Agent not found: <id>"`.
+ *
+ * Request: `{ agentId? }` (handler reads `_agentId` from rawParams as a
+ *   fallback).
+ * Response: `{ agentId, perAgent, effective? }`. `perAgent` is the loose-record
+ *   per-agent heartbeat config (or `{}` for unconfigured agents). `effective`
+ *   is the loose-record full resolved config (only present when global config
+ *   is well-formed).
+ */
+export const HeartbeatGetContract = defineContract({
+  method: "heartbeat.get",
+  request: z.object({
+    agentId: z.string().optional(),
+  }),
+  response: z.object({
+    agentId: z.string(),
+    perAgent: z.record(z.string(), z.unknown()),
+    effective: z.record(z.string(), z.unknown()).optional(),
+  }),
+  scopes: ["admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
+// heartbeat.update
+// ---------------------------------------------------------------------------
+
+/**
+ * `heartbeat.update` — Patch per-agent heartbeat config with deep-merge +
+ * YAML persistence. Admin-scoped per setup-gateway-api.ts:327-329 AND
+ * in-handler `_trustLevel === "admin"` gate. Handler path:
+ * heartbeat-handlers.ts:115-206.
+ *
+ * Bespoke pre-Zod validation:
+ *   - `_trustLevel !== "admin"` → `"Admin access required for heartbeat
+ *     configuration"`.
+ *   - Missing `agentId` → `"Missing required parameter: agentId"`.
+ *   - Unknown agentId → `"Agent not found: <id>"`.
+ *
+ * Request: `{ agentId?, ...patchFields }`. Patch fields include `enabled`,
+ *   `intervalMs`, `showOk`, `showAlerts`, `prompt`, `model`, `session`,
+ *   `allowDm`, `lightContext`, `ackMaxChars`, `responsePrefix`,
+ *   `skipHeartbeatOnlyDelivery`, `alertThreshold`, `alertCooldownMs`,
+ *   `staleMs`, plus optional `targetChannelType`/`targetChannelId`/
+ *   `targetChatId`/`targetIsDm` (build target sub-object). The merged config
+ *   is validated via `PerAgentHeartbeatConfigSchema.parse(merged)` in the
+ *   handler.
+ *
+ * Response: `{ agentId, config, updated }`. `config` is the loose-record
+ *   full PerAgentHeartbeatConfig.
+ */
+export const HeartbeatUpdateContract = defineContract({
+  method: "heartbeat.update",
+  request: z.object({
+    agentId: z.string().optional(),
+    enabled: z.boolean().optional(),
+    intervalMs: z.number().optional(),
+    showOk: z.boolean().optional(),
+    showAlerts: z.boolean().optional(),
+    prompt: z.string().optional(),
+    model: z.string().optional(),
+    session: z.string().optional(),
+    allowDm: z.boolean().optional(),
+    lightContext: z.boolean().optional(),
+    ackMaxChars: z.number().optional(),
+    responsePrefix: z.string().optional(),
+    skipHeartbeatOnlyDelivery: z.boolean().optional(),
+    alertThreshold: z.number().optional(),
+    alertCooldownMs: z.number().optional(),
+    staleMs: z.number().optional(),
+    targetChannelType: z.string().optional(),
+    targetChannelId: z.string().optional(),
+    targetChatId: z.string().optional(),
+    targetIsDm: z.boolean().optional(),
+  }),
+  response: z.object({
+    agentId: z.string(),
+    config: z.record(z.string(), z.unknown()),
+    updated: z.boolean(),
+  }),
+  scopes: ["admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
+// heartbeat.trigger
+// ---------------------------------------------------------------------------
+
+/**
+ * `heartbeat.trigger` — Immediate per-agent heartbeat execution. Admin-scoped
+ * per setup-gateway-api.ts:327-329 AND in-handler `_trustLevel === "admin"`
+ * gate. Handler path: heartbeat-handlers.ts:211-230.
+ *
+ * Bespoke pre-Zod validation:
+ *   - `_trustLevel !== "admin"` → `"Admin access required for heartbeat trigger"`.
+ *   - Missing `agentId` → `"Missing required parameter: agentId"`.
+ *   - `!deps.perAgentRunner` → `"Heartbeat runner not available"`.
+ *
+ * Request: `{ agentId? }` (handler reads `_agentId` from rawParams as a
+ *   fallback).
+ * Response: `{ agentId, triggered }`.
+ */
+export const HeartbeatTriggerContract = defineContract({
+  method: "heartbeat.trigger",
+  request: z.object({
+    agentId: z.string().optional(),
+  }),
+  response: z.object({
+    agentId: z.string(),
+    triggered: z.boolean(),
+  }),
+  scopes: ["admin"] as const,
+});
+
+/**
+ * heartbeat-handlers slice (4 contracts — heartbeat.*). Spread order is
+ * determinism-critical for codegen output stability.
+ */
+export const HEARTBEAT_HANDLERS_CONTRACTS = [
+  HeartbeatStatesContract,
+  HeartbeatGetContract,
+  HeartbeatUpdateContract,
+  HeartbeatTriggerContract,
+] as const;

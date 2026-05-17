@@ -24,7 +24,7 @@ import type {
   NormalizedMessage,
   SendMessageOptions,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { randomUUID } from "node:crypto";
@@ -33,6 +33,7 @@ import { validateSlackCredentials } from "./credential-validator.js";
 import { mapSlackToNormalized } from "./message-mapper.js";
 import { renderSlackButtons, renderSlackCards } from "./rich-renderer.js";
 import { executeSlackAction } from "./slack-actions.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -44,6 +45,21 @@ export interface SlackAdapterDeps {
   appToken?: string;
   signingSecret?: string;
   logger: ComisLogger;
+  /**
+   * Optional Slack Web API root URL override (e.g. `http://127.0.0.1:54321`).
+   * When set, @slack/bolt's underlying `WebClient` is constructed with
+   * `clientOptions.slackApiUrl = apiRoot`. Production callers leave this
+   * undefined and bolt uses its default (`https://slack.com/api`).
+   *
+   * Production seam for the wire-level E2E mock chat-platform fixture
+   * (test/e2e/mocks/slack/).
+   *
+   * Note: this only redirects Web API REST traffic. Socket Mode WebSocket
+   * connections go to `wss://wss-primary.slack.com` and cannot be redirected
+   * via this seam — E2E tests use Slack's HTTP/Events mode against the mock
+   * by setting mode='http'.
+   */
+  apiRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,12 +96,14 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
     },
 
     async start(): Promise<Result<void, Error>> {
-      // Fail fast on invalid credentials
+      // Fail fast on invalid credentials. Pass apiRoot if set so auth.test()
+      // hits the redirection mock.
       const credResult = await validateSlackCredentials({
         botToken: deps.botToken,
         mode: deps.mode,
         appToken: deps.appToken,
         signingSecret: deps.signingSecret,
+        ...(deps.apiRoot ? { apiRoot: deps.apiRoot } : {}),
       });
 
       if (!credResult.ok) {
@@ -116,17 +134,26 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         // Dynamic import to keep @slack/bolt optional at module level
         const { App } = await import("@slack/bolt");
 
+        // E2E seam: when deps.apiRoot is set, bolt's underlying WebClient
+        // receives slackApiUrl=apiRoot via clientOptions. Production path
+        // omits clientOptions entirely (byte-identical to the prior shape).
+        const clientOptionsOverride = deps.apiRoot
+          ? { clientOptions: { slackApiUrl: deps.apiRoot } }
+          : {};
+
         // Create Bolt App with mode-dependent config
         if (deps.mode === "socket") {
           app = new App({
             token: deps.botToken,
             appToken: deps.appToken,
             socketMode: true,
+            ...clientOptionsOverride,
           });
         } else {
           app = new App({
             token: deps.botToken,
             signingSecret: deps.signingSecret,
+            ...clientOptionsOverride,
           });
         }
 
@@ -149,7 +176,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
             return;
           }
 
-          _lastMessageAt = Date.now();
+          _lastMessageAt = systemNowMs();
           const normalized = mapSlackToNormalized(event);
           deps.logger.info(
             { channelType: "slack", messageId: normalized.id, chatId: event.channel, previewLen: (normalized.text ?? "").length },
@@ -203,7 +230,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
                 (body as { channel?: { id?: string } }).channel?.id ?? "",
               senderId: user?.id ?? "",
               text: buttonAction.action_id ?? "",
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
               attachments: [],
               metadata: {
                 isButtonCallback: true,
@@ -255,7 +282,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         await app.start();
 
         _connected = true;
-        _startedAt = Date.now();
+        _startedAt = systemNowMs();
 
         deps.logger.info(
           {
@@ -325,7 +352,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           ...(options?.threadReply && options?.replyTo ? { reply_broadcast: false } : {}),
         });
         const messageId = String(result.ts ?? "");
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.debug(
           { channelType: "slack", messageId, chatId: channelId, preview: text.slice(0, 1500) },
@@ -532,7 +559,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         connected: _connected,
         channelId: _channelId,
         channelType: "slack",
-        uptime: _connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: _connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: deps.mode === "http" ? "webhook" : "socket",

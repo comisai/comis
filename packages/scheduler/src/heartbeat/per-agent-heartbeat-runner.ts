@@ -17,6 +17,7 @@ import {
   isRecovery,
 } from "./resilience-tracker.js";
 import type { ErrorClassification } from "./resilience-tracker.js";
+import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 /** Per-agent heartbeat state tracked in the runner's agent map. */
 export interface HeartbeatAgentState {
@@ -79,7 +80,7 @@ export function createPerAgentHeartbeatRunner(
 
   function clearTimer(): void {
     if (timer !== null) {
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       timer = null;
     }
   }
@@ -101,7 +102,7 @@ export function createPerAgentHeartbeatRunner(
     const now = getNow();
     const delayMs = Math.max(0, soonestDueMs - now);
 
-    timer = setTimeout(() => {
+    timer = systemSetTimeout(() => {
       void tick();
     }, delayMs);
     timer.unref();
@@ -120,7 +121,7 @@ export function createPerAgentHeartbeatRunner(
       await Promise.race([
         onTick(state.agentId),
         new Promise<never>((_, reject) => {
-          const t = setTimeout(
+          const t = systemSetTimeout(
             () =>
               reject(
                 new Error(

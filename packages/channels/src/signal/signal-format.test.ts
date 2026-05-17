@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { convertIrToSignalTextStyles, type SignalTextStyle } from "./signal-format.js";
-import { parseMarkdownToIR } from "../shared/markdown-ir.js";
-import type { MarkdownIR } from "../shared/markdown-ir.js";
+import { parseMarkdownToIR } from "@comis/core";
+import type { MarkdownIR } from "@comis/core";
 
 describe("convertIrToSignalTextStyles", () => {
   it("converts plain text without styles", () => {
@@ -128,7 +128,7 @@ describe("convertIrToSignalTextStyles", () => {
     expect(boldStyle!.length).toBe(4);
   });
 
-  it("handles empty IR", () => {
+  it("handles empty Intermediate Representation by returning empty text and styles", () => {
     const ir: MarkdownIR = { blocks: [], sourceLength: 0 };
     const result = convertIrToSignalTextStyles(ir);
     expect(result.text).toBe("");

@@ -4,6 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { DeliveryTrace, DeliveryStep } from "../api/types/index.js";
+import { systemClearInterval, systemDateFrom, systemNowMs, systemSetInterval } from "@comis/core";
 
 // Side-effect imports (register custom elements)
 import "../components/data/ic-stat-card.js";
@@ -265,7 +266,7 @@ export class IcDeliveryView extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._refreshInterval !== null) {
-      clearInterval(this._refreshInterval);
+      systemClearInterval(this._refreshInterval);
       this._refreshInterval = null;
     }
     this._rpcStatusUnsub?.();
@@ -298,7 +299,7 @@ export class IcDeliveryView extends LitElement {
   private _startLoading(): void {
     this._loadData();
     if (this._refreshInterval === null) {
-      this._refreshInterval = setInterval(() => {
+      this._refreshInterval = systemSetInterval(() => {
         this._loadData();
       }, RPC_REFRESH_INTERVAL_MS);
     }
@@ -353,8 +354,8 @@ export class IcDeliveryView extends LitElement {
   }
 
   private _normalizeTrace(d: Record<string, unknown>): DeliveryTrace {
-    const traceId = String(d.traceId ?? `${d.sourceChannelId ?? "unknown"}-${d.deliveredAt ?? Date.now()}`);
-    const timestamp = Number(d.timestamp ?? d.deliveredAt ?? Date.now());
+    const traceId = String(d.traceId ?? `${d.sourceChannelId ?? "unknown"}-${d.deliveredAt ?? systemNowMs()}`);
+    const timestamp = Number(d.timestamp ?? d.deliveredAt ?? systemNowMs());
     const channelType = String(d.sourceChannelType ?? d.targetChannelType ?? d.channelType ?? "unknown");
     const messagePreview = String(
       (d as Record<string, Record<string, unknown>>).metadata?.messagePreview ??
@@ -604,7 +605,7 @@ export class IcDeliveryView extends LitElement {
     if (!t) return nothing;
 
     const steps = (t.steps ?? []) as DeliveryStep[];
-    const timestamp = new Date(t.timestamp).toLocaleString();
+    const timestamp = systemDateFrom(t.timestamp).toLocaleString();
 
     return html`
       <ic-detail-panel

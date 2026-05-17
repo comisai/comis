@@ -12,7 +12,6 @@
  */
 
 import type { ConnectionStatus } from "./types/index.js";
-
 /** Pending RPC request tracker */
 interface PendingRequest {
   readonly resolve: (value: unknown) => void;

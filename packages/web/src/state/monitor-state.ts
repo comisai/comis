@@ -17,6 +17,7 @@ import type {
   MonitorSnapshot,
 } from "../api/types/index.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import { systemClearInterval, systemNowMs, systemSetInterval } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -188,7 +189,7 @@ export function createMonitorState(): MonitorState {
 
     // Start elapsed timer on first running response
     if (startedAt === null && response.status === "running") {
-      startedAt = Date.now();
+      startedAt = systemNowMs();
       elapsedMs = 0;
       startElapsedTimer();
     }
@@ -224,23 +225,23 @@ export function createMonitorState(): MonitorState {
 
   function clearPollTimer(): void {
     if (pollTimer !== null) {
-      clearInterval(pollTimer);
+      systemClearInterval(pollTimer);
       pollTimer = null;
     }
   }
 
   function clearElapsedTimer(): void {
     if (elapsedTimer !== null) {
-      clearInterval(elapsedTimer);
+      systemClearInterval(elapsedTimer);
       elapsedTimer = null;
     }
   }
 
   function startElapsedTimer(): void {
     clearElapsedTimer();
-    elapsedTimer = setInterval(() => {
+    elapsedTimer = systemSetInterval(() => {
       if (startedAt !== null) {
-        elapsedMs = Date.now() - startedAt;
+        elapsedMs = systemNowMs() - startedAt;
         notifyAll();
       }
     }, ELAPSED_INTERVAL_MS);
@@ -318,7 +319,7 @@ export function createMonitorState(): MonitorState {
       poll(rpcClient, gId);
 
       // Then poll every 2s
-      pollTimer = setInterval(() => {
+      pollTimer = systemSetInterval(() => {
         poll(rpcClient, gId);
       }, POLL_INTERVAL_MS);
     },
@@ -406,7 +407,7 @@ export function createMonitorState(): MonitorState {
         if (p.graphId !== graphId) return;
 
         if (startedAt === null) {
-          startedAt = Date.now();
+          startedAt = systemNowMs();
           elapsedMs = 0;
           startElapsedTimer();
         }
@@ -427,7 +428,7 @@ export function createMonitorState(): MonitorState {
 
       // Restart the interval
       clearPollTimer();
-      pollTimer = setInterval(() => {
+      pollTimer = systemSetInterval(() => {
         poll(storedRpcClient!, graphId);
       }, POLL_INTERVAL_MS);
     },

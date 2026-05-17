@@ -4,10 +4,9 @@
  *
  * Gated by the `COMIS_TEST_SILENT_FAIL_FLAG` environment variable (which
  * names a file path). When the env var is set AND that file exists, the
- * next call to tryInjectSilentFailure() consumes the file atomically and
- * returns a synthetic silent-LLM-failure result. This lets operators
- * validate the FINDING-2 retry/reuseSessionKey code path end-to-end
- * without waiting for Anthropic's real API to fail silently.
+ * next call to tryInjectSilentFailure() consumes the file atomically and * returns a synthetic silent-LLM-failure result. This lets operators
+ * validate the silent-failure retry / reuseSessionKey code path
+ * end-to-end without waiting for Anthropic's real API to fail silently.
  *
  * Safety:
  * - Env var is ABSENT in every shipped config (installer, examples, docs).
@@ -29,6 +28,7 @@
  */
 
 import { unlinkSync } from "node:fs";
+import type { EnvPort } from "@comis/core";
 
 /** Shape returned when fault injection fires (otherwise `undefined`). */
 export interface SilentFailureInjection {
@@ -50,15 +50,17 @@ interface Logger {
  * through to real execution.
  *
  * @param logger - For WARN on successful injection, DEBUG on unexpected FS errors.
+ * @param env - EnvPort for reading the test-only fault flag env vars.
  * @param context - Extra fields attached to the WARN log (agentId, sessionKey, etc.).
  * @returns SilentFailureInjection when fault fired; undefined otherwise.
  */
 export function tryInjectSilentFailure(
   logger: Logger,
+  env: EnvPort,
   context: Record<string, unknown> = {},
 ): SilentFailureInjection | undefined {
-  // eslint-disable-next-line no-restricted-syntax -- ops toggle read before SecretManager is initialized
-  const faultFlag = process.env.COMIS_TEST_SILENT_FAIL_FLAG;
+  // Env reads via injected port (not process.env) so tests can stub.
+  const faultFlag = env.get("COMIS_TEST_SILENT_FAIL_FLAG");
   if (!faultFlag) return undefined;
 
   // Optional scope gate: COMIS_TEST_SILENT_FAIL_SCOPE controls which
@@ -67,8 +69,7 @@ export function tryInjectSilentFailure(
   //   "subagent"          — only sub-agent sessions may fire
   //   "parent"            — only non-sub-agent sessions may fire
   // Sub-agent session keys contain "sub-agent:" (see sub-agent-runner).
-  // eslint-disable-next-line no-restricted-syntax -- ops toggle read before SecretManager is initialized
-  const scope = process.env.COMIS_TEST_SILENT_FAIL_SCOPE;
+  const scope = env.get("COMIS_TEST_SILENT_FAIL_SCOPE");
   if (scope === "subagent" || scope === "parent") {
     const sessionKey = typeof context.sessionKey === "string" ? context.sessionKey : "";
     const isSubAgent = sessionKey.includes("sub-agent:") || sessionKey.includes("sub-agent-");
@@ -105,7 +106,7 @@ export function tryInjectSilentFailure(
   logger.warn(
     {
       ...context,
-      hint: "COMIS_TEST_SILENT_FAIL_FLAG consumed -- this turn returns synthetic error for FINDING-2 retry-path testing",
+      hint: "COMIS_TEST_SILENT_FAIL_FLAG consumed -- this turn returns synthetic error for silent-failure retry-path testing",
       errorKind: "dependency" as const,
     },
     "Synthetic silent LLM failure injected for retry-path testing",

@@ -19,10 +19,10 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { ContextStore } from "@comis/memory";
-import type { ComisLogger } from "@comis/infra";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { ComisLogger, ContextStorePort } from "@comis/core";
 import type { ContextEngineConfig } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import type {
   ContextEngine,
   ContextLayer,
@@ -133,13 +133,13 @@ export function mapMessageRole(message: AgentMessage): string {
  */
 export function reconcileJsonlToDag(
   messages: AgentMessage[],
-  store: ContextStore,
+  store: ContextStorePort,
   db: unknown,
   conversationId: string,
   estimateTokens: (text: string) => number,
   logger: ComisLogger,
 ): ReconciliationResult {
-  const startTime = Date.now();
+  const startTime = systemNowMs();
 
   if (messages.length === 0) {
     return { conversationId, imported: 0, fullImport: false, durationMs: 0 };
@@ -193,7 +193,7 @@ export function reconcileJsonlToDag(
         conversationId,
         imported: importCount,
         fullImport: true,
-        durationMs: Date.now() - startTime,
+        durationMs: systemNowMs() - startTime,
       };
     }
 
@@ -210,7 +210,7 @@ export function reconcileJsonlToDag(
         conversationId,
         imported: 0,
         fullImport: false,
-        durationMs: Date.now() - startTime,
+        durationMs: systemNowMs() - startTime,
       };
     }
 
@@ -234,7 +234,7 @@ export function reconcileJsonlToDag(
           conversationId,
           lastDagHash: lastDagRow.content_hash,
           hint: "JSONL-DAG anchor not found; gap too large or hash collision. Reconciliation skipped.",
-          errorKind: "data" as const,
+          errorKind: "internal" as const,
         },
         "DAG reconciliation anchor not found",
       );
@@ -242,7 +242,7 @@ export function reconcileJsonlToDag(
         conversationId,
         imported: 0,
         fullImport: false,
-        durationMs: Date.now() - startTime,
+        durationMs: systemNowMs() - startTime,
       };
     }
 
@@ -295,7 +295,7 @@ export function reconcileJsonlToDag(
       conversationId,
       imported: importCount,
       fullImport: false,
-      durationMs: Date.now() - startTime,
+      durationMs: systemNowMs() - startTime,
     };
   });
 
@@ -325,7 +325,7 @@ export function reconcileJsonlToDag(
  */
 export function installDagIngestionHook(
   sm: unknown,
-  store: ContextStore,
+  store: ContextStorePort,
   conversationId: string,
   logger: ComisLogger,
   estimateTokens: (text: string) => number,
@@ -449,11 +449,11 @@ async function runDagLayer(
     return { messages, durationMs: 0, errored: false };
   }
 
-  const start = Date.now();
+  const start = systemNowMs();
   try {
     const result = await layer.apply(messages, budget);
     breaker.recordSuccess(layer.name);
-    const durationMs = Date.now() - start;
+    const durationMs = systemNowMs() - start;
     logger.debug(
       { layerName: layer.name, messagesIn: messages.length, messagesOut: result.length, durationMs },
       "DAG context engine layer applied",
@@ -461,7 +461,7 @@ async function runDagLayer(
     return { messages: result, durationMs, errored: false };
   } catch (err) {
     breaker.recordFailure(layer.name);
-    const durationMs = Date.now() - start;
+    const durationMs = systemNowMs() - start;
     logger.warn(
       {
         layerName: layer.name,
@@ -546,7 +546,7 @@ export function createDagContextEngine(
   const engine: ContextEngine = {
     lastTrimOffset: 0,
     async transformContext(messages: AgentMessage[]): Promise<AgentMessage[]> {
-      const pipelineStart = Date.now();
+      const pipelineStart = systemNowMs();
 
       // Step 1: Reconciliation (before any layers)
       const reconcileResult = reconcileJsonlToDag(
@@ -641,7 +641,7 @@ export function createDagContextEngine(
         if (outcome.errored) layerErrors++;
       }
 
-      const durationMs = Date.now() - pipelineStart;
+      const durationMs = systemNowMs() - pipelineStart;
 
       // Emit context:pipeline event for consistency with pipeline engine
       if (deps.eventBus) {
@@ -665,7 +665,7 @@ export function createDagContextEngine(
           durationMs,
           layerCount: layers.length,
           layers: layerTimings.map(t => ({ ...t, messagesIn: 0, messagesOut: 0 })),
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
       }
 

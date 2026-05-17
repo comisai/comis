@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Branch-gap coverage for delivery-mirror-adapter.ts.
+ *
+ * Closes the catch-block error paths in record()/pending()/acknowledge()/
+ * pruneOld() — the missing branch-paths are the
+ * `e instanceof Error ? e : new Error(String(e))` ternary halves.
+ *
+ * @module
+ */
+import { describe, it, expect, beforeEach } from "vitest";
+import Database from "better-sqlite3";
+import { initSchema } from "./schema.js";
+import { createSqliteDeliveryMirror } from "./delivery-mirror-adapter.js";
+import type { DeliveryMirrorPort } from "@comis/core";
+
+describe("SqliteDeliveryMirrorAdapter — branch-gap coverage", () => {
+  let db: Database.Database;
+  let mirror: DeliveryMirrorPort;
+
+  function makeInput(overrides: Record<string, unknown> = {}) {
+    return {
+      sessionKey: "tg:dm:user-1",
+      text: "mirrored hello",
+      mediaUrls: [] as string[],
+      channelType: "telegram",
+      channelId: "ch-1",
+      origin: "agent",
+      idempotencyKey: `key-${Math.random()}`,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 128);
+    mirror = createSqliteDeliveryMirror(db);
+  });
+
+  it("returns err result when record runs against a closed database", async () => {
+    db.close();
+    const result = await mirror.record(makeInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it("returns err result when pending runs against a closed database", async () => {
+    db.close();
+    const result = await mirror.pending("tg:dm:user-1");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it("returns err result when acknowledge runs against a closed database", async () => {
+    db.close();
+    const result = await mirror.acknowledge(["non-existent-id"]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it("returns err result when pruneOld runs against a closed database", async () => {
+    db.close();
+    const result = await mirror.pruneOld(0);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it("acknowledge no-ops cleanly when given empty id array", async () => {
+    const result = await mirror.acknowledge([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("pruneOld returns 0 when no rows are older than the cutoff", async () => {
+    await mirror.record(makeInput());
+    const result = await mirror.pruneOld(60_000); // 60s -- recent row stays
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toBe(0);
+    }
+  });
+
+  it("pruneOld removes rows whose created_at is older than the cutoff", async () => {
+    // Insert a row directly with a stale timestamp so pruneOld removes it
+    db.prepare(
+      `INSERT INTO delivery_mirror (id, session_key, text, media_urls, channel_type, channel_id,
+                                     origin, idempotency_key, status, created_at)
+       VALUES ('stale-id', 'tg:dm:user-1', 'old', '[]', 'telegram', 'ch-1', 'agent', 'k1', 'pending', ?)`,
+    ).run(0); // created_at=0 -> definitely stale
+    const result = await mirror.pruneOld(0);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toBe(1);
+    }
+  });
+});

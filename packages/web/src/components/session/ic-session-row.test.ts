@@ -6,10 +6,12 @@ import type { SessionInfo } from "../../api/types/index.js";
 // Side-effect import to register custom element
 import "./ic-session-row.js";
 
-/** Create a session with a parseable key (agent prefix format). */
+/** Create a session with a parseable key.
+ *  Session keys do not carry an `agent:<agentId>:` prefix; the agent
+ *  identity is sourced from the session row's `agentId` field instead. */
 function makeSession(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
-    key: "agent:default:myTenant:user123:telegram",
+    key: "myTenant:user123:telegram",
     agentId: "default",
     channelType: "telegram",
     messageCount: 47,
@@ -71,7 +73,7 @@ describe("IcSessionRow", () => {
     expect(displayName?.textContent).toBe("short");
   });
 
-  it("shows channel tag", async () => {
+  it("shows channel tag element inside the IcSessionRow shadow-DOM for the session", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
       session: makeSession(),
     });

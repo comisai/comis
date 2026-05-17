@@ -4,6 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { ActivityEntry } from "../api/types/index.js";
 import type { SseEventHandler } from "../api/api-client.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
+import { systemNowMs } from "@comis/core";
 import "./form/ic-filter-chips.js";
 
 /** Event type display configuration */
@@ -33,7 +34,7 @@ const FILTER_OPTIONS = Object.entries(EVENT_CONFIG).map(([value, cfg]) => ({
 
 /** @internal -- exported for testing */
 export function relativeTime(timestamp: number): string {
-  const diff = Date.now() - timestamp;
+  const diff = systemNowMs() - timestamp;
   const seconds = Math.floor(diff / 1000);
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
@@ -271,7 +272,7 @@ export class IcActivityFeed extends LitElement {
         id: this._nextLiveId++,
         event,
         payload: (data ?? {}) as Record<string, unknown>,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       };
 
       if (this._paused) {

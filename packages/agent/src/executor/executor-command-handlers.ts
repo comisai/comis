@@ -17,8 +17,8 @@ import {
   safePath,
   type SessionKey,
 } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
-import type { CommandDirectives } from "../commands/types.js";
+import type { ComisLogger, ErrorKind } from "@comis/core";
+import type { CommandDirectives } from "./command-directive-types.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import type { ExecutionResult } from "./types.js";
 import path from "node:path";
@@ -31,8 +31,10 @@ import path from "node:path";
 export interface CommandHandlerDeps {
   logger: ComisLogger;
   eventBus: import("@comis/core").TypedEventBus;
-  modelRegistry: import("@mariozechner/pi-coding-agent").ModelRegistry;
+  modelRegistry: import("@earendil-works/pi-coding-agent").ModelRegistry;
   workspaceDir: string;
+  /** Wall-clock + monotonic time reads. */
+  clock: import("@comis/core").ClockPort;
 }
 
 /**
@@ -128,7 +130,7 @@ export async function applyCommandDirectives(params: {
         memoriesWritten: 0,
         trigger: "manual" as const,
         success: true,
-        timestamp: Date.now(),
+        timestamp: deps.clock.now(),
       });
     } catch (compactError) {
       deps.logger.warn(

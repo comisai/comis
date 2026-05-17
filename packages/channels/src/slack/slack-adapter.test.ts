@@ -154,7 +154,7 @@ describe("createSlackAdapter", () => {
   });
 
   describe("channelType", () => {
-    it("returns 'slack'", () => {
+    it("returns 'slack' string for SlackAdapter channelType getter", () => {
       const adapter = createSlackAdapter(makeDeps());
       expect(adapter.channelType).toBe("slack");
     });
@@ -272,7 +272,7 @@ describe("createSlackAdapter", () => {
       );
     });
 
-    it("calls app.start()", async () => {
+    it("calls Slack Bolt app.start() to initialize the adapter lifecycle", async () => {
       vi.mocked(validateSlackCredentials).mockResolvedValue(
         ok({ userId: "U1", teamId: "T1", botId: "B1" }),
       );
@@ -595,7 +595,7 @@ describe("createSlackAdapter", () => {
   });
 
   describe("stop()", () => {
-    it("calls app.stop()", async () => {
+    it("calls Slack Bolt app.stop() to terminate the adapter lifecycle", async () => {
       vi.mocked(validateSlackCredentials).mockResolvedValue(
         ok({ userId: "U1", teamId: "T1", botId: "B1" }),
       );

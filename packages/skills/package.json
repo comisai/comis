@@ -1,7 +1,7 @@
 {
   "name": "@comis/skills",
   "private": true,
-  "version": "1.0.37",
+  "version": "1.0.38",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Skill system, MCP integration, and tool sandbox for Comis agents",
@@ -11,8 +11,6 @@
     "dist"
   ],
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
     "url": "https://github.com/comisai/comis.git",
@@ -24,8 +22,16 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/skills/index.d.ts",
+      "import": "./dist/skills/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
+    "./platform-tools": {
+      "types": "./dist/platform-tools/index.d.ts",
+      "import": "./dist/platform-tools/index.js"
     }
   },
   "scripts": {
@@ -34,12 +40,11 @@
   },
   "dependencies": {
     "@comis/core": "workspace:*",
-    "@comis/infra": "workspace:*",
     "@comis/shared": "workspace:*",
     "@elevenlabs/elevenlabs-js": "2.45.0",
     "@fal-ai/client": "1.9.6",
-    "@mariozechner/pi-agent-core": "0.72.1",
-    "@mariozechner/pi-coding-agent": "0.72.1",
+    "@earendil-works/pi-agent-core": "0.74.1",
+    "@earendil-works/pi-coding-agent": "0.74.1",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@mozilla/readability": "0.6.0",
     "@napi-rs/canvas": "0.1.100",

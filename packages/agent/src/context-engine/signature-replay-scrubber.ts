@@ -56,8 +56,8 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { ComisLogger } from "@comis/infra";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { ComisLogger } from "@comis/core";
 import type { ContextLayer, TokenBudget } from "./types.js";
 import type { DriftCheck } from "../executor/replay-drift-detector.js";
 
@@ -74,20 +74,14 @@ export interface SignatureReplayScrubberDeps {
    *  unrelated edits in callers. */
   getReplayDriftMode?: () => DriftCheck | undefined;
   /** Optional callback invoked at the end of `apply()` with the scrub
-   *  counts. Fields preserve the legacy `dropped` / `signaturesStripped`
-   *  names so the context-engine snapshot consumer keeps working without
-   *  churn; the new explicit counter names are also included. */
+   *  counts. Canonical field names: `blocksAffected` (signed thinking
+   *  blocks removed) and `toolCallsAffected` (tool-call `thoughtSignature`
+   *  fields stripped). */
   onScrubbed?: (stats: {
     scrubbedAssistantMessages: number;
     blocksAffected: number;
     toolCallsAffected: number;
     latestAssistantIdx: number;
-    /** Alias of blocksAffected (legacy field name preserved). */
-    dropped: number;
-    /** Alias of toolCallsAffected (legacy field name preserved). */
-    signaturesStripped: number;
-    /** Legacy; always undefined now (no drift reason in the always-on path). */
-    reason?: string;
   }) => void;
   /** Required: per-execute INFO log emission. */
   logger: ComisLogger;
@@ -228,16 +222,13 @@ export function createSignatureReplayScrubber(
 
       // Always invoke onScrubbed so the context-engine snapshot stays
       // consistent on zero-touch turns (e.g., a single assistant message
-      // history). Legacy aliases preserved for the existing snapshot
-      // consumer at context-engine.ts ~lines 718–725.
+      // history). Canonical field names only — consumer at
+      // context-engine.ts reads `blocksAffected` / `toolCallsAffected`.
       deps.onScrubbed?.({
         scrubbedAssistantMessages,
         blocksAffected,
         toolCallsAffected,
         latestAssistantIdx: latestIdx,
-        dropped: blocksAffected,
-        signaturesStripped: toolCallsAffected,
-        reason: undefined,
       });
 
       // Emit once per execute() when at least one assistant message was

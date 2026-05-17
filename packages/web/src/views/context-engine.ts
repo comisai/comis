@@ -6,6 +6,7 @@ import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import type { AgentInfo, PipelineSnapshot, DagCompactionSnapshot } from "../api/types/index.js";
+import { systemClearInterval, systemClearTimeout, systemDateFrom, systemSetInterval, systemSetTimeout } from "@comis/core";
 
 // Side-effect imports (register custom elements)
 import "../components/data/ic-budget-segment-bar.js";
@@ -283,8 +284,8 @@ export class IcContextEngineView extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadData();
     }, delayMs);
@@ -293,11 +294,11 @@ export class IcContextEngineView extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
     if (this._refreshInterval !== null) {
-      clearInterval(this._refreshInterval);
+      systemClearInterval(this._refreshInterval);
       this._refreshInterval = null;
     }
     this._rpcStatusUnsub?.();
@@ -334,7 +335,7 @@ export class IcContextEngineView extends LitElement {
   private _startLoading(): void {
     this._loadData();
     if (this._refreshInterval === null) {
-      this._refreshInterval = setInterval(() => {
+      this._refreshInterval = systemSetInterval(() => {
         this._loadData();
       }, RPC_REFRESH_INTERVAL_MS);
     }
@@ -408,7 +409,7 @@ export class IcContextEngineView extends LitElement {
   /* ---- Formatters ---- */
 
   private _formatTime(timestamp: number): string {
-    return new Date(timestamp).toLocaleTimeString(undefined, {
+    return systemDateFrom(timestamp).toLocaleTimeString(undefined, {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",

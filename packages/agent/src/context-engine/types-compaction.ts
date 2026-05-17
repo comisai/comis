@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { TokenAnchor } from "./types-core.js";
 
 // ---------------------------------------------------------------------------

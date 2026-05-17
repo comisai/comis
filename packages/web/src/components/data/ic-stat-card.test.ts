@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe("IcStatCard", () => {
-  it("renders label text", async () => {
+  it("renders the label text inside the IcStatCard shadow-DOM label element", async () => {
     const el = await createElement<IcStatCard>("ic-stat-card", {
       label: "Active Agents",
       value: "3",
@@ -32,7 +32,7 @@ describe("IcStatCard", () => {
     expect(label?.textContent).toContain("Active Agents");
   });
 
-  it("renders value text", async () => {
+  it("renders the value text inside the IcStatCard shadow-DOM value element", async () => {
     const el = await createElement<IcStatCard>("ic-stat-card", {
       label: "Count",
       value: "1,247",

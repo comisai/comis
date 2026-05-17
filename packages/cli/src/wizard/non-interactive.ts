@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.
 /**
  * Non-interactive mode for the init wizard.
  *
@@ -17,7 +18,7 @@
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { safePath } from "@comis/core";
-import { createModelCatalog } from "@comis/agent";
+import { createModelCatalog } from "@comis/core";
 import type {
   WizardState,
   WizardStepId,

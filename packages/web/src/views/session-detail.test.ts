@@ -10,7 +10,7 @@ import "./session-detail.js";
 import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
 
 const testSession: SessionInfo = {
-  key: "agent:mybot:default:user123:telegram",
+  key: "default:user123:telegram",
   agentId: "mybot",
   channelType: "telegram",
   messageCount: 47,
@@ -36,7 +36,7 @@ const testMessages: SessionMessage[] = [
 const testPipelineSnapshots: PipelineSnapshot[] = [
   {
     agentId: "mybot",
-    sessionKey: "agent:mybot:default:user123:telegram",
+    sessionKey: "default:user123:telegram",
     tokensLoaded: 5000,
     tokensEvicted: 1000,
     tokensMasked: 200,
@@ -113,18 +113,18 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
-    expect(api.getSessionDetail).toHaveBeenCalledWith("agent:mybot:default:user123:telegram");
+    expect(api.getSessionDetail).toHaveBeenCalledWith("default:user123:telegram");
   });
 
   it("renders three tab buttons (Conversation, Context State, Metrics)", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -141,7 +141,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -157,7 +157,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -174,7 +174,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -190,7 +190,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -205,7 +205,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -220,7 +220,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -238,7 +238,7 @@ describe("IcSessionDetail", () => {
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
       rpcClient: rpc,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -267,7 +267,7 @@ describe("IcSessionDetail", () => {
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
       rpcClient: rpc,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -295,7 +295,7 @@ describe("IcSessionDetail", () => {
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
       rpcClient: rpc,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -316,7 +316,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -333,35 +333,35 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
 
     (el as any)._confirmAction = "reset";
     await (el as any)._handleConfirm();
-    expect(api.resetSession).toHaveBeenCalledWith("agent:mybot:default:user123:telegram");
+    expect(api.resetSession).toHaveBeenCalledWith("default:user123:telegram");
   });
 
   it("compact button calls compactSession after confirm", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
 
     (el as any)._confirmAction = "compact";
     await (el as any)._handleConfirm();
-    expect(api.compactSession).toHaveBeenCalledWith("agent:mybot:default:user123:telegram");
+    expect(api.compactSession).toHaveBeenCalledWith("default:user123:telegram");
   });
 
   it("delete button calls deleteSession after confirm with danger variant", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -373,7 +373,7 @@ describe("IcSessionDetail", () => {
     expect((dialog as any)?.variant).toBe("danger");
 
     await (el as any)._handleConfirm();
-    expect(api.deleteSession).toHaveBeenCalledWith("agent:mybot:default:user123:telegram");
+    expect(api.deleteSession).toHaveBeenCalledWith("default:user123:telegram");
   });
 
   it("clicking Metrics tab triggers _loadMetricsData", async () => {
@@ -384,7 +384,7 @@ describe("IcSessionDetail", () => {
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
       rpcClient: rpc,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -398,14 +398,14 @@ describe("IcSessionDetail", () => {
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
 
-    expect(rpc.call).toHaveBeenCalledWith("obs.billing.bySession", expect.objectContaining({ sessionKey: "agent:mybot:default:user123:telegram" }));
+    expect(rpc.call).toHaveBeenCalledWith("obs.billing.bySession", expect.objectContaining({ sessionKey: "default:user123:telegram" }));
   });
 
   it("metrics tab renders stat cards with session data", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -437,7 +437,7 @@ describe("IcSessionDetail", () => {
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
       rpcClient: rpc,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -461,7 +461,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "agent:mybot:default:user123:telegram",
+      sessionKey: "default:user123:telegram",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;

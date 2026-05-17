@@ -5,14 +5,11 @@
  * Exercises:
  * - Watchdog timer fires -> run marked failed -> failure notification delivered
  * - Ghost sweep detects stale runs -> force-failed -> notification delivered
+ * - ERROR with errorKind:'timeout' for both watchdog and ghost sweep paths
  *
  * Uses vi.useFakeTimers({ shouldAdvanceTime: true }) for timer-dependent
  * scenarios. Follows the established pattern from
  * test/integration/subagent-pipeline.test.ts.
- *
- * Covers:
- * - TEST-03 (partial): Subagent timeout to user notification E2E
- * - OBSV-03 (partial): ERROR with errorKind:'timeout' for watchdog and ghost sweep
  *
  * @module
  */
@@ -25,9 +22,43 @@ import { join } from "node:path";
 import {
   createSubAgentRunner,
   type SubAgentRunnerDeps,
-} from "@comis/daemon";
+} from "@comis/agent";
 
 import { TypedEventBus } from "@comis/core";
+import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Lightweight port wrappers that delegate to globals so vi.useFakeTimers()
+// continues to intercept timer ticks below.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 // ---------------------------------------------------------------------------
 // Shared temp directory
@@ -99,6 +130,8 @@ function buildIntegrationDeps(
     tenantId: "test-subagent-timeout",
     dataDir: tmpDir,
     logger: mockLogger,
+    clock: testClock,
+    timers: testTimers,
     ...overrides,
   } as SubAgentRunnerDeps & { eventBus: TypedEventBus };
 }
@@ -175,7 +208,7 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
     expect(completedEvents[0]!.runId).toBe(runId);
     expect(completedEvents[0]!.success).toBe(false);
 
-    // OBSV-03: Verify ERROR log with errorKind:'timeout' for watchdog
+    // Verify ERROR log with errorKind:'timeout' for watchdog
     expect(deps.logger!.error).toHaveBeenCalledWith(
       expect.objectContaining({
         errorKind: "timeout",
@@ -194,7 +227,7 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
 
     // Use very large maxRunTimeoutMs so watchdog never fires within test window.
     // Then backdate startedAt so the ghost sweep sees the run as ancient.
-    // This is the established technique from sub-agent-runner.test.ts (472-02).
+    // This is the established technique from packages/agent/src/spawn/sub-agent-runner.test.ts.
     const LARGE_TIMEOUT_MS = 10_000_000;
 
     const deps = buildIntegrationDeps({
@@ -257,6 +290,7 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
     const run = runner.getRunStatus(runId)!;
     run.startedAt = Date.now() - (LARGE_TIMEOUT_MS + 200_000);
 
+
     // Next sweep fires at 600_000ms total; ghost sweep sees backdated run
     await vi.advanceTimersByTimeAsync(300_000);
 
@@ -276,7 +310,7 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
     expect(ghostCompletedEvents.length).toBeGreaterThanOrEqual(1);
     expect(ghostCompletedEvents[0]!.success).toBe(false);
 
-    // OBSV-03: Verify ERROR log with errorKind:'timeout' for ghost sweep
+    // Verify ERROR log with errorKind:'timeout' for ghost sweep
     expect(deps.logger!.error).toHaveBeenCalledWith(
       expect.objectContaining({
         errorKind: "timeout",

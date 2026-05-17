@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: media-resolver throws inside fromPromise(); converted to Result.err.
 /**
  * WhatsApp MediaResolverPort adapter.
  *
@@ -17,6 +18,7 @@ import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";
 import { downloadContentFromMessage } from "@whiskeysockets/baileys";
 import type { BaileysMessage } from "./message-mapper.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -107,7 +109,7 @@ export function createWhatsAppResolver(deps: WhatsAppResolverDeps): MediaResolve
           }
 
           // Download media via Baileys (handles E2EE decryption)
-          const startMs = Date.now();
+          const startMs = systemNowMs();
           const stream = await downloadContentFromMessage(
             media.content as Parameters<typeof downloadContentFromMessage>[0],
             media.mediaType as Parameters<typeof downloadContentFromMessage>[1],
@@ -119,7 +121,7 @@ export function createWhatsAppResolver(deps: WhatsAppResolverDeps): MediaResolve
             chunks.push(chunk as Buffer);
           }
           const buffer = Buffer.concat(chunks);
-          const durationMs = Date.now() - startMs;
+          const durationMs = systemNowMs() - startMs;
 
           // Reject downloads exceeding size limit
           if (buffer.length > deps.maxBytes) {

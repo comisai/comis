@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createThinkingBlockCleaner } from "./thinking-block-cleaner.js";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TokenBudget } from "./types.js";
 
 // ---------------------------------------------------------------------------

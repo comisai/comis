@@ -30,6 +30,11 @@ import "./editors/agent-log-level-editor.js";
 import { BUILTIN_TOOLS } from "./editors/editor-types.js";
 import type { CatalogProvider, FieldChangeDetail } from "./editors/editor-types.js";
 import type { LogLevelChangeDetail } from "./editors/agent-log-level-editor.js";
+import { systemSetTimeout } from "@comis/core";
+import {
+  createAgentEditorController,
+  type AgentEditorController,
+} from "./agent-editor-controller.js";
 
 /** Default form state for a new agent. */
 function createDefaultForm(): Record<string, unknown> {
@@ -476,6 +481,9 @@ export class IcAgentEditor extends LitElement {
   /** Dirty-state tracker for unsaved change detection and navigation guards. */
   private _dirtyTracker = createDirtyTracker();
 
+  /** Controller owns RPC orchestration (thin façade pattern — view keeps @state). */
+  private _controller: AgentEditorController | null = null;
+
   /** Whether we are creating a new agent. */
   get _isNew(): boolean {
     return !this.agentId || this.agentId === "new";
@@ -486,6 +494,7 @@ export class IcAgentEditor extends LitElement {
     this._dirtyTracker.attach();
     window.addEventListener("hashchange", this._boundHashChangeGuard);
     if (this.rpcClient) {
+      this._controller = createAgentEditorController(this, this.rpcClient);
       this._loadModelCatalog();
       this._loadTopLevelConfig();
     }
@@ -519,6 +528,9 @@ export class IcAgentEditor extends LitElement {
 
   override updated(changed: Map<string, unknown>): void {
     if (changed.has("rpcClient") && this.rpcClient) {
+      if (!this._controller) {
+        this._controller = createAgentEditorController(this, this.rpcClient);
+      }
       if (this._catalogProviders.length === 0) this._loadModelCatalog();
       this._loadTopLevelConfig();
       if (!this._isNew && this._loadState === "loading") this._loadAgent();
@@ -527,12 +539,9 @@ export class IcAgentEditor extends LitElement {
 
   /** Fetch the model catalog from the backend. */
   private async _loadModelCatalog(): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
     try {
-      const result = await this.rpcClient.call<{
-        providers?: CatalogProvider[];
-        totalModels?: number;
-      }>("models.list");
+      const result = await this._controller.loadModelCatalog();
       if (result.providers) {
         this._catalogProviders = result.providers;
       }
@@ -543,9 +552,9 @@ export class IcAgentEditor extends LitElement {
 
   /** Load system-wide streaming and delivery config from config.read RPC. */
   async _loadTopLevelConfig(): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
     try {
-      const result = await this.rpcClient.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
+      const result = await this._controller.loadTopLevelConfig();
       const cfg = result.config;
       this._streamingConfig = (cfg.streaming as Record<string, unknown>) ?? {};
       this._deliveryQueueConfig = (cfg.deliveryQueue as Record<string, unknown>) ?? {};
@@ -561,8 +570,12 @@ export class IcAgentEditor extends LitElement {
   /** Handle config-change events from system-wide sub-editors (streaming, delivery). */
   private async _handleConfigChange(e: CustomEvent<{ section: string; key: string; value: unknown }>): Promise<void> {
     const { section, key, value } = e.detail;
+    if (!this._controller) {
+      IcToast.show("Not connected", "error");
+      return;
+    }
     try {
-      await this.rpcClient!.call("config.patch", { section, key, value });
+      await this._controller.patchConfig(section, key, value);
       // Update local state to reflect the change
       if (section === "streaming") this._streamingConfig = { ...this._streamingConfig, [key]: value };
       else if (section === "deliveryQueue") this._deliveryQueueConfig = { ...this._deliveryQueueConfig, [key]: value };
@@ -579,13 +592,15 @@ export class IcAgentEditor extends LitElement {
   /** Handle log-level-change events from the log level editor. */
   private async _handleLogLevelChange(e: CustomEvent<LogLevelChangeDetail>): Promise<void> {
     const { module, level } = e.detail;
+    if (!this._controller) {
+      IcToast.show("Not connected", "error");
+      return;
+    }
     try {
-      const params: Record<string, string> = { level };
-      if (module) params.module = module;
-      await this.rpcClient!.call("daemon.setLogLevel", params);
+      await this._controller.setLogLevel(level, module);
       this._logLevelApplied = module ?? "__global__";
       IcToast.show(`Log level ${module ? `${module}: ` : ""}${level}`, "success");
-      setTimeout(() => { this._logLevelApplied = ""; }, 3000);
+      systemSetTimeout(() => { this._logLevelApplied = ""; }, 3000);
     } catch (err) {
       IcToast.show(err instanceof Error ? err.message : "Failed to set log level", "error");
     }
@@ -593,17 +608,14 @@ export class IcAgentEditor extends LitElement {
 
   /** Load existing agent config for edit mode. */
   async _loadAgent(): Promise<void> {
-    if (!this.rpcClient) {
+    if (!this._controller) {
       this._loadState = "error";
       this._error = "Not connected";
       return;
     }
     this._loadState = "loading";
     try {
-      const result = await this.rpcClient.call<{ agentId: string; config: Record<string, unknown> }>(
-        "agents.get",
-        { agentId: this.agentId },
-      );
+      const result = await this._controller.loadAgent(this.agentId);
       const agent = this._mapConfigToDetail(result.agentId, result.config);
       this._populateForm(agent);
       this._loadState = "loaded";
@@ -1283,14 +1295,10 @@ export class IcAgentEditor extends LitElement {
     }
 
     // Server-side validation via dry-run agents.update parse
-    if (this.rpcClient && !this._isNew) {
+    if (this._controller && !this._isNew) {
       try {
         const payload = this._buildPayload();
-        await this.rpcClient.call("agents.update", {
-          agentId: this.agentId,
-          config: payload,
-          dryRun: true,
-        });
+        await this._controller.validateAgent(this.agentId, payload);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // Parse Zod validation errors from the response
@@ -1321,7 +1329,7 @@ export class IcAgentEditor extends LitElement {
 
   /** Save handler: create or update agent. */
   async _handleSave(): Promise<void> {
-    if (!this.rpcClient) {
+    if (!this._controller) {
       this._error = "Not connected";
       return;
     }
@@ -1339,13 +1347,13 @@ export class IcAgentEditor extends LitElement {
       const payload = this._buildPayload();
 
       if (this._isNew) {
-        const result = await this.rpcClient.call<{ agentId: string }>("agents.create", { agentId: this._form.id, config: payload });
+        const result = await this._controller.createAgent(this._form.id as string, payload);
         this._dirtyTracker.markClean();
         this._navigatingAfterSave = true;
         IcToast.show("Agent created successfully", "success");
         this.dispatchEvent(new CustomEvent("navigate", { detail: `agents/${result?.agentId ?? this._form.id}`, bubbles: true, composed: true }));
       } else {
-        await this.rpcClient.call("agents.update", { agentId: this.agentId, config: payload });
+        await this._controller.updateAgent(this.agentId, payload);
         this._dirtyTracker.markClean();
         this._navigatingAfterSave = true;
         IcToast.show("Agent updated successfully", "success");

@@ -27,54 +27,58 @@ import { Command } from "commander";
 // Mocks must be declared BEFORE the SUT import so vitest applies them.
 // -----------------------------------------------------------------------------
 
-// Mock @comis/agent — replace the OAuth login runner with a deterministic
-// fixture that returns a fixed JWT-derived profile. Other named exports are
-// kept as `vi.fn()` stubs because they are referenced at import time by
-// `auth.ts`.
-vi.mock("@comis/agent", () => ({
-  loginOpenAICodexOAuth: vi.fn(async () => ({
-    ok: true,
-    value: {
-      access: "test-access-token",
-      refresh: "test-refresh-token",
-      expires: Date.now() + 60 * 60_000, // 1h
-      accountId: "acct-123",
-      email: "user_a@example.com",
-      displayName: "User A",
-      profileId: "openai-codex:user_a@example.com",
-    },
-  })),
-  selectOAuthCredentialStore: vi.fn(),
-  isRemoteEnvironment: vi.fn(() => false),
-  redactEmailForLog: vi.fn((e?: string) => e ?? null),
-}));
-
-// Mock @comis/core — keep the real `validateProfileId` (we want its real
-// validation behavior driving mismatch / malformed assertions) but stub
-// the config-loading helpers so `openOAuthStoreFromConfig` short-circuits to
-// the file adapter without touching `~/.comis/config.yaml`.
+// Mock @comis/core — all the OAuth helpers + file-lock + createConsoleLogger
+// live here. Single combined mock now that auth.ts imports ALL these symbols
+// from @comis/core.
 vi.mock("@comis/core", async () => {
   const actual = await vi.importActual<typeof import("@comis/core")>(
     "@comis/core",
   );
   return {
     ...actual,
+    loginOpenAICodexOAuth: vi.fn(async () => ({
+      ok: true,
+      value: {
+        access: "test-access-token",
+        refresh: "test-refresh-token",
+        expires: Date.now() + 60 * 60_000, // 1h
+        accountId: "acct-123",
+        email: "user_a@example.com",
+        displayName: "User A",
+        profileId: "openai-codex:user_a@example.com",
+      },
+    })),
+    selectOAuthCredentialStore: vi.fn(),
+    isRemoteEnvironment: vi.fn(() => false),
+    // createFileLock lives in @comis/core/runtime/file-lock.ts. The mock
+    // returns a no-op port — the tests never exercise the file lock body,
+    // only the CLI control flow.
+    createFileLock: vi.fn(() => ({
+      acquire: vi.fn(),
+      release: vi.fn(),
+      withLock: vi.fn(),
+      isLocked: vi.fn(async () => false),
+      cleanupStaleLocks: vi.fn(async () => 0),
+    })),
+    // createConsoleLogger replaces @comis/infra's createLogger. Returns a
+    // no-op logger — auth.ts tests never exercise the log body, only the
+    // CLI control flow.
+    createConsoleLogger: vi.fn(() => ({
+      level: "info",
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      trace: vi.fn(),
+      fatal: vi.fn(),
+      audit: vi.fn(),
+      child: vi.fn(),
+    })),
     loadConfigFile: vi.fn(() => ({ ok: false, error: new Error("no config") })),
     validateConfig: vi.fn(),
     safePath: vi.fn((...parts: string[]) => parts.join("/")),
   };
 });
-
-// Mock @comis/infra — `createLogger` returns a no-op logger. Other exports
-// are stubs (auth.ts only uses createLogger).
-vi.mock("@comis/infra", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-}));
 
 // Mock the `open` package so attempted browser launches are no-ops.
 vi.mock("open", () => ({ default: vi.fn() }));
@@ -100,7 +104,7 @@ vi.mock("../wizard/clack-adapter.js", () => ({
 // -----------------------------------------------------------------------------
 
 const { registerAuthCommand } = await import("./auth.js");
-const agent = await import("@comis/agent");
+const agent = await import("@comis/core");
 
 // Reference to the in-memory store the tests will inject. Each test seeds
 // this via `selectOAuthCredentialStore` mock return.

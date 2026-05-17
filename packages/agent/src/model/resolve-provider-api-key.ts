@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: OAuth credential resolution: explicit-profile request that store cannot satisfy is security-critical hard fail per the inline comment (line 79-81); caller chain is PiExecutor.execute -> gateway routes which lift to user-facing error.
 /**
  * resolveProviderApiKey: shared dispatch helper that routes OAuth-eligible
  * providers through the OAuthTokenManager + AuthStorage.setRuntimeApiKey
@@ -19,8 +20,8 @@
  * @module
  */
 
-import type { AuthStorage } from "@mariozechner/pi-coding-agent";
-import { getOAuthProvider } from "@mariozechner/pi-ai/oauth";
+import type { AuthStorage } from "@earendil-works/pi-coding-agent";
+import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import type { PerAgentConfig } from "@comis/core";
 import type { OAuthTokenManager } from "./oauth-token-manager.js";
 

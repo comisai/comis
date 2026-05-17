@@ -23,11 +23,12 @@ import type {
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err, fromPromise } from "@comis/shared";
 import { Client } from "irc-framework";
 import { mapIrcToNormalized } from "./message-mapper.js";
+import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -99,7 +100,7 @@ function splitMessage(text: string, maxChars: number = IRC_MAX_LINE_CHARS): stri
  * Delay utility for flood protection between multi-line sends.
  */
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => systemSetTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +127,7 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
   let _lastError: string | undefined;
 
   function dispatchMessage(event: { target: string; nick: string; message: string; tags?: Record<string, string> }): void {
-    _lastMessageAt = Date.now();
+    _lastMessageAt = systemNowMs();
     const normalized = mapIrcToNormalized({
       target: event.target,
       nick: event.nick,
@@ -171,7 +172,7 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
           };
 
           // Timeout: if we don't register within 30 seconds, fail
-          const timer = setTimeout(() => {
+          const timer = systemSetTimeout(() => {
             const timeoutErr = new Error(`IRC connection to ${deps.host} timed out`);
             deps.logger.error(
               {
@@ -186,9 +187,9 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
           }, 30_000);
 
           bot.on("registered", () => {
-            clearTimeout(timer);
+            systemClearTimeout(timer);
             _connected = true;
-            _startedAt = Date.now();
+            _startedAt = systemNowMs();
             _channelId = `irc-${bot.user.nick}@${deps.host}`;
 
             // NickServ authentication
@@ -284,7 +285,7 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
 
         // IRC has no standard message IDs; use IRCv3 msgid if echoed back,
         // otherwise return a synthetic identifier
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.debug(
           { channelType: "irc" as const, messageId: "sent", chatId, preview: text.slice(0, 1500) },
@@ -410,7 +411,7 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
         connected: _connected,
         channelId: _channelId,
         channelType: "irc",
-        uptime: _connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: _connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: "socket",

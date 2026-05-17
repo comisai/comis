@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: Unknown config section guard in serializeSection(); consumed via daemon config-handlers (@allow-throw boundary).
 /**
  * Config schema serializer: converts Zod schemas to JSON Schema for agent introspection.
  *
@@ -11,21 +12,7 @@
 
 import { z } from "zod";
 import { AppConfigSchema } from "./schema.js";
-import { PerAgentConfigSchema, RoutingConfigSchema } from "./schema-agent.js";
-import { ApprovalsConfigSchema } from "./schema-approvals.js";
-import { BrowserConfigSchema } from "./schema-browser.js";
-import { ChannelConfigSchema } from "./schema-channel.js";
-import { DaemonConfigSchema } from "./schema-daemon.js";
-import { GatewayConfigSchema } from "./schema-gateway.js";
-import { IntegrationsConfigSchema } from "./schema-integrations.js";
-import { MemoryConfigSchema } from "./schema-memory.js";
-import { MessagesConfigSchema } from "./schema-messages.js";
-import { ModelsConfigSchema } from "./schema-models.js";
-import { MonitoringConfigSchema } from "./schema-observability.js";
-import { ProvidersConfigSchema } from "./schema-providers.js";
-import { SchedulerConfigSchema } from "./schema-scheduler.js";
-import { SecurityConfigSchema } from "./schema-security.js";
-import { ToolingConfigSchema } from "./schema-tooling.js";
+import { SECTION_REGISTRY } from "./section-registry.js";
 
 // ---------------------------------------------------------------------------
 // Section schema lookup
@@ -33,25 +20,17 @@ import { ToolingConfigSchema } from "./schema-tooling.js";
 
 /**
  * Maps config section names to their Zod schema objects.
+ *
+ * Derived from SECTION_REGISTRY. The legacy standalone SECTION_SCHEMAS
+ * literal previously held its own 16-entry list and drifted from
+ * field-metadata.ts and managed-sections.ts. Now there is a single source
+ * of truth.
  */
-const SECTION_SCHEMAS: Record<string, z.ZodType> = {
-  agents: PerAgentConfigSchema,
-  channels: ChannelConfigSchema,
-  memory: MemoryConfigSchema,
-  security: SecurityConfigSchema,
-  routing: RoutingConfigSchema,
-  daemon: DaemonConfigSchema,
-  scheduler: SchedulerConfigSchema,
-  gateway: GatewayConfigSchema,
-  integrations: IntegrationsConfigSchema,
-  monitoring: MonitoringConfigSchema,
-  browser: BrowserConfigSchema,
-  models: ModelsConfigSchema,
-  providers: ProvidersConfigSchema,
-  messages: MessagesConfigSchema,
-  approvals: ApprovalsConfigSchema,
-  tooling: ToolingConfigSchema,
-};
+const SECTION_SCHEMAS: Record<string, z.ZodType> = Object.fromEntries(
+  Object.entries(SECTION_REGISTRY)
+    .filter(([, entry]) => entry.schemaSerializable)
+    .map(([name, entry]) => [name, entry.schema]),
+);
 
 // ---------------------------------------------------------------------------
 // Full schema cache

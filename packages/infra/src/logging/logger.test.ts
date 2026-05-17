@@ -2,7 +2,7 @@
 import { Writable } from "node:stream";
 import { describe, it, expect } from "vitest";
 import { createLogger } from "./logger.js";
-import { isValidLogLevel } from "./log-fields.js";
+import { isValidLogLevel } from "@comis/core";
 
 /**
  * Capture logger output by creating a pino destination writable stream.

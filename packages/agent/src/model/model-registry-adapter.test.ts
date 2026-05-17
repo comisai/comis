@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { ModelRegistry } from "@mariozechner/pi-coding-agent";
-import { getModels } from "@mariozechner/pi-ai";
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { getModels } from "@earendil-works/pi-ai";
 import { createSecretManager } from "@comis/core";
 import { createAuthStorageAdapter } from "./auth-storage-adapter.js";
 import { createModelAllowlist } from "./model-allowlist.js";

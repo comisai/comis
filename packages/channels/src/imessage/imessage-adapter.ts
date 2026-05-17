@@ -23,12 +23,13 @@ import type {
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { createImsgClient, type ImsgClient } from "./imessage-client.js";
 import { validateIMessageConnection } from "./credential-validator.js";
 import { mapImsgToNormalized, type ImsgMessageParams } from "./message-mapper.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -129,7 +130,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
           // Skip messages from self
           if (messageParams.isFromMe) return;
 
-          _lastMessageAt = Date.now();
+          _lastMessageAt = systemNowMs();
           const normalized = mapImsgToNormalized(messageParams);
 
           deps.logger.info(
@@ -182,7 +183,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
       }
 
       _connected = true;
-      _startedAt = Date.now();
+      _startedAt = systemNowMs();
       deps.logger.info(
         { channelType: "imessage" as const },
         "Adapter started",
@@ -253,7 +254,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
         (typeof response?.guid === "string" && response.guid) ||
         "ok";
 
-      _lastMessageAt = Date.now();
+      _lastMessageAt = systemNowMs();
       _lastError = undefined;
       deps.logger.debug(
         { channelType: "imessage" as const, messageId, chatId, preview: text.slice(0, 1500) },
@@ -321,8 +322,8 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
             typeof msg.timestamp === "number"
               ? msg.timestamp
               : typeof msg.created_at === "string"
-                ? Date.parse(msg.created_at) || Date.now()
-                : Date.now(),
+                ? Date.parse(msg.created_at) || systemNowMs()
+                : systemNowMs(),
         }),
       );
 
@@ -433,7 +434,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
         connected: _connected,
         channelId: _channelId,
         channelType: "imessage",
-        uptime: _connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: _connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: "socket",

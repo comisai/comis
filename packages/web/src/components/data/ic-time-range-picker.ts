@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { TimeRangePreset } from "../../api/types/index.js";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 
 export type { TimeRangePreset };
 
@@ -132,8 +133,8 @@ export class IcTimeRangePicker extends LitElement {
   private _onCustomDateChange(): void {
     if (!this._customFrom || !this._customTo) return;
 
-    const fromMs = new Date(this._customFrom).getTime();
-    const sinceMs = Date.now() - fromMs;
+    const fromMs = systemDateFrom(this._customFrom).getTime();
+    const sinceMs = systemNowMs() - fromMs;
 
     this.dispatchEvent(
       new CustomEvent("time-range-change", {

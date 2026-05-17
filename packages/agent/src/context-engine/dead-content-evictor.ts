@@ -25,7 +25,7 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ContextLayer, TokenBudget, EvictionStats } from "./types.js";
 import { getToolResultText, isAlreadyOffloaded, isAlreadyMasked } from "./cleanup-helpers.js";
 

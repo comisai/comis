@@ -18,7 +18,7 @@ import {
   safePath,
   type PerAgentConfig,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import { createContextEngine, type ContextEngine } from "../context-engine/index.js";
 import type { TokenAnchor } from "../context-engine/types.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
@@ -33,7 +33,7 @@ import {
   getSessionLatches,
 } from "./executor-session-state.js";
 import { shouldDropSignedFields, type DriftCheck } from "./replay-drift-detector.js";
-import type { ErrorKind } from "@comis/infra";
+import type { ErrorKind } from "@comis/core";
 import { readFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
@@ -46,10 +46,10 @@ export interface ContextEngineSetupDeps {
   eventBus: import("@comis/core").TypedEventBus;
   agentId?: string;
   workspaceDir: string;
-  authStorage: import("@mariozechner/pi-coding-agent").AuthStorage;
-  modelRegistry: import("@mariozechner/pi-coding-agent").ModelRegistry;
+  authStorage: import("@earendil-works/pi-coding-agent").AuthStorage;
+  modelRegistry: import("@earendil-works/pi-coding-agent").ModelRegistry;
   getPromptSkillsXml?: () => string;
-  contextStore?: import("@comis/memory").ContextStore;
+  contextStore?: import("@comis/core").ContextStorePort;
   db?: unknown;
   /**
    * Optional OAuth token manager. When provided, compaction LLM
@@ -57,6 +57,8 @@ export interface ContextEngineSetupDeps {
    * with fallthrough to authStorage for non-OAuth providers.
    */
   oauthManager?: OAuthTokenManager;
+  /** Wall-clock + monotonic time reads. */
+  clock: import("@comis/core").ClockPort;
 }
 
 /** Parameters for context engine creation. */
@@ -134,7 +136,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // contextEngineOverrides removed from ExecutionOverrides -- compaction model resolved via operationModels chain
   const contextEngineConfig = config.contextEngine ?? ContextEngineConfigSchema.parse({});
 
-  // --- Replay drift memo (Fix #2) -----------------------------------------
+  // --- Replay drift memo ---------------------------------------------------
   // Memoized per-execute() so all pipeline runs in a single execute() see a
   // consistent decision (cleaner + scrubber must agree). The closure reads
   // the latest model identity each time (handles cycleModel mid-execute).
@@ -162,6 +164,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
           api: currentApi,
         },
         idleMs,
+        now: deps.clock.now(),
       });
 
       memoizedDrift = existingDrift;
@@ -239,8 +242,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       if (drift?.drop) return 0;
       return undefined; // Use default keepTurns
     },
-    // Replay drift mode getter (Fix #2): activates the
-    // signature-replay-scrubber pipeline layer when drift is detected.
+    // Replay drift mode getter: activates the signature-replay-scrubber
+    // pipeline layer when drift is detected.
     getReplayDriftMode: () => computeDriftIfNeeded(),
 
     // LLM compaction deps
@@ -397,7 +400,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
           filesInjected: stats.filesInjected,
           skillsInjected: stats.skillsInjected,
           overflowStripped: stats.overflowStripped,
-          timestamp: Date.now(),
+          timestamp: deps.clock.now(),
         });
       },
       onOverflow: (stats: { contextChars: number; budgetChars: number; recoveryAction: "strip_files" | "strip_skills" | "remove_position1" | "remove_rehydration" | "none" }) => {
@@ -407,7 +410,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
           contextTokens: Math.ceil(stats.contextChars / CHARS_PER_TOKEN_RATIO),
           budgetTokens: Math.ceil(stats.budgetChars / CHARS_PER_TOKEN_RATIO),
           recoveryAction: stats.recoveryAction,
-          timestamp: Date.now(),
+          timestamp: deps.clock.now(),
         });
       },
     }),

@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createRehydrationLayer } from "./rehydration.js";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { RehydrationLayerDeps, TokenBudget } from "./types.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 

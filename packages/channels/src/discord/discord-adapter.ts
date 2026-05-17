@@ -24,7 +24,7 @@ import type {
   NormalizedMessage,
   SendMessageOptions,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import {
@@ -39,6 +39,11 @@ import { chunkDiscordText } from "./format-discord.js";
 import { mapDiscordToNormalized } from "./message-mapper.js";
 import { renderDiscordButtons, renderDiscordCards } from "./rich-renderer.js";
 import { createDiscordVoiceSender } from "./voice-sender.js";
+// Adjacent untyped-cast sites in editMessage / reactToMessage / removeReaction
+// / deleteMessage / fetchMessages all use asTextLike, the structural-subset
+// narrowing helper that discord-actions.ts also uses.
+import { asTextLike } from "./discord-adapter-types.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -47,6 +52,19 @@ import { createDiscordVoiceSender } from "./voice-sender.js";
 export interface DiscordAdapterDeps {
   botToken: string;
   logger: ComisLogger;
+  /**
+   * Optional Discord REST API root URL override (e.g. `http://127.0.0.1:54321`).
+   * When set, the discord.js Client is constructed with `rest.api = apiRoot`.
+   * The WebSocket gateway URL is fetched FROM this REST endpoint
+   * (`GET /api/v10/gateway/bot`), so redirecting `apiRoot` to a 127.0.0.1
+   * mock automatically redirects gateway connections too (the mock returns
+   * its own ws://127.0.0.1 URL).
+   *
+   * Production callers leave this undefined — discord.js uses its default
+   * `https://discord.com/api`. This is the production seam for the
+   * wire-level E2E mock chat-platform fixture (test/e2e/mocks/discord/).
+   */
+  apiRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +79,10 @@ export interface DiscordAdapterDeps {
  * Developer Portal.
  */
 export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
+  // E2E seam: when deps.apiRoot is set, redirect discord.js's REST traffic
+  // (and, transitively via /gateway/bot, the WebSocket gateway) to that URL.
+  // Production callers leave it unset and discord.js uses its default
+  // (https://discord.com/api).
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -70,6 +92,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
       GatewayIntentBits.GuildMessageReactions,
       GatewayIntentBits.DirectMessageReactions,
     ],
+    ...(deps.apiRoot ? { rest: { api: deps.apiRoot } } : {}),
   });
 
   const handlers: MessageHandler[] = [];
@@ -92,8 +115,9 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     },
 
     async start(): Promise<Result<void, Error>> {
-      // Fail fast on invalid token
-      const tokenResult = await validateDiscordToken(deps.botToken);
+      // Fail fast on invalid token. Pass apiRoot if set so adapter
+      // self-validation hits the redirection mock instead of discord.com.
+      const tokenResult = await validateDiscordToken(deps.botToken, deps.apiRoot);
       if (!tokenResult.ok) {
         deps.logger.error(
           {
@@ -121,7 +145,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
           return;
         }
 
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         const normalized = mapDiscordToNormalized(msg);
         deps.logger.info(
           { channelType: "discord", messageId: normalized.id, chatId: msg.channelId, previewLen: (normalized.text ?? "").length },
@@ -198,7 +222,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
             channelId: interaction.channelId,
             senderId: interaction.user.id,
             text: interaction.customId,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
             attachments: [],
             metadata: {
               isButtonCallback: true,
@@ -251,7 +275,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
       await client.login(deps.botToken);
 
       _connected = true;
-      _startedAt = Date.now();
+      _startedAt = systemNowMs();
 
       deps.logger.info(
         { channelType: "discord", botId: botInfo.id, username: botInfo.username },
@@ -361,7 +385,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
           await sendable.send({ content: chunks[i] });
         }
 
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.debug(
           { channelType: "discord", messageId: firstMessage.id, chatId: channelId, preview: text.slice(0, 1500) },
@@ -392,16 +416,15 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     ): Promise<Result<void, Error>> {
       try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
 
         // Truncate to 2000 chars as a defensive check
         const truncatedText = text.length > 2000 ? text.slice(0, 2000) : text;
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textChannel = channel as any;
-        const msg = await textChannel.messages.fetch(messageId);
+        const msg = await tc.messages.fetch(messageId);
         await msg.edit(truncatedText);
 
         deps.logger.debug(
@@ -422,13 +445,12 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     ): Promise<Result<void, Error>> {
       try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textChannel = channel as any;
-        const msg = await textChannel.messages.fetch(messageId);
+        const msg = await tc.messages.fetch(messageId);
         await msg.react(emoji);
         return ok(undefined);
       } catch (error) {
@@ -444,13 +466,12 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     ): Promise<Result<void, Error>> {
       try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textChannel = channel as any;
-        const msg = await textChannel.messages.fetch(messageId);
+        const msg = await tc.messages.fetch(messageId);
         const reaction = msg.reactions.cache.get(emoji);
         if (reaction) {
           await reaction.users.remove(client.user!.id);
@@ -469,13 +490,12 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     ): Promise<Result<void, Error>> {
       try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textChannel = channel as any;
-        const msg = await textChannel.messages.fetch(messageId);
+        const msg = await tc.messages.fetch(messageId);
         await msg.delete();
         return ok(undefined);
       } catch (error) {
@@ -490,12 +510,11 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     ): Promise<Result<FetchedMessage[], Error>> {
       try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textChannel = channel as any;
         const fetchOptions: Record<string, unknown> = {
           limit: options?.limit ?? 20,
         };
@@ -503,7 +522,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
           fetchOptions.before = options.before;
         }
 
-        const messages = await textChannel.messages.fetch(fetchOptions);
+        const messages = await tc.messages.fetch(fetchOptions);
         const mapped: FetchedMessage[] = [];
         for (const [, m] of messages) {
           mapped.push({
@@ -603,7 +622,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         connected: _connected,
         channelId: _channelId,
         channelType: "discord",
-        uptime: _connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: _connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: "socket",

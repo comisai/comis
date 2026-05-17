@@ -7,7 +7,7 @@
  */
 
 import { createBackgroundTaskManager, TASK_DIR_NAME, type BackgroundTaskManager } from "@comis/agent";
-import type { TypedEventBus } from "@comis/core";
+import type { TypedEventBus, ClockPort, TimerPort } from "@comis/core";
 import { safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
@@ -21,6 +21,10 @@ export interface SetupBackgroundTasksDeps {
   dataDir: string;
   eventBus: TypedEventBus;
   logger: ComisLogger;
+  /** Wall-clock + monotonic time reads. */
+  clock: ClockPort;
+  /** Timer scheduling. */
+  timers: TimerPort;
 }
 
 /**
@@ -43,11 +47,13 @@ export function setupBackgroundTasks(deps: SetupBackgroundTasksDeps): Background
     dataDir: safePath(deps.dataDir, TASK_DIR_NAME),
     eventBus: deps.eventBus,
     logger: deps.logger,
+    clock: deps.clock,
+    timers: deps.timers,
   });
 
   // Startup recovery is deferred to daemon.ts (after the completion runner subscribes).
   // Periodic cleanup of stale completed/failed tasks (24h TTL)
-  const cleanupInterval = setInterval(() => manager.cleanup(), 3_600_000); // every hour
+  const cleanupInterval = deps.timers.setInterval(() => manager.cleanup(), 3_600_000); // every hour
   cleanupInterval.unref(); // don't keep daemon alive for cleanup
 
   return { backgroundTaskManager: manager };

@@ -2,6 +2,7 @@
 import type { WSContext, WSEvents } from "hono/ws";
 import type { JSONRPCServer, JSONRPCRequest } from "json-rpc-2.0";
 import type { RpcContext } from "./method-router.js";
+import { systemNowMs, systemSetTimeout, systemSetInterval, systemClearInterval } from "@comis/core";
 
 /**
  * Logger interface for WebSocket handler (minimal pino-compatible).
@@ -49,7 +50,7 @@ export class WsConnectionManager {
     this.connections.set(connectionId, {
       clientId,
       ws,
-      connectedAt: Date.now(),
+      connectedAt: systemNowMs(),
     });
   }
 
@@ -59,7 +60,7 @@ export class WsConnectionManager {
   remove(connectionId: string): void {
     const conn = this.connections.get(connectionId);
     if (conn?.heartbeatTimer) {
-      clearInterval(conn.heartbeatTimer);
+      systemClearInterval(conn.heartbeatTimer);
     }
     this.connections.delete(connectionId);
   }
@@ -147,7 +148,7 @@ export class WsConnectionManager {
 
     for (const [id, conn] of this.connections) {
       if (conn.heartbeatTimer) {
-        clearInterval(conn.heartbeatTimer);
+        systemClearInterval(conn.heartbeatTimer);
       }
 
       // Listen for close completion on the raw ws before initiating close
@@ -171,7 +172,7 @@ export class WsConnectionManager {
     if (closePromises.length > 0) {
       await Promise.race([
         Promise.all(closePromises),
-        new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+        new Promise<void>((resolve) => systemSetTimeout(resolve, timeoutMs)),
       ]);
     }
   }
@@ -230,7 +231,7 @@ let connectionCounter = 0;
  */
 export function createWsHandler(deps: WsHandlerDeps, rpcContext: RpcContext): WSEvents {
   const { rpcServer, connections, logger, maxBatchSize, heartbeatMs, maxMessageBytes, messageRateLimit } = deps;
-  const connectionId = `ws-${++connectionCounter}-${Date.now()}`;
+  const connectionId = `ws-${++connectionCounter}-${systemNowMs()}`;
 
   // Per-connection sliding window rate limiter
   const messageTimestamps: number[] = [];
@@ -248,11 +249,11 @@ export function createWsHandler(deps: WsHandlerDeps, rpcContext: RpcContext): WS
 
       // Set up heartbeat ping if enabled
       if (heartbeatMs > 0) {
-        const timer = setInterval(() => {
+        const timer = systemSetInterval(() => {
           try {
             // Send a JSON-RPC notification as heartbeat ping
             ws.send(
-              JSON.stringify({ jsonrpc: "2.0", method: "heartbeat", params: { ts: Date.now() } }),
+              JSON.stringify({ jsonrpc: "2.0", method: "heartbeat", params: { ts: systemNowMs() } }),
             );
           } catch {
             // Connection may be closed; cleanup will happen in onClose
@@ -286,7 +287,7 @@ export function createWsHandler(deps: WsHandlerDeps, rpcContext: RpcContext): WS
       }
 
       // Per-connection message rate limiting (sliding window)
-      const now = Date.now();
+      const now = systemNowMs();
       const { maxMessages, windowMs } = messageRateLimit;
       // Remove timestamps outside the window
       while (messageTimestamps.length > 0 && messageTimestamps[0]! <= now - windowMs) {
@@ -380,7 +381,7 @@ export function createWsHandler(deps: WsHandlerDeps, rpcContext: RpcContext): WS
      
     onClose(evt: CloseEvent, _ws: WSContext) {
       const conn = connections.get(connectionId);
-      const connectionDurationMs = conn ? Date.now() - conn.connectedAt : undefined;
+      const connectionDurationMs = conn ? systemNowMs() - conn.connectedAt : undefined;
       connections.remove(connectionId);
       const isAbnormal = evt.code !== 1000 && evt.code !== 1001 && evt.code !== 1005;
       const logFn = isAbnormal ? logger.info.bind(logger) : logger.debug.bind(logger);

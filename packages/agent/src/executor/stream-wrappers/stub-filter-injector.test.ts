@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
 import { createStubFilterInjector } from "./stub-filter-injector.js";
-import { createMockLogger, createMockStreamFn } from "./__test-helpers.js";
+import { createMockLogger, createMockStreamFn } from "./__test-helpers/index.js";
 
 describe("createStubFilterInjector", () => {
   it("filters stubs from top-level params.tools by name (Anthropic/OpenAI/xAI shape)", async () => {

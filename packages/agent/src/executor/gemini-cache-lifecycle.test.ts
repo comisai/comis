@@ -79,8 +79,9 @@ describe("wireGeminiCacheCleanup", () => {
 
     eventBus.emit("session:expired", { sessionKey, reason: "idle" });
 
-    // formatSessionKey produces "agent:{agentId}:{tenantId}:{userId}:{channelId}"
-    expect(cacheManager.dispose).toHaveBeenCalledWith("agent:agent-1:default:user-1:chan-1");
+    // `formatSessionKey` does not serialize `agentId`; the formatted key is
+    // `{tenantId}:{userId}:{channelId}` for keys without optional segments.
+    expect(cacheManager.dispose).toHaveBeenCalledWith("default:user-1:chan-1");
   });
 
   it("does not throw if dispose rejects (fire-and-forget via suppressError)", () => {

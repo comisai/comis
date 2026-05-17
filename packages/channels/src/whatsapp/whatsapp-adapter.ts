@@ -23,7 +23,7 @@ import type {
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { Boom } from "@hapi/boom";
 import { ok, err } from "@comis/shared";
@@ -36,6 +36,7 @@ import {
 import { validateWhatsAppAuth } from "./credential-validator.js";
 import { mapBaileysToNormalized, type BaileysMessage } from "./message-mapper.js";
 import { createWhatsAppVoiceSender } from "./voice-sender.js";
+import { systemNowMs, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -45,6 +46,20 @@ export interface WhatsAppAdapterDeps {
   authDir: string;
   printQR?: boolean; // Default: true
   logger: ComisLogger;
+  /**
+   * Optional WhatsApp WebSocket URL override (e.g.
+   * `ws://127.0.0.1:54324/ws/chat`). When set, Baileys' SocketConfig.
+   * waWebSocketUrl is set to this URL instead of the default
+   * `wss://web.whatsapp.com/ws/chat`. Production callers leave this
+   * undefined and Baileys uses its built-in default. Provides a wire-level
+   * seam for the E2E mock chat-platform fixture (test/e2e/mocks/whatsapp/).
+   *
+   * NOTE: this is the `apiRoot` field from ChannelEntrySchema (a single
+   * config key is documented to mean "the platform's primary backend
+   * endpoint" regardless of whether the underlying protocol is HTTP REST,
+   * WebSocket, or both). For WhatsApp/Baileys, that's the WebSocket URL.
+   */
+  apiRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,9 +98,13 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
   async function connect(): Promise<void> {
     const { state, saveCreds } = await useMultiFileAuthState(deps.authDir);
 
+    // E2E seam: when deps.apiRoot is set, point Baileys at the override
+    // WebSocket URL instead of wss://web.whatsapp.com/ws/chat. Production
+    // path omits the option entirely.
     sock = makeWASocket({
       auth: state,
       printQRInTerminal: deps.printQR ?? true,
+      ...(deps.apiRoot ? { waWebSocketUrl: deps.apiRoot } : {}),
     });
 
     // Handle connection state changes (auto-reconnection)
@@ -95,7 +114,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
       if (connection === "open") {
         connected = true;
         reconnectAttempt = 0;
-        if (!_startedAt) _startedAt = Date.now();
+        if (!_startedAt) _startedAt = systemNowMs();
         _channelId = `whatsapp-${sock?.user?.id ?? "unknown"}`;
         deps.logger.info({ channelType: "whatsapp" }, "Adapter started");
       }
@@ -150,11 +169,11 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         const msgId = m.key.id;
         if (msgId) {
           rawMessageCache.set(msgId, m as BaileysMessage);
-          const timer = setTimeout(() => rawMessageCache.delete(msgId), RAW_MESSAGE_TTL_MS);
+          const timer = systemSetTimeout(() => rawMessageCache.delete(msgId), RAW_MESSAGE_TTL_MS);
           timer.unref();
         }
 
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         const normalized = mapBaileysToNormalized(m as BaileysMessage);
         deps.logger.info(
           { channelType: "whatsapp", messageId: normalized.id, chatId: m.key.remoteJid ?? "", previewLen: (normalized.text ?? "").length },
@@ -261,7 +280,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
 
         const sent = await sock.sendMessage(channelId, { text });
         const messageId = sent?.key?.id ?? "";
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.debug(
           { channelType: "whatsapp", messageId, chatId: channelId, preview: text.slice(0, 1500) },
@@ -590,7 +609,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         connected,
         channelId: _channelId,
         channelType: "whatsapp",
-        uptime: connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: "socket",

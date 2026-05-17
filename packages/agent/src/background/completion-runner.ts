@@ -27,9 +27,10 @@
 
 import { randomUUID } from "node:crypto";
 import { suppressError } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
 import type { NormalizedMessage, TypedEventBus, BackgroundTaskOrigin } from "@comis/core";
 import { parseFormattedSessionKey } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { AgentExecutor } from "../executor/types.js";
 import { formatCompletionAnnouncement } from "./completion-formatter.js";
 import type { BackgroundTaskManager, NotifyFn } from "./background-task-manager.js";
@@ -203,7 +204,7 @@ export function createBackgroundCompletionRunner(
       channelType: "background_task",
       senderId: "background-task-runner",
       text: announcement,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
       attachments: [],
       metadata: {
         backgroundHopCount: nextHopCount,
@@ -239,7 +240,7 @@ export function createBackgroundCompletionRunner(
       sessionKey: origin.sessionKey,
       hopCount: nextHopCount,
       traceId: origin.traceId ?? null,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
 
     // One turn per event. Existing session lock orders concurrent calls.

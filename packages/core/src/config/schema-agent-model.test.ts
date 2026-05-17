@@ -10,7 +10,7 @@ import {
   PromptTimeoutConfigSchema,
   OperationModelsSchema,
   OperationModelEntrySchema,
-} from "./schema-agent.js";
+} from "./schema-agent/index.js";
 
 describe("BudgetConfigSchema", () => {
   it("parses valid input with all fields", () => {

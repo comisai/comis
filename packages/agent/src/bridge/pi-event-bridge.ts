@@ -10,24 +10,26 @@
  * @module
  */
 
-import { shouldCompact } from "@mariozechner/pi-coding-agent";
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import { shouldCompact } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
   sanitizeLogString,
+  systemNowMs,
   type SessionKey,
   type TypedEventBus,
   type MemoryPort,
   type MemoryEntry,
   type ModelOperationType,
+  type ErrorKind,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { randomUUID } from "node:crypto";
-import { resolveModelPricing } from "../model/model-catalog.js";
+import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
-import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-break-detection.js";
+import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-detection/index.js";
 import { classifyError } from "../executor/error-classifier.js";
 import type { BudgetGuard } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
@@ -112,7 +114,7 @@ export interface PiEventBridgeDeps {
   /** Callback fired when cache break detection finds a break event.
    *  Receives the full CacheBreakEvent. PiExecutor uses this to trigger
    *  coordinated reset on server eviction. */
-  onCacheBreakDetected?: (event: import("../executor/cache-break-detection.js").CacheBreakEvent) => void;
+  onCacheBreakDetected?: (event: import("../executor/cache-detection/index.js").CacheBreakEvent) => void;
   /** Decrement eviction cooldown counter each turn (unconditional). */
   decrementEvictionCooldown?: () => void;
   /** Callback to record per-turn cache savings for cost gate evaluation.
@@ -133,7 +135,7 @@ export interface PiEventBridgeDeps {
   /** Execution start timestamp for SEP timing metrics. */
   sepExecutionStartMs?: number;
   /** Cache break detection callback. Returns CacheBreakEvent if break detected. */
-  checkCacheBreak?: (input: { sessionKey: string; provider: string; cacheReadTokens: number; cacheWriteTokens: number; totalInputTokens: number; apiError?: boolean }) => import("../executor/cache-break-detection.js").CacheBreakEvent | null;
+  checkCacheBreak?: (input: { sessionKey: string; provider: string; cacheReadTokens: number; cacheWriteTokens: number; totalInputTokens: number; apiError?: boolean }) => import("../executor/cache-detection/index.js").CacheBreakEvent | null;
   /** Called on each turn_end with the per-turn usage.input tokens.
    *  Used by pi-executor to update the TokenAnchor for API-grounded estimation. */
   onTurnUsage?: (inputTokens: number) => void;
@@ -207,9 +209,6 @@ export interface PiEventBridgeResult {
   getDrainState: () => DrainInflightState;
 }
 
-// Re-export helper functions for backward compatibility with existing imports
-export { sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
-
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -262,7 +261,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // -----------------------------------------------------------------
         case "tool_execution_start": {
           const toolEvent = event as { toolName: string; toolCallId: string; args?: unknown };
-          m.toolStartTimes.set(toolEvent.toolCallId, Date.now());
+          m.toolStartTimes.set(toolEvent.toolCallId, systemNowMs());
           m.toolCallHistory.push(toolEvent.toolName);
           m.lastActiveToolName = toolEvent.toolName;
 
@@ -290,7 +289,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           deps.eventBus.emit("tool:started", {
             toolName: toolEvent.toolName,
             toolCallId: toolEvent.toolCallId,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),
             traceId: deps.executionId,
@@ -315,7 +314,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           // Calculate duration from tracked start time
           const startTime = m.toolStartTimes.get(endEvent.toolCallId);
-          const durationMs = startTime ? Date.now() - startTime : 0;
+          const durationMs = startTime ? systemNowMs() - startTime : 0;
           m.toolStartTimes.delete(endEvent.toolCallId);
           // Clear active tool once completed (no tool in-flight after this point)
           if (m.lastActiveToolName === endEvent.toolName) m.lastActiveToolName = undefined;
@@ -326,7 +325,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // Tools like exec never throw — they return { details: { exitCode: N } }.
           // The SDK only sets isError on thrown exceptions, so we also inspect the result.
           let toolSuccess = !endEvent.isError;
-          let toolErrorKind: string | undefined;
+          let toolErrorKind: ErrorKind | undefined;
           if (toolSuccess && endEvent.result != null) {
             const details = (endEvent.result as Record<string, unknown>)?.details;
             if (
@@ -335,7 +334,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               (details as Record<string, unknown>).exitCode !== 0
             ) {
               toolSuccess = false;
-              toolErrorKind = "nonzero-exit";
+              toolErrorKind = "dependency";
             }
           }
 
@@ -411,7 +410,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 action,
                 channelType,
                 channelId,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
 
               // Composite-key drain at the bridge call site. The composite
@@ -457,7 +456,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             toolName: endEvent.toolName,
             durationMs,
             success: toolSuccess,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
@@ -690,7 +689,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           }
 
           // Compute LLM latency: turn wallclock minus tool execution time
-          const turnWallclockMs = Date.now() - m.turnStartMs;
+          const turnWallclockMs = systemNowMs() - m.turnStartMs;
           // Cap per-turn tool duration to turn wallclock (parallel tools can sum > wallclock)
           const effectiveTurnToolMs = Math.min(m.turnToolDurationMs, turnWallclockMs);
           m.cumulativeToolWallclockMs += effectiveTurnToolMs;
@@ -725,7 +724,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 graphId: deps.graphId,
                 nodeId: deps.nodeId,
                 cacheWriteTokens,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
             }
 
@@ -923,7 +922,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
             // Emit observability event
             deps.eventBus.emit("observability:token_usage", {
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
               traceId: deps.executionId,
               agentId: deps.agentId,
               channelId: deps.channelId,
@@ -977,7 +976,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   totalTokens: m.totalTokens,
                   llmCallCount: m.llmCallCount,
                   projectedCallsLeft: Math.floor((deps.perExecutionBudgetCap! - m.totalTokens) / avgTokensPerCall),
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
                 deps.logger.warn({
                   totalTokens: m.totalTokens,
@@ -1026,7 +1025,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   contextPercent: contextUsage.percent ?? Math.round((contextUsage.tokens / contextUsage.contextWindow) * 100),
                   contextTokens: contextUsage.tokens,
                   contextWindow: contextUsage.contextWindow,
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
                 deps.logger.debug(
                   {
@@ -1064,14 +1063,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   request: (deps.sepMessageText ?? "").slice(0, 200),
                   steps,
                   completedCount: 0,
-                  createdAtMs: Date.now(),
+                  createdAtMs: systemNowMs(),
                 };
                 deps.executionPlan.current = plan;
                 deps.logger.info(
                   {
                     agentId: deps.agentId,
                     stepCount: steps.length,
-                    durationMs: deps.sepExecutionStartMs ? Date.now() - deps.sepExecutionStartMs : undefined,
+                    durationMs: deps.sepExecutionStartMs ? systemNowMs() - deps.sepExecutionStartMs : undefined,
                   },
                   "SEP plan extracted (mid-loop)",
                 );
@@ -1079,7 +1078,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   agentId: deps.agentId ?? "default",
                   sessionKey: formatSessionKey(deps.sessionKey),
                   stepCount: steps.length,
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
               }
             }
@@ -1158,7 +1157,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           }
 
           // Reset LLM turn timer for next turn
-          m.turnStartMs = Date.now();
+          m.turnStartMs = systemNowMs();
           break;
         }
 
@@ -1166,7 +1165,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // Auto-compaction lifecycle
         // -----------------------------------------------------------------
         case "compaction_start": {
-          m.compactionStartMs = Date.now();
+          m.compactionStartMs = systemNowMs();
           deps.logger.info(
             { sessionKey: formatSessionKey(deps.sessionKey) },
             "Auto-compaction started",
@@ -1174,7 +1173,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           deps.eventBus.emit("compaction:started", {
             agentId: deps.agentId,
             sessionKey: deps.sessionKey,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
           break;
         }
@@ -1199,7 +1198,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               trustLevel: "learned" as const,
               source: { who: "compaction", channel: deps.channelId },
               tags: ["compaction-summary"],
-              createdAt: Date.now(),
+              createdAt: systemNowMs(),
             };
             // Fire-and-forget: never block event processing on memory I/O
             suppressError(deps.memoryPort.store(entry as MemoryEntry), "compaction memory flush");
@@ -1211,10 +1210,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             memoriesWritten,
             trigger: "soft",
             success: !compactionEvent.aborted && !!compactionEvent.result,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
 
-          const durationMs = m.compactionStartMs ? Date.now() - m.compactionStartMs : 0;
+          const durationMs = m.compactionStartMs ? systemNowMs() - m.compactionStartMs : 0;
           m.compactionStartMs = 0; // reset
 
           // WARN for failure/abort

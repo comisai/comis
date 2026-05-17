@@ -14,6 +14,11 @@ import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
+import { systemClearInterval, systemClearTimeout, systemSetInterval, systemSetTimeout } from "@comis/core";
+import {
+  createDashboardController,
+  type DashboardController,
+} from "./dashboard-controller.js";
 // Import sub-components (side-effect registrations)
 import "../components/data/ic-stat-card.js";
 import "../components/data/ic-sparkline.js";
@@ -457,29 +462,64 @@ export class IcDashboard extends LitElement {
   @state() private _tokenSparklineData: number[] = [];
   @state() private _costSparklineData: number[] = [];
   @state() private _agentBilling: Map<string, { cost: number; tokens: number }> = new Map();
+  /** Mirrors rpcClient.status so render() can react to WS connect/disconnect. */
+  @state() private _rpcStatus: "connected" | "reconnecting" | "disconnected" = "disconnected";
 
   private _sse: SseController | null = null;
   private _rpcRefreshInterval: ReturnType<typeof setInterval> | null = null;
   private _reloadDebounce: ReturnType<typeof setTimeout> | null = null;
+  private _rpcStatusUnsub: (() => void) | null = null;
+
+  /** Controller owns RPC orchestration (thin façade — view keeps @state + render + SSE). */
+  private _controller: DashboardController | null = null;
+
+  /** Captured rpcClient reference -- if `this.rpcClient` is reassigned to a
+   *  different instance (logout→login while mounted, hot-reload, test-time
+   *  reassignment), the helper recreates the controller so it never calls
+   *  the stale captured client. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) the controller. Allows test-time
+   *  `priv(el).rpcClient = mock` direct assignment (bypassing Lit's reactive
+   *  update cycle) to still construct the controller, AND rebinds when the
+   *  rpcClient reference changes. */
+  private _ensureController(): DashboardController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
+    if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
+      this._controller = createDashboardController(this, this.rpcClient);
+    }
+    return this._controller;
+  }
 
   override connectedCallback(): void {
     super.connectedCallback();
     // Note: _loadData() and _startRpcRefresh() are NOT called here --
     // apiClient/rpcClient are typically null at this point. The updated()
     // callback handles loading once the client properties are set.
+    this._ensureController();
     this._initSse();
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
     this._stopRpcRefresh();
+    this._rpcStatusUnsub?.();
+    this._rpcStatusUnsub = null;
   }
 
   override updated(changed: Map<string, unknown>): void {
+    if (changed.has("rpcClient")) {
+      this._ensureController();
+    }
     if (changed.has("apiClient") && this.apiClient) {
       this._loadData();
     }
@@ -487,6 +527,17 @@ export class IcDashboard extends LitElement {
       this._stopRpcRefresh();
       this._startRpcRefresh();
       this._loadRpcData();
+      // Track RPC status so render() can show "---" placeholders when disconnected.
+      this._rpcStatusUnsub?.();
+      this._rpcStatusUnsub = null;
+      if (this.rpcClient) {
+        this._rpcStatus = this.rpcClient.status;
+        this._rpcStatusUnsub = this.rpcClient.onStatusChange((status) => {
+          this._rpcStatus = status;
+        });
+      } else {
+        this._rpcStatus = "disconnected";
+      }
     }
     if (changed.has("eventDispatcher") && this.eventDispatcher && !this._sse) {
       this._initSse();
@@ -521,8 +572,8 @@ export class IcDashboard extends LitElement {
   // ---------------------------------------------------------------------------
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadData();
     }, delayMs);
@@ -552,14 +603,14 @@ export class IcDashboard extends LitElement {
 
   private _startRpcRefresh(): void {
     if (this._rpcRefreshInterval !== null) return;
-    this._rpcRefreshInterval = setInterval(() => {
+    this._rpcRefreshInterval = systemSetInterval(() => {
       this._loadRpcData();
     }, RPC_REFRESH_INTERVAL_MS);
   }
 
   private _stopRpcRefresh(): void {
     if (this._rpcRefreshInterval !== null) {
-      clearInterval(this._rpcRefreshInterval);
+      systemClearInterval(this._rpcRefreshInterval);
       this._rpcRefreshInterval = null;
     }
   }
@@ -681,19 +732,17 @@ export class IcDashboard extends LitElement {
   // ---------------------------------------------------------------------------
 
   private async _loadCostSparkline(): Promise<void> {
-    if (!this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!controller) return;
 
     const dayMs = 86_400_000;
     const calls = Array.from({ length: 7 }, (_, i) =>
-      this.rpcClient!.call<Record<string, unknown>>(
-        "obs.billing.total",
-        { sinceMs: dayMs * (i + 1) },
-      ),
+      controller.getBillingTotal(dayMs * (i + 1)),
     );
     const results = await Promise.allSettled(calls);
 
     const cumulative = results.map((r) =>
-      r.status === "fulfilled" ? Number((r.value as Record<string, unknown>).totalCost ?? 0) : 0,
+      r.status === "fulfilled" ? Number(r.value.totalCost ?? 0) : 0,
     );
     const daily = cumulative.map((val, i) =>
       i === 0 ? val : Math.max(0, val - cumulative[i - 1]),
@@ -706,13 +755,12 @@ export class IcDashboard extends LitElement {
   // ---------------------------------------------------------------------------
 
   private async _loadSparklineData(): Promise<void> {
-    if (!this.rpcClient || this.rpcClient.status !== "connected") return;
+    const controller = this._ensureController();
+    if (!controller || !this.rpcClient || this.rpcClient.status !== "connected") return;
 
     await Promise.allSettled([
       (async () => {
-        const usage24h = await this.rpcClient!.call<Array<{ hour: number; tokens: number }>>(
-          "obs.billing.usage24h",
-        );
+        const usage24h = await controller.getUsage24h();
         this._tokenSparklineData = usage24h.map((d) => d.tokens);
       })(),
       this._loadCostSparkline(),
@@ -724,14 +772,12 @@ export class IcDashboard extends LitElement {
   // ---------------------------------------------------------------------------
 
   private async _loadAgentBilling(): Promise<void> {
-    if (!this.rpcClient || this._agents.length === 0) return;
+    const controller = this._ensureController();
+    if (!controller || this._agents.length === 0) return;
 
     const results = await Promise.allSettled(
       this._agents.slice(0, 20).map((agent) =>
-        this.rpcClient!.call<{ totalCost: number; totalTokens: number }>(
-          "obs.billing.byAgent",
-          { agentId: agent.id },
-        ),
+        controller.getBillingByAgent(agent.id),
       ),
     );
 
@@ -947,7 +993,11 @@ export class IcDashboard extends LitElement {
     }
 
     const activeAgents = this._agents.filter((a) => a.status === "active").length;
-    const hasRpc = this.rpcClient != null;
+    // RPC-dependent stat cards show "---" placeholder when the WS connection is
+    // not yet established (status !== "connected"). The presence of an
+    // RpcClient instance is not sufficient -- the daemon may be unreachable.
+    // Use the @state-tracked _rpcStatus so render reruns on status changes.
+    const hasRpc = this.rpcClient != null && this._rpcStatus === "connected";
 
     // Compute deltas for messages, tokens, cost
     const msgDelta = this._computeDelta(this._messagesToday, this._prevMessages);

@@ -70,8 +70,10 @@ describe("resolveToolMaskingTier", () => {
     expect(resolveToolMaskingTier("read")).toBe("protected");
   });
 
-  it("returns 'protected' for file_read (legacy alias)", () => {
-    expect(resolveToolMaskingTier("file_read")).toBe("protected");
+  it("returns 'standard' for file_read (legacy SDK alias removed)", () => {
+    // @anthropic-ai/sdk 0.91+ emits 'read' (not 'file_read'); the alias has
+    // been removed.
+    expect(resolveToolMaskingTier("file_read")).toBe("standard");
   });
 
   it("returns 'protected' for session_search", () => {
@@ -122,15 +124,15 @@ describe("resolveToolMaskingTier", () => {
 });
 
 describe("TOOL_MASKING_TIERS", () => {
-  it("has exactly 11 entries (6 protected + 5 ephemeral)", () => {
-    expect(TOOL_MASKING_TIERS.size).toBe(11);
+  it("has exactly 10 entries (5 protected + 5 ephemeral)", () => {
+    expect(TOOL_MASKING_TIERS.size).toBe(10);
   });
 
-  it("contains 6 protected-tier entries (read + file_read legacy alias)", () => {
+  it("contains 5 protected-tier entries", () => {
     const protectedEntries = [...TOOL_MASKING_TIERS.entries()].filter(
       ([, tier]) => tier === "protected",
     );
-    expect(protectedEntries).toHaveLength(6);
+    expect(protectedEntries).toHaveLength(5);
   });
 
   it("contains 5 ephemeral-tier entries", () => {
@@ -142,7 +144,7 @@ describe("TOOL_MASKING_TIERS", () => {
 });
 
 describe("EPHEMERAL_TOOL_KEEP_WINDOW", () => {
-  it("equals 10", () => {
+  it("equals 10 messages per ephemeral-tool keep-window contract", () => {
     expect(EPHEMERAL_TOOL_KEEP_WINDOW).toBe(10);
   });
 });

@@ -8,11 +8,19 @@
  * @module
  */
 
-import { validateProfileId, type AgentConfig } from "@comis/core";
+import {
+  validateProfileId,
+  AgentsCreateContract,
+  AgentsUpdateContract,
+  AgentsDeleteContract,
+  AgentGetOperationModelsContract,
+  ConfigReadContract,
+  type AgentConfig,
+} from "@comis/core";
 import type { Command } from "commander";
-import { ensureWorkspace, resolveWorkspaceDir } from "@comis/agent";
+import { ensureWorkspace, resolveWorkspaceDir } from "@comis/core";
 import chalk from "chalk";
-import { withClient } from "../client/rpc-client.js";
+import { withClient, callTyped } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable } from "../output/table.js";
@@ -44,10 +52,11 @@ export function registerAgentCommand(program: Command): void {
       try {
         const result = await withSpinner("Fetching agents...", () =>
           withClient(async (client) => {
-            return (await client.call("config.get", { section: "agents" })) as Record<
-              string,
-              unknown
-            >;
+            // Retargeted from stale `config.get` method name (daemon implements
+            // `config.read`) to ConfigReadContract.
+            return await callTyped(client, ConfigReadContract, {
+              section: "agents",
+            }) as Record<string, unknown>;
           }),
         );
 
@@ -93,7 +102,7 @@ export function registerAgentCommand(program: Command): void {
 
         await withSpinner(`Creating agent "${name}"...`, () =>
           withClient(async (client) => {
-            return await client.call("agents.create", {
+            return await callTyped(client, AgentsCreateContract, {
               agentId: name,
               config: agentConfig,
             });
@@ -137,7 +146,7 @@ export function registerAgentCommand(program: Command): void {
 
         await withSpinner(`Updating agent "${name}"...`, () =>
           withClient(async (client) => {
-            return await client.call("agents.update", {
+            return await callTyped(client, AgentsUpdateContract, {
               agentId: name,
               config: updates,
             });
@@ -180,7 +189,7 @@ export function registerAgentCommand(program: Command): void {
       try {
         await withSpinner(`Setting OAuth profile for "${agentId}"...`, () =>
           withClient(async (client) => {
-            return await client.call("agents.update", {
+            return await callTyped(client, AgentsUpdateContract, {
               agentId,
               config: { oauthProfiles: { [provider]: profileId } },
             });
@@ -238,7 +247,7 @@ export function registerAgentCommand(program: Command): void {
       try {
         await withSpinner(`Deleting agent "${name}"...`, () =>
           withClient(async (client) => {
-            return await client.call("agents.delete", {
+            return await callTyped(client, AgentsDeleteContract, {
               agentId: name,
             });
           }),
@@ -261,7 +270,7 @@ export function registerAgentCommand(program: Command): void {
       try {
         const result = await withSpinner("Fetching operation models...", () =>
           withClient(async (client) => {
-            return await client.call("agent.getOperationModels", { agentId });
+            return await callTyped(client, AgentGetOperationModelsContract, { agentId });
           }),
         );
 

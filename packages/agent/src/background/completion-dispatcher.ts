@@ -35,7 +35,7 @@
 
 import { suppressError } from "@comis/shared";
 import type { TypedEventBus, BackgroundTaskOrigin } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type {
   BackgroundTask,
   BackgroundSessionState,

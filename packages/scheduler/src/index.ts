@@ -6,7 +6,7 @@
 export type { SchedulerLogger } from "./shared-types.js";
 
 // Cron types
-export type { CronJob } from "./cron/index.js";
+export type { CronJob, CronSchedule } from "./cron/index.js";
 
 // Cron engine
 export { computeNextRunAtMs } from "./cron/index.js";
@@ -19,9 +19,9 @@ export type { CronScheduler } from "./cron/index.js";
 export { createExecutionTracker } from "./execution/index.js";
 export type { ExecutionTracker, ExecutionLogEntry } from "./execution/index.js";
 
-// File-based execution lock (consumed by @comis/agent OAuth file adapter + token manager)
-export { withExecutionLock, isLocked } from "./execution/execution-lock.js";
-export type { ExecutionLockOptions } from "./execution/execution-lock.js";
+// createFileLock lives in @comis/core. Consumers (CLI, agent OAuth call
+// sites, daemon composition root, scheduler internals) import directly from
+// @comis/core; scheduler no longer mediates the FileLockPort factory.
 
 // Heartbeat monitoring
 export { HEARTBEAT_OK_TOKEN, createHeartbeatRunner } from "./heartbeat/index.js";

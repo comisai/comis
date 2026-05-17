@@ -20,22 +20,23 @@ import { INITIAL_STATE } from "../types.js";
 vi.mock("@clack/prompts", () => ({}));
 
 // Mock pi-ai's getModels so we control the catalog baseUrl in tests
-vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@mariozechner/pi-ai")>();
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@earendil-works/pi-ai")>();
   return {
     ...actual,
     getModels: vi.fn(() => [{ baseUrl: "https://api.anthropic.com" }]),
   };
 });
 
-// Mock @comis/agent's interactive OAuth flow for the dispatch tests.
+// Mock @comis/core's interactive OAuth flow for the dispatch tests.
 // The mock returns a controllable Result so the dispatch branches can
 // be exercised without a real browser open or callback server.
 // selectOAuthCredentialStore is stubbed to an in-memory port so the
 // test never touches ~/.comis/auth-profiles.json on the test host's
-// filesystem.
-vi.mock("@comis/agent", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@comis/agent")>();
+// filesystem. loadConfigFile is also mocked here so the wizard defaults
+// to file storage.
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
     loginOpenAICodexOAuth: vi.fn(),
@@ -56,17 +57,6 @@ vi.mock("@comis/agent", async (importOriginal) => {
         has: async (id: string) => ({ ok: true as const, value: inMemory.has(id) }),
       };
     }),
-    redactEmailForLog: actual.redactEmailForLog,
-  };
-});
-
-// Mock loadConfigFile to return "no config" so the wizard defaults to
-// file storage (the selectOAuthCredentialStore mock above intercepts
-// the result anyway). validateConfig is pass-through.
-vi.mock("@comis/core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@comis/core")>();
-  return {
-    ...actual,
     loadConfigFile: vi
       .fn()
       .mockReturnValue({ ok: false, error: new Error("no config") }),
@@ -74,17 +64,17 @@ vi.mock("@comis/core", async (importOriginal) => {
 });
 
 import { credentialsStep } from "./04-credentials.js";
-import { getModels } from "@mariozechner/pi-ai";
-import { loginOpenAICodexOAuth, isRemoteEnvironment } from "@comis/agent";
+import { getModels } from "@earendil-works/pi-ai";
+import { loginOpenAICodexOAuth, isRemoteEnvironment } from "@comis/core";
 
 // Capture the un-mocked `getModels` so the composed-URL regression tests
 // can compose URLs against the real pi-ai catalog (the module-level
 // `vi.mock` returns a sentinel baseUrl).
-let actualGetModels: typeof import("@mariozechner/pi-ai").getModels;
+let actualGetModels: typeof import("@earendil-works/pi-ai").getModels;
 
 beforeAll(async () => {
-  const actual = await vi.importActual<typeof import("@mariozechner/pi-ai")>(
-    "@mariozechner/pi-ai",
+  const actual = await vi.importActual<typeof import("@earendil-works/pi-ai")>(
+    "@earendil-works/pi-ai",
   );
   actualGetModels = actual.getModels;
 });

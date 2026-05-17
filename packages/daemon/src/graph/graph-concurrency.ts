@@ -100,7 +100,7 @@ export function globalCompletionHandler(
       runId: event.runId,
       success: event.success,
       hint: "Sub-agent completion event not routed to any graph — possible event ordering issue or non-graph completion",
-      errorKind: "internal",
+      errorKind: "internal" as const,
     }, "Orphaned graph sub-agent completion");
   }
 }

@@ -22,7 +22,7 @@
  * @module
  */
 
-import { getModels, type KnownProvider } from "@mariozechner/pi-ai";
+import { getModels, type KnownProvider } from "@earendil-works/pi-ai";
 import { resolveOperationDefaults } from "./operation-model-defaults.js";
 
 /**

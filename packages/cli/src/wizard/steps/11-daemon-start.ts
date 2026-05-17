@@ -26,8 +26,7 @@ import {
 } from "node:fs";
 import * as os from "node:os";
 import { promisify } from "node:util";
-import { safePath } from "@comis/core";
-import { isDocker } from "@comis/infra";
+import { isDocker, safePath, systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 const exec = promisify(execFile);
 import type {
@@ -97,20 +96,20 @@ function resolveGateway(state: WizardState): { host: string; port: number } {
  * @returns true if the daemon became ready, false on timeout
  */
 async function waitForReady(host: string, port: number): Promise<boolean> {
-  const deadline = Date.now() + READY_TIMEOUT_MS;
+  const deadline = systemNowMs() + READY_TIMEOUT_MS;
   const url = `http://${host}:${port}/health`;
 
-  while (Date.now() < deadline) {
+  while (systemNowMs() < deadline) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2000);
+      const timer = systemSetTimeout(() => controller.abort(), 2000);
       const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       if (res.ok) return true;
     } catch {
       // Not ready yet -- keep polling
     }
-    await new Promise((r) => setTimeout(r, READY_POLL_MS));
+    await new Promise<void>((r) => systemSetTimeout(() => r(), READY_POLL_MS));
   }
   return false;
 }
@@ -129,9 +128,9 @@ async function waitForRestart(host: string, port: number): Promise<boolean> {
   const probe = async (): Promise<boolean> => {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 1500);
+      const timer = systemSetTimeout(() => controller.abort(), 1500);
       const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       return res.ok;
     } catch {
       return false;
@@ -139,17 +138,17 @@ async function waitForRestart(host: string, port: number): Promise<boolean> {
   };
 
   // Phase 1: wait for the gateway to disappear (signal landed).
-  const downDeadline = Date.now() + 5_000;
-  while (Date.now() < downDeadline) {
+  const downDeadline = systemNowMs() + 5_000;
+  while (systemNowMs() < downDeadline) {
     if (!(await probe())) break;
-    await new Promise((r) => setTimeout(r, READY_POLL_MS));
+    await new Promise<void>((r) => systemSetTimeout(() => r(), READY_POLL_MS));
   }
 
   // Phase 2: wait for the gateway to come back (container restarted).
-  const upDeadline = Date.now() + READY_TIMEOUT_MS;
-  while (Date.now() < upDeadline) {
+  const upDeadline = systemNowMs() + READY_TIMEOUT_MS;
+  while (systemNowMs() < upDeadline) {
     if (await probe()) return true;
-    await new Promise((r) => setTimeout(r, READY_POLL_MS));
+    await new Promise<void>((r) => systemSetTimeout(() => r(), READY_POLL_MS));
   }
   return false;
 }
@@ -171,11 +170,11 @@ async function runHealthCheck(
   // 1. Gateway check
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
+    const timer = systemSetTimeout(() => controller.abort(), 5000);
     const res = await fetch(`http://${gatewayHost}:${gatewayPort}/health`, {
       signal: controller.signal,
     });
-    clearTimeout(timer);
+    systemClearTimeout(timer);
 
     if (res.ok) {
       checks.push({
@@ -369,7 +368,7 @@ async function restartViaSigusr2(manager: "systemd" | "systemd-user"): Promise<b
     if (isNaN(pid) || pid <= 0) return false;
     process.kill(pid, "SIGUSR2");
     // Wait for systemd to respawn the process
-    await new Promise((r) => setTimeout(r, 3000));
+    await new Promise<void>((r) => systemSetTimeout(() => r(), 3000));
     return true;
   } catch {
     return false;
@@ -407,11 +406,11 @@ export const daemonStartStep: WizardStep = {
 
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2000);
+      const timer = systemSetTimeout(() => controller.abort(), 2000);
       const res = await fetch(`http://${host}:${port}/health`, {
         signal: controller.signal,
       });
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       if (res.ok) daemonRunning = true;
     } catch {
       // Not running
@@ -562,7 +561,7 @@ export const daemonStartStep: WizardStep = {
           const pid = Number(readFileSync(pidFile, "utf-8").trim());
           if (!isNaN(pid)) {
             try { process.kill(pid, "SIGTERM"); } catch { /* already stopped */ }
-            await new Promise((r) => setTimeout(r, 1500));
+            await new Promise<void>((r) => systemSetTimeout(() => r(), 1500));
           }
         }
         stopSpinner.stop("Daemon stopped");

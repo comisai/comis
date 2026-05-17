@@ -156,7 +156,7 @@ describe("ActiveRunRegistry", () => {
   // -------------------------------------------------------------------------
 
   describe("size", () => {
-    it("starts at 0", () => {
+    it("starts at 0 entries before any run is registered", () => {
       const registry = createActiveRunRegistry();
 
       expect(registry.size).toBe(0);

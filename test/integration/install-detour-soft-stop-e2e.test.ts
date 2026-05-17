@@ -19,7 +19,7 @@
  *    refusal; assertion verifies none have success=true)
  * 4. Privacy invariant — payload JSON does not contain raw command/cwd
  *
- * exec is NOT an RPC method (packages/daemon/src/wiring/setup-gateway-rpc.ts
+ * exec is NOT an RPC method (packages/daemon/src/wiring/setup-gateway-api.ts
  * has no exec.* allowlist entry). Driving the install-detour code path
  * requires inline createExecTool + tool.execute().
  *
@@ -43,7 +43,8 @@ import {
 import { DAEMON_STARTUP_MS } from "../support/timeouts.js";
 import { createEventAwaiter } from "../support/event-awaiter.js";
 import type { TypedEventBus, EventMap } from "@comis/core";
-import { createExecTool, createProcessRegistry } from "@comis/skills";
+// exec / process registry live at the `./tools` subpath.
+import { createExecTool, createProcessRegistry } from "@comis/skills/tools";
 // Test-only stub. Allowed import from test/integration/ — the architecture-grep
 // (packages/skills/src/__tests__/architecture.test.ts) scopes only
 // packages/<pkg>/src/**/*.ts, NOT test/integration/.
