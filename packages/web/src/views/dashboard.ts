@@ -458,10 +458,13 @@ export class IcDashboard extends LitElement {
   @state() private _tokenSparklineData: number[] = [];
   @state() private _costSparklineData: number[] = [];
   @state() private _agentBilling: Map<string, { cost: number; tokens: number }> = new Map();
+  /** Mirrors rpcClient.status so render() can react to WS connect/disconnect. */
+  @state() private _rpcStatus: "connected" | "reconnecting" | "disconnected" = "disconnected";
 
   private _sse: SseController | null = null;
   private _rpcRefreshInterval: ReturnType<typeof setInterval> | null = null;
   private _reloadDebounce: ReturnType<typeof setTimeout> | null = null;
+  private _rpcStatusUnsub: (() => void) | null = null;
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -478,6 +481,8 @@ export class IcDashboard extends LitElement {
       this._reloadDebounce = null;
     }
     this._stopRpcRefresh();
+    this._rpcStatusUnsub?.();
+    this._rpcStatusUnsub = null;
   }
 
   override updated(changed: Map<string, unknown>): void {
@@ -488,6 +493,17 @@ export class IcDashboard extends LitElement {
       this._stopRpcRefresh();
       this._startRpcRefresh();
       this._loadRpcData();
+      // Track RPC status so render() can show "---" placeholders when disconnected.
+      this._rpcStatusUnsub?.();
+      this._rpcStatusUnsub = null;
+      if (this.rpcClient) {
+        this._rpcStatus = this.rpcClient.status;
+        this._rpcStatusUnsub = this.rpcClient.onStatusChange((status) => {
+          this._rpcStatus = status;
+        });
+      } else {
+        this._rpcStatus = "disconnected";
+      }
     }
     if (changed.has("eventDispatcher") && this.eventDispatcher && !this._sse) {
       this._initSse();
@@ -948,7 +964,11 @@ export class IcDashboard extends LitElement {
     }
 
     const activeAgents = this._agents.filter((a) => a.status === "active").length;
-    const hasRpc = this.rpcClient != null;
+    // RPC-dependent stat cards show "---" placeholder when the WS connection is
+    // not yet established (status !== "connected"). The presence of an
+    // RpcClient instance is not sufficient -- the daemon may be unreachable.
+    // Use the @state-tracked _rpcStatus so render reruns on status changes.
+    const hasRpc = this.rpcClient != null && this._rpcStatus === "connected";
 
     // Compute deltas for messages, tokens, cost
     const msgDelta = this._computeDelta(this._messagesToday, this._prevMessages);
