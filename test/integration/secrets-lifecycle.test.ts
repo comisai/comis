@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Secrets Lifecycle Integration Tests (TEST-01)
+ * Secrets Lifecycle Integration Tests
  *
  * Validates the encrypted secrets boot path, per-agent credential scoping,
  * and secret:accessed audit event emission -- end-to-end with a real daemon.
@@ -52,7 +52,7 @@ const DENIED_VALUE = "test-openai-key-value";
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("Secrets Lifecycle Integration Tests (TEST-01)", () => {
+describe("Secrets Lifecycle Integration Tests", () => {
   let handle: TestDaemonHandle;
   let logCapture: ReturnType<typeof createLogCapture>;
   let tempSecretsDbPath: string;

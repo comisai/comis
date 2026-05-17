@@ -9,11 +9,11 @@
  * All tests run in-process using :memory: SQLite databases and mock LLM
  * boundaries. No daemon, no real LLM calls.
  *
- * TEST-11: DAG Ingest + Assemble
- * TEST-12: Compaction Cycle (Originals Recoverable)
- * TEST-13: ctx_recall E2E (Handler-Level via createContextHandlers)
- * TEST-14: Mode Switch (Pipeline to DAG)
- * TEST-15: Metrics Emission in DAG Mode
+ * DAG Ingest + Assemble
+ * Compaction Cycle (Originals Recoverable)
+ * ctx_recall E2E (Handler-Level via createContextHandlers)
+ * Mode Switch (Pipeline to DAG)
+ * Metrics Emission in DAG Mode
  *
  * @module
  */
@@ -112,10 +112,10 @@ const mockGenerateSummary = vi.fn().mockImplementation(
 );
 
 // =========================================================================
-// TEST-11: DAG Ingest + Assemble
+// DAG Ingest + Assemble
 // =========================================================================
 
-describe("TEST-11: DAG Ingest + Assemble", () => {
+describe("DAG Ingest + Assemble", () => {
   let db: InstanceType<typeof Database>;
   let store: ContextStore;
   let conversationId: string;
@@ -209,10 +209,10 @@ describe("TEST-11: DAG Ingest + Assemble", () => {
 });
 
 // =========================================================================
-// TEST-12: Compaction Cycle (Originals Recoverable)
+// Compaction Cycle (Originals Recoverable)
 // =========================================================================
 
-describe("TEST-12: Compaction Cycle (Originals Recoverable)", () => {
+describe("Compaction Cycle (Originals Recoverable)", () => {
   let db: InstanceType<typeof Database>;
   let store: ContextStore;
   let conversationId: string;
@@ -351,10 +351,10 @@ describe("TEST-12: Compaction Cycle (Originals Recoverable)", () => {
 });
 
 // =========================================================================
-// TEST-14: Mode Switch (Pipeline to DAG)
+// Mode Switch (Pipeline to DAG)
 // =========================================================================
 
-describe("TEST-14: Mode Switch (Pipeline to DAG)", () => {
+describe("Mode Switch (Pipeline to DAG)", () => {
   let db: InstanceType<typeof Database>;
   let store: ContextStore;
   let conversationId: string;
@@ -443,10 +443,10 @@ describe("TEST-14: Mode Switch (Pipeline to DAG)", () => {
 });
 
 // =========================================================================
-// TEST-13: ctx_recall E2E (Handler-Level via createContextHandlers)
+// ctx_recall E2E (Handler-Level via createContextHandlers)
 // =========================================================================
 
-describe("TEST-13: ctx_recall E2E (Handler-Level)", () => {
+describe("ctx_recall E2E (Handler-Level)", () => {
   let db: InstanceType<typeof Database>;
   let store: ContextStore;
   let conversationId: string;
@@ -610,10 +610,10 @@ describe("TEST-13: ctx_recall E2E (Handler-Level)", () => {
 });
 
 // =========================================================================
-// TEST-15: Metrics Emission in DAG Mode
+// Metrics Emission in DAG Mode
 // =========================================================================
 
-describe("TEST-15: Metrics Emission in DAG Mode", () => {
+describe("Metrics Emission in DAG Mode", () => {
   let db: InstanceType<typeof Database>;
   let store: ContextStore;
   let conversationId: string;

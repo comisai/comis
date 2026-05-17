@@ -1,4 +1,4 @@
-# Token Resolution Integration Test (TEST-02)
+# Token Resolution Integration Test
 #
 # Validates the three-tier token resolution chain:
 #   1. Config secret (explicit, >= 32 chars) -> use directly

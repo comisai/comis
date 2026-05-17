@@ -33,14 +33,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
 
 // 5 enforced directories with narrow scopes
-const COV_06_AGENT_EXECUTOR = resolve(REPO_ROOT, "packages/agent/src/executor");
-const COV_06_AGENT_SESSION = resolve(REPO_ROOT, "packages/agent/src/session");
-const COV_06_DAEMON_WIRING = resolve(REPO_ROOT, "packages/daemon/src/wiring");
-const COV_06_GATEWAY_SRC = resolve(REPO_ROOT, "packages/gateway/src");
-const COV_06_COMIS_SRC = resolve(REPO_ROOT, "packages/comis/src");
+const AGENT_EXECUTOR_DIR = resolve(REPO_ROOT, "packages/agent/src/executor");
+const AGENT_SESSION_DIR = resolve(REPO_ROOT, "packages/agent/src/session");
+const DAEMON_WIRING_DIR = resolve(REPO_ROOT, "packages/daemon/src/wiring");
+const GATEWAY_SRC_DIR = resolve(REPO_ROOT, "packages/gateway/src");
+const COMIS_SRC_DIR = resolve(REPO_ROOT, "packages/comis/src");
 
 // Daemon wiring: ONLY setup-*.ts files
-const COV_06_DAEMON_WIRING_PATTERN = /^setup-[a-z][a-z0-9-]*\.ts$/;
+const DAEMON_WIRING_PATTERN = /^setup-[a-z][a-z0-9-]*\.ts$/;
 
 // Gateway: ONLY public index.ts (root + web/discovery/responses/acp/openai subdirs — 6 total)
 function isGatewayPublicIndex(absPath: string): boolean {
@@ -124,7 +124,7 @@ describe("coverage-gate — file-neighbor invariant", () => {
 
   it("every production .ts file under packages/agent/src/executor has a neighbor test or a coverageWaiver entry", () => {
     const files: string[] = [];
-    walkProductionFiles(COV_06_AGENT_EXECUTOR, files);
+    walkProductionFiles(AGENT_EXECUTOR_DIR, files);
     const violations = files.filter(
       (f) => !hasNeighborTest(f) && !waiverSet.has(repoRelative(f)),
     );
@@ -147,7 +147,7 @@ describe("coverage-gate — file-neighbor invariant", () => {
 
   it("every production .ts file under packages/agent/src/session has a neighbor test or a coverageWaiver entry", () => {
     const files: string[] = [];
-    walkProductionFiles(COV_06_AGENT_SESSION, files);
+    walkProductionFiles(AGENT_SESSION_DIR, files);
     const violations = files.filter(
       (f) => !hasNeighborTest(f) && !waiverSet.has(repoRelative(f)),
     );
@@ -170,8 +170,8 @@ describe("coverage-gate — file-neighbor invariant", () => {
 
   it("every production setup-*.ts file in packages/daemon/src/wiring has a neighbor test or a coverageWaiver entry", () => {
     const files: string[] = [];
-    walkProductionFiles(COV_06_DAEMON_WIRING, files);
-    const inScope = files.filter((f) => COV_06_DAEMON_WIRING_PATTERN.test(basename(f)));
+    walkProductionFiles(DAEMON_WIRING_DIR, files);
+    const inScope = files.filter((f) => DAEMON_WIRING_PATTERN.test(basename(f)));
     const violations = inScope.filter(
       (f) => !hasNeighborTest(f) && !waiverSet.has(repoRelative(f)),
     );
@@ -194,7 +194,7 @@ describe("coverage-gate — file-neighbor invariant", () => {
 
   it("every public gateway barrel index.ts (root + 5 sub-barrels) has a neighbor test or a coverageWaiver entry", () => {
     const files: string[] = [];
-    walkProductionFiles(COV_06_GATEWAY_SRC, files);
+    walkProductionFiles(GATEWAY_SRC_DIR, files);
     const inScope = files.filter(isGatewayPublicIndex);
     const violations = inScope.filter(
       (f) => !hasNeighborTest(f) && !waiverSet.has(repoRelative(f)),
@@ -218,7 +218,7 @@ describe("coverage-gate — file-neighbor invariant", () => {
 
   it("every direct-child .ts file under packages/comis/src has a neighbor test or a coverageWaiver entry", () => {
     const files: string[] = [];
-    walkProductionFiles(COV_06_COMIS_SRC, files);
+    walkProductionFiles(COMIS_SRC_DIR, files);
     // ONLY direct children of packages/comis/src/ (no recursion);
     // path depth must be exactly 4: ["packages", "comis", "src", "<file>"].
     const inScope = files.filter((f) => {

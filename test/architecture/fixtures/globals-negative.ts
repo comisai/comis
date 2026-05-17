@@ -36,7 +36,7 @@ function register() {
 // CLEAN: Property access without call — `Date.now` (no parens)
 const fn = Date.now;  // function reference, not invocation
 
-// CLEAN: TimerHandle.unref() — D-GLOB-03 type-checker resolves to TimerHandle
+// CLEAN: TimerHandle.unref() — type-checker resolves to TimerHandle
 interface TimerHandle {
   readonly cancelled: boolean;
   cancel(): void;

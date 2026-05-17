@@ -10,10 +10,10 @@
  * imported from dist/ via @comis/agent, @comis/core, @comis/skills aliases.
  *
  * Covers:
- * - TEST-08: Evictor + Masker ordering (no double-processing)
- * - TEST-09: session_search tool handler E2E with mock RPC
- * - TEST-10: Budget utilization < 0.85 with 200-entry synthetic session
- * - TEST-15: Pipeline metrics emission completeness (all 17 fields)
+ * - Evictor + Masker ordering (no double-processing)
+ * - session_search tool handler E2E with mock RPC
+ * - Budget utilization < 0.85 with 200-entry synthetic session
+ * - Pipeline metrics emission completeness (all 17 fields)
  *
  * @module
  */
@@ -86,10 +86,10 @@ function buildMockSessionManager(fileEntries: unknown[]) {
 }
 
 // ---------------------------------------------------------------------------
-// TEST-08: Evictor + Masker Ordering (no double-processing)
+// Evictor + Masker Ordering (no double-processing)
 // ---------------------------------------------------------------------------
 
-describe("TEST-08: Evictor + Masker Ordering", () => {
+describe("Evictor + Masker Ordering", () => {
   it("evictor runs before masker and no message is double-processed", async () => {
     // Config: low observationTriggerChars (50_000 = minimum valid) so masker activates,
     // high historyTurns so window does not clip messages, low evictionMinAge.
@@ -219,10 +219,10 @@ describe("TEST-08: Evictor + Masker Ordering", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TEST-09: Session Search Tool Handler E2E
+// Session Search Tool Handler E2E
 // ---------------------------------------------------------------------------
 
-describe("TEST-09: Session Search Tool Handler E2E", () => {
+describe("Session Search Tool Handler E2E", () => {
   // Build session content representing a conversation with searchable data
   const sessionMessages = [
     { role: "user", content: "What does the config file contain?" },
@@ -362,10 +362,10 @@ describe("TEST-09: Session Search Tool Handler E2E", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TEST-10: Budget Under 0.85 with 200-Entry Synthetic Session
+// Budget Under 0.85 with 200-Entry Synthetic Session
 // ---------------------------------------------------------------------------
 
-describe("TEST-10: Budget utilization under 0.85 with 200-entry session", () => {
+describe("Budget utilization under 0.85 with 200-entry session", () => {
   it("pipeline reduces context to stay within budget", async () => {
     const config = ContextEngineConfigSchema.parse({
       enabled: true,
@@ -449,10 +449,10 @@ describe("TEST-10: Budget utilization under 0.85 with 200-entry session", () => 
 });
 
 // ---------------------------------------------------------------------------
-// TEST-15: Pipeline Metrics Emission Completeness
+// Pipeline Metrics Emission Completeness
 // ---------------------------------------------------------------------------
 
-describe("TEST-15: Pipeline metrics emission completeness", () => {
+describe("Pipeline metrics emission completeness", () => {
   it("context:pipeline event contains all 17 required fields with correct types", async () => {
     const config = ContextEngineConfigSchema.parse({
       enabled: true,

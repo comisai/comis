@@ -1,4 +1,4 @@
-# Comis Test Configuration — Typed Graph Approval-Gate Integration Tests (TEST-07)
+# Comis Test Configuration — Typed Graph Approval-Gate Integration Tests
 #
 # Uses port 8740 to avoid conflicts when running in parallel via vitest pool: "forks".
 # Tests the approval-gate node type through the graph coordinator's wait_for_input

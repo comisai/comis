@@ -629,7 +629,7 @@ describe("BwrapProvider", () => {
     });
 
     it("drops empty segments from inherited PATH (leading/trailing/double colons)", () => {
-      // Regression test for IN-03: an inherited PATH like ":foo:bar",
+      // Regression test for empty-segment PATH handling: an inherited PATH like ":foo:bar",
       // "foo::bar", or "foo:bar:" expands the empty segment to "." on
       // Unix, making the sandboxed CWD the first directory searched for
       // any binary. The provider must filter empty segments from

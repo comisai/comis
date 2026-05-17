@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Integration test: Compaction lifecycle events (TEST-04)
+ * Integration test: Compaction lifecycle events
  *
  * Proves that auto-compaction events emit with correct fields and log levels
  * through the built dist output. Uses a real TypedEventBus instance from
@@ -99,7 +99,7 @@ function makeAutoCompactionEndEvent(opts: {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("resilience-compaction-events integration (TEST-04)", () => {
+describe("resilience-compaction-events integration", () => {
   let deps: PiEventBridgeDeps;
 
   beforeEach(() => {
