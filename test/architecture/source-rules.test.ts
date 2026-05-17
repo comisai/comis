@@ -3,36 +3,34 @@
  * Project-wide source-rules invariants.
  *
  * Rules enforced here:
- *   - L23 (ARCH-BASE-06 partial): production source under packages/*\/src/**
- *     MUST NOT call raw path.join / nodePath.join / `join as pathJoin`
- *     aliases. Use safePath(base, ...segments) from @comis/core/security
- *     instead.
- *   - CONFIG-DELIV-08a (no-free-deliverToChannel): production source under
- *     packages/*\/src/** MUST NOT contain a free-standing `deliverToChannel(...)`
- *     call. Consume the method via `deps.deliveryService.deliverToChannel(...)`
- *     instead. Path-tail allowlist exempts the impl declaration site and the
- *     test factory.
- *   - CONFIG-DELIV-08b (no-deps-optional-in-delivery): files under
- *     packages/core/src/delivery/ MUST NOT use a `deps?:` optional-deps
- *     signature. The required-deps DeliveryService factory is the only
- *     legitimate shape (L26 closure).
+ *   - safePath: production source under packages/*\/src/** MUST NOT call
+ *     raw path.join / nodePath.join / `join as pathJoin` aliases. Use
+ *     safePath(base, ...segments) from @comis/core/security instead.
+ *   - no-free-deliverToChannel: production source under packages/*\/src/**
+ *     MUST NOT contain a free-standing `deliverToChannel(...)` call.
+ *     Consume the method via `deps.deliveryService.deliverToChannel(...)`
+ *     instead. Path-tail allowlist exempts the impl declaration site and
+ *     the test factory.
+ *   - no-deps-optional-in-delivery: files under packages/core/src/delivery/
+ *     MUST NOT use a `deps?:` optional-deps signature. The required-deps
+ *     DeliveryService factory is the only legitimate shape.
  *
- * The closed-`errorKind` literal rule (L16, the third component of
- * ARCH-BASE-06) lives in a separate AST walker, not here — that rule
- * needs the TS TypeChecker to resolve Object.assign / spread / member-access
- * expressions, which source-grep cannot do.
+ * The closed-`errorKind` literal rule lives in a separate AST walker, not
+ * here — that rule needs the TS TypeChecker to resolve Object.assign /
+ * spread / member-access expressions, which source-grep cannot do.
  *
  * Sub-allowlist semantics:
- *   - L23_ALLOWLIST: each entry is a path-tail (substring match against the
- *     absolute path). The canonical safe-path implementation file is the
- *     sole entry, plus a carve-out for the symlink-aware skill discovery.
+ *   - SAFE_PATH_ALLOWLIST: each entry is a path-tail (substring match
+ *     against the absolute path). The canonical safe-path implementation
+ *     file is the sole entry, plus a carve-out for the symlink-aware
+ *     skill discovery.
  *   - NO_FREE_DELIVER_ALLOWLIST: exactly two path-tails — the
  *     `DeliveryService.deliverToChannel(...)` method declaration in
  *     `core/src/delivery/delivery-service.ts` (the symbol's only legitimate
  *     bare-token site, since the regex catches the method-declaration
  *     syntax) and the `makeDeliveryService` test factory in
  *     `test/support/factories.ts` (defensive — the file no longer matches
- *     the regex, but is retained per the design spec).
+ *     the regex, but is retained per the design contract).
  *
  * @module
  */
@@ -65,7 +63,7 @@ const WORKSPACE_PACKAGES = [
 ] as const;
 
 /**
- * L23 sub-allowlist (1 entry).
+ * safePath sub-allowlist (1 entry).
  *
  * The sole entry (`core/src/security/safe-path.ts`) is the canonical
  * implementation of `safePath` itself — by definition it must call
@@ -83,7 +81,7 @@ const WORKSPACE_PACKAGES = [
  * Format: each entry is a path-tail. The check uses `m.endsWith(allowed)`
  * so the entry is matched as a suffix of the absolute file path.
  */
-const L23_ALLOWLIST: readonly string[] = [
+const SAFE_PATH_ALLOWLIST: readonly string[] = [
   // canonical safePath implementation (path.join is the safe wrapper's body)
   "core/src/security/safe-path.ts",
   // Skill discovery legitimately follows symlinks (dedup via realpath); the
@@ -97,7 +95,7 @@ const L23_ALLOWLIST: readonly string[] = [
 ] as const;
 
 /**
- * NO_FREE_DELIVER_ALLOWLIST (CONFIG-DELIV-08a — 2 entries).
+ * NO_FREE_DELIVER_ALLOWLIST (2 entries).
  *
  * The first entry is the `DeliveryService.deliverToChannel(...)` method
  * declaration in `core/src/delivery/delivery-service.ts` — the file
@@ -111,9 +109,9 @@ const L23_ALLOWLIST: readonly string[] = [
  * but `factories.ts` is NOT a `.test.ts` file. The factory's
  * `makeDeliveryService(...)` body is currently a method-form call
  * (`createDeliveryService({...})`) and does NOT contain a bare
- * `deliverToChannel(` token today, but the entry is retained per the
- * CONFIG-DELIV-08 design spec: if the factory evolves to expose a
- * method-declaration form, it must remain the only second site.
+ * `deliverToChannel(` token today, but the entry is retained as a
+ * defensive guard: if the factory evolves to expose a method-declaration
+ * form, it must remain the only second site.
  *
  * Path-tail match (`m.endsWith(allowed)`) so any future move of these
  * files within the same suffix continues to apply.
@@ -123,7 +121,7 @@ const NO_FREE_DELIVER_ALLOWLIST: readonly string[] = [
   "test/support/factories.ts",
 ] as const;
 
-describe("source-rules -- L23 safePath (ARCH-BASE-06 partial)", () => {
+describe("source-rules -- safePath", () => {
   for (const pkg of WORKSPACE_PACKAGES) {
     it(`packages/${pkg}/src does NOT call raw path.join (use safePath instead)`, () => {
       const result = findInSourceFiles({
@@ -139,7 +137,7 @@ describe("source-rules -- L23 safePath (ARCH-BASE-06 partial)", () => {
         excludeFileSuffixes: [".test.ts"],
       });
       const offenders = result.matches.filter(
-        (m) => !L23_ALLOWLIST.some((allowed) => m.endsWith(allowed)),
+        (m) => !SAFE_PATH_ALLOWLIST.some((allowed) => m.endsWith(allowed)),
       );
       expect(
         offenders,
@@ -148,8 +146,7 @@ describe("source-rules -- L23 safePath (ARCH-BASE-06 partial)", () => {
           violations: offenders.map((file) => ({ file, line: 0 })),
           suggestedFix:
             "Replace `path.join(base, segment, ...)` with `safePath(base, segment, ...)` from @comis/core. safePath enforces no path traversal beyond `base` (per OWASP V12).",
-          designRef: "design §1.3 L23",
-          allowlistRef: "L23 + L23_ALLOWLIST (in-file sub-allowlist)",
+          allowlistRef: "SAFE_PATH_ALLOWLIST (in-file sub-allowlist)",
         }),
       ).toEqual([]);
       expect(
@@ -160,7 +157,7 @@ describe("source-rules -- L23 safePath (ARCH-BASE-06 partial)", () => {
   }
 });
 
-describe("source-rules -- no-free-deliverToChannel (CONFIG-DELIV-08)", () => {
+describe("source-rules -- no-free-deliverToChannel", () => {
   for (const pkg of WORKSPACE_PACKAGES) {
     it(`packages/${pkg}/src does NOT contain a free-standing deliverToChannel(...) call`, () => {
       const result = findInSourceFiles({
@@ -170,8 +167,8 @@ describe("source-rules -- no-free-deliverToChannel (CONFIG-DELIV-08)", () => {
         // `deps.deliveryService.deliverToChannel(...)` (the CORRECT pattern)
         // and only flags bare-token sites: the method-declaration syntax in
         // `delivery-service.ts` (allowlisted) and any future free-standing
-        // function or top-level call that would re-introduce the L26 shape.
-        // Mirrors the L23 (?<!\.)\bpath\.join pattern verbatim.
+        // function or top-level call that would re-introduce the forbidden
+        // shape. Mirrors the safePath `(?<!\.)\bpath\.join` pattern verbatim.
         needle: /(?<!\.)\bdeliverToChannel\s*\(/,
         excludeFileSuffixes: [".test.ts"],
       });
@@ -184,8 +181,7 @@ describe("source-rules -- no-free-deliverToChannel (CONFIG-DELIV-08)", () => {
           description: `packages/${pkg}/src must consume DeliveryService.deliverToChannel via the service interface; no free-standing call.`,
           violations: offenders.map((file) => ({ file, line: 0 })),
           suggestedFix:
-            "Inject DeliveryService via deps and call deliveryService.deliverToChannel(adapter, channelId, text, options). See CONFIG-DELIV-04 / -05.",
-          designRef: "design §1.3 L26 / CONFIG-DELIV-04 / -08",
+            "Inject DeliveryService via deps and call deliveryService.deliverToChannel(adapter, channelId, text, options).",
           allowlistRef: "NO_FREE_DELIVER_ALLOWLIST (in-file sub-allowlist)",
         }),
       ).toEqual([]);
@@ -197,7 +193,7 @@ describe("source-rules -- no-free-deliverToChannel (CONFIG-DELIV-08)", () => {
   }
 });
 
-describe("source-rules -- no-deps-optional-in-delivery (CONFIG-DELIV-08)", () => {
+describe("source-rules -- no-deps-optional-in-delivery", () => {
   it("core/src/delivery does NOT use `deps?:` optional-deps signature", () => {
     const result = findInSourceFiles({
       rootDir: resolve(PACKAGES_ROOT, "core", "src", "delivery"),
@@ -210,11 +206,10 @@ describe("source-rules -- no-deps-optional-in-delivery (CONFIG-DELIV-08)", () =>
       result.matches,
       formatViolations({
         description:
-          "Delivery code must require deps; optional deps (deps?: ...) is forbidden by L26 closure.",
+          "Delivery code must require deps; optional deps (deps?: ...) is forbidden.",
         violations: result.matches.map((file) => ({ file, line: 0 })),
         suggestedFix:
           "Change `deps?: DeliveryServiceDeps` to `deps: DeliveryServiceDeps`. Construct the service at composition root and inject the resolved DeliveryService into call sites; do not push optional deps through the call chain.",
-        designRef: "design §1.3 L26 / CONFIG-DELIV-04 / -08",
         allowlistRef: "(no allowlist — delivery code must not use deps?:)",
       }),
     ).toEqual([]);
@@ -270,7 +265,6 @@ describe("source-rules -- disableRedaction forbidden in production source", () =
           })),
           suggestedFix:
             "Remove the `disableRedaction: true` assignment. If you genuinely need to observe raw payloads for a test, place that test under test/integration/ and use the residency-test harness pattern.",
-          designRef: "design §8.2.7",
         }),
       ).toEqual([]);
     });
@@ -316,7 +310,6 @@ describe("source-rules -- secret-residency", () => {
         })),
         suggestedFix:
           "Remove any module-level / class-level binding named /secret|decrypted|plaintext/i whose initializer comes from SecretStorePort / SecretManager / SecretsCrypto. Remove any Promise.all closure that captures such a binding from outer scope. See core/src/security/SECRET-RPC-CHECKLIST.md sections B (Plaintext residency) and D (Architecture-test alignment).",
-        designRef: "design §8.2.7",
       }),
     ).toEqual([]);
   });
@@ -348,7 +341,6 @@ describe("source-rules -- secret-residency", () => {
           })),
           suggestedFix:
             "Remove any module-level / class-level binding holding the un-projected OAuthProfile[]. Apply the redactProfileForRpc projection IMMEDIATELY at the handler-return boundary, never storing the un-projected array in a closure-captured variable. See core/src/security/SECRET-RPC-CHECKLIST.md sections B (Plaintext residency) and D (Architecture-test alignment).",
-          designRef: "design §8.2.7",
         }),
       ).toEqual([]);
     },
@@ -382,7 +374,6 @@ describe("source-rules -- ContextStorePort row-DTO residency", () => {
         })),
         suggestedFix:
           "Add the missing `export interface <Name> { ... }` to packages/core/src/ports/context-store-types.ts. If the type genuinely should not be a public row-DTO (e.g., it's a helper type), rename it so it does NOT match /^Ctx[A-Z][A-Za-z]+Row$/.",
-        designRef: "design §8.2.1",
       }),
     ).toEqual([]);
   });

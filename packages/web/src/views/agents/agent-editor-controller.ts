@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent-editor controller (Phase 44 / WEB-DECOMP-01).
+ * Agent-editor controller.
  *
  * Thin RPC façade — the agent-editor view retains @state for its form
  * because 41 existing behavioural tests use `priv()._form = …`,
@@ -8,9 +8,9 @@
  * to a snapshot-source controller would require a 96-call test rewrite.
  *
  * The controller's job is to keep `rpcClient.call(...)` out of
- * `agent-editor.ts` so the WEB-DECOMP-03 boundary test passes. Each method
- * mirrors a source view RPC invocation 1:1 (same method name, same args,
- * same response shape). Errors propagate verbatim (callers handle).
+ * `agent-editor.ts`. Each method mirrors a source view RPC invocation 1:1
+ * (same method name, same args, same response shape). Errors propagate
+ * verbatim (callers handle).
  *
  * @module
  */

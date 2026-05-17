@@ -94,7 +94,7 @@ describe("TTLCache", () => {
   });
 });
 
-describe("createTTLCache (PORTS-15): nowMs required", () => {
+describe("createTTLCache: nowMs required", () => {
   it("uses the injected nowMs for expiry timing", () => {
     let synthetic = 0;
     const cache = createTTLCache<string>({ ttlMs: 100, nowMs: () => synthetic });

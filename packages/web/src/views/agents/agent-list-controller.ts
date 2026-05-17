@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent list controller (Phase 44 / WEB-DECOMP-01 / Wave 5 / Task 3).
+ * Agent list controller.
  *
  * Thin RPC façade — the agent-list view retains @state for its agent
  * list, search/filter state, action-pending lock, delete-target,
  * model-catalog cache, and 8-field create-agent wizard flow because
  * the existing render + REST-driven (apiClient) interactions keep
  * state on the view. The controller's job is to keep
- * `rpcClient.call(...)` out of `agent-list.ts` so the WEB-DECOMP-03
- * boundary test passes.
+ * `rpcClient.call(...)` out of `agent-list.ts`.
  *
  * Note: agent list bootstrap goes through `apiClient.getAgents()` (REST)
  * — orthogonal to the rpcClient.call boundary regex.

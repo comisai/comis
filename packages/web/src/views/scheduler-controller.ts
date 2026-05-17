@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Scheduler controller (Phase 44 / WEB-DECOMP-01).
+ * Scheduler controller.
  *
  * Thin RPC façade — the scheduler view retains @state for jobs / heartbeat /
  * editor / SSE-driven execution feed because the view's existing test suite
  * relies on direct state assertions and DOM-driven editor flow with the
  * ic-cron-editor sub-component. The controller's job is to keep
- * `rpcClient.call(...)` out of `scheduler.ts` so the WEB-DECOMP-03 boundary
- * test passes. Each method mirrors a source view RPC invocation 1:1
- * (same method name, same args, same response shape). Errors propagate
- * verbatim (callers handle).
+ * `rpcClient.call(...)` out of `scheduler.ts`. Each method mirrors a source
+ * view RPC invocation 1:1 (same method name, same args, same response
+ * shape). Errors propagate verbatim (callers handle).
  *
  * The view continues to access `rpcClient.onStatusChange(...)` directly for
  * reconnect-triggered reloads — the boundary regex only matches `.call(...)`,
  * not status subscriptions.
  *
- * The embedded `ic-cron-editor` sub-component is Wave 6 scope; its
- * @property bindings remain on the view verbatim.
+ * The embedded `ic-cron-editor` sub-component's @property bindings remain on
+ * the view verbatim.
  *
  * @module
  */

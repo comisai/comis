@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Memory-inspector controller (Phase 44 / WEB-DECOMP-01).
+ * Memory-inspector controller.
  *
  * Thin RPC façade — the memory-inspector view retains @state for its 33
  * fields (search/browse/filter/selection/dialogs/embedding stats) because
@@ -9,7 +9,7 @@
  * itself wraps RPC under the hood, but the boundary regex matches only
  * `rpcClient.call` — apiClient stays on the view). The controller's job
  * is to keep the 3 raw `rpcClient.call(...)` sites out of
- * `memory-inspector.ts` so the WEB-DECOMP-03 boundary test passes.
+ * `memory-inspector.ts`.
  *
  * Each method mirrors a source view RPC invocation 1:1 (same method name,
  * same args, same response shape). Errors propagate verbatim (callers

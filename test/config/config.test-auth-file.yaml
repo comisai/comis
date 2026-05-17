@@ -1,4 +1,4 @@
-# Comis Test Configuration -- Auth-State Matrix (MEM-CTX-PORTS-11), file storage
+# Comis Test Configuration -- Auth-State Matrix, file storage
 #
 # Dedicated config for test/integration/auth-state-matrix.test.ts (file rows).
 # Configures `oauth.storage: file` so the CLI's auth list/logout/status

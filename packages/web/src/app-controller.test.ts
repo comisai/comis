@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * App-controller tests (Phase 44 / WEB-DECOMP-01 / Wave 7 / Task 1).
+ * App-controller tests.
  *
  * Coverage:
  *   - init / addController lifecycle
- *   - PollingController construction order (T-W7-01)
+ *   - PollingController construction order
  *   - Auth fail-closed semantics (fetch error → _authenticated stays false)
  *   - Auth success flow wires rpcClient + globalState + eventDispatcher
  *     + PollingController in the documented order
@@ -180,7 +180,7 @@ describe("AppController", () => {
   });
 
   it("init: constructs rpcClient before PollingController", async () => {
-    // T-W7-01 mitigation: this test is the contract.
+    // This test is the contract for PollingController construction order.
     //
     // Strategy: rather than relying on internal construction order
     // (which is private), we observe via side effects: when

@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { createFakeTimers } from "./fake-timers.js";
 
-describe("createFakeTimers (PORTS-08, PORTS-09)", () => {
+describe("createFakeTimers", () => {
   it("advance(ms) fires scheduled setTimeout callbacks whose deadline passed", () => {
     const t = createFakeTimers(0);
     let fired = false;
@@ -40,7 +40,7 @@ describe("createFakeTimers (PORTS-08, PORTS-09)", () => {
     expect(count).toBe(2); // no more fires after cancel
   });
 
-  it("PORTS-09: unrefRecord() reflects unref() calls", () => {
+  it("unrefRecord() reflects unref() calls", () => {
     const t = createFakeTimers(0);
     const h1 = t.setInterval(() => {}, 1_000);
     const h2 = t.setTimeout(() => {}, 5_000);
@@ -55,7 +55,7 @@ describe("createFakeTimers (PORTS-08, PORTS-09)", () => {
     h2.cancel();
   });
 
-  it("PORTS-04 contract on the fake: unref() after cancel() is a no-op", () => {
+  it("contract on the fake: unref() after cancel() is a no-op", () => {
     const t = createFakeTimers(0);
     const h = t.setInterval(() => {}, 60_000);
     h.cancel();

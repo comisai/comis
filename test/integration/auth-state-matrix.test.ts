@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MEM-CTX-PORTS-11: 4-state matrix for `comis auth {list, logout, status}`.
+ * 4-state matrix for `comis auth {list, logout, status}`.
  *
  * Each command must behave correctly across the product:
  *   - oauth.storage ∈ { "file", "encrypted" }
@@ -21,9 +21,9 @@
  *                      exit 4 + REMEDIATION_MESSAGE on stderr.
  *
  * The matrix exercises:
- *   - storage-mode-branching in cli/commands/auth.ts (plan 31-11)
- *   - requireDaemonOrExit gate (plan 31-09)
- *   - daemon's auth-handlers.ts admin-scoped RPC surface (plan 31-11)
+ *   - storage-mode-branching in cli/commands/auth.ts
+ *   - requireDaemonOrExit gate
+ *   - daemon's auth-handlers.ts admin-scoped RPC surface
  *
  * @module
  */
@@ -104,7 +104,7 @@ const MATRIX: readonly MatrixRow[] = [
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("auth {list, logout, status} -- 4-state matrix (MEM-CTX-PORTS-11)", () => {
+describe("auth {list, logout, status} -- 4-state matrix", () => {
   let activeHandle: TestDaemonHandle | undefined;
   let tempDbPath: string | undefined;
 

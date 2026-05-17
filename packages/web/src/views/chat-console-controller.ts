@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Chat console controller (Phase 44 / WEB-DECOMP-01).
+ * Chat console controller.
  *
  * Owns RPC orchestration for the chat console view. Unlike the
  * controller-as-snapshot-source pattern used by setup-wizard and skills,

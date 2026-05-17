@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Security controller tests (Phase 44 / WEB-DECOMP-01 / Wave 7 / Task 2).
+ * Security controller tests.
  *
  * Coverage: each RPC method (success + failure propagation) + addController
- * registration + lifecycle no-op. Pattern matches pipeline-monitor-
- * controller.test.ts (Wave 6 reference).
+ * registration + lifecycle no-op. Pattern matches pipeline-monitor-controller.test.ts.
  */
 import { describe, it, expect, vi } from "vitest";
 import type { ReactiveControllerHost } from "lit";

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Skills view controller (Phase 44 / WEB-DECOMP-01).
+ * Skills view controller.
  *
  * Owns state + RPC orchestration for the skills management view:
  * config.read for skills config, skills.list for discovered prompt skills,

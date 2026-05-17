@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Channel-detail controller (Phase 44 / WEB-DECOMP-01).
+ * Channel-detail controller.
  *
  * Thin RPC façade — the channel-detail view retains @state for its
  * tabbed config dashboard (config + media-processing + delivery trace +
@@ -8,7 +8,7 @@
  * DOM-coupled flow (tab switching, optimistic media-toggle updates with
  * rollback, debounce on reload, SSE event subscriptions) keeps state on
  * the view. The controller's job is to keep `rpcClient.call(...)` out
- * of `channel-detail.ts` so the WEB-DECOMP-03 boundary test passes.
+ * of `channel-detail.ts` so the boundary test passes.
  * Each method mirrors a source view RPC invocation 1:1 (same method
  * name, same args, same response shape). Errors propagate verbatim
  * (callers handle).

@@ -61,14 +61,13 @@ const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
  * to child views via property passing. Uses sidebar + topbar shell
  * layout with 14 navigation items and 27 parameterized routes.
  *
- * Phase 44 Wave 7: auth + polling + global-state + keyboard +
- * command-palette orchestration is owned by `app-controller.ts`
- * (createAppController). The shell retains the Lit @customElement
- * tag registration, static styles, router host fields, the
- * VIEW_LOADERS map, _renderAuth / _renderApp / _renderShortcutsHelp
- * template helpers, and the render() method. The controller's
- * `_completeInit` preserves the documented PollingController-after-
- * rpcClient construction order (T-W7-01) verbatim.
+ * Auth + polling + global-state + keyboard + command-palette
+ * orchestration is owned by `app-controller.ts` (createAppController).
+ * The shell retains the Lit @customElement tag registration, static
+ * styles, router host fields, the VIEW_LOADERS map, _renderAuth /
+ * _renderApp / _renderShortcutsHelp template helpers, and the render()
+ * method. The controller's `_completeInit` preserves the documented
+ * PollingController-after-rpcClient construction order verbatim.
  */
 @customElement("ic-app")
 export class IcApp extends LitElement implements AppHost {
@@ -293,8 +292,8 @@ export class IcApp extends LitElement implements AppHost {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    // Phase 44 Wave 7: instantiate (or reuse if a test pre-instantiated
-    // via _ensureController) the app-controller. The shell retains
+    // Instantiate (or reuse if a test pre-instantiated via
+    // _ensureController) the app-controller. The shell retains
     // router-host @state, render() + template helpers, VIEW_LOADERS.
     // Manually fire hostConnected — the element is already connected and
     // the controller needs to restore the session token + wire the global

@@ -156,7 +156,7 @@ describe("globals — production source", () => {
     const allFiles = listAllProductionFiles();
     const violations = classifyGlobals(allFiles);
 
-    // Allowlist key shape: {file, line, global} per PATTERNS.md key table.
+    // Allowlist key shape: {file, line, global}.
     // Each occurrence is a distinct site.
     const allowlistKey = new Set(
       globalsAllowlist.map((e) => `${e.file}:${e.line}:${e.global}`),

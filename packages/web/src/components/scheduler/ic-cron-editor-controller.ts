@@ -1,22 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cron editor controller (Phase 44 / WEB-DECOMP-04 / Wave 6 / Task 3).
+ * Cron editor controller.
  *
  * NO-RPC variant — the ic-cron-editor component is a graph form
- * component with zero direct daemon-RPC invocations at HEAD
- * (verified live grep against the boundary regex). Per Plan 44-06
- * `<interfaces>` NO-RPC variant: the controller factory signature
- * drops the `rpcClient` parameter and the
+ * component with zero direct daemon-RPC invocations. The controller
+ * factory signature omits the `rpcClient` parameter and the
  * controller owns pure UI orchestration (debounce timer + next-runs
  * computation). The view retains @state because its property
- * bindings to the parent scheduler view (Wave 3 output) are the
- * cross-component API contract — `<ic-cron-editor .job=${...}
- * .agents=${...} .mode=${...} @save=${...} @cancel=${...}>` must
- * stay verbatim.
- *
- * Controller cap is 500L (TIGHTEST in scope) per PATTERNS.md §S1
- * line 106 — ic-cron-editor is the graph-component form-only
- * variant.
+ * bindings to the parent scheduler view are the cross-component API
+ * contract — `<ic-cron-editor .job=${...} .agents=${...}
+ * .mode=${...} @save=${...} @cancel=${...}>` must stay verbatim.
  *
  * The next-runs calculators (computeNextCronRuns / computeNextEveryRuns
  * / computeNextAtRun) remain exported from ic-cron-editor.ts because

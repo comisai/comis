@@ -2,12 +2,12 @@
 /**
  * Node-backed TimerPort adapter.
  *
- * Returns closure-cancellable TimerHandle objects per PORTS-03/04:
+ * Returns closure-cancellable TimerHandle objects:
  *   - handle.cancel()  → clearTimeout/clearInterval the underlying Node timer
  *   - handle.unref()   → t.unref() with cancel-safety + idempotency guard
  *   - handle.cancelled → readonly flag for callers and shutdown tests
  *
- * PORTS-04 contract:
+ * Idempotency contract:
  *   - unref() on a cancelled timer is a no-op (cancelled flag guards delegation)
  *   - unref() called twice is a no-op (unrefCalled flag guards delegation)
  *   - cancel() called twice is a no-op (cancelled flag guards delegation)

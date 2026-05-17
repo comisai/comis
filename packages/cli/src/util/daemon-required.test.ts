@@ -13,7 +13,7 @@ import {
   DAEMON_PROBE_TIMEOUT_MS,
 } from "./daemon-required.js";
 
-describe("requireDaemonOrExit (MEM-CTX-PORTS-12)", () => {
+describe("requireDaemonOrExit", () => {
   let stderrSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
@@ -54,11 +54,11 @@ describe("requireDaemonOrExit (MEM-CTX-PORTS-12)", () => {
     expect(isDaemonRunning).toHaveBeenCalledWith(50);
   });
 
-  it("declares DAEMON_PROBE_TIMEOUT_MS === 200 ms per MEM-CTX-PORTS-12 contract", () => {
+  it("declares DAEMON_PROBE_TIMEOUT_MS === 200 ms", () => {
     expect(DAEMON_PROBE_TIMEOUT_MS).toBe(200);
   });
 
-  it("REMEDIATION_MESSAGE matches MEM-CTX-PORTS-10 contract — starts with ERROR + names comis start/status/logs", () => {
+  it("REMEDIATION_MESSAGE starts with ERROR and names comis start/status/logs", () => {
     expect(REMEDIATION_MESSAGE).toMatch(
       /^ERROR: This command requires the comis daemon, which is not running\./,
     );

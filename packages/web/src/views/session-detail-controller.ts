@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Session detail controller (Phase 44 / WEB-DECOMP-01 / Wave 5 / Task 2).
+ * Session detail controller.
  *
  * Thin RPC façade — the session-detail view retains @state for its
  * session info, messages, tab state, pipeline snapshot selection, and
  * confirmation-dialog flow because the existing render + REST-driven
  * (apiClient) interactions keep state on the view. The controller's
- * job is to keep `rpcClient.call(...)` out of `session-detail.ts` so
- * the WEB-DECOMP-03 boundary test passes.
+ * job is to keep `rpcClient.call(...)` out of `session-detail.ts`.
  *
  * Note: session reset / compact / delete / export / detail-load all
  * flow through `apiClient` (REST) — orthogonal to the rpcClient.call

@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { createFakeClock } from "./fake-clock.js";
 
-describe("createFakeClock (PORTS-08)", () => {
+describe("createFakeClock", () => {
   it("now() returns initialMs initially", () => {
     const c = createFakeClock(1_000);
     expect(c.now()).toBe(1_000);

@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pipeline list controller (Phase 44 / WEB-DECOMP-01 / Wave 5 / Task 4).
+ * Pipeline list controller.
  *
  * Thin RPC façade — the pipeline-list view retains @state for its
  * pipeline list, search/sort state, variable-prompt flow, delete
  * confirm-dialog target, and pending-execute payload buffer because
  * the existing render + DOM-coupled flows keep state on the view.
  * The controller's job is to keep `rpcClient.call(...)` out of
- * `pipeline-list.ts` so the WEB-DECOMP-03 boundary test passes.
- *
- * Controller cap is 700L (tighter than the default 900) per
- * PATTERNS.md §S1 line 101 — pipeline-list has lower @state density
- * (10 fields, most state in row components) than the Wave 2-4 views.
+ * `pipeline-list.ts` so the view ↔ controller boundary test passes.
  *
  * @module
  */

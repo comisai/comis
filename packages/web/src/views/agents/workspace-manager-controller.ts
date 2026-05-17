@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Workspace manager controller (Phase 44 / WEB-DECOMP-01).
+ * Workspace manager controller.
  *
  * Thin RPC façade — the workspace-manager view retains @state for its
  * two-panel layout (file tree + editor + git tab) because the existing
  * DOM-coupled flow (tab switching, dirty-state tracking, confirm dialogs,
  * commit message editing, diff viewer) keeps state on the view. The
  * controller's job is to keep `rpcClient.call(...)` out of
- * `workspace-manager.ts` so the WEB-DECOMP-03 boundary test passes. Each
- * method mirrors a source view RPC invocation 1:1 (same method name,
- * same args, same response shape). Errors propagate verbatim (callers
- * handle).
+ * `workspace-manager.ts`. Each method mirrors a source view RPC invocation
+ * 1:1 (same method name, same args, same response shape). Errors propagate
+ * verbatim (callers handle).
  *
  * @module
  */

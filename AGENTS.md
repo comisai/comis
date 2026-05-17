@@ -132,7 +132,7 @@ Eight allowlist arrays live in `test/support/architecture-allowlist.ts` and are 
 
 ### 2.9 Backward compatibility
 
-Not supported. Per the project's no-BC policy, never add migration code, default-to-old-behavior fallbacks, alias re-exports, deprecated-parameter shims, or `@deprecated` JSDoc — Phase 38 (BC-REM) deleted every existing one and `no-backward-compat.test.ts` keeps them out. Intentional behavior breaks are released in the changelog, not absorbed by a shim. When a rename or signature change is needed, change the call sites in the same diff.
+Not supported. Per the project's no-BC policy, never add migration code, default-to-old-behavior fallbacks, alias re-exports, deprecated-parameter shims, or `@deprecated` JSDoc — `no-backward-compat.test.ts` keeps them out. Intentional behavior breaks are released in the changelog, not absorbed by a shim. When a rename or signature change is needed, change the call sites in the same diff.
 
 ## 3) Naming Contract
 
@@ -222,9 +222,9 @@ By change type:
 - Channel adapters: test credential validation, message mapping, lifecycle.
 - Config schemas: test defaults, valid inputs, validation errors.
 - Injection patterns: test detection accuracy and false positives.
-- Integration tests: `pnpm build` first; run via `pnpm test:integration` (or `:mock` / `test:orchestrate`). Required per-commit when retargeting a production caller from a global to a port, and when splitting executor files (Phase 42 invariant).
+- Integration tests: `pnpm build` first; run via `pnpm test:integration` (or `:mock` / `test:orchestrate`). Required per-commit when retargeting a production caller from a global to a port, and when splitting executor files.
 
-Coverage (Phase 40): `pnpm test --coverage` enforces `lines: 90 / branches: 85 / functions: 90` on `packages/*/src/**/*.ts` via `@vitest/coverage-v8`; integration tier ≥80% line. `coverageWaiver` is for test-impractical files only.
+Coverage: `pnpm test --coverage` enforces `lines: 90 / branches: 85 / functions: 90` on `packages/*/src/**/*.ts` via `@vitest/coverage-v8`; integration tier ≥80% line. `coverageWaiver` is for test-impractical files only.
 
 If full validation is impractical, document what was run and what was skipped.
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @ts-nocheck
 /**
- * Fixture: LEAKY — Promise.all closure escape (Rule 2, RES-PIT-31-1).
+ * Fixture: LEAKY — Promise.all closure escape (Rule 2).
  *
  * The handler does `Promise.all([...])` and a closure inside the array
  * captures `secretBinding` from the outer handler scope. Even though

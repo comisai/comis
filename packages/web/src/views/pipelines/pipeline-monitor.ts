@@ -279,7 +279,7 @@ export class IcPipelineMonitor extends LitElement {
   private _resizeObserver: ResizeObserver | null = null;
 
   /** Controller owns RPC orchestration (thin façade — view keeps @state +
-   *  render + createMonitorState consumer pattern verbatim from Wave 5's
+   *  render + createMonitorState consumer pattern, matching the
    *  pipeline-builder precedent). */
   private _controller: PipelineMonitorController | null = null;
 
@@ -287,7 +287,7 @@ export class IcPipelineMonitor extends LitElement {
   private _capturedRpcClient: RpcClient | null = null;
 
   /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
-   *  Wave-4 pattern, with rpcClient-swap detection. */
+   *  pattern, with rpcClient-swap detection. */
   private _ensureController(): PipelineMonitorController | null {
     if (this._controller && this._capturedRpcClient !== this.rpcClient) {
       this.removeController(this._controller);

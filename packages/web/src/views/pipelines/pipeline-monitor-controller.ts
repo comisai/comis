@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pipeline monitor controller (Phase 44 / WEB-DECOMP-01 / Wave 6 / Task 4).
+ * Pipeline monitor controller.
  *
  * Thin RPC façade — the pipeline-monitor view retains @state for
  * its snapshot mirror + viewport + cancel-confirm flag + ARIA live
@@ -8,19 +8,14 @@
  * `createMonitorState` directly + ResizeObserver-driven canvas
  * dimensions + SSE subscription wiring all keep state on the view.
  * The controller's job is to keep `rpcClient.call(...)` out of
- * `pipeline-monitor.ts` so the WEB-DECOMP-03 boundary test passes.
+ * `pipeline-monitor.ts` so the view ↔ controller boundary test passes.
  *
  * Note: the MonitorState primitive (packages/web/src/state/monitor-
  * state.ts) makes its own internal rpcClient.call invocations as
  * part of `startPolling()` — those are NOT direct view → daemon
- * calls and are out of Phase 44 scope (state primitives untouched).
- * The 4 direct call sites this controller wraps are graph.load,
- * graph.status, graph.cancel, and subagent.steer.
- *
- * Controller cap is 500L (TIGHT) per PATTERNS.md §S1 line 107 —
- * pipeline-monitor is the LOWEST-RISK Wave 6 extraction because the
- * pattern was prototyped via createMonitorState (RESEARCH §Source
- * Inventory line 107).
+ * calls and remain encapsulated in the state primitive. The 4 direct
+ * call sites this controller wraps are graph.load, graph.status,
+ * graph.cancel, and subagent.steer.
  *
  * @module
  */

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Models controller (Phase 44 / WEB-DECOMP-01).
+ * Models controller.
  *
  * Thin RPC façade — the models view retains @state for provider/alias/
  * model-catalog state because its existing test suite (37 priv() calls)
  * relies on direct state assertions and form mutations. The controller's
- * job is to keep `rpcClient.call(...)` out of `models.ts` so the
- * WEB-DECOMP-03 boundary test passes.
+ * job is to keep `rpcClient.call(...)` out of `models.ts` so the boundary
+ * test passes.
  *
  * Each method mirrors a source view RPC invocation 1:1 (same method name,
  * same args, same response shape). Errors propagate verbatim (callers

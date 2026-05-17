@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Observe-view controller (Phase 44 / WEB-DECOMP-01).
+ * Observe-view controller.
  *
  * Thin RPC façade — the observe view retains @state for its tab-based
  * dashboard (overview/billing/diagnostics/delivery/channels/health) because
@@ -8,7 +8,7 @@
  * assertions and its data primarily flows via SSE events + apiClient
  * higher-level wrappers (which the boundary regex doesn't match). The
  * controller's job is to keep the 1 raw `rpcClient.call(...)` site out of
- * `observe-view.ts` so the WEB-DECOMP-03 boundary test passes.
+ * `observe-view.ts` so the boundary test passes.
  *
  * Errors propagate verbatim (callers handle).
  *

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Setup-wizard controller (Phase 44 / WEB-DECOMP-01).
+ * Setup-wizard controller.
  *
  * Owns state + RPC orchestration for the multi-step setup wizard.
  * Lifecycle attaches via `host.addController(controller)`; view consumes
@@ -265,8 +265,8 @@ function toYaml(obj: unknown, indent = 0): string {
     // YAML 1.2 plain-scalar safe set: quote if the string contains any
     // YAML indicator character anywhere, or has leading/trailing
     // whitespace. The indicator set is: : # [ ] { } , & * ! | > ' " @ `
-    // plus ? % ~ (added per Phase 44 IN-07 -- previously missed). Matches
-    // the broader regex in `packages/web/src/utils/to-yaml.ts:50`.
+    // plus ? % ~. Matches the broader regex in
+    // `packages/web/src/utils/to-yaml.ts:50`.
     if (obj === "" || /[:#[\]{},&*!?%~|>'"@`]/.test(obj) || /^\s|\s$/.test(obj)) {
       return `"${obj.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
     }

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MEM-CTX-PORTS-14 / RES-PIT-31-4 — `LoggerOptions.disableRedaction`
- * behavioral test.
+ * `LoggerOptions.disableRedaction` behavioral test.
  *
  * Two assertions for the new optional flag:
  *   - default (disableRedaction omitted) → a known sensitive field
@@ -47,7 +46,7 @@ function captureStdout(): {
   };
 }
 
-describe("LoggerOptions.disableRedaction (MEM-CTX-PORTS-14 / RES-PIT-31-4)", () => {
+describe("LoggerOptions.disableRedaction", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });

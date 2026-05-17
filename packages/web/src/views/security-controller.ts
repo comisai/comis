@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Security view controller (Phase 44 / WEB-DECOMP-01 / Wave 7 / Task 2).
+ * Security view controller.
  *
  * Thin RPC façade — the security view retains @state for the security
  * config + provider health + failover log + auth cooldowns + active tab
@@ -9,17 +9,14 @@
  * the SSE event wiring keeps state on the view (debounce timer for
  * provider-health reload), and the existing security.test.ts suite
  * uses `priv()` to access @state fields directly. The controller's job
- * is to keep `rpcClient.call(...)` out of `security.ts` so the
- * WEB-DECOMP-03 boundary test drains its security.ts entry from
- * PRE_EXTRACTION_ALLOWLIST.
+ * is to keep `rpcClient.call(...)` out of `security.ts`.
  *
- * Wraps 3 RPC methods (verified live grep at Wave-1 HEAD):
+ * Wraps 3 RPC methods:
  *   - agent.cacheStats → getProviderCacheStats() — provider health probe.
  *   - config.read → readConfig() — initial config + security section load.
  *   - config.patch → patchConfig() — write back individual config fields.
  *
- * Controller cap is 500L (TIGHT) per PATTERNS.md §S1 line 105 / Plan 44-07
- * acceptance_criteria.
+ * Controller cap is 500L (TIGHT).
  *
  * @module
  */

@@ -5,7 +5,7 @@
  * Used by `no-cycles.test.ts` (cross-package cycle detection over the parsed
  * tsconfig.json `references` graph + package.json @comis/* dependencies graph).
  * Tarjan classic 1972 — verified line-by-line against the canonical paper to
- * avoid the off-by-one in `lowLinks` documented in RES-PIT-3.
+ * avoid an off-by-one in `lowLinks` (see CRITICAL note in `strongConnect`).
  *
  * Zero dependencies. ~30 lines (excluding JSDoc).
  *
@@ -43,7 +43,8 @@ export function findStronglyConnectedComponents<T>(
         strongConnect(w);
         lowLinks.set(v, Math.min(lowLinks.get(v)!, lowLinks.get(w)!));
       } else if (onStack.has(w)) {
-        // CRITICAL: indices.get(w), NOT lowLinks.get(w) — see RES-PIT-3.
+        // CRITICAL: indices.get(w), NOT lowLinks.get(w) — using lowLinks here
+        // is a classic off-by-one that breaks SCC correctness on back-edges.
         lowLinks.set(v, Math.min(lowLinks.get(v)!, indices.get(w)!));
       }
     }

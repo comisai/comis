@@ -249,9 +249,8 @@ export class IcSecurityView extends LitElement {
 
   private _healthReloadDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  /** RPC façade controller (Phase 44 / WEB-DECOMP-01 / Wave 7). Wraps
-   *  config.read, config.patch, agent.cacheStats so the view contains
-   *  zero direct daemon RPC sites. */
+  /** RPC façade controller. Wraps config.read, config.patch,
+   *  agent.cacheStats so the view contains zero direct daemon RPC sites. */
   private _controller: SecurityController | null = null;
 
   /** Captured rpcClient reference -- recreate the controller if rpcClient

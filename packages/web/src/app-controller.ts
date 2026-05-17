@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * App-shell controller (Phase 44 / WEB-DECOMP-01 / Wave 7 / Task 1).
+ * App-shell controller.
  *
  * App.ts has 0 `rpcClient.call(...)` direct sites at HEAD (RPC indirect
  * via PollingController). The controller owns auth + polling +
@@ -11,10 +11,10 @@
  * Lit lifecycle hooks.
  *
  * PollingController construction order MUST be: token-validation →
- * rpcClient → globalState wiring → PollingController. T-W7-01 test
- * asserts this. T-W7-02: NEVER log token/err.cause/JSON.stringify(err)
- * in auth catch — only err.message. T-W7-04: NO @customElement decorator
- * here — controller is a plain object implementing ReactiveController.
+ * rpcClient → globalState wiring → PollingController. A dedicated
+ * controller test asserts this. NEVER log token/err.cause/JSON.stringify(err)
+ * in auth catch — only err.message. NO @customElement decorator here —
+ * controller is a plain object implementing ReactiveController.
  *
  * @module
  */
@@ -260,9 +260,9 @@ export function createAppController(
    *   8. Manually kick off first poll.
    *   9. Initialize router with view-change callback.
    *
-   * Threat-model: T-W7-01 (PollingController instantiation order
-   * inversion) — DO NOT reorder steps 2 vs 7. The dedicated controller
-   * test asserts this order.
+   * Threat-model: PollingController instantiation order inversion —
+   * DO NOT reorder steps 2 vs 7. The dedicated controller test asserts
+   * this order.
    */
   function _completeInit(token: string, baseUrl: string): void {
     sessionStorage.setItem(TOKEN_KEY, token);
@@ -343,9 +343,8 @@ export function createAppController(
           _completeInit(token, baseUrl);
         })
         .catch((err: unknown) => {
-          // T-W7-02 redaction: only err.message — never err.cause, never
-          // JSON.stringify(err), never the token itself. Matches the
-          // verbatim message string from source app.ts:511.
+          // Redaction: only err.message — never err.cause, never
+          // JSON.stringify(err), never the token itself.
           void err;
           host._authError = "Invalid token or server unreachable";
           sessionStorage.removeItem(TOKEN_KEY);

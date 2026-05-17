@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MCP management controller (Phase 44 / WEB-DECOMP-01 / Wave 5 / Task 1).
+ * MCP management controller.
  *
  * Thin RPC façade — the mcp-management view retains @state for its server
  * list, config-only list, expansion state, add-form fields, confirm-dialog
  * targets, test results, and instructions toggle because the existing
  * render + interaction flows keep state on the view. The controller's job
- * is to keep `rpcClient.call(...)` out of `mcp-management.ts` so the
- * WEB-DECOMP-03 boundary test passes. Each method mirrors a source view
- * RPC invocation 1:1 (same method name, same args, same response shape).
+ * is to keep `rpcClient.call(...)` out of `mcp-management.ts`. Each method
+ * mirrors a source view RPC invocation 1:1 (same method name, same args,
+ * same response shape).
  *
  * Errors propagate verbatim to the caller (the view's existing try/catch
  * + IcToast.show pattern handles user-facing error messaging at the call

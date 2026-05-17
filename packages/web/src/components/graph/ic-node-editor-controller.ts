@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ic-node-editor controller (Phase 44 / WEB-DECOMP-04).
+ * ic-node-editor controller.
  *
  * Thin RPC façade — the node-editor component retains @state for its dropdown
  * caches (`_agents`, `_models`, `_allowAgents`) + UI flags (`_agentsLoading`,
  * `_modelsLoading`, `_showVariables`, `_cycleErrors`) because the existing
  * test suite + DOM render path relies on direct state assertions. The
  * controller's job is to keep `rpcClient.call(...)` out of `ic-node-editor.ts`
- * so the WEB-DECOMP-03 boundary test passes. Each method mirrors a source view
- * RPC invocation 1:1 (same method name, same args, same response shape).
+ * so the boundary test passes. Each method mirrors a source view RPC
+ * invocation 1:1 (same method name, same args, same response shape).
  * Errors propagate verbatim (callers handle).
  *
  * Read-path methods use non-async passthrough (return rpcClient.call(...))
  * instead of (async ... return await rpcClient.call(...)) — this is timing-
- * neutral and matches the source view's await chain. Pattern matured in
- * Wave 3 (scheduler-controller, models-controller).
+ * neutral and matches the source view's await chain.
  *
  * @module
  */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MEM-CTX-PORTS-09 unit tests for the core master-key helpers extracted
- * from CLI's `secrets init` body.
+ * Unit tests for the core master-key helpers extracted from CLI's
+ * `secrets init` body.
  *
  * @module
  */

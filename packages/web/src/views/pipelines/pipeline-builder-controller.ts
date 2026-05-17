@@ -1,24 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pipeline builder controller (Phase 44 / WEB-DECOMP-01 / Wave 5 / Task 5).
+ * Pipeline builder controller.
  *
  * Thin RPC façade — the pipeline-builder view retains @state for its
  * viewport + nodes/edges mirrors (the `createGraphBuilderState`
  * subscription target), interaction-mode flags, validation result,
  * settings, draft ID, dirty tracking, template-picker overlay, and
  * variable-prompt overlay because the existing
- * `createGraphBuilderState` consumer pattern (already half-prototyped
- * in this view per RESEARCH §"Source Inventory" line 103) + the 11
- * `@property()` bindings to ic-graph-canvas + the DOM-direct pointer
- * hot path all keep state on the view. The controller's job is to
- * keep `rpcClient.call(...)` out of `pipeline-builder.ts` so the
- * WEB-DECOMP-03 boundary test passes; ic-graph-canvas integration
- * (Wave 4 final) is preserved verbatim.
- *
- * Controller cap is 700L (tighter than the default 900) per
- * PATTERNS.md §S1 line 102 — pipeline-builder is the LOWEST-RISK in
- * Wave 5 because the pattern is already half-prototyped via
- * createGraphBuilderState.
+ * `createGraphBuilderState` consumer pattern + the 11 `@property()`
+ * bindings to ic-graph-canvas + the DOM-direct pointer hot path all
+ * keep state on the view. The controller's job is to keep
+ * `rpcClient.call(...)` out of `pipeline-builder.ts` so the
+ * view ↔ controller boundary test passes; ic-graph-canvas integration
+ * is preserved verbatim.
  *
  * @module
  */

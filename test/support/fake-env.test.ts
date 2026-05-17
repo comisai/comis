@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { createFakeEnv } from "./fake-env.js";
 
-describe("createFakeEnv (PORTS-08)", () => {
+describe("createFakeEnv", () => {
   it("get(key) returns the backing record's value", () => {
     const e = createFakeEnv({ FOO: "bar", BAZ: undefined });
     expect(e.get("FOO")).toBe("bar");

@@ -2,9 +2,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { withTimeout, TimeoutError } from "./timeout.js";
 
-// Default scheduleTimeout backed by Node's globals. Used by the
-// existing-shape tests after the PORTS-14 reshape — pre-reshape these
-// will fail with a TypeScript-arity error (4-arg vs 3-arg call shape).
+// Default scheduleTimeout backed by Node's globals. Matches the
+// 3-arg call shape expected by withTimeout (cb, ms) → cancel.
 const realScheduleTimeout = (cb: () => void, ms: number): (() => void) => {
   const t = setTimeout(cb, ms);
   return () => clearTimeout(t);
@@ -102,7 +101,7 @@ describe("withTimeout", () => {
   });
 });
 
-describe("withTimeout (PORTS-14): scheduleTimeout callback", () => {
+describe("withTimeout: scheduleTimeout callback", () => {
   it("calls scheduleTimeout exactly once with the supplied delay", async () => {
     const cancel = vi.fn();
     const scheduleTimeout = vi.fn((_cb: () => void, _ms: number) => cancel);

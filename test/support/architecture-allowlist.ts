@@ -172,139 +172,139 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/web/src/views/chat-console.ts",
     lines: 1163,
-    reason: "Lit web view; RPC orchestration extracted via chat-console-controller.ts. Residual DOM-coupled interaction logic (recording, drag-drop, scroll/focus, slash menu, raf-batched streaming) does not split into a controller without breaking 67 existing @state-driven tests. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via chat-console-controller.ts. Residual DOM-coupled interaction logic (recording, drag-drop, scroll/focus, slash menu, raf-batched streaming) does not split into a controller without breaking 67 existing @state-driven tests.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/message-center.ts",
     lines: 1338,
-    reason: "Lit web view; RPC orchestration extracted via message-center-controller.ts (14 rpc methods moved out). Residual DOM-coupled interaction logic (emoji picker, inline edit, 5 confirmation dialogs, 4 per-platform action panels with dynamic inputs) does not split cleanly into a controller. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via message-center-controller.ts (14 rpc methods moved out). Residual DOM-coupled interaction logic (emoji picker, inline edit, 5 confirmation dialogs, 4 per-platform action panels with dynamic inputs) does not split cleanly into a controller.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/config-editor.ts",
     lines: 1214,
-    reason: "Lit web view; RPC orchestration extracted via config-editor-controller.ts (config.read/schema/apply/patch/history/diff/rollback/gc moved out). Residual schema-driven form renderer + YAML diff + tree state + multi-tab sub-views are DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via config-editor-controller.ts (config.read/schema/apply/patch/history/diff/rollback/gc moved out). Residual schema-driven form renderer + YAML diff + tree state + multi-tab sub-views are DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/agents/agent-editor.ts",
     lines: 1644,
-    reason: "Lit web view; RPC orchestration extracted via agent-editor-controller.ts (models.list, config.read, config.patch, daemon.setLogLevel, agents.{get,create,update} moved out). Residual ≤1700L is dominated by createDefaultForm() (~125L), _mapConfigToDetail() (~135L), _populateForm() (~180L), _buildPayload() (~290L), _buildYamlPreview() (~65L), plus 13 sub-editor render bindings. The mapping/payload helpers are tightly coupled to the @state form shape and existing test suite (96 priv() calls across 41 tests). Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via agent-editor-controller.ts (models.list, config.read, config.patch, daemon.setLogLevel, agents.{get,create,update} moved out). Residual ≤1700L is dominated by createDefaultForm() (~125L), _mapConfigToDetail() (~135L), _populateForm() (~180L), _buildPayload() (~290L), _buildYamlPreview() (~65L), plus 13 sub-editor render bindings. The mapping/payload helpers are tightly coupled to the @state form shape and existing test suite (96 priv() calls across 41 tests).",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/scheduler.ts",
     lines: 1615,
-    reason: "Lit web view; RPC orchestration extracted via scheduler-controller.ts (cron.list/status/add/update/remove/run, config.read/set, heartbeat.states/trigger moved out). Residual ≤1620L is dominated by 3 tab renderers (cron jobs, heartbeat, extracted tasks), the embedded ic-cron-editor overlay wiring (Wave 6 scope), SSE event handling for scheduler:job_started/job_completed/heartbeat_delivered/heartbeat_alert/scheduler:task_extracted, optimistic-update edit/delete flows, and detailed per-job/per-heartbeat row templates with relative-time formatting. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via scheduler-controller.ts (cron.list/status/add/update/remove/run, config.read/set, heartbeat.states/trigger moved out). Residual ≤1620L is dominated by 3 tab renderers (cron jobs, heartbeat, extracted tasks), the embedded ic-cron-editor overlay wiring, SSE event handling for scheduler:job_started/job_completed/heartbeat_delivered/heartbeat_alert/scheduler:task_extracted, optimistic-update edit/delete flows, and detailed per-job/per-heartbeat row templates with relative-time formatting.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/memory-inspector.ts",
     lines: 1589,
-    reason: "Lit web view; RPC orchestration extracted via memory-inspector-controller.ts (memory.embeddingCache, memory.store, memory.flush moved out). Higher-level data access flows through apiClient (boundary regex matches only rpcClient.call). Residual ≤1600L is dominated by 33 @state fields across search/browse/filter/selection/dialogs/embedding-stats, an inline _normalizeEntry mapper, paginated browse with multi-axis filters (type/trust/agent/date), bulk-delete + export flows, a memory-create dialog with provenance tags, and a flush-confirm dialog — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via memory-inspector-controller.ts (memory.embeddingCache, memory.store, memory.flush moved out). Higher-level data access flows through apiClient (boundary regex matches only rpcClient.call). Residual ≤1600L is dominated by 33 @state fields across search/browse/filter/selection/dialogs/embedding-stats, an inline _normalizeEntry mapper, paginated browse with multi-axis filters (type/trust/agent/date), bulk-delete + export flows, a memory-create dialog with provenance tags, and a flush-confirm dialog — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/observe-view.ts",
     lines: 1567,
-    reason: "Lit web view; RPC orchestration extracted via observe-view-controller.ts (obs.reset moved out). Higher-level data and tab-section refreshes flow via SSE events (observability:metrics/token_usage/reset) + apiClient wrappers, which the boundary regex doesn't match. Residual ≤1570L is dominated by 6 tab renderers (overview/billing/diagnostics/delivery/channels/health) + sparkline + per-tab stat-card grids + filterable delivery-trace table + agent/channel health row grids + reset-confirm dialog — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via observe-view-controller.ts (obs.reset moved out). Higher-level data and tab-section refreshes flow via SSE events (observability:metrics/token_usage/reset) + apiClient wrappers, which the boundary regex doesn't match. Residual ≤1570L is dominated by 6 tab renderers (overview/billing/diagnostics/delivery/channels/health) + sparkline + per-tab stat-card grids + filterable delivery-trace table + agent/channel health row grids + reset-confirm dialog — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/models.ts",
     lines: 1439,
-    reason: "Lit web view; RPC orchestration extracted via models-controller.ts (config.read, models.list, agents.list, agents.get, config.patch, models.test, agents.update moved out). Residual ≤1440L is dominated by 3 tab renderers (providers/models/defaults), provider-card grid with inline edit + connectivity test, model-catalog table with search + provider filter + sort, model-alias CRUD form, per-agent override grid with provider/model dropdowns, and a SSE-driven reload-debounce flow — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via models-controller.ts (config.read, models.list, agents.list, agents.get, config.patch, models.test, agents.update moved out). Residual ≤1440L is dominated by 3 tab renderers (providers/models/defaults), provider-card grid with inline edit + connectivity test, model-catalog table with search + provider filter + sort, model-alias CRUD form, per-agent override grid with provider/model dropdowns, and a SSE-driven reload-debounce flow — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/components/graph/ic-node-editor.ts",
     lines: 1394,
-    reason: "Graph component; RPC orchestration extracted via ic-node-editor-controller.ts (agents.list, agents.get, models.list, config.read[security] moved out). Residual ≤1400L is dominated by ~335L of component-scoped CSS, 10 section render helpers (_renderHeader/_renderTask/_renderAgent/_renderDependencies/_renderConstraints/_renderRetries/_renderContextMode/_renderNodeType/_renderModelOverride/_renderActions), and 7 per-node-type config form renderers (_renderAgentTypeConfig/_renderDebateTypeConfig/_renderVoteTypeConfig/_renderRefineTypeConfig/_renderCollaborateTypeConfig/_renderApprovalGateTypeConfig/_renderMapReduceTypeConfig) plus _handleDependencyChange cycle-detection flow with timed error clearing — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Graph component; RPC orchestration extracted via ic-node-editor-controller.ts (agents.list, agents.get, models.list, config.read[security] moved out). Residual ≤1400L is dominated by ~335L of component-scoped CSS, 10 section render helpers (_renderHeader/_renderTask/_renderAgent/_renderDependencies/_renderConstraints/_renderRetries/_renderContextMode/_renderNodeType/_renderModelOverride/_renderActions), and 7 per-node-type config form renderers (_renderAgentTypeConfig/_renderDebateTypeConfig/_renderVoteTypeConfig/_renderRefineTypeConfig/_renderCollaborateTypeConfig/_renderApprovalGateTypeConfig/_renderMapReduceTypeConfig) plus _handleDependencyChange cycle-detection flow with timed error clearing — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/agents/workspace-manager.ts",
     lines: 1337,
-    reason: "Lit web view; RPC orchestration extracted via workspace-manager-controller.ts (workspace.status/readFile/listDir/writeFile/resetFile/deleteFile/init + workspace.git.status/log/diff/restore/commit moved out). Residual ≤1340L is dominated by ~440L of CSS, the two-panel layout (file tree sidebar + editor/dir panel + git tab), 6 confirm-dialog flows (delete/reset/restore + commit-on-empty), tab-switching state, dirty-tracking on the textarea, and the diff viewer with status badge rendering — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via workspace-manager-controller.ts (workspace.status/readFile/listDir/writeFile/resetFile/deleteFile/init + workspace.git.status/log/diff/restore/commit moved out). Residual ≤1340L is dominated by ~440L of CSS, the two-panel layout (file tree sidebar + editor/dir panel + git tab), 6 confirm-dialog flows (delete/reset/restore + commit-on-empty), tab-switching state, dirty-tracking on the textarea, and the diff viewer with status badge rendering — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/channel-detail.ts",
     lines: 1243,
-    reason: "Lit web view; RPC orchestration extracted via channel-detail-controller.ts (channels.get/restart/disable/enable/capabilities, obs.delivery.recent, obs.channels.get, delivery.queue.status, config.read[channels], config.patch moved out). Residual ≤1245L is dominated by ~450L of CSS, the PLATFORM_FIELDS map for 8 platforms (telegram/discord/slack/whatsapp/imessage/signal/irc/line/email) with per-platform field defs, 5-tab dashboard renderers (overview/connection/media-processing/delivery/capabilities), activity sparkline derivation from delivery traces, MEDIA_PROCESSING_FIELDS toggle list with optimistic-update rollback, SSE-driven debounced reload, and platform-specific config form renderers — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via channel-detail-controller.ts (channels.get/restart/disable/enable/capabilities, obs.delivery.recent, obs.channels.get, delivery.queue.status, config.read[channels], config.patch moved out). Residual ≤1245L is dominated by ~450L of CSS, the PLATFORM_FIELDS map for 8 platforms (telegram/discord/slack/whatsapp/imessage/signal/irc/line/email) with per-platform field defs, 5-tab dashboard renderers (overview/connection/media-processing/delivery/capabilities), activity sparkline derivation from delivery traces, MEDIA_PROCESSING_FIELDS toggle list with optimistic-update rollback, SSE-driven debounced reload, and platform-specific config form renderers — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/components/graph/ic-graph-canvas.ts",
     lines: 1197,
-    reason: "Graph component (SPECIAL CASE per OQ-4); controller pattern incompatible with this file. The 11 @property decorators (viewport/interactionMode/nodes/edges/selectedNodeIds/selectedEdgeId/snapToGrid/highlightNodeIds/readOnly/nodeStatuses/edgeStatuses) are the parent-binding contract with pipeline-builder.ts:67-78 and MUST stay on the view class. The interaction state (_mode + 12 _drag*/_pan*/_connect* fields) is tightly coupled to ~280L of pointer-event handlers that perform DOM-direct mutations via _svgTransformGroup.setAttribute / _container.setAttribute / renderRoot.querySelector at 60fps during the drag/pan/zoom hot path — moving these to a controller would require the controller to hold the host (view) ref and access view-private DOM refs through that, saving ~30L of field declarations while keeping all 280L of handler code (Tier 1 cannot reach the ≤800L view cap). Tier 2 helper-module extraction faces the same DOM coupling (zoomAtPoint and screenToGraph already live in utils/viewport-transform.ts; cycle detection in utils/cycle-detection.ts; the remaining DOM-direct code cannot become pure functions). 0 rpcClient.call sites so the WEB-DECOMP-03 boundary check is trivially green (file was never in PRE_EXTRACTION_ALLOWLIST). Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback) — web view; internal velocity only. Wave 8 may revisit if priorities shift.",
+    reason: "Graph component (special case); controller pattern incompatible with this file. The 11 @property decorators (viewport/interactionMode/nodes/edges/selectedNodeIds/selectedEdgeId/snapToGrid/highlightNodeIds/readOnly/nodeStatuses/edgeStatuses) are the parent-binding contract with pipeline-builder.ts:67-78 and MUST stay on the view class. The interaction state (_mode + 12 _drag*/_pan*/_connect* fields) is tightly coupled to ~280L of pointer-event handlers that perform DOM-direct mutations via _svgTransformGroup.setAttribute / _container.setAttribute / renderRoot.querySelector at 60fps during the drag/pan/zoom hot path — moving these to a controller would require the controller to hold the host (view) ref and access view-private DOM refs through that, saving ~30L of field declarations while keeping all 280L of handler code (cannot reach the ≤800L view cap). Helper-module extraction faces the same DOM coupling (zoomAtPoint and screenToGraph already live in utils/viewport-transform.ts; cycle detection in utils/cycle-detection.ts; the remaining DOM-direct code cannot become pure functions). 0 rpcClient.call sites so the boundary check is trivially green (file was never in PRE_EXTRACTION_ALLOWLIST). Deferred — web view; internal velocity only.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/dashboard.ts",
     lines: 1166,
-    reason: "Lit web view; RPC orchestration extracted via dashboard-controller.ts (obs.billing.total, obs.billing.usage24h, obs.billing.byAgent moved out). Residual ≤1170L is dominated by ~480L of CSS, the KPI grid + sparkline + per-agent billing card renderers, parallel REST fan-out via apiClient (getAgents/getChannels/getActivity — not matched by the rpcClient.call boundary regex), the auto-refresh interval lifecycle, SSE-driven billing_snapshot/token_usage event handlers, RPC connection-status tracking with onStatusChange unsub, system-health pipeline summary card, and the NAV_TARGETS-driven navigation keyboard handlers — all tightly DOM-coupled. SseController + EventDispatcher imports preserved verbatim (out of Phase 44 scope). Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via dashboard-controller.ts (obs.billing.total, obs.billing.usage24h, obs.billing.byAgent moved out). Residual ≤1170L is dominated by ~480L of CSS, the KPI grid + sparkline + per-agent billing card renderers, parallel REST fan-out via apiClient (getAgents/getChannels/getActivity — not matched by the rpcClient.call boundary regex), the auto-refresh interval lifecycle, SSE-driven billing_snapshot/token_usage event handlers, RPC connection-status tracking with onStatusChange unsub, system-health pipeline summary card, and the NAV_TARGETS-driven navigation keyboard handlers — all tightly DOM-coupled. SseController + EventDispatcher imports preserved verbatim.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/mcp-management.ts",
     lines: 1148,
-    reason: "Lit web view; RPC orchestration extracted via mcp-management-controller.ts (mcp.list, config.read, mcp.status, config.patch, mcp.disconnect, mcp.reconnect, mcp.test moved out — 6 unique RPC methods spanning 8 call sites). Residual ≤1150L is dominated by ~375L of component-scoped CSS, the add-server form renderer (transport select + transport-conditional command/url/headers/env block), 5 render helpers (_renderServer, _renderConfigOnlyServer, _renderToolList, _renderInstructions, _renderTestResult), capability badge + server-version + 6-status tag rendering, two confirm-dialog flows (delete/disconnect), and the 6-field add-form state — all tightly DOM-coupled. Existing render + interaction flows keep state on the view. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via mcp-management-controller.ts (mcp.list, config.read, mcp.status, config.patch, mcp.disconnect, mcp.reconnect, mcp.test moved out — 6 unique RPC methods spanning 8 call sites). Residual ≤1150L is dominated by ~375L of component-scoped CSS, the add-server form renderer (transport select + transport-conditional command/url/headers/env block), 5 render helpers (_renderServer, _renderConfigOnlyServer, _renderToolList, _renderInstructions, _renderTestResult), capability badge + server-version + 6-status tag rendering, two confirm-dialog flows (delete/disconnect), and the 6-field add-form state — all tightly DOM-coupled. Existing render + interaction flows keep state on the view.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/session-detail.ts",
     lines: 1102,
-    reason: "Lit web view; RPC orchestration extracted via session-detail-controller.ts (obs.context.pipeline, obs.context.dag, obs.billing.bySession moved out — 3 unique RPC methods spanning 3 call sites). Higher-level data flows (getSessionDetail, resetSession, compactSession, deleteSession, exportSession) go through apiClient (REST) — orthogonal to the rpcClient.call boundary regex. Residual ≤1110L is dominated by ~300L of CSS, 3 tab renderers (conversation/context/metrics) with lazy-load gates, the per-message renderer mapping role→ic-chat-message/ic-tool-call/compaction-marker, ic-budget-segment-bar + ic-layer-waterfall context-tab renderers, the per-execution pipeline-snapshot selection grid, the metrics-tab cost/token/call-count stat cards with health diagnostics, the confirm-dialog flow for reset/compact/delete actions with variant-specific copy, and breadcrumb hash-route navigation — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via session-detail-controller.ts (obs.context.pipeline, obs.context.dag, obs.billing.bySession moved out — 3 unique RPC methods spanning 3 call sites). Higher-level data flows (getSessionDetail, resetSession, compactSession, deleteSession, exportSession) go through apiClient (REST) — orthogonal to the rpcClient.call boundary regex. Residual ≤1110L is dominated by ~300L of CSS, 3 tab renderers (conversation/context/metrics) with lazy-load gates, the per-message renderer mapping role→ic-chat-message/ic-tool-call/compaction-marker, ic-budget-segment-bar + ic-layer-waterfall context-tab renderers, the per-execution pipeline-snapshot selection grid, the metrics-tab cost/token/call-count stat cards with health diagnostics, the confirm-dialog flow for reset/compact/delete actions with variant-specific copy, and breadcrumb hash-route navigation — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/agents/agent-list.ts",
     lines: 1104,
-    reason: "Lit web view; RPC orchestration extracted via agent-list-controller.ts (models.list, obs.billing.byAgent, agents.suspend, agents.resume, agents.delete, agents.create moved out — 6 unique RPC methods spanning 5 call sites). Higher-level data flows (getAgents bulk bootstrap) go through apiClient (REST) — orthogonal to the rpcClient.call boundary regex. Residual ≤1110L is dominated by ~265L of CSS, the 7-column ic-data-table column definitions with per-column render functions (status tag / model monospace / messages-today Intl.NumberFormat / cost currency / budget inline bar / 3-action row), SSE-driven debounced reload from observability:token_usage/agent:hot_added/agent:hot_removed events, the 3-step new-agent wizard (id/name → provider/model dropdowns driven by models.list catalog → tool-policy profile → confirm) with per-step validation and <dialog> HTMLDialogElement lifecycle, suspend/resume + delete confirm flow with toast surfacing, and the search + status-chip filter pipeline — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via agent-list-controller.ts (models.list, obs.billing.byAgent, agents.suspend, agents.resume, agents.delete, agents.create moved out — 6 unique RPC methods spanning 5 call sites). Higher-level data flows (getAgents bulk bootstrap) go through apiClient (REST) — orthogonal to the rpcClient.call boundary regex. Residual ≤1110L is dominated by ~265L of CSS, the 7-column ic-data-table column definitions with per-column render functions (status tag / model monospace / messages-today Intl.NumberFormat / cost currency / budget inline bar / 3-action row), SSE-driven debounced reload from observability:token_usage/agent:hot_added/agent:hot_removed events, the 3-step new-agent wizard (id/name → provider/model dropdowns driven by models.list catalog → tool-policy profile → confirm) with per-step validation and <dialog> HTMLDialogElement lifecycle, suspend/resume + delete confirm flow with toast surfacing, and the search + status-chip filter pipeline — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/pipelines/pipeline-list.ts",
     lines: 1077,
-    reason: "Lit web view; RPC orchestration extracted via pipeline-list-controller.ts (graph.list, graph.status, graph.load, obs.channels.all, graph.execute, graph.save, graph.delete moved out — 7 unique RPC methods spanning 8 call sites). Controller fits the tighter 700L cap (152L). Residual ≤1080L is dominated by ~340L of CSS, the merge logic for graph.list saved entries with graph.status execution snapshots, search + sort + filter pipeline with per-column compare across 5 sort keys, the status-dot color mapping for 5 graph statuses, two confirm flows (delete + variable-prompt overlay for ${VAR} substitution), the quick-execute orchestration with approval-gate channel-context resolution, the duplicate-with-new-id flow, and the per-row 3-action toolbar (run/duplicate/delete) — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via pipeline-list-controller.ts (graph.list, graph.status, graph.load, obs.channels.all, graph.execute, graph.save, graph.delete moved out — 7 unique RPC methods spanning 8 call sites). Controller fits the tighter 700L cap (152L). Residual ≤1080L is dominated by ~340L of CSS, the merge logic for graph.list saved entries with graph.status execution snapshots, search + sort + filter pipeline with per-column compare across 5 sort keys, the status-dot color mapping for 5 graph statuses, two confirm flows (delete + variable-prompt overlay for ${VAR} substitution), the quick-execute orchestration with approval-gate channel-context resolution, the duplicate-with-new-id flow, and the per-row 3-action toolbar (run/duplicate/delete) — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/pipelines/pipeline-builder.ts",
     lines: 1051,
-    reason: "Lit web view; RPC orchestration extracted via pipeline-builder-controller.ts (graph.define, graph.load, graph.save, graph.execute moved out — 4 unique RPC methods spanning 4 call sites). Controller fits the tighter 700L cap (121L). The view PRESERVES verbatim the createGraphBuilderState consumer pattern + all 7 ic-graph-canvas @property bindings (.viewport/.nodes/.edges/.selectedNodeIds/.selectedEdgeId/.snapToGrid/.highlightNodeIds) — Wave 4's ic-graph-canvas integration is the critical gate, re-validated by Playwright pipeline-builder.spec. Residual ≤1050L is dominated by the createGraphBuilderState factory + 8 view-mirror @state fields subscribing to graph state, the 200ms validation debounce timer, the keyboard handler (Delete/Backspace/Cmd+Z/Cmd+Shift+Z/arrow nudges/Cmd+S/Cmd+R/Cmd+A/Esc), document-level beforeunload + hashchange guards for dirty drafts, template-picker + variable-prompt overlay flows, the server-load execution-format → canvas-format node mapper with auto-layout fallback, and the validate/save/run toolbar wiring — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC orchestration extracted via pipeline-builder-controller.ts (graph.define, graph.load, graph.save, graph.execute moved out — 4 unique RPC methods spanning 4 call sites). Controller fits the tighter 700L cap (121L). The view PRESERVES verbatim the createGraphBuilderState consumer pattern + all 7 ic-graph-canvas @property bindings (.viewport/.nodes/.edges/.selectedNodeIds/.selectedEdgeId/.snapToGrid/.highlightNodeIds) — the ic-graph-canvas integration is the critical gate, re-validated by Playwright pipeline-builder.spec. Residual ≤1050L is dominated by the createGraphBuilderState factory + 8 view-mirror @state fields subscribing to graph state, the 200ms validation debounce timer, the keyboard handler (Delete/Backspace/Cmd+Z/Cmd+Shift+Z/arrow nudges/Cmd+S/Cmd+R/Cmd+A/Esc), document-level beforeunload + hashchange guards for dirty drafts, template-picker + variable-prompt overlay flows, the server-load execution-format → canvas-format node mapper with auto-layout fallback, and the validate/save/run toolbar wiring — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/agents/agent-detail.ts",
     lines: 1018,
-    reason: "Lit web view; RPC extraction completed via agent-detail-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (agents.get, obs.billing.byAgent, skills.list, heartbeat.states, agents.suspend, agents.resume, agents.delete moved out — 7 unique RPC methods spanning 6 call sites). Controller fits the tighter 700L cap (128L). The remaining ≤1020L is dominated by ~380L of component-scoped CSS, the two-column detail layout with 7 card renderers (_renderIdentityCard / _renderStatsCard / _renderConfigCard / _renderBudgetGaugesCard / _renderCircuitBreakerCard / _renderSkillsCard / _renderHeartbeatCard), the daemon-config → AgentDetail _mapToAgentDetail() mapper (~63L) with 7 nested optional shape branches (circuitBreaker / contextGuard / sdkRetry / modelFailover / rag / sessionPolicy / concurrency), the SseController consumer driving debounced reload from observability:token_usage + scheduler:heartbeat_delivered events, the suspend/resume + delete action flow with ic-confirm-dialog lifecycle + IcToast surfacing, the heartbeat status renderer with backoff / consecutive-error / running-tick state coalescing, the skill-chip variant mapping for 4 source classes, and the relative-time formatters — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC extraction completed via agent-detail-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (agents.get, obs.billing.byAgent, skills.list, heartbeat.states, agents.suspend, agents.resume, agents.delete moved out — 7 unique RPC methods spanning 6 call sites). Controller fits the tighter 700L cap (128L). The remaining ≤1020L is dominated by ~380L of component-scoped CSS, the two-column detail layout with 7 card renderers (_renderIdentityCard / _renderStatsCard / _renderConfigCard / _renderBudgetGaugesCard / _renderCircuitBreakerCard / _renderSkillsCard / _renderHeartbeatCard), the daemon-config → AgentDetail _mapToAgentDetail() mapper (~63L) with 7 nested optional shape branches (circuitBreaker / contextGuard / sdkRetry / modelFailover / rag / sessionPolicy / concurrency), the SseController consumer driving debounced reload from observability:token_usage + scheduler:heartbeat_delivered events, the suspend/resume + delete action flow with ic-confirm-dialog lifecycle + IcToast surfacing, the heartbeat status renderer with backoff / consecutive-error / running-tick state coalescing, the skill-chip variant mapping for 4 source classes, and the relative-time formatters — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/media-test.ts",
     lines: 983,
-    reason: "Lit web view; RPC extraction completed via media-test-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (media.providers, media.test.stt, media.test.tts, media.test.vision, media.test.document, media.test.video, media.test.link moved out — 7 unique RPC methods spanning 7 call sites). Controller fits the tighter 600L cap (139L). Wave-6 caps tightened the view from 800L to 500L; the residual ≤985L is dominated by ~310L of component-scoped CSS, 6 tab content renderers (STT / TTS / Vision / Document / Video / Link) with per-tab file-upload + base64-encode hot paths (ArrayBuffer → btoa chunked-conversion), 3 file-size guard branches with 25 / 20 / 50 MB limits, audio-playback Object URL lifecycle (revoke on tab-switch + disconnect), image-preview Object URL lifecycle, the provider-availability probe with graceful media.providers-missing fallback, 6 per-tab result panels with per-result-type sub-renderers (transcription / synthesized audio / vision-tag list / document-page list / video-segments / link metadata), IcToast error surfacing in each handler, and the active-tab + processing-flag + per-tab @state coordination — all tightly DOM-coupled and integration-critical for operator verification. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC extraction completed via media-test-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (media.providers, media.test.stt, media.test.tts, media.test.vision, media.test.document, media.test.video, media.test.link moved out — 7 unique RPC methods spanning 7 call sites). Controller fits the tighter 600L cap (139L). View cap tightened from 800L to 500L; the residual ≤985L is dominated by ~310L of component-scoped CSS, 6 tab content renderers (STT / TTS / Vision / Document / Video / Link) with per-tab file-upload + base64-encode hot paths (ArrayBuffer → btoa chunked-conversion), 3 file-size guard branches with 25 / 20 / 50 MB limits, audio-playback Object URL lifecycle (revoke on tab-switch + disconnect), image-preview Object URL lifecycle, the provider-availability probe with graceful media.providers-missing fallback, 6 per-tab result panels with per-result-type sub-renderers (transcription / synthesized audio / vision-tag list / document-page list / video-segments / link metadata), IcToast error surfacing in each handler, and the active-tab + processing-flag + per-tab @state coordination — all tightly DOM-coupled and integration-critical for operator verification.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/components/scheduler/ic-cron-editor.ts",
     lines: 872,
-    reason: "Graph form component (NO-RPC variant); preview-debounce orchestration extracted via ic-cron-editor-controller.ts — view has 0 rpcClient.call sites at HEAD (form-only, no daemon I/O) and now delegates the preview-recompute debounce + next-runs dispatch to the controller. Controller fits the tightest 500L cap (136L). Wave-6 caps tightened the view from 800L to 500L; the residual ≤875L is dominated by ~190L of component-scoped CSS, the 5-field cron-expression form renderer (cron / every / at variants with conditional input fields), the 10-entry TIMEZONE dropdown renderer, the agent-selector dropdown + message textarea + maxConcurrent + sessionTarget + deliveryMode form-fields renderer, the next-5-runs preview rendering with timezone-aware Intl.DateTimeFormat, the _populateFromJob() / _assembleJob() pure mappers between view @state and CronJobInput shape (parent-binding contract with scheduler view from Wave 3), the willUpdate() hook for job-property + agents-property propagation into @state, the updated() hook for schedule-field change detection driving the debounce, and the save / cancel CustomEvent dispatchers — all tightly DOM-coupled with the parent scheduler view's <ic-cron-editor> @property bindings. The 16 form @state fields stay on the view because they are the form contract — the controller would not satisfy the parent scheduler view's expectation of @state semantics, and the existing 24 view tests rely on direct @state access via priv(). Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Graph form component (NO-RPC variant); preview-debounce orchestration extracted via ic-cron-editor-controller.ts — view has 0 rpcClient.call sites at HEAD (form-only, no daemon I/O) and now delegates the preview-recompute debounce + next-runs dispatch to the controller. Controller fits the tightest 500L cap (136L). View cap tightened from 800L to 500L; the residual ≤875L is dominated by ~190L of component-scoped CSS, the 5-field cron-expression form renderer (cron / every / at variants with conditional input fields), the 10-entry TIMEZONE dropdown renderer, the agent-selector dropdown + message textarea + maxConcurrent + sessionTarget + deliveryMode form-fields renderer, the next-5-runs preview rendering with timezone-aware Intl.DateTimeFormat, the _populateFromJob() / _assembleJob() pure mappers between view @state and CronJobInput shape (parent-binding contract with scheduler view), the willUpdate() hook for job-property + agents-property propagation into @state, the updated() hook for schedule-field change detection driving the debounce, and the save / cancel CustomEvent dispatchers — all tightly DOM-coupled with the parent scheduler view's <ic-cron-editor> @property bindings. The 16 form @state fields stay on the view because they are the form contract — the controller would not satisfy the parent scheduler view's expectation of @state semantics, and the existing 24 view tests rely on direct @state access via priv().",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/pipelines/pipeline-monitor.ts",
     lines: 848,
-    reason: "Lit web view; RPC extraction completed via pipeline-monitor-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (graph.load, graph.status, graph.cancel, subagent.steer moved out — 4 unique RPC methods spanning 4 call sites). Controller fits the tightest 500L cap (108L). The view PRESERVES verbatim the createMonitorState consumer pattern (same Wave-5 precedent as pipeline-builder + createGraphBuilderState) — the MonitorState primitive (packages/web/src/state/monitor-state.ts) is out of Phase 44 scope per plan-44-01 verification step 6 (state primitives untouched). Wave-6 caps tightened the view from 800L to 500L; the residual ≤850L is dominated by ~230L of component-scoped CSS, the canvas/timeline/minimap layout with ic-graph-canvas embed + 5 sub-components (ic-monitor-status-bar / ic-node-detail-panel / ic-execution-timeline / ic-graph-minimap), the createMonitorState consumer with subscribe-on-mount + destroy-on-unmount lifecycle, the _initMonitor() server-load → execution-format → canvas-format node mapper with autoLayout fallback when positions are missing, the SSE event wiring (graph:started / graph:node_updated / graph:completed) with EventDispatcher-driven polling suspend/resume coordination via systemSetInterval check, the ResizeObserver-driven container sizing, the ARIA live-region announcement coalescing on node-status transitions, the cancel-confirm ic-confirm-dialog flow with IcToast surfacing, and the steer subagent CustomEvent handler — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC extraction completed via pipeline-monitor-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (graph.load, graph.status, graph.cancel, subagent.steer moved out — 4 unique RPC methods spanning 4 call sites). Controller fits the tightest 500L cap (108L). The view PRESERVES verbatim the createMonitorState consumer pattern (mirrors the pipeline-builder + createGraphBuilderState precedent) — the MonitorState primitive (packages/web/src/state/monitor-state.ts) is intentionally untouched (state primitives are kept stable across decomposition work). View cap tightened from 800L to 500L; the residual ≤850L is dominated by ~230L of component-scoped CSS, the canvas/timeline/minimap layout with ic-graph-canvas embed + 5 sub-components (ic-monitor-status-bar / ic-node-detail-panel / ic-execution-timeline / ic-graph-minimap), the createMonitorState consumer with subscribe-on-mount + destroy-on-unmount lifecycle, the _initMonitor() server-load → execution-format → canvas-format node mapper with autoLayout fallback when positions are missing, the SSE event wiring (graph:started / graph:node_updated / graph:completed) with EventDispatcher-driven polling suspend/resume coordination via systemSetInterval check, the ResizeObserver-driven container sizing, the ARIA live-region announcement coalescing on node-status transitions, the cancel-confirm ic-confirm-dialog flow with IcToast surfacing, and the steer subagent CustomEvent handler — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/security.ts",
     lines: 793,
-    reason: "Lit web view; RPC extraction completed via security-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (config.read, config.patch, agent.cacheStats moved out — 3 unique RPC methods spanning 3 call sites). Controller fits the tightest 500L cap (138L). Wave-7 caps tightened the view from 800L to 500L; the residual ≤795L is dominated by ~160L of component-scoped CSS, the 7-tab routing layout, the SseController consumer wiring 14 SSE event handlers (audit:event / approval:requested+resolved / security:injection_detected / security:injection_rate_exceeded / security:memory_tainted / security:warn / secret:accessed+modified / provider:degraded+recovered / model:auth_cooldown / model:fallback_attempt+exhausted / observability:token_usage) with per-event SecurityEvent classification + bounded retention, the secrets-tab toggle + db-path renderer with optimistic-update patchConfig flow, the provider-health tab renderer with cards + failover log + auth cooldowns timer math, the debounce timer for provider-health reload (systemSetTimeout / systemClearTimeout) tracking ResizeObserver-style coalescing, and the 3 sub-component shadow-DOM accessors (_eventFeed / _approvalQueue) — all tightly DOM-coupled and intersecting with 14 SSE event listeners' @state side effects. The existing security.test.ts uses priv() to access _securityConfig + _activeTab + _loadState directly; preserving these as @state on the view (vs. moving to controller snapshot) keeps the existing 19 view tests intact. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    reason: "Lit web view; RPC extraction completed via security-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (config.read, config.patch, agent.cacheStats moved out — 3 unique RPC methods spanning 3 call sites). Controller fits the tightest 500L cap (138L). View cap tightened from 800L to 500L; the residual ≤795L is dominated by ~160L of component-scoped CSS, the 7-tab routing layout, the SseController consumer wiring 14 SSE event handlers (audit:event / approval:requested+resolved / security:injection_detected / security:injection_rate_exceeded / security:memory_tainted / security:warn / secret:accessed+modified / provider:degraded+recovered / model:auth_cooldown / model:fallback_attempt+exhausted / observability:token_usage) with per-event SecurityEvent classification + bounded retention, the secrets-tab toggle + db-path renderer with optimistic-update patchConfig flow, the provider-health tab renderer with cards + failover log + auth cooldowns timer math, the debounce timer for provider-health reload (systemSetTimeout / systemClearTimeout) tracking ResizeObserver-style coalescing, and the 3 sub-component shadow-DOM accessors (_eventFeed / _approvalQueue) — all tightly DOM-coupled and intersecting with 14 SSE event listeners' @state side effects. The existing security.test.ts uses priv() to access _securityConfig + _activeTab + _loadState directly; preserving these as @state on the view (vs. moving to controller snapshot) keeps the existing 19 view tests intact.",
     removedIn: "deferred",
   },
 
@@ -324,59 +324,57 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/agent/src/executor/pi-executor/pi-executor.ts",
     lines: 1397,
-    reason: "Thinned PiExecutor factory + withSession callback (§13.3 fallback); 4 co-equal/closure-extracted helpers shipped; inside-lock callback deferred to focused follow-up. Structural test GREEN non-vacuously (5 closure-extracted helpers walked).",
+    reason: "Thinned PiExecutor factory + withSession callback (fallback); 4 co-equal/closure-extracted helpers shipped; inside-lock callback deferred to focused follow-up. Structural test GREEN non-vacuously (5 closure-extracted helpers walked).",
     removedIn: "deferred",
   },
-  // §8.2.5 adjacent files decision.
-  // Per-file decisions; line counts
-  // re-measured at HEAD; all 6 entries converted from phase-E → deferred with
-  // explicit reasons. File 6 (executor-post-execution.ts) re-measured at 816L
-  // (>810 per §8.2.5 matrix branch), so its default split-attempt branch is
-  // foreclosed and the deferred-with-reason fallback applies. SHIPPED
-  // with 0 phase-E tags in any allowlist (closure invariant).
+  // Adjacent-files decision. Per-file decisions; line counts re-measured at
+  // HEAD; all 6 entries marked deferred with explicit reasons. File 6
+  // (executor-post-execution.ts) re-measured at 816L (>810 threshold), so its
+  // default split-attempt branch is foreclosed and the deferred-with-reason
+  // fallback applies.
   {
     file: "packages/agent/src/bridge/pi-event-bridge.ts",
     lines: 1496,
-    reason: "Executor-adjacent file (1,496L re-measured;-2L drift from 1,498L design-doc cite); 17 small event handlers; mechanical split by event family deferred to a focused follow-up — engineer-time budget consumed by 4 primary executor splits (default-defer per §8.2.5)",
+    reason: "Executor-adjacent file (1,496L re-measured; -2L drift from prior measurement); 17 small event handlers; mechanical split by event family deferred to a focused follow-up — engineer-time budget consumed by 4 primary executor splits (default-defer)",
     removedIn: "deferred",
   },
   {
     file: "packages/agent/src/model/oauth-token-manager.ts",
     lines: 1441,
-    reason: "Executor-adjacent file (1,441L re-measured;+3L drift from 1,438L design-doc cite); 5th-largest non-daemon agent file; OAuth surface is mature/stable; splitting requires care to preserve runtime-override priority path (setRuntimeApiKey side effect) (default-defer per §8.2.5)",
+    reason: "Executor-adjacent file (1,441L re-measured; +3L drift from prior measurement); 5th-largest non-daemon agent file; OAuth surface is mature/stable; splitting requires care to preserve runtime-override priority path (setRuntimeApiKey side effect) (default-defer)",
     removedIn: "deferred",
   },
   {
     file: "packages/agent/src/spawn/sub-agent-runner.ts",
     lines: 1715,
-    reason: "Executor-adjacent file (1,715L re-measured;+7L drift from 1,708L design-doc cite); gated by §7.2.5 SubAgentRunnerDeps audit; the audit closed (AUDIT.md exists) but the natural module seams require focused-follow-up care (default-defer per §8.2.5)",
+    reason: "Executor-adjacent file (1,715L re-measured; +7L drift from prior measurement); gated by the SubAgentRunnerDeps audit; the audit closed (AUDIT.md exists) but the natural module seams require focused-follow-up care (default-defer)",
     removedIn: "deferred",
   },
   {
     file: "packages/agent/src/executor/prompt-assembly.ts",
     lines: 1100,
-    reason: "Executor-adjacent file (1,100L re-measured;-5L drift from 1,105L design-doc cite); direct-global retargeting closed; no obvious natural seam at this size; defer pending further audit (default-defer per §8.2.5)",
+    reason: "Executor-adjacent file (1,100L re-measured; -5L drift from prior measurement); direct-global retargeting closed; no obvious natural seam at this size; defer pending further audit (default-defer)",
     removedIn: "deferred",
   },
   {
     file: "packages/agent/src/executor/tool-deferral.ts",
     lines: 1035,
-    reason: "Executor-adjacent file (1,035L re-measured;+2L drift from 1,033L design-doc cite); BM25/cosine ranking algorithm conceptually separate from deferral orchestration; split sensible but not urgent (default-defer per §8.2.5)",
+    reason: "Executor-adjacent file (1,035L re-measured; +2L drift from prior measurement); BM25/cosine ranking algorithm conceptually separate from deferral orchestration; split sensible but not urgent (default-defer)",
     removedIn: "deferred",
   },
   {
     file: "packages/agent/src/executor/executor-post-execution.ts",
     lines: 816,
-    reason: "Executor-adjacent file (816L re-measured;+10L drift from 806L design-doc cite); barely above 800L cap but now >810L threshold per §8.2.5 matrix branch — the matrix's split-attempt branch (801-810 + clean seam) is foreclosed by the re-measurement; defer pending global-removal shrinkage or a focused post-run-cleanup/metrics helper extraction (§8.2.5 file-6 fallback)",
+    reason: "Executor-adjacent file (816L re-measured; +10L drift from prior measurement); barely above 800L cap but now >810L threshold — the 801-810-with-clean-seam split-attempt branch is foreclosed by the re-measurement; defer pending global-removal shrinkage or a focused post-run-cleanup/metrics helper extraction",
     removedIn: "deferred",
   },
 
   // ============================================================================
   // Long-file splits outside agent/executor/ (21 files) — CLOSED
   // ============================================================================
-  // SHIPPED with 0 long-file-split tags in any allowlist (closure invariant
-  // per §9.5). 21 of 22 source files split into per-subdirectory modules
-  // across multiple waves; 2 files remain in this allowlist as
+  // Shipped with 0 long-file-split tags in any allowlist (closure invariant).
+  // 21 of 22 source files split into per-subdirectory modules; 2 files remain
+  // in this allowlist as
   // `removedIn: "deferred"` with documented architectural rationale:
   //   - daemon.ts: bootstrap-order invariants force a ~1,270L floor
   //     (5 × 200L stage bodies must stay in daemon.ts); the project-wide
@@ -407,7 +405,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/memory/src/context-store.ts",
     lines: 853,
-    reason: "Memory context store (853L re-measured; -1L drift from 854L design-doc cite); grew from 769→854 lines during mapper retargeting (17 inline mapper factories + 7 named mappers added at module top to honor row-mapper style). NOT cited in REQUIREMENTS.md (file split design predates the addition). Deferred pending dedicated audit of the inline mapper factory pattern — a focused follow-up will split it after the mapper-pattern audit completes (default-defer per §9.5).",
+    reason: "Memory context store (853L re-measured; -1L drift from prior measurement); grew from 769→854 lines during mapper retargeting (17 inline mapper factories + 7 named mappers added at module top to honor row-mapper style). Deferred pending dedicated audit of the inline mapper factory pattern — a focused follow-up will split it after the mapper-pattern audit completes (default-defer).",
     removedIn: "deferred",
   },
 ] as const;
@@ -1349,10 +1347,9 @@ export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [
   // symbol is "Array" (the angle-bracketed generic body does not match
   // `\w+`).
   //
-  // The allowlist key is `{file, symbol}` (per PATTERNS.md key-shape table):
-  // multiple raw cast sites in the same file that target the same `symbol`
-  // collapse into one entry. The live grep yielded 61 raw cast sites
-  // collapsing to 35 unique pairs across 14 files.
+  // The allowlist key is `{file, symbol}`: multiple raw cast sites in the same
+  // file that target the same `symbol` collapse into one entry. The live grep
+  // yielded 61 raw cast sites collapsing to 35 unique pairs across 14 files.
 
   // context-store.ts — DRAINED.
   // Previously held 8 `{file, symbol}` entries for {Array (inline id-projection
@@ -1405,8 +1402,8 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   // Per-declaration audit (final state)
   // ============================================================================
   // NOTE: ChannelManagerDeps (44 optional fields, channel-manager.ts:83) is NOT
-  // in this list — it is hard-excluded by the rule itself because
-  // v3 §9.2.5 owns its audit. Re-adding it here is a contract violation.
+  // in this list — it is hard-excluded by the rule itself because its audit is
+  // owned elsewhere. Re-adding it here is a contract violation.
   //
   // Audit outcome:
   //   - Reviewed each interface declaration line-by-line + every construction
@@ -1419,12 +1416,11 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   //     concern-split. (c) Cosmetic over-optional-marking — fields marked `?`
   //     but supplied at every construction site; would DELETE entry + require
   //     fields. ZERO entries classified as (c).
-  //   - Final count: 25 (unchanged). Decision 5 explicitly authorizes
-  //     "no target floor — the audit decisions ARE the gate". RESEARCH §
-  //     "Land-mine 8" reinforces audit-driven shrinkage, not mandate-to-count.
-  //     RESEARCH Assumption A5: "most >12-optional-field interfaces will be
-  //     audited and kept with documented reason" — confirmed by per-interface
-  //     inspection. No entry survived as cosmetic over-optional marking.
+  //   - Final count: 25 (unchanged). The audit gate has no target floor — the
+  //     audit decisions ARE the gate. Audit-driven shrinkage, not mandate-to-
+  //     count: most >12-optional-field interfaces are kept with documented
+  //     reason; per-interface inspection confirmed no entry survived as
+  //     cosmetic over-optional marking.
   //
   // Why no cosmetic deletions: every audited interface fell into one of three
   // genuine-variance patterns:
@@ -1628,8 +1624,8 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
 // One entry per current callable-global site outside the bootstrap-allowlist
 // paths in BOOTSTRAP_PATH_PATTERNS (test/support/globals-classifier.ts).
 //
-// Closure state (final drain): every direct-global PORTS retarget
-// entry has been drained. Production source files in packages/{shared,core,
+// Closure state (final drain): every direct-global port-retarget entry has
+// been drained. Production source files in packages/{shared,core,
 // agent,channels,cli,daemon,gateway,memory,orchestrator,scheduler,skills}/src/
 // either consume ClockPort/EnvPort/TimerPort via injected Deps (Pattern A),
 // indirect through @comis/core/runtime/system-time.ts sanctioned helpers
@@ -1645,7 +1641,6 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
 // the right shape for a browser-resident bundle, and their classifier
 // hits are sanctioned by the web boundary contract rather than expected
 // to drain.
-// (PORTS-10). The +1226 drift was documented per RESEARCH.md Pitfall §1.
 //
 // Future regressions: any new outside-sanctioned-root direct-global call in
 // packages/*/src/ MUST either retarget through the appropriate port at the
@@ -1696,7 +1691,7 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   // callback that every consumer constructs from its TimerPort (Pattern A)
   // or `systemScheduleTimeout` from `@comis/core/runtime` (Pattern B).
   // The callback signature is a bare structural type, so `@comis/shared`
-  // imports zero port types and remains the PORTS-16 leaf.
+  // imports zero port types and remains a leaf.
   // ---- skills ----
   // ---- web ----
   

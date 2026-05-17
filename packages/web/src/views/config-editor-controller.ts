@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Config editor controller (Phase 44 / WEB-DECOMP-01).
+ * Config editor controller.
  *
  * Thin RPC façade for the schema-driven config editor view: config.read,
  * config.schema, config.apply, config.patch, config.history, config.diff,

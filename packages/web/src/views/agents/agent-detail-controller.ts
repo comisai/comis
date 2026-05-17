@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent detail controller (Phase 44 / WEB-DECOMP-01 / Wave 6 / Task 1).
+ * Agent detail controller.
  *
  * Thin RPC façade — the agent-detail view retains @state for the
  * agent / billing / skills / heartbeat snapshots, the loadState +
@@ -8,12 +8,10 @@
  * dialog open flag because the existing two-column render +
  * SseController-driven debounced reload + ic-confirm-dialog
  * lifecycle all keep state on the view. The controller's job is
- * to keep `rpcClient.call(...)` out of `agent-detail.ts` so the
- * WEB-DECOMP-03 boundary test passes.
+ * to keep `rpcClient.call(...)` out of `agent-detail.ts`.
  *
- * Controller cap is 700L (tighter than the default 900) per
- * PATTERNS.md §S1 line 104 — agent-detail is a detail view with
- * a small RPC surface (5 methods spanning 6 call sites).
+ * agent-detail is a detail view with a small RPC surface
+ * (5 methods spanning 6 call sites).
  *
  * @module
  */

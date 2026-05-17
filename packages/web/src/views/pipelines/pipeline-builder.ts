@@ -104,14 +104,14 @@ export class IcPipelineBuilder extends LitElement {
 
   /** Controller owns RPC orchestration (thin façade — view keeps @state +
    *  render + createGraphBuilderState consumer + 11 @property bindings to
-   *  ic-graph-canvas verbatim from Wave 4). */
+   *  ic-graph-canvas verbatim). */
   private _controller: PipelineBuilderController | null = null;
 
   /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
   private _capturedRpcClient: RpcClient | null = null;
 
   /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
-   *  Wave-4 pattern, with rpcClient-swap detection. */
+   *  pattern, with rpcClient-swap detection. */
   private _ensureController(): PipelineBuilderController | null {
     if (this._controller && this._capturedRpcClient !== this.rpcClient) {
       this.removeController(this._controller);

@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MEM-CTX-PORTS-14 part 2 + MEM-CTX-PORTS-15: behavioral residency proof
- * and failure-mode tests for the daemon `secrets.*` admin RPC surface.
+ * Behavioral residency proof and failure-mode tests for the daemon
+ * `secrets.*` admin RPC surface.
  *
  * Three describe blocks:
  *
- *   1. **Sequential stress + cross-read isolation** (MEM-CTX-PORTS-14 part 2)
+ *   1. **Sequential stress + cross-read isolation**
  *      - 100 sequential `secrets.get` reads on a canary value; assert the
  *        plaintext NEVER appears in stdout / stderr / Pino log capture.
  *      - `secrets.list` after the stress run also redacts metadata-only.
  *      - Cross-read isolation: read X then Y; Y response carries no X
  *        plaintext (rules out shared-buffer reuse).
  *
- *   2. **Positive control** (RES-PIT-31-2)
+ *   2. **Positive control**
  *      - Deliberately log a known canary value through the daemon's logger
  *        (gated on COMIS_RESIDENCY_TEST_DELIBERATE_LEAK=1). Assert the
  *        residency capture DOES find the canary. Proves the residency
  *        infrastructure (disableRedaction:true + log capture) actually
  *        catches leaks - guards against vacuous green passes.
  *
- *   3. **Failure modes** (MEM-CTX-PORTS-15)
+ *   3. **Failure modes**
  *      - daemon-down: spawned CLI returns exit 4 + remediation; no plaintext
  *        in stderr/stdout.
  *      - unauthorized (rpc-scope token): handler errors; no plaintext.
@@ -29,7 +29,7 @@
  *
  * The test daemon is booted with `disableRedaction: true` so Pino emits
  * raw payloads. Production daemons NEVER set this flag - the source-rule
- * walker added in plan 31-06 source-greps packages/* / src/** to enforce.
+ * walker source-greps packages/* / src/** to enforce.
  *
  * @module
  */
@@ -108,7 +108,7 @@ async function rpcCallExpectError(
 // Suite 1: behavioral residency (100-stress + cross-read isolation)
 // ---------------------------------------------------------------------------
 
-describe("MEM-CTX-PORTS-14 part 2 -- behavioral residency (secret-rpc-residency)", () => {
+describe("behavioral residency (secret-rpc-residency)", () => {
   let handle: TestDaemonHandle;
   let logCapture: ReturnType<typeof createLogCapture>;
   let tempSecretsDbPath: string;
@@ -228,10 +228,10 @@ describe("MEM-CTX-PORTS-14 part 2 -- behavioral residency (secret-rpc-residency)
 });
 
 // ---------------------------------------------------------------------------
-// Suite 2: positive control (RES-PIT-31-2)
+// Suite 2: positive control
 // ---------------------------------------------------------------------------
 
-describe("MEM-CTX-PORTS-14 part 2 / RES-PIT-31-2 -- POSITIVE CONTROL", () => {
+describe("POSITIVE CONTROL", () => {
   let handle: TestDaemonHandle;
   let logCapture: ReturnType<typeof createLogCapture>;
   let tempSecretsDbPath: string;
@@ -325,10 +325,10 @@ describe("MEM-CTX-PORTS-14 part 2 / RES-PIT-31-2 -- POSITIVE CONTROL", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 3: failure-mode tests (MEM-CTX-PORTS-15)
+// Suite 3: failure-mode tests
 // ---------------------------------------------------------------------------
 
-describe("MEM-CTX-PORTS-15 -- failure-mode tests", () => {
+describe("failure-mode tests", () => {
   let handle: TestDaemonHandle;
   let logCapture: ReturnType<typeof createLogCapture>;
   let tempSecretsDbPath: string;

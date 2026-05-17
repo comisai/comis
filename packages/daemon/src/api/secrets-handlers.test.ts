@@ -73,7 +73,7 @@ function loggerCallsAsString(logger: ReturnType<typeof createMockLogger>): strin
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("createSecretsHandlers (MEM-CTX-PORTS-13)", () => {
+describe("createSecretsHandlers", () => {
   // -------------------------------------------------------------------------
   // secrets.get
   // -------------------------------------------------------------------------

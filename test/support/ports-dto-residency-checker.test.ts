@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the ContextStorePort row-DTO residency walker
- * (MEM-CTX-PORTS-04 primary check).
+ * Unit tests for the ContextStorePort row-DTO residency walker.
  *
  * The walker uses ts.createProgram + TypeChecker to enumerate every
  * Ctx*Row type transitively referenced from ContextStorePort method
@@ -45,7 +44,7 @@ function clearCache(): void {
   }
 }
 
-describe("checkContextStoreRowResidency (MEM-CTX-PORTS-04 primary)", () => {
+describe("checkContextStoreRowResidency", () => {
   beforeEach(() => {
     clearCache();
   });

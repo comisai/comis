@@ -1768,9 +1768,9 @@ describe("config.patch credential guard", () => {
   it("succeeds when providers.entries.<id>.apiKeyName is in secretManager (Source A)", async () => {
     const deps = makeDeps(tempConfig.configPath);
     // Wire a provider entry whose apiKeyName resolves via the bootstrap's
-    // secretManager. Seed the env map explicitly per PORTS-10 — bootstrap
-    // no longer falls back to process.env, so the test seeds the
-    // SecretManager via makeDepsWithEnv.
+    // secretManager. Seed the env map explicitly — bootstrap no longer
+    // falls back to process.env, so the test seeds the SecretManager via
+    // makeDepsWithEnv.
     const freshDeps = makeDepsWithEnv(tempConfig.configPath, { OR_KEY: "sk-or-v1-xxx" });
     (freshDeps.container.config as { providers: { entries: Record<string, unknown> } }).providers.entries["openrouter"] = {
       type: "openai",

@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { findStronglyConnectedComponents, findCycles } from "./tarjan-scc.js";
 
-describe("findCycles -- Tarjan SCC (RES-PIT-3 regression coverage)", () => {
+describe("findCycles -- Tarjan SCC", () => {
   it("non-cyclic DAG: A → B → C returns no cycles", () => {
     const nodes = new Set(["A", "B", "C"]);
     const edges = new Map<string, ReadonlySet<string>>([

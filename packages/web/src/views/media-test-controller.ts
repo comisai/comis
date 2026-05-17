@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Media test controller (Phase 44 / WEB-DECOMP-01 / Wave 6 / Task 2).
+ * Media test controller.
  *
  * Thin RPC façade — the media-test view retains @state for the
  * 6 tab content panels (STT / TTS / Vision / Document / Video /
@@ -8,12 +8,11 @@
  * lifecycle, and image-preview Object URL because the existing
  * file-upload + browser audio playback + IcToast surfacing flows
  * keep state on the view. The controller's job is to keep
- * `rpcClient.call(...)` out of `media-test.ts` so the
- * WEB-DECOMP-03 boundary test passes.
+ * `rpcClient.call(...)` out of `media-test.ts`.
  *
- * Controller cap is 600L (tighter than the default 900) per
- * PATTERNS.md §S1 line 105 — media-test is a test-harness with a
- * small RPC surface (7 methods, one per tab + capabilities probe).
+ * Controller cap is 600L (tighter than the default 900) —
+ * media-test is a test-harness with a small RPC surface (7 methods,
+ * one per tab + capabilities probe).
  *
  * @module
  */

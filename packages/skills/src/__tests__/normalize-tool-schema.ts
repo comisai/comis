@@ -7,11 +7,10 @@
  * with string keys sorted lexicographically and `undefined` values dropped;
  * `JSON.stringify` is the runtime that drops Symbol keys.
  *
- * Why TypeBox not Zod: per RES-PIT-10 amendment in 33-RESEARCH.md, every
- * platform tool uses `typebox 1.1.37`'s `Type.Object(...)` builder. TypeBox
- * `TSchema` IS JSON Schema directly — no serialization layer needed. The
- * `TYPEBOX_VERSION` export pins the snapshot filename so cross-version
- * snapshots are never compared.
+ * Why TypeBox not Zod: every platform tool uses `typebox 1.1.37`'s
+ * `Type.Object(...)` builder. TypeBox `TSchema` IS JSON Schema directly —
+ * no serialization layer needed. The `TYPEBOX_VERSION` export pins the
+ * snapshot filename so cross-version snapshots are never compared.
  *
  * TYPEBOX_VERSION resolution: `typebox`'s `package.json` is not exposed in
  * its `exports` map (verified at typebox@1.1.37). We resolve the runtime

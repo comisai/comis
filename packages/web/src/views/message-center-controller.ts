@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Message center controller (Phase 44 / WEB-DECOMP-01).
+ * Message center controller.
  *
  * Thin RPC façade for the multi-channel inbox view: channels.list,
  * channels.capabilities, channels.get, obs.channels.all, message.fetch,
@@ -72,7 +72,7 @@ export function createMessageCenterController(
     // Read-path passthroughs use .then(...) rather than async/await so the
     // unpacked-field transformation does not introduce an extra microtask
     // boundary (matches scheduler-controller's non-async listJobs/getStatus
-    // pattern — Wave 3 timing fix).
+    // pattern).
     listChannels(): Promise<ChannelListEntry[]> {
       return rpcClient
         .call<{ channels: ChannelListEntry[]; total: number }>("channels.list")

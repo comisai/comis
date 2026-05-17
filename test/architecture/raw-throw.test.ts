@@ -15,10 +15,10 @@
  *   - any file containing the literal substring `// @allow-throw:` or
  *     `@allow-throw:` anywhere in its source
  *
- * Allowlist filter: `{file, lineRanges[0][0]}` key shape per PATTERNS.md
- * — anchors on the FIRST range's start line. Seeded with one entry per
- * file (consolidating all line-ranges into one entry per file at seed
- * time) so the multi-range complexity is forward-looking.
+ * Allowlist filter: `{file, lineRanges[0][0]}` key shape — anchors on
+ * the FIRST range's start line. Seeded with one entry per file
+ * (consolidating all line-ranges into one entry per file at seed time)
+ * so the multi-range complexity is forward-looking.
  *
  * @module
  */

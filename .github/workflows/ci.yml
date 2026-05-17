@@ -47,20 +47,20 @@ jobs:
       - name: Lint (security)
         run: pnpm lint:security
 
-      # Phase 40 / COV-17 composite green check — Phase C exit gates.
+      # Composite green check that aggregates all required test/lint jobs.
       # Each of the four commands runs as a separate CI step so logs are
       # readable; any non-zero exit fails the PR.
 
-      - name: Unit tests with coverage (COV-03 / COV-05)
+      - name: Unit tests with coverage
         run: pnpm test --coverage
 
-      - name: Integration tests with coverage (COV-04)
+      - name: Integration tests with coverage
         run: pnpm test:integration --coverage
 
-      - name: E2E orchestrate (COV-17)
+      - name: E2E orchestrate
         run: pnpm test:orchestrate
 
-      - name: E2E flow-matrix gate (COV-14 / COV-17)
+      - name: E2E flow-matrix gate
         run: pnpm test:orchestrate --check-matrix
 
       - name: Test (deterministic integration CI gates)

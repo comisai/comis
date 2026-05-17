@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Dashboard controller (Phase 44 / WEB-DECOMP-01).
+ * Dashboard controller.
  *
  * Thin RPC façade — the dashboard view retains @state for its KPI grid,
  * sparkline data, per-agent billing map, and connection status because
  * the existing test suite + SSE-driven UI flow (billing_snapshot,
  * token_usage events triggering sparkline reloads, parallel REST fan-
  * out via apiClient) keeps state on the view. The controller's job is
- * to keep `rpcClient.call(...)` out of `dashboard.ts` so the
- * WEB-DECOMP-03 boundary test passes. Each method mirrors a source
- * view RPC invocation 1:1 (same method name, same args, same response
- * shape). Errors propagate verbatim (callers handle Promise.allSettled).
+ * to keep `rpcClient.call(...)` out of `dashboard.ts` so the boundary
+ * test passes. Each method mirrors a source view RPC invocation 1:1
+ * (same method name, same args, same response shape). Errors propagate
+ * verbatim (callers handle Promise.allSettled).
  *
  * Higher-level data flows through apiClient (`getAgents`, `getChannels`,
  * `getActivity`) — orthogonal to this controller (boundary regex
  * matches only `rpcClient!?.call`). SseController + EventDispatcher
- * preserved verbatim on the view (out of Phase 44 scope per
- * PATTERNS.md §"File Classification" #15).
+ * preserved verbatim on the view.
  *
  * @module
  */
