@@ -26,20 +26,9 @@ import {
   type PendingFlow,
 } from "../oauth/oauth-callback-route.js";
 import type { OAuthCredentialStorePort } from "@comis/core";
+import type { GatewayLogger } from "./gateway-logger.js";
 
-/**
- * Logger interface for gateway server (minimal pino-compatible).
- */
-export interface GatewayLogger {
-  debug(msg: string): void;
-  debug(obj: Record<string, unknown>, msg: string): void;
-  info(msg: string): void;
-  info(obj: Record<string, unknown>, msg: string): void;
-  warn(msg: string): void;
-  warn(obj: Record<string, unknown>, msg: string): void;
-  error(msg: string): void;
-  error(obj: Record<string, unknown>, msg: string): void;
-}
+export type { GatewayLogger };
 
 /**
  * Dependencies for creating a gateway server.

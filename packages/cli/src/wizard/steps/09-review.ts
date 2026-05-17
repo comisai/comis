@@ -20,13 +20,11 @@ import type {
   WizardState,
   WizardStep,
   WizardStepId,
-  WizardPrompter,
-} from "../index.js";
-import {
-  updateState,
-  heading,
-  CancelError,
-} from "../index.js";
+} from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { CancelError } from "../prompter.js";
+import { updateState } from "../state.js";
+import { heading } from "../theme.js";
 
 // ---------- Helpers ----------
 

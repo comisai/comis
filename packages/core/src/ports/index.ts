@@ -124,8 +124,8 @@ export type {
 export type {
   ChannelPluginPort,
   ChannelCapability,
-  ChannelStatus,
 } from "./channel-plugin.js";
+export type { ChannelStatus } from "./channel.js";
 export type {
   DeviceIdentity,
   DeviceIdentityPort,

@@ -14,8 +14,10 @@
 
 import { statfs } from "node:fs/promises";
 import { homedir } from "node:os";
-import type { WizardState, WizardStep, WizardPrompter } from "../index.js";
-import { updateState, sectionSeparator } from "../index.js";
+import type { WizardState, WizardStep } from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { updateState } from "../state.js";
+import { sectionSeparator } from "../theme.js";
 
 // ---------- Helpers ----------
 

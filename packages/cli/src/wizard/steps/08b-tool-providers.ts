@@ -15,14 +15,12 @@
 import type {
   WizardState,
   WizardStep,
-  WizardPrompter,
   ToolProviderConfig,
-} from "../index.js";
-import {
-  updateState,
-  sectionSeparator,
-  SUPPORTED_TOOL_PROVIDERS,
-} from "../index.js";
+} from "../types.js";
+import { SUPPORTED_TOOL_PROVIDERS } from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { updateState } from "../state.js";
+import { sectionSeparator } from "../theme.js";
 
 // ---------- Step Implementation ----------
 

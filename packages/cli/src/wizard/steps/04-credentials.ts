@@ -20,17 +20,13 @@
 import type {
   WizardState,
   WizardStep,
-  WizardPrompter,
   ProviderConfig,
   AuthMethod,
-} from "../index.js";
-import {
-  updateState,
-  sectionSeparator,
-  info,
-  validateApiKey,
-  getKeyPrefix,
-} from "../index.js";
+} from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { updateState } from "../state.js";
+import { sectionSeparator, info } from "../theme.js";
+import { validateApiKey, getKeyPrefix } from "../validators/api-key.js";
 import { getModels, type KnownProvider } from "@earendil-works/pi-ai";
 
 // ---- OAuth interactive-flow imports ----

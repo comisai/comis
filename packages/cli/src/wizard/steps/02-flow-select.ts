@@ -15,10 +15,10 @@
 import type {
   WizardState,
   WizardStep,
-  WizardPrompter,
   FlowType,
-} from "../index.js";
-import { updateState } from "../index.js";
+} from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { updateState } from "../state.js";
 
 // ---------- Step Implementation ----------
 

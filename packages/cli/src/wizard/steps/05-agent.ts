@@ -10,12 +10,11 @@
  * @module
  */
 
-import type { WizardState, WizardStep, WizardPrompter } from "../index.js";
-import {
-  updateState,
-  sectionSeparator,
-  validateAgentName,
-} from "../index.js";
+import type { WizardState, WizardStep } from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { updateState } from "../state.js";
+import { sectionSeparator } from "../theme.js";
+import { validateAgentName } from "../validators/agent-name.js";
 import { createModelCatalog } from "@comis/core";
 
 // ---------- Helpers ----------

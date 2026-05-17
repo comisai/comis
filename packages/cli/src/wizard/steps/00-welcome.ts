@@ -11,8 +11,11 @@
  * @module
  */
 
-import type { WizardState, WizardStep, WizardPrompter } from "../index.js";
-import { updateState, heading, CancelError } from "../index.js";
+import type { WizardState, WizardStep } from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { CancelError } from "../prompter.js";
+import { updateState } from "../state.js";
+import { heading } from "../theme.js";
 
 // ---------- Security Notice ----------
 

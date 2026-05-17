@@ -29,18 +29,14 @@ import { promisify } from "node:util";
 import { isDocker, safePath, systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 const exec = promisify(execFile);
-import type {
-  WizardState,
-  WizardStep,
-  WizardPrompter,
-  Spinner,
-} from "../index.js";
+import type { WizardState, WizardStep } from "../types.js";
+import type { WizardPrompter, Spinner } from "../prompter.js";
+import { updateState } from "../state.js";
 import {
-  updateState,
   sectionSeparator,
   success as themeSuccess,
   error as themeError,
-} from "../index.js";
+} from "../theme.js";
 
 // ---------- Constants ----------
 

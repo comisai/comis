@@ -13,28 +13,6 @@ import type { ChannelCapability } from "../domain/channel-capability.js";
 export type { ChannelCapability };
 
 /**
- * ChannelStatus: Runtime status snapshot of a connected channel adapter.
- *
- * Returned by ChannelPort.getStatus() for observability and health checks.
- */
-export interface ChannelStatus {
-  /** Whether the adapter is currently connected and operational */
-  readonly connected: boolean;
-  /** The channel adapter instance identifier */
-  readonly channelId: string;
-  /** The channel type (e.g. "telegram", "discord") */
-  readonly channelType: string;
-  /** Milliseconds since the adapter started */
-  readonly uptime?: number;
-  /** Timestamp of the last message processed */
-  readonly lastMessageAt?: number;
-  /** Error description if the adapter is in a failed state */
-  readonly error?: string;
-  /** Connection mode used by this adapter (for health check stale-exemption logic) */
-  readonly connectionMode?: "socket" | "polling" | "webhook";
-}
-
-/**
  * ChannelPluginPort: A plugin that provides a channel adapter.
  *
  * Extends the base PluginPort with channel-specific metadata:

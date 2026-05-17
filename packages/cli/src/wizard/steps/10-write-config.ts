@@ -17,16 +17,15 @@ import { safePath, loadEnvFile } from "@comis/core";
 import type {
   WizardState,
   WizardStep,
-  WizardPrompter,
-} from "../index.js";
+} from "../types.js";
 import {
-  updateState,
-  heading,
-  success as themeSuccess,
   PROVIDER_ENV_KEYS,
   CHANNEL_ENV_KEYS,
   TOOL_PROVIDER_ENV_KEYS,
-} from "../index.js";
+} from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { updateState } from "../state.js";
+import { heading, success as themeSuccess } from "../theme.js";
 
 // ---------- Helpers ----------
 

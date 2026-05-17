@@ -22,10 +22,11 @@
 import type {
   WizardState,
   WizardStep,
-  WizardPrompter,
   ProviderConfig,
-} from "../index.js";
-import { updateState, sectionSeparator } from "../index.js";
+} from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { updateState } from "../state.js";
+import { sectionSeparator } from "../theme.js";
 import { loadProvidersWithFallback } from "../../client/provider-list.js";
 
 // ---------- UX Hint Map ----------

@@ -13,13 +13,12 @@
  */
 
 import { randomBytes } from "node:crypto";
-import type { WizardState, WizardStep, WizardPrompter, GatewayConfig } from "../index.js";
-import {
-  updateState,
-  sectionSeparator,
-  validatePort,
-  validateIpAddress,
-} from "../index.js";
+import type { WizardState, WizardStep, GatewayConfig } from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { updateState } from "../state.js";
+import { sectionSeparator } from "../theme.js";
+import { validatePort } from "../validators/port.js";
+import { validateIpAddress } from "../validators/network.js";
 
 // ---------- Step Implementation ----------
 

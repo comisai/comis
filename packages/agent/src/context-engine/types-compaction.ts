@@ -6,7 +6,7 @@
  */
 
 import type { ComisLogger } from "@comis/core";
-import type { TokenAnchor } from "./types-core.js";
+import type { TokenAnchor } from "./types-anchor.js";
 
 // ---------------------------------------------------------------------------
 // LLM Compaction

@@ -14,18 +14,13 @@
 import type {
   WizardState,
   WizardStep,
-  WizardPrompter,
   ChannelConfig,
-} from "../index.js";
-import {
-  updateState,
-  success,
-  warning,
-  info,
-  CancelError,
-  CHANNEL_ENV_KEYS,
-  PROVIDER_ENV_KEYS,
-} from "../index.js";
+} from "../types.js";
+import { CHANNEL_ENV_KEYS, PROVIDER_ENV_KEYS } from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { CancelError } from "../prompter.js";
+import { updateState } from "../state.js";
+import { success, warning, info } from "../theme.js";
 import {
   loadConfigFile,
   validatePartial,

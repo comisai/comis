@@ -11,8 +11,10 @@
  * @module
  */
 
-import type { GatewayConfig, WizardState, WizardStep, WizardPrompter } from "../index.js";
-import { brand, info, sectionSeparator, updateState, warning } from "../index.js";
+import type { GatewayConfig, WizardState, WizardStep } from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { updateState } from "../state.js";
+import { brand, info, sectionSeparator, warning } from "../theme.js";
 
 // ---------- Helpers ----------
 

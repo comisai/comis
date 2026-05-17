@@ -16,16 +16,13 @@
 import type {
   WizardState,
   WizardStep,
-  WizardPrompter,
   ChannelConfig,
-} from "../index.js";
-import {
-  updateState,
-  sectionSeparator,
-  info,
-  SUPPORTED_CHANNELS,
-  validateChannelCredential,
-} from "../index.js";
+} from "../types.js";
+import { SUPPORTED_CHANNELS } from "../types.js";
+import type { WizardPrompter } from "../prompter.js";
+import { updateState } from "../state.js";
+import { sectionSeparator, info } from "../theme.js";
+import { validateChannelCredential } from "../validators/channel-creds.js";
 import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // ---------- Live Validation Functions ----------

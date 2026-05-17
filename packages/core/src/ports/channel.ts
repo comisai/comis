@@ -2,12 +2,33 @@
 import type { Result } from "@comis/shared";
 import type { NormalizedMessage } from "../domain/normalized-message.js";
 import type { RichButton, RichCard, RichEffect } from "../domain/rich-message.js";
-import type { ChannelStatus } from "./channel-plugin.js";
 
 /**
  * Callback signature for incoming messages from a channel.
  */
 export type MessageHandler = (message: NormalizedMessage) => void | Promise<void>;
+
+/**
+ * ChannelStatus: Runtime status snapshot of a connected channel adapter.
+ *
+ * Returned by ChannelPort.getStatus() for observability and health checks.
+ */
+export interface ChannelStatus {
+  /** Whether the adapter is currently connected and operational */
+  readonly connected: boolean;
+  /** The channel adapter instance identifier */
+  readonly channelId: string;
+  /** The channel type (e.g. "telegram", "discord") */
+  readonly channelType: string;
+  /** Milliseconds since the adapter started */
+  readonly uptime?: number;
+  /** Timestamp of the last message processed */
+  readonly lastMessageAt?: number;
+  /** Error description if the adapter is in a failed state */
+  readonly error?: string;
+  /** Connection mode used by this adapter (for health check stale-exemption logic) */
+  readonly connectionMode?: "socket" | "polling" | "webhook";
+}
 
 /**
  * ChannelPort: The hexagonal architecture boundary for messaging channels.

@@ -26,7 +26,7 @@ import type {
   TypedEventBus,
 } from "@comis/core";
 import { resolveCodexAuthIdentity, rewriteOAuthError, redactEmailForLog, systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
-import type { GatewayLogger } from "../server/hono-server.js";
+import type { GatewayLogger } from "../server/gateway-logger.js";
 
 // ---------------------------------------------------------------------------
 // Constants
