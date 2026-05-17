@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
 import type { IcSkillsView } from "./skills.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import type { SkillsController } from "./skills-controller.js";
 
 // Side-effect registration
 import "./skills.js";
@@ -75,18 +76,51 @@ async function createElement(
   return el;
 }
 
-/** Type-safe access to private fields. */
-function priv(el: IcSkillsView) {
-  return el as unknown as {
-    _loadState: "loading" | "loaded" | "error";
-    _error: string;
-    _activeTab: string;
-    _skillsConfig: unknown;
-    _discoveredSkills: unknown[];
-    _searchQuery: string;
-    _loadData(): Promise<void>;
-    rpcClient: RpcClient | null;
-  };
+/**
+ * Test-only state accessor. Post-Phase-44 the view delegates state to
+ * `SkillsController`; `priv()` returns a getter/setter facade so the
+ * existing tests keep working via controller snapshot reads and action
+ * method writes.
+ */
+function priv(el: IcSkillsView): {
+  _loadState: "loading" | "loaded" | "error";
+  _error: string;
+  _activeTab: string;
+  _skillsConfig: unknown;
+  _discoveredSkills: ReadonlyArray<unknown>;
+  _searchQuery: string;
+  _loadData(): Promise<void>;
+  rpcClient: RpcClient | null;
+} {
+  const e = el as unknown as { _controller: SkillsController | null; rpcClient: RpcClient | null };
+  if (!e._controller) {
+    return {
+      get _loadState() { return "loading"; },
+      get _error() { return ""; },
+      get _activeTab() { return "tools"; },
+      get _skillsConfig() { return null; },
+      get _discoveredSkills() { return []; },
+      get _searchQuery() { return ""; },
+      set _activeTab(_v: string) { /* no controller yet */ },
+      _loadData: async () => undefined,
+      get rpcClient() { return e.rpcClient; },
+      set rpcClient(v: RpcClient | null) { e.rpcClient = v; },
+    } as unknown as ReturnType<typeof priv>;
+  }
+  const ctrl = e._controller;
+  return {
+    get _loadState() { return ctrl.getSnapshot().loadState; },
+    get _error() { return ctrl.getSnapshot().error; },
+    get _activeTab() { return ctrl.getSnapshot().activeTab; },
+    set _activeTab(v: string) { ctrl.setActiveTab(v); },
+    get _skillsConfig() { return ctrl.getSnapshot().skillsConfig; },
+    get _discoveredSkills() { return ctrl.getSnapshot().discoveredSkills; },
+    get _searchQuery() { return ctrl.getSnapshot().searchQuery; },
+    set _searchQuery(v: string) { ctrl.setSearchQuery(v); },
+    _loadData: () => ctrl.loadData(),
+    get rpcClient() { return e.rpcClient; },
+    set rpcClient(v: RpcClient | null) { e.rpcClient = v; },
+  } as unknown as ReturnType<typeof priv>;
 }
 
 afterEach(() => {

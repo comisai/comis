@@ -139,7 +139,7 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     // ===== IN-SCOPE INCLUDED — drained per Wave 2-7 split commit =====
     // Wave 2
     //   setup-wizard.ts: drained — extracted via setup-wizard-controller.ts (Task 1).
-    "packages/web/src/views/skills.ts",                             //  7 rpcClient.call (verified HEAD)
+    //   skills.ts:       drained — extracted via skills-controller.ts       (Task 2).
     "packages/web/src/views/chat-console.ts",                       //  7 rpcClient.call (verified HEAD)
     "packages/web/src/views/message-center.ts",                     // 14 rpcClient.call (verified HEAD)
     "packages/web/src/views/config-editor.ts",                      // 12 rpcClient.call (verified HEAD)
