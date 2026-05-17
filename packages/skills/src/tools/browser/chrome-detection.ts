@@ -22,7 +22,7 @@ import { systemClearTimeout, systemGetEnv, systemNowMs, systemSetTimeout } from 
 // ── Types ────────────────────────────────────────────────────────────
 
 export type BrowserExecutable = {
-  kind: "chrome" | "chromium" | "brave" | "edge" | "canary" | "custom";
+  kind: "chrome" | "chromium" | "brave" | "edge" | "canary" | "custom" | "cloak";
   path: string;
 };
 
@@ -123,10 +123,76 @@ function findChromeLinux(): BrowserExecutable | null {
   return findFirstExecutable(candidates);
 }
 
+// Compare two CloakBrowser version-dir names ("chromium-146.0.7680.177.4")
+// numerically, descending — newest first. Falls back to lexicographic on
+// non-numeric segments so we never throw on a malformed dir name.
+function compareCloakVersionsDesc(a: string, b: string): number {
+  const norm = (s: string) =>
+    s.replace(/^chromium-/, "").split(".").map((p) => {
+      const n = Number(p);
+      return Number.isFinite(n) ? n : p;
+    });
+  const av = norm(a);
+  const bv = norm(b);
+  const len = Math.max(av.length, bv.length);
+  for (let i = 0; i < len; i++) {
+    const x = av[i] ?? 0;
+    const y = bv[i] ?? 0;
+    if (x === y) continue;
+    if (typeof x === "number" && typeof y === "number") return y - x;
+    return String(y).localeCompare(String(x));
+  }
+  return 0;
+}
+
+/**
+ * Find the CloakBrowser binary if installed.
+ *
+ * CloakBrowser ships its own stealth Chromium binary that auto-downloads
+ * to ~/.cloakbrowser/chromium-<version>/ when `npx cloakbrowser install`
+ * runs. We prefer it over stock Chrome when present — the user (or the
+ * installer's --with-cloakbrowser flag) put it there deliberately.
+ *
+ * Layout differs per platform:
+ *   Linux:  ~/.cloakbrowser/chromium-<version>/chrome
+ *   macOS:  ~/.cloakbrowser/chromium-<version>/Chromium.app/Contents/MacOS/Chromium
+ *
+ * Multiple versions may coexist (auto-update keeps the previous one as a
+ * fallback) — pick the newest.
+ */
+function findCloakBrowser(): BrowserExecutable | null {
+  const root = `${os.homedir()}/.cloakbrowser`;
+  if (!exists(root)) return null;
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    return null;
+  }
+  const versions = entries
+    .filter((name) => name.startsWith("chromium-"))
+    .sort(compareCloakVersionsDesc);
+  const isMac = process.platform === "darwin";
+  for (const v of versions) {
+    const binPath = isMac
+      ? `${root}/${v}/Chromium.app/Contents/MacOS/Chromium`
+      : `${root}/${v}/chrome`;
+    if (exists(binPath)) {
+      return { kind: "cloak", path: binPath };
+    }
+  }
+  return null;
+}
+
 /**
  * Find an installed Chrome/Chromium executable.
  *
- * Checks custom path first (from config), then standard OS locations.
+ * Resolution order:
+ *   1. Explicit chromePath from config (operator override).
+ *   2. CloakBrowser binary at ~/.cloakbrowser/ if present (stealth wins
+ *      when the user installed it deliberately).
+ *   3. Stock Chrome / Brave / Edge / Chromium per platform.
+ *
  * Returns null if no browser is found.
  */
 export function findChrome(
@@ -138,6 +204,9 @@ export function findChrome(
     }
     return { kind: "custom", path: chromePath };
   }
+
+  const cloak = findCloakBrowser();
+  if (cloak) return cloak;
 
   const platform = process.platform;
   if (platform === "darwin") return findChromeMac();

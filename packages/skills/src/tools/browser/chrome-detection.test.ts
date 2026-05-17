@@ -9,9 +9,11 @@ vi.mock("node:fs", () => ({
   default: {
     existsSync: vi.fn().mockReturnValue(false),
     mkdirSync: vi.fn(),
+    readdirSync: vi.fn().mockReturnValue([]),
   },
   existsSync: vi.fn().mockReturnValue(false),
   mkdirSync: vi.fn(),
+  readdirSync: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -47,6 +49,13 @@ let originalPlatform: PropertyDescriptor | undefined;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Reset fs mocks to defaults — clearAllMocks() only clears call history,
+  // not return values, so any test that customizes readdirSync/existsSync
+  // would otherwise leak into the next test.
+  vi.mocked(fs.existsSync).mockReturnValue(false);
+  vi.mocked(fs.readdirSync).mockReturnValue(
+    [] as unknown as ReturnType<typeof fs.readdirSync>,
+  );
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
@@ -236,6 +245,110 @@ describe("findChrome", () => {
       const result = findChrome();
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe("CloakBrowser detection", () => {
+    beforeEach(() => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+    });
+
+    it("prefers CloakBrowser over stock Chrome on Linux when both exist", () => {
+      setPlatform("linux");
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        "chromium-146.0.7680.177.4",
+      ] as unknown as ReturnType<typeof fs.readdirSync>);
+      vi.mocked(fs.existsSync).mockImplementation((p) =>
+        p === "/home/testuser/.cloakbrowser" ||
+        p === "/home/testuser/.cloakbrowser/chromium-146.0.7680.177.4/chrome" ||
+        p === "/usr/bin/google-chrome",
+      );
+
+      const result = findChrome();
+
+      expect(result).toEqual({
+        kind: "cloak",
+        path: "/home/testuser/.cloakbrowser/chromium-146.0.7680.177.4/chrome",
+      });
+    });
+
+    it("picks the newest version when multiple are cached", () => {
+      setPlatform("linux");
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        "chromium-146.0.7680.177.3",
+        "chromium-146.0.7680.177.4",
+        "chromium-145.0.7632.109.2",
+      ] as unknown as ReturnType<typeof fs.readdirSync>);
+      vi.mocked(fs.existsSync).mockImplementation((p) =>
+        typeof p === "string" && p.startsWith("/home/testuser/.cloakbrowser"),
+      );
+
+      const result = findChrome();
+
+      expect(result?.kind).toBe("cloak");
+      expect(result?.path).toBe(
+        "/home/testuser/.cloakbrowser/chromium-146.0.7680.177.4/chrome",
+      );
+    });
+
+    it("locates the macOS .app bundle binary", () => {
+      setPlatform("darwin");
+      vi.mocked(os.homedir).mockReturnValue("/Users/testuser");
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        "chromium-145.0.7632.109.2",
+      ] as unknown as ReturnType<typeof fs.readdirSync>);
+      vi.mocked(fs.existsSync).mockImplementation((p) =>
+        p === "/Users/testuser/.cloakbrowser" ||
+        p === "/Users/testuser/.cloakbrowser/chromium-145.0.7632.109.2/Chromium.app/Contents/MacOS/Chromium",
+      );
+
+      const result = findChrome();
+
+      expect(result).toEqual({
+        kind: "cloak",
+        path: "/Users/testuser/.cloakbrowser/chromium-145.0.7632.109.2/Chromium.app/Contents/MacOS/Chromium",
+      });
+    });
+
+    it("falls through to stock Chrome when cloakbrowser dir is empty", () => {
+      setPlatform("linux");
+      vi.mocked(fs.readdirSync).mockReturnValue(
+        [] as unknown as ReturnType<typeof fs.readdirSync>,
+      );
+      vi.mocked(fs.existsSync).mockImplementation((p) =>
+        p === "/home/testuser/.cloakbrowser" ||
+        p === "/usr/bin/google-chrome",
+      );
+
+      const result = findChrome();
+
+      expect(result?.kind).toBe("chrome");
+    });
+
+    it("does not invoke readdirSync when ~/.cloakbrowser is missing", () => {
+      setPlatform("linux");
+      vi.mocked(fs.existsSync).mockImplementation((p) =>
+        p === "/usr/bin/google-chrome",
+      );
+
+      const result = findChrome();
+
+      expect(result?.kind).toBe("chrome");
+      // readdirSync should never have been called because the root dir
+      // existsSync check returned false.
+      expect(fs.readdirSync).not.toHaveBeenCalled();
+    });
+
+    it("explicit chromePath overrides CloakBrowser auto-detect", () => {
+      setPlatform("linux");
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        "chromium-146.0.7680.177.4",
+      ] as unknown as ReturnType<typeof fs.readdirSync>);
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+
+      const result = findChrome("/custom/path/to/chrome");
+
+      expect(result).toEqual({ kind: "custom", path: "/custom/path/to/chrome" });
     });
   });
 
