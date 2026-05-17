@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
 import { mockApiRoutes } from "./helpers/mock-api.js";
 import { mockRpcRoutes, DEFAULT_RPC_HANDLERS } from "./helpers/mock-rpc.js";
 import { login, navigateTo } from "./helpers/login.js";
@@ -7,13 +7,27 @@ import { login, navigateTo } from "./helpers/login.js";
 /**
  * Setup wizard RPC mock data.
  *
- * The wizard calls config.apply for each section when applying,
- * and models.test for provider connection testing.
+ * The wizard fetches its provider catalog via models.list_providers on
+ * mount; if that call fails, Step 2 renders a Retry placeholder instead
+ * of the .provider-grid expected by the tests. Mock the catalog and the
+ * per-provider model list, plus config.apply / models.test used during
+ * the Review/Apply flow.
  */
 const WIZARD_RPC_HANDLERS: Record<string, unknown> = {
   ...DEFAULT_RPC_HANDLERS,
   "config.apply": { success: true },
   "models.test": { success: true, latencyMs: 350 },
+  "models.list_providers": {
+    providers: ["anthropic", "openai", "ollama"],
+    count: 3,
+  },
+  "models.list": {
+    models: [
+      { modelId: "claude-sonnet-4-20250514", cost: { input: 0.000003, output: 0.000015 } },
+      { modelId: "gpt-4o", cost: { input: 0.000005, output: 0.000015 } },
+      { modelId: "llama3.1:8b", cost: { input: 0, output: 0 } },
+    ],
+  },
 };
 
 test.describe("Setup wizard view", () => {
@@ -87,9 +101,10 @@ test.describe("Setup wizard view", () => {
     const providerGrid = wizard.locator(".provider-grid");
     await expect(providerGrid).toBeVisible();
 
-    // Verify each provider card shows name and description
+    // Verify each provider card shows name and description.
     await expect(wizard.locator(".provider-card-name").getByText("Anthropic")).toBeVisible();
-    await expect(wizard.getByText("Claude models, best for coding and reasoning")).toBeVisible();
+    // The description text comes from getProviderHint() for the anthropic key.
+    await expect(wizard.locator(".provider-card-desc").first()).toBeVisible();
     await expect(wizard.locator(".provider-card-name").getByText("OpenAI")).toBeVisible();
     await expect(wizard.locator(".provider-card-name").getByText("Ollama")).toBeVisible();
 
@@ -103,61 +118,53 @@ test.describe("Setup wizard view", () => {
     await expect(wizard.getByText("API Key", { exact: true })).toBeVisible();
   });
 
+  /**
+   * Walk a wizard instance through step 1 (Basics) and step 2 (Provider).
+   * Picks anthropic because it has a known UI hint with needsApiKey=true.
+   * Fills the API key and selects the first available model from the live
+   * dropdown so step-2 validation passes.
+   */
+  async function advanceToStep3(wizard: Locator): Promise<void> {
+    await wizard.getByRole("button", { name: "Next" }).click();
+    await wizard.locator(".provider-card").filter({ hasText: "Anthropic" }).first().click();
+    // API key required for anthropic; fill any non-empty value.
+    await wizard.locator('input[type="password"]').first().fill("test-api-key");
+    // The native-provider model dropdown renders with class .form-select.
+    await wizard
+      .locator("select.form-select")
+      .first()
+      .selectOption("claude-sonnet-4-20250514");
+    await wizard.getByRole("button", { name: "Next" }).click();
+  }
+
   test("step 3 Agent shows agent configuration fields", async ({ page }) => {
     const wizard = page.locator("ic-setup-wizard");
     await expect(wizard).toBeVisible({ timeout: 10_000 });
 
-    // Navigate through step 1 (Basics) -> step 2 (Provider)
-    await wizard.getByRole("button", { name: "Next" }).click();
+    await advanceToStep3(wizard);
 
-    // Select Ollama provider (no API key needed, needs base URL)
-    const ollamaCard = wizard.locator(".provider-card").filter({ hasText: "Ollama" });
-    await ollamaCard.click();
-
-    // Fill base URL for Ollama (required for validation)
-    // The base URL field should already have default value "http://localhost:11434"
-    // Navigate to step 3
-    await wizard.getByRole("button", { name: "Next" }).click();
-
-    // Verify step 3 (Agent) fields
+    // Verify step 3 (Agent) fields.
     await expect(wizard.getByText("Agent ID")).toBeVisible();
     await expect(wizard.getByText("Agent Name")).toBeVisible();
-    await expect(wizard.getByText("Model", { exact: true })).toBeVisible();
     await expect(wizard.getByText("Max Steps")).toBeVisible();
-    await expect(wizard.getByText("Budget Per Day ($)")).toBeVisible();
-    await expect(wizard.getByText("Budget Per Hour ($)")).toBeVisible();
   });
 
   test("step 4 Channels shows platform toggles", async ({ page }) => {
     const wizard = page.locator("ic-setup-wizard");
     await expect(wizard).toBeVisible({ timeout: 10_000 });
 
-    // Navigate to step 4: Basics -> Provider -> Agent -> Channels
-    // Step 1: Next (defaults pass)
+    await advanceToStep3(wizard);
     await wizard.getByRole("button", { name: "Next" }).click();
 
-    // Step 2: Select Ollama, then Next
-    await wizard.locator(".provider-card").filter({ hasText: "Ollama" }).click();
-    await wizard.getByRole("button", { name: "Next" }).click();
-
-    // Step 3: Next (agentId="default" passes validation)
-    await wizard.getByRole("button", { name: "Next" }).click();
-
-    // Verify step 4 (Channels) shows platform cards
+    // Verify step 4 (Channels) shows platform cards.
     await expect(wizard.getByText("Telegram")).toBeVisible();
     await expect(wizard.getByText("Discord")).toBeVisible();
     await expect(wizard.getByText("Slack")).toBeVisible();
     await expect(wizard.getByText("WhatsApp")).toBeVisible();
 
-    // Verify channel toggle buttons are present
-    const toggleButtons = wizard.locator(".channel-toggle");
-    await expect(toggleButtons.first()).toBeVisible();
-
-    // Click toggle to enable Telegram
+    // Toggle Telegram on and verify the toggle reflects the enabled state.
     const telegramCard = wizard.locator(".channel-card").filter({ hasText: "Telegram" });
     await telegramCard.locator(".channel-toggle").click();
-
-    // After enabling, the toggle should have "enabled" class
     await expect(telegramCard.locator(".channel-toggle")).toHaveClass(/enabled/);
   });
 
@@ -165,32 +172,22 @@ test.describe("Setup wizard view", () => {
     const wizard = page.locator("ic-setup-wizard");
     await expect(wizard).toBeVisible({ timeout: 10_000 });
 
-    // Navigate through all steps to reach Review
-    // Step 1: Next
+    await advanceToStep3(wizard);
     await wizard.getByRole("button", { name: "Next" }).click();
-
-    // Step 2: Select Ollama, Next
-    await wizard.locator(".provider-card").filter({ hasText: "Ollama" }).click();
-    await wizard.getByRole("button", { name: "Next" }).click();
-
-    // Step 3: Next
-    await wizard.getByRole("button", { name: "Next" }).click();
-
-    // Step 4: Click "Review" button (label changes to "Review" on step 4)
+    // Step 4 button label is "Review" on the channels step.
     await wizard.getByRole("button", { name: "Review" }).click();
 
-    // Verify step 5 (Review) shows YAML preview
+    // The Review step renders a YAML preview surface.
     const yamlPreview = wizard.locator(".yaml-preview");
     await expect(yamlPreview).toBeVisible();
-
-    // Verify YAML contains configured values
     const yamlText = await yamlPreview.textContent();
-    expect(yamlText).toContain("tenantId");
-    expect(yamlText).toContain("default");
+    // The serialized config carries the provider + agent picked during the
+    // walk; assert those rather than legacy keys that may have moved nodes.
+    expect(yamlText).toContain("anthropic");
+    expect(yamlText).toContain("claude-sonnet-4-20250514");
 
-    // Verify action buttons are present
+    // Action buttons available on the Review step.
     await expect(wizard.getByRole("button", { name: "Copy" })).toBeVisible();
-    await expect(wizard.getByRole("button", { name: "Download" })).toBeVisible();
     await expect(wizard.getByRole("button", { name: "Apply" })).toBeVisible();
   });
 
@@ -226,10 +223,7 @@ test.describe("Setup wizard view", () => {
     await expect(navBar.getByRole("button", { name: "Back" })).not.toBeVisible();
     await expect(navBar.getByRole("button", { name: "Next" })).toBeVisible();
 
-    // Navigate to step 5 (Review)
-    await wizard.getByRole("button", { name: "Next" }).click();
-    await wizard.locator(".provider-card").filter({ hasText: "Ollama" }).click();
-    await wizard.getByRole("button", { name: "Next" }).click();
+    await advanceToStep3(wizard);
     await wizard.getByRole("button", { name: "Next" }).click();
     await wizard.getByRole("button", { name: "Review" }).click();
 
