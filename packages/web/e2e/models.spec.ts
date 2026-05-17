@@ -9,38 +9,47 @@ import { login, navigateTo } from "./helpers/login.js";
  * aliases, defaults, and test connection button.
  */
 
-/** Mock config.read response matching the models view's expected shape. */
+/**
+ * Mock config.read response matching the models view's expected shape.
+ *
+ * The view reads `configResult.config.providers.entries` and
+ * `configResult.config.models.*` — wrap the payload in `config` and
+ * include the `sections` list to mirror the real RPC contract.
+ */
 const MODELS_CONFIG = {
-  providers: {
-    entries: {
-      anthropic: {
-        type: "anthropic",
-        name: "anthropic",
-        baseUrl: "",
-        apiKeyName: "ANTHROPIC_API_KEY",
-        enabled: true,
-        timeoutMs: 120000,
-        maxRetries: 2,
-      },
-      openai: {
-        type: "openai",
-        name: "openai",
-        baseUrl: "https://api.openai.com/v1",
-        apiKeyName: "OPENAI_API_KEY",
-        enabled: true,
-        timeoutMs: 120000,
-        maxRetries: 2,
+  config: {
+    providers: {
+      entries: {
+        anthropic: {
+          type: "anthropic",
+          name: "anthropic",
+          baseUrl: "",
+          apiKeyName: "ANTHROPIC_API_KEY",
+          enabled: true,
+          timeoutMs: 120000,
+          maxRetries: 2,
+        },
+        openai: {
+          type: "openai",
+          name: "openai",
+          baseUrl: "https://api.openai.com/v1",
+          apiKeyName: "OPENAI_API_KEY",
+          enabled: true,
+          timeoutMs: 120000,
+          maxRetries: 2,
+        },
       },
     },
+    models: {
+      defaultProvider: "anthropic",
+      defaultModel: "claude-sonnet-4-20250514",
+      aliases: [
+        { alias: "fast", provider: "anthropic", modelId: "claude-haiku-35" },
+        { alias: "smart", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+      ],
+    },
   },
-  models: {
-    defaultProvider: "anthropic",
-    defaultModel: "claude-sonnet-4-20250514",
-    aliases: [
-      { alias: "fast", provider: "anthropic", modelId: "claude-haiku-35" },
-      { alias: "smart", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
-    ],
-  },
+  sections: ["providers", "models"],
 };
 
 /** Mock models.list response matching ModelsListResponse interface. */
@@ -118,8 +127,8 @@ test.describe("Models view", () => {
     const view = page.locator("ic-models-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Navigate to Available Models tab
-    await view.getByText("Available Models").click();
+    // Navigate to the model catalog tab (renamed from "Available Models").
+    await view.getByRole("tab", { name: "Catalog" }).click();
 
     // Verify all three models are listed
     await expect(view.getByText("claude-sonnet-4-20250514")).toBeVisible();
@@ -136,8 +145,8 @@ test.describe("Models view", () => {
     const view = page.locator("ic-models-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Navigate to Aliases tab
-    await view.getByText("Aliases").click();
+    // Navigate to Aliases tab via role to avoid ambiguity with body text.
+    await view.getByRole("tab", { name: "Aliases" }).click();
 
     // Verify alias "fast" pointing to claude-haiku-35 is visible
     await expect(view.getByText("fast", { exact: true })).toBeVisible();
@@ -152,8 +161,8 @@ test.describe("Models view", () => {
     const view = page.locator("ic-models-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Navigate to Defaults tab
-    await view.getByText("Defaults").click();
+    // Navigate to Defaults tab via role to avoid ambiguity with body text.
+    await view.getByRole("tab", { name: "Defaults" }).click();
 
     // Verify default provider "anthropic" is indicated
     await expect(view.getByText("Default Provider")).toBeVisible();
@@ -162,8 +171,8 @@ test.describe("Models view", () => {
     await expect(view.getByText("Default Model")).toBeVisible();
 
     // The defaults summary section shows the current defaults via ic-tag
-    await expect(view.locator("ic-tag").filter({ hasText: "anthropic" })).toBeVisible();
-    await expect(view.locator("ic-tag").filter({ hasText: "claude-sonnet-4-20250514" })).toBeVisible();
+    await expect(view.locator("ic-tag").filter({ hasText: "anthropic" }).first()).toBeVisible();
+    await expect(view.locator("ic-tag").filter({ hasText: "claude-sonnet-4-20250514" }).first()).toBeVisible();
   });
 
   test("provider card has test connection button", async ({ page }) => {
