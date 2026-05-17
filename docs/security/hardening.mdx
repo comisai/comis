@@ -289,6 +289,19 @@ These items provide additional hardening for environments with strict security r
     **Why:** Browser tools can access the web, which creates opportunities for both SSRF attacks and data exfiltration. Proper sandboxing ensures browser actions are constrained.
 
     **Verify:** Check your `comis doctor` output for specific browser security recommendations.
+
+    **What the installer does for you:** When the daemon is installed with `--with-browser`, `--with-xvfb`, or `--with-cloakbrowser`, the systemd unit is written with two layers of filesystem isolation around the browser binary:
+
+    | Layer | What it does | Browser-tool specifics |
+    |---|---|---|
+    | Kernel sandbox (`ReadWritePaths=`) | Bind-mounts the rest of the host filesystem read-only. The browser process can write only to the listed paths. | `~/.config/comis/browser` (profile dir) plus a small set of binary-specific paths — `~/.config/google-chrome` + `~/.local/share/applications` for stock Chrome, or `~/.cloakbrowser` + `~/.config/chromium` for CloakBrowser (tighter — no mimeapps write). |
+    | Node `--permission` model (`--allow-fs-write=`) | Independently constrains what the Node daemon process can write, even before kernel checks run. | Same paths as `ReadWritePaths`, kept in lockstep so the two layers don't drift. |
+
+    Both are emitted by `render_systemd_unit` in `install.sh` and rendered into `/etc/systemd/system/comis.service`. The unit is checksummed and refuses to overwrite hand edits, so once you've audited the paths they stay stable across upgrades.
+
+    For the `--with-xvfb` variant, the companion `comis-xvfb.service` unit runs as the same user, joins the daemon's `/tmp` namespace via `JoinsNamespaceOf=`, and exposes Xvfb on a Unix socket only (`-nolisten tcp`) — no network surface added.
+
+    **What it does *not* do:** the daemon does not block what URLs the browser navigates to (beyond the always-on SSRF guard against private IPs, loopback, and cloud metadata endpoints). If you need URL allowlisting, layer that at the network egress level (egress-logging chain + outbound firewall rules).
   </Step>
 
   <Step title="Review SSRF attack surface">

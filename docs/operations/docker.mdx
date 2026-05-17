@@ -51,6 +51,9 @@ ARG COMIS_NODE_BOOKWORM_IMAGE="node:22-bookworm"
 ARG COMIS_NODE_BOOKWORM_SLIM_IMAGE="node:22-bookworm-slim"
 ARG COMIS_VARIANT="slim"
 ARG COMIS_DOCKER_APT_PACKAGES=""
+ARG COMIS_WITH_BROWSER=0
+ARG COMIS_WITH_XVFB=0
+ARG COMIS_WITH_CLOAKBROWSER=0
 ```
 
 - **Digest pinning** -- the base image ARGs accept `@sha256:` digests for
@@ -61,6 +64,28 @@ ARG COMIS_DOCKER_APT_PACKAGES=""
   debugging tools, or leave as `slim` for production.
 - **Custom packages** -- set `COMIS_DOCKER_APT_PACKAGES` to install additional
   system packages into the final image.
+- **Browser tool** -- three independent flags mirror the bare-VPS installer:
+  `COMIS_WITH_BROWSER=1` installs Google Chrome + headless shared libs;
+  `COMIS_WITH_XVFB=1` adds Xvfb (entrypoint shim starts it on `:99` before the
+  daemon); `COMIS_WITH_CLOAKBROWSER=1` installs CloakBrowser (stealth Chromium)
+  instead of stock Chrome. All implications and the datacenter-IP caveat are
+  documented in [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection).
+
+### Installer-built variant (`Dockerfile.install`)
+
+The repo ships a second Dockerfile that runs `install.sh` end-to-end inside
+the container instead of doing the multi-stage TypeScript build. Same build
+args, same final image shape, but exercises the bare-VPS installer code path:
+
+```bash
+docker build -f Dockerfile.install \
+  --build-arg COMIS_WITH_CLOAKBROWSER=1 \
+  -t comis-installed:cloak .
+```
+
+Use this for CI validation of `install.sh` changes, or when you want strict
+parity with a bare-VPS deploy. The main `Dockerfile` remains the production
+path (smaller, faster, no apt repo activity in the final layer).
 
 <Tip>
 The multi-stage build keeps the final image small. Only compiled JavaScript,

@@ -291,6 +291,48 @@ The bottom section of the unit file locks down the service:
 | `SystemCallFilter=@system-service` | Only allows system calls needed for normal services |
 | `PrivateDevices=yes` | Hides physical devices from the service |
 
+### Browser tool wiring (when installed with `--with-browser` / `--with-xvfb` / `--with-cloakbrowser`)
+
+The browser-tool flags don't change the security posture — they widen specific write paths just enough for the chosen browser binary to launch:
+
+| Install flag | `ReadWritePaths` additions | `--allow-fs-write` additions |
+|---|---|---|
+| `--with-browser` (stock Chrome) | `~/.config/google-chrome`, `~/.local/share/applications`, `~/.config/comis/browser` | Same set; mirrored on the Node permission model |
+| `--with-cloakbrowser` (stealth Chromium) | `~/.cloakbrowser`, `~/.config/chromium`, `~/.config/comis/browser` | Same; tighter than the Chrome variant (no mimeapps write needed — CloakBrowser patches that out) |
+| `--with-xvfb` | (no extra paths — see companion unit below) | (no extra paths) |
+
+Every additional write path is named, scoped to the daemon's home, and matches what the binary actually writes. The Chrome variant needs `~/.local/share/applications` for `mimeapps.list` (Chrome's default-browser registration; no flag disables it). The cloak variant doesn't.
+
+### `comis-xvfb.service` companion (when installed with `--with-xvfb`)
+
+A second managed unit at `/etc/systemd/system/comis-xvfb.service` runs Xvfb on display `:99` as the same `comis` user:
+
+```
+[Service]
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp
+```
+
+`-nolisten tcp` keeps the X server on a Unix socket only; `-ac` is safe because the socket is owned by the `comis` user and inaccessible from outside that namespace. The main `comis.service` unit picks up the display by way of three additional directives:
+
+```
+After=network-online.target comis-xvfb.service
+Wants=network-online.target comis-xvfb.service
+Environment=DISPLAY=:99
+JoinsNamespaceOf=comis-xvfb.service
+```
+
+`JoinsNamespaceOf=` is load-bearing — without it, `PrivateTmp=yes` on the main unit gives the daemon its own `/tmp` namespace and the X11 socket at `/tmp/.X11-unix/X99` is unreachable. The pair share `/tmp` for exactly this purpose.
+
+Manage the companion unit the same way as the main one:
+
+```bash
+sudo systemctl status comis-xvfb         # check it's running
+sudo systemctl restart comis-xvfb        # bounces both this and the daemon
+journalctl -u comis-xvfb --since "-1h"   # Xvfb startup logs
+```
+
+The companion is uninstalled together with the main service by `bash install.sh --uninstall` (no separate command needed).
+
 ## Common commands
 
 | Command | What it does |
