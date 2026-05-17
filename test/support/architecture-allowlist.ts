@@ -177,9 +177,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/message-center.ts",
-    lines: 1772,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1338,
+    reason: "Lit web view; RPC orchestration extracted via message-center-controller.ts (14 rpc methods moved out). Residual DOM-coupled interaction logic (emoji picker, inline edit, 5 confirmation dialogs, 4 per-platform action panels with dynamic inputs) does not split cleanly into a controller. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/config-editor.ts",

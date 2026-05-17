@@ -425,6 +425,15 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // behavioural tests that rely on direct `@state` assignment. Auto-
     // acceptable per WEB-DECOMP-09.
     "packages/web/src/views/chat-console.ts",
+    // message-center.ts (Wave 2 / Task 4): RPC extraction completed via
+    // message-center-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates all daemon I/O to the controller (14 rpc methods).
+    // The remaining ≤1400L is DOM-coupled interaction logic (emoji picker
+    // with click-outside, inline edit textarea + focus, 5 confirmation
+    // dialogs, 4 per-platform action panels with dynamic input fields)
+    // that does not split cleanly into a controller. Auto-acceptable per
+    // WEB-DECOMP-09.
+    "packages/web/src/views/message-center.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
