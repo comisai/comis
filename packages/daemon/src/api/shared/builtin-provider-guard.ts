@@ -20,7 +20,7 @@
  *
  * @module
  */
-import { getProviders, getModels, type KnownProvider } from "@mariozechner/pi-ai";
+import { getProviders, getModels, type KnownProvider } from "@earendil-works/pi-ai";
 
 export type BuiltInProviderGuardResult =
   | { ok: true }

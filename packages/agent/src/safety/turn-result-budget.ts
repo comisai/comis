@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { Message, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Message, ToolResultMessage } from "@earendil-works/pi-ai";
 
 import { createToolResultSizeGuard, type ContentBlock } from "./tool-result-size-guard.js";
 

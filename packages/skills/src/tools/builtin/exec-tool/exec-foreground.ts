@@ -13,7 +13,7 @@ import { createWriteStream, mkdirSync, writeFileSync, copyFileSync, statSync } f
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { safePath, systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
-import type { AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ExecSandboxConfig } from "../sandbox/types.js";
 import type { ProcessRegistry } from "../process-registry.js";
 import { truncateTail, formatSize, DEFAULT_MAX_BYTES } from "../truncate.js";

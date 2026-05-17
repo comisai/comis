@@ -25,9 +25,9 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Message } from "@mariozechner/pi-ai";
-import { generateSummary } from "@mariozechner/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
+import { generateSummary } from "@earendil-works/pi-coding-agent";
 import type { ContextLayer, TokenBudget, CompactionLayerDeps } from "./types.js";
 import {
   COMPACTION_TRIGGER_PERCENT,

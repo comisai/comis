@@ -44,7 +44,7 @@ vi.mock("@comis/core", async (importOriginal) => {
   };
 });
 
-vi.mock("@mariozechner/pi-ai/oauth", () => ({
+vi.mock("@earendil-works/pi-ai/oauth", () => ({
   getOAuthProvider: mockGetOAuthProvider,
 }));
 

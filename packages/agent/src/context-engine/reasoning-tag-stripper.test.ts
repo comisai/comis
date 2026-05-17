@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createReasoningTagStripper, validateRoleAttribution } from "./reasoning-tag-stripper.js";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TokenBudget } from "./types.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 

@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import { parse as parseYaml } from "yaml";
-import type { Message } from "@mariozechner/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
 
 import { createStubMcpServer } from "./stub-mcp-server.js";
 

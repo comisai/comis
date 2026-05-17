@@ -12,7 +12,7 @@
  */
 
 import { createHmac } from "node:crypto";
-import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
+import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
 import { resolveOperationDefaults } from "@comis/agent";
 import { TOOL_PROFILES } from "@comis/skills";
 
@@ -55,7 +55,7 @@ export function resolveAgentModel(
     if (allProviders.length === 0) {
       throw new Error(
         "Pi-ai catalog returned zero providers. " +
-        "Install or upgrade @mariozechner/pi-ai, or set models.defaultProvider explicitly.",
+        "Install or upgrade @earendil-works/pi-ai, or set models.defaultProvider explicitly.",
       );
     }
     provider = allProviders
@@ -79,7 +79,7 @@ export function resolveAgentModel(
     if (!candidate) {
       throw new Error(
         `No models found for provider "${provider}" in pi-ai catalog. ` +
-        "Set models.defaultModel explicitly or upgrade @mariozechner/pi-ai.",
+        "Set models.defaultModel explicitly or upgrade @earendil-works/pi-ai.",
       );
     }
     model = candidate;

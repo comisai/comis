@@ -27,7 +27,7 @@ import {
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { TurnBudgetTracker } from "../../budget/turn-budget-tracker.js";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import { processFailurePath } from "./failure-path.js";

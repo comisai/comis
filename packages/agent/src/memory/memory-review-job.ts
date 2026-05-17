@@ -21,7 +21,7 @@ import type { MemoryReviewConfig } from "@comis/core";
 import type { MemoryPort, MemorySearchOptions } from "@comis/core";
 import type { MemoryEntry } from "@comis/core";
 import type { SessionData, SessionKey } from "@comis/core";
-import { completeSimple, getModel } from "@mariozechner/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 

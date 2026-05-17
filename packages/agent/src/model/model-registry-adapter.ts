@@ -10,11 +10,11 @@
  * @module
  */
 
-import { ModelRegistry } from "@mariozechner/pi-coding-agent";
-import type { AuthStorage } from "@mariozechner/pi-coding-agent";
-import { getModels, getProviders } from "@mariozechner/pi-ai";
-import type { Api, Model, KnownProvider } from "@mariozechner/pi-ai";
-import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { AuthStorage } from "@earendil-works/pi-coding-agent";
+import { getModels, getProviders } from "@earendil-works/pi-ai";
+import type { Api, Model, KnownProvider } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { SecretManager } from "@comis/core";
 import type { ModelAllowlist } from "./model-allowlist.js";
 

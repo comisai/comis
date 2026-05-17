@@ -12,7 +12,7 @@
  * @module
  */
 
-import type { AuthStorage } from "@mariozechner/pi-coding-agent";
+import type { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { SecretManager } from "@comis/core";
 import type { TypedEventBus, OAuthCredentialStorePort, FileLockPort } from "@comis/core";
 import type { ComisLogger } from "@comis/core";

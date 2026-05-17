@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 /**
  * Extract the first text block's content from a tool result message.

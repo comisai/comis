@@ -52,12 +52,12 @@ import {
   type FileLockPort,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
-import type { OAuthCredentials } from "@mariozechner/pi-ai";
+import type { OAuthCredentials } from "@earendil-works/pi-ai";
 import {
   getOAuthProvider,
   getOAuthApiKey,
   getOAuthProviders,
-} from "@mariozechner/pi-ai/oauth";
+} from "@earendil-works/pi-ai/oauth";
 import { watch, type FSWatcher } from "chokidar";
 import {
   resolveCodexAuthIdentity,

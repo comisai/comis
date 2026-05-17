@@ -15,7 +15,7 @@
  * @module
  */
 
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 
 import { parseUserTokenBudget } from "../../budget/budget-parser.js";

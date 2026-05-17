@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { getModels } from "@mariozechner/pi-ai";
+import { getModels } from "@earendil-works/pi-ai";
 import { resolveCompactionModel } from "./compaction-model-resolver.js";
 
 describe("resolveCompactionModel", () => {

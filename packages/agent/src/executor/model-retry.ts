@@ -24,9 +24,9 @@
  * @module
  */
 
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
-import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { TypedEventBus, ClockPort, TimerPort } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";

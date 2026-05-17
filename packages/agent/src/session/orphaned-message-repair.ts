@@ -34,7 +34,7 @@ import type {
   SessionManager,
   SessionEntry,
   SessionMessageEntry,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------

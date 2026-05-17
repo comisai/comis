@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ComisLogger } from "@comis/core";
 import type { CompactionLayerDeps } from "./types-compaction.js";
 import type { RehydrationLayerDeps } from "./types-compaction.js";

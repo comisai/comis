@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 
 // --- Schema normalization (formerly schema-normalizer.ts) ---

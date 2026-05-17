@@ -16,7 +16,7 @@
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Type } from "typebox";
-import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { safePath, systemNowMs, tryGetContext } from "@comis/core";
 import {
   jsonResult,

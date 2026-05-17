@@ -12,7 +12,7 @@
  * @module
  */
 
-import { getProviders, getModels } from "@mariozechner/pi-ai";
+import { getProviders, getModels } from "@earendil-works/pi-ai";
 import type { ModelCompatConfig } from "../domain/model-compat.js";
 
 // ---------------------------------------------------------------------------

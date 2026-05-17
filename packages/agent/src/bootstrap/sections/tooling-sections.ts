@@ -4,7 +4,7 @@
  * and compacted output recovery.
  */
 
-import { getProviders } from "@mariozechner/pi-ai";
+import { getProviders } from "@earendil-works/pi-ai";
 
 // ---------------------------------------------------------------------------
 // 3. Tooling (include in minimal)

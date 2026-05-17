@@ -10,7 +10,7 @@
  */
 
 import type { SkillsConfig } from "@comis/core";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createComisReadTool } from "../file-tools/read-tool.js";
 import { createComisEditTool } from "../file-tools/edit-tool.js";
 import { createComisNotebookEditTool } from "../file-tools/notebook-edit-tool.js";

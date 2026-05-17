@@ -12,10 +12,10 @@ import { handleGraphCompletion } from "./graph-completion.js";
 import type { CoordinatorSharedState, GraphRunState } from "./graph-coordinator-state.js";
 
 // ---------------------------------------------------------------------------
-// Module mock for @mariozechner/pi-ai (prevents real SDK import in unit tests)
+// Module mock for @earendil-works/pi-ai (prevents real SDK import in unit tests)
 // ---------------------------------------------------------------------------
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", () => ({
   getModel: vi.fn().mockReturnValue({ id: "mock-model" }),
   getModels: vi.fn().mockReturnValue([]),
   getProviders: vi.fn().mockReturnValue([]),

@@ -14,7 +14,7 @@ import { createOAuthTokenManager, type OAuthTokenManager, type OAuthError } from
 // Mock pi-ai OAuth module
 // ---------------------------------------------------------------------------
 
-vi.mock("@mariozechner/pi-ai/oauth", () => ({
+vi.mock("@earendil-works/pi-ai/oauth", () => ({
   getOAuthProvider: vi.fn(),
   getOAuthApiKey: vi.fn(),
   getOAuthProviders: vi.fn(),
@@ -24,7 +24,7 @@ import {
   getOAuthProvider,
   getOAuthApiKey,
   getOAuthProviders,
-} from "@mariozechner/pi-ai/oauth";
+} from "@earendil-works/pi-ai/oauth";
 import type { FileLockPort } from "@comis/core";
 
 // The production OAuthTokenManager does not import `@comis/scheduler`'s
@@ -1750,7 +1750,7 @@ type OAuthTokenManagerDepsLike = Parameters<typeof createOAuthTokenManager>[0];
 // The token manager bypasses pi-ai's getOAuthApiKey for openai-codex so the
 // refresh-failure response body is available for clean classification. These
 // tests drive the bypass by mocking globalThis.fetch — the existing module-
-// level mock of @mariozechner/pi-ai/oauth (lines 17-21) keeps non-Codex
+// level mock of @earendil-works/pi-ai/oauth (lines 17-21) keeps non-Codex
 // providers on the pi-ai path so we can verify pure fall-through.
 // =============================================================================
 

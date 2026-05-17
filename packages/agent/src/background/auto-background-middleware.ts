@@ -11,7 +11,7 @@
 import { suppressError } from "@comis/shared";
 import type { BackgroundTasksConfig } from "@comis/core";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { BackgroundTaskManager } from "./background-task-manager.js";
 import type { BackgroundTaskOrigin } from "./background-task-types.js";
 

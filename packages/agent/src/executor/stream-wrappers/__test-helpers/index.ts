@@ -5,7 +5,7 @@
  */
 
 import { vi } from "vitest";
-import type { Context, Message, AssistantMessage } from "@mariozechner/pi-ai";
+import type { Context, Message, AssistantMessage } from "@earendil-works/pi-ai";
 
 export function createMockLogger() {
   return {

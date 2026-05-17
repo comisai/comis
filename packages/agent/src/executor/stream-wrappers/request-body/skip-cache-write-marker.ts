@@ -15,7 +15,7 @@
  * @module
  */
 
-import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { ComisLogger } from "@comis/core";
 
 import { addCacheControlToLastBlock } from "./cache-control-block.js";

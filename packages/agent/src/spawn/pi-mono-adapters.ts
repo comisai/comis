@@ -13,7 +13,7 @@
  * @module
  */
 
-import { SessionManager as SdkSessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager as SdkSessionManager } from "@earendil-works/pi-coding-agent";
 import { ok, err } from "@comis/shared";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
 

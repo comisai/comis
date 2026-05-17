@@ -16,7 +16,7 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ContextEngineConfig } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import type {
@@ -40,7 +40,7 @@ import { createRehydrationLayer } from "./rehydration.js";
 import { createObjectiveReinforcementLayer } from "./objective-reinforcement.js";
 import { createDeadContentEvictorLayer } from "./dead-content-evictor.js";
 import { detectRereads } from "./reread-detector.js";
-import type { Message } from "@mariozechner/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
 import { estimateContextCharsWithDualRatio, estimateWithAnchor } from "../safety/token-estimator.js";
 import { createDagContextEngine } from "./dag-reconciliation.js";
 import type { DagContextEngineDeps } from "./types.js";

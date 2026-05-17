@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";

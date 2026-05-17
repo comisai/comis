@@ -25,7 +25,7 @@ import { scanWithOutputGuard } from "../executor-response-filter.js";
 import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
 import { getCacheProviderInfo } from "../cache-usage-helpers.js";
 
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 
 /**

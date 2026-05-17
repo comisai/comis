@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 
 /** Cache write token threshold for fast-path escalation.
  *  When the first turn writes >20K tokens, promote to "long" immediately

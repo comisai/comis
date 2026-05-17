@@ -4,7 +4,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { safePath } from "@comis/core";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { wrapToolForAutoBackground, type ToolDefinition } from "./auto-background-middleware.js";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
 import type { BackgroundTasksConfig, ClockPort, TimerPort, TimerHandle } from "@comis/core";

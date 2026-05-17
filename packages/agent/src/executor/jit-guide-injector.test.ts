@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { registerToolMetadata } from "@comis/core";
 import {
   wrapToolResultWithGuide,

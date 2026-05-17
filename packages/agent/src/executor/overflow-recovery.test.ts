@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import { createOverflowRecovery, type OverflowRecoveryConfig } from "./overflow-recovery.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 

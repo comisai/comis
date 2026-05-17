@@ -4,7 +4,7 @@
  *
  * Types-only module: the heavyweight runtime implementation
  * (`createOAuthTokenManager`) stays in `@comis/agent` because it carries
- * deep runtime deps (`chokidar` for file-watcher, `@mariozechner/pi-ai`
+ * deep runtime deps (`chokidar` for file-watcher, `@earendil-works/pi-ai`
  * for OAuth provider operations) that are out of scope for `@comis/core`.
  * Only the daemon constructs OAuthTokenManager; CLI consumers only
  * reference the `OAuthError` interface for pattern-matching on
@@ -30,7 +30,7 @@ import type { FileLockPort } from "../ports/file-lock.js";
 
 /**
  * Pi-ai's `OAuthCredentials` shape, mirrored structurally so that core does
- * not depend on `@mariozechner/pi-ai`. Pi-ai 0.71 exports the type as:
+ * not depend on `@earendil-works/pi-ai`. Pi-ai 0.71 exports the type as:
  *   export type OAuthCredentials = {
  *     refresh: string;
  *     access: string;

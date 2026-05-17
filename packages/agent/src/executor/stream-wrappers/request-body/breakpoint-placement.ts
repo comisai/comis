@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   CHARS_PER_TOKEN_RATIO,
   CHARS_PER_TOKEN_RATIO_STRUCTURED,

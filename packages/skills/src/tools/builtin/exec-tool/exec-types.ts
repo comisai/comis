@@ -12,7 +12,7 @@ import type { spawn } from "node:child_process";
 import type { createWriteStream } from "node:fs";
 import { Type } from "typebox";
 import type { TypedEventBus, SecretManager, ToolCapabilityPort, ApprovalGate } from "@comis/core";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExecSandboxConfig } from "../sandbox/types.js";
 import type { ProcessRegistry } from "../process-registry.js";
 import type { InstallDetourDecision } from "../install-detour.js";

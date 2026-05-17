@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createContextEngine } from "./context-engine.js";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ContextEngineConfig } from "@comis/core";
 import type { ContextEngineDeps } from "./types.js";
 import { COMPACTION_REQUIRED_SECTIONS } from "./constants.js";
@@ -21,7 +21,7 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 const mockGenerateSummary = vi.fn<(...args: unknown[]) => Promise<string>>();
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
+vi.mock("@earendil-works/pi-coding-agent", () => ({
   generateSummary: (...args: unknown[]) => mockGenerateSummary(...args),
 }));
 

@@ -27,7 +27,7 @@
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import type { ComisLogger } from "../logging/log-fields.js";
-import { loginOpenAICodex } from "@mariozechner/pi-ai/oauth";
+import { loginOpenAICodex } from "@earendil-works/pi-ai/oauth";
 import {
   resolveCodexAuthIdentity,
   redactEmailForLog,

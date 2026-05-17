@@ -201,7 +201,7 @@ const {
 // Module mocks
 // ---------------------------------------------------------------------------
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
+vi.mock("@earendil-works/pi-coding-agent", () => ({
   createAgentSession: vi.fn().mockResolvedValue({ session: mockSession, extensionsResult: {} }),
   SettingsManager: {
     create: mockSettingsManagerCreate,
@@ -306,8 +306,8 @@ import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../../bootstrap/index.js";
 import { createRagRetriever } from "../../rag/rag-retriever.js";
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
-import { SettingsManager } from "@mariozechner/pi-coding-agent";
-import { createAgentSession } from "@mariozechner/pi-coding-agent";
+import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession } from "@earendil-works/pi-coding-agent";
 import { appendFileSync } from "node:fs";
 const mockAppendFileSync = vi.mocked(appendFileSync);
 

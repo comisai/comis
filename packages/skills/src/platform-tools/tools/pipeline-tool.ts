@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { ApprovalGate } from "@comis/core";
 import { tryGetContext } from "@comis/core";

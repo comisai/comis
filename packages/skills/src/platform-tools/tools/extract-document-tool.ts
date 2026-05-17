@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { jsonResult, readStringParam, readNumberParam } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";

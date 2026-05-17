@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   repairOrphanedMessages,
   scrubPoisonedThinkingBlocks,

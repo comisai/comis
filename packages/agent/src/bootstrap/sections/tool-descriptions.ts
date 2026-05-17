@@ -21,7 +21,7 @@
 
 import type { ModelTier } from "./tooling-sections.js";
 import { getToolMetadata } from "@comis/core";
-import { getProviders } from "@mariozechner/pi-ai";
+import { getProviders } from "@earendil-works/pi-ai";
 
 // ---------------------------------------------------------------------------
 // Live native-catalog provider list

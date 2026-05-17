@@ -9,7 +9,7 @@
 //
 // The binding gate is the **outgoing provider payload**. The pi-ai OpenAI
 // Responses converter at
-// `node_modules/@mariozechner/pi-ai/dist/providers/openai-responses-shared.js`
+// `node_modules/@earendil-works/pi-ai/dist/providers/openai-responses-shared.js`
 // (lines 159-163) reads `msg.content` only — `msg.details` is ignored.
 // We replicate that production projection in `projectMessagesToProviderPayload`
 // below: a faithful, test-isolated reimplementation that mirrors what

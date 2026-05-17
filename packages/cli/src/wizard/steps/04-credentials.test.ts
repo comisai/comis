@@ -20,8 +20,8 @@ import { INITIAL_STATE } from "../types.js";
 vi.mock("@clack/prompts", () => ({}));
 
 // Mock pi-ai's getModels so we control the catalog baseUrl in tests
-vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@mariozechner/pi-ai")>();
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@earendil-works/pi-ai")>();
   return {
     ...actual,
     getModels: vi.fn(() => [{ baseUrl: "https://api.anthropic.com" }]),
@@ -64,17 +64,17 @@ vi.mock("@comis/core", async (importOriginal) => {
 });
 
 import { credentialsStep } from "./04-credentials.js";
-import { getModels } from "@mariozechner/pi-ai";
+import { getModels } from "@earendil-works/pi-ai";
 import { loginOpenAICodexOAuth, isRemoteEnvironment } from "@comis/core";
 
 // Capture the un-mocked `getModels` so the composed-URL regression tests
 // can compose URLs against the real pi-ai catalog (the module-level
 // `vi.mock` returns a sentinel baseUrl).
-let actualGetModels: typeof import("@mariozechner/pi-ai").getModels;
+let actualGetModels: typeof import("@earendil-works/pi-ai").getModels;
 
 beforeAll(async () => {
-  const actual = await vi.importActual<typeof import("@mariozechner/pi-ai")>(
-    "@mariozechner/pi-ai",
+  const actual = await vi.importActual<typeof import("@earendil-works/pi-ai")>(
+    "@earendil-works/pi-ai",
   );
   actualGetModels = actual.getModels;
 });

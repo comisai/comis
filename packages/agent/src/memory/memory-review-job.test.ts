@@ -5,7 +5,7 @@ import type { MemoryReviewConfig } from "@comis/core";
 import type { MemoryReviewDeps } from "./memory-review-job.js";
 
 // Mock pi-ai
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", () => ({
   getModel: vi.fn(() => ({ id: "mock-model" })),
   completeSimple: vi.fn(),
 }));
@@ -18,7 +18,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import { runMemoryReview } from "./memory-review-job.js";
-import { completeSimple, getModel } from "@mariozechner/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import { readFile, writeFile, rename } from "node:fs/promises";
 
 function makeConfig(overrides: Partial<MemoryReviewConfig> = {}): MemoryReviewConfig {

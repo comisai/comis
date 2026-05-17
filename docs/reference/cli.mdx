@@ -688,7 +688,7 @@ comis memory clear --tenant default --filter memoryType=conversation --yes
 
 ### `comis models`
 
-Model management commands for browsing the model catalog and updating agent model assignments. The catalog is sourced live from the [`@mariozechner/pi-ai`](https://www.npmjs.com/package/@mariozechner/pi-ai) SDK — adding a new provider/model to pi-ai automatically surfaces it here with no Comis update required.
+Model management commands for browsing the model catalog and updating agent model assignments. The catalog is sourced live from the [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) SDK — adding a new provider/model to pi-ai automatically surfaces it here with no Comis update required.
 
 When the daemon is running, the commands fetch via the `models.list` RPC. When the daemon is stopped (e.g., during `comis init`), they fall back to the local pi-ai static catalog so the wizard works pre-init.
 

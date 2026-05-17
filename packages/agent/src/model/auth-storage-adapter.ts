@@ -8,7 +8,7 @@
  * @module
  */
 
-import { AuthStorage, InMemoryAuthStorageBackend } from "@mariozechner/pi-coding-agent";
+import { AuthStorage, InMemoryAuthStorageBackend } from "@earendil-works/pi-coding-agent";
 import type { SecretManager } from "@comis/core";
 
 /** Default provider-to-env-var mapping for known LLM providers. */

@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createExecTool, buildSpawnCommand, killTree } from "./exec-tool/index.js";
 import { createProcessRegistry } from "./process-registry.js";
 import type { ProcessRegistry } from "./process-registry.js";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExecSandboxConfig, SandboxProvider, SandboxOptions } from "./sandbox/types.js";
 import { homedir, tmpdir } from "node:os";
 import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";

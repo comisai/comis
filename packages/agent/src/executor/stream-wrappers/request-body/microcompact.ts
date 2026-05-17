@@ -16,7 +16,7 @@
  * @module
  */
 
-import type { Message } from "@mariozechner/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
 import type { ComisLogger } from "@comis/core";
 
 import { CHARS_PER_TOKEN_RATIO } from "../../../context-engine/index.js";

@@ -14,8 +14,8 @@
  * @module
  */
 
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
-import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   type SessionKey,
   type NormalizedMessage,

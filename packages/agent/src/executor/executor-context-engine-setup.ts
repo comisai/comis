@@ -46,8 +46,8 @@ export interface ContextEngineSetupDeps {
   eventBus: import("@comis/core").TypedEventBus;
   agentId?: string;
   workspaceDir: string;
-  authStorage: import("@mariozechner/pi-coding-agent").AuthStorage;
-  modelRegistry: import("@mariozechner/pi-coding-agent").ModelRegistry;
+  authStorage: import("@earendil-works/pi-coding-agent").AuthStorage;
+  modelRegistry: import("@earendil-works/pi-coding-agent").ModelRegistry;
   getPromptSkillsXml?: () => string;
   contextStore?: import("@comis/core").ContextStorePort;
   db?: unknown;

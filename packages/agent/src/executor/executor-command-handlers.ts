@@ -31,7 +31,7 @@ import path from "node:path";
 export interface CommandHandlerDeps {
   logger: ComisLogger;
   eventBus: import("@comis/core").TypedEventBus;
-  modelRegistry: import("@mariozechner/pi-coding-agent").ModelRegistry;
+  modelRegistry: import("@earendil-works/pi-coding-agent").ModelRegistry;
   workspaceDir: string;
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;

@@ -12,8 +12,8 @@ import type {
   AuthStorage,
   ModelRegistry,
   ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+} from "@earendil-works/pi-coding-agent";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type {
   TypedEventBus,
   MemoryPort,

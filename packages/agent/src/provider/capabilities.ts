@@ -14,7 +14,7 @@
  * @module
  */
 
-import { getProviders } from "@mariozechner/pi-ai";
+import { getProviders } from "@earendil-works/pi-ai";
 import type { ProviderCapabilities } from "@comis/core";
 
 /**

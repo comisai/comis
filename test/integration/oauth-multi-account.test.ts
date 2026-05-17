@@ -313,7 +313,7 @@ async function executeOAuthLLMCall(
   // (`fetch(resolveCodexUrl(model.baseUrl), { method: "POST", headers: sseHeaders, body, ... })`).
   //
   // Why an inline reproduction instead of importing pi-ai directly:
-  //   - `@mariozechner/pi-ai/openai-codex-responses` is declared as a
+  //   - `@earendil-works/pi-ai/openai-codex-responses` is declared as a
   //     dependency of `@comis/agent` (and other workspace packages), but
   //     the integration test's runtime resolution lives at the repo root
   //     where pi-ai isn't hoisted. Adding pi-ai to the root devDependencies

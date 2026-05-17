@@ -55,7 +55,7 @@ const mocks = vi.hoisted(() => ({
 // the call via mocks.settingsApplyOverrides.
 mocks.settingsManagerInstance.applyOverrides = mocks.settingsApplyOverrides;
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
+vi.mock("@earendil-works/pi-coding-agent", () => ({
   SettingsManager: {
     create: mocks.settingsManagerCreate,
     inMemory: mocks.settingsManagerInMemory,

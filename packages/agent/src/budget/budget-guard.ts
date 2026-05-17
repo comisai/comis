@@ -2,7 +2,7 @@
 import type { BudgetConfig } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import { type Result, ok, err } from "@comis/shared";
-import { estimateTokens } from "@mariozechner/pi-coding-agent";
+import { estimateTokens } from "@earendil-works/pi-coding-agent";
 
 /**
  * Budget enforcement error with diagnostic context.
@@ -61,7 +61,7 @@ export interface BudgetGuard {
  * without maintaining a local constant that could diverge.
  *
  * The `as any` is needed because the budget-guard module does not import
- * `UserMessage` from `@mariozechner/pi-ai` and the object literal satisfies
+ * `UserMessage` from `@earendil-works/pi-ai` and the object literal satisfies
  * the runtime shape expected by estimateTokens().
  */
 const SDK_PROBE_CHARS = 400;

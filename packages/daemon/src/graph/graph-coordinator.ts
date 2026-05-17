@@ -13,7 +13,7 @@ import { mkdirSync } from "node:fs";
 import { ok, err, type Result } from "@comis/shared";
 import { computeGraphToolSuperset } from "./graph-tool-superset.js";
 import { preWarmGraphCache, type PreWarmSdk } from "./graph-prewarm.js";
-import { getModel, completeSimple } from "@mariozechner/pi-ai";
+import { getModel, completeSimple } from "@earendil-works/pi-ai";
 
 // Module imports
 import { globalCompletionHandler, releaseAndDrainQueue } from "./graph-concurrency.js";

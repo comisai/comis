@@ -35,7 +35,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { runOAuthTlsPreflight } from "@comis/core";
-import { getOAuthProvider } from "@mariozechner/pi-ai/oauth";
+import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import type { ComisLogger } from "@comis/infra";
 import type { PerAgentConfig } from "@comis/core";
 

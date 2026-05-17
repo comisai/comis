@@ -23,7 +23,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { generateSummary, truncateHead, truncateTail } from "@mariozechner/pi-coding-agent";
+import { generateSummary, truncateHead, truncateTail } from "@earendil-works/pi-coding-agent";
 import { type SubagentResult, SubagentResultSchema, type CondensedResult } from "@comis/core";
 import { safePath, systemNowMs, systemNowDate } from "@comis/core";
 import { mkdir, writeFile } from "node:fs/promises";

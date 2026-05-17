@@ -8,7 +8,7 @@ import {
   getElapsedSinceLastResponse,
   _getSessionLastResponseTsForTest,
 } from "./ttl-guard.js";
-import type { StreamFn } from "@mariozechner/pi-agent-core";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { ClockPort } from "@comis/core";
 
 // Test clock stub.

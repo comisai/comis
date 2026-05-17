@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { Type } from "typebox";
 import { applyToolPolicy, TOOL_PROFILES, TOOL_GROUPS, expandGroups } from "./tool-policy.js";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolFilterReason, ToolPolicyResult } from "./tool-policy.js";
 
 /** Create a minimal mock tool with the given name. */

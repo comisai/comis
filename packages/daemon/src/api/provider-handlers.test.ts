@@ -23,7 +23,7 @@ const mockPersistToConfig = vi.mocked(persistToConfig);
 import { probeProviderAuth } from "./shared/probe-provider-auth.js";
 const mockProbeProviderAuth = vi.mocked(probeProviderAuth);
 
-import { getProviders, getModels, type KnownProvider } from "@mariozechner/pi-ai";
+import { getProviders, getModels, type KnownProvider } from "@earendil-works/pi-ai";
 
 // ---------------------------------------------------------------------------
 // Helpers

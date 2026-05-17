@@ -14,7 +14,7 @@
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { systemClearTimeout, systemNowMs } from "@comis/core";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExecSandboxConfig } from "../sandbox/types.js";
 import type { ProcessRegistry, ProcessSession } from "../process-registry.js";
 import { generateSessionId, appendOutput } from "../process-registry.js";

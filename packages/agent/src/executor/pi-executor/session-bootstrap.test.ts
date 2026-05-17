@@ -12,7 +12,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import type { SessionKey, PerAgentConfig } from "@comis/core";
-import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 
 import {
   bootstrapSession,

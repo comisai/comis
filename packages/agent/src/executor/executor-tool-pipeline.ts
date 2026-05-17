@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ComisLogger } from "@comis/core";
 import {
   getToolSchemaSnapshots,

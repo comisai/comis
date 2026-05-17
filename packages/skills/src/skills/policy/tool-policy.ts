@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 /**
  * Structured reason why a tool was filtered by policy.

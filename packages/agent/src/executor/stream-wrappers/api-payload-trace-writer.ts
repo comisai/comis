@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { StreamFn } from "@mariozechner/pi-agent-core";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { ComisLogger, ClockPort } from "@comis/core";
 import { suppressError } from "@comis/shared";
 

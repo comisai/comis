@@ -24,7 +24,7 @@ import { withPromptTimeout } from "../prompt-timeout.js";
 import { scrubSignedReplayStateInPlace } from "../signature-block-scrubber.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 
 /** Mutable state threaded through the silent-failure branches. */

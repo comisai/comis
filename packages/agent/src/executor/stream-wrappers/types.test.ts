@@ -37,8 +37,8 @@ describe("stream-wrappers/types.ts — pure-type module shape contract", () => {
     expect(content).not.toMatch(/^export\s+(const|let|var|function|class|enum)\b/m);
   });
 
-  it("imports the StreamFn type from @mariozechner/pi-agent-core (its sole runtime dep is type-only)", () => {
+  it("imports the StreamFn type from @earendil-works/pi-agent-core (its sole runtime dep is type-only)", () => {
     const content = readFileSync(sourcePath, "utf8");
-    expect(content).toMatch(/import\s+type\s*\{\s*StreamFn\s*\}\s*from\s*"@mariozechner\/pi-agent-core"/);
+    expect(content).toMatch(/import\s+type\s*\{\s*StreamFn\s*\}\s*from\s*"@earendil-works\/pi-agent-core"/);
   });
 });

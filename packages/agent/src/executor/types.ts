@@ -6,7 +6,7 @@
  */
 
 import type { SessionKey, NormalizedMessage, SpawnPacket, ModelOperationType } from "@comis/core";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 // CommandDirectives canonical home is @comis/orchestrator/src/commands/types.ts.
 // Agent uses a local mirror to avoid the orchestrator → agent circular dep
 // (see file docstring there).

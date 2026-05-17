@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   decodeHtmlEntitiesInParams,
   applyJitGuideWrapping,

@@ -31,7 +31,7 @@ import {
   validateApiKey,
   getKeyPrefix,
 } from "../index.js";
-import { getModels, type KnownProvider } from "@mariozechner/pi-ai";
+import { getModels, type KnownProvider } from "@earendil-works/pi-ai";
 
 // ---- OAuth interactive-flow imports ----
 // CLI cannot import from packages/daemon (dep-direction); the OAuth

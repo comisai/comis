@@ -30,7 +30,7 @@ import type {
 import { wrapExternalContent, safePath, formatSessionKey, generateCanaryToken } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import type { ComisLogger } from "@comis/core";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { PromptMode, RuntimeInfo, InboundMetadata, BootstrapContextFile } from "../bootstrap/types.js";
 import {
   loadWorkspaceBootstrapFiles,

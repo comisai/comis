@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
+import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
 import { resolveAgentModel } from "./setup-agents-tooling.js";
 
 describe("resolveAgentModel", () => {

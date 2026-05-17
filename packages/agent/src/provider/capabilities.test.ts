@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
-// Hoist-mock @mariozechner/pi-ai so `validateProviderOverrides` reads from
+// Hoist-mock @earendil-works/pi-ai so `validateProviderOverrides` reads from
 // the controllable `getProvidersMock` instead of the real catalog.
 // vi.mock is hoisted to the top of the file by Vitest -- the factory closure
 // captures `getProvidersMock` via the function body, not via lexical scope at
@@ -13,8 +13,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 const { getProvidersMock } = vi.hoisted(() => ({
   getProvidersMock: vi.fn<() => string[]>(() => []),
 }));
-vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@mariozechner/pi-ai")>();
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@earendil-works/pi-ai")>();
   return { ...actual, getProviders: getProvidersMock };
 });
 

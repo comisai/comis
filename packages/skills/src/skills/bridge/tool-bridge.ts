@@ -19,7 +19,7 @@ import type { SecretManager } from "@comis/core";
 import type { SkillsConfig } from "@comis/core";
 import type { TypedEventBus } from "@comis/core";
 import type { WrapExternalContentOptions } from "@comis/core";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { applyToolPolicy } from "../policy/tool-policy.js";
 import { wrapWithAudit } from "./tool-audit.js";
 import { wrapWithMetadataEnforcement } from "./tool-metadata-enforcement.js";

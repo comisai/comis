@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { createDagAnnotatorLayer } from "./dag-annotator.js";
 import type { TokenBudget } from "./types.js";
 

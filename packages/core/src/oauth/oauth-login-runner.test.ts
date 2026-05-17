@@ -17,11 +17,11 @@ import {
 
 // vi.mock MUST be hoisted — vitest hoists vi.mock calls so the module under
 // test sees the mock, NOT the real implementation.
-vi.mock("@mariozechner/pi-ai/oauth", () => ({
+vi.mock("@earendil-works/pi-ai/oauth", () => ({
   loginOpenAICodex: vi.fn(),
 }));
 
-import { loginOpenAICodex } from "@mariozechner/pi-ai/oauth";
+import { loginOpenAICodex } from "@earendil-works/pi-ai/oauth";
 
 // ---------------------------------------------------------------------------
 // Test fixtures

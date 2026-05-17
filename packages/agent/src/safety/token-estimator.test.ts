@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import type { Message, UserMessage, AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Message, UserMessage, AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import {
   CHARS_PER_TOKEN,
   IMAGE_TOKEN_ESTIMATE,

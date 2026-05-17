@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { TypedEventBus } from "@comis/core";
 import { systemNowMs, tryGetContext } from "@comis/core";
 

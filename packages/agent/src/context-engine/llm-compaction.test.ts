@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TokenBudget, CompactionLayerDeps } from "./types.js";
 import { createLlmCompactionLayer, validateCompactionSummary } from "./llm-compaction.js";
 import { COMPACTION_REQUIRED_SECTIONS, OVERSIZED_MESSAGE_CHARS_THRESHOLD } from "./constants.js";
@@ -19,7 +19,7 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 const mockGenerateSummary = vi.fn<(...args: unknown[]) => Promise<string>>();
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
+vi.mock("@earendil-works/pi-coding-agent", () => ({
   generateSummary: (...args: unknown[]) => mockGenerateSummary(...args),
 }));
 

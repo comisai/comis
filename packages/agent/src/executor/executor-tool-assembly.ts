@@ -17,15 +17,15 @@
 import {
   SettingsManager,
   DefaultResourceLoader,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import type {
   ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 /** Partial<Settings> extracted from SettingsManager.applyOverrides() parameter type.
  *  Settings is not re-exported from the SDK's index -- extract from the class method. */
 type SettingsOverrides = Parameters<SettingsManager['applyOverrides']>[0];
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
   formatSessionKey,
   type SessionKey,

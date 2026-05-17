@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Context, Message } from "@mariozechner/pi-ai";
+import type { Context, Message } from "@earendil-works/pi-ai";
 import { createTurnResultBudgetWrapper } from "./turn-result-budget-wrapper.js";
 import { createMockLogger, createMockStreamFn, makeAssistantMessage, makeContext } from "./__test-helpers/index.js";
 

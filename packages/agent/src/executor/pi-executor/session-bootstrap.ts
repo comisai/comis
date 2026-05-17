@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 import { formatSessionKey } from "@comis/core";
 import type {
   SessionKey,

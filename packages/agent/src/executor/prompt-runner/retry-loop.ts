@@ -22,7 +22,7 @@ import { runWithModelRetry } from "../model-retry.js";
 import { classifyError } from "../error-classifier.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import {
   handleClientRequest,

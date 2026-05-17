@@ -21,7 +21,7 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ContextLayer, TokenBudget } from "./types.js";
 import { resolveToolMaskingTier, EPHEMERAL_TOOL_KEEP_WINDOW } from "./constants.js";
 

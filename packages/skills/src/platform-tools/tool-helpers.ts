@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { UserTrustLevel } from "@comis/core";
 import { classifyAction, safePath, tryGetContext } from "@comis/core";
 

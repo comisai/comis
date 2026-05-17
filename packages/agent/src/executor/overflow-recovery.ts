@@ -13,8 +13,8 @@
  */
 
 
-import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { Context, Message } from "@mariozechner/pi-ai";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import type { Context, Message } from "@earendil-works/pi-ai";
 import type { ComisLogger } from "@comis/core";
 
 import { estimateMessageChars, estimateContextChars } from "../safety/token-estimator.js";

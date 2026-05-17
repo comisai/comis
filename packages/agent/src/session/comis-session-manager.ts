@@ -16,7 +16,7 @@
  * @module
  */
 
-import { SessionManager as SdkSessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager as SdkSessionManager } from "@earendil-works/pi-coding-agent";
 import { formatSessionKey, safePath, systemNowDate, type SessionKey } from "@comis/core";
 import type { ComisLogger, FileLockPort } from "@comis/core";
 import { suppressError, type Result } from "@comis/shared";

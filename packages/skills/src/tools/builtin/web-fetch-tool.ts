@@ -19,7 +19,7 @@
  * @module
  */
 
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import { Impit } from "impit";
 import { EXTERNAL_CONTENT_WARNING, FileExtractionConfigSchema, systemNowDate, systemNowMs, type WrapExternalContentOptions, validateUrl, wrapWebContent } from "@comis/core";

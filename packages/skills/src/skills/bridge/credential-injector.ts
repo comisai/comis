@@ -17,7 +17,7 @@
 
 import type { SecretManager, TypedEventBus, CredentialMapping } from "@comis/core";
 import { sanitizeLogString, systemNowMs, validateUrl } from "@comis/core";
-import type { AgentTool, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 
 // ---------------------------------------------------------------------------
 // Interfaces

@@ -22,7 +22,7 @@
  * @module
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ContextLayer, TokenBudget, RehydrationLayerDeps } from "./types.js";
 import {
   MAX_REHYDRATION_FILES,

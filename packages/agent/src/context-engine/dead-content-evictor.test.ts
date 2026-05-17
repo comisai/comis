@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createDeadContentEvictorLayer } from "./dead-content-evictor.js";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TokenBudget } from "./types.js";
 
 // ---------------------------------------------------------------------------

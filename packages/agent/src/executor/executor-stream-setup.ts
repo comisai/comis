@@ -33,7 +33,7 @@ import {
   type PerAgentConfig,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
-import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { StreamFnWrapper } from "./stream-wrappers/index.js";
 import {
   createToolResultSizeBouncer,
@@ -64,7 +64,7 @@ import {
   getBreakpointIndex,
   getEvictionCooldown,
 } from "./executor-session-state.js";
-import type { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import { installMicrocompactionGuard } from "../context-engine/index.js";
 import type { ContextEngine } from "../context-engine/index.js";
 import type { AdaptiveCacheRetention } from "./adaptive-cache-retention.js";

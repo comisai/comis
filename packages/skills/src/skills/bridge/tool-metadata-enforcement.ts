@@ -12,7 +12,7 @@
  * @module
  */
 
-import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { getToolMetadata, truncateContentBlocks } from "@comis/core";
 import { validateToolEntry } from "./schema-validator.js";
 

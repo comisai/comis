@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
   DEFAULT_TIMEOUT_SECONDS,
   DEFAULT_CACHE_TTL_MINUTES,

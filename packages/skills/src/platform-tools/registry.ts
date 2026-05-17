@@ -29,7 +29,7 @@
  *
  * @module
  */
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ComisLogger } from "@comis/core";
 
 // Import every platform-tool factory function. Local relative paths because

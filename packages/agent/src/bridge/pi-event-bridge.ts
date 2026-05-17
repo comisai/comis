@@ -10,9 +10,9 @@
  * @module
  */
 
-import { shouldCompact } from "@mariozechner/pi-coding-agent";
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import { shouldCompact } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
   sanitizeLogString,

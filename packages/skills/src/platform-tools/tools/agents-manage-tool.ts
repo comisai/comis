@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate, ComisLogger } from "@comis/core";
 import { readStringParam } from "../tool-helpers.js";

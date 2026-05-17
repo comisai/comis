@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { Type } from "typebox";

@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { ClockPort } from "@comis/core";
 import { createSessionLatch } from "./session-latch.js";
 import type { SessionLatch } from "./session-latch.js";

@@ -6,7 +6,7 @@ import {
   pruneSchemaDescriptions,
   pruneToolSchemas,
 } from "./tool-schema-safety.js";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 describe("tool-schema-safety", () => {
   // ---------------------------------------------------------------------------

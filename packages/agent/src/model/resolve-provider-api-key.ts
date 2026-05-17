@@ -20,8 +20,8 @@
  * @module
  */
 
-import type { AuthStorage } from "@mariozechner/pi-coding-agent";
-import { getOAuthProvider } from "@mariozechner/pi-ai/oauth";
+import type { AuthStorage } from "@earendil-works/pi-coding-agent";
+import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import type { PerAgentConfig } from "@comis/core";
 import type { OAuthTokenManager } from "./oauth-token-manager.js";
 

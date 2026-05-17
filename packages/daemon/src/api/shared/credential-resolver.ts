@@ -26,7 +26,7 @@
  *
  * @module
  */
-import { getEnvApiKey, getProviders, getModels, type KnownProvider } from "@mariozechner/pi-ai";
+import { getEnvApiKey, getProviders, getModels, type KnownProvider } from "@earendil-works/pi-ai";
 import type { ProviderEntry } from "@comis/core";
 
 /**

@@ -30,7 +30,7 @@
  * @module
  */
 
-import type { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 
 /** Literal placeholder written by sanitizeSessionSecrets. */
 const REDACTION_PLACEHOLDER = "[REDACTED]";

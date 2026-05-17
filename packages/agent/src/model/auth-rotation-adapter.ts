@@ -12,7 +12,7 @@
  * @module
  */
 
-import type { AuthStorage } from "@mariozechner/pi-coding-agent";
+import type { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { AuthProfileManager } from "./auth-profile.js";
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { StreamFn } from "@mariozechner/pi-agent-core";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
 
 /**
  * A StreamFn wrapper intercepts and decorates a StreamFn.

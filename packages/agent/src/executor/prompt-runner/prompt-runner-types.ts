@@ -10,8 +10,8 @@
  * @module
  */
 
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
-import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type {
   NormalizedMessage,
   PerAgentConfig,

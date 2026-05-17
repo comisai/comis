@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@comis/shared": "workspace:*",
-    "@mariozechner/pi-ai": "0.72.1",
+    "@earendil-works/pi-ai": "0.74.1",
     "ipaddr.js": "2.3.0",
     "proper-lockfile": "4.1.2",
     "yaml": "2.8.4",

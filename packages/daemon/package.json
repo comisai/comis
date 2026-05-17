@@ -47,7 +47,7 @@
     "@comis/scheduler": "workspace:*",
     "@comis/shared": "workspace:*",
     "@comis/skills": "workspace:*",
-    "@mariozechner/pi-ai": "0.72.1",
+    "@earendil-works/pi-ai": "0.74.1",
     "better-sqlite3": "12.9.0",
     "hono": "4.12.18",
     "pino": "10.3.1",

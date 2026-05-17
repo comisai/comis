@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import { systemNowMs, type WrapExternalContentOptions } from "@comis/core";
 import type { TTLCache } from "@comis/shared";

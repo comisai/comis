@@ -36,14 +36,14 @@
 import {
   createAgentSession,
   DefaultResourceLoader,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import type {
   CreateAgentSessionOptions,
   SessionManager as SdkSessionManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
-import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
-import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
   tryGetContext,
@@ -54,7 +54,7 @@ import {
 } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { suppressError } from "@comis/shared";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "../command-directive-types.js";
 import type { StepCounter } from "../step-counter.js";
 import { createToolRetryBreaker } from "../../safety/tool-retry-breaker.js";

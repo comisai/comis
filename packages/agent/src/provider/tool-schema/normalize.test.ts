@@ -4,7 +4,7 @@ import {
   normalizeToolSchemasForProvider,
   setToolNormalizationLogger,
 } from "./normalize.js";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ComisLogger } from "@comis/core";
 
 /** Create a minimal ToolDefinition stub for testing. */
