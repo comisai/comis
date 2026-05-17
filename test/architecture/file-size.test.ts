@@ -570,6 +570,23 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // detection.ts. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback)
     // — web view; internal velocity only.
     "packages/web/src/components/graph/ic-graph-canvas.ts",
+    // dashboard.ts (Wave 4 / Task 5): RPC extraction completed via
+    // dashboard-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates daemon I/O to the controller (obs.billing.total,
+    // obs.billing.usage24h, obs.billing.byAgent moved out). Higher-
+    // level data flows via apiClient (getAgents/getChannels/
+    // getActivity) — orthogonal to the rpcClient.call boundary regex.
+    // SseController + EventDispatcher imports preserved verbatim (out
+    // of Phase 44 scope). The remaining ≤1170L is dominated by ~480L
+    // of CSS, the KPI grid + sparkline + per-agent billing card
+    // renderers, parallel REST fan-out via apiClient, auto-refresh
+    // interval lifecycle, SSE-driven billing_snapshot/token_usage
+    // event handlers, RPC connection-status tracking with
+    // onStatusChange unsub, system-health pipeline summary card, and
+    // the NAV_TARGETS-driven navigation keyboard handlers — all
+    // tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
+    // fallback).
+    "packages/web/src/views/dashboard.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

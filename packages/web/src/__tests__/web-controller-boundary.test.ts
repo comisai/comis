@@ -153,8 +153,8 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     //   ic-node-editor.ts:     drained — RPC extracted via ic-node-editor-controller.ts (Task 1).
     //   workspace-manager.ts:  drained — RPC extracted via workspace-manager-controller.ts (Task 2).
     //   channel-detail.ts:     drained — RPC extracted via channel-detail-controller.ts (Task 3).
-    // ic-graph-canvas.ts: 0 rpcClient.call (verified HEAD) — EXCLUDED (regex never matches).
-    "packages/web/src/views/dashboard.ts",                          //  3 rpcClient.call (verified HEAD)
+    //   ic-graph-canvas.ts:    0 rpcClient.call (verified HEAD) — EXCLUDED (regex never matches); deferred Tier 3 per OQ-4.
+    //   dashboard.ts:          drained — RPC extracted via dashboard-controller.ts (Task 5).
     // Wave 5
     "packages/web/src/views/mcp-management.ts",                     //  8 rpcClient.call (verified HEAD)
     "packages/web/src/views/session-detail.ts",                     //  3 rpcClient.call (verified HEAD)

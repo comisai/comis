@@ -243,9 +243,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/dashboard.ts",
-    lines: 1140,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1166,
+    reason: "Lit web view; RPC orchestration extracted via dashboard-controller.ts (obs.billing.total, obs.billing.usage24h, obs.billing.byAgent moved out). Residual ≤1170L is dominated by ~480L of CSS, the KPI grid + sparkline + per-agent billing card renderers, parallel REST fan-out via apiClient (getAgents/getChannels/getActivity — not matched by the rpcClient.call boundary regex), the auto-refresh interval lifecycle, SSE-driven billing_snapshot/token_usage event handlers, RPC connection-status tracking with onStatusChange unsub, system-health pipeline summary card, and the NAV_TARGETS-driven navigation keyboard handlers — all tightly DOM-coupled. SseController + EventDispatcher imports preserved verbatim (out of Phase 44 scope). Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/mcp-management.ts",
