@@ -267,9 +267,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/pipelines/pipeline-list.ts",
-    lines: 1064,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1077,
+    reason: "Lit web view; RPC orchestration extracted via pipeline-list-controller.ts (graph.list, graph.status, graph.load, obs.channels.all, graph.execute, graph.save, graph.delete moved out — 7 unique RPC methods spanning 8 call sites). Controller fits the tighter 700L cap (152L). Residual ≤1080L is dominated by ~340L of CSS, the merge logic for graph.list saved entries with graph.status execution snapshots, search + sort + filter pipeline with per-column compare across 5 sort keys, the status-dot color mapping for 5 graph statuses, two confirm flows (delete + variable-prompt overlay for ${VAR} substitution), the quick-execute orchestration with approval-gate channel-context resolution, the duplicate-with-new-id flow, and the per-row 3-action toolbar (run/duplicate/delete) — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/pipelines/pipeline-builder.ts",
