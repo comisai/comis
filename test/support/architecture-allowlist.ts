@@ -297,9 +297,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/pipelines/pipeline-monitor.ts",
-    lines: 859,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 848,
+    reason: "Lit web view; RPC extraction completed via pipeline-monitor-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (graph.load, graph.status, graph.cancel, subagent.steer moved out — 4 unique RPC methods spanning 4 call sites). Controller fits the tightest 500L cap (108L). The view PRESERVES verbatim the createMonitorState consumer pattern (same Wave-5 precedent as pipeline-builder + createGraphBuilderState) — the MonitorState primitive (packages/web/src/state/monitor-state.ts) is out of Phase 44 scope per plan-44-01 verification step 6 (state primitives untouched). Wave-6 caps tightened the view from 800L to 500L; the residual ≤850L is dominated by ~230L of component-scoped CSS, the canvas/timeline/minimap layout with ic-graph-canvas embed + 5 sub-components (ic-monitor-status-bar / ic-node-detail-panel / ic-execution-timeline / ic-graph-minimap), the createMonitorState consumer with subscribe-on-mount + destroy-on-unmount lifecycle, the _initMonitor() server-load → execution-format → canvas-format node mapper with autoLayout fallback when positions are missing, the SSE event wiring (graph:started / graph:node_updated / graph:completed) with EventDispatcher-driven polling suspend/resume coordination via systemSetInterval check, the ResizeObserver-driven container sizing, the ARIA live-region announcement coalescing on node-status transitions, the cancel-confirm ic-confirm-dialog flow with IcToast surfacing, and the steer subagent CustomEvent handler — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/app.ts",

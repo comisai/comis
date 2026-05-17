@@ -165,7 +165,7 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     //   agents/agent-detail.ts: drained — RPC extracted via agent-detail-controller.ts (Task 1).
     //   media-test.ts: drained — RPC extracted via media-test-controller.ts (Task 2).
     // ic-cron-editor.ts: 0 rpcClient.call (verified HEAD) — EXCLUDED (form-only, no RPC).
-    "packages/web/src/views/pipelines/pipeline-monitor.ts",         //  4 rpcClient.call (verified HEAD) — INCLUDED
+    //   pipelines/pipeline-monitor.ts: drained — RPC extracted via pipeline-monitor-controller.ts (Task 4).
     // Wave 7
     // app.ts: 0 rpcClient.call (verified HEAD) — EXCLUDED (RPC indirect via PollingController).
     //   Note: app.ts constructs `rpcClient` then passes it to PollingController; it

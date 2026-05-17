@@ -738,6 +738,28 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // fields stay on the view because they are the form contract.
     // Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/components/scheduler/ic-cron-editor.ts",
+    // pipeline-monitor.ts (Wave 6 / Task 4 — LOWEST-RISK): RPC
+    // extraction completed via pipeline-monitor-controller.ts —
+    // view contains 0 rpcClient.call sites and delegates all daemon
+    // I/O to the controller (graph.load, graph.status, graph.cancel,
+    // subagent.steer moved out — 4 unique RPC methods spanning 4
+    // call sites). Controller fits the tightest 500L cap (108L).
+    // The view PRESERVES verbatim the createMonitorState consumer
+    // pattern (same Wave-5 precedent as pipeline-builder +
+    // createGraphBuilderState) — MonitorState primitive is out of
+    // Phase 44 scope (state primitives untouched). Wave-6 caps
+    // tightened the view from 800L to 500L; residual ≤850L is
+    // dominated by ~230L of CSS, the canvas/timeline/minimap layout
+    // with ic-graph-canvas embed + 5 sub-components, the
+    // createMonitorState subscribe/destroy lifecycle, the
+    // _initMonitor() execution-format → canvas-format node mapper
+    // with autoLayout fallback, the SSE event wiring with polling
+    // suspend/resume coordination, the ResizeObserver-driven
+    // container sizing, the ARIA live-region announcement coalescing
+    // on node-status transitions, and the cancel-confirm + steer
+    // CustomEvent handlers — all tightly DOM-coupled. Auto-acceptable
+    // per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/pipelines/pipeline-monitor.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
