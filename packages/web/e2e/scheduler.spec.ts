@@ -118,33 +118,19 @@ test.describe("Scheduler - Heartbeat", () => {
     // Click the Heartbeat tab via the role="tab" button to avoid ambiguity
     await scheduler.getByRole("tab", { name: "Heartbeat" }).click();
 
-    // Verify heartbeat enabled checkbox is checked (config.read returns enabled: true)
-    await expect(scheduler.locator("#hb-toggle")).toBeChecked();
+    // The Heartbeat tab summary bar shows global enabled state and interval.
+    // config.read returns heartbeat: { enabled: true, intervalMs: 300000 }, so:
+    //   - "Global heartbeat: enabled"
+    //   - "Interval: Every 5m" (formatIntervalMs(300000))
+    const summary = scheduler.locator(".hb-summary-bar");
+    await expect(summary).toBeVisible();
+    await expect(summary.getByText("Global heartbeat: enabled")).toBeVisible();
+    await expect(summary.getByText("Every 5m")).toBeVisible();
 
-    // Verify interval is displayed -- formatIntervalMs(300000) = "Every 5m"
-    await expect(scheduler.getByText("Every 5m")).toBeVisible();
-
-    // Initially no heartbeat events have occurred, so "Awaiting first heartbeat check" shows
-    await expect(scheduler.getByText("Awaiting first heartbeat check")).toBeVisible();
-
-    // Dispatch a heartbeat SSE event to populate heartbeat data
-    await page.evaluate(() => {
-      document.dispatchEvent(
-        new CustomEvent("scheduler:heartbeat_check", {
-          detail: {
-            checksRun: 150,
-            alertsRaised: 3,
-            timestamp: Date.now(),
-          },
-        }),
-      );
-    });
-
-    // After the event, heartbeat summary should show checks and alerts
-    // Scope to the heartbeat-summary panel to avoid matching other "150" occurrences
-    const summary = scheduler.locator(".heartbeat-summary");
-    await expect(summary.getByText("150")).toBeVisible({ timeout: 5_000 });
-    await expect(summary.locator(".alerts-highlight").getByText("3")).toBeVisible();
+    // With no per-agent heartbeat data loaded (heartbeat.states RPC has no
+    // mock here, so _heartbeatAgents stays empty), the tab falls back to an
+    // empty state advising the user to configure per-agent heartbeat.
+    await expect(scheduler.getByText("No heartbeat agents")).toBeVisible();
   });
 });
 

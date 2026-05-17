@@ -37,20 +37,17 @@ function createMockApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
 }
 
 function createMockEventDispatcher(): EventDispatcher & { _fire: (type: string, data?: unknown) => void } {
-  const handlers = new Map<string, Set<(data: unknown) => void>>();
+  // SseController listens for SSE events on `document` (EventDispatcher's
+  // channel-2 delivery path). The mock dispatcher therefore just needs to
+  // satisfy the EventDispatcher shape; _fire routes via document.dispatchEvent
+  // so SseController-driven views observe the event.
   return {
     connected: true,
     start: vi.fn(),
     stop: vi.fn(),
-    addEventListener(type: string, handler: (data: unknown) => void): () => void {
-      if (!handlers.has(type)) handlers.set(type, new Set());
-      handlers.get(type)!.add(handler);
-      return () => {
-        handlers.get(type)?.delete(handler);
-      };
-    },
+    addEventListener: vi.fn(() => vi.fn()),
     _fire(type: string, data: unknown = {}) {
-      handlers.get(type)?.forEach((h) => h(data));
+      document.dispatchEvent(new CustomEvent(type, { detail: data }));
     },
   };
 }
@@ -475,7 +472,8 @@ describe("IcDashboard", () => {
       priv(el)._initSse();
 
       priv(el)._messagesToday = 10;
-      mockDispatcher._fire("message:received");
+      // SseController listens on document events (EventDispatcher channel 2).
+      document.dispatchEvent(new CustomEvent("message:received"));
       expect(priv(el)._messagesToday).toBe(11);
     });
 
@@ -486,7 +484,7 @@ describe("IcDashboard", () => {
       priv(el)._initSse();
 
       priv(el)._messagesToday = 5;
-      mockDispatcher._fire("message:sent");
+      document.dispatchEvent(new CustomEvent("message:sent"));
       expect(priv(el)._messagesToday).toBe(6);
     });
 
@@ -497,7 +495,7 @@ describe("IcDashboard", () => {
       priv(el)._initSse();
 
       priv(el)._errorCount = 3;
-      mockDispatcher._fire("system:error");
+      document.dispatchEvent(new CustomEvent("system:error"));
       expect(priv(el)._errorCount).toBe(4);
     });
 
@@ -508,7 +506,7 @@ describe("IcDashboard", () => {
       priv(el)._initSse();
 
       priv(el)._sessionCount = 7;
-      mockDispatcher._fire("session:created");
+      document.dispatchEvent(new CustomEvent("session:created"));
       expect(priv(el)._sessionCount).toBe(8);
     });
   });

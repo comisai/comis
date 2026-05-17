@@ -2,10 +2,12 @@
 /**
  * Tests for SseController.
  *
- * Covers the Lit ReactiveController lifecycle bridging SSE events from an
- * EventDispatcher to a host element. hostConnected subscribes for every
- * registered event type; hostDisconnected runs each unsubscribe and clears
- * the internal list. No timers — purely subscription bookkeeping.
+ * Covers the Lit ReactiveController lifecycle bridging SSE events from the
+ * EventDispatcher's document-CustomEvent channel to a host element.
+ * hostConnected registers a document listener per event type; hostDisconnected
+ * removes them. The dispatcher reference is retained for API stability but
+ * unused internally because EventDispatcher.deliver() re-fires every SSE
+ * event as a document CustomEvent.
  *
  * @module
  */
@@ -33,92 +35,69 @@ function makeHost(): {
   return { host, controllers };
 }
 
-function makeDispatcher(): {
-  dispatcher: EventDispatcher;
-  registered: Array<{ type: string; handler: (data: unknown) => void }>;
-  unsubs: ReturnType<typeof vi.fn>[];
-} {
-  const registered: Array<{ type: string; handler: (data: unknown) => void }> = [];
-  const unsubs: ReturnType<typeof vi.fn>[] = [];
-  const dispatcher = {
-    addEventListener(type: string, handler: (data: unknown) => void): () => void {
-      registered.push({ type, handler });
-      const unsub = vi.fn();
-      unsubs.push(unsub);
-      return unsub;
-    },
+function makeDispatcher(): EventDispatcher {
+  return {
+    addEventListener: vi.fn(() => vi.fn()),
     start: vi.fn(),
     stop: vi.fn(),
     connected: false,
   } as unknown as EventDispatcher;
-  return { dispatcher, registered, unsubs };
 }
 
 describe("SseController", () => {
   it("registers itself with the host element via addController on construction", () => {
     const { host, controllers } = makeHost();
-    const { dispatcher } = makeDispatcher();
-    const ctrl = new SseController(host, dispatcher, {});
+    const ctrl = new SseController(host, makeDispatcher(), {});
     expect(controllers).toContain(ctrl);
   });
 
-  it("subscribes to every event type in the events map on hostConnected lifecycle hook", () => {
+  it("subscribes via document.addEventListener for every event type on hostConnected", () => {
     const { host } = makeHost();
-    const { dispatcher, registered } = makeDispatcher();
     const onAgentStatus = vi.fn();
     const onSystemError = vi.fn();
-    const ctrl = new SseController(host, dispatcher, {
+    const ctrl = new SseController(host, makeDispatcher(), {
       "agent:status": onAgentStatus,
       "system:error": onSystemError,
     });
     ctrl.hostConnected();
-    expect(registered).toHaveLength(2);
-    const types = registered.map((r) => r.type).sort();
-    expect(types).toEqual(["agent:status", "system:error"]);
+
+    document.dispatchEvent(new CustomEvent("agent:status", { detail: { agentId: "a" } }));
+    document.dispatchEvent(new CustomEvent("system:error", { detail: { kind: "boom" } }));
+
+    expect(onAgentStatus).toHaveBeenCalledWith({ agentId: "a" });
+    expect(onSystemError).toHaveBeenCalledWith({ kind: "boom" });
+    ctrl.hostDisconnected();
   });
 
-  it("forwards the original handler reference to dispatcher.addEventListener for each event type", () => {
+  it("removes document listeners on hostDisconnected so handlers stop firing", () => {
     const { host } = makeHost();
-    const { dispatcher, registered } = makeDispatcher();
     const handler = vi.fn();
-    new SseController(host, dispatcher, { "agent:status": handler }).hostConnected();
-    expect(registered[0]?.handler).toBe(handler);
-  });
-
-  it("invokes every captured unsubscribe function on hostDisconnected lifecycle hook", () => {
-    const { host } = makeHost();
-    const { dispatcher, unsubs } = makeDispatcher();
-    const ctrl = new SseController(host, dispatcher, {
-      "agent:status": vi.fn(),
-      "system:error": vi.fn(),
-    });
+    const ctrl = new SseController(host, makeDispatcher(), { "agent:status": handler });
     ctrl.hostConnected();
     ctrl.hostDisconnected();
-    expect(unsubs[0]).toHaveBeenCalledTimes(1);
-    expect(unsubs[1]).toHaveBeenCalledTimes(1);
+
+    document.dispatchEvent(new CustomEvent("agent:status", { detail: { agentId: "a" } }));
+    expect(handler).not.toHaveBeenCalled();
   });
 
-  it("clears the internal unsubs array on hostDisconnected so a re-connect re-subscribes cleanly", () => {
+  it("supports reconnect: hostDisconnected then hostConnected re-registers listeners", () => {
     const { host } = makeHost();
-    const { dispatcher, registered, unsubs } = makeDispatcher();
-    const ctrl = new SseController(host, dispatcher, {
-      "agent:status": vi.fn(),
-    });
+    const handler = vi.fn();
+    const ctrl = new SseController(host, makeDispatcher(), { "agent:status": handler });
     ctrl.hostConnected();
     ctrl.hostDisconnected();
-    // Re-connect to assert it does not re-trigger the prior unsub captures.
     ctrl.hostConnected();
-    expect(registered).toHaveLength(2);
-    expect(unsubs).toHaveLength(2);
-    expect(unsubs[0]).toHaveBeenCalledTimes(1); // first cycle's unsub ran once
+
+    document.dispatchEvent(new CustomEvent("agent:status", { detail: { agentId: "b" } }));
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith({ agentId: "b" });
+    ctrl.hostDisconnected();
   });
 
   it("subscribes nothing when constructed with an empty events map (no-op host lifecycle)", () => {
     const { host } = makeHost();
-    const { dispatcher, registered } = makeDispatcher();
-    const ctrl = new SseController(host, dispatcher, {});
+    const ctrl = new SseController(host, makeDispatcher(), {});
     ctrl.hostConnected();
-    expect(registered).toHaveLength(0);
     // hostDisconnected on an empty controller is safe and clears nothing.
     expect(() => ctrl.hostDisconnected()).not.toThrow();
   });
