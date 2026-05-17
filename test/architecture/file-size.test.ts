@@ -456,6 +456,19 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // a full test rewrite. Auto-acceptable per WEB-DECOMP-09 (§10.5
     // fallback).
     "packages/web/src/views/agents/agent-editor.ts",
+    // scheduler.ts (Wave 3 / Task 2): RPC extraction completed via
+    // scheduler-controller.ts — view contains 0 rpcClient.call sites and
+    // delegates all daemon I/O to the controller (cron.list/status/add/
+    // update/remove/run, config.read/set, heartbeat.states/trigger moved
+    // out). The remaining ≤1620L is dominated by 3 tab renderers (cron
+    // jobs, heartbeat, extracted tasks), the embedded ic-cron-editor
+    // overlay wiring (Wave 6 scope — preserved verbatim here), SSE event
+    // handling for scheduler:job_started/job_completed/
+    // heartbeat_delivered/heartbeat_alert/scheduler:task_extracted,
+    // optimistic-update edit/delete flows, and detailed per-job/per-
+    // heartbeat row templates with relative-time formatting. Auto-
+    // acceptable per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/scheduler.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

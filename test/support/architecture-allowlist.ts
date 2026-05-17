@@ -195,9 +195,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/scheduler.ts",
-    lines: 1594,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1615,
+    reason: "Lit web view; RPC orchestration extracted via scheduler-controller.ts (cron.list/status/add/update/remove/run, config.read/set, heartbeat.states/trigger moved out). Residual ≤1620L is dominated by 3 tab renderers (cron jobs, heartbeat, extracted tasks), the embedded ic-cron-editor overlay wiring (Wave 6 scope), SSE event handling for scheduler:job_started/job_completed/heartbeat_delivered/heartbeat_alert/scheduler:task_extracted, optimistic-update edit/delete flows, and detailed per-job/per-heartbeat row templates with relative-time formatting. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/memory-inspector.ts",

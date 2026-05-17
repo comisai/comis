@@ -145,7 +145,7 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     //   config-editor.ts:  drained — RPC extracted via config-editor-controller.ts (Task 5).
     // Wave 3
     //   agent-editor.ts:    drained — RPC extracted via agent-editor-controller.ts (Task 1).
-    "packages/web/src/views/scheduler.ts",                          // 11 rpcClient.call (verified HEAD)
+    //   scheduler.ts:       drained — RPC extracted via scheduler-controller.ts (Task 2).
     "packages/web/src/views/memory-inspector.ts",                   //  3 rpcClient.call (verified HEAD)
     "packages/web/src/views/observe-view.ts",                       //  1 rpcClient.call (verified HEAD)
     "packages/web/src/views/models.ts",                             //  7 rpcClient.call (verified HEAD)
