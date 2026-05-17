@@ -55,7 +55,7 @@ describe("PipelineListController", () => {
     expect(result.graphs?.[0]?.status).toBe("running");
   });
 
-  it("loadGraph + executeGraph + getAllChannels: orchestrate quick-execute approval-gate flow", async () => {
+  it("calls loadGraph, executeGraph, and getAllChannels in sequence for the quick-execute approval-gate flow", async () => {
     const host = makeHost();
     const seen: string[] = [];
     const rpc = createMockRpcClient(async (...args: unknown[]) => {

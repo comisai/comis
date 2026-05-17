@@ -213,7 +213,7 @@ describe("findChrome", () => {
       });
     });
 
-    it("finds brave-browser", () => {
+    it("finds the brave-browser binary", () => {
       vi.mocked(fs.existsSync).mockImplementation((p) =>
         p === "/usr/bin/brave-browser",
       );
@@ -226,7 +226,7 @@ describe("findChrome", () => {
       });
     });
 
-    it("finds snap chromium", () => {
+    it("finds the snap chromium binary", () => {
       vi.mocked(fs.existsSync).mockImplementation((p) =>
         p === "/snap/bin/chromium",
       );
@@ -291,7 +291,7 @@ describe("findChrome", () => {
       );
     });
 
-    it("locates the macOS .app bundle binary", () => {
+    it("finds the macOS .app bundle binary", () => {
       setPlatform("darwin");
       vi.mocked(os.homedir).mockReturnValue("/Users/testuser");
       vi.mocked(fs.readdirSync).mockReturnValue([
@@ -586,7 +586,7 @@ describe("stopChrome", () => {
     expect(running.proc.kill).not.toHaveBeenCalled();
   });
 
-  it("sends SIGTERM first", async () => {
+  it("sends SIGTERM before SIGKILL on graceful shutdown", async () => {
     const running = createRunningChrome();
     // Process exits gracefully after SIGTERM
     vi.mocked(running.proc.kill).mockImplementation((sig) => {
