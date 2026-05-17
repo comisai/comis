@@ -201,9 +201,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/memory-inspector.ts",
-    lines: 1577,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1589,
+    reason: "Lit web view; RPC orchestration extracted via memory-inspector-controller.ts (memory.embeddingCache, memory.store, memory.flush moved out). Higher-level data access flows through apiClient (boundary regex matches only rpcClient.call). Residual ≤1600L is dominated by 33 @state fields across search/browse/filter/selection/dialogs/embedding-stats, an inline _normalizeEntry mapper, paginated browse with multi-axis filters (type/trust/agent/date), bulk-delete + export flows, a memory-create dialog with provenance tags, and a flush-confirm dialog — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/observe-view.ts",
