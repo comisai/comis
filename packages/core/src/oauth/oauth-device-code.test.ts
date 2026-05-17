@@ -2,11 +2,6 @@
 /**
  * Unit tests for oauth-device-code.ts.
  *
- * Relocated from packages/agent/src/model/oauth-device-code.test.ts in
- * Phase 35 per WEB-CONTRACTS-02 D-01 #2. Sibling import paths unchanged
- * (the test imports `./oauth-device-code.js` — same relative path in
- * both packages).
- *
  * Pure-function tests using DI fetch seam — NO vi.mock, NO vi.useFakeTimers,
  * NO vi.spyOn. The `fetchFn?: typeof fetch` option exists for exactly this
  * test surface (mirrors oauth-tls-preflight.test.ts).
@@ -79,17 +74,16 @@ describe("loginOpenAICodexDeviceCode", () => {
     10_000,
   );
 
-  // REMOVED (Phase 40 / COV-11 / plan 40-06): the 15-minute polling-deadline
-  // case stays uncovered at this tier by design. This file's header (lines
-  // 10-12) declares "NO vi.mock, NO vi.useFakeTimers, NO vi.spyOn" — a
-  // fake-timers conversion would violate the file's own purity contract.
-  // The deadline math itself (resolveNextDeviceCodePollDelayMs at line 192
-  // of the production source) is exercised by the happy-path fetch-seam
-  // tests above, and production timeout behavior is verified end-to-end by
-  // long-running OAuth flows in the staging environment (no per-PR check).
-  // Coverage gap accepted: any regression in the `while (systemNowMs() <
-  // deadline)` loop would manifest as a real-time wall-clock hang and be
-  // caught by user-facing rollout rather than CI.
+  // The 15-minute polling-deadline case stays uncovered at this tier by
+  // design. This file's header declares "NO vi.mock, NO vi.useFakeTimers,
+  // NO vi.spyOn" — a fake-timers conversion would violate the file's own
+  // purity contract. The deadline math itself
+  // (resolveNextDeviceCodePollDelayMs in the production source) is
+  // exercised by the happy-path fetch-seam tests above, and production
+  // timeout behavior is verified end-to-end by long-running OAuth flows
+  // in the staging environment (no per-PR check). Any regression in the
+  // `while (systemNowMs() < deadline)` loop would manifest as a real-time
+  // wall-clock hang and be caught by user-facing rollout rather than CI.
 
   it("returns err on fatal poll status (500)", async () => {
     const result = await loginOpenAICodexDeviceCode({

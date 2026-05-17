@@ -4,11 +4,9 @@
  *
  * Asserts shape + identity parity with the `@comis/orchestrator` barrel:
  * the mirror exports the same key set, the sentinel `createChannelManager`
- * is a function (Phase 32 extraction landed the factory at this name), and
- * the mirror re-export is identity-equal (`===`) to the direct import.
- * Catches `prepack.js` bundling regressions and silent re-export shadowing.
- *
- * Phase 40 / Phase C §6.3.5 / COV-09.
+ * is a function, and the mirror re-export is identity-equal (`===`) to
+ * the direct import. Catches `prepack.js` bundling regressions and
+ * silent re-export shadowing.
  *
  * @module
  */

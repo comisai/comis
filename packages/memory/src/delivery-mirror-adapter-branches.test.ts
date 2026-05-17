@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for delivery-mirror-adapter.ts (COV-03 / Plan 40-11).
+ * Branch-gap coverage for delivery-mirror-adapter.ts.
  *
  * Closes the catch-block error paths in record()/pending()/acknowledge()/
- * pruneOld() — all 8 missing branch-paths in delivery-mirror-adapter.ts are
- * the `e instanceof Error ? e : new Error(String(e))` ternary halves.
+ * pruneOld() — the missing branch-paths are the
+ * `e instanceof Error ? e : new Error(String(e))` ternary halves.
  *
  * @module
  */

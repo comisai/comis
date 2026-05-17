@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Contract test (MEM-CTX-PORTS-06): memory's `createSessionStore` runtime
- * implementation structurally satisfies the `SessionStorePort` contract
- * declared in `@comis/core/src/ports/session-store.ts`.
+ * Contract test: memory's `createSessionStore` runtime implementation
+ * structurally satisfies the `SessionStorePort` contract declared in
+ * `@comis/core/src/ports/session-store.ts`.
  *
  * Without this gate, the local return-type swap in
  * `packages/memory/src/session-store.ts` could silently drift (e.g. a method
@@ -13,10 +13,10 @@
  * shapes match the `SessionData` / `SessionDetailedEntry` DTO contracts that
  * now live in core.
  *
- * Mirrors the Phase 28 analog pattern at
- * `packages/infra/src/logging/__tests__/logger-contract.test.ts` (`.toExtend`
- * is the canonical non-deprecated matcher per RES-STK-2; `toMatchTypeOf` is
- * deprecated since expect-type@1.2.0).
+ * Mirrors the analog pattern at
+ * `packages/infra/src/logging/__tests__/logger-contract.test.ts`. `.toExtend`
+ * is the canonical non-deprecated matcher; `toMatchTypeOf` is deprecated
+ * since expect-type@1.2.0.
  *
  * @module
  */
@@ -33,7 +33,7 @@ import { beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { initSchema } from "../schema.js";
 import { createSessionStore } from "../session-store.js";
 
-describe("createSessionStore — SessionStorePort contract (MEM-CTX-PORTS-06)", () => {
+describe("createSessionStore — SessionStorePort contract", () => {
   let db: Database.Database;
 
   beforeEach(() => {

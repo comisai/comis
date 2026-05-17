@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
  * Image generation RPC handler module.
- * Provides the image.generate handler that bridges the agent tool
- * to the image generation provider. Applies rate limiting,
- * safety checking, and delivers generated images directly
- * to the channel via adapter.sendAttachment.
- * Image generation RPC dispatch.
  *
- * Phase 35 Wave C (Plan 35-15): refactored to use the `@comis/core`
- * contract registry. The handler key is a computed-property name
- * (`[ImageGenerateContract.method]:`) so the bidirectional 1:1
- * architecture test resolves it through `defineContract({ method, ... })`
- * in `packages/core/src/api-contracts/media.ts`. The
- * dispatcher-injected `_X` internal fields are stripped via
- * `stripInternalFields` BEFORE `contract.request.parse(...)` (D-04
- * Pitfall 6). The `_agentId` / `_callerChannelType` / `_callerChannelId`
- * reads happen on the un-stripped `rawParams` BEFORE the strip step (the
- * internal fields flow into the handler through `rawParams`).
+ * Provides the image.generate handler that bridges the agent tool to the
+ * image generation provider. Applies rate limiting, safety checking, and
+ * delivers generated images directly to the channel via
+ * adapter.sendAttachment.
+ *
+ * Uses the `@comis/core` contract registry. The handler key is a
+ * computed-property name (`[ImageGenerateContract.method]:`) so the
+ * bidirectional 1:1 architecture test resolves it through
+ * `defineContract({ method, ... })` in
+ * `packages/core/src/api-contracts/media.ts`. The dispatcher-injected
+ * `_X` internal fields are stripped via `stripInternalFields` BEFORE
+ * `contract.request.parse(...)`. The `_agentId` / `_callerChannelType` /
+ * `_callerChannelId` reads happen on the un-stripped `rawParams` BEFORE
+ * the strip step (the internal fields flow into the handler through
+ * `rawParams`).
  *
  * The bespoke prompt-presence + rate-limit checks are intentionally
  * retained for user-friendly `{ success: false, error }` responses
@@ -37,19 +37,14 @@ import type { MediaApiDeps, RpcHandler } from "./types.js";
 /** Dependencies required by image generation RPC handlers.
  *
  * Re-aliased from the nested `imageHandlerDeps` sub-shape of the MediaApiDeps
- * cluster slice in api/types.ts (Plan 34-08a; alias retarget in Plan 34-08c).
- * Single source of truth: `MediaApiDeps["imageHandlerDeps"]` (NonNullable —
- * the dispatcher constructs this handler only inside the
- * `deps.imageHandlerDeps ? ...` truthy branch). The cluster slice's nested
- * shape is structurally identical to the legacy ImageHandlerDeps. DAEMON-API-03
- * sub-shape alias — handler body unchanged.
+ * cluster slice in api/types.ts. Single source of truth:
+ * `MediaApiDeps["imageHandlerDeps"]` (NonNullable — the dispatcher constructs
+ * this handler only inside the `deps.imageHandlerDeps ? ...` truthy branch).
  *
- * Note: unlike the other 8 retargets in 34-08c, image-handlers does NOT
- * receive the full MediaApiDeps cluster slice at runtime. The dispatcher
+ * Note: unlike the other retargets in the same refactor, image-handlers does
+ * NOT receive the full MediaApiDeps cluster slice at runtime. The dispatcher
  * passes `deps.imageHandlerDeps` (the nested object) to `createImageHandlers`,
  * which is why the alias points at the sub-shape rather than the slice itself.
- * Plan 34-09 (api/shared/) is expected to lift this nested shape into a
- * sibling module both api/types.ts and image-handlers can import from.
  */
 export type ImageHandlerDeps = NonNullable<MediaApiDeps["imageHandlerDeps"]>;
 

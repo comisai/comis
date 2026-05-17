@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the daemon-domain Wave C contracts.
+ * Per-contract test for the daemon-domain contracts.
  *
- * NOTE: The plan's <interfaces> block enumerated 5 methods but
- * `packages/daemon/src/api/daemon-handlers.ts` currently only exposes 2
- * methods — `system.ping` and `daemon.setLogLevel`. The other 3 methods
- * the plan cited (`gateway.status`, `gateway.restart`, `obs.diagnostics`)
- * live in different handler factory files (`config-handlers.ts`,
- * `obs-handlers.ts`) which are out of scope for plan 35-06's
- * `files_modified` list. Per D-08 (one contract file per handler factory
- * file), those methods will land in their own Wave C plans (35-07+).
+ * NOTE: `packages/daemon/src/api/daemon-handlers.ts` currently exposes 2
+ * methods — `system.ping` and `daemon.setLogLevel`. Other methods such as
+ * `gateway.status`, `gateway.restart`, and `obs.diagnostics` live in
+ * different handler factory files (`config-handlers.ts`,
+ * `obs-handlers.ts`). The invariant is one contract file per handler
+ * factory file.
  *
  * @module
  */
@@ -91,7 +89,7 @@ describe("daemon-domain contracts", () => {
     expect(() => SystemPingContract.request.parse({})).not.toThrow();
   });
 
-  it("scopes are correct", () => {
+  it("declares the expected scopes on each contract", () => {
     expect(SystemPingContract.scopes).toEqual(["rpc"]);
     expect(DaemonSetLogLevelContract.scopes).toEqual(["admin"]);
   });

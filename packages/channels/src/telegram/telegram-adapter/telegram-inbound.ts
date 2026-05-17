@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram inbound message routing (Phase 43 split per FILE-SPLIT-12).
+ * Telegram inbound message routing.
  *
  * Owns the four grammy event handlers that translate Telegram updates into
  * the channel-agnostic NormalizedMessage shape and dispatch them to the
@@ -10,9 +10,9 @@
  *   - bot.on("poll")           - poll result updates
  *   - bot.on("callback_query:data") - button taps
  *
- * State-first protocol (matches Phase 42 pi-executor + Phase 43 mcp-client):
- * every helper takes `state: TelegramAdapterState` as its first positional
- * parameter, `deps: TelegramAdapterDeps` as second, then per-call args.
+ * State-first protocol: every helper takes `state: TelegramAdapterState`
+ * as its first positional parameter, `deps: TelegramAdapterDeps` as
+ * second, then per-call args.
  *
  * @module
  */

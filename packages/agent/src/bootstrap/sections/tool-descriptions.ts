@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: bootstrap-time invariant assertion (LEAN_TOOL_DESCRIPTIONS / TOOL_SUMMARIES / NATIVE_TOOLS keys must match); consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
+// @allow-throw: bootstrap-time invariant assertion (LEAN_TOOL_DESCRIPTIONS / TOOL_SUMMARIES / NATIVE_TOOLS keys must match); consumed at daemon.ts bootstrap catch boundary.
 /**
  * Lean tool descriptions (LEAN_TOOL_DESCRIPTIONS) and summaries (TOOL_SUMMARIES)
  * for the dual-summary description layer.

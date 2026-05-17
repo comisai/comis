@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: setup-agents runtime guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
+// @allow-throw: setup-agents runtime guards; consumed at daemon.ts bootstrap catch boundary.
 /**
  * Per-agent executor runtime: session manager, per-agent workspace, safety
  * dependencies (circuit breaker, budget guard, cost tracker, step counter),
  * and PiExecutor creation. Single-agent factory `setupSingleAgent` and the
  * shared `SingleAgentDeps` / `SingleAgentResult` interface declarations.
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-agents.ts.
  * Imports `resolveAgentModel` + `deriveCanaryFallback` from
  * ./setup-agents-tooling.js; the top-level orchestration loop lives in
  * ./setup-agents-registry.js.
@@ -87,7 +86,7 @@ export async function setupSingleAgent(
 
   const { container, memoryAdapter, agentLogger, resolvedAgentDir } = deps;
 
-  // Resolve "default" model/provider to global defaults (MODELS-DEFAULT).
+  // Resolve "default" model/provider to global defaults.
   // Resolution sources, in priority order:
   //   1. Per-agent explicit value (agentConfig.model / .provider)
   //   2. modelsConfig.defaultModel / .defaultProvider (YAML models.* section)
@@ -291,9 +290,9 @@ export async function setupSingleAgent(
     lockDir,
     cwd: dir,
     // Same FileLockPort instance the OAuth path uses — single proper-lockfile
-    // adapter per daemon process per Phase 32 commit 12 (ORCH-EXT-15).
+    // adapter per daemon process.
     fileLock: deps.fileLock,
-    // WR-07: thread the agent-scoped logger so withSessionLock can emit a
+    // Thread the agent-scoped logger so withSessionLock can emit a
     // structured-cause line before collapsing the FileLockPort error
     // union to the legacy 'locked' | 'error' string. Enables operator
     // triage of EACCES / disk-full vs lock contention.
@@ -385,11 +384,11 @@ export async function setupSingleAgent(
   // InputSecurityGuard per agent
   const inputGuard = createInputSecurityGuard();
   // Uses default config: mediumThreshold=0.4, highThreshold=0.7, action="warn"
-  // Operator can override via agent config in future phases
+  // Operator can override via agent config in the future
 
   // Pre-resolve lean descriptions for this agent's session.
   // channelType unavailable at agent setup time; message tool resolves to "chat"
-  // fallback. Per-channel resolution deferred to
+  // fallback. Per-channel resolution deferred to runtime.
   const descriptionContext: ToolDescriptionContext = {
     channelType: undefined,
     trustLevel: "default", // Trust comes from token/context at message time, not config
@@ -419,7 +418,7 @@ export async function setupSingleAgent(
       tokenCount: totalDescriptionTokens,
       dynamicCount,
       overLimitCount,
-      // Finding 7: setup-time modelTier for lean description selection (per-execution tier may differ)
+      // Setup-time modelTier for lean description selection (per-execution tier may differ)
       modelTier: descriptionContext.modelTier,
     },
     "Tool descriptions resolved",
@@ -518,7 +517,7 @@ export async function setupSingleAgent(
     storeCompletions: effectiveConfig.storeCompletions,
     providerCapabilities: container.config.providers?.entries?.[resolved.provider]?.capabilities,
     maxSendsPerExecution: container.config.messages?.maxSendsPerExecution,
-    // Phase 39 PORTS-11/12/13: runtime adapter ports threaded into the executor.
+    // Runtime adapter ports threaded into the executor.
     clock: deps.clock,
     env: deps.env,
     timers: deps.timers,

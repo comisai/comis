@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Exec command security — denylist patterns + zsh detection + main pipeline
- * (Phase 43 split per FILE-SPLIT-11).
+ * Exec command security — denylist patterns + zsh detection + main pipeline.
  *
- * Extracted from `exec-security.ts` (1,153L monolith) on 2026-05-16. Owns
- * the post-pre-check gates + the pipeline entry point + exit-code semantics:
+ * Owns the post-pre-check gates + the pipeline entry point + exit-code
+ * semantics:
  *   - DANGEROUS_COMMAND_PATTERNS (regex denylist; Gate 2.5 + Gate 3+4)
  *   - validateCommand (denylist check; pre-split and per-segment)
  *   - detectZshDangerousCommands (Gate 7)

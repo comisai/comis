@@ -10,26 +10,24 @@
  *   - Tool policy (TOOL_PROFILES, TOOL_GROUPS, applyToolPolicy)
  *   - MCP client manager
  *
- * Per Phase 33 RES-ARCH-1 + RES-ARCH-5, source files under `src/skills/`
- * (excluding this barrel) MUST NOT import from `../tools/` or
- * `../platform-tools/` at the per-file level (one-way invariant enforced
- * by `__tests__/architecture.test.ts`).
+ * Source files under `src/skills/` (excluding this barrel) MUST NOT
+ * import from `../tools/` or `../platform-tools/` at the per-file level
+ * (one-way invariant enforced by `__tests__/architecture.test.ts`).
  *
- * This barrel additionally re-exports the SAME 45 platform-tool factories
- * + media stack + browser + builtin tools + integrations + etc. surface
- * that the pre-Phase-33 `packages/skills/src/index.ts` exposed, so that
+ * This barrel additionally re-exports the platform-tool factories +
+ * media stack + browser + builtin tools + integrations + etc. surface
+ * that the previous flat `packages/skills/src/index.ts` exposed, so that
  * consumers (daemon, agent) which already import from `@comis/skills`
- * continue to resolve. Plan 03 introduces the descriptor registry and
- * Plan 04 narrows consumer imports to the appropriate subpath; this
- * re-export shim can be dropped at that point (PUB-EXPORTS-* dead-export
- * test catches anything we accidentally re-broaden).
+ * continue to resolve. As consumer imports are narrowed to the
+ * appropriate subpath, this re-export shim can be dropped (the
+ * dead-export gate catches anything we accidentally re-broaden).
  *
  * @module
  */
 
 // ===========================================================================
 // `.` subpath canonical exports (skill registry, manifest, prompt, policy,
-// bridge, MCP client manager). Plan 04 narrows the barrel down to this set.
+// bridge, MCP client manager).
 // ===========================================================================
 
 // Registry
@@ -85,8 +83,8 @@ export { applyToolPolicy, expandGroups, TOOL_PROFILES, TOOL_GROUPS } from "./pol
 export type { ToolFilterReason, ToolPolicyResult } from "./policy/index.js";
 
 // ===========================================================================
-// Transitional `./tools` re-exports (Phase 33 — kept for daemon/agent
-// import compatibility; Plan 04 will retarget consumers and drop this).
+// Transitional `./tools` re-exports (kept for daemon/agent import
+// compatibility until consumers retarget to the appropriate subpath).
 // ===========================================================================
 
 // Built-in tools (web-search, web-fetch)
@@ -101,17 +99,17 @@ export {
   resolveAllProfiles,
 } from "../tools/builtin/tool-source-profiles.js";
 
-// Built-in tools -- safe-path types: dropped from `.` subpath (Plan 03 /
-// ARCH-BASE-03). `LazyPaths` and `resolvePaths` are consumed only by
-// daemon's setup-tools.ts which now imports them from
-// `@comis/skills/tools` (their canonical subpath per Plan 02 RES-ARCH-1).
+// Built-in tools -- safe-path types: dropped from `.` subpath.
+// `LazyPaths` and `resolvePaths` are consumed only by daemon's
+// setup-tools.ts which now imports them from `@comis/skills/tools`
+// (their canonical subpath).
 
 // Built-in tools -- file state tracking
 // `createFileStateTracker` is still consumed via the `.` subpath by
 // daemon.ts (sessionTrackerRegistry construction); `isDeviceFile` retained
 // for symmetry. `FileStateTracker` type is now imported by daemon via
-// `@comis/skills/tools` (Plan 03), so the type re-export below is dead --
-// dropped per public-export-consumers test (ARCH-BASE-03 + ARCH-BASE-08).
+// `@comis/skills/tools`, so the type re-export below is dead -- dropped
+// per the public-export-consumers test.
 export { createFileStateTracker, isDeviceFile } from "../tools/builtin/file/file-state-tracker.js";
 export type { FileReadState } from "../tools/builtin/file/file-state-tracker.js";
 
@@ -125,7 +123,7 @@ export { parseInstallDetour } from "../tools/builtin/install-detour.js";
 // `SandboxProvider` is still consumed via `.` subpath by daemon.ts
 // (detectSandboxProvider call); `ExecSandboxConfig` was used only by
 // setup-tools.ts which now imports it from `@comis/skills/tools` -- the
-// dead `.` subpath re-export is dropped (Plan 03 / ARCH-BASE-03).
+// dead `.` subpath re-export is dropped.
 export type { SandboxProvider, SandboxOptions } from "../tools/builtin/sandbox/types.js";
 
 // Built-in tools -- Exec sandbox detection
@@ -202,10 +200,10 @@ export { createImageGenProvider, createImageGenRateLimiter } from "../tools/inte
 export type { ImageGenRateLimiter } from "../tools/integrations/image-gen/index.js";
 
 // ===========================================================================
-// Phase 33 SKILLS-SPLIT-08: the 38+ platform-tool factory re-exports that
-// used to live here (the `transitional kitchen-sink` block) have been
-// dropped. Daemon now consumes the platform-tool surface via the descriptor
-// registry on the `./platform-tools` subpath:
+// The 38+ platform-tool factory re-exports that used to live here (the
+// `transitional kitchen-sink` block) have been dropped. Daemon now consumes
+// the platform-tool surface via the descriptor registry on the
+// `./platform-tools` subpath:
 //   import { createPlatformToolRegistry } from "@comis/skills/platform-tools"
 // All callers should reach for the registry rather than naming individual
 // factories. The factory functions themselves remain exported from the
@@ -221,6 +219,6 @@ export type { ImageGenRateLimiter } from "../tools/integrations/image-gen/index.
 
 // Re-export RpcCall on the `.` subpath for daemon-internal type compatibility
 // (BrowserService deps, RpcDispatchPort signatures, etc. -- all in daemon's
-// daemon-types.ts and rpc-dispatch.ts). Plan 04 will narrow this when daemon
-// imports RpcCall from `@comis/skills/platform-tools` directly.
+// daemon-types.ts and rpc-dispatch.ts). This will narrow when daemon imports
+// RpcCall from `@comis/skills/platform-tools` directly.
 export type { RpcCall } from "../platform-tools/index.js";

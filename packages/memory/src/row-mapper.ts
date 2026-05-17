@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: Internal SQL-injection guard in countRows/groupCountRows (ALLOWED_TABLES / ALLOWED_GROUP_COLUMNS); throws prevent unsafe table/column names from reaching prepare(); consumed by MemoryApi adapter (daemon RPC handler @allow-throw boundary per Decision 2) (Phase 41 TS-HYG-07).
+// @allow-throw: Internal SQL-injection guard in countRows/groupCountRows (ALLOWED_TABLES / ALLOWED_GROUP_COLUMNS); throws prevent unsafe table/column names from reaching prepare(); consumed by MemoryApi adapter (daemon RPC handler @allow-throw boundary).
 /**
  * Shared helpers for converting between MemoryRow (DB row) and
  * MemoryEntry (domain type), and for common DB operations.
@@ -276,11 +276,10 @@ export function groupCountRows(
   return result;
 }
 
-// ===== Generic RowMapper factory (TS-HYG-01, TS-HYG-02) =============
-// Phase 41 — generic factory for typed SQLite row parsing.
-// Existing domain-specific helpers above (rowToEntry, parseTags, etc.) stay.
-// Plan 41-04 consumes this factory at every SQLite call-site retarget to
-// replace `db.prepare(...).all() as Foo[]` casts with
+// ===== Generic RowMapper factory ===================================
+// Generic factory for typed SQLite row parsing. Domain-specific helpers
+// above (rowToEntry, parseTags, etc.) stay. Consumed at every SQLite
+// call-site to replace `db.prepare(...).all() as Foo[]` casts with
 // `mapper.parseRows(stmt.all(...))` + Result-handling.
 
 /**
@@ -304,8 +303,7 @@ export interface MapperError {
  * parseRow / parseOptionalRow / parseRows methods.
  *
  * Created via createRowMapper(schema). Used at every memory-package SQLite
- * call site to replace `db.prepare(...).all() as Foo[]` casts
- * (Phase 41 TS-HYG-03).
+ * call site to replace `db.prepare(...).all() as Foo[]` casts.
  *
  * @template TRow The parsed row type (matches the Zod schema's output).
  */
@@ -368,8 +366,8 @@ export function createRowMapper<TRow>(schema: ZodType<TRow>): RowMapper<TRow> {
       return ok(parsed.data);
     },
     parseOptionalRow(raw) {
-      // Critical wrinkle (RESEARCH §"Pattern 1" line 223): undefined input
-      // → ok(undefined) (no row matched). Malformed-but-present → err.
+      // Undefined input → ok(undefined) (no row matched).
+      // Malformed-but-present → err.
       if (raw === undefined) return ok(undefined);
       const parsed = schema.safeParse(raw);
       if (!parsed.success) {

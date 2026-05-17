@@ -14,10 +14,9 @@ import {
 // ---------------------------------------------------------------------------
 // buildToolingSection
 //
-// Post-BC-REM-11 (phase 38): the function unconditionally emits the residual
-// one-liner pointing at the per-turn `## Capabilities` block. The legacy
-// `## Available Tools` flat block + the static-prompt capability-index gate
-// parameter have been removed.
+// The function unconditionally emits the residual one-liner pointing at the
+// per-turn `## Capabilities` block. The legacy `## Available Tools` flat block
+// + the static-prompt capability-index gate parameter have been removed.
 // ---------------------------------------------------------------------------
 
 describe("buildToolingSection", () => {
@@ -449,11 +448,10 @@ describe("buildPrivilegedToolsSection catalog interpolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tool-first counterweight (post-BC-REM-11). The bullet now emits
-// unconditionally when `exec` is in `toolNames`; the previous static-prompt
-// capability-index gate has been removed. The bullet wording is normative —
-// DO NOT auto-update via `vitest -u` without verifying the rendered text by
-// hand.
+// Tool-first counterweight. The bullet now emits unconditionally when `exec`
+// is in `toolNames`; the previous static-prompt capability-index gate has been
+// removed. The bullet wording is normative — DO NOT auto-update via
+// `vitest -u` without verifying the rendered text by hand.
 // ---------------------------------------------------------------------------
 
 describe("buildToolCallStyleSection — tool-first counterweight", () => {

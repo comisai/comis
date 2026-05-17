@@ -2,10 +2,10 @@
 /**
  * Type-equality + runtime-parse assertions for row schemas.
  *
- * Phase 41 TS-HYG-01 — proves each Zod schema in `row-schemas.ts` matches
- * the paired TypeScript interface. Mitigates the schema-drift risk called
- * out in RESEARCH §"Pitfall 7": without these tests, a column-type drift
- * between interface and schema would only surface at runtime in production.
+ * Proves each Zod schema in `row-schemas.ts` matches the paired TypeScript
+ * interface. Mitigates schema-drift risk: without these tests, a column-type
+ * drift between interface and schema would only surface at runtime in
+ * production.
  *
  * Two categories:
  *
@@ -19,12 +19,12 @@
  * 2. **Runtime-parse tests** — for schemas whose source interface is
  *    file-internal (TokenUsageDbRow, OAuthProfileRow, CredentialMappingRow,
  *    DeliveryMirrorDbRow, DeliveryQueueDbRow, IdentityLinkRow, BatchCacheRow,
- *    and observability *DbRow types). The schema IS the new single source
- *    of truth (Plan 41-04 retargets to `z.infer<typeof XxxRowSchema>`); we
- *    prove the schema parses representative rows + rejects malformed ones.
+ *    and observability *DbRow types). The schema IS the single source of
+ *    truth (interfaces are `z.infer<typeof XxxRowSchema>`); we prove the
+ *    schema parses representative rows + rejects malformed ones.
  *
- * COV-10 compliance: every `it()` description is ≥20 chars and use-case-
- * named (no "works"/"happy path"/"smoke").
+ * Every `it()` description is ≥20 chars and use-case-named (no
+ * "works"/"happy path"/"smoke").
  */
 
 import { describe, it, expect, expectTypeOf } from "vitest";
@@ -92,7 +92,7 @@ import {
 // of the schema matches the source interface exactly)
 // =====================================================================
 
-describe("row-schemas — type-equality with paired interfaces (TS-HYG-01)", () => {
+describe("row-schemas — type-equality with paired interfaces", () => {
   it("MemoryRowSchema z.infer matches MemoryRow interface from types.ts", () => {
     expectTypeOf<z.infer<typeof MemoryRowSchema>>().toEqualTypeOf<MemoryRow>();
   });
@@ -164,10 +164,10 @@ describe("row-schemas — type-equality with paired interfaces (TS-HYG-01)", () 
 
 // =====================================================================
 // 2. Runtime-parse assertions for schemas whose source interface is
-// file-internal (the schema IS the new SSOT for Plan 41-04)
+// file-internal (the schema IS the SSOT)
 // =====================================================================
 
-describe("row-schemas — internal DB row runtime parses (TS-HYG-01)", () => {
+describe("row-schemas — internal DB row runtime parses", () => {
   it("TokenUsageDbRowSchema parses a complete token_usage row", () => {
     const sample = {
       id: 1,
@@ -411,7 +411,7 @@ describe("row-schemas — internal DB row runtime parses (TS-HYG-01)", () => {
 // (defense-in-depth against schema drift; ties to MapperError contract)
 // =====================================================================
 
-describe("row-schemas — strictObject rejects unexpected columns (TS-HYG-01)", () => {
+describe("row-schemas — strictObject rejects unexpected columns", () => {
   it("MemoryRowSchema rejects rows with an unexpected extra column", () => {
     const sample = {
       id: "row-1",

@@ -1,19 +1,20 @@
-# SubAgentRunnerDeps Audit (Phase 41 — FINAL)
+# SubAgentRunnerDeps Audit
 
 **Generated:** 2026-05-15
 **Status:** FINAL
 **Interface source:** `packages/agent/src/spawn/sub-agent-runner.ts:131-291` (21-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-cross-session.ts:813` (single site — `createSubAgentRunner({`)
 **Field count:** 21 (7 required + 14 optional + 0 stale-fallback)
-**OQ-1 resolution:** Option B (this path — co-located with the agent package). `.planning/` policy conflict avoided; `files: ["dist"]` in `packages/agent/package.json` excludes this file from the npm tarball.
+
+This audit lives co-located with the agent package; `files: ["dist"]` in `packages/agent/package.json` excludes it from the npm tarball.
 
 ## Audit Result
 
 The audit enumerates all 21 fields of `SubAgentRunnerDeps`. Every required field appears in every production construction call; every optional field has a real production absent-mode code path (either an `if (deps.X)` guard or a `deps.X?.method()` chain whose absent-branch falls through to a no-op).
 
-The structural audit found ONE candidate stale-fallback field: `activeRunRegistry?`. The daemon construction site wires it (`setup-cross-session.ts:829: activeRunRegistry: deps.activeRunRegistry`), but the sub-agent runner production source never accesses `deps.activeRunRegistry` — only `deps.sessionResolver` reads from the activeRunRegistry indirectly via `createBackgroundSessionResolver({activeRunRegistry})` (per JSDoc at sub-agent-runner.ts:196-203). The classification retains `activeRunRegistry` as `optional` because (a) the daemon construction site still wires it for structural type completeness with the cross-package resolver chain, and (b) deletion is a behavior-changing diff that should be scoped to a dedicated cleanup commit, not bundled into a Phase-41 audit. The `When-absent` cell documents the supersession.
+The structural audit found ONE candidate stale-fallback field: `activeRunRegistry?`. The daemon construction site wires it (`setup-cross-session.ts:829: activeRunRegistry: deps.activeRunRegistry`), but the sub-agent runner production source never accesses `deps.activeRunRegistry` — only `deps.sessionResolver` reads from the activeRunRegistry indirectly via `createBackgroundSessionResolver({activeRunRegistry})` (per JSDoc at sub-agent-runner.ts:196-203). The classification retains `activeRunRegistry` as `optional` because (a) the daemon construction site still wires it for structural type completeness with the cross-package resolver chain, and (b) deletion is a behavior-changing diff that should be scoped to a dedicated cleanup commit. The `When-absent` cell documents the supersession.
 
-The architecture-test invariants enforced by `packages/agent/src/__tests__/architecture.test.ts` (extended in Plan 41-06 Task 2) hold: bidirectional set equality between this table and `SubAgentRunnerDeps`; every classification is `required` or `optional`; classification matches the interface's `?` marker; every row has a non-empty evidence-link cell.
+The architecture-test invariants enforced by `packages/agent/src/__tests__/architecture.test.ts` hold: bidirectional set equality between this table and `SubAgentRunnerDeps`; every classification is `required` or `optional`; classification matches the interface's `?` marker; every row has a non-empty evidence-link cell.
 
 ## Field Classification
 
@@ -47,11 +48,10 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 **None.** Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path. The audit verified this empirically by counting `deps.<field>` references across `packages/agent/src/spawn/{sub-agent-runner.ts, sub-agent-result-processor.ts}` for each candidate optional field; every candidate had at least one production reference whose absent-branch IS the production behavior.
 
-The candidate stale-fallback field `activeRunRegistry` was retained as `optional` rather than removed because (a) the daemon construction site at `setup-cross-session.ts:829` still wires it for structural type compatibility with the cross-package resolver chain, and (b) deletion would constitute a behavior-changing API diff outside the scope of a Phase-41 audit commit. The `When-absent` cell documents the supersession by `sessionResolver`; future cleanup may delete the field in a dedicated commit.
+The candidate stale-fallback field `activeRunRegistry` was retained as `optional` rather than removed because (a) the daemon construction site at `setup-cross-session.ts:829` still wires it for structural type compatibility with the cross-package resolver chain, and (b) deletion would constitute a behavior-changing API diff outside the scope of this audit. The `When-absent` cell documents the supersession by `sessionResolver`; future cleanup may delete the field in a dedicated commit.
 
 ## Summary
 
-- **Pre-audit count:** 21 (post-Phase 39 PORTS-11/13 ClockPort + TimerPort additions)
 - **Final count:** 21 (7 required + 14 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
@@ -61,4 +61,4 @@ The candidate stale-fallback field `activeRunRegistry` was retained as `optional
 - This is the FINAL audit. Every `when-absent` cell has a real description; no deferred placeholder cells remain.
 - The CI architecture test in `packages/agent/src/__tests__/architecture.test.ts` parses this file row-by-row and asserts (1) bidirectional set equality between audit fields and `SubAgentRunnerDeps` fields, (2) every classification cell is `required` or `optional` (never the third "stale-fallback" value), (3) classification matches the interface's optional/required marker, (4) every row has a non-empty `evidence-link`. The parser depends on the table format above — DO NOT introduce nested tables, multi-line cells, or column reordering.
 - Evidence-link line numbers point at the current `packages/agent/src/spawn/sub-agent-runner.ts` layout. The audit-coverage test does not parse the line-number portion of each evidence link, so future incidental shifts (e.g., a comment edit on line 90) do not invalidate the audit until a field is added or removed; the table covers schema, not exact line addresses.
-- The plan's `must_haves.truths` line referenced "26 fields"; the actual interface has 21 fields. The architecture test asserts the interface body's actual field count via bidirectional set equality, not against the plan's estimate. Pre-Phase-39, the interface may have carried more fields; the current 21-field shape is post-PORTS-11/13 (clock + timers added).
+- The architecture test asserts the interface body's actual field count via bidirectional set equality. The current 21-field shape includes clock + timers as port-typed dependencies.

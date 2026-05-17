@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for embedding-provider-openai.ts (COV-03 / Plan 40-11).
+ * Branch-gap coverage for embedding-provider-openai.ts.
  *
  * The existing test file (embedding-provider-openai.test.ts) is gated behind
  * a real OPENAI_API_KEY and runs only under live-API conditions, so the

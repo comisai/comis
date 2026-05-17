@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Subagent-handlers contract slice (Phase 43 split per FILE-SPLIT-14).
+ * Subagent-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/subagent-handlers.ts` (3 methods —
- * subagent.*). Block-moved verbatim from the pre-split
- * `api-contracts/orchestrator.ts` (lines 990-1078). Spread order in
- * `SUBAGENT_HANDLERS_CONTRACTS` matches the pre-split
- * `ORCHESTRATOR_CONTRACTS` array (orchestrator.ts:1126-1128) byte for byte
- * to keep `contracts.generated.*` artifacts byte-identical.
+ * subagent.*). Spread order in `SUBAGENT_HANDLERS_CONTRACTS` matches the
+ * orchestrator contracts array byte for byte to keep
+ * `contracts.generated.*` artifacts byte-identical.
  *
  * @module
  */
@@ -106,8 +104,8 @@ export const SubagentSteerContract = defineContract({
 
 /**
  * subagent-handlers slice (3 contracts — subagent.*). Spread order matches
- * the pre-split `ORCHESTRATOR_CONTRACTS` array (orchestrator.ts:1126-1128)
- * byte for byte — determinism-critical for codegen output stability.
+ * the orchestrator contracts array byte for byte — determinism-critical
+ * for codegen output stability.
  */
 export const SUBAGENT_HANDLERS_CONTRACTS = [
   SubagentListContract,

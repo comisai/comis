@@ -4,7 +4,7 @@ import { TimeoutError } from "@comis/shared";
 import { withPromptTimeout, withResettablePromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
 import type { TimerPort, TimerHandle } from "@comis/core";
 
-// Phase 39 PORTS-13: test TimerPort that delegates to globals.
+// Test TimerPort that delegates to globals.
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
   let cancelled = false;
   let unrefCalled = false;

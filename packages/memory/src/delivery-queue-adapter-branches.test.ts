@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for delivery-queue-adapter.ts (COV-03 / Plan 40-11).
+ * Branch-gap coverage for delivery-queue-adapter.ts.
  *
  * Targets the uncovered error-path branches in every Result-returning method
  * (enqueue/enqueueInFlight/ack/nack/fail/pendingEntries/pruneExpired/depth/

@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("agents") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("agents") 1`] = `
 "[
   {
     "default": true,
@@ -1925,7 +1925,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("autoReplyEngine") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("autoReplyEngine") 1`] = `
 "[
   {
     "default": [],
@@ -1966,7 +1966,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("channels") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("channels") 1`] = `
 "[
   {
     "default": {
@@ -3846,7 +3846,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("daemon") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("daemon") 1`] = `
 "[
   {
     "default": {
@@ -3988,7 +3988,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("embedding") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("embedding") 1`] = `
 "[
   {
     "default": true,
@@ -4128,7 +4128,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("envelope") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("envelope") 1`] = `
 "[
   {
     "default": 86400000,
@@ -4163,7 +4163,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("gateway") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("gateway") 1`] = `
 "[
   {
     "default": false,
@@ -4316,7 +4316,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("integrations") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("integrations") 1`] = `
 "[
   {
     "default": {
@@ -5076,7 +5076,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("memory") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("memory") 1`] = `
 "[
   {
     "default": {
@@ -5154,7 +5154,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("monitoring") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("monitoring") 1`] = `
 "[
   {
     "default": {
@@ -5289,7 +5289,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("plugins") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("plugins") 1`] = `
 "[
   {
     "default": true,
@@ -5306,7 +5306,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("queue") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("queue") 1`] = `
 "[
   {
     "default": 600000,
@@ -5496,7 +5496,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("routing") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("routing") 1`] = `
 "[
   {
     "default": [],
@@ -5513,7 +5513,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("scheduler") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("scheduler") 1`] = `
 "[
   {
     "default": {
@@ -5742,7 +5742,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("security") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("security") 1`] = `
 "[
   {
     "default": {
@@ -6086,7 +6086,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("sendPolicy") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("sendPolicy") 1`] = `
 "[
   {
     "default": "allow",
@@ -6109,7 +6109,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("streaming") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("streaming") 1`] = `
 "[
   {
     "default": "paragraph",
@@ -6246,7 +6246,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata("tooling") 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata("tooling") 1`] = `
 "[
   {
     "default": {
@@ -6328,7 +6328,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFieldMetadata() — full flat array 1`] = `
+exports[`section-registry parity > field-metadata view > getFieldMetadata() — full flat array 1`] = `
 "[
   {
     "default": "~/.pi/agent",
@@ -12315,7 +12315,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > MANAGED_SECTIONS — 5-entry array 1`] = `
+exports[`section-registry parity > managed-sections view > MANAGED_SECTIONS exposes the canonical 5-entry array 1`] = `
 "[
   {
     "description": "Manage MCP server connections (list, status, connect, disconnect, reconnect).",
@@ -12465,7 +12465,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > MAN
 ]"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > getManagedSectionRedirect("agents", "(no key)") 1`] = `
+exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("agents", "(no key)") 1`] = `
 "{
   "description": "Manage agent fleet (create, get, update, delete, suspend, resume).",
   "exampleArgs": {
@@ -12503,7 +12503,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > get
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > getManagedSectionRedirect("channels", "(no key)") 1`] = `
+exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("channels", "(no key)") 1`] = `
 "{
   "description": "Manage channel adapters (list, get, enable, disable, restart, configure).",
   "fullyManaged": false,
@@ -12522,7 +12522,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > get
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > getManagedSectionRedirect("gateway", "tokens") 1`] = `
+exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("gateway", "tokens") 1`] = `
 "{
   "description": "Manage gateway tokens (list, create, revoke, rotate).",
   "exampleArgs": {
@@ -12552,7 +12552,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > get
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > getManagedSectionRedirect("integrations", "mcp.servers") 1`] = `
+exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("integrations", "mcp.servers") 1`] = `
 "{
   "description": "Manage MCP server connections (list, status, connect, disconnect, reconnect).",
   "exampleArgs": {
@@ -12584,11 +12584,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > get
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > getManagedSectionRedirect("memory", "(no key)") 1`] = `undefined`;
+exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("memory", "(no key)") 1`] = `undefined`;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > getManagedSectionRedirect("nonexistent", "(no key)") 1`] = `undefined`;
+exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("nonexistent", "(no key)") 1`] = `undefined`;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > getManagedSectionRedirect("providers", "(no key)") 1`] = `
+exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("providers", "(no key)") 1`] = `
 "{
   "description": "Manage LLM providers (list, get, create, update, delete, enable, disable).",
   "exampleArgs": {
@@ -12629,9 +12629,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > get
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > managed-sections view > getManagedSectionRedirect("security", "(no key)") 1`] = `undefined`;
+exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("security", "(no key)") 1`] = `undefined`;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("agents") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("agents") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -15013,7 +15013,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("approvals") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("approvals") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -15107,7 +15107,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("browser") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("browser") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -15231,7 +15231,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("channels") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("channels") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -17681,7 +17681,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("daemon") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("daemon") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -17872,7 +17872,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("gateway") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("gateway") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -18122,7 +18122,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("integrations") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("integrations") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -19126,7 +19126,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("memory") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("memory") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -19220,7 +19220,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("messages") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("messages") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -19278,7 +19278,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("models") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("models") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -19340,7 +19340,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("monitoring") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("monitoring") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -19504,7 +19504,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("providers") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("providers") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -19739,7 +19739,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("routing") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("routing") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -19787,7 +19787,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("scheduler") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("scheduler") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -20040,7 +20040,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("security") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("security") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -20443,7 +20443,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema("tooling") 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema("tooling") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -20644,7 +20644,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSchema() — full schema 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSchema() — full schema 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -31316,7 +31316,7 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
 }"
 `;
 
-exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > getConfigSections() 1`] = `
+exports[`section-registry parity > schema-serializer view > getConfigSections() returns the canonical section list 1`] = `
 "[
   "agents",
   "channels",

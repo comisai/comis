@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for hook-strategies.ts mergeBeforeDelivery (Plan 40-11).
+ * Branch-gap coverage for hook-strategies.ts mergeBeforeDelivery.
  *
  * The existing hook-strategies.test.ts covers mergeBeforeAgentStart,
  * mergeBeforeToolCall, mergeToolResultPersist, and mergeBeforeCompaction
- * but does NOT touch mergeBeforeDelivery. Lines 87-90 (4 binary-expr
- * branches × 2 paths each = 8 missing branch-paths) need both `next` and
- * `acc` paths exercised.
+ * but does NOT touch mergeBeforeDelivery. Exercises both `next` and `acc`
+ * paths for the binary-expression branches.
  *
  * @module
  */

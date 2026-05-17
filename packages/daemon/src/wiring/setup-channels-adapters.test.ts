@@ -126,8 +126,8 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({ telegram: { enabled: true, botToken: "tok123" } });
     const result = await bootstrapAdapters({ container, channelsLogger });
 
-    // Phase 40 / Plan 40-09: validateBotToken now takes (token, apiRoot?);
-    // production path passes undefined for the second arg.
+    // validateBotToken takes (token, apiRoot?); production path passes
+    // undefined for the second arg.
     expect(validateBotToken).toHaveBeenCalledWith("tok123", undefined);
     expect(createTelegramPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ botToken: "tok123", logger: channelsLogger }),
@@ -140,12 +140,11 @@ describe("bootstrapAdapters", () => {
     );
   });
 
-  it("threads telegram.apiRoot through to validateBotToken + plugin factory when configured (COV-15 E2E seam)", async () => {
-    // Phase 40 / Plan 40-09 / COV-15: when channels.telegram.apiRoot is set,
-    // it MUST flow through to both validateBotToken (for the getMe redirect)
-    // and createTelegramPlugin (for the production-traffic redirect). E2E
-    // tests rely on this seam to point grammy at a 127.0.0.1 mock instead of
-    // api.telegram.org.
+  it("threads telegram.apiRoot through to validateBotToken + plugin factory when configured (E2E seam)", async () => {
+    // When channels.telegram.apiRoot is set, it MUST flow through to both
+    // validateBotToken (for the getMe redirect) and createTelegramPlugin
+    // (for the production-traffic redirect). E2E tests rely on this seam
+    // to point grammy at a 127.0.0.1 mock instead of api.telegram.org.
     const container = makeContainer({
       telegram: { enabled: true, botToken: "tok123", apiRoot: "http://127.0.0.1:54321" },
     });
@@ -187,8 +186,8 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({ discord: { enabled: true, botToken: "disc-tok" } });
     const result = await bootstrapAdapters({ container, channelsLogger });
 
-    // Phase 40 / Plan 40-09: validateDiscordToken now takes (token, apiRoot?);
-    // production path passes undefined for the second arg.
+    // validateDiscordToken takes (token, apiRoot?); production path passes
+    // undefined for the second arg.
     expect(validateDiscordToken).toHaveBeenCalledWith("disc-tok", undefined);
     expect(createDiscordPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ botToken: "disc-tok" }),
@@ -196,7 +195,7 @@ describe("bootstrapAdapters", () => {
     expect(result.adaptersByType.get("discord")).toBe(mockDiscordPlugin.adapter);
   });
 
-  it("threads discord.apiRoot through to validateDiscordToken + plugin factory (COV-15 E2E seam)", async () => {
+  it("threads discord.apiRoot through to validateDiscordToken + plugin factory (E2E seam)", async () => {
     const container = makeContainer({
       discord: { enabled: true, botToken: "disc-tok", apiRoot: "http://127.0.0.1:54322" },
     });
@@ -226,7 +225,7 @@ describe("bootstrapAdapters", () => {
     expect(result.adaptersByType.get("slack")).toBe(mockSlackPlugin.adapter);
   });
 
-  it("threads slack.apiRoot through to validateSlackCredentials + plugin factory (COV-15 E2E seam)", async () => {
+  it("threads slack.apiRoot through to validateSlackCredentials + plugin factory (E2E seam)", async () => {
     const container = makeContainer({
       slack: {
         enabled: true,
@@ -261,7 +260,7 @@ describe("bootstrapAdapters", () => {
     expect(result.adaptersByType.get("whatsapp")).toBe(mockWhatsAppPlugin.adapter);
   });
 
-  it("threads whatsapp.apiRoot through to plugin factory (COV-15 E2E seam)", async () => {
+  it("threads whatsapp.apiRoot through to plugin factory (E2E seam)", async () => {
     const container = makeContainer({
       whatsapp: {
         enabled: true,
@@ -293,7 +292,7 @@ describe("bootstrapAdapters", () => {
     expect(result.linePlugin).toBe(mockLinePlugin);
   });
 
-  it("threads line.apiRoot through to validateLineCredentials + plugin factory (COV-15 E2E seam)", async () => {
+  it("threads line.apiRoot through to validateLineCredentials + plugin factory (E2E seam)", async () => {
     const container = makeContainer({
       line: {
         enabled: true,

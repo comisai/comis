@@ -2,9 +2,7 @@
 /**
  * E2E: iMessage × DM — file-based imsg shim roundtrip.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09 Wave D).
- *
- * Scope: spawns the mock imsg shell shim (from Wave B7) and asserts:
+ * Scope: spawns the mock imsg shell shim and asserts:
  *   1. The shim's binary path can be invoked as a child process.
  *   2. JSON-RPC `send` requests written to the shim's stdin are
  *      captured in the mock's outbox.jsonl.
@@ -12,8 +10,8 @@
  *      JSON-RPC notifications on the shim's stdout.
  *
  * This is a FILE-BASED fixture (no network) — see mock-imessage-server.ts
- * Wave B7 commentary for the design rationale (the iMessage adapter
- * spawns the imsg CLI as a subprocess and talks over stdin/stdout).
+ * for the design rationale (the iMessage adapter spawns the imsg CLI as
+ * a subprocess and talks over stdin/stdout).
  *
  * @module
  */
@@ -22,7 +20,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createMockIMessageServer, type MockIMessageServer } from "./mocks/imessage/mock-imessage-server.js";
 
-describe("E2E: imessage × dm — file-based imsg shim roundtrip (COV-15)", () => {
+describe("E2E: imessage × dm — file-based imsg shim roundtrip", () => {
   let mock: MockIMessageServer;
   let binaryPath: string;
   let proc: ChildProcessWithoutNullStreams | undefined;

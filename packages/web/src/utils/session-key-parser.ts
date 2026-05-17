@@ -10,8 +10,8 @@
  *   {tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]
  *
  * The legacy `agent:<agentId>:` prefix (pre-v2.1) is no longer recognized
- * here — the daemon parser dropped it in BC-REM-15 (Phase 38) and the
- * emitter dropped it in the CR-01 follow-up. This parser mirrors the daemon.
+ * here — both the daemon parser and emitter dropped it. This parser
+ * mirrors the daemon.
  */
 
 /** Parsed fields from a formatted session key string. */

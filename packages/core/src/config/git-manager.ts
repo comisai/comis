@@ -628,10 +628,10 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
       const oldCommits = commits.filter((c) => c.timestamp < thresholdMs);
       if (oldCommits.length < 2) return ok({ squashedCount: 0, newRootSha: "" });
 
-      // Newest old commit becomes the squash boundary.
-      // Phase 41 TS-HYG-12: explicit length-check + Result.err in lieu of non-null
-      // assertion. The `length < 2` check above guarantees non-empty, but
-      // TypeScript can't narrow array indexing through that guard.
+      // Newest old commit becomes the squash boundary. Explicit length-
+      // check + Result.err in lieu of non-null assertion: the `length < 2`
+      // check above guarantees non-empty, but TypeScript can't narrow array
+      // indexing through that guard.
       const squashTarget = oldCommits[oldCommits.length - 1];
       if (!squashTarget) {
         return err("Empty oldCommits despite length check");

@@ -2,11 +2,8 @@
 /**
  * E2E: Telegram × DM — Bot API wire roundtrip against the 127.0.0.1 mock.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09 Wave D).
- *
  * Scope: spawns the production `@comis/channels` Telegram adapter via
- * `createTelegramPlugin({ apiRoot: <mock-base-url>, ... })` — the apiRoot
- * config key landed in Wave A1 — and asserts:
+ * `createTelegramPlugin({ apiRoot: <mock-base-url>, ... })` and asserts:
  *   1. validateBotToken hits the mock /bot<TOKEN>/getMe at startup.
  *   2. Adapter outbound sendMessage POSTs to /bot<TOKEN>/sendMessage with
  *      the correct chat_id and text.
@@ -25,7 +22,7 @@ import { createTelegramPlugin } from "@comis/channels";
 import { createMockLogger } from "../support/mock-logger.js";
 import type { ChannelPort, NormalizedMessage } from "@comis/core";
 
-describe("E2E: telegram × dm — Bot API wire roundtrip against the 127.0.0.1 mock (COV-15)", () => {
+describe("E2E: telegram × dm — Bot API wire roundtrip against the 127.0.0.1 mock", () => {
   let mock: MockTelegramServer;
   let adapter: ChannelPort;
   let receivedInbound: NormalizedMessage[];

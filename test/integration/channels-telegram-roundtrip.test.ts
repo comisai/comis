@@ -2,10 +2,10 @@
 /**
  * INTEGRATION: Telegram channel — Bot API wire roundtrip + adapter integration.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts coverage on the
- * `@comis/channels` Telegram subpackage (validateBotToken, telegram-adapter,
- * telegram-plugin) by driving the production code paths against the
- * loopback-bound mock from test/e2e/mocks/telegram/.
+ * Lifts coverage on the `@comis/channels` Telegram subpackage
+ * (validateBotToken, telegram-adapter, telegram-plugin) by driving the
+ * production code paths against the loopback-bound mock from
+ * test/e2e/mocks/telegram/.
  *
  * @module
  */

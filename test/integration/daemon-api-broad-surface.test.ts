@@ -2,9 +2,9 @@
 /**
  * INTEGRATION: Daemon API broad surface — handler family roundtrips.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts integration-tier coverage
- * across the daemon's many RPC handler families (agent, config, sessions,
- * env, secrets, channels, daemon, gateway, observability, memory).
+ * Lifts integration-tier coverage across the daemon's many RPC handler
+ * families (agent, config, sessions, env, secrets, channels, daemon,
+ * gateway, observability, memory).
  *
  * One test daemon serves all probes — each `it` block invokes a different
  * handler family. This exercises:

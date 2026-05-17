@@ -13,7 +13,6 @@
  * consumers of `npm install -g comisai`.
  *
  * Catches `prepack.js` bundling regressions and silent re-export shadowing.
- * Phase 40 / Phase C §6.3.5 / COV-09.
  *
  * @module
  */

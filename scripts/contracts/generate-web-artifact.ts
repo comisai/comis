@@ -1,38 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Codegen entry point: produces `packages/web/src/api/contracts.generated.{ts,json,size.json}`
- * deterministically from `API_CONTRACTS_ORDERED` (populated by Wave C — 190
- * contracts across 14 domains as of Plan 35-19).
+ * deterministically from `API_CONTRACTS_ORDERED`.
  *
- * Phase 35 Wave D Plan 35-20.
- *
- * Pipeline (RESEARCH §"Example: Generator entry point" lines 1315–1406):
- *   1. Allowlist gate (WEB-CONTRACTS-11): run `assertOnlyAllowlistShapes` over
- *      every contract's request + response. Forbidden shapes (e.g., `z.date`,
- *      `z.refine`, `z.lazy`) throw with method + direction + path + class
- *      name; bubbles up uncaught.
+ * Pipeline:
+ *   1. Allowlist gate: run `assertOnlyAllowlistShapes` over every contract's
+ *      request + response. Forbidden shapes (e.g., `z.date`, `z.refine`,
+ *      `z.lazy`) throw with method + direction + path + class name; bubbles
+ *      up uncaught.
  *   2. Sort contracts alphabetically by method name. This is the single
- *      sort point (RESEARCH §"Determinism rules" item 1).
+ *      sort point.
  *   3. Emit a JSON Schema map via `z.toJSONSchema(schema, { unrepresentable:
- *      "throw", reused: "inline" })`. `"throw"` is mandatory (CONTEXT D-06 +
- *      BLOCKER 5) — `"any"` silently produces `{}` for forbidden shapes,
- *      disabling validation in the generated browser artifact.
+ *      "throw", reused: "inline" })`. `"throw"` is mandatory — `"any"`
+ *      silently produces `{}` for forbidden shapes, disabling validation
+ *      in the generated browser artifact.
  *   4. Write the JSON map to `contracts.generated.json`.
  *   5. Emit the TS dispatch-table form via `emitDispatchTableTs`; write to
  *      `contracts.generated.ts`.
  *   6. Measure minified + gzipped sizes; write to
  *      `contracts.generated.size.json`. Exit 1 on budget overage.
  *
- * Determinism (RESEARCH §"Determinism rules" lines 763–778):
+ * Determinism rules:
  *   - No `Date.now()`, no `new Date()`, no UUID, no `Math.random()`.
  *   - JSON.stringify with 2-space indent (matches diff conventions).
  *   - Esbuild minify is deterministic on pinned version.
  *   - Single sort point: alphabetical-by-method-name on the top-level CONTRACTS map.
  *
- * Browser-safety (WEB-CONTRACTS-15): The emitted TS has zero `@comis/*`,
- * zero `node:*`, and zero Zod imports. The emitter (`emitDispatchTableTs`)
- * is responsible for these invariants; the codegen entry point validates by
- * source-grep at test time (see `test/architecture/web-generated-imports.test.ts`).
+ * Browser-safety: The emitted TS has zero `@comis/*`, zero `node:*`, and
+ * zero Zod imports. The emitter (`emitDispatchTableTs`) is responsible for
+ * these invariants; the codegen entry point validates by source-grep at
+ * test time (see `test/architecture/web-generated-imports.test.ts`).
  *
  * Usage:
  *   pnpm contracts:generate
@@ -86,29 +83,26 @@ export interface CodegenResult {
  * compare against the on-disk versions without re-running.
  */
 export function runCodegen(): CodegenResult {
-  // 1. Allowlist gate (WEB-CONTRACTS-11). Forbidden shapes throw with the
-  //    contract's method name + direction + class name; the error bubbles
-  //    up to the entry point.
+  // 1. Allowlist gate. Forbidden shapes throw with the contract's method
+  //    name + direction + class name; the error bubbles up to the entry point.
   for (const c of API_CONTRACTS_ORDERED) {
     assertOnlyAllowlistShapes(c.method, "request", c.request);
     assertOnlyAllowlistShapes(c.method, "response", c.response);
   }
 
-  // 2. Sort by method name (alphabetical) — the single sort point per
-  //    RESEARCH §"Determinism rules" item 1. The aggregator in
-  //    packages/core/src/api-contracts/index.ts already sorts by DOMAIN
-  //    (BLOCKER 6, Plan 35-19) but we re-sort by METHOD here so the codegen
-  //    output is alphabetical at the method-name level — independent of
-  //    aggregator order.
+  // 2. Sort by method name (alphabetical) — the single sort point. The
+  //    aggregator in packages/core/src/api-contracts/index.ts already sorts
+  //    by DOMAIN; we re-sort by METHOD here so the codegen output is
+  //    alphabetical at the method-name level — independent of aggregator order.
   const sortedContracts = [...API_CONTRACTS_ORDERED].sort((a, b) =>
     a.method.localeCompare(b.method),
   );
 
-  // 3. JSON Schema map. `unrepresentable: "throw"` is load-bearing (CONTEXT
-  //    D-06 + BLOCKER 5): forbidden Zod shapes that slipped past the
-  //    allowlist (e.g., a new contract author adding `.refine()`) hard-fail
-  //    codegen rather than silently producing `{}` (validation disabled).
-  //    `reused: "inline"` (no `$defs`) keeps the output flat for diffability.
+  // 3. JSON Schema map. `unrepresentable: "throw"` is load-bearing: forbidden
+  //    Zod shapes that slipped past the allowlist (e.g., a new contract
+  //    author adding `.refine()`) hard-fail codegen rather than silently
+  //    producing `{}` (validation disabled). `reused: "inline"` (no `$defs`)
+  //    keeps the output flat for diffability.
   const jsonSchemaMap: Record<
     string,
     { request: unknown; response: unknown; scopes: readonly string[] }

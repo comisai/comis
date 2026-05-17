@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure-function tests for breakpoint-placement.ts (Phase 42 EXEC-SPLIT-03).
+ * Pure-function tests for breakpoint-placement.ts.
  *
  * Targeted unit tests for `placeCacheBreakpoints` + `placeSingleBreakpoint`
  * that exercise the public function directly (without

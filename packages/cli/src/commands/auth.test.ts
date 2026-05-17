@@ -18,8 +18,7 @@ import { registerAuthCommand } from "./auth.js";
 
 // loginOpenAICodexOAuth makes real network calls (device-code polling, browser
 // OAuth server). Mock it so action-body tests exit:1 immediately instead of
-// hanging until the 5s Vitest timeout. Module relocated to @comis/core in
-// Phase 35 Plan 35-04 (D-01 #2).
+// hanging until the 5s Vitest timeout.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {

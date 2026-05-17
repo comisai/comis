@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: File-backed OAuth credential store throws: ENOENT re-raise (line 182) is unlink-cleanup pattern; lines 186/195/211 are file-format/decode boundary guards. Consumed by OAuthCredentialStorePort callers (auth-handlers daemon RPC @allow-throw per Decision 2) (Phase 41 TS-HYG-07).
+// @allow-throw: File-backed OAuth credential store throws: ENOENT re-raise (line 182) is unlink-cleanup pattern; lines 186/195/211 are file-format/decode boundary guards. Consumed by OAuthCredentialStorePort callers (auth-handlers daemon RPC @allow-throw boundary).
 /**
  * Plaintext file-backed OAuthCredentialStorePort adapter.
  *
- * Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #2.
- * Sibling-dependency of `selectOAuthCredentialStore` (also relocated this
- * plan): the selector's default factory is this `createOAuthCredentialStoreFile`,
- * so both files must live in the same package for the selector's production
- * path to resolve without a `@comis/agent` import. The original agent-side
- * source remains in place until Plan 35-04 deletes it — additive relocation
- * (Wave A invariant).
+ * Sibling-dependency of `selectOAuthCredentialStore`: the selector's default
+ * factory is this `createOAuthCredentialStoreFile`, so both files must live
+ * in the same package for the selector's production path to resolve without
+ * a `@comis/agent` import.
  *
  * Default storage backend for OAuth credentials (derives from existing
  * dataDir, no separate config key). Stores all profiles in a single JSON
@@ -25,11 +22,9 @@
  *
  * Per-profile-ID locking via the injected FileLockPort.withLock: different
  * providers and different identities for the same provider can refresh in
- * parallel. Phase 32 commit 12 (ORCH-EXT-15) flipped this from a direct
- * `@comis/scheduler` import (`createFileLock()`) to a dep on the
- * `OAuthCredentialStoreFileConfig` so the daemon/CLI composition root owns
- * the single proper-lockfile adapter and the agent package no longer
- * depends on `@comis/scheduler` at the import boundary.
+ * parallel. The daemon/CLI composition root owns the single proper-lockfile
+ * adapter via `OAuthCredentialStoreFileConfig` so the agent package does not
+ * depend on `@comis/scheduler` at the import boundary.
  *
  * Schema versioning: single integer version at top level. Hard-fail on
  * mismatch — pre-1.0 software, no migration plumbing.

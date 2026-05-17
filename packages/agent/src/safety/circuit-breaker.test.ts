@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createCircuitBreaker, type CircuitBreaker, type CircuitState } from "./circuit-breaker.js";
 import type { ClockPort } from "@comis/core";
 
-// Phase 39 PORTS-11: test clock that delegates to Date.now.
+// Test clock that delegates to Date.now.
 const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 describe("createCircuitBreaker", () => {

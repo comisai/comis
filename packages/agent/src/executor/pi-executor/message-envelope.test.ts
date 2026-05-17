@@ -3,9 +3,9 @@
  * Unit tests for applyPromptRunOutcome + handleEnvelopeException —
  * runPrompt outcome translation.
  *
- * Closure-extracted helper (state-first per EXEC-SPLIT-06): tests cover
- * stuck-session detection, exception classification, and OutputGuard
- * scan wiring without standing up a real runPrompt.
+ * Closure-extracted helper (state-first): tests cover stuck-session
+ * detection, exception classification, and OutputGuard scan wiring
+ * without standing up a real runPrompt.
  *
  * @module
  */
@@ -49,7 +49,7 @@ function makeDeps(overrides: Partial<MessageEnvelopeDeps> = {}): MessageEnvelope
   };
 }
 
-describe("applyPromptRunOutcome (EXEC-SPLIT-06)", () => {
+describe("applyPromptRunOutcome", () => {
   it("sets session_reset finishReason + canonical reset message when stuck detected", () => {
     const result = makeResult();
     const promptRunResult: PromptRunResult = {
@@ -74,7 +74,7 @@ describe("applyPromptRunOutcome (EXEC-SPLIT-06)", () => {
   });
 });
 
-describe("handleEnvelopeException (EXEC-SPLIT-06)", () => {
+describe("handleEnvelopeException", () => {
   it("classifies PromptTimeoutError and writes user-facing message", () => {
     const result = makeResult();
     const err = new PromptTimeoutError(30_000);

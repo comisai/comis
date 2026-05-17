@@ -6,8 +6,6 @@
  * @google/genai SDK. Uses SHA-256 content hashing for invalidation and
  * concurrent dedup via pending Promise tracking.
  *
- * .
- *
  * @module
  */
 
@@ -69,7 +67,7 @@ export interface GeminiCacheManagerConfig {
     warn: (...args: unknown[]) => void;
     error: (...args: unknown[]) => void;
   };
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
 }
 
@@ -132,7 +130,7 @@ function buildDisplayName(agentId: string, sessionKey: string, contentHash: stri
 function parseExpireTime(expireTime: string | undefined, clock: ClockPort): number {
   if (!expireTime) return clock.now() + 3_600_000;
   // Date.parse handles RFC 3339; not flagged by the globals classifier (only
-  // `new Date(...)` is flagged). Wave 4 SUMMARY documented this same pattern.
+  // `new Date(...)` is flagged).
   return Date.parse(expireTime);
 }
 

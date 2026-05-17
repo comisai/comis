@@ -98,9 +98,9 @@ describe("credential-validator", () => {
     });
 
     it("passes client.apiRoot to grammy Bot constructor when apiRoot is provided", async () => {
-      // Phase 40 / Plan 40-09 / COV-15: apiRoot threads through to grammy
-      // for E2E redirection to 127.0.0.1 mock. Production callers leave it
-      // undefined and grammy uses its default (https://api.telegram.org).
+      // apiRoot threads through to grammy for E2E redirection to 127.0.0.1
+      // mock. Production callers leave it undefined and grammy uses its
+      // default (https://api.telegram.org).
       mockGetMe.mockResolvedValueOnce({ id: 1, is_bot: true, username: "bot" });
       const mockBot = vi.mocked(Bot);
       mockBot.mockClear();

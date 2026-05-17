@@ -83,7 +83,7 @@ describe("browser.act handler", () => {
 // browser.status / start / stop / tabs (read-only or no-arg handlers)
 // ---------------------------------------------------------------------------
 
-describe("browser lifecycle handlers (Plan 40-14)", () => {
+describe("browser lifecycle handlers", () => {
   it("returns browser running status from service.status() when status is invoked", async () => {
     const mockService = makeMockService();
     const handlers = createBrowserHandlers(
@@ -129,7 +129,7 @@ describe("browser lifecycle handlers (Plan 40-14)", () => {
 // browser.navigate / snapshot / screenshot / pdf / console (param-passing)
 // ---------------------------------------------------------------------------
 
-describe("browser data handlers (Plan 40-14)", () => {
+describe("browser data handlers", () => {
   it("passes targetUrl through to service.navigate() with url and targetId parameters", async () => {
     const mockService = makeMockService();
     const handlers = createBrowserHandlers(
@@ -216,7 +216,7 @@ describe("browser data handlers (Plan 40-14)", () => {
 // browser.open / focus / close (tab management)
 // ---------------------------------------------------------------------------
 
-describe("browser tab handlers (Plan 40-14)", () => {
+describe("browser tab handlers", () => {
   it("defaults open targetUrl to about:blank when omitted from parameters", async () => {
     const mockService = makeMockService();
     const handlers = createBrowserHandlers(

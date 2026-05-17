@@ -3,11 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-// Test-only @comis/core import — production session-write-lock module no
-// longer imports from scheduler or proper-lockfile after Phase 32 commit 12;
-// the FileLockPort instance is injected by daemon composition (setup-agents.ts).
-// createFileLock relocated from @comis/scheduler to @comis/core in Phase 35
-// Plan 35-04 per D-01 #1.
+// Test-only @comis/core import — production session-write-lock module
+// receives its FileLockPort instance via daemon composition (setup-agents.ts).
 import { createFileLock, type FileLockPort } from "@comis/core";
 import { withSessionLock, cleanupStaleLocks } from "./session-write-lock.js";
 

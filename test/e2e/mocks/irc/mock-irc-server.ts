@@ -2,8 +2,6 @@
 /**
  * Mock IRC server for E2E flow-matrix coverage.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09 scaffolding for human review).
- *
  * Wire surface: a minimal IRC server speaking enough of RFC 1459 to satisfy
  * the irc-framework client used by `packages/channels/src/irc/irc-adapter.ts`:
  *

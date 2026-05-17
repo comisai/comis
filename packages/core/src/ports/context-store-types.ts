@@ -2,19 +2,13 @@
 /**
  * Row DTOs for ContextStorePort. Type-only.
  *
- * Lifted from packages/core/src/ports/context-store.ts:50-139 (Phase 28
- * commit 4 inlined them) and packages/memory/src/types.ts:91-209
- * (canonical source through Phase 30). Phase 31 commit 1 moves them here
- * per MEM-CTX-PORTS-03.
- *
- * Per design §8.2.1 these row DTOs land in core/src/ports/ (NOT
- * core/src/domain/) to preserve the domain/persistence boundary.
+ * These row DTOs live in core/src/ports/ (NOT core/src/domain/) to preserve
+ * the domain/persistence boundary.
  *
  * Two additional types (CtxSummaryMessageRow, CtxSummaryParentRow) live
  * here as well even though they are not referenced by any ContextStorePort
  * method signature — they are part of memory's public row-DTO surface and
- * per RESEARCH.md Open Question #3 the canonical home is core for
- * single-source-of-truth.
+ * are canonically owned by core for single-source-of-truth.
  *
  * @module
  */

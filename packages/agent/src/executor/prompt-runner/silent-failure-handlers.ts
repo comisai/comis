@@ -9,13 +9,8 @@
  *   3. client-request short-circuit (deterministic provider validation; do not retry)
  *   4. default strip-and-retry + LKW (last-known-working) auth-failure fallback
  *
- * Phase 42 split per EXEC-SPLIT-07 — extracted from the pre-split
- * `executor-prompt-runner.ts` (lines 441-874). Wording, log payloads, error
- * messages, and gate-close semantics are byte-identical to the source to
- * satisfy the EXEC-SPLIT-11 parity gate.
- *
- * Per EXEC-SPLIT-08 this module imports types only from
- * `./prompt-runner-types.js` — never from `./prompt-runner.js`.
+ * Imports types only from `./prompt-runner-types.js` — never from
+ * `./prompt-runner.js` (avoids circular dependency).
  *
  * @module
  */

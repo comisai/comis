@@ -14,7 +14,7 @@ export interface ScopedSessionKeyParams {
   msg: NormalizedMessage;
   /** Agent identifier for multi-agent setups (retained for caller ergonomics
    *  and future telemetry; NOT serialized into the session key — see
-   *  CR-01 follow-up to BC-REM-15 in `@comis/core/domain/session-key.ts`). */
+   *  `@comis/core/domain/session-key.ts`). */
   agentId: string;
   /** ChannelPort.channelId — bot account identifier */
   adapterChannelId: string;
@@ -54,7 +54,7 @@ function isGroupMessage(msg: NormalizedMessage): boolean {
  * - "per-account-channel-peer": includes adapter channel ID for multi-bot isolation
  *
  * The `agentId` param is retained for caller ergonomics / future telemetry
- * but is NOT serialized into the session key (CR-01 follow-up to BC-REM-15).
+ * but is NOT serialized into the session key.
  */
 export function buildScopedSessionKey(params: ScopedSessionKeyParams): SessionKey {
   const {

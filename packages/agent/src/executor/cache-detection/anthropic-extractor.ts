@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-break detection — Anthropic Messages API adapter (Phase 42 split
- * per EXEC-SPLIT-09).
+ * Cache-break detection — Anthropic Messages API adapter.
  *
  * Extracts `RecordPromptStateInput` from an Anthropic params object
  * (system, tools, messages, cache_control markers, headers, extra body

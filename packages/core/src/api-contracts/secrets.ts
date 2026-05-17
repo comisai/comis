@@ -3,15 +3,14 @@
  * Secrets-domain RPC contracts. Mirrors
  * `packages/daemon/src/api/secrets-handlers.ts`.
  *
- * Phase 35 Wave C plan 35-08 (Wave C domain #3). The secrets-handlers.ts
- * factory exposes 4 admin-scoped methods that gate encrypted-secret
- * management (AES-256-GCM SQLite store via `SecretStorePort`):
+ * The secrets-handlers.ts factory exposes 4 admin-scoped methods that gate
+ * encrypted-secret management (AES-256-GCM SQLite store via `SecretStorePort`):
  *
  *   - `secrets.set`    (admin) — store or update an encrypted secret.
  *                                Rate-limited at 5 writes/minute. The
  *                                `value` parameter NEVER appears in any
  *                                log call or audit event (residency
- *                                invariant MEM-CTX-PORTS-14 + RES-PIT-31-3).
+ *                                invariant).
  *   - `secrets.get`    (admin) — retrieve plaintext for a single secret by
  *                                name. Rate-limited at 60 reads/minute.
  *                                Plaintext is returned to the authenticated
@@ -24,32 +23,28 @@
  *                                deletes/minute. Emits a destructive audit
  *                                event regardless of outcome.
  *
- * All 4 contracts have `scopes: ["admin"] as const`, locking in the Phase
- * 31 invariant (RES-PIT-31-3) at the contract-registry level: every
- * `/^secrets\./` method is admin-only. The existing AST architecture test
- * in `packages/core/src/__tests__/architecture.test.ts` enforces the
- * same invariant against `setup-gateway-api.ts`; this file adds a second,
+ * All 4 contracts have `scopes: ["admin"] as const`, locking the admin-only
+ * invariant in at the contract-registry level: every `/^secrets\./` method
+ * is admin-only. The existing AST architecture test in
+ * `packages/core/src/__tests__/architecture.test.ts` enforces the same
+ * invariant against `setup-gateway-api.ts`; this file adds a second,
  * orthogonal enforcement point (the contract registry itself).
  *
  * Response shapes match the handler's actual return values verbatim:
- *   - `secrets.set` returns `{ name, stored: boolean }`
- *     (NOT `{ name, set: boolean }` as the plan's <interfaces> block
- *     suggested — confirmed by reading secrets-handlers.ts line 341).
+ *   - `secrets.set` returns `{ name, stored: boolean }`.
  *   - `secrets.get` returns `{ name, exists: boolean, value?: string }`.
  *   - `secrets.list` returns `{ secrets: SecretMetadata[] }`
- *     (NOT `{ names: string[] }` as the plan's <interfaces> block
- *     suggested — the handler returns the full SecretMetadata rows from
- *     `SecretStorePort.list()`; the CLI table renderer at
- *     `packages/cli/src/commands/secrets.ts:289-330` consumes the full
- *     metadata shape).
+ *     (the handler returns the full SecretMetadata rows from
+ *     `SecretStorePort.list()`; the CLI table renderer in
+ *     `packages/cli/src/commands/secrets.ts` consumes the full metadata
+ *     shape).
  *   - `secrets.delete` returns `{ name, deleted: boolean }`.
  *
- * The SecretMetadata shape mirrors `packages/core/src/ports/secret-store.ts`
- * (lines 9-26). `value` is intentionally absent from the schema (no
- * `.passthrough()`) — modelling it would defeat the dev-mode
- * `response.parse(...)` projection that doubles as a residency canary
- * by stripping any accidental `value` field before the response crosses
- * the daemon → CLI boundary.
+ * The SecretMetadata shape mirrors `packages/core/src/ports/secret-store.ts`.
+ * `value` is intentionally absent from the schema (no `.passthrough()`) —
+ * modelling it would defeat the dev-mode `response.parse(...)` projection
+ * that doubles as a residency canary by stripping any accidental `value`
+ * field before the response crosses the daemon → CLI boundary.
  *
  * @module
  */
@@ -63,7 +58,7 @@ import { defineContract } from "./types.js";
 /**
  * Metadata-only shape returned by `secrets.list`. Mirrors the
  * `SecretMetadata` interface in `packages/core/src/ports/secret-store.ts`
- * (lines 9-26) — kept structurally identical so the handler's
+ * — kept structurally identical so the handler's
  * `SecretStorePort.list()` output round-trips through
  * `SecretsListContract.response.parse(...)` cleanly.
  *
@@ -97,7 +92,7 @@ const SecretMetadataSchema = z.object({
  *     error message; the contract's `.min(1)` is defense-in-depth.
  *   - `value` MUST be a non-empty string, ≤8192 chars. Cannot be a
  *     redaction placeholder (handler rejects `[REDACTED]` / `[REDACTED:*]`
- *     literals — see secrets-handlers.ts line 273).
+ *     literals).
  *
  * Response: `{ name: string, stored: boolean }`. `stored` is always `true`
  * on success (the handler throws on failure paths).
@@ -160,8 +155,7 @@ export const SecretsGetContract = defineContract({
  *
  * Response: `{ secrets: SecretMetadata[] }`. The array MAY be empty when
  * the encrypted store is not configured (`SECRETS_MASTER_KEY` missing —
- * the handler returns `{ secrets: [] }` rather than failing; see
- * secrets-handlers.ts line 361).
+ * the handler returns `{ secrets: [] }` rather than failing).
  *
  * Plaintext values are NEVER part of `SecretMetadata`. The contract
  * `response.parse(...)` gate in the handler (dev-mode only) doubles as
@@ -211,10 +205,6 @@ export const SecretsDeleteContract = defineContract({
 /**
  * Secrets-domain contract array. Registered into
  * `API_CONTRACTS_ORDERED` by `packages/core/src/api-contracts/index.ts`.
- *
- * Plan 35-19 (Wave C closure) supersedes the placeholder aggregation in
- * `index.ts` with the final alphabetical aggregation across all 14
- * domains — this array remains unchanged.
  */
 export const SECRETS_CONTRACTS = [
   SecretsSetContract,

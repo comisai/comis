@@ -53,7 +53,7 @@ describe("createOverflowRecovery", () => {
     logger = createMockLogger();
   });
 
-  // 1. Phase 1: truncates oversized tool results to 30% of maxContextChars
+  // Phase 1: truncates oversized tool results to 30% of maxContextChars
   it("phase 1: truncates oversized tool results to 30% of maxContextChars", () => {
     const config: OverflowRecoveryConfig = { maxContextChars: 10_000 };
     const recovery = createOverflowRecovery(config, logger);

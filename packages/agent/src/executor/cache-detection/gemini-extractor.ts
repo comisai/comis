@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-break detection — Gemini-native adapter (Phase 42 split per
- * EXEC-SPLIT-09).
+ * Cache-break detection — Gemini-native adapter.
  *
  * Extracts `RecordPromptStateInput` from a Gemini params object (nested
  * `config.systemInstruction`, `config.tools[0].functionDeclarations`,

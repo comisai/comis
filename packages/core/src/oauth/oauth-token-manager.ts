@@ -2,17 +2,13 @@
 /**
  * OAuth Token Manager — public TYPE contracts.
  *
- * Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #2.
- * The agent-side source remains in place (Wave A additive); Plan 35-04
- * deletes the agent re-export after CLI Plan 35-05 retargets.
- *
- * This is a TYPES-ONLY relocation: the heavyweight runtime implementation
+ * Types-only module: the heavyweight runtime implementation
  * (`createOAuthTokenManager`) stays in `@comis/agent` because it carries
  * deep runtime deps (`chokidar` for file-watcher, `@mariozechner/pi-ai`
  * for OAuth provider operations) that are out of scope for `@comis/core`.
- * Only the daemon constructs OAuthTokenManager; CLI consumers (this plan's
- * driver) only reference the `OAuthError` interface for pattern-matching
- * on refresh-failure causes (`err.errorKind === "refresh_token_reused"`
+ * Only the daemon constructs OAuthTokenManager; CLI consumers only
+ * reference the `OAuthError` interface for pattern-matching on
+ * refresh-failure causes (`err.errorKind === "refresh_token_reused"`
  * in cli/src/commands/auth.ts).
  *
  * Both `OAuthCredentials` and `OAuthTokenManager` interfaces preserve the
@@ -93,10 +89,8 @@ export interface OAuthTokenManagerDeps {
   /**
    * Cross-process filesystem mutex for per-profile refresh serialization.
    * Injected by the composition root (`@comis/core`'s `createFileLock()` in
-   * production). Phase 32 commit 12 (ORCH-EXT-15) moved this from a
-   * module-level direct scheduler import to a deps field. Phase 35 Plan 35-02
-   * relocated the canonical adapter from `@comis/scheduler` into core.
-   * Stateless port — sharing one instance across token managers is safe.
+   * production). Stateless port — sharing one instance across token managers
+   * is safe.
    */
   fileLock: FileLockPort;
   /** Prefix for SecretManager key names (default: "OAUTH_"). */

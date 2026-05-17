@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Prefix-stability diagnostic (Phase 42 split per EXEC-SPLIT-02).
+ * Prefix-stability diagnostic.
  *
  * Detects when microcompaction changes the cache-fenced prefix between turns,
  * which indicates permanent cache collapse. Warns at WARN level when the
@@ -16,8 +16,6 @@
  *
  * Skips detection when no fence is set yet (early bootstrap /
  * non-Anthropic provider).
- *
- * Lifted verbatim from request-body-injector.ts:1388-1464.
  *
  * @module
  */

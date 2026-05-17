@@ -3,9 +3,8 @@
  * Tokens-domain RPC contracts. Mirrors
  * `packages/daemon/src/api/token-handlers.ts`.
  *
- * Phase 35 Wave C plan 35-09 (Wave C domain #4). The token-handlers.ts
- * factory exposes 4 admin-scoped methods that gate runtime token
- * lifecycle management for the web SPA's admin UI:
+ * The token-handlers.ts factory exposes 4 admin-scoped methods that gate
+ * runtime token lifecycle management for the web SPA's admin UI:
  *
  *   - `tokens.list`   (admin) — enumerate token METADATA (id, scopes,
  *                                createdAt). Secrets NEVER cross the
@@ -36,14 +35,14 @@
  * line 248-250 (`registerRpcPassthrough(..., ["tokens.list",
  * "tokens.create", "tokens.revoke", "tokens.rotate"], "admin")`).
  *
- * **BLOCKER 1 exemption.** tokens are managed via the web SPA only.
+ * Tokens are managed via the web SPA only.
  * `grep -rln 'tokens\.\(list\|create\|revoke\|rotate\)'
  * packages/cli/src/commands/` returns empty — no CLI consumer to
  * retarget through `callTyped`. The web SPA's `tokens.*` consumers
  * (packages/web/src/api/types/rpc-registry.ts line 363-378 +
  * packages/web/src/views/security.test.ts) consume their own typed RPC
- * registry, not `@comis/core` directly; Wave D's codegen path will
- * source web types from this contract registry in a later phase.
+ * registry, not `@comis/core` directly; a future codegen path will
+ * source web types from this contract registry.
  *
  * Response shapes match the handler's actual return values verbatim:
  *   - `tokens.list` returns `{ tokens: TokenEntryMetadata[] }` where
@@ -238,10 +237,6 @@ export const TokensRotateContract = defineContract({
 /**
  * Tokens-domain contract array. Registered into
  * `API_CONTRACTS_ORDERED` by `packages/core/src/api-contracts/index.ts`.
- *
- * Plan 35-19 (Wave C closure) supersedes the placeholder aggregation in
- * `index.ts` with the final alphabetical aggregation across all 14
- * domains — this array remains unchanged.
  */
 export const TOKENS_CONTRACTS = [
   TokensListContract,

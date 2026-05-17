@@ -1,11 +1,11 @@
-# AuthApiDeps Audit (Phase 34)
+# AuthApiDeps Audit
 
 **Generated:** 2026-05-12
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:326–362`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
 **Field count:** 8 (5 required + 3 optional + 0 stale-fallback)
-**OQ-1 resolution:** Option B (co-located with @comis/daemon package). `feedback_no_planning_commits` policy + `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
+**Storage:** co-located with `@comis/daemon` package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from the npm tarball.
 
 ## Field Classification
 

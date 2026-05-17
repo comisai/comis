@@ -1,39 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WEB-CONTRACTS-07: bidirectional 1:1 mapping between daemon handlers and
- * the `@comis/core/api-contracts` registry.
+ * Bidirectional 1:1 mapping between daemon handlers and the
+ * `@comis/core/api-contracts` registry.
  *
- * Phase 35 Wave A scaffolds this test green (registry empty). Wave C
- * per-domain plans incrementally populate `API_CONTRACTS_ORDERED`. Each
- * Wave C commit migrates one handler factory file from string-literal
- * method keys (`"auth.list":`) to computed-key contract references
- * (`[AuthListContract.method]:`); this test enforces 1:1 mapping ONLY for
- * the MIGRATED set on each iteration. Plan 35-19 (Wave C closure) lands
- * the final handler migration, at which point the migrated set equals the
- * full handler set and the test enforces the complete 1:1 invariant.
+ * The handler-method set is split into two cohorts:
+ *   - `migratedHandlerMethods` (computed-key `[Contract.method]:`)
+ *   - `unmigratedHandlerMethods` (string-literal `"method.name":`)
+ * The test asserts:
+ *   - Every contract entry has a MIGRATED handler.
+ *   - Every MIGRATED handler method has a contract entry.
+ * The unmigrated set is tracked diagnostically; once every handler uses
+ * computed-key form, enforcement is universal by construction.
  *
- * **Incremental-migration design (35-06 Rule 1 fix).** The original test
- * compared `API_CONTRACTS.keys()` against ALL handler methods (both
- * string-literal AND computed-key). That design is incompatible with
- * incremental Wave C: the FIRST contract added would immediately produce
- * 188 orphans (every unmigrated string-literal handler in every OTHER
- * handler file). The corrected design splits handler methods into two
- * sets — `migratedHandlerMethods` (computed-key) and
- * `unmigratedHandlerMethods` (string-literal) — and asserts:
- *   - Every contract entry has a MIGRATED handler. (PROOF: every Wave C
- *     plan adds contracts in lockstep with the matching handler refactor.)
- *   - Every MIGRATED handler method has a contract entry. (PROOF: the
- *     handler factory uses `[Contract.method]:` only after the contract
- *     exists in `@comis/core`.)
- * The unmigrated set is intentionally NOT a participating gate during
- * Wave C — Plan 35-19 closes it (every handler computed-key → unmigrated
- * set is empty → enforcement is universal by construction).
- *
- * Walker design (mirrors `packages/daemon/src/__tests__/architecture.test.ts`
- * lines 480–540 DAEMON-API-05): for each
- * `packages/daemon/src/api/*-handlers.ts` file, parse via
- * `ts.createSourceFile(..., ts.ScriptTarget.ES2023, true)` and tag every
- * `PropertyAssignment.name`:
+ * Walker design: for each `packages/daemon/src/api/*-handlers.ts` file,
+ * parse via `ts.createSourceFile(..., ts.ScriptTarget.ES2023, true)` and
+ * tag every `PropertyAssignment.name`:
  *   - `StringLiteral` (e.g. `"auth.list":`) → unmigrated.
  *   - `ComputedPropertyName` of the form `[<Contract>.method]:` → migrated
  *     (the test resolves the contract's `.method` literal by reading the
@@ -57,9 +38,9 @@ const CONTRACT_DIR = resolve(REPO_ROOT, "packages/core/src/api-contracts");
 /**
  * Recursively enumerate every `.ts` file under `dir`, skipping
  * `*.test.ts` files and `__snapshots__/` directories. Used by
- * `resolveContractMethodName` to support the Phase 43 split where
+ * `resolveContractMethodName` to support the subdirectory split where
  * large contract files (workspace.ts, orchestrator.ts) were
- * decomposed into subdirectories (e.g. `workspace/workspace-handlers.ts`).
+ * decomposed (e.g. `workspace/workspace-handlers.ts`).
  */
 function listContractFiles(dir: string): string[] {
   const out: string[] = [];
@@ -83,13 +64,13 @@ function listContractFiles(dir: string): string[] {
 
 /**
  * Recursive walker for handler files under `HANDLER_DIR` (and any
- * subdirectories created by Phase 43 Wave 7 splits — e.g. `graph-handlers/`,
- * `obs-handlers/`, `session-handlers/`, `config-handlers/`).
+ * `*-handlers/` subdirectories created by domain splits — e.g.
+ * `graph-handlers/`, `obs-handlers/`, `session-handlers/`,
+ * `config-handlers/`).
  *
- * Returns paths relative to `HANDLER_DIR` (matching the previous
- * `readdirSync(HANDLER_DIR).filter(f => f.endsWith("-handlers.ts"))` shape).
- * Accepts top-level `*-handlers.ts` files AND any `.ts` file inside a
- * `*-handlers/` subdirectory (excluding test files, snapshots, parity tests).
+ * Returns paths relative to `HANDLER_DIR`. Accepts top-level
+ * `*-handlers.ts` files AND any `.ts` file inside a `*-handlers/`
+ * subdirectory (excluding test files, snapshots, parity tests).
  */
 function listHandlerFiles(dir: string, prefix = ""): string[] {
   const out: string[] = [];
@@ -104,7 +85,7 @@ function listHandlerFiles(dir: string, prefix = ""): string[] {
     const full = resolve(dir, ent.name);
     if (ent.isDirectory()) {
       if (ent.name === "__snapshots__" || ent.name === "shared") continue;
-      // Descend only into `*-handlers/` subdirectories (Phase 43 FILE-SPLIT-03/04/05/09).
+      // Descend only into `*-handlers/` subdirectories.
       if (ent.name.endsWith("-handlers")) {
         out.push(...listHandlerFiles(full, relPath));
       }
@@ -129,9 +110,8 @@ function listHandlerFiles(dir: string, prefix = ""): string[] {
 /**
  * Find `export const <ContractName> = defineContract({ method: "..." ... })`
  * across every `.ts` file under `packages/core/src/api-contracts/` (recursive
- * — supports the Phase 43 subdirectory splits per FILE-SPLIT-14). Returns
- * the matched method literal or `undefined` if the contract symbol is not
- * present (Wave A: registry is empty, so this is `undefined` for everything).
+ * — supports the subdirectory splits). Returns the matched method literal
+ * or `undefined` if the contract symbol is not present.
  */
 function resolveContractMethodName(contractName: string): string | undefined {
   const files = listContractFiles(CONTRACT_DIR);
@@ -153,8 +133,7 @@ function resolveContractMethodName(contractName: string): string | undefined {
  * `true` for `[Contract.method]:` computed-key declarations and `false`
  * for `"method.name":` string-literal declarations. The bidirectional 1:1
  * gate enforces the contract↔handler match ONLY against the migrated set;
- * the unmigrated set is tracked for diagnostics and shrinks to empty as
- * Wave C plans (35-06..35-19) migrate every handler factory.
+ * the unmigrated set is tracked for diagnostics.
  */
 interface TaggedMethod {
   readonly method: string;
@@ -163,9 +142,9 @@ interface TaggedMethod {
 
 /**
  * Collect every method name declared as a handler in `file` (one
- * `*-handlers.ts` under `HANDLER_DIR`). Returns tagged entries: string-literal
- * keys are tagged `migrated: false` (Wave C migration target); computed-name
- * keys resolved through the contract registry are tagged `migrated: true`.
+ * `*-handlers.ts` under `HANDLER_DIR`). Returns tagged entries:
+ * string-literal keys are tagged `migrated: false`; computed-name keys
+ * resolved through the contract registry are tagged `migrated: true`.
  */
 function collectMethodsFromFile(file: string): TaggedMethod[] {
   const src = readFileSync(resolve(HANDLER_DIR, file), "utf8");
@@ -213,7 +192,7 @@ function collectMethodsFromFile(file: string): TaggedMethod[] {
   return methods;
 }
 
-describe("Contract registry — bidirectional 1:1 (WEB-CONTRACTS-07)", () => {
+describe("Contract registry — bidirectional 1:1", () => {
   const handlerFiles = listHandlerFiles(HANDLER_DIR);
 
   it("sanity: api/ contains at least 20 *-handlers.ts files", () => {
@@ -223,15 +202,13 @@ describe("Contract registry — bidirectional 1:1 (WEB-CONTRACTS-07)", () => {
     ).toBeGreaterThan(20);
   });
 
-  it("every MIGRATED daemon handler method has a contract entry (WEB-CONTRACTS-07)", () => {
+  it("every MIGRATED daemon handler method has a contract entry", () => {
     // Migrated = handler factory uses `[Contract.method]:` computed-property
     // key. By construction, that key cannot resolve unless the contract
     // exists in the registry — so the orphan check is in effect a 1:1
-    // consistency check for the Wave C migration cohort that has landed so
-    // far. The unmigrated string-literal handlers (the remaining ~188
-    // methods at Wave C kickoff) are tracked by the "Wave C progress"
-    // it() block below for visibility, NOT gated against the registry
-    // until Plan 35-19 closes Wave C.
+    // consistency check for the migrated cohort. The unmigrated
+    // string-literal handlers are tracked by the diagnostic it() block
+    // below for visibility, NOT gated against the registry.
     const migratedHandlerMethods = new Set<string>();
     for (const file of handlerFiles) {
       for (const m of collectMethodsFromFile(file)) {
@@ -239,7 +216,7 @@ describe("Contract registry — bidirectional 1:1 (WEB-CONTRACTS-07)", () => {
       }
     }
     const contractMethods = new Set(API_CONTRACTS.keys());
-    // Wave A state: both sets empty → trivially pass. Wave C state: every
+    // When both sets are empty the test trivially passes; otherwise every
     // migrated handler must be in the contract registry.
     const orphans = [...migratedHandlerMethods].filter(
       (m) => !contractMethods.has(m),
@@ -256,17 +233,16 @@ describe("Contract registry — bidirectional 1:1 (WEB-CONTRACTS-07)", () => {
         })),
         suggestedFix:
           "Add a contract entry to packages/core/src/api-contracts/<domain>.ts",
-        designRef: "WEB-CONTRACTS-07 + 35-CONTEXT.md D-08",
+        designRef: "api-contracts bidirectional 1:1",
       }),
     ).toEqual([]);
   });
 
-  it("every contract entry has a MIGRATED daemon handler (WEB-CONTRACTS-07)", () => {
+  it("every contract entry has a MIGRATED daemon handler", () => {
     // Migrated = `[Contract.method]:` computed key. A contract without a
     // matching migrated handler is either (a) a contract author forgot to
     // refactor the handler to computed keys, or (b) the contract was
-    // added without a corresponding handler at all. Both are bugs Wave C
-    // plans must catch.
+    // added without a corresponding handler at all. Both are bugs.
     const migratedHandlerMethods = new Set<string>();
     for (const file of handlerFiles) {
       for (const m of collectMethodsFromFile(file)) {
@@ -287,19 +263,18 @@ describe("Contract registry — bidirectional 1:1 (WEB-CONTRACTS-07)", () => {
         })),
         suggestedFix:
           "Refactor the handler to use `[<Contract>.method]:` computed key, or remove the contract.",
-        designRef: "WEB-CONTRACTS-07",
+        designRef: "api-contracts bidirectional 1:1",
       }),
     ).toEqual([]);
   });
 
-  it("Wave C migration progress is visible (diagnostic — non-blocking)", () => {
+  it("migration progress is visible (diagnostic — non-blocking)", () => {
     // Diagnostic-only it() block. Counts how many handler methods are
     // unmigrated (string-literal keys) — gives reviewers a live count of
-    // remaining Wave C migration work. Always passes (asserts >= 0); the
-    // actual gate is the "every contract entry has a MIGRATED handler"
-    // assertion above + Plan 35-19's Wave C closure which makes the
-    // unmigrated count zero by construction (every handler uses computed
-    // keys → every method is enforced 1:1 with the registry).
+    // remaining migration work. Always passes (asserts >= 0); the actual
+    // gate is the "every contract entry has a MIGRATED handler"
+    // assertion above. When every handler uses computed keys the
+    // unmigrated count is zero by construction.
     let migrated = 0;
     let unmigrated = 0;
     for (const file of handlerFiles) {
@@ -313,7 +288,7 @@ describe("Contract registry — bidirectional 1:1 (WEB-CONTRACTS-07)", () => {
     // when other tests in this file fail.
     expect(
       migrated + unmigrated,
-      `Wave C migration progress: migrated=${migrated} unmigrated=${unmigrated} (registry size=${API_CONTRACTS.size})`,
+      `migration progress: migrated=${migrated} unmigrated=${unmigrated} (registry size=${API_CONTRACTS.size})`,
     ).toBeGreaterThanOrEqual(0);
   });
 });

@@ -186,10 +186,10 @@ describe("createApprovalHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Plan 40-14 — admin.approval.resolveAll branch coverage
+  // admin.approval.resolveAll branch coverage
   // -------------------------------------------------------------------------
 
-  describe("admin.approval.resolveAll (Plan 40-14)", () => {
+  describe("admin.approval.resolveAll", () => {
     it("rejects resolveAll when approved parameter is not a boolean value per bespoke pre-zod guard", async () => {
       mockGate = createMockApprovalGate([]);
       handlers = createApprovalHandlers({ approvalGate: mockGate });
@@ -240,10 +240,10 @@ describe("createApprovalHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Plan 40-14 — admin.approval.clearDenialCache branch coverage
+  // admin.approval.clearDenialCache branch coverage
   // -------------------------------------------------------------------------
 
-  describe("admin.approval.clearDenialCache (Plan 40-14)", () => {
+  describe("admin.approval.clearDenialCache", () => {
     it("forwards sessionKey to ApprovalGate.clearDenialCache and returns cleared:true on success", async () => {
       const clearDenialCache = vi.fn();
       mockGate = { ...createMockApprovalGate([]), clearDenialCache } as ApprovalGate;

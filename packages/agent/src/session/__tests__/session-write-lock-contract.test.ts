@@ -2,18 +2,15 @@
 /**
  * Session-write-lock contract test.
  *
- * Phase 28 establishes FileLockPort. Phase 32 commit 13 (ORCH-EXT-15) injects
- * it into agent's session-write-lock path. This contract test runs against
- * TODAY's direct-proper-lockfile impl (per D-10) - Phase 32 retargets imports;
- * tests stay green by construction because the contract surface is identical.
+ * FileLockPort is injected into agent's session-write-lock path. This
+ * contract test runs against the direct-proper-lockfile impl; the contract
+ * surface is identical so tests stay green across import retargets.
  *
  * The scheduler file-lock contract proves basic acquire/release/withLock
  * semantics; these tests prove the additional behavior session-write-lock
  * relies on (session-write-lock.ts:62 ELOCKED detection,
  * session-write-lock.ts:173 directory-form `.lock.lock` cleanup, lock-file
  * naming format).
- *
- * Test names from design [section 5.3] are binding contracts (per [section 3.4]).
  *
  * @module
  */
@@ -22,10 +19,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-// Test-only @comis/core import — Phase 32 commit 12 cut the production
-// session-write-lock module's direct proper-lockfile dependency; the contract
-// test wires the canonical createFileLock() adapter explicitly. Relocated from
-// @comis/scheduler to @comis/core in Phase 35 Plan 35-04 per D-01 #1.
+// Test-only @comis/core import — the production session-write-lock module no
+// longer depends directly on proper-lockfile; the contract test wires the
+// canonical createFileLock() adapter explicitly.
 import { createFileLock, type FileLockPort } from "@comis/core";
 import { withSessionLock, cleanupStaleLocks } from "../session-write-lock.js";
 
@@ -42,7 +38,6 @@ describe("session-write-lock contract", () => {
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
-  // Binding test names from design [section 5.3] - copy verbatim.
   it("FileLockPort surfaces ELOCKED-equivalent contention with the retry semantics session-write-lock relies on (locked → retry → eventual ok or err with stable error shape)", async () => {
     const sessionKey = "test:session:contention";
 
@@ -140,8 +135,8 @@ describe("session-write-lock contract", () => {
     // (sha256(sessionKey).slice(0,12) per session-write-lock.ts line 58).
     expect(observedLockName.length).toBe(17);
     expect(observedLockName.endsWith(".lock")).toBe(true);
-    // Future-proofing: when Phase 32 cuts over to FileLockPort, the same
-    // naming convention is preserved (the deriveLockPath impl moves with
+    // Future-proofing: when FileLockPort is used end-to-end, the same naming
+    // convention is preserved (the deriveLockPath impl moves with
     // session-write-lock; the FileLockPort accepts an arbitrary lockPath so
     // the caller-side hash-derivation choice is preserved).
   });

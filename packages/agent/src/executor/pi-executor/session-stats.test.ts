@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for mergeSessionStats — SDK session-stats delegation helper.
- * Migrated verbatim from pi-executor.test.ts (Phase 42 split per
- * EXEC-SPLIT-05).
  *
  * @module
  */

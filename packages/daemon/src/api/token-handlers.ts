@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Token management RPC handler module.
  * Provides 4 handlers for runtime token management:
@@ -10,18 +10,17 @@
  * Includes a mutable TokenRegistry that tracks token metadata at runtime,
  * seeded from the gateway config tokens on startup.
  *
- * Phase 35 Wave C (Plan 35-09): refactored to use the `@comis/core` contract
- * registry. Method keys are computed-property names
- * (`[TokensListContract.method]:`) so the bidirectional 1:1 architecture
- * test resolves them through `defineContract({ method, ... })` declarations
- * in `packages/core/src/api-contracts/tokens.ts`. The dispatcher-injected
+ * Handlers use the `@comis/core` contract registry. Method keys are
+ * computed-property names (`[TokensListContract.method]:`) so the
+ * bidirectional 1:1 architecture test resolves them through
+ * `defineContract({ method, ... })` declarations in
+ * `packages/core/src/api-contracts/tokens.ts`. The dispatcher-injected
  * `_X` internal fields are stripped via `stripInternalFields` BEFORE
- * `contract.request.parse(...)` (D-04 pitfall 6 — never model internals
- * in the contract schema). The admin trust check + internal-field reads
- * (`_context`, `_agentId`, `_traceId` for the audit-trail user/trace
- * attribution path) all happen against `rawParams` BEFORE the strip step
- * (the gate + audit-context stays separate from the contract schema
- * per D-04).
+ * `contract.request.parse(...)` — never model internals in the contract
+ * schema. The admin trust check + internal-field reads (`_context`,
+ * `_agentId`, `_traceId` for the audit-trail user/trace attribution
+ * path) all happen against `rawParams` BEFORE the strip step (the gate +
+ * audit-context stays separate from the contract schema).
  *
  * The bespoke pre-Zod validation (admin gate, scope-empty guard, missing-id
  * guard, rotation-source-existence guard) is intentionally retained for
@@ -39,10 +38,8 @@
  * their response schemas — the secret-once policy mandates that the
  * caller see the value EXACTLY once.)
  *
- * **BLOCKER 1 exemption.** Tokens are managed via the web SPA only —
- * no CLI consumer exists for `tokens.list|create|revoke|rotate` in
- * `packages/cli/src/commands/`. Wave C CLI retarget (callTyped wrap) is
- * therefore N/A for this domain.
+ * Tokens are managed via the web SPA only — no CLI consumer exists for
+ * `tokens.list|create|revoke|rotate` in `packages/cli/src/commands/`.
  * @module
  */
 
@@ -125,16 +122,12 @@ export function createTokenRegistry(
 
 /** Dependencies required by token management RPC handlers.
  *
- * Re-aliased from the cluster slice in api/types.ts (Plan 34-08a; alias retarget
- * in Plan 34-08c). Single source of truth: AuthApiDeps (shared with auth-handlers
- * + secrets-handlers). The cluster slice was widened in 34-08c to cover
- * token-handler fields (persistDeps). DAEMON-API-03 Option A retarget — handler
- * body unchanged.
+ * Single source of truth: AuthApiDeps (shared with auth-handlers +
+ * secrets-handlers).
  *
  * NOTE: `TokenRegistry` is still exported from this file as the canonical
  * runtime type; `AuthApiDeps.tokenRegistry` declares a structurally-identical
- * inline shape to avoid the bidirectional madge cycle (Phase 27 ARCH-BASE-05).
- * Plan 34-09 (api/shared/) will move TokenRegistry to a sibling module.
+ * inline shape to avoid a bidirectional madge cycle.
  */
 import type { AuthApiDeps as TokenHandlerDeps } from "./types.js";
 export type { TokenHandlerDeps };
@@ -153,15 +146,14 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
      * Returns id, scopes, and createdAt -- never secrets.
      */
     [TokensListContract.method]: async (rawParams) => {
-      // Admin trust check FIRST — separate from the contract schema (D-04).
+      // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for token listing");
       }
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6). Then type-narrow via the
-      // contract — defense-in-depth.
+      // Strip dispatcher-injected _X internals BEFORE contract parse.
+      // Then type-narrow via the contract — defense-in-depth.
       const userParams = stripInternalFields(rawParams);
       TokensListContract.request.parse(userParams);
 
@@ -177,9 +169,8 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       // STRIPS unknown keys, so any accidental `secret` field on a row
       // is PROJECTED AWAY from the parsed output before the response
       // crosses the daemon → web-SPA boundary. Production skips for
-      // cold-start budget (D-10); the trust boundary is the
-      // TokenRegistry which never stores secrets by construction
-      // (line 70-72).
+      // cold-start budget; the trust boundary is the TokenRegistry which
+      // never stores secrets by construction.
       if (systemGetEnv("NODE_ENV") !== "production") {
         TokensListContract.response.parse(result);
       }
@@ -191,7 +182,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
      * Returns the secret exactly once in the response.
      */
     [TokensCreateContract.method]: async (rawParams) => {
-      // Admin trust check FIRST — separate from the contract schema (D-04).
+      // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for token creation");
@@ -206,9 +197,9 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
         throw new Error("Missing or empty required parameter: scopes");
       }
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6). The contract parse runs AFTER
-      // the bespoke guard and serves as type-narrowing + defense-in-depth.
+      // Strip dispatcher-injected _X internals BEFORE contract parse.
+      // The contract parse runs AFTER the bespoke guard and serves as
+      // type-narrowing + defense-in-depth.
       const userParams = stripInternalFields(rawParams);
       const params = TokensCreateContract.request.parse(userParams);
 
@@ -222,7 +213,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       // Best-effort persistence to config.yaml -- secret-free. Reads
       // `_context`/`_agentId`/`_traceId` from rawParams (BEFORE strip)
       // because those internal fields carry audit-trail attribution
-      // that must NOT be modelled in the contract schema (D-04).
+      // that must NOT be modelled in the contract schema.
       if (deps.persistDeps) {
         const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
         const existingTokens = (deps.persistDeps.container.config.gateway?.tokens ?? [])
@@ -263,7 +254,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
      * Revoke (disable) a token by ID.
      */
     [TokensRevokeContract.method]: async (rawParams) => {
-      // Admin trust check FIRST — separate from the contract schema (D-04).
+      // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for token revocation");
@@ -278,9 +269,9 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
         throw new Error("Missing required parameter: id");
       }
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6). The contract parse runs AFTER
-      // the bespoke guard and serves as type-narrowing + defense-in-depth.
+      // Strip dispatcher-injected _X internals BEFORE contract parse.
+      // The contract parse runs AFTER the bespoke guard and serves as
+      // type-narrowing + defense-in-depth.
       const userParams = stripInternalFields(rawParams);
       const params = TokensRevokeContract.request.parse(userParams);
       const id = params.id;
@@ -325,7 +316,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
      * Returns the new secret exactly once.
      */
     [TokensRotateContract.method]: async (rawParams) => {
-      // Admin trust check FIRST — separate from the contract schema (D-04).
+      // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for token rotation");
@@ -337,8 +328,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
         throw new Error("Missing required parameter: id");
       }
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6).
+      // Strip dispatcher-injected _X internals BEFORE contract parse.
       const userParams = stripInternalFields(rawParams);
       const params = TokensRotateContract.request.parse(userParams);
       const id = params.id;

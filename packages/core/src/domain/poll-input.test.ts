@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for domain/poll-input.ts (COV-03 / Plan 40-11).
+ * Branch-gap coverage for domain/poll-input.ts.
  *
- * Closes the 6 missing branch-paths in this file:
+ * Covers the six branch paths in this file:
  *   - normalizePollDurationHours undefined branch + clamp lower/upper
  *   - validatePollInput safeParse !success branch
  *   - validatePollInput maxSelections > options.length branch

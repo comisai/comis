@@ -2,10 +2,9 @@
 /**
  * Canonical log field vocabulary + structural Comis logger contract.
  *
- * Phase 28 commit 2 (CORE-PORTS-05) moved these contracts from @comis/infra
- * to @comis/core so non-daemon packages (agent, channels, gateway, skills,
- * scheduler) can import the structural ComisLogger interface without
- * coupling to @comis/infra.
+ * These contracts live in @comis/core so non-daemon packages (agent,
+ * channels, gateway, skills, scheduler) can import the structural
+ * ComisLogger interface without coupling to @comis/infra.
  *
  * The Pino-backed runtime implementation lives in @comis/infra and is
  * assignable to ComisLogger (proven by
@@ -47,8 +46,7 @@ export function isValidLogLevel(level: string): boolean {
  * - `internal`    -- Unexpected internal errors (assertion failures, logic bugs)
  * - `platform`    -- Chat platform API errors (Discord, Telegram, Slack rate limits)
  *
- * Closed 9-member union per design §1.3 L16 + AGENTS.md §2.1. Phase 28
- * commit 6B fixes every off-union literal to one of these 9 values.
+ * Closed 9-member union per AGENTS.md §2.1.
  */
 export type ErrorKind =
   | "config"

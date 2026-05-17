@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * mcp-client public types + closure-state interface (Phase 43 split per
- * FILE-SPLIT-11).
+ * mcp-client public types + closure-state interface.
  *
- * Types extracted verbatim from the pre-split mcp-client.ts. The
- * canonical public-API contract is preserved byte-identical so the
+ * The canonical public-API contract is preserved byte-identical so the
  * @comis/skills barrel re-exports stay byte-identical.
  *
- * Adds the closure-state shape (McpClientManagerState) used by the
- * state-first protocol per Phase 42 pi-executor and Phase 43
- * telegram-adapter conventions (WARNING ISSUE-06 fix).
+ * Defines the closure-state shape (McpClientManagerState) used by the
+ * state-first protocol across the mcp-client leaves.
  *
  * @module
  */
@@ -30,8 +27,7 @@ import type PQueue from "p-queue";
 // putting the qualify helpers in call.ts would close a 3-way cycle
 // (call -> reconnect -> discover -> call). Hosting them in types.ts
 // (the leaf with zero internal sibling imports) keeps the dependency
-// graph acyclic. (Same pattern as Phase 43 plan 02b's SearchProviderName
-// fix per 43-02b-SUMMARY.md Decision 1.)
+// graph acyclic.
 
 const MCP_PREFIX = "mcp:";
 
@@ -205,7 +201,7 @@ export interface McpClientManager {
 }
 
 // ---------------------------------------------------------------------------
-// Closure-state interface (Phase 43 split per FILE-SPLIT-11 + WARNING ISSUE-06)
+// Closure-state interface
 // ---------------------------------------------------------------------------
 
 /**
@@ -225,17 +221,10 @@ export interface McpClientManagerOptions {
 }
 
 /**
- * Closure-captured state shape for the mcp-client manager. Phase 43 split
- * (FILE-SPLIT-11) extracts the createMcpClientManager factory closure body
- * into per-concern leaves; each leaf takes `state: McpClientManagerState`
- * as its first parameter (state-first protocol; matches Phase 42
- * pi-executor and Phase 43 telegram-adapter).
- *
- * The 7-Map/Set surface area (vs RESEARCH's 3-variable estimate) was
- * discovered when reading the live createMcpClientManager body (lines
- * 217-1047 of the pre-split mcp-client.ts) per Task 2 Step 1 of
- * 43-02c-PLAN.md — the closure scales beyond RESEARCH's initial estimate
- * but the state-first protocol scales identically.
+ * Closure-captured state shape for the mcp-client manager. The
+ * createMcpClientManager factory closure body is split into per-concern
+ * leaves; each leaf takes `state: McpClientManagerState` as its first
+ * parameter (state-first protocol).
  *
  * @internal — not exported from the package barrel; only consumed by
  * sibling leaves within mcp-client/.

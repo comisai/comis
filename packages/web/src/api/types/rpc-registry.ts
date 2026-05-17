@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 35 Wave D Plan 35-21 shim. The hand-maintained 825-line RpcMethodMap
- * interface retired in favor of the generated CONTRACTS dispatch table. New
- * code MUST import {@link MethodName} / {@link validateRequest} /
- * {@link validateResponse} / `CONTRACTS` directly from
- * `../contracts.generated.js` (single source of truth — `pnpm contracts:generate`).
+ * Shim for the retired hand-maintained `RpcMethodMap` interface; replaced by
+ * the generated CONTRACTS dispatch table. New code MUST import
+ * {@link MethodName} / {@link validateRequest} / {@link validateResponse} /
+ * `CONTRACTS` directly from `../contracts.generated.js` (single source of
+ * truth — `pnpm contracts:generate`).
  *
  * @module
  */

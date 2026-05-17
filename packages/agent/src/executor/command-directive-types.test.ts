@@ -23,8 +23,6 @@
  * an `export interface` line from this file (vs. renaming/updating it) will
  * see a test failure on the next test run.
  *
- * Phase 40 / Phase C §6.3.1 / COV-06.
- *
  * @module
  */
 

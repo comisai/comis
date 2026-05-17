@@ -18,12 +18,10 @@
  *     provider-branched prompt teaching. `tool_search_tool_regex` has an
  *     allowlist for `request-body/tool-deferral-injection.ts` (the surviving
  *     Anthropic-payload-reshape file where the literal appears as a
- *     tool-name field in the API payload; post-Phase-42 EXEC-SPLIT-02 — was
- *     previously `request-body-injector.ts`), `request-body/types.ts`
+ *     tool-name field in the API payload), `request-body/types.ts`
  *     (JSDoc reference on the deferred-tools config option),
  *     `cache-detection/anthropic-extractor.ts` (server-side-tool skip-list
- *     with the literal in comments + a `tool_search_tool_` prefix-match;
- *     post-Phase-42 EXEC-SPLIT-09 — was previously `cache-break-detection.ts`),
+ *     with the literal in comments + a `tool_search_tool_` prefix-match),
  *     and `stub-filter-injector.ts` (JSDoc explaining the payload-reshape
  *     interaction with the stub-filter).
  *   - `prompt-assembly.ts` does NOT import `capability-index-context.ts`
@@ -31,16 +29,14 @@
  *     between turns — cache-fence enforcement at the source-grep boundary.
  *     `assemblerParams` MUST stay free of live-runtime accessors so the
  *     cached system-prompt prefix remains byte-identical when the skill
- *     registry reloads between turns. (Phase 38 BC-REM-11 removed the
- *     last config-derived boolean from `assemblerParams` along with the
- *     static-prompt gate-off branch in `tooling-sections.ts`; only
- *     LIVE-RUNTIME accessors remain forbidden.)
- *   - `bootstrap/` and `workspace/` directories remain agent-owned per
- *     Phase 32 ORCH-EXT-09 audit (OQ-5). Both directories are executor
- *     support (LLM system-prompt assembly + ~/.comis/ filesystem-layout
- *     management), NOT inbound message handling. A future PR that moves
- *     either directory to orchestrator fails CI at the existsSync
- *     boundary below.
+ *     registry reloads between turns. Only LIVE-RUNTIME accessors are
+ *     forbidden; config-derived booleans no longer flow through
+ *     `assemblerParams`.
+ *   - `bootstrap/` and `workspace/` directories remain agent-owned.
+ *     Both directories are executor support (LLM system-prompt assembly
+ *     + ~/.comis/ filesystem-layout management), NOT inbound message
+ *     handling. A future PR that moves either directory to orchestrator
+ *     fails CI at the existsSync boundary below.
  *
  * @module
  */
@@ -58,10 +54,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
 const PKG_ROOT = resolve(SRC_ROOT, "..");
 
-// Audit-coverage paths (Phase 41 Plan 41-06 Task 2 / TS-HYG-10).
-// The audit doc at packages/agent/AUDIT.md mirrors packages/orchestrator/AUDIT.md
-// and is parsed by the architecture test below to assert bidirectional set
-// equality between SubAgentRunnerDeps fields and the audit table.
+// Audit-coverage paths. The audit doc at packages/agent/AUDIT.md mirrors
+// packages/orchestrator/AUDIT.md and is parsed by the architecture test
+// below to assert bidirectional set equality between SubAgentRunnerDeps
+// fields and the audit table.
 const AUDIT_PATH = resolve(PKG_ROOT, "AUDIT.md");
 const SUB_AGENT_RUNNER_PATH = resolve(SRC_ROOT, "spawn/sub-agent-runner.ts");
 
@@ -152,10 +148,10 @@ describe("@comis/agent -- architecture invariants", () => {
       "executor-post-execution.ts", // comment about stripping discover_tools result schemas
       "schema-stripping.ts",       // tool-name discriminant: `msg.toolName !== "discover_tools"`
       "discovery-tracker.ts",      // JSDoc explaining the session-scoped tracker tied to discover_tools
-      "pi-executor.ts",            // JSDoc + comments referring to discover_tools as a known concept (mid-turn injection) — pre-split + post-Phase-42 path under pi-executor/
-      "pi-executor-types.ts",      // PiExecutorDeps interface JSDoc references discover_tools concept (post-Phase-42 EXEC-SPLIT-05 split)
+      "pi-executor.ts",            // JSDoc + comments referring to discover_tools as a known concept (mid-turn injection)
+      "pi-executor-types.ts",      // PiExecutorDeps interface JSDoc references discover_tools concept
       // Anthropic payload-reshape identifiers.
-      "tool-deferral-injection.ts", // payload reshape removes the client-side discover_tools tool name (post-Phase-42 EXEC-SPLIT-02 split; previously request-body-injector.ts)
+      "tool-deferral-injection.ts", // payload reshape removes the client-side discover_tools tool name
       "stub-filter-injector.ts",   // JSDoc explaining stub-filter interaction with discover_tools removal
     ];
     const offenders = result.matches.filter(
@@ -177,14 +173,12 @@ describe("@comis/agent -- architecture invariants", () => {
     // payload-reshape / cache-detection layer:
     //   - request-body/tool-deferral-injection.ts — appends the server-side
     //     tool to the API payload (type discriminant + name field) when
-    //     supportsToolSearch gates a tool-search-eligible model. Post-Phase-42
-    //     split (EXEC-SPLIT-02); was previously request-body-injector.ts.
+    //     supportsToolSearch gates a tool-search-eligible model.
     //   - request-body/types.ts — JSDoc on the config option naming the tool.
     //   - cache-detection/anthropic-extractor.ts — skip-list comments + per-tool-hash
     //     skip for server-side tools that lack input_schema (the literal appears
     //     in comments naming what gets skipped; the runtime check uses the
-    //     `tool_search_tool_` prefix). Post-Phase-42 split (EXEC-SPLIT-09); was
-    //     previously cache-break-detection.ts.
+    //     `tool_search_tool_` prefix).
     //   - stub-filter-injector.ts — JSDoc cross-reference explaining how the
     //     stub-filter interacts with the payload-reshape that appends this
     //     tool to the rendered Anthropic payload.
@@ -198,9 +192,9 @@ describe("@comis/agent -- architecture invariants", () => {
       excludeFileSuffixes: [".test.ts"],
     });
     const ALLOWED_FILES = [
-      "tool-deferral-injection.ts", // post-Phase-42 EXEC-SPLIT-02: request-body/ payload-reshape module
+      "tool-deferral-injection.ts", // request-body/ payload-reshape module
       "request-body/types.ts",     // JSDoc reference on the deferred-tools config option
-      "anthropic-extractor.ts",    // post-EXEC-SPLIT-09: cache-detection/ extractor module
+      "anthropic-extractor.ts",    // cache-detection/ extractor module
       "stub-filter-injector.ts",   // JSDoc cross-reference to the payload reshape
     ];
     const offenders = result.matches.filter(
@@ -216,8 +210,7 @@ describe("@comis/agent -- architecture invariants", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Cache-fence invariant — the highest-cost regression class in the v1.1
-  // milestone.
+  // Cache-fence invariant — the highest-cost regression class.
   // ---------------------------------------------------------------------------
   //
   // `prompt-assembly.ts` builds the cached system-prompt prefix via
@@ -235,10 +228,8 @@ describe("@comis/agent -- architecture invariants", () => {
   //   - the live-runtime MCP-server accessor (mutates between turns when
   //     servers connect/disconnect.)
   //
-  // The grep below targets the LIVE-RUNTIME accessors only. Phase 38
-  // BC-REM-11 removed the last config-derived boolean that previously
-  // flowed through `assemblerParams`; only live-runtime accessors remain
-  // forbidden by the cache-fence invariant.
+  // The grep below targets the LIVE-RUNTIME accessors only — config-derived
+  // booleans no longer flow through `assemblerParams`.
 
   it("prompt-assembly.ts does NOT import capability-index-context or call live-runtime port accessors", () => {
     // The test scans the executor/ directory and filters for prompt-assembly.ts
@@ -313,13 +304,12 @@ describe("@comis/agent -- architecture invariants", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 28 commit 2 (CORE-PORTS-05) — logger contract types canonically live
-  // in @comis/core. agent production source must import them from @comis/core,
-  // not @comis/infra (the runtime-Pino package). The package dropped its
-  // @comis/infra dep in this commit; if any production source kept a stale
-  // `from "@comis/infra"` import, `pnpm build` would fail (forcing function).
-  // This rule guards the regression at the source-grep boundary so a future
-  // edit is caught pre-merge instead of pre-publish.
+  // Logger contract types canonically live in @comis/core. Agent production
+  // source must import them from @comis/core, not @comis/infra (the
+  // runtime-Pino package). The package no longer has an @comis/infra dep;
+  // any production source with a stale `from "@comis/infra"` import would
+  // fail `pnpm build`. This rule guards the regression at the source-grep
+  // boundary so a future edit is caught pre-merge instead of pre-publish.
   // ---------------------------------------------------------------------------
 
   it("imports logger contract types from @comis/core, not @comis/infra", () => {
@@ -339,9 +329,7 @@ describe("@comis/agent -- architecture invariants", () => {
           snippet: v.snippet,
         })),
         suggestedFix:
-          "Replace `import type { ComisLogger | LogFields | ErrorKind } from \"@comis/infra\"` with `... from \"@comis/core\"`. The Pino-free structural ComisLogger contract canonically lives in @comis/core after Phase 28 commit 2.",
-        designRef:
-          "design §5.2 step 2 / §5.4 step 2 (CORE-PORTS-05 / L12 closure)",
+          "Replace `import type { ComisLogger | LogFields | ErrorKind } from \"@comis/infra\"` with `... from \"@comis/core\"`. The Pino-free structural ComisLogger contract canonically lives in @comis/core.",
       }),
     ).toEqual([]);
     expect(
@@ -358,48 +346,45 @@ describe("@comis/agent -- architecture invariants", () => {
     expect(
       tsconfigContent.includes("@comis/infra") ||
         tsconfigContent.includes('"path": "../infra"'),
-      "agent/tsconfig.json must not reference @comis/infra (Phase 28 commit 2 / CORE-PORTS-05). " +
+      "agent/tsconfig.json must not reference @comis/infra. " +
         "If a logger contract type is needed, import it from @comis/core; the runtime Pino " +
         "factory belongs in @comis/daemon's wiring, not @comis/agent.",
     ).toBe(false);
     expect(
       packageJsonContent.includes("@comis/infra"),
-      "agent/package.json must not depend on @comis/infra (Phase 28 commit 2 / CORE-PORTS-05). " +
+      "agent/package.json must not depend on @comis/infra. " +
         "agent's logger contract usage is type-only and resolves through @comis/core.",
     ).toBe(false);
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 31 commit 3 (MEM-CTX-PORTS-01) — agent has zero memory production
-  // imports outside the transient 1-site allowlist closed in commit 4.
+  // Agent has zero memory production imports.
   //
   // ContextStorePort + SessionStorePort + row DTOs (Ctx*Row + Session*) all
-  // live in @comis/core after Phase 31 commits 1-2. Agent production source
-  // imports them from @comis/core. The lone remaining memory import is the
-  // value import at model/oauth-credential-store-selector.ts:23 (the encrypted
-  // OAuth store factory); plan 31-04 rewrites the selector to consume an
-  // injected encryptedStore port, dropping that import too.
+  // live in @comis/core. Agent production source imports them from
+  // @comis/core. The OAuth credential store selector is rewritten to consume
+  // a daemon-injected encryptedStore port, so no value-import into
+  // @comis/memory remains.
   // ---------------------------------------------------------------------------
 
-  describe("Phase 31 -- agent -> memory cut (MEM-CTX-PORTS-01)", () => {
-    // Closed in plan 31-04 commit 4 -- the OAuth credential store selector was
-    // rewritten to consume a daemon-injected encryptedStore port; the
-    // memory value-import moved to daemon's setup-agents.ts. Empty array
-    // means the architecture invariant asserts ZERO agent -> memory
-    // production imports going forward.
-    const PHASE_31_MEMORY_ALLOWLIST: readonly string[] = [];
+  describe("agent -> memory cut", () => {
+    // The OAuth credential store selector consumes a daemon-injected
+    // encryptedStore port; the memory value-import moved to daemon's
+    // setup-agents.ts. Empty array means the architecture invariant
+    // asserts ZERO agent -> memory production imports going forward.
+    const MEMORY_ALLOWLIST: readonly string[] = [];
 
-    it("production source does NOT import @comis/memory (MEM-CTX-PORTS-01 closure)", () => {
+    it("production source does NOT import @comis/memory", () => {
       const { violations, checkedFiles } = findForbiddenImports({
         rootDir: SRC_ROOT,
         forbiddenPackage: "@comis/memory",
-        allowlistPaths: [...PHASE_31_MEMORY_ALLOWLIST],
+        allowlistPaths: [...MEMORY_ALLOWLIST],
       });
       expect(
         violations,
         formatViolations({
           description:
-            "@comis/agent production source must not import @comis/memory. ContextStore->ContextStorePort and SessionStore->SessionStorePort plus the 9 Ctx*Row and 3 Session* row DTOs all live in @comis/core after Phase 31 commits 1-2. The lone value-import (createOAuthProfileStoreEncrypted) moved to daemon's setup-agents.ts in commit 4 -- the agent selector now consumes an injected encryptedStore port.",
+            "@comis/agent production source must not import @comis/memory. ContextStore->ContextStorePort and SessionStore->SessionStorePort plus the 9 Ctx*Row and 3 Session* row DTOs all live in @comis/core. The lone value-import (createOAuthProfileStoreEncrypted) moved to daemon's setup-agents.ts -- the agent selector now consumes an injected encryptedStore port.",
           violations: violations.map((v) => ({
             file: v.file,
             line: v.line,
@@ -408,8 +393,6 @@ describe("@comis/agent -- architecture invariants", () => {
           })),
           suggestedFix:
             'Replace `from "@comis/memory"` with `from "@comis/core"`. Rename ContextStore->ContextStorePort and SessionStore->SessionStorePort at use sites. For OAuth-store construction, inject an OAuthCredentialStorePort from the daemon composition (setup-agents.ts already owns the createOAuthProfileStoreEncrypted call site).',
-          designRef: "design §8.2 (Phase 31) / MEM-CTX-PORTS-01 / MEM-CTX-PORTS-07",
-          allowlistRef: "PHASE_31_MEMORY_ALLOWLIST (closed in plan 31-04)",
         }),
       ).toEqual([]);
       expect(
@@ -418,7 +401,7 @@ describe("@comis/agent -- architecture invariants", () => {
       ).toBeGreaterThan(0);
     });
 
-    it("agent/tsconfig.json and agent/package.json dependencies do NOT reference @comis/memory (MEM-CTX-PORTS-01 closure)", () => {
+    it("agent/tsconfig.json and agent/package.json dependencies do NOT reference @comis/memory", () => {
       const tsconfigPath = resolve(PKG_ROOT, "tsconfig.json");
       const packageJsonPath = resolve(PKG_ROOT, "package.json");
       const tsconfigContent = readFileSync(tsconfigPath, "utf8");
@@ -427,41 +410,40 @@ describe("@comis/agent -- architecture invariants", () => {
       // tsconfig.json: no reference to ../memory anywhere.
       expect(
         tsconfigContent,
-        "agent/tsconfig.json must not reference ../memory (Phase 31 commit 4 / MEM-CTX-PORTS-01). " +
+        "agent/tsconfig.json must not reference ../memory. " +
           "The runtime OAuth-store factory moved to daemon composition; agent's production source resolves all memory-domain types through @comis/core.",
       ).not.toMatch(/"path":\s*"\.\.\/memory"/);
 
       // package.json: `dependencies` block must NOT contain @comis/memory.
-      // `devDependencies` retention is permitted per Open Q5 (co-located
-      // test files still need memory's factories; the production invariant
-      // excludes .test.ts via findForbiddenImports' default suffix filter).
+      // `devDependencies` retention is permitted because co-located test
+      // files still need memory's factories; the production invariant
+      // excludes .test.ts via findForbiddenImports' default suffix filter.
       const pkg = JSON.parse(packageJsonContent) as {
         dependencies?: Record<string, string>;
         devDependencies?: Record<string, string>;
       };
       expect(
         pkg.dependencies?.["@comis/memory"],
-        "agent/package.json `dependencies` must not include @comis/memory (Phase 31 commit 4 / MEM-CTX-PORTS-01). " +
-          "devDependencies retention is permitted for co-located test compilation per Open Q5.",
+        "agent/package.json `dependencies` must not include @comis/memory. " +
+          "devDependencies retention is permitted for co-located test compilation.",
       ).toBeUndefined();
     });
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 28 commit 5 (CORE-PORTS-14 / L4 closure) — binding rules from design
-  // §5.3. The OAuth helpers (resolveCodexAuthIdentity, rewriteOAuthError,
+  // OAuth helpers (resolveCodexAuthIdentity, rewriteOAuthError,
   // redactEmailForLog, decodeCodexJwtPayload, resolveCodexStableSubject,
-  // resolveCodexAccessTokenExpiry, OAuthErrorCode, RewrittenOAuthError) move
-  // to @comis/core/src/security/oauth-helpers.ts. agent production source
+  // resolveCodexAccessTokenExpiry, OAuthErrorCode, RewrittenOAuthError) live
+  // in @comis/core/src/security/oauth-helpers.ts. Agent production source
   // must import them from @comis/core; the agent-local model/oauth-identity.ts
-  // and model/oauth-errors.ts files are deleted in the same commit.
+  // and model/oauth-errors.ts files do not exist.
   // ---------------------------------------------------------------------------
 
   it("does not import resolveCodexAuthIdentity, rewriteOAuthError, redactEmailForLog from its own model/oauth-* files", () => {
-    // The agent-local oauth-identity.ts + oauth-errors.ts source files are
-    // deleted in Phase 28 commit 5; any production source still importing
-    // from them via relative path is a regression that would also fail the
-    // build, but the source-grep catches it pre-build with a clearer message.
+    // The agent-local oauth-identity.ts + oauth-errors.ts source files do
+    // not exist; any production source still importing from them via
+    // relative path is a regression that would also fail the build, but
+    // the source-grep catches it pre-build with a clearer message.
     const result = findInSourceFiles({
       rootDir: SRC_ROOT,
       needle: /from\s+"\.\/(oauth-identity|oauth-errors)\.js"|from\s+"\.\.\/model\/(oauth-identity|oauth-errors)\.js"/,
@@ -469,8 +451,8 @@ describe("@comis/agent -- architecture invariants", () => {
     });
     expect(
       result.matches,
-      "@comis/agent production source must not import from ./oauth-identity.js or ./oauth-errors.js " +
-        "(these files were deleted in Phase 28 commit 5 / L4 closure). Import from \"@comis/core\" instead.",
+      "@comis/agent production source must not import from ./oauth-identity.js or ./oauth-errors.js. " +
+        "Import from \"@comis/core\" instead.",
     ).toEqual([]);
     expect(result.checkedFiles, "sanity: helper walked at least one agent/src file").toBeGreaterThan(0);
   });
@@ -489,26 +471,21 @@ describe("@comis/agent -- architecture invariants", () => {
     expect(
       result.matches.length,
       "@comis/agent production source must import oauth helpers (rewriteOAuthError | resolveCodexAuthIdentity | " +
-        "redactEmailForLog | resolveCodexAccessTokenExpiry) from @comis/core (post-L4-closure single source).",
+        "redactEmailForLog | resolveCodexAccessTokenExpiry) from @comis/core (single source).",
     ).toBeGreaterThan(0);
     expect(result.checkedFiles, "sanity: helper walked at least one agent/src file").toBeGreaterThan(0);
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 32 ORCH-EXT-09 audit (commit 10): agent/src/bootstrap/ +
-  // agent/src/workspace/ were audited for inbound-only helpers. NONE found.
-  // Both directories remain agent-owned because their contents are executor
-  // prompt assembly (system-prompt-assembler, section-extractor,
-  // workspace-loader) and workspace runtime management (workspace-manager,
-  // boot-file, data-env, heartbeat-file, onboarding-detector, templates,
-  // workspace-resolver, workspace-state) — not inbound message handling.
-  // The cross-package consumers (cli/src/commands/agent.ts for workspace
-  // lifecycle, daemon/src/wiring/setup-heartbeat.ts for heartbeat empty-
-  // detection) reach these surfaces through the @comis/agent barrel, never
-  // through cross-package direct paths into agent/src/bootstrap/ or
-  // agent/src/workspace/. The orchestrator package references "bootstrap"
-  // only via a deps callback (getBootstrapInfo) supplied externally — no
-  // module-import edge into agent/src/bootstrap/.
+  // Agent directory ownership: agent/src/bootstrap/ + agent/src/workspace/
+  // contain executor support (LLM system-prompt assembly + ~/.comis/
+  // filesystem-layout management), not inbound message handling. Cross-
+  // package consumers (cli/src/commands/agent.ts for workspace lifecycle,
+  // daemon/src/wiring/setup-heartbeat.ts for heartbeat empty-detection)
+  // reach these surfaces through the @comis/agent barrel, never through
+  // cross-package direct paths. The orchestrator package references
+  // "bootstrap" only via a deps callback (getBootstrapInfo) supplied
+  // externally — no module-import edge into agent/src/bootstrap/.
   //
   // The existsSync assertions below freeze that ownership at the source-
   // grep boundary: a future PR that accidentally moves either directory to
@@ -522,15 +499,13 @@ describe("@comis/agent -- architecture invariants", () => {
   // deletion is the regression class this test is designed to catch.
   // ---------------------------------------------------------------------------
 
-  describe("Phase 32 ORCH-EXT-09 -- agent directory ownership (OQ-5 audit)", () => {
+  describe("agent directory ownership", () => {
     it("bootstrap/ remains agent-owned (executor prompt assembly, not inbound)", () => {
       const bootstrapDir = resolve(SRC_ROOT, "bootstrap");
       expect(
         existsSync(bootstrapDir),
-        "packages/agent/src/bootstrap/ must exist (executor prompt assembly stays in agent per Phase 32 ORCH-EXT-09 audit). " +
-          "If a future PR moves this directory to @comis/orchestrator, that PR also needs to amend the Phase 32 design doc " +
-          "(RES-PIT-17 design-amendment-required) — the OQ-5 audit explicitly concluded that NO file in this directory is " +
-          "inbound-only; every file is LLM system-prompt assembly support.",
+        "packages/agent/src/bootstrap/ must exist (executor prompt assembly stays in agent). " +
+          "NO file in this directory is inbound-only; every file is LLM system-prompt assembly support.",
       ).toBe(true);
 
       // Sanity: the barrel + the load-bearing modules are present. Adding
@@ -545,7 +520,7 @@ describe("@comis/agent -- architecture invariants", () => {
       for (const f of expectedFiles) {
         expect(
           existsSync(resolve(bootstrapDir, f)),
-          `${f} must exist in packages/agent/src/bootstrap/ (agent-owned per Phase 32 ORCH-EXT-09).`,
+          `${f} must exist in packages/agent/src/bootstrap/ (agent-owned).`,
         ).toBe(true);
       }
     });
@@ -554,9 +529,9 @@ describe("@comis/agent -- architecture invariants", () => {
       const workspaceDir = resolve(SRC_ROOT, "workspace");
       expect(
         existsSync(workspaceDir),
-        "packages/agent/src/workspace/ must exist (executor workspace runtime stays in agent per Phase 32 ORCH-EXT-09 audit). " +
-          "Like bootstrap/, the OQ-5 audit concluded that this directory is filesystem-layout management for ~/.comis/, " +
-          "not inbound message handling. A move requires a Phase 32 design amendment first.",
+        "packages/agent/src/workspace/ must exist (executor workspace runtime stays in agent). " +
+          "Like bootstrap/, this directory is filesystem-layout management for ~/.comis/, " +
+          "not inbound message handling.",
       ).toBe(true);
 
       // Sanity: the barrel + the load-bearing modules are present.
@@ -569,28 +544,26 @@ describe("@comis/agent -- architecture invariants", () => {
       for (const f of expectedFiles) {
         expect(
           existsSync(resolve(workspaceDir, f)),
-          `${f} must exist in packages/agent/src/workspace/ (agent-owned per Phase 32 ORCH-EXT-09).`,
+          `${f} must exist in packages/agent/src/workspace/ (agent-owned).`,
         ).toBe(true);
       }
     });
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 32 commit 13 (ORCH-EXT-15 partial) + Phase 35 Plan 35-04 (D-01 #1):
-  // hard-forbid `proper-lockfile` from agent production source.
+  // Hard-forbid `proper-lockfile` from agent production source.
   //
-  // Wave 12 (32-12) cut every production import of proper-lockfile by
-  // injecting FileLockPort through deps. Wave 13 (32-13) moved proper-lockfile
-  // from agent's `dependencies` to `devDependencies`. Phase 35 Plan 35-04
-  // deletes the agent/src/index.ts:123 `export { createFileLock } from
-  // "@comis/scheduler"` re-export and severs the package-graph edge.
+  // Agent production source has zero imports of proper-lockfile; FileLockPort
+  // is injected through deps. proper-lockfile lives in `devDependencies`
+  // only. The `export { createFileLock } from "@comis/scheduler"` re-export
+  // was removed; the package-graph edge is severed.
   //
   // @comis/scheduler is NOT promoted to HARD_FORBIDDEN here because agent
   // production source still consumes `computeNextRunAtMs`,
   // `createSystemEventQueue`, and `WakeReasonKind` from scheduler at the
   // value-import level (`session-reset-policy.ts`, `executor/spawn/...`).
-  // The L6/L19 closure is specifically about the createFileLock re-export
-  // edge — that one is gone; the other scheduler-symbol edges are by-design.
+  // The lockfile-edge is the only one that needed cutting; the other
+  // scheduler-symbol edges are by-design.
   // ---------------------------------------------------------------------------
 
   const HARD_FORBIDDEN_PACKAGES = ["proper-lockfile"] as const;
@@ -613,13 +586,11 @@ describe("@comis/agent -- architecture invariants", () => {
           })),
           suggestedFix:
             "Consume the `FileLockPort` abstraction via deps injection instead. " +
-            "createFileLock() (from @comis/core, relocated in Phase 35 Plan 35-04 / " +
-            "D-01 #1) is the canonical adapter; the daemon composition root " +
-            "constructs one instance and threads it through OAuthTokenManagerDeps / " +
-            "OAuthCredentialStoreFileConfig / ComisSessionManagerDeps. See " +
-            "`packages/daemon/src/wiring/setup-agents.ts` for the wiring pattern.",
-          designRef:
-            "design §1.3 L24 (closed Phase 32 commit 13) / L6 + L19 (closed Phase 35 Plan 35-04) / FileLockPort injection",
+            "createFileLock() (from @comis/core) is the canonical adapter; the " +
+            "daemon composition root constructs one instance and threads it " +
+            "through OAuthTokenManagerDeps / OAuthCredentialStoreFileConfig / " +
+            "ComisSessionManagerDeps. See `packages/daemon/src/wiring/setup-agents.ts` " +
+            "for the wiring pattern.",
         }),
       ).toEqual([]);
       expect(
@@ -630,10 +601,10 @@ describe("@comis/agent -- architecture invariants", () => {
   }
 
   // ---------------------------------------------------------------------------
-  // Phase 41 Plan 41-06 Task 2 (TS-HYG-10) — SubAgentRunnerDeps audit-coverage.
-  // Mirrors packages/orchestrator/src/__tests__/architecture.test.ts:166-263.
-  // The audit doc at packages/agent/AUDIT.md must align row-for-row with
-  // SubAgentRunnerDeps. CI failure on field drift forces audit refresh.
+  // SubAgentRunnerDeps audit-coverage. Mirrors
+  // packages/orchestrator/src/__tests__/architecture.test.ts. The audit doc
+  // at packages/agent/AUDIT.md must align row-for-row with SubAgentRunnerDeps;
+  // CI failure on field drift forces audit refresh.
   // ---------------------------------------------------------------------------
 
   it("every SubAgentRunnerDeps field appears in the agent AUDIT.md audit table", () => {
@@ -736,42 +707,37 @@ describe("@comis/agent -- architecture invariants", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 42 EXEC-SPLIT-06 + EXEC-SPLIT-08 — closure-extraction + dependency-direction
-  // structural invariants for the Phase 42 pi-executor + prompt-runner splits.
+  // Closure-extraction + dependency-direction structural invariants for the
+  // pi-executor + prompt-runner splits.
   //
-  // RED phase (Wave 1): the target subdirectories DO NOT exist; both tests are
-  // vacuously satisfied (early-return on !existsSync(dir)). The dependency
-  // arrow inference + closure-extraction protocol are not yet exercised.
-  //
-  // GREEN trajectory: as Wave 4 (prompt-runner) + Wave 5 (pi-executor) split
-  // commits land, the directories come into existence and the assertions
-  // enforce their respective invariants.
+  // Until the target subdirectories exist on disk, both tests are vacuously
+  // satisfied (early-return on !existsSync(dir)). Once the directories
+  // materialize, the assertions enforce their respective invariants.
   // ---------------------------------------------------------------------------
 
   /**
-   * EXEC-SPLIT-06 — closure-extraction protocol enforcement.
+   * Closure-extraction protocol enforcement.
    *
    * Every helper extracted from createPiExecutor's closure body (under
    * pi-executor/) takes its state via an explicit first parameter named
    * `state` typed as a Readonly<...> shape — not via closure capture.
    * This catches silent state-drift regressions where a refactor moves
    * code out of the factory closure while leaving closure-captured
-   * variables intact (the highest-cost regression class for Phase 42
-   * Wave 5 — see RESEARCH §"Pattern 2: Closure-Extraction Protocol").
+   * variables intact.
    *
    * Exempt files: index.ts, pi-executor.ts (the factory itself);
    * before-tool-call-guard.ts and session-stats.ts (co-equal top-level
-   * functions that already take named typed parameters — these are
-   * mechanically extracted in plan 42-05, not reshaped per RESEARCH
-   * §"Anti-Patterns to Avoid"); types.ts (type-only collection file).
+   * functions that already take named typed parameters); types.ts
+   * (type-only collection file).
    *
-   * Pre-split (Wave 1) state: pi-executor/ directory does not exist;
-   * assertion is vacuously satisfied.
+   * If the pi-executor/ directory does not exist yet, the assertion is
+   * vacuously satisfied.
    */
-  it("pi-executor extracted helpers accept state by parameter (EXEC-SPLIT-06)", () => {
+  it("pi-executor extracted helpers accept state by parameter", () => {
     const piExecutorDir = resolve(SRC_ROOT, "executor/pi-executor");
     if (!existsSync(piExecutorDir)) {
-      // Vacuously satisfied pre-split — directory will materialize in Wave 5.
+      // Vacuously satisfied pre-split — directory will materialize when the
+      // pi-executor split lands.
       expect([]).toEqual([]);
       return;
     }
@@ -813,7 +779,7 @@ describe("@comis/agent -- architecture invariants", () => {
               file,
               export: name,
               reason:
-                "First parameter must be `state` (closure-extraction protocol EXEC-SPLIT-06)",
+                "First parameter must be `state` (closure-extraction protocol)",
             });
           }
         }
@@ -831,14 +797,12 @@ describe("@comis/agent -- architecture invariants", () => {
         })),
         suggestedFix:
           "Reshape the helper to `export function <name>(state: Readonly<PiExecutorState>, ...args)`. The state shape is defined alongside the factory; helpers should read from `state` instead of closure-capturing values.",
-        designRef:
-          "code-quality-plan §8.2.2 / Phase 42 / EXEC-SPLIT-06 (closure-extraction protocol)",
       }),
     ).toEqual([]);
   });
 
   /**
-   * EXEC-SPLIT-08 — prompt-runner dependency-direction.
+   * Prompt-runner dependency-direction.
    *
    * Modules extracted from executor-prompt-runner.ts into prompt-runner/
    * (other than prompt-runner.ts itself and index.ts) must not import
@@ -847,13 +811,14 @@ describe("@comis/agent -- architecture invariants", () => {
    * never call back into the orchestrator. A cycle here re-creates the
    * mega-function smell at the package boundary.
    *
-   * Pre-split (Wave 1) state: prompt-runner/ directory does not exist;
-   * assertion is vacuously satisfied.
+   * If the prompt-runner/ directory does not exist yet, the assertion is
+   * vacuously satisfied.
    */
-  it("prompt-runner leaf modules do not import from prompt-runner.ts (EXEC-SPLIT-08)", () => {
+  it("prompt-runner leaf modules do not import from prompt-runner.ts", () => {
     const promptRunnerDir = resolve(SRC_ROOT, "executor/prompt-runner");
     if (!existsSync(promptRunnerDir)) {
-      // Vacuously satisfied pre-split — directory will materialize in Wave 4.
+      // Vacuously satisfied pre-split — directory will materialize when the
+      // prompt-runner split lands.
       expect([]).toEqual([]);
       return;
     }
@@ -900,8 +865,6 @@ describe("@comis/agent -- architecture invariants", () => {
         })),
         suggestedFix:
           "Promote the shared symbol to prompt-runner-types.ts (type-only) or a sibling leaf module. Never let a leaf import back into the orchestrator file.",
-        designRef:
-          "code-quality-plan §8.2.3 / Phase 42 / EXEC-SPLIT-08 (dependency-direction)",
       }),
     ).toEqual([]);
   });

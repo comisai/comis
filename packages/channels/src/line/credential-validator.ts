@@ -30,7 +30,6 @@ interface LineValidateOpts {
   /**
    * Optional Messaging API base URL override. Production: undefined
    * (SDK uses api.line.me). E2E tests: 127.0.0.1 mock URL.
-   * Phase 40 / Plan 40-09 / COV-15.
    */
   apiRoot?: string;
 }
@@ -61,7 +60,7 @@ export async function validateLineCredentials(
 
   // E2E seam: when caller passes apiRoot, the LINE SDK client targets the
   // override URL. Production omits the baseURL key so the SDK uses its
-  // default. Phase 40 / Plan 40-09 / COV-15.
+  // default.
   const client = new messagingApi.MessagingApiClient({
     channelAccessToken: opts.channelAccessToken,
     ...(opts.apiRoot ? { baseURL: opts.apiRoot } : {}),

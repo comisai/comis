@@ -1,28 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `@comis/core/api-contracts` aggregator (barrel-only public surface per
- * CONTEXT D-05). External consumers always import from `"@comis/core"`.
+ * `@comis/core/api-contracts` aggregator (barrel-only public surface).
+ * External consumers always import from `"@comis/core"`.
  *
- * Phase 35 history:
- *   - Wave A (35-01..35-05): scaffolded the empty registry + 12-shape
- *     allowlist + INTERNAL_FIELD_NAMES + architecture tests.
- *   - Wave C (35-06..35-19): per-domain plans added each domain
- *     additively (one contract file per logical domain mirroring Phase
- *     34's `*ApiDeps` cluster slices). Plan 35-19 (Wave C closure)
- *     performs the BLOCKER 6 atomic edit of THIS file with all 14
- *     domain aggregator imports alphabetically sorted — replacing the
- *     cumulative additive list with a single deterministic registry.
- *     This prevents parallel-plan write conflicts AND makes git diffs
- *     for future contract authors deterministic (alphabetical position
- *     of the domain).
+ * One contract file per logical domain; this file aggregates the 14
+ * domain registries into a single deterministic registry. Imports are
+ * alphabetically sorted so future contract authors get deterministic
+ * git diffs (alphabetical position of the domain).
  *
  * Domain order: agents → auth → channels → config → daemon → mcp →
  * media → memory → observability → orchestrator → secrets → sessions →
- * tokens → workspace. Note: `mcp` < `media` alphabetically (verified).
+ * tokens → workspace. Note: `mcp` < `media` alphabetically.
  *
- * BLOCKER 9 (Wave C closure): the bidirectional 1:1 test in
+ * The bidirectional 1:1 test in
  * `test/architecture/api-contracts-bidirectional.test.ts` is the
- * AUTHORITATIVE COUNT — it walks every handler factory file and
+ * authoritative count — it walks every handler factory file and
  * asserts equality with `API_CONTRACTS.size`. No magic-number floor.
  *
  * @module
@@ -30,8 +22,7 @@
 import type { ZodTypeAny } from "zod";
 import type { ApiContract } from "./types.js";
 
-// 14 domain imports — alphabetical order for deterministic git diffs
-// (BLOCKER 6 fix; Wave C closure).
+// 14 domain imports — alphabetical order for deterministic git diffs.
 import { AGENTS_CONTRACTS } from "./agents.js";
 import { AUTH_CONTRACTS } from "./auth.js";
 import { CHANNELS_CONTRACTS } from "./channels.js";
@@ -48,10 +39,9 @@ import { TOKENS_CONTRACTS } from "./tokens.js";
 import { WORKSPACE_CONTRACTS } from "./workspace/index.js";
 
 /**
- * Ordered array — codegen-deterministic iteration. Alphabetical by domain
- * (BLOCKER 6 fix). The bidirectional 1:1 architecture test treats this as
- * an unordered set; Plan 35-20's collapse loop iterates it to derive
- * registerMethod calls.
+ * Ordered array — codegen-deterministic iteration. Alphabetical by domain.
+ * The bidirectional 1:1 architecture test treats this as an unordered
+ * set; the collapse loop iterates it to derive registerMethod calls.
  */
 export const API_CONTRACTS_ORDERED: readonly ApiContract<ZodTypeAny, ZodTypeAny>[] = [
   ...AGENTS_CONTRACTS,
@@ -74,7 +64,7 @@ export const API_CONTRACTS_ORDERED: readonly ApiContract<ZodTypeAny, ZodTypeAny>
 export const API_CONTRACTS: ReadonlyMap<string, ApiContract<ZodTypeAny, ZodTypeAny>> =
   new Map(API_CONTRACTS_ORDERED.map((c) => [c.method, c] as const));
 
-// Type + helper re-exports (barrel-only — D-05).
+// Type + helper re-exports (barrel-only).
 export type { ApiContract, Scope, MethodName } from "./types.js";
 export { defineContract } from "./types.js";
 export { INTERNAL_FIELD_NAMES, stripInternalFields } from "./internals.js";

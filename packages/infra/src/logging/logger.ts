@@ -113,8 +113,7 @@ export interface LoggerOptions {
    * test must observe that secret values truly do not appear in logs;
    * production must NEVER set this. An architecture test in
    * `test/architecture/source-rules.test.ts` enforces this contract by
-   * source-grep on `packages/*\/src/**\/*.ts` (RES-PIT-31-4 /
-   * MEM-CTX-PORTS-14).
+   * source-grep on `packages/*\/src/**\/*.ts`.
    *
    * Consumer: only `test/integration/secret-rpc-residency.test.ts` sets
    * this to `true` via the test daemon harness.
@@ -132,14 +131,14 @@ const AUDIT_LEVEL_VALUE = 35;
 /**
  * Comis logger type.
  *
- * Phase 28 commit 2 (CORE-PORTS-05): retyped to alias the Pino-free
- * structural contract in @comis/core. The Pino-backed runtime impl
- * returned by `createLogger()` (`pino.Logger<"audit"> & { audit: pino.LogFn }`)
- * remains assignable to this contract; the proof lives at
+ * Aliases the Pino-free structural contract in @comis/core. The Pino-backed
+ * runtime impl returned by `createLogger()`
+ * (`pino.Logger<"audit"> & { audit: pino.LogFn }`) remains assignable to
+ * this contract; the proof lives at
  * `packages/infra/src/logging/__tests__/logger-contract.type-check.ts` via
- * `expectTypeOf<PinoComisLogger>().toExtend<CoreComisLogger>()` (matcher
- * call uses `.toExtend(...)` per RES-STK-2 — `toMatchTypeOf` deprecated
- * since expect-type@1.2.0; expect-type@1.3.0 ships with Vitest 4.1.5).
+ * `expectTypeOf<PinoComisLogger>().toExtend<CoreComisLogger>()`. The matcher
+ * call uses `.toExtend(...)` — `toMatchTypeOf` was deprecated in
+ * expect-type@1.2.0; expect-type@1.3.0 ships with Vitest 4.1.5.
  */
 export type ComisLogger = CoreComisLogger;
 
@@ -171,13 +170,13 @@ export function createLogger(options: LoggerOptions): ComisLogger {
     customLevels: {
       audit: AUDIT_LEVEL_VALUE,
     },
-    // RES-PIT-31-4 / MEM-CTX-PORTS-14: when the residency-test harness
-    // sets `options.disableRedaction` (see LoggerOptions JSDoc above),
-    // emit `redact: undefined` so Pino emits raw payloads and the test
-    // can observe that secrets truly do not appear. Production must
-    // NEVER enable this flag; an architecture invariant in
-    // `test/architecture/source-rules.test.ts` source-greps the literal
-    // assignment form and fails the build on any production-source match.
+    // When the residency-test harness sets `options.disableRedaction`
+    // (see LoggerOptions JSDoc above), emit `redact: undefined` so Pino
+    // emits raw payloads and the test can observe that secrets truly do
+    // not appear. Production must NEVER enable this flag; an architecture
+    // invariant in `test/architecture/source-rules.test.ts` source-greps
+    // the literal assignment form and fails the build on any
+    // production-source match.
     redact: options.disableRedaction
       ? undefined
       : { paths: allRedactPaths, censor: "[REDACTED]" },

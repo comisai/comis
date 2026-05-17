@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Contract test (MEM-CTX-PORTS-06): memory's `createContextStore` runtime
- * implementation structurally satisfies the `ContextStorePort` contract
- * declared in `@comis/core/src/ports/context-store.ts`, AND the row shapes
- * returned by the impl match the `Ctx*Row` DTOs that now live in
- * `@comis/core/src/ports/context-store-types.ts` (Phase 31 commit 1 /
- * MEM-CTX-PORTS-03).
+ * Contract test: memory's `createContextStore` runtime implementation
+ * structurally satisfies the `ContextStorePort` contract declared in
+ * `@comis/core/src/ports/context-store.ts`, AND the row shapes returned by
+ * the impl match the `Ctx*Row` DTOs in
+ * `@comis/core/src/ports/context-store-types.ts`.
  *
- * Mirrors the Phase 28 analog pattern at
+ * Mirrors the analog pattern at
  * `packages/infra/src/logging/__tests__/logger-contract.test.ts`. Uses
- * `.toExtend` per RES-STK-2 (`toMatchTypeOf` is deprecated since
- * expect-type@1.2.0).
+ * `.toExtend` because `toMatchTypeOf` is deprecated since
+ * expect-type@1.2.0.
  *
  * The round-trip fixture body copies the canonical
  * `createConversation` + `insertMessage` pattern from
@@ -30,7 +29,7 @@ import { beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
 import { createContextStore } from "../context-store.js";
 
-describe("createContextStore — ContextStorePort contract (MEM-CTX-PORTS-06)", () => {
+describe("createContextStore — ContextStorePort contract", () => {
   let db: Database.Database;
   let store: ContextStorePort;
 

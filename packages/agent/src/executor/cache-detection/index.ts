@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-break detection module (Phase 42 split per EXEC-SPLIT-09).
+ * Cache-break detection module.
  *
  * Barrel re-export of the canonical public API of the former
  * cache-break-detection.ts monolith. No aliases — every export keeps

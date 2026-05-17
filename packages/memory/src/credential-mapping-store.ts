@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: validation throw inside tryCatch() boundary wrapper (CredentialMappingPort.set); SQLite-backed adapter rethrows are caught and converted to Result by the port-internal tryCatch + caller via daemon RPC handler @allow-throw boundary (Decision 2 transitive) (Phase 41 TS-HYG-07).
+// @allow-throw: validation throw inside tryCatch() boundary wrapper (CredentialMappingPort.set); SQLite-backed adapter rethrows are caught and converted to Result by the port-internal tryCatch + caller via daemon RPC handler @allow-throw boundary.
 /**
  * CredentialMappingStore — CredentialMappingPort implementation with SQLite storage.
  *
@@ -20,7 +20,7 @@ import { CredentialMappingRowSchema } from "./row-schemas.js";
 
 /**
  * Row shape returned by SELECT queries on the credential_mappings table.
- * SSOT is `CredentialMappingRowSchema` in row-schemas.ts (Phase 41 TS-HYG-03).
+ * SSOT is `CredentialMappingRowSchema` in row-schemas.ts.
  */
 type CredentialMappingRow = z.infer<typeof CredentialMappingRowSchema>;
 const credentialMappingMapper = createRowMapper(CredentialMappingRowSchema);

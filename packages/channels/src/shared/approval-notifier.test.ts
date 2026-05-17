@@ -9,12 +9,11 @@ import { ok } from "@comis/shared";
 import { createApprovalNotifier } from "./approval-notifier.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
-// Phase 30 plan 04: vi.mock("./deliver-to-channel.js", ...) replaced with an
-// injected fake DeliveryService (research §H.2 Option 2). The fake's
-// deliverToChannel delegates to adapter.sendMessage so existing assertions on
+// Uses an injected fake DeliveryService instead of vi.mock("./deliver-to-channel.js", ...).
+// The fake's deliverToChannel delegates to adapter.sendMessage so existing assertions on
 // adapter.sendMessage still work (avoids formatForChannel HTML conversion).
-// This aligns the test with the new production DI shape and removes the
-// implicit module-graph coupling that vi.mock introduced.
+// Aligns the test with the production DI shape and removes the implicit module-graph
+// coupling that vi.mock introduced.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake
 function makeFakeDeliveryService(): DeliveryService {
   return {

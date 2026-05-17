@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Heartbeat RPC handler module.
  * Factory-pattern heartbeat handlers returning Record<string, RpcHandler>:
@@ -8,13 +8,13 @@
  *   heartbeat.update  — Patch heartbeat config with deep-merge and YAML persistence
  *   heartbeat.trigger — Invoke immediate heartbeat execution for an agent
  *
- * Phase 35 Wave C plan 35-18: refactored to computed-property keys
+ * Handlers are registered via computed-property keys
  * `[<Contract>.method]:` so the bidirectional 1:1 architecture test
  * resolves them to the registry. Per-method pipeline: bespoke pre-Zod
  * guards FIRST (using rawParams reads — preserves user-friendly error
  * messages matching the existing handler-test assertions) →
- * stripInternalFields → request.parse → existing business logic
- * UNCHANGED → dev-mode response.parse (D-10).
+ * stripInternalFields → request.parse → existing business logic →
+ * dev-mode response.parse.
  *
  * @module
  */
@@ -34,7 +34,7 @@ import { persistToConfig } from "./shared/persist-to-config.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**
@@ -48,10 +48,8 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
-// Single source of truth: OrchestratorApiDeps (shared with cron, graph,
-// subagent handlers). DAEMON-API-03 Option A retarget — handler bodies and
-// call sites unchanged.
+// Re-aliased from the cluster slice in api/types.ts. Single source of
+// truth: OrchestratorApiDeps (shared with cron, graph, subagent handlers).
 import type { OrchestratorApiDeps as HeartbeatHandlerDeps } from "./types.js";
 export type { HeartbeatHandlerDeps };
 
@@ -114,7 +112,7 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
     },
 
     // -------------------------------------------------------------------------
-    // heartbeat.get -- read per-agent and effective config
+    // heartbeat.get — read per-agent and effective config
     // -------------------------------------------------------------------------
     [HeartbeatGetContract.method]: async (rawParams) => {
       // Bespoke pre-Zod validation FIRST.

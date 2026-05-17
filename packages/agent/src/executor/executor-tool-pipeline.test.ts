@@ -10,10 +10,9 @@
  * `{ tools, ... } -> ToolDefinition[]`, so the tests construct minimal
  * stand-ins (no SDK init) and assert on the returned shape.
  *
- * Use-case design (Phase 40 / Phase C §3.3 / COV-10): every `it("...")`
- * description names a use case ≥20 chars ending in a recognizable shape
- * ("returns X when Y", "rejects Z when W", "<noun phrase>" describing
- * observable behavior).
+ * Use-case design: every `it("...")` description names a use case ≥20
+ * chars ending in a recognizable shape ("returns X when Y",
+ * "rejects Z when W", "<noun phrase>" describing observable behavior).
  *
  * @module
  */
@@ -35,7 +34,7 @@ import {
 } from "./executor-session-state.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
-// Module-level clock for executor-session-state's bounded session map (PORTS-11).
+// Module-level clock for executor-session-state's bounded session map.
 setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
 
 // ---------------------------------------------------------------------------

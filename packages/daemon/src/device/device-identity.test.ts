@@ -140,10 +140,10 @@ describe("device-identity", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Plan 40-14 — loadOrCreateDeviceIdentity error path branches
+  // loadOrCreateDeviceIdentity error path branches
   // -----------------------------------------------------------------------
 
-  describe("loadOrCreateDeviceIdentity error paths (Plan 40-14)", () => {
+  describe("loadOrCreateDeviceIdentity error paths", () => {
     it("returns err Result when existing device.json contains malformed JSON content on disk", () => {
       const stateDir = makeTmpDir();
       const identityDir = stateDir + "/identity";

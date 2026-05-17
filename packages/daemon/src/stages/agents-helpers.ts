@@ -2,16 +2,15 @@
 /**
  * Agents-stage helpers for daemon.ts's stageAgents.
  *
- * Block-moved verbatim from daemon.ts in Phase 43 Wave 8c (FILE-SPLIT-06):
- *   - restoreApprovalState (daemon.ts:819-865)
- *   - setupMcpManager (daemon.ts:874-890)
- *   - wirePostAgentsCleanup (daemon.ts:899-930)
- *   - buildAuditBundle (daemon.ts:937-956)
- *   - buildDeferredCronWakeCallback (daemon.ts:974-989)
+ * Exposes:
+ *   - restoreApprovalState
+ *   - setupMcpManager
+ *   - wirePostAgentsCleanup
+ *   - buildAuditBundle
+ *   - buildDeferredCronWakeCallback
  *
- * Each helper is a top-level function (not a closure) — mechanical block-move
- * is safe per RESEARCH §"No-cycles invariant". Consumed by stageAgents in
- * daemon.ts.
+ * Each helper is a top-level function (not a closure). Consumed by
+ * stageAgents in daemon.ts.
  *
  * @module
  */
@@ -40,11 +39,10 @@ import { setupMcp, type setupLogging } from "../wiring/index.js";
 /**
  * Restore approval pending requests and cache from disk at startup.
  *
- * Extracted from the original daemon.ts approval-restore block (39L) to keep
- * `stageAgents` under the DAEMON-API-06 ≤200L cap. Reads
- * `<dataDir>/restart-approvals.json` and `<dataDir>/restart-approval-cache.json`
- * (written by graceful shutdown), restores into the in-memory ApprovalGate,
- * then deletes the files. Best-effort on JSON parse failure: log warn + unlink.
+ * Reads `<dataDir>/restart-approvals.json` and
+ * `<dataDir>/restart-approval-cache.json` (written by graceful shutdown),
+ * restores into the in-memory ApprovalGate, then deletes the files.
+ * Best-effort on JSON parse failure: log warn + unlink.
  */
 export function restoreApprovalState(deps: {
   approvalGate: ReturnType<typeof createApprovalGate>;
@@ -95,8 +93,7 @@ export function restoreApprovalState(deps: {
 }
 
 /**
- * Construct the daemon-global MCP client manager. Hoisted to its own helper
- * to fit stageAgents under DAEMON-API-06 ≤200L. The manager is a pure
+ * Construct the daemon-global MCP client manager. The manager is a pure
  * in-memory state holder (no I/O), so construction is safe before any
  * server-connect attempts and BEFORE setupAgents (per-agent
  * ToolCapabilityPort adapter construction closes over the manager).
@@ -123,8 +120,6 @@ export async function setupMcpManager(deps: {
  * Wire post-setupAgents cleanup listeners: session:expired releases
  * sessionTrackerRegistry, Gemini cache disposal, and MCP disconnect cleanup.
  * Schedules an orphan-cache cleanup pass for any stale comis:* caches.
- *
- * Extracted from stageAgents to fit the DAEMON-API-06 ≤200L cap.
  */
 export function wirePostAgentsCleanup(deps: {
   eventBus: Awaited<ReturnType<typeof bootstrap>> extends import("@comis/shared").Result<infer C, unknown> ? C extends { eventBus: infer EB } ? EB : never : never;
@@ -161,8 +156,7 @@ export function wirePostAgentsCleanup(deps: {
 
 /**
  * Build the audit aggregator + onSuspiciousContent reporter pair used by
- * stageAgents and threaded into setupMedia. Extracted to keep stageAgents
- * under the DAEMON-API-06 ≤200L cap.
+ * stageAgents and threaded into setupMedia.
  */
 export function buildAuditBundle(deps: {
   eventBus: Awaited<ReturnType<typeof bootstrap>> extends import("@comis/shared").Result<infer C, unknown> ? C extends { eventBus: infer EB } ? EB : never : never;
@@ -192,14 +186,12 @@ export function buildAuditBundle(deps: {
  * the wake. If a cron fires in the gap between stageAgents returning and
  * stageChannels populating the ref (typically milliseconds, but a heavy
  * startup may stretch it to seconds), surface the drop with a debug log
- * line so the silent miss is visible (WR-07).
+ * line so the silent miss is visible.
  *
  * Observability-only: we intentionally do NOT buffer-then-drain (the
  * precedent set by channelPluginsRef / bgNotifyRef etc.). Cron wakes are
  * timer-driven; replaying a backlog could cause a wake storm if N timers
  * fired during a slow startup.
- *
- * Extracted from stageAgents to keep it under the DAEMON-API-06 ≤200L cap.
  */
 export function buildDeferredCronWakeCallback(
   cronWakeCallbackRef: { ref?: (reason: string) => void },

@@ -59,14 +59,13 @@ export interface SessionResetSchedulerDeps {
   /**
    * Daily-reset cron computation, injected by daemon composition. The canonical
    * implementation in `@comis/scheduler` (`computeNextRunAtMs` over a
-   * `0 H * * *` cron schedule) is wired in `setup-schedulers.ts`. Phase 32
-   * commit 12 (ORCH-EXT-15) introduced this dep so agent no longer imports
-   * `@comis/scheduler` directly.
+   * `0 H * * *` cron schedule) is wired in `setup-schedulers.ts`. Injected as
+   * a dep so agent does not import `@comis/scheduler` directly.
    */
   computeDailyResetNextRun: ComputeDailyResetNextRun;
   /** Injectable clock for testing. Defaults to Date.now. */
   nowMs?: () => number;
-  /** Timer scheduling (Phase 39 PORTS-13). Sweep-interval uses .unref() so it does not block shutdown. */
+  /** Timer scheduling. Sweep-interval uses .unref() so it does not block shutdown. */
   timers: TimerPort;
 }
 
@@ -133,9 +132,8 @@ export function resolvePolicy(
  * implementation: `computeNextRunAtMs` from `@comis/scheduler`). If the next
  * occurrence after updatedAt is `<= nowMs`, the session should be reset.
  *
- * Phase 32 commit 12 (ORCH-EXT-15) flipped this from a direct
- * `@comis/scheduler` import to a deps callback so agent no longer reaches
- * into scheduler at the import boundary.
+ * Injected as a deps callback so agent does not reach into scheduler at the
+ * import boundary.
  */
 export function isDailyResetDue(
   updatedAt: number,
@@ -292,7 +290,7 @@ export function createSessionResetScheduler(
       const config = deps.getConfig();
       const intervalMs = config?.sweepIntervalMs ?? 300_000;
       timer = deps.timers.setInterval(sweep, intervalMs);
-      timer.unref();   // PRESERVED — TimerHandle has .unref() per PORTS-04
+      timer.unref();   // Sweep timer does not block shutdown
     },
 
     stop(): void {

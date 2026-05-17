@@ -22,9 +22,8 @@ const __dirname = dirname(__filename);
 const packagesDir = resolve(__dirname, "../../packages");
 
 // Dynamic imports from dist to work with integration test alias resolution.
-// Phase 33: dist paths retargeted from `skills/dist/{manifest,prompt}/` to
-// `skills/dist/skills/{manifest,prompt}/` per SKILLS-SPLIT-02 (the source
-// tree was regrouped under `src/skills/`).
+// Source tree is regrouped under `src/skills/`, so dist paths are
+// `skills/dist/skills/{manifest,prompt}/`.
 const { SkillManifestSchema, SkillNameSchema, ComisNamespaceSchema } = await import(
   resolve(packagesDir, "skills/dist/skills/manifest/schema.js")
 );

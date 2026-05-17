@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: setup-agents registry guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
+// @allow-throw: setup-agents registry guards; consumed at daemon.ts bootstrap catch boundary.
 /**
  * Top-level agents-subsystem orchestrator: builds the `AgentsResult` registry
  * by iterating over configured agents and delegating to setupSingleAgent.
@@ -7,7 +7,6 @@
  * store, provider health monitor, last-known-model tracker, file lock,
  * encrypted OAuth profile store, periodic lock-cleanup timer).
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-agents.ts.
  * Imports `setupSingleAgent` + `SingleAgentDeps` from ./setup-agents-runtime.js
  * and `resolveSubAgentToolNames` from ./setup-agents-tooling.js.
  *
@@ -18,10 +17,9 @@ import { safePath, type AppContainer, type InjectionRateLimiter, type OAuthCrede
 import type { ComisLogger } from "@comis/infra";
 import type Database from "better-sqlite3";
 import type { SqliteMemoryAdapter, createSessionStore } from "@comis/memory";
-// Phase 31 commit 4 (MEM-CTX-PORTS-07): the encrypted-store factory value-import
-// moved from packages/agent/src/model/oauth-credential-store-selector.ts to here.
-// Daemon already owns secretsDb + secretsCrypto, so constructing the store at
-// this composition site removes agent's last production @comis/memory import.
+// The encrypted-store factory is value-imported here because daemon owns
+// secretsDb + secretsCrypto. Constructing the store at this composition
+// site keeps agent free of any production @comis/memory import.
 import { createOAuthProfileStoreEncrypted } from "@comis/memory";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync } from "node:fs";
@@ -40,14 +38,13 @@ import {
   type ActiveRunRegistry,
   type ProviderHealthMonitor,
 } from "@comis/agent";
-// Phase 35 Plan 35-04 (D-01): symbols relocated from @comis/agent to
-// @comis/core. The daemon composition root now imports them directly via
-// @comis/core; agent re-exports are deleted in the same plan.
+// Symbols imported directly from @comis/core — the daemon composition
+// root no longer goes through @comis/agent re-exports.
 import {
   selectOAuthCredentialStore,
-  // Canonical FileLockPort adapter. Relocated from @comis/scheduler in Plan
-  // 35-02; consumed here as the production createFileLock() target so the
-  // daemon no longer reaches into @comis/scheduler for it (D-01 #1).
+  // Canonical FileLockPort adapter consumed here as the production
+  // createFileLock() target so the daemon no longer reaches into
+  // @comis/scheduler for it.
   createFileLock,
 } from "@comis/core";
 import {
@@ -110,7 +107,7 @@ export interface AgentsResult {
    * skillRegistries.
    */
   toolCapabilityPorts: Map<string, ToolCapabilityPort>;
-  /** Periodic lock cleanup timer (cleared on shutdown). Phase 39 PORTS-13: TimerHandle. */
+  /** Periodic lock cleanup timer (cleared on shutdown). */
   lockCleanupTimer: import("@comis/core").TimerHandle;
   /** Shared single-agent dependencies for hot-add closure capture. */
   singleAgentDeps: SingleAgentDeps;
@@ -189,11 +186,11 @@ export async function setupAgents(deps: {
    * daemon.ts threads it in after running setupMcp before setupAgents.
    */
   mcpClientManager: McpClientManager;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
-  /** Environment-variable reads (Phase 39 PORTS-12). */
+  /** Environment-variable reads. */
   env: import("@comis/core").EnvPort;
-  /** Timer scheduling (Phase 39 PORTS-13). */
+  /** Timer scheduling. */
   timers: import("@comis/core").TimerPort;
 }): Promise<AgentsResult> {
   const { container, memoryAdapter, sessionStore, agentLogger } = deps;
@@ -299,9 +296,8 @@ export async function setupAgents(deps: {
       ? container.config.dataDir
       : safePath(homedir(), ".comis");
 
-  // Phase 31 commit 4 (MEM-CTX-PORTS-07): construct the encrypted-mode store
-  // HERE (daemon already owns secretsDb + secretsCrypto). The agent selector
-  // no longer reaches into @comis/memory.
+  // Construct the encrypted-mode store HERE — daemon already owns secretsDb
+  // + secretsCrypto, so the agent selector does not reach into @comis/memory.
   //
   // EXPLICIT GUARDS (NOT non-null assertions): if storage is "encrypted" but
   // either secretsDb or secretsCrypto is unset, throw a clear bootstrap error
@@ -321,10 +317,10 @@ export async function setupAgents(deps: {
     encryptedStore = createOAuthProfileStoreEncrypted(deps.secretsDb, deps.secretsCrypto);
   }
 
-  // Phase 32 commit 12 (ORCH-EXT-15): construct the canonical FileLockPort
-  // adapter ONCE here. Reused for OAuth store/manager locking AND session-
-  // write-lock + stale-lock cleanup across every per-agent setup. The port
-  // is stateless (per `createFileLock` semantics in @comis/scheduler), so a
+  // Construct the canonical FileLockPort adapter ONCE here. Reused for
+  // OAuth store/manager locking AND session-write-lock + stale-lock
+  // cleanup across every per-agent setup. The port is stateless (per
+  // `createFileLock` semantics in @comis/scheduler), so a
   // single shared instance is correct.
   const fileLock = createFileLock();
 
@@ -373,7 +369,7 @@ export async function setupAgents(deps: {
     mcpClientManager: deps.mcpClientManager,
     // Canonical FileLockPort adapter — see comment at construction site.
     fileLock,
-    // Phase 39 PORTS-11/12/13: runtime adapter ports.
+    // Runtime adapter ports.
     clock: deps.clock,
     env: deps.env,
     timers: deps.timers,

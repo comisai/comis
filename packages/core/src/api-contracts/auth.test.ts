@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the auth-domain Wave C contracts.
+ * Per-contract test for the auth-domain contracts.
  *
- * Plan 35-07 (Wave C domain #2). Mirrors the structure of
- * `packages/core/src/api-contracts/daemon.test.ts` (Plan 35-06's
- * template).
+ * Mirrors the structure of
+ * `packages/core/src/api-contracts/daemon.test.ts`.
  *
  * @module
  */

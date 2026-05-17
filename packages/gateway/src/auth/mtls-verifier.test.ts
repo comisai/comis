@@ -140,7 +140,7 @@ describe("validateCertificates", () => {
   });
 
   it("returns error when certificate has PEM marker but corrupt body fails X509 parse", () => {
-    // Plan 40-14 — exercise the X509Certificate parse-failure branch in
+    // Exercise the X509Certificate parse-failure branch in
     // validateCertificates. The file passes the "-----BEGIN " sniff guard
     // (line 40) but fails the new X509Certificate(pem) constructor at
     // line 54, routing into the catch on line 59.
@@ -261,7 +261,7 @@ describe("extractClientCN", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Plan 40-14 — extra extractClientCN + parse-error branch coverage
+  // Extra extractClientCN + parse-error branch coverage
   // -------------------------------------------------------------------------
 
   it("returns first CN entry when subject.CN is an array of multiple values", () => {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
- * Session read RPC handlers (Phase 43 split per FILE-SPLIT-04).
+ * Session read RPC handlers.
  *
  * Handlers covering single-session reads + agent/run inspection:
  *   - session.status: current session counters + agent config

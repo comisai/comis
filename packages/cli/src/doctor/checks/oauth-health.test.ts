@@ -33,10 +33,6 @@ vi.mock("node:fs/promises", async () => {
   return { ...actual, stat: vi.fn(), readFile: vi.fn() };
 });
 
-// @comis/core — selectOAuthCredentialStore + runOAuthTlsPreflight relocated
-// from @comis/agent in Phase 35 Plan 35-04 per D-01 #2 + drift recovery.
-// (decodeCodexJwtPayload, redactEmailForLog, and rewriteOAuthError moved to
-// @comis/core in Phase 28 commit 5 / L4 closure.)
 vi.mock("@comis/core", async () => {
   const actual =
     await vi.importActual<typeof import("@comis/core")>("@comis/core");

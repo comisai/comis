@@ -2,7 +2,6 @@
 /**
  * Cross-session messaging composition root.
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-cross-session.ts.
  * Hosts the `setupCrossSession` orchestrator + `CrossSessionResult` type +
  * the cross-session sender / announcement batcher / dead-letter queue /
  * result condenser / narrative caster / lifecycle hooks / sub-agent runner
@@ -91,9 +90,9 @@ export function setupCrossSession(deps: {
   deliveryService: DeliveryService;
   /** Canonical FileLockPort adapter, threaded into ephemeral session adapters. */
   fileLock: FileLockPort;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
-  /** Timer scheduling (Phase 39 PORTS-13). */
+  /** Timer scheduling. */
   timers: TimerPort;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;

@@ -1,23 +1,17 @@
-# ChannelManagerDeps Audit (Phase 32 — FINAL)
+# ChannelManagerDeps Audit
 
-**Generated:** 2026-05-11 (final at commit 14)
-**Status:** FINAL — supersedes the seed audit committed at commit 2 (and refreshed at commit 4 for the cross-package move).
+**Generated:** 2026-05-11
 **Interface source:** `packages/orchestrator/src/channel-manager.ts:83–229` (51-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-channels.ts:739` (single site — `createChannelManager({`)
 **Field count:** 51 (7 required + 44 optional + 0 stale-fallback)
-**OQ-1 resolution:** Option B (this path — co-located with the orchestrator package). `.planning/` policy conflict avoided; `files: ["dist"]` in `packages/orchestrator/package.json` excludes this file from the npm tarball.
 
-## Audit Result (vs. Seed)
+This file is co-located with the orchestrator package. `files: ["dist"]` in `packages/orchestrator/package.json` excludes it from the npm tarball.
 
-The seed audit at commit 2 enumerated 51 fields (51 at the commit-3 refresh after `processInboundMessage` was added). The final audit confirms the same 51-field shape: empirically, every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path that fires in that omission. The RESEARCH §A2 hypothesis of a 49 → ~25 shrink was an over-estimate — none of the 14 fields that the daemon never wires are dead code. Each has at least one `if (deps.X)` or `deps.X?.method()` site in the orchestrator production source whose absent branch IS the production behavior.
+## Audit Result
 
-Therefore the final audit's structural change vs. the seed is limited to:
+Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path that fires in that omission. None of the 14 fields that the daemon never wires are dead code; each has at least one `if (deps.X)` or `deps.X?.method()` site in the orchestrator production source whose absent branch IS the production behavior.
 
-1. Every seed-audit placeholder cell (10 fields previously marked as deferred) replaced with the real absent-mode prose.
-2. Header retitled `SEED` → `FINAL`.
-3. Evidence-link line numbers refreshed to the current post-Wave-4 file layout (the seed's numbers tracked the original pre-move file).
-
-The architecture-test invariants enforced by `packages/orchestrator/src/__tests__/architecture.test.ts` (activated at commit 4) hold unchanged: bidirectional set equality between this table and `ChannelManagerDeps`; every classification is `required` or `optional`; classification matches the interface's `?` marker; every row has a non-empty evidence-link cell.
+The architecture-test invariants enforced by `packages/orchestrator/src/__tests__/architecture.test.ts` hold: bidirectional set equality between this table and `ChannelManagerDeps`; every classification is `required` or `optional`; classification matches the interface's `?` marker; every row has a non-empty evidence-link cell.
 
 ## Field Classification
 
@@ -77,7 +71,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | inFlightSends | optional | factory creates its own per-instance Set (production path) | packages/orchestrator/src/channel-manager.ts:226 |
 | getAllowFrom | optional | no allowFrom sender filter (all senders allowed) | packages/orchestrator/src/channel-manager.ts:228 |
 
-## Removed Fields (stale-fallback — deleted at commit 14)
+## Removed Fields (stale-fallback)
 
 **None.** Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path. The audit verified this empirically by counting `deps.<field>` references across `packages/orchestrator/src/{channel-manager.ts, inbound/*.ts, execution/*.ts}` for each of the 14 candidate fields that the daemon never wires; every candidate had at least one production reference whose absent-branch IS the production behavior. Examples:
 
@@ -87,17 +81,14 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 - `inFlightSends`: 3 usages; the interface JSDoc documents this as a test-only injection point; the factory creates its own per-instance Set when absent (the production path, `channel-manager.ts:273`).
 - `ackReactionConfig`, `channelRegistry`, `followupConfig`, `followupTrigger`, `getDmScopeConfig`, `greetingGenerator`, `identityResolver`, `priorityScheduler`, `sessionLabelStore`: all follow the same pattern — declared optional, daemon does not wire, absent-mode is the production code path.
 
-The RESEARCH §A2 hypothesis of a 49 → ~25 shrink mis-estimated the number of stale absent-mode branches. The empirical fanout-of-1 verification rules them all in as production behavior.
-
 ## Summary
 
-- **Pre-audit count:** 51 (seed at commits 2/3; refreshed at commit 4)
-- **Final count:** 51 (7 required + 44 optional)
+- **Total fields:** 51 (7 required + 44 optional)
 - **Removed (stale-fallback):** 0
-- **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
+- **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value)
 
 ## Notes
 
-- This is the FINAL audit. Every `when-absent` cell has a real description; no deferred placeholder cells remain.
+- Every `when-absent` cell has a real description; no deferred placeholder cells remain.
 - The CI architecture test in `packages/orchestrator/src/__tests__/architecture.test.ts` parses this file row-by-row and asserts (1) bidirectional set equality between audit fields and `ChannelManagerDeps` fields, (2) every classification cell is `required` or `optional` (never the third "stale-fallback" value), (3) classification matches the interface's optional/required marker, (4) every row has a non-empty `evidence-link`. The parser depends on the table format above — DO NOT introduce nested tables, multi-line cells, or column reordering.
-- Evidence-link line numbers were refreshed at commit 14 to point at the current `packages/orchestrator/src/channel-manager.ts` layout. The audit-coverage test does not parse the line-number portion of each evidence link, so future incidental shifts (e.g., a comment edit on line 90) do not invalidate the audit until a field is added or removed; the table covers schema, not exact line addresses.
+- The audit-coverage test does not parse the line-number portion of each evidence link, so future incidental shifts (e.g., a comment edit on line 90) do not invalidate the audit until a field is added or removed; the table covers schema, not exact line addresses.

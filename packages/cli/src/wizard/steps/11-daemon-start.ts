@@ -26,9 +26,6 @@ import {
 } from "node:fs";
 import * as os from "node:os";
 import { promisify } from "node:util";
-// Phase 35 Plan 35-05 (WEB-CONTRACTS-03 / L12 closure): isDocker relocated
-// from @comis/infra to @comis/core (Plan 35-02 / WEB-CONTRACTS-05). CLI no
-// longer imports from @comis/infra.
 import { isDocker, safePath, systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 const exec = promisify(execFile);

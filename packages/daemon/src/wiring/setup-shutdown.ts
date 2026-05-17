@@ -90,7 +90,7 @@ export interface ShutdownDeps {
   auditAggregator?: { destroy: () => void };
   /** Injection rate limiter for clearing timers on shutdown (optional). */
   injectionRateLimiter?: { destroy: () => void };
-  /** Periodic lock cleanup timer (from setupAgents). Phase 39 PORTS-13: TimerHandle. */
+  /** Periodic lock cleanup timer (from setupAgents). */
   lockCleanupTimer?: import("@comis/core").TimerHandle;
   /** Data directory for restart continuation file (optional). */
   dataDir?: string;
@@ -113,7 +113,7 @@ export interface ShutdownResult {
 }
 
 // ---------------------------------------------------------------------------
-// Per-step timeout helper (quick-164)
+// Per-step timeout helper
 // ---------------------------------------------------------------------------
 
 /** Per-step timeout budget (5s). The outer 30s hard timeout in graceful-shutdown.ts remains unchanged. */

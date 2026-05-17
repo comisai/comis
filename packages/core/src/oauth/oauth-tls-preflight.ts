@@ -1,7 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-// Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 (drift
-// recovery; pushes the last CLI → @comis/agent import site through @comis/core
-// so packages/cli/src/ ends at zero @comis/agent imports — closes L17).
 /**
  * OAuth TLS preflight for OpenAI Codex `auth.openai.com`.
  *

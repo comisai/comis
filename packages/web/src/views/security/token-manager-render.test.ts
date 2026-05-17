@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Render-branch tests for IcTokenManager (Phase 40 Plan 40-15 gap-closure).
+ * Render-branch tests for IcTokenManager.
  *
- * token-manager.ts at baseline reports 32.81% / 29.16% / 33.33% / 32.72%
- * (lines/branches/functions/statements). This file covers:
+ * Covers:
  *   - render() always-rendered grid-table header + token row iteration
  *   - _newSecretDisplay banner conditional render
  *   - 5 scope checkbox bindings (.checked binding from _newTokenScopes.includes)

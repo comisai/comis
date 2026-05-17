@@ -10,8 +10,6 @@
  * Sanctioned runtime root — process.env access here is exempt from
  * the globals architecture rule by classifier.
  *
- * Phase 39, PORTS-06.
- *
  * @module
  */
 import type { EnvPort } from "@comis/core";

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Verbose-failure rendering helper for Phase 27+ architecture tests.
+ * Verbose-failure rendering helper for architecture tests.
  *
  * Every architecture rule's `expect(...).toEqual([])` carries a custom
  * message produced by `formatViolations()`. The output includes
  * `file:line[:column]`, optional snippet context, suggested fix, and a
  * design-doc citation -- making the architecture suite's failure
- * messages self-documenting (CONTEXT.md D-02).
+ * messages self-documenting.
  *
  * Pattern analog: `log-validator.ts:formatReport` (multi-line breakdown
  * keyed off the violation list).
@@ -30,7 +30,7 @@ export interface ViolationCitation {
 /**
  * Inputs for `formatViolations()`. `description` states the broken
  * invariant in one sentence. `suggestedFix` is operator-actionable.
- * `designRef` cites the §1.3 design-doc anchor (e.g. "design §5.2 / L17").
+ * `designRef` cites the design-doc anchor for the invariant.
  * `allowlistRef` is omitted when no allowlist exception is applicable.
  */
 export interface ArchitectureFailureContext {

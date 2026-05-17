@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: @allow-throw boundary: web API client dev-time validation guards; consumed by Lit element error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception (Phase 41 TS-HYG-07).
+// @allow-throw: @allow-throw boundary: web API client dev-time validation guards; consumed by Lit element error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception.
 /**
  * HTTP/SSE client for the Comis gateway REST API.
  *
@@ -129,7 +129,7 @@ export interface ApiClient {
 }
 
 /**
- * Dev-mode validation gate (Phase 35 D-10 spirit, applied to the browser).
+ * Dev-mode validation gate, applied to the browser.
  *
  * In Vite dev/build, `import.meta.env.DEV` is `true` for `vite dev` and `false`
  * for production builds. Validation surfaces contract drift fast in development
@@ -159,7 +159,7 @@ function isDevValidationActive(): boolean {
  *
  * @internal Used by every method-wrapper below that dispatches over the RPC
  *           channel; consolidates the prior `rpcCall(method, params)` pattern
- *           through the single generated artifact (WEB-CONTRACTS-15 / 16).
+ *           through the single generated artifact.
  */
 function typedCall<T>(
   rpcCall: RpcCallFn,

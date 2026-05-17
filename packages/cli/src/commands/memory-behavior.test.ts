@@ -19,8 +19,8 @@ import {
 } from "../test-helpers.js";
 
 // Mock withClient from rpc-client at module level for ESM hoisting.
-// Plan 35-19 Wave C closure: importOriginal-based mock so callTyped
-// resolves to the real wrapper while withClient is mocked.
+// importOriginal-based mock so callTyped resolves to the real wrapper
+// while withClient is mocked.
 vi.mock("../client/rpc-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
   return {
@@ -66,10 +66,8 @@ const SEARCH_RESULTS = {
 };
 
 /**
- * Full memory entry for inspect tests. Phase 35 Wave C closure (Plan
- * 35-19): retargeted from stale `memory.inspect` (no daemon handler)
- * to ContextInspectContract which returns the entry directly (no
- * `entry: {...}` wrapper).
+ * Full memory entry for inspect tests. Targets ContextInspectContract,
+ * which returns the entry directly (no `entry: {...}` wrapper).
  */
 const INSPECT_ENTRY = {
   id: "mem-001",
@@ -84,10 +82,8 @@ const INSPECT_ENTRY = {
 };
 
 /**
- * Stats object for stats display tests. Phase 35 Wave C closure (Plan
- * 35-19): retargeted from stale `memory.inspect` (no daemon handler)
- * to MemoryStatsContract which returns the stats directly (no
- * `stats: {...}` wrapper).
+ * Stats object for stats display tests. Targets MemoryStatsContract,
+ * which returns the stats directly (no `stats: {...}` wrapper).
  */
 const STATS_DATA = {
   totalEntries: 150,
@@ -246,9 +242,7 @@ describe("memory search --limit constrains result count", () => {
       "node", "test", "memory", "search", "test query", "--limit", "5",
     ]);
 
-    // Plan 35-19 Wave C closure: retargeted from stale `memory.search`
-    // method name (no daemon handler) to `context.search` (the actual
-    // full-text search surface).
+    // `context.search` is the actual full-text search surface.
     expect(callSpy).toHaveBeenCalledWith("context.search", {
       query: "test query",
       limit: 5,
@@ -319,8 +313,7 @@ describe("memory inspect full details", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
-      // Plan 35-19: retargeted to context.inspect (returns the entry
-      // directly, no `entry: {...}` wrapper).
+      // context.inspect returns the entry directly (no `entry: {...}` wrapper).
       const mockClient = createMockRpcClient()
         .onCall("context.inspect", INSPECT_ENTRY)
         .build();
@@ -362,7 +355,6 @@ describe("memory inspect --format json", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
-      // Plan 35-19: retargeted to context.inspect.
       const mockClient = createMockRpcClient()
         .onCall("context.inspect", INSPECT_ENTRY)
         .build();
@@ -408,9 +400,7 @@ describe("memory inspect non-existent", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
-      // Plan 35-19: retargeted to context.inspect. The new "not found"
-      // signal is an empty record (vs. the old `{ entry: undefined }`
-      // wrapper).
+      // context.inspect "not found" signal is an empty record.
       const mockClient = createMockRpcClient()
         .onCall("context.inspect", {})
         .build();
@@ -448,9 +438,7 @@ describe("memory stats display", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
-      // Plan 35-19: retargeted to memory.stats (the actual daemon stats
-      // surface; pre-Plan-35-19 called the stale memory.inspect method
-      // with no args expecting a `stats: {...}` wrapper).
+      // memory.stats is the actual daemon stats surface.
       const mockClient = createMockRpcClient()
         .onCall("memory.stats", STATS_DATA)
         .build();
@@ -493,7 +481,6 @@ describe("memory stats --format json", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
-      // Plan 35-19: retargeted to memory.stats.
       const mockClient = createMockRpcClient()
         .onCall("memory.stats", STATS_DATA)
         .build();
@@ -534,7 +521,7 @@ describe("memory stats empty", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
-      // Plan 35-19: retargeted to memory.stats. Empty record = no stats.
+      // Empty record = no stats.
       const mockClient = createMockRpcClient()
         .onCall("memory.stats", {})
         .build();
@@ -649,16 +636,10 @@ describe("memory clear with --yes and --filter sends RPC", () => {
     exitSpy.restore();
   });
 
-  it("sends memory.flush RPC (--filter is dropped — pre-Plan-35-19 config.set was a no-op)", async () => {
-    // Phase 35 Wave C closure (Plan 35-19): pre-Plan-35-19 called the
-    // stale `config.set` method with section=memory + key=clear + an
-    // arbitrary filter value object — the daemon never implemented
-    // that path. Retargeted to MemoryFlushContract which is the actual
-    // flush surface. The MemoryFlushContract request only models
-    // tenant_id + agent_id (the daemon's actual flush params);
-    // arbitrary --filter key=value flags are dropped (same observable
-    // behavior as pre-Plan-35-19, where the daemon ignored the entire
-    // config.set call).
+  it("sends memory.flush RPC (--filter is dropped)", async () => {
+    // MemoryFlushContract is the actual flush surface. The contract's
+    // request only models tenant_id + agent_id (the daemon's actual flush
+    // params); arbitrary --filter key=value flags are dropped.
     const program = createTestProgram();
     registerMemoryCommand(program);
 
@@ -697,8 +678,8 @@ describe("memory clear with --yes and --tenant", () => {
   });
 
   it("sends memory.flush RPC with tenant_id param", async () => {
-    // Plan 35-19: --tenant flag maps to MemoryFlushContract's tenant_id
-    // request field (snake_case — matches the daemon's actual parameter).
+    // --tenant flag maps to MemoryFlushContract's tenant_id request field
+    // (snake_case — matches the daemon's actual parameter).
     const program = createTestProgram();
     registerMemoryCommand(program);
 
@@ -739,8 +720,8 @@ describe("memory clear with both --filter and --tenant", () => {
   });
 
   it("sends memory.flush RPC with tenant_id (--filter is dropped)", async () => {
-    // Plan 35-19: only the --tenant flag maps to a real MemoryFlushContract
-    // request field; arbitrary --filter key=value flags are dropped.
+    // Only the --tenant flag maps to a real MemoryFlushContract request
+    // field; arbitrary --filter key=value flags are dropped.
     const program = createTestProgram();
     registerMemoryCommand(program);
 
@@ -816,10 +797,10 @@ describe("memory clear with filter containing = in value", () => {
   });
 
   it("correctly parses filter value containing = signs (but --filter is dropped from RPC)", async () => {
-    // Plan 35-19: the CLI still parses --filter (for the input-validation
-    // guard at the top of the action handler — at least one flag is
-    // required), but the resulting filter object no longer flows into
-    // the RPC call (MemoryFlushContract doesn't model arbitrary filters).
+    // The CLI still parses --filter for the input-validation guard at the
+    // top of the action handler (at least one flag is required), but the
+    // resulting filter object no longer flows into the RPC call
+    // (MemoryFlushContract doesn't model arbitrary filters).
     const program = createTestProgram();
     registerMemoryCommand(program);
 

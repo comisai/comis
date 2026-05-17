@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Schema-driven config-value validation helpers (Phase 43 split per FILE-SPLIT-03).
+ * Schema-driven config-value validation helpers.
  *
  * Pure helpers for navigating + coercing values against `AppConfigSchema`.
  * These three exports are part of the public API (re-exported through the

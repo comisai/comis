@@ -77,7 +77,7 @@ describe("static-middleware security headers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Plan 40-14 — asset cache header + SPA fallback branch coverage
+  // Asset cache header + SPA fallback branch coverage
   // -------------------------------------------------------------------------
 
   it("does not set immutable Cache-Control on /app/assets/* when response status is not 200", async () => {

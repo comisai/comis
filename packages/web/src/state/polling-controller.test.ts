@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for PollingController (Phase 40 Plan 40-15 gap-closure for COV-03).
+ * Tests for PollingController.
  *
  * Covers the polling lifecycle (hostConnected/hostDisconnected), badge-count
  * aggregation from agent.list/channel.list/session.list RPC results, and the
  * non-fatal error-swallow branch. Uses vi.spyOn on globalThis.setInterval
- * (not vi.useFakeTimers) per Plan 40-15 testing-rule guidance.
+ * (not vi.useFakeTimers) so each interval tick can be invoked manually.
  *
  * @module
  */

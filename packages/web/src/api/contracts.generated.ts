@@ -117,7 +117,7 @@ function validateNode(node: JsonSchemaNode, v: unknown): boolean {
 // ---------------------------------------------------------------------------
 // CONTRACTS table — alphabetically sorted by method name (deterministic).
 // Generated from API_CONTRACTS_ORDERED via z.toJSONSchema(...,
-// { unrepresentable: "throw", reused: "inline" }) — see RESEARCH §3 + D-06.
+// { unrepresentable: "throw", reused: "inline" }).
 // ---------------------------------------------------------------------------
 
 export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {

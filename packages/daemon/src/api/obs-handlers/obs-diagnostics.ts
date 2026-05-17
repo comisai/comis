@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
- * Observability diagnostics RPC handlers (Phase 43 split per FILE-SPLIT-09).
+ * Observability diagnostics RPC handlers.
  *
  * Handlers covering live observability streams:
  *   - obs.diagnostics: query diagnostic events by category/time/limit
@@ -49,7 +49,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
         throw new Error("Admin access required for diagnostics");
       }
 
-      // Strip dispatcher-injected internals BEFORE contract parse (D-04).
+      // Strip dispatcher-injected internals BEFORE contract parse.
       const userParams = stripInternalFields(rawParams);
       const params = ObsDiagnosticsContract.request.parse(userParams);
       const category = params.category as DiagnosticCategory | undefined;

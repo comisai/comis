@@ -192,14 +192,13 @@ describe("createGlobalState", () => {
   });
 });
 
-// Phase 41 TS-HYG-12: requireGlobalState helper tests.
+// requireGlobalState helper tests.
 //
-// These tests pin the contract Plan 41-06 will consume verbatim to
-// eliminate 7-8 `this._globalState!.X` non-null-assertion sites in
-// packages/web/src/app.ts:441-471. The helper is the foundation —
-// adding new uses of the `!.` non-null-assertion idiom should be
-// rejected at code review in favor of requireGlobalState(this).
-describe("requireGlobalState — typed null-check helper (TS-HYG-12)", () => {
+// These tests pin the contract used to eliminate `this._globalState!.X`
+// non-null-assertion sites in packages/web/src/app.ts. New uses of the
+// `!.` non-null-assertion idiom should be rejected at code review in
+// favor of requireGlobalState(this).
+describe("requireGlobalState — typed null-check helper", () => {
   it("requireGlobalState throws GlobalStateNotInitializedError when state is null", () => {
     const component = { _globalState: null };
     expect(() => requireGlobalState(component)).toThrowError(

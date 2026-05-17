@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: 10MB session-size guard in SessionStore.save(); consumed by daemon RPC session-handlers (@allow-throw boundary per Decision 2) (Phase 41 TS-HYG-07).
+// @allow-throw: 10MB session-size guard in SessionStore.save(); consumed by daemon RPC session-handlers (@allow-throw boundary).
 /**
  * Session store for conversation persistence.
  *
@@ -17,7 +17,7 @@ import { z } from "zod";
 import { createRowMapper } from "./row-mapper.js";
 import { SessionRowSchema } from "./row-schemas.js";
 
-// Row mappers (Phase 41 TS-HYG-03)
+// Row mappers
 const sessionRowMapper = createRowMapper(SessionRowSchema);
 const sessionListEntryRowMapper = createRowMapper(
   z.strictObject({
@@ -65,9 +65,8 @@ function parseMetadata(raw: string): Record<string, unknown> {
 }
 
 // SessionData, SessionListEntry, SessionDetailedEntry, SessionStorePort —
-// canonical home is `@comis/core/src/ports/session-store-types.ts` (Phase 31
-// commit 1 / MEM-CTX-PORTS-03). Imported above for use in the factory body's
-// internal type narrowing.
+// canonical home is `@comis/core/src/ports/session-store-types.ts`.
+// Imported above for use in the factory body's internal type narrowing.
 
 /**
  * Create a SessionStorePort bound to the given database.

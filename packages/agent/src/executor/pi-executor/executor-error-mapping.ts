@@ -6,8 +6,6 @@
  * `withSession` callback (caller's runPrompt error handling) lives in
  * `message-envelope.ts`; this helper handles the OUTER post-lock layer.
  *
- * Phase 42 split per EXEC-SPLIT-05/06.
- *
  * Closure-extraction protocol: state-by-parameter (Readonly<ErrorMappingState>).
  *
  * @module

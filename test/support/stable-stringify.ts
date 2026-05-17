@@ -2,14 +2,8 @@
 /**
  * Deterministic JSON serialization helper for parity-snapshot tests.
  *
- * Extracted in Phase 43 Wave 1 per AGENTS.md §2.3 rule-of-three: ~16
- * Phase 43 parity test files + the existing CONFIG-DELIV-03
- * section-registry-parity.test.ts consumer = 17 consumers; the rule of three is
- * crossed for the first time.
- *
- * Source provenance: copied verbatim from
- * packages/core/src/config/section-registry-parity.test.ts:26-44 (Phase 30
- * CONFIG-DELIV-03; commit predates Phase 30 close 2026-04-22).
+ * Extracted per AGENTS.md §2.3 rule-of-three from the original
+ * section-registry-parity.test.ts implementation.
  *
  * @module
  */

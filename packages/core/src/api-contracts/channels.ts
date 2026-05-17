@@ -1,20 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Channels + message + platform-action RPC contracts. Mirrors the two daemon
- * handler factory files that share the `ChannelsApiDeps` cluster slice
- * (Phase 34 plan 34-08a):
+ * handler factory files that share the `ChannelsApiDeps` cluster slice:
  *
  *   - `packages/daemon/src/api/channel-handlers.ts`  ( 8 methods — channels.* +
  *                                                     delivery.queue.status)
  *   - `packages/daemon/src/api/message-handlers.ts`  (11 methods — message.* +
  *                                                     4 platform.action)
  *
- * Phase 35 Wave C plan 35-17 (Wave C domain #12). Per D-08 (one contract file
- * per logical domain mirroring Phase 34's 11 `*ApiDeps` slices), both handler
- * files map to the SAME ApiDeps slice (`ChannelsApiDeps`) and so share one
- * contract file. The aggregator below preserves per-handler grouping via
- * `// --- xxx-handlers.ts ---` comment blocks; the order within the array is
- * documentation-only (the bidirectional 1:1 test treats it as an unordered
+ * Both handler files map to the SAME ApiDeps slice (`ChannelsApiDeps`) and so
+ * share one contract file. The aggregator below preserves per-handler grouping
+ * via `// --- xxx-handlers.ts ---` comment blocks; the order within the array
+ * is documentation-only (the bidirectional 1:1 test treats it as an unordered
  * set).
  *
  * **Scope assignments** (mirror `setup-gateway-api.ts` registrations):
@@ -43,8 +40,8 @@
  *   - `slack.action`             (admin)
  *   - `whatsapp.action`          (admin)
  *
- * **D-05 loose-record use** (Pitfall 6 escape hatch). Several request and
- * response positions carry loosely-typed payloads:
+ * **Loose-record use** (escape hatch). Several request and response positions
+ * carry loosely-typed payloads:
  *
  *   - `message.send / .reply.request` — `buttons`, `cards`, `effects` are rich
  *     content payloads (RichButton[][], RichCard[], RichEffect[] from
@@ -58,7 +55,7 @@
  *     request + response — platform-action requests carry arbitrary platform-
  *     specific parameters (e.g., telegram's `chat_id`, discord's `guildId`);
  *     responses carry adapter.platformAction's return value (varies by
- *     adapter). Both modelled as loose-record (D-05).
+ *     adapter). Both modelled as loose-record.
  *   - `channels.capabilities.response.features` — feature map varies by
  *     plugin (`reactions`, `editMessages`, etc.); modelled as loose-record.
  *
@@ -70,31 +67,7 @@
  * **Allowlist compliance.** All schemas use the 12-shape allowlist:
  * z.object, z.string (bare `z.string()` everywhere — no `.url()` /
  * `.regex()` refinements), z.number, z.boolean, z.literal, z.enum, z.array,
- * z.nullable, z.optional, z.record (D-05 loose-record value-type).
- *
- * **BLOCKER 1 status (web-SPA only — EXEMPT).** `packages/cli/src/commands/
- * channel.ts` has ONE `client.call(...)` site, and it calls
- * `client.call("config.get", { section: "channels" })` — NOT a `channels.*` /
- * `message.*` method. `config.get` is a pre-existing dead call (NOT a
- * registered daemon RPC method per setup-gateway-api.ts; same pre-existing
- * dead call as Plan 35-16 documented in commands/agent.ts:54). No CLI
- * consumer of the 19 channels-domain methods exists. Web SPA consumes its
- * own typed registry; Wave D codegen will bridge those types from this
- * contract registry. Same BLOCKER 1 exemption pattern as Plans 35-09/10/12/
- * 13/14/15.
- *
- * **BLOCKER 6 (Wave C precedent).** Per orchestrator directive ("Additive
- * edits to api-contracts/index.ts are accepted; Plan 35-19 owns final
- * atomic edit"), `index.ts` is updated to register `CHANNELS_CONTRACTS`
- * (1 import line + 1 spread + 1 re-export).
- *
- * **Plan-vs-reality.** The plan's `<truths>` enumerated `~22 contracts
- * covering channels.* + channels.health/capabilities (rpc) + message.* +
- * telegram.action/discord.action/slack.action/whatsapp.action (admin)`.
- * Reality: 19 contracts (8 channel-handlers + 11 message-handlers). The
- * plan's `delivery.queue.status` was NOT enumerated but exists in
- * channel-handlers.ts — included here. The over-projection is consistent
- * with Plans 35-06/35-16's plan-vs-reality patterns.
+ * z.nullable, z.optional, z.record (loose-record value-type).
  *
  * @module
  */
@@ -188,7 +161,7 @@ export const DeliveryQueueStatusContract = defineContract({
  *   - Missing `channel_type` → `"Missing required parameter: channel_type"`.
  *   - Unknown channel type in `channelPlugins` → `"Channel type not found: <type>"`.
  *
- * D-05 LOOSE-RECORD for `features`: the feature map varies by plugin
+ * LOOSE-RECORD for `features`: the feature map varies by plugin
  * (reactions, editMessages, deleteMessages, fetchHistory, attachments,
  * threads, mentions, formatting, buttons, cards, effects). Tight modeling
  * would re-encode the ChannelCapability surface in the contract.
@@ -378,7 +351,7 @@ export const ChannelsRestartContract = defineContract({
  * via `resolveAdapter`. Optional rich content (`buttons`, `cards`, `effects`)
  * passed via `extra` to `deliveryService.deliverToChannel`.
  *
- * D-05 LOOSE-ARRAY for `buttons`, `cards`, `effects` request positions: rich
+ * LOOSE-ARRAY for `buttons`, `cards`, `effects` request positions: rich
  * content shapes (RichButton[][], RichCard[], RichEffect[] from @comis/core).
  * Tight modeling would re-encode the entire rich-content surface.
  *
@@ -536,7 +509,7 @@ export const MessageDeleteContract = defineContract({
  *
  * Capability-gated (`fetchHistory` feature). `limit` defaults to 20.
  *
- * D-05 LOOSE-ARRAY for response `messages`: array of ChannelMessage records
+ * LOOSE-ARRAY for response `messages`: array of ChannelMessage records
  * from `@comis/core`; each channel's wire format differs (Telegram exposes
  * `from`/`text`/`date`, Discord exposes `author`/`content`/`timestamp`).
  *
@@ -609,7 +582,7 @@ export const MessageAttachContract = defineContract({
  * voice connect/disconnect, role management, etc.). Admin-only. Handler
  * path: message-handlers.ts:311-325.
  *
- * D-05 LOOSE-RECORD for request + response: platform-action parameters vary
+ * LOOSE-RECORD for request + response: platform-action parameters vary
  * by action (e.g., `pin_message` carries `message_id`; `voice_connect`
  * carries `voice_channel_id`); response is `adapter.platformAction`'s return
  * value, which is action-dependent.
@@ -633,7 +606,7 @@ export const DiscordActionContract = defineContract({
  * message, manage admins, etc.). Admin-only. Handler path:
  * message-handlers.ts:327-341.
  *
- * D-05 LOOSE-RECORD for request + response.
+ * LOOSE-RECORD for request + response.
  *
  * Request: `{ action, chat_id?, ... arbitrary platform-specific fields }`.
  * Response: LooseRecord.
@@ -654,7 +627,7 @@ export const TelegramActionContract = defineContract({
  * channel, manage workspaces, etc.). Admin-only. Handler path:
  * message-handlers.ts:343-357.
  *
- * D-05 LOOSE-RECORD for request + response.
+ * LOOSE-RECORD for request + response.
  *
  * Request: `{ action, channel_id?, ... arbitrary platform-specific fields }`.
  * Response: LooseRecord.
@@ -675,7 +648,7 @@ export const SlackActionContract = defineContract({
  * promote/demote, group settings, etc.). Admin-only. Handler path:
  * message-handlers.ts:359-373.
  *
- * D-05 LOOSE-RECORD for request + response.
+ * LOOSE-RECORD for request + response.
  *
  * Request: `{ action, group_jid?, ... arbitrary platform-specific fields }`.
  * Response: LooseRecord.

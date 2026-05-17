@@ -122,7 +122,7 @@ export function createEmbeddingCircuitBreaker(
 export async function setupMemory(deps: {
   container: AppContainer;
   memoryLogger: ComisLogger;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
 }): Promise<MemoryResult> {
   const { container, memoryLogger, clock } = deps;

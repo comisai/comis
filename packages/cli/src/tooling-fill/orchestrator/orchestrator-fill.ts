@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Fill phase of `comis config tooling-fill` (Phase 43 split per FILE-SPLIT-10).
+ * Fill phase of `comis config tooling-fill`.
  *
  * Pre-flight: daemon-up check, gateway port + token resolution, supervisor
  * detection, non-TTY fail-fast gates. Per-hint: callAgent → parseFillResponse

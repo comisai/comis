@@ -534,12 +534,10 @@ describe("createDeadContentEvictorLayer", () => {
   // ---------------------------------------------------------------------------
 
   describe("H. Skip already-processed", () => {
-    // Deleted (Phase 38 BC-REM-16): "tool result with [Tool result cleared:
-    // prefix: not double-evicted" — the legacy `[Tool result cleared:`
-    // prefix is no longer recognized by `isAlreadyMasked` (cleanup-helpers.ts),
-    // so the evictor no longer treats such content as already-processed
-    // (INTENTIONAL BREAK #2). The canonical-prefix test below covers the
-    // post-deletion behavior.
+    // The legacy `[Tool result cleared:` prefix is no longer recognized by
+    // `isAlreadyMasked` (cleanup-helpers.ts), so the evictor no longer treats
+    // such content as already-processed. The canonical-prefix tests below
+    // cover the current behavior.
 
     it("tool result with [Tool result summarized: prefix: not double-evicted", async () => {
       const onEvicted = vi.fn();

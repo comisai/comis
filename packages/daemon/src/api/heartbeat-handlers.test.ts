@@ -300,11 +300,11 @@ describe("createHeartbeatHandlers", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Plan 40-14 — heartbeat.get with globalHeartbeatConfig + heartbeat.update
-  // target subobject + persistence error path branches
+  // heartbeat.get with globalHeartbeatConfig + heartbeat.update target
+  // subobject + persistence error path branches
   // -----------------------------------------------------------------------
 
-  describe("heartbeat.get with globalHeartbeatConfig (Plan 40-14)", () => {
+  describe("heartbeat.get with globalHeartbeatConfig", () => {
     it("returns effective config when globalHeartbeatConfig resolution succeeds for valid input", async () => {
       const handlers = createHeartbeatHandlers({
         agents: { "a": { scheduler: { heartbeat: { enabled: true, intervalMs: 60_000 } } } as never },
@@ -334,7 +334,7 @@ describe("createHeartbeatHandlers", () => {
     });
   });
 
-  describe("heartbeat.update target subobject + edge cases (Plan 40-14)", () => {
+  describe("heartbeat.update target subobject + edge cases", () => {
     it("rejects heartbeat.update when agentId is missing from request payload", async () => {
       const handlers = createHeartbeatHandlers({ agents: {} });
       await expect(

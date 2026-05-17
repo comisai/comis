@@ -39,11 +39,9 @@ import { chunkDiscordText } from "./format-discord.js";
 import { mapDiscordToNormalized } from "./message-mapper.js";
 import { renderDiscordButtons, renderDiscordCards } from "./rich-renderer.js";
 import { createDiscordVoiceSender } from "./voice-sender.js";
-// Phase 41 TS-HYG-06 (per 41-03-SUMMARY.md Decision 3): the 5 adjacent
-// untyped-cast sites in editMessage / reactToMessage / removeReaction /
-// deleteMessage / fetchMessages (previously at lines 426/453/475/500/521)
-// retarget to asTextLike, the structural-subset narrowing helper that the
-// new discord-actions.ts uses for the same purpose.
+// Adjacent untyped-cast sites in editMessage / reactToMessage / removeReaction
+// / deleteMessage / fetchMessages all use asTextLike, the structural-subset
+// narrowing helper that discord-actions.ts also uses.
 import { asTextLike } from "./discord-adapter-types.js";
 import { systemNowMs } from "@comis/core";
 
@@ -63,10 +61,8 @@ export interface DiscordAdapterDeps {
    * its own ws://127.0.0.1 URL).
    *
    * Production callers leave this undefined — discord.js uses its default
-   * `https://discord.com/api`.
-   *
-   * Phase 40 / Plan 40-09 / COV-15 — production seam for the wire-level
-   * E2E mock chat-platform fixture (test/e2e/mocks/discord/).
+   * `https://discord.com/api`. This is the production seam for the
+   * wire-level E2E mock chat-platform fixture (test/e2e/mocks/discord/).
    */
   apiRoot?: string;
 }
@@ -86,7 +82,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
   // E2E seam: when deps.apiRoot is set, redirect discord.js's REST traffic
   // (and, transitively via /gateway/bot, the WebSocket gateway) to that URL.
   // Production callers leave it unset and discord.js uses its default
-  // (https://discord.com/api). Phase 40 / Plan 40-09 / COV-15.
+  // (https://discord.com/api).
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -119,8 +115,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     },
 
     async start(): Promise<Result<void, Error>> {
-      // Fail fast on invalid token
-      // Pass apiRoot if set (Phase 40 / Plan 40-09 / COV-15) so adapter
+      // Fail fast on invalid token. Pass apiRoot if set so adapter
       // self-validation hits the redirection mock instead of discord.com.
       const tokenResult = await validateDiscordToken(deps.botToken, deps.apiRoot);
       if (!tokenResult.ok) {

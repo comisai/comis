@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Project-wide optional-field-bloat invariant (HYG-06).
+ * Project-wide optional-field-bloat invariant.
  *
  * Every `interface` or type-literal `type` declaration in production
  * source must have ≤12 optional fields unless it carries an
  * `// @optional-field-count: <reason>` audit-stamp comment immediately
  * above the declaration OR is the v3-owned `ChannelManagerDeps`
- * (HYG-06 explicit exclusion — §9.2.5 owns its audit).
+ * (explicit exclusion — design §9.2.5 owns its audit).
  *
  * Walker: `ts.createSourceFile` (no `ts.createProgram`, no TypeChecker)
  * — pure syntactic check. Counts members where
@@ -15,10 +15,10 @@
  *
  * Audit-stamp scan: extracts the source-text slice from
  * `node.getFullStart()` to `node.getStart()` (leading trivia) and tests
- * for the literal substring `@optional-field-count:` per RESEARCH.md
- * Landmine §6. JSDoc and `//`-style comments both work because
- * `ts.forEachChild` does not visit trivia — the slice contains the raw
- * source text including comments.
+ * for the literal substring `@optional-field-count:`. JSDoc and
+ * `//`-style comments both work because `ts.forEachChild` does not
+ * visit trivia — the slice contains the raw source text including
+ * comments.
  *
  * @module
  */
@@ -37,9 +37,9 @@ const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
 const THRESHOLD = 12;
 
 /**
- * Hard-coded exclusion (HYG-06): `ChannelManagerDeps` is the largest
- * bloated interface (44 optional fields) but v3 §9.2.5 owns its audit
- * — it is NOT subject to the Phase D shrink. Matched on file+name pair
+ * Hard-coded exclusion: `ChannelManagerDeps` is the largest bloated
+ * interface (44 optional fields) but v3 §9.2.5 owns its audit
+ * — it is NOT subject to the broader shrink. Matched on file+name pair
  * (NOT path alone) because `orchestrator/src/commands/types.ts` also
  * declares interfaces in the bloat list.
  */
@@ -117,9 +117,8 @@ function repoRelative(absPath: string): string {
 
 /**
  * Returns true if the node's leading-trivia source range contains the
- * literal substring `@optional-field-count:`. Per RESEARCH.md Landmine
- * §6 — JSDoc and line-comment forms both produce a substring match in
- * the raw source-text slice.
+ * literal substring `@optional-field-count:`. JSDoc and line-comment
+ * forms both produce a substring match in the raw source-text slice.
  */
 function hasAuditStamp(node: ts.Node, sourceText: string): boolean {
   const fullStart = node.getFullStart();
@@ -183,7 +182,7 @@ function findOptionalFieldBloat(
   return out;
 }
 
-describe("optional-field-bloat — interfaces/types ≤12 optional fields (HYG-06)", () => {
+describe("optional-field-bloat — interfaces/types ≤12 optional fields", () => {
   it("no production interface/type has more than 12 optional fields without an audit-stamp", () => {
     const files = listAllProductionFiles();
     const violations = findOptionalFieldBloat(files);
@@ -210,9 +209,9 @@ describe("optional-field-bloat — interfaces/types ≤12 optional fields (HYG-0
           snippet: `${v.typeName} has ${v.optionalCount} optional fields (threshold: ${THRESHOLD})`,
         })),
         suggestedFix:
-          "Either: (a) reduce optional fields; (b) split the interface; (c) add `// @optional-field-count: <reason>` immediately above the declaration; (d) add an optionalFieldAllowlist entry to test/support/architecture-allowlist.ts with removedIn: \"phase-D\" (Phase 41 TS-HYG-13 closes the list).",
+          "Either: (a) reduce optional fields; (b) split the interface; (c) add `// @optional-field-count: <reason>` immediately above the declaration; (d) add an optionalFieldAllowlist entry to test/support/architecture-allowlist.ts.",
         designRef:
-          "code-quality-plan §4.2 (4) / Phase A / HYG-06 / Phase D TS-HYG-13",
+          "Optional-field bloat invariant — interfaces/types ≤12 optional fields.",
         allowlistRef:
           "optionalFieldAllowlist (test/support/architecture-allowlist.ts)",
       }),

@@ -28,15 +28,13 @@ vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
   };
 });
 
-// Mock @comis/core's interactive OAuth flow for the dispatch tests
-// (relocated from @comis/agent in Phase 35 Plan 35-04 per D-01 #2).
+// Mock @comis/core's interactive OAuth flow for the dispatch tests.
 // The mock returns a controllable Result so the dispatch branches can
 // be exercised without a real browser open or callback server.
 // selectOAuthCredentialStore is stubbed to an in-memory port so the
 // test never touches ~/.comis/auth-profiles.json on the test host's
 // filesystem. loadConfigFile is also mocked here so the wizard defaults
-// to file storage (single combined @comis/core mock now that all of
-// the relocated symbols share that module).
+// to file storage.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {

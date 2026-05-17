@@ -41,20 +41,17 @@ export interface ComisSessionManagerDeps {
   cwd: string;
   /**
    * Per-session filesystem mutex. Injected by daemon composition
-   * (setup-agents.ts wires a single `createFileLock()` from `@comis/core`,
-   * relocated from `@comis/scheduler` in Phase 35 Plan 35-04 D-01 #1).
-   * Phase 32 commit 12 (ORCH-EXT-15) moved this from a module-level direct
-   * proper-lockfile import inside session-write-lock.ts to a deps field so
-   * agent's production source no longer reaches into scheduler or the
-   * proper-lockfile package directly.
+   * (setup-agents.ts wires a single `createFileLock()` from `@comis/core`).
+   * Injected as a deps field so agent's production source does not reach
+   * into scheduler or the proper-lockfile package directly.
    */
   fileLock: FileLockPort;
   /**
    * Optional logger. When provided, structured-cause logging fires before
    * withSessionLock collapses the FileLockPort's discriminated error union
-   * to the legacy 'locked' | 'error' string (WR-07). Without it, operator
-   * triage cannot distinguish 'ELOCKED after N retries' from 'EACCES on
-   * the lock directory'. The public Result API is unchanged either way.
+   * to the legacy 'locked' | 'error' string. Without it, operator triage
+   * cannot distinguish 'ELOCKED after N retries' from 'EACCES on the lock
+   * directory'. The public Result API is unchanged either way.
    */
   logger?: ComisLogger;
 }

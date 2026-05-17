@@ -235,9 +235,8 @@ describe("refresh-failure error classification", () => {
 
       // (b) WARN log captured with module=oauth-token-manager. Per
       //     AGENTS.md §2.7, Pino `errorKind` is a closed union, so the WARN
-      //     payload's `errorKind` is the literal `"auth"` (Phase 28 commit
-      //     6B). The OAuth domain discriminator now flows via the event
-      //     payload and OAuthError instead.
+      //     payload's `errorKind` is the literal `"auth"`. The OAuth domain
+      //     discriminator flows via the event payload and OAuthError instead.
       const warnCalls = logger._calls("warn");
       const refreshWarn = warnCalls.find(
         (c) => c.payload?.submodule === "oauth-token-manager",

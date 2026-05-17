@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 30 — Test factories.
+ * Test factories.
  *
  * `makeDeliveryService(overrides?: Partial<DeliveryServiceDeps>): DeliveryService`
- * lands BEFORE the standalone `deliverToChannel` export is deleted (per
- * RESEARCH RES-ARCH-5 ordering rule). Provides a single canonical way to
- * construct a DeliveryService for tests with sensible no-op defaults; tests
- * override individual deps via the Partial parameter.
+ * provides a single canonical way to construct a DeliveryService for tests
+ * with sensible no-op defaults; tests override individual deps via the
+ * Partial parameter.
  *
  * Mirror of `test/support/mock-event-bus.ts` and `test/support/mock-logger.ts`
  * conventions (single function, named after the production type, Partial<X>
@@ -32,9 +31,10 @@ import { createMockEventBus } from "./mock-event-bus.js";
  * test, which is unnecessary overhead for the default case).
  *
  * The cast through `unknown` is intentional: HookRunner has ~14 methods
- * (Phase 28's gateway/session hooks), and the default factory only needs the
- * ones the DeliveryService exercises (`runBeforeDelivery`, `runAfterDelivery`).
- * Tests that exercise other hooks override the field via the Partial pattern.
+ * (including gateway/session hooks), and the default factory only needs
+ * the ones the DeliveryService exercises (`runBeforeDelivery`,
+ * `runAfterDelivery`). Tests that exercise other hooks override the field
+ * via the Partial pattern.
  */
 function makeNoopHookRunner(): HookRunner {
   const noop = vi.fn().mockResolvedValue(undefined);

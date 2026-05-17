@@ -27,7 +27,7 @@ vi.mock("./shared/probe-provider-auth.js", () => ({
   probeProviderAuth: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
 }));
 
-// Phase 35 Plan 35-04 (D-01 #5): resolveWorkspaceDir relocated to @comis/core.
+// resolveWorkspaceDir lives in @comis/core.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {

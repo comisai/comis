@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: setup-agents tooling guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
+// @allow-throw: setup-agents tooling guards; consumed at daemon.ts bootstrap catch boundary.
 /**
  * Per-agent tooling and model resolution helpers.
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-agents.ts
- * containing `resolveAgentModel`, the sub-agent tool-name resolver, and the
+ * Contains `resolveAgentModel`, the sub-agent tool-name resolver, and the
  * deterministic canary fallback derivation. Pure helpers — no closure state,
  * no daemon-runtime deps; safe to import from setup-agents-runtime and
  * setup-agents-registry.

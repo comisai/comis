@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Model management RPC handler module.
  * Handles model catalog query methods:
@@ -21,7 +21,7 @@ import {
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**
@@ -35,10 +35,9 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: AgentsApiDeps (shared with agent-handlers,
-// provider-handlers). DAEMON-API-03 Option A retarget — handler bodies and
-// call sites unchanged.
+// provider-handlers).
 import type { AgentsApiDeps as ModelHandlerDeps } from "./types.js";
 export type { ModelHandlerDeps };
 

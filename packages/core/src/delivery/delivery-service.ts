@@ -1,14 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 30 — DeliveryService factory.
+ * DeliveryService factory.
  *
  * Replaces the standalone `deliverToChannel(adapter, ..., deps?)` export in
- * channels/src/shared/deliver-to-channel.ts. Closes:
- *  - L14 prep (global hook-runner singleton → deps.hookRunner closure)
- *  - L26 prep (optional deps parameter → required deps parameter)
- *
- * Body is lifted verbatim from packages/channels/src/shared/deliver-to-channel.ts
- * (lines 253-693 at plan-authoring time) with two surgical changes:
+ * channels/src/shared/deliver-to-channel.ts. Two surgical differences:
  *  1. The global hook-runner lookup is replaced by `deps.hookRunner` (the
  *     `if (hookRunner)` null-guard is dropped — deps.hookRunner is REQUIRED).
  *  2. Function parameters lose the trailing optional `DeliverToChannelDeps`
@@ -19,7 +14,7 @@
  *
  * Hook execution order, traceId propagation, suppressError wrap on
  * after_delivery, and all `delivery:*` event emissions are byte-identical to
- * current behavior (CONFIG-DELIV-09).
+ * the prior standalone behavior.
  *
  * @module
  */
@@ -53,9 +48,7 @@ import { systemNowMs } from "../runtime/system-time.js";
 
 // ---------------------------------------------------------------------------
 // Constants — platform sets local to the delivery pipeline. The chunk-limit
-// default and queue-backoff schedule live in `./queue-backoff.js` (Phase 30
-// plan 06: relocated from channels along with the standalone deliverToChannel
-// deletion).
+// default and queue-backoff schedule live in `./queue-backoff.js`.
 // ---------------------------------------------------------------------------
 
 const PLATFORMS_NEEDING_FORMAT = new Set([
@@ -79,8 +72,8 @@ const PASSTHROUGH_PLATFORMS = new Set(["discord", "gateway", "echo"]);
  * Dependencies for createDeliveryService.
  *
  * `hookRunner` + `deliveryQueue` are REQUIRED — the closures that replace the
- * L14 global hook-runner singleton and L26 optional-deps
- * shape (was an optional `DeliverToChannelDeps` argument). `eventBus`, `retryEngine`,
+ * prior global hook-runner singleton and optional-deps shape (was an optional
+ * `DeliverToChannelDeps` argument). `eventBus`, `retryEngine`,
  * `maxCharsOverride`, `replyMode`, `abortSignal`, and `inFlightSends` are
  * optional — they preserve the per-call/per-instance optional knobs the
  * standalone function already accepts.
@@ -88,14 +81,13 @@ const PASSTHROUGH_PLATFORMS = new Set(["discord", "gateway", "echo"]);
  * @see packages/channels/src/shared/deliver-to-channel.ts:DeliverToChannelDeps
  */
 export interface DeliveryServiceDeps {
-  /** Hook runner. REQUIRED — closes L14 (was global state). */
+  /** Hook runner. REQUIRED — closes the global-state dependency. */
   hookRunner: HookRunner;
 
   /**
-   * Delivery queue for crash-safe persistence. REQUIRED — closes part of L26
-   * (was optional in the standalone function's deps record). Use
-   * `createNoOpDeliveryQueue()` from `@comis/core` when the queue feature is
-   * disabled.
+   * Delivery queue for crash-safe persistence. REQUIRED (was optional in the
+   * standalone function's deps record). Use `createNoOpDeliveryQueue()` from
+   * `@comis/core` when the queue feature is disabled.
    */
   deliveryQueue: DeliveryQueuePort;
 
@@ -123,10 +115,10 @@ export interface DeliveryServiceDeps {
 }
 
 /**
- * Single-method delivery service per design §7.2 + AGENTS.md §2.3 (no
- * speculative methods — add ops only when call sites exist). The `abortSignal`
- * still rides on a per-call options channel (consistent with the standalone
- * function's `deps.abortSignal`).
+ * Single-method delivery service per AGENTS.md §2.3 (no speculative methods —
+ * add ops only when call sites exist). The `abortSignal` still rides on a
+ * per-call options channel (consistent with the standalone function's
+ * `deps.abortSignal`).
  */
 export interface DeliveryService {
   deliverToChannel(
@@ -146,7 +138,7 @@ export interface DeliveryService {
  * IMPORTANT: This factory MUST NOT call `tryGetContext()` or any
  * AsyncLocalStorage helpers at construction time — those are per-request
  * concerns. The closure captures `deps`; per-request context (traceId,
- * sessionKey) is resolved INSIDE the method body (research Pitfall 5).
+ * sessionKey) is resolved INSIDE the method body.
  */
 export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryService {
   return {
@@ -172,12 +164,10 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         }
 
         // --- 1b. HOOKS: before_delivery ---
-        // L14 surgical change: was a global hook-runner lookup followed by
-        // `if (hookRunner) { ... }`. deps.hookRunner is REQUIRED here, so the
-        // variable is always present and the if-guard is dropped. An empty
-        // plugin registry still causes runBeforeDelivery to return undefined
-        // (preserved behavior — see hooks/hook-runner.ts:runModifyingHook
-        // empty-registry short-circuit).
+        // deps.hookRunner is REQUIRED, so the variable is always present
+        // (no if-guard needed). An empty plugin registry still causes
+        // runBeforeDelivery to return undefined (see
+        // hooks/hook-runner.ts:runModifyingHook empty-registry short-circuit).
         let deliveryText = text;
         const hookRunner = deps.hookRunner;
         {
@@ -312,9 +302,9 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           // Build SendMessageOptions
           const sendOpts: SendMessageOptions = {};
 
-          // replyTo: respects replyMode. Per-call options.replyMode (Phase 30
-          // plan 04) supersedes the closure-captured deps.replyMode so callers
-          // that resolve per-channel/per-chat-type variance (execution-deliver
+          // replyTo: respects replyMode. Per-call options.replyMode
+          // supersedes the closure-captured deps.replyMode so callers that
+          // resolve per-channel/per-chat-type variance (execution-deliver
           // reading streamingConfig.replyModeByChatType) can still override the
           // service-wide default without constructing a new DeliveryService.
           if (options?.replyTo) {
@@ -356,8 +346,8 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           // 'in_flight' -> 'pending' for the drainer to retry. All ack/nack/fail
           // statements are status-agnostic UPDATE-by-id, so no SQL change is needed.
           let entryId: string | null = null;
-          // deps.deliveryQueue is REQUIRED in DeliveryServiceDeps (closure
-          // mechanism — was optional in the standalone DeliverToChannelDeps).
+          // deps.deliveryQueue is REQUIRED in DeliveryServiceDeps (was
+          // optional in the standalone DeliverToChannelDeps).
           {
             const enqueueResult = await deps.deliveryQueue.enqueueInFlight({
               text: chunk,
@@ -574,7 +564,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         }
 
         // --- 6. HOOKS: after_delivery -- skip for aborted deliveries ---
-        // L14: hookRunner is always present (deps.hookRunner is REQUIRED).
+        // hookRunner is always present (deps.hookRunner is REQUIRED).
         if (!aborted) {
           const afterCtx = tryGetContext();
           suppressError(

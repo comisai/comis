@@ -12,10 +12,9 @@
  * invariants"). A future minor/major bump must verify the listed runtime
  * methods still exist on the polymorphic Channel union.
  *
- * Anti-pattern reminder (41-RESEARCH §"Anti-Patterns" line 425): this file
- * does NOT import @comis/shared's `Result`. `asTextLike` is a typed-cast
- * utility, not a fallible computation; `null` is the right "not text-like"
- * signal that callers handle.
+ * This file deliberately does NOT import @comis/shared's `Result`.
+ * `asTextLike` is a typed-cast utility, not a fallible computation; `null`
+ * is the right "not text-like" signal that callers handle.
  *
  * @module
  */
@@ -34,14 +33,14 @@ import type {
  * methods used by `discord-actions.ts` (pin/unpin/send/edit/delete/setTopic/
  * setRateLimitPerUser/sendTyping/threads.*).
  *
- * Plan 41-05 (TS-HYG-06) imports this to eliminate the 18 `as any` casts
- * in `discord-actions.ts`.
+ * This interface eliminates `as any` casts in `discord-actions.ts` by
+ * providing typed structural shapes for the polymorphic channel union.
  *
  * The `threads?` field combines the base `ThreadManager` (for `fetchActive()`)
  * with the create overload from `GuildTextThreadManager` (which extends
- * `ThreadManager<false>` and adds `create()`). Plan 41-05's `threadCreate`
- * action call site needs both methods on the same narrowed reference, and
- * the underlying discord.js types model them via the GuildTextThreadManager
+ * `ThreadManager<false>` and adds `create()`). The `threadCreate` action
+ * call site needs both methods on the same narrowed reference, and the
+ * underlying discord.js types model them via the GuildTextThreadManager
  * subclass rather than the ThreadManager base — the structural intersection
  * captures both shapes in a single field type. The `create()` parameter
  * type is intentionally permissive (`Record<string, unknown>`) because the
@@ -88,9 +87,8 @@ export function asTextLike(
 }
 
 /**
- * Phase 41 TS-HYG-06 secondary shape — for the per-thread iteration sites
- * in `discord-actions.ts` `threadList` action (RESEARCH §"Discord `as any`
- * inventory" lines 223-231). The polymorphic iteration item from
+ * Secondary shape for per-thread iteration sites in `discord-actions.ts`
+ * `threadList` action. The polymorphic iteration item from
  * `ThreadManager.fetchActive()` is typed loosely; this is a stricter
  * structural shape suitable for the read-only fields the action emits.
  */

@@ -2,11 +2,6 @@
 /**
  * Tests for `isRemoteEnvironment(input)` — VPS / headless detection.
  *
- * Mirrors the tests at packages/agent/src/model/oauth-env.test.ts verbatim
- * (the function was relocated from agent → core in Phase 35 Plan 35-02 per
- * Decision D-01 #3). After Plan 35-04 retargets CLI consumers and removes
- * the agent-side copy, this remains the only test file for the function.
- *
  * @module
  */
 import { describe, it, expect } from "vitest";

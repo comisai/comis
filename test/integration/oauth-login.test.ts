@@ -37,13 +37,9 @@ import {
   vi,
 } from "vitest";
 import type { OAuthProfile } from "@comis/core";
-// Phase 35 Plan 35-07 (Rule 1 fix — pre-existing import bug, not a Plan 35-07
-// regression): createFileLock + OAuth helpers were relocated to @comis/core
-// in Plan 35-02 / Plan 35-03 / Plan 35-04 (D-01 #1/#2). The agent re-exports
-// were removed alongside Plan 35-05's CLI retarget, but this integration
-// test was never retargeted — the failure surfaces as
-// `createFileLock is not a function` at import time. Retarget to the
-// canonical @comis/core barrel (mirrors the existing CLI consumer in
+// createFileLock + OAuth helpers live in @comis/core. The agent re-exports
+// were removed when the CLI was retargeted; this integration test consumes
+// the canonical @comis/core barrel (mirroring the existing CLI consumer in
 // packages/cli/src/commands/auth.ts).
 import {
   createFileLock,

@@ -27,14 +27,13 @@ memory        SQLite-backed ContextStorePort + SessionStorePort impls (return ty
               from core) + MemoryApi + FTS5 + vector search (MemoryPort, SecretStorePort,
               CredentialMappingPort, DeliveryQueuePort, DeliveryMirrorPort, OAuth-store,
               observability/embedding adapters). Row DTOs re-exported from core (single
-              source of truth after Phase 31). Daemon consumes; agent + cli now consume
-              port types from @comis/core.
+              source of truth). Daemon consumes; agent + cli consume port types from @comis/core.
 gateway       Hono HTTP, JSON-RPC, WebSocket, mTLS
 skills        manifest, prompt skills, MCP, built-in tools, media, STT/TTS/vision/image-gen integrations
 scheduler     cron, heartbeat, task extraction; createFileLock(): FileLockPort factory backed by proper-lockfile
 agent         orchestration: executor, planner, RAG, sessions, model, safety, response-filter (no longer references @comis/infra; OAuth helpers moved to @comis/core)
 channels      platform adapters (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email, Echo) (no longer references @comis/infra)
-orchestrator  inbound pipeline, execution coordination, channel-manager, command queue, routing, cross-session messaging (carved out from agent + channels in Phase 32)
+orchestrator  inbound pipeline, execution coordination, channel-manager, command queue, routing, cross-session messaging
 cli           Commander.js, JSON-RPC client
 daemon        orchestrator, observability, systemd (DeviceIdentityPort adapter)
 comis         umbrella package — namespace re-exports
@@ -153,7 +152,7 @@ Define interface in `core/src/ports/` → export from core index → add to `App
 `z.strictObject({...})` schema in `core/src/domain/` (domain layer is strict — loosening is a compat break) → infer type with `z.infer<typeof Schema>` → export schema, type, and a paired `parseX(raw): Result<T, z.ZodError>` helper wrapping `safeParse()`. Call sites use `parseX()` — never `.parse()` (throws) or raw `.safeParse()`.
 
 ### 6.4 Add a Config Schema
-`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`. New top-level sections register a single entry in the `SECTION_REGISTRY` in `core/src/config/section-registry.ts` (the consolidated source of truth post-Phase-30 CONFIG-DELIV-01/-02). Per-view derivations (`SECTION_SCHEMAS` in `schema-serializer.ts`, the metadata map in `field-metadata.ts`, the managed-section redirect map in `managed-sections.ts`) are derived from the registry — no per-file edit needed beyond the registry entry.
+`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`. New top-level sections register a single entry in the `SECTION_REGISTRY` in `core/src/config/section-registry.ts` (the consolidated source of truth). Per-view derivations (`SECTION_SCHEMAS` in `schema-serializer.ts`, the metadata map in `field-metadata.ts`, the managed-section redirect map in `managed-sections.ts`) are derived from the registry — no per-file edit needed beyond the registry entry.
 
 ### 6.5 Add a Skill
 Skills are Markdown files with manifest frontmatter. Add to `packages/skills/`, validate frontmatter against manifest Zod schema, test loading + manifest validation.

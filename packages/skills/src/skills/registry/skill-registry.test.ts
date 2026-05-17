@@ -15,7 +15,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseSkillManifest } from "../manifest/parser.js";
 import { discoverSkills } from "./discovery.js";
-// Phase 43 plan 02b (FILE-SPLIT-11): skill-registry.ts split into skill-registry/ subdirectory; import retargeted to the barrel.
+// skill-registry.ts is split into a skill-registry/ subdirectory; import via the barrel.
 import { createSkillRegistry } from "./skill-registry/index.js";
 import { createMockEventBus as _createMockEventBus } from "../../../../../test/support/mock-event-bus.js";
 

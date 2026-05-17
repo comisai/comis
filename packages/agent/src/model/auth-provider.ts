@@ -62,9 +62,8 @@ export interface AuthProviderConfig {
     /**
      * Cross-process filesystem mutex for the OAuth refresh path. Threaded
      * straight into OAuthTokenManagerDeps. Daemon composition supplies
-     * `createFileLock()` from `@comis/core` (relocated from `@comis/scheduler`
-     * in Phase 35 Plan 35-04 D-01 #1). Required so the token manager can run
-     * inside `@comis/agent` without importing scheduler.
+     * `createFileLock()` from `@comis/core`. Required so the token manager can
+     * run inside `@comis/agent` without importing scheduler.
      */
     fileLock: FileLockPort;
     /** Prefix for SecretManager key names (default: "OAUTH_"). */

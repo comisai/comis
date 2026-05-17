@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * defer_loading injection for deferred tools
- * (Phase 42 split per EXEC-SPLIT-02).
+ * defer_loading injection for deferred tools.
  *
  * For Anthropic non-Haiku models that support tool_search, injects
  * `defer_loading: true` on tools whose names appear in the deferred-tools
@@ -16,8 +15,6 @@
  *  - When `deferCount === 0` even after activation (deferred tools were
  *    excluded upstream; payload lacks deferred definitions and injecting
  *    the search tool would crash the API/SDK).
- *
- * Lifted verbatim from request-body-injector.ts:1586-1632.
  *
  * @module
  */

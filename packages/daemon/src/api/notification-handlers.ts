@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Notification RPC handler module.
  * Provides the notification.send handler that bridges the agent tool
@@ -12,17 +12,15 @@
  * enqueued entries, and this handler prevents re-entry.
  * Tool and programmatic notification dispatch.
  *
- * Phase 35 Wave C (Plan 35-13 Task 2): refactored to use the
- * `@comis/core` contract registry. Method key is a computed-property
+ * Uses the `@comis/core` contract registry. Method key is a computed-property
  * name (`[NotificationSendContract.method]:`) so the bidirectional 1:1
  * architecture test resolves it through `defineContract({ method, ... })`
  * declarations in `packages/core/src/api-contracts/workspace.ts` (the
  * workspace umbrella file groups all 5 handlers that share the
- * `WorkspaceApiDeps` slice). The dispatcher-injected `_X` internal
- * fields are stripped via `stripInternalFields` BEFORE
- * `contract.request.parse(...)` (D-04 pitfall 6). The `_agentId`
- * fallback is resolved from RAW params BEFORE the strip step (handler
- * identity flows from internals, not user params).
+ * `WorkspaceApiDeps` slice). The dispatcher-injected `_X` internal fields
+ * are stripped via `stripInternalFields` BEFORE `contract.request.parse(...)`.
+ * The `_agentId` fallback is resolved from RAW params BEFORE the strip
+ * step (handler identity flows from internals, not user params).
  *
  * The structured-error returns (not exception throws) for missing
  * `message` + chain-depth-guard rejection are preserved verbatim —
@@ -39,20 +37,19 @@ import {
 
 import type { RpcHandler } from "./types.js";
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
 // approval, mcp, skill handlers). The dispatcher constructs this handler only
 // inside the `deps.notificationService ? ...` truthy branch, so the alias
 // narrows `notificationService` to required (matching the handler body's
-// direct `deps.notificationService.x` access). DAEMON-API-03 Option A
-// retarget + 34-08b narrowing — handler bodies unchanged.
+// direct `deps.notificationService.x` access).
 import type { WorkspaceApiDeps } from "./types.js";
 export type NotificationHandlerDeps = WorkspaceApiDeps & {
   notificationService: import("../notification/notification-service.js").NotificationService;
 };
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**

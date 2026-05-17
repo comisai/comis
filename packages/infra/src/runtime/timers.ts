@@ -15,8 +15,6 @@
  * Sanctioned runtime root — setTimeout/setInterval/clearTimeout/clearInterval
  * are exempt from the globals architecture rule by classifier.
  *
- * Phase 39, PORTS-06.
- *
  * @module
  */
 import type { TimerPort, TimerHandle } from "@comis/core";

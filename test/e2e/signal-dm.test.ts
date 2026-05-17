@@ -2,8 +2,6 @@
 /**
  * E2E: Signal × DM — signal-cli REST/SSE wire roundtrip against the 127.0.0.1 mock.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09 Wave D).
- *
  * Scope: spawns the production `@comis/channels` Signal adapter against
  * the mock signal-cli daemon (HTTP + SSE on 127.0.0.1). Asserts:
  *   1. The adapter's `start()` hits /api/v1/check (health probe).
@@ -12,9 +10,9 @@
  *   3. The adapter's SSE-receive path observes injected envelopes via
  *      its registered MessageHandler.
  *
- * The Signal adapter accepts `baseUrl` directly — no Wave A apiRoot
- * refactor was needed (Signal already had a configurable host config
- * key in production).
+ * The Signal adapter accepts `baseUrl` directly — no apiRoot refactor
+ * was needed (Signal already had a configurable host config key in
+ * production).
  *
  * @module
  */
@@ -25,7 +23,7 @@ import { createSignalPlugin } from "@comis/channels";
 import { createMockLogger } from "../support/mock-logger.js";
 import type { ChannelPort, NormalizedMessage } from "@comis/core";
 
-describe("E2E: signal × dm — signal-cli HTTP/SSE wire roundtrip against the 127.0.0.1 mock (COV-15)", () => {
+describe("E2E: signal × dm — signal-cli HTTP/SSE wire roundtrip against the 127.0.0.1 mock", () => {
   let mock: MockSignalServer;
   let adapter: ChannelPort;
   let receivedInbound: NormalizedMessage[];

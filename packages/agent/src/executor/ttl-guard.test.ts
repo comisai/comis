@@ -11,7 +11,7 @@ import {
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { ClockPort } from "@comis/core";
 
-// Phase 39 PORTS-11: test clock stub.
+// Test clock stub.
 const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 // ---------------------------------------------------------------------------

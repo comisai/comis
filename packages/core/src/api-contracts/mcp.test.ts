@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the MCP-domain Wave C contracts.
+ * Per-contract test for the MCP-domain contracts.
  *
- * Plan 35-10 (Wave C domain #5). Mirrors the structure of
- * `packages/core/src/api-contracts/tokens.test.ts` (Plan 35-09's
- * template — closest analog by admin-only + 6-method scope including
- * record-shaped optional fields).
+ * Mirrors the structure of `packages/core/src/api-contracts/tokens.test.ts`
+ * (closest analog by admin-only + 6-method scope including record-shaped
+ * optional fields).
  *
- * BLOCKER 1 exemption: MCP RPC methods are managed via the web SPA only
- * (no CLI consumer for `mcp.list|status|connect|disconnect|reconnect|test`
- * in `packages/cli/src/commands/`). The CLI's `comis mcp` surface
- * touches `config.read` / `config.patch` (managing
- * `integrations.mcp.servers` entries) — NOT these admin RPCs. This test
- * exercises the contract-side surface only.
+ * MCP RPC methods are managed via the web SPA only (no CLI consumer for
+ * `mcp.list|status|connect|disconnect|reconnect|test` in
+ * `packages/cli/src/commands/`). The CLI's `comis mcp` surface touches
+ * `config.read` / `config.patch` (managing `integrations.mcp.servers`
+ * entries) — NOT these admin RPCs. This test exercises the contract-side
+ * surface only.
  *
  * @module
  */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Post-payload cadence tracking (Phase 42 split per EXEC-SPLIT-02).
+ * Post-payload cadence tracking.
  *
  * Records inter-turn pause durations and decides recent-zone TTL promotion
  * (slow cadence) or demotion (fast cadence). Symmetric:
@@ -10,8 +10,6 @@
  * Runs AFTER `onPayloadForCacheDetection` so the detection snapshot
  * reflects the pre-mutation state. Mutation takes effect on the next
  * turn's `placeCacheBreakpoints` call.
- *
- * Lifted verbatim from request-body-injector.ts:1849-1897.
  *
  * @module
  */

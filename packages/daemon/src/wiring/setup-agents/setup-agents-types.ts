@@ -2,10 +2,9 @@
 /**
  * Daemon agents-subsystem types.
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-agents.ts.
  * Holds the `SingleAgentDeps` and `SingleAgentResult` interfaces so the
  * runtime and registry leaves can both reference them without inflating
- * either leaf past the ≤600L subdirectory cap.
+ * either leaf.
  *
  * @module
  */
@@ -108,19 +107,18 @@ export interface SingleAgentDeps {
    */
   mcpClientManager: McpClientManager;
   /**
-   * Canonical FileLockPort adapter (proper-lockfile-backed `createFileLock()`
-   * from `@comis/scheduler`). Phase 32 commit 12 (ORCH-EXT-15) moved
-   * construction here so agent/session/oauth modules no longer import
+   * Canonical FileLockPort adapter (proper-lockfile-backed `createFileLock()`).
+   * Constructed once here so agent/session/oauth modules no longer import
    * `@comis/scheduler` directly. The port is stateless — one instance
    * shared across every per-agent OAuth store, OAuth token manager, and
    * session-write-lock call site is safe.
    */
   fileLock: FileLockPort;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
-  /** Environment-variable reads (Phase 39 PORTS-12). */
+  /** Environment-variable reads. */
   env: import("@comis/core").EnvPort;
-  /** Timer scheduling (Phase 39 PORTS-13). */
+  /** Timer scheduling. */
   timers: import("@comis/core").TimerPort;
 }
 

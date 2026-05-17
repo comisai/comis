@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Workspace contract aggregator (Phase 43 split per FILE-SPLIT-14).
+ * Workspace contract aggregator.
  *
  * Re-aggregates 5 handler-family slices into WORKSPACE_CONTRACTS, preserving
- * the EXACT spread order from the pre-split workspace.ts:1110-1152 to keep
- * API_CONTRACTS_ORDERED byte-identical (contract-codegen-drift.test.ts).
+ * the EXACT spread order required to keep API_CONTRACTS_ORDERED byte-
+ * identical (contract-codegen-drift.test.ts).
  *
  * Family files (mirrors `packages/daemon/src/api/` factory file naming):
  *   - workspace-handlers.ts     (12 methods — workspace.*)
@@ -15,7 +15,7 @@
  *
  * Total: 36 contracts. The bidirectional 1:1 architecture test treats the
  * spread order as documentation only (unordered set); the spread order here
- * matches the pre-split source for codegen byte-stability.
+ * matches the canonical source for codegen byte-stability.
  *
  * @module
  */

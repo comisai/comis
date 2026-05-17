@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the tokens-domain Wave C contracts.
+ * Per-contract test for the tokens-domain contracts.
  *
- * Plan 35-09 (Wave C domain #4). Mirrors the structure of
- * `packages/core/src/api-contracts/secrets.test.ts` (Plan 35-08's
- * template — closest analog by admin-only / 4-method scope).
+ * Mirrors the structure of `packages/core/src/api-contracts/secrets.test.ts`
+ * (closest analog by admin-only / 4-method scope).
  *
- * BLOCKER 1 exemption: tokens are managed via the web SPA only (no CLI
- * consumer for `tokens.list|create|revoke|rotate` in
- * `packages/cli/src/commands/`). This test exercises the contract-side
- * surface only; CLI retarget verification is N/A for this domain.
+ * Tokens are managed via the web SPA only (no CLI consumer for
+ * `tokens.list|create|revoke|rotate` in `packages/cli/src/commands/`),
+ * so this test exercises the contract-side surface only; CLI retarget
+ * verification is N/A for this domain.
  *
  * @module
  */
@@ -94,11 +93,11 @@ describe("tokens-domain contracts", () => {
 
   it("tokens.list: residency-canary projection — `secret` field on a row is STRIPPED on parse", () => {
     // TokenRegistryEntry intentionally omits `secret`. Mirrors the
-    // residency canary from Plan 35-08's secrets.list: SecretMetadata
-    // omits `value` and does NOT use `.passthrough()`. Default Zod
-    // behavior for unknown keys is STRIP (not reject) — so a
-    // well-shaped token entry that ALSO carries a leaked `secret`
-    // field has the `secret` removed by the parse step.
+    // residency canary from secrets.list: SecretMetadata omits `value`
+    // and does NOT use `.passthrough()`. Default Zod behavior for
+    // unknown keys is STRIP (not reject) — so a well-shaped token entry
+    // that ALSO carries a leaked `secret` field has the `secret`
+    // removed by the parse step.
     //
     // This is the structural defense the daemon's dev-mode
     // `TokensListContract.response.parse(...)` provides: even if a

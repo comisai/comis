@@ -1,11 +1,11 @@
-# AgentsApiDeps Audit (Phase 34)
+# AgentsApiDeps Audit
 
 **Generated:** 2026-05-12
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:179–209`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
 **Field count:** 11 (4 required + 7 optional + 0 stale-fallback)
-**OQ-1 resolution:** Option B (co-located with @comis/daemon package). `feedback_no_planning_commits` policy + `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
+**Location:** co-located with the @comis/daemon package. The `files: ["dist", "bundled-skills"]` entry in `packages/daemon/package.json` excludes this file from the npm tarball.
 
 ## Field Classification
 

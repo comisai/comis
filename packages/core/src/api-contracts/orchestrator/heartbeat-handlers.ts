@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Heartbeat-handlers contract slice (Phase 43 split per FILE-SPLIT-14).
+ * Heartbeat-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/heartbeat-handlers.ts` (4 methods —
- * heartbeat.*). Block-moved verbatim from the pre-split
- * `api-contracts/orchestrator.ts` (lines 829-988). Spread order in
- * `HEARTBEAT_HANDLERS_CONTRACTS` matches the pre-split
- * `ORCHESTRATOR_CONTRACTS` array (orchestrator.ts:1121-1124) byte for byte
- * to keep `contracts.generated.*` artifacts byte-identical.
+ * heartbeat.*). Spread order in `HEARTBEAT_HANDLERS_CONTRACTS` matches
+ * the legacy `ORCHESTRATOR_CONTRACTS` array byte for byte to keep
+ * `contracts.generated.*` artifacts byte-identical.
  *
  * @module
  */
@@ -176,9 +174,8 @@ export const HeartbeatTriggerContract = defineContract({
 });
 
 /**
- * heartbeat-handlers slice (4 contracts — heartbeat.*). Spread order matches
- * the pre-split `ORCHESTRATOR_CONTRACTS` array (orchestrator.ts:1121-1124)
- * byte for byte — determinism-critical for codegen output stability.
+ * heartbeat-handlers slice (4 contracts — heartbeat.*). Spread order is
+ * determinism-critical for codegen output stability.
  */
 export const HEARTBEAT_HANDLERS_CONTRACTS = [
   HeartbeatStatesContract,

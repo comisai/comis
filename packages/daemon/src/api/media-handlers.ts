@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Media RPC handler methods (vision, TTS, link processing, audio transcription).
  * Covers 15 methods:
@@ -10,18 +10,17 @@
  *   media.test.document, media.test.video, media.test.link,
  *   media.providers
  *
- * Phase 35 Wave C (Plan 35-15): refactored to use the `@comis/core`
- * contract registry. Method keys are computed-property names
- * (`[TtsSynthesizeContract.method]:`) so the bidirectional 1:1
+ * Uses the `@comis/core` contract registry. Method keys are computed-property
+ * names (`[TtsSynthesizeContract.method]:`) so the bidirectional 1:1
  * architecture test resolves them through `defineContract({ method, ... })`
  * declarations in `packages/core/src/api-contracts/media.ts`. The
  * dispatcher-injected `_X` internal fields are stripped via
- * `stripInternalFields` BEFORE `contract.request.parse(...)` (D-04
- * Pitfall 6 — never model internals in the contract schema). The
- * dispatcher reads `_channelType` / `_chatType` / `_sessionKey` /
- * `_agentId` from `rawParams` BEFORE the strip step (the internal fields
- * flow into the handler body through the un-stripped params; the
- * contract-parsed `params` carry only the user-facing keys).
+ * `stripInternalFields` BEFORE `contract.request.parse(...)` (never model
+ * internals in the contract schema). The dispatcher reads `_channelType` /
+ * `_chatType` / `_sessionKey` / `_agentId` from `rawParams` BEFORE the strip
+ * step (the internal fields flow into the handler body through the
+ * un-stripped params; the contract-parsed `params` carry only the
+ * user-facing keys).
  *
  * The bespoke pre-Zod validation (no-vision-registry guard, no-TTS-adapter
  * guard, no-resolveAttachment guard, scope-rule deny branch, source_type
@@ -70,12 +69,10 @@ import type { RpcHandler } from "./types.js";
 
 /** Dependencies required by media handlers.
  *
- * Re-aliased from the cluster slice in api/types.ts (Plan 34-08a; alias retarget
- * in Plan 34-08c). Single source of truth: MediaApiDeps (shared with
- * image-handlers via the nested `imageHandlerDeps` field). The cluster slice
- * was widened in 34-08c to cover media-handler fields (workspaceDirs,
- * defaultWorkspaceDir, defaultAgentId, logger). DAEMON-API-03 Option A
- * retarget — handler body unchanged.
+ * Re-aliased from the cluster slice in api/types.ts. Single source of truth:
+ * MediaApiDeps (shared with image-handlers via the nested `imageHandlerDeps`
+ * field). The cluster slice covers media-handler fields (workspaceDirs,
+ * defaultWorkspaceDir, defaultAgentId, logger).
  */
 import type { MediaApiDeps as MediaHandlerDeps } from "./types.js";
 export type { MediaHandlerDeps };

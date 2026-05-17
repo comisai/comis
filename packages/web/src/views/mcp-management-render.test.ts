@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Render-branch tests for IcMcpManagement view (Phase 40 Plan 40-15 gap-closure).
+ * Render-branch tests for IcMcpManagement view.
  *
- * mcp-management.ts at baseline reports 23.93% / 15.72% / 15.87% / 18.84%
- * (lines/branches/functions/statements) — the lowest-coverage view in the
- * web package. This file targets the render() decision tree + the helper
- * render methods so the LoadState/empty-state/server-card/config-only/
- * confirm-dialog branches all execute.
+ * Targets the render() decision tree + the helper render methods so the
+ * LoadState/empty-state/server-card/config-only/confirm-dialog branches
+ * all execute. mcp-management.ts had the lowest baseline coverage in the
+ * web package; this file lifts it by exercising every render path.
  *
  * @module
  */

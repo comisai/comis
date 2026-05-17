@@ -1,20 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WEB-CONTRACTS-15 lock-in: the web SPA's `api/` directory MUST import
- * neither any `@comis/*` workspace package NOR any `node:*` builtin.
+ * Lock-in: the web SPA's `api/` directory MUST import neither any
+ * `@comis/*` workspace package NOR any `node:*` builtin.
  *
  * Why: `packages/web/src/api/` is the browser-only seam — its files ship in
  * the Vite bundle that runs in the user's browser. Importing a Node-only
  * symbol (e.g., `node:fs`, `node:path`, raw `fs` / `path` / `crypto`) would
  * either pull in a Node polyfill (silent runtime bloat) or break the build.
- * Importing a `@comis/*` server-side package would defeat the codegen seam
- * established in Plan 35-20 (the generated `contracts.generated.ts` IS the
- * cross-process boundary; no other @comis surface belongs in the browser).
+ * Importing a `@comis/*` server-side package would defeat the codegen seam:
+ * the generated `contracts.generated.ts` IS the cross-process boundary; no
+ * other @comis surface belongs in the browser.
  *
- * Forbidden packages list mirrors PATTERNS.md lines 577–581 + the
- * `HARD_FORBIDDEN_PACKAGES` constellation in
- * `packages/gateway/src/__tests__/architecture.test.ts:33–42`. Forbidden
- * Node builtins mirror RESEARCH §"Browser-safe constraints" (lines 870–875).
+ * The forbidden-packages list mirrors the `HARD_FORBIDDEN_PACKAGES`
+ * constellation in `packages/gateway/src/__tests__/architecture.test.ts`.
  *
  * Lock-in scope: the test walks `packages/web/src/api/` (NOT all of
  * `packages/web/src/`). The view/component layer can still import a
@@ -38,8 +36,8 @@ const WEB_API_DIR = resolve(REPO_ROOT, "packages/web/src/api");
 /**
  * Every workspace package — none may be imported from `packages/web/src/api/`.
  * The web SPA depends on the generated `contracts.generated.ts` (which has
- * zero `@comis/*` imports by construction — codegen-asserted in Plan 35-20)
- * and on browser primitives. The `@comis/*` graph is server-only.
+ * zero `@comis/*` imports by construction — codegen-asserted) and on
+ * browser primitives. The `@comis/*` graph is server-only.
  */
 const FORBIDDEN_FOR_WEB = [
   "@comis/core",
@@ -69,7 +67,7 @@ const FORBIDDEN_FOR_WEB = [
  */
 const FORBIDDEN_NODE_BUILTINS_BARE = ["fs", "path", "crypto", "zlib", "stream"] as const;
 
-describe("Web no @comis/* and no node:* imports (WEB-CONTRACTS-15)", () => {
+describe("Web no @comis/* and no node:* imports", () => {
   // ---------------------------------------------------------------------
   // Block 1 — forbidden @comis/* packages via AST-walked findForbiddenImports.
   // ---------------------------------------------------------------------
@@ -90,8 +88,8 @@ describe("Web no @comis/* and no node:* imports (WEB-CONTRACTS-15)", () => {
             column: v.column,
             snippet: v.snippet,
           })),
-          suggestedFix: `Replace the import with named exports from "./contracts.generated.js" (or refactor the consuming code to a server-side surface). The generated artifact is the one-way seam between core and web — see .planning/phases/35-gateway-cli-web-contracts/35-CONTEXT.md §D-02 / §D-03 and 35-20-SUMMARY.md.`,
-          designRef: "WEB-CONTRACTS-15 — Phase 35 Wave D / RESEARCH §Browser-safe constraints",
+          suggestedFix: `Replace the import with named exports from "./contracts.generated.js" (or refactor the consuming code to a server-side surface). The generated artifact is the one-way seam between core and web.`,
+          designRef: "Browser-safe constraints — packages/web/src/api/ must contain no @comis/* imports",
         }),
       ).toEqual([]);
       expect(
@@ -118,7 +116,7 @@ describe("Web no @comis/* and no node:* imports (WEB-CONTRACTS-15)", () => {
         description: `packages/web/src/api/ must not contain any \`from "node:…"\` import — browser builds cannot resolve Node builtins.`,
         violations: offenders.map((file) => ({ file, line: 0 })),
         suggestedFix: `Move the Node-only logic to a server-side package (e.g., packages/daemon/) and surface the result via an RPC contract in @comis/core/api-contracts/. The browser consumes the result through contracts.generated.ts.`,
-        designRef: "WEB-CONTRACTS-15 — RESEARCH §Browser-safe constraints (lines 870–875)",
+        designRef: "Browser-safe constraints — packages/web/src/api/ must contain no node:* imports",
       }),
     ).toEqual([]);
   });
@@ -134,7 +132,7 @@ describe("Web no @comis/* and no node:* imports (WEB-CONTRACTS-15)", () => {
           description: `packages/web/src/api/ must not contain a bare \`from "${bare}"\` import — Vite resolves bare imports against node_modules, and ${bare} is a Node builtin (no browser polyfill ships by default).`,
           violations: offenders.map((file) => ({ file, line: 0 })),
           suggestedFix: `If you must use a ${bare}-equivalent in the browser, find a published browser-safe alternative (e.g., crypto → SubtleCrypto via globalThis.crypto). Server-side ${bare} usage belongs in a non-web package.`,
-          designRef: "WEB-CONTRACTS-15 — RESEARCH §Browser-safe constraints (lines 870–875)",
+          designRef: "Browser-safe constraints — packages/web/src/api/ must contain no bare Node-builtin imports",
         }),
       ).toEqual([]);
     });
@@ -173,8 +171,7 @@ function findRawImportMatches(rootDir: string, needle: RegExp): string[] {
       if (entry.name.endsWith(".test.ts")) continue;
       const src = readFileSync(full, "utf8");
       // Clone the regex so `g`/`y` flags on caller-supplied patterns don't
-      // retain `lastIndex` state across files (mirrors source-grep's
-      // RES-PIT-8 fix).
+      // retain `lastIndex` state across files.
       const re = new RegExp(needle.source, needle.flags);
       if (re.test(src)) out.push(full);
     }

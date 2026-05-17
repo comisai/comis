@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-// Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #5.
 import { safePath } from "../security/safe-path.js";
 import * as fs from "node:fs/promises";
 import { z } from "zod";

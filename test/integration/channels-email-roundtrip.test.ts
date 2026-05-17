@@ -2,9 +2,8 @@
 /**
  * INTEGRATION: Email channel — SMTP wire roundtrip + sender allowlist.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts coverage on the
- * `@comis/channels` Email subpackage (validateEmailCredentials,
- * isAllowedSender, email-plugin).
+ * Covers the `@comis/channels` Email subpackage (validateEmailCredentials,
+ * isAllowedSender, email-plugin) end-to-end against a mock SMTP server.
  *
  * @module
  */
@@ -61,8 +60,7 @@ describe("INTEGRATION: email channel — SMTP wire roundtrip + sender filter", (
 
   it("isAllowedSender accepts senders in the explicit allowlist (allowlist mode)", () => {
     // isAllowedSender is the production helper imported by the email
-    // adapter's IMAP inbound path. Calling it from integration lifts
-    // the email-sender-filter line.
+    // adapter's IMAP inbound path.
     const result = isAllowedSender(
       "user@example.test",
       ["user@example.test", "other@example.test"],

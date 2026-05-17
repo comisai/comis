@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unified allowlist shrink-only gate (D-04 + D-SHRINK-01..03).
+ * Unified allowlist shrink-only gate.
  *
  * Reads `test/support/architecture-allowlist.ts` at base ref via
  * `git show origin/main:test/support/architecture-allowlist.ts`,
  * parses both base and head via static AST extraction (NOT dynamic
  * import — robust to schema drift between commits), and for each of
  * the 8 allowlists asserts no NEW entries vs base per the key-shape
- * appropriate to that array (D-SHRINK-02 / PATTERNS.md key shape table).
+ * appropriate to that array.
  *
  * Key shapes:
- *   - `ALLOWLIST`                 — L-ID set (Phase 27 D-04 preserved)
+ *   - `ALLOWLIST`                 — L-ID set
  *   - `fileSizeAllowlist`         — {file} set
  *   - `rawThrowAllowlist`         — {file, lineRanges[0][0]} set
  *   - `untypedSqliteAllowlist`    — {file, symbol} set
@@ -20,9 +20,9 @@
  *   - `coverageWaiver`            — length only (head.length <= base.length)
  *
  * Local-fallback: if `origin/main` is not fetched (running locally
- * without `git fetch`), the test SKIPS with a console.warn (Phase 27
- * pattern preserved — auto-fetching from a test would surprise
- * developers and require network access during `pnpm test`).
+ * without `git fetch`), the test SKIPS with a console.warn — auto-fetching
+ * from a test would surprise developers and require network access during
+ * `pnpm test`.
  *
  * @module
  */
@@ -65,7 +65,7 @@ function readBaseAllowlist(): string | null {
  * record contains the entry's PropertyAssignment values (StringLiteral
  * + NumericLiteral only — composite values like `lineRanges:
  * [[12, 12]]` are extracted as their first inner numeric for shrink-key
- * stability per PATTERNS.md).
+ * stability).
  */
 function extractArrayEntries(
   sourceText: string,
@@ -93,7 +93,7 @@ function extractArrayEntries(
         record[key] = Number(init.text);
       } else if (ts.isArrayLiteralExpression(init)) {
         // For lineRanges: [[12, 12], ...] — extract first numeric of
-        // first nested array for shrink-key stability.
+        // the first nested array for shrink-key stability.
         const first = init.elements[0];
         if (first && ts.isArrayLiteralExpression(first)) {
           const inner = first.elements[0];
@@ -149,10 +149,7 @@ interface ShrinkArrayConfig {
   readonly extractKey?: (p: Record<string, string | number>) => string;
 }
 
-/**
- * Configuration for all 8 allowlists. The order matches RESEARCH.md
- * §"Shrink-Test Unification" SHRINK_ARRAYS table.
- */
+/** Configuration for all 8 allowlists. */
 const SHRINK_ARRAYS: readonly ShrinkArrayConfig[] = [
   { name: "ALLOWLIST", keyKind: "l-id" },
   {
@@ -189,16 +186,16 @@ const SHRINK_ARRAYS: readonly ShrinkArrayConfig[] = [
   { name: "coverageWaiver", keyKind: "length" },
   // testNamingAllowlist: per-(file,line,text) tuple key — but the text
   // can contain commas / quotes / unicode, which the simple AST extractor
-  // does not faithfully reconstruct. We use length-only ratchet for COV-10
-  // (same model as coverageWaiver) — the gate's per-entry semantic is
-  // enforced by the test-naming.test.ts file itself (it builds the
-  // allowlistSet from canonical key strings). The length ratchet here
-  // guarantees the array shrinks monotonically across phases.
+  // does not faithfully reconstruct. We use a length-only ratchet (same
+  // model as coverageWaiver) — the gate's per-entry semantic is enforced
+  // by the test-naming.test.ts file itself (it builds the allowlistSet
+  // from canonical key strings). The length ratchet here guarantees the
+  // array shrinks monotonically over time.
   { name: "testNamingAllowlist", keyKind: "length" },
 ];
 
 describe.each(SHRINK_ARRAYS)(
-  "allowlist-shrink — $name (D-SHRINK-01..03)",
+  "allowlist-shrink — $name",
   ({ name, keyKind, extractKey }) => {
     it(`${name} is shrink-only between ${BASE_REF}..HEAD`, () => {
       const baseText = readBaseAllowlist();
@@ -227,9 +224,9 @@ describe.each(SHRINK_ARRAYS)(
               },
             ],
             suggestedFix:
-              "Remove entries from the head allowlist OR escalate via the out-of-band exception process (D-SHRINK-02 deferred).",
+              "Remove entries from the head allowlist OR escalate via the out-of-band exception process.",
             designRef:
-              "design §15.5 + code-quality-plan §4.5 (D-SHRINK-01) + Phase 27 D-04",
+              "architecture allowlist shrink-only invariant",
           }),
         ).toBeLessThanOrEqual(baseEntries.length);
         return;
@@ -247,15 +244,15 @@ describe.each(SHRINK_ARRAYS)(
       expect(
         added,
         formatViolations({
-          description: `${name} is shrink-only (D-SHRINK-01). The following entries were ADDED in this PR:`,
+          description: `${name} is shrink-only. The following entries were ADDED in this PR:`,
           violations: added.map((key) => ({
             file: `${name} (key: ${key})`,
             line: 0,
           })),
           suggestedFix:
-            "If a new violation must be allowlisted, it requires an explicit phase commit (not a feature PR). Either (a) close the underlying violation in this PR (preferred), or (b) escalate to a design-doc amendment + phase commit.",
+            "If a new violation must be allowlisted, it requires an explicit follow-up commit (not a feature PR). Either (a) close the underlying violation in this PR (preferred), or (b) escalate to a design-doc amendment.",
           designRef:
-            "design §15.5 + code-quality-plan §4.5 (D-SHRINK-01) + Phase 27 D-04",
+            "architecture allowlist shrink-only invariant",
           allowlistRef: name,
         }),
       ).toEqual([]);
@@ -263,16 +260,16 @@ describe.each(SHRINK_ARRAYS)(
   },
 );
 
-// Preserve the self-test invariant from Phase 27: AST extractor count
-// must agree with a regex-based sanity count for each array.
-describe("allowlist-shrink — AST extractor self-test (D-04)", () => {
-  it("extractArrayEntries(ALLOWLIST) agrees with regex L-ID count (Phase 27 invariant)", () => {
+// AST extractor self-test: count must agree with a regex-based sanity
+// count for each array.
+describe("allowlist-shrink — AST extractor self-test", () => {
+  it("extractArrayEntries(ALLOWLIST) agrees with regex L-ID count", () => {
     const headText = readFileSync(ALLOWLIST_PATH, "utf8");
     const headEntries = extractArrayEntries(headText, "ALLOWLIST");
     const regexCount = (headText.match(/^\s*id:\s*"L\d+"/gm) ?? []).length;
     expect(
       headEntries.length,
-      "extractArrayEntries parse-self-test: count must agree with regex regardless of allowlist size (Phase 36 GUARDRAILS-01 closed the last entry — vacuous-pass is now legitimate because the array is the closed empty set).",
+      "extractArrayEntries parse-self-test: count must agree with regex regardless of allowlist size (vacuous-pass is legitimate when the array is the closed empty set).",
     ).toBeGreaterThanOrEqual(0);
     expect(
       headEntries.length,
@@ -287,7 +284,7 @@ describe("allowlist-shrink — AST extractor self-test (D-04)", () => {
     const entries = extractArrayEntries(headText, name);
     // Smoke: the extractor parses without throwing; each entry has at
     // least one extracted key (file or id — universal across all 7
-    // new arrays per PATTERNS.md schema).
+    // arrays).
     expect(entries.length).toBeGreaterThanOrEqual(0);
     for (const e of entries) {
       expect(

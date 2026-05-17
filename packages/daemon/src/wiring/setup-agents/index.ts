@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Daemon agents-subsystem wiring (Phase 43 wave 8 split per FILE-SPLIT-08).
+ * Daemon agents-subsystem wiring.
  *
- * Barrel re-export of the canonical public API of the former setup-agents.ts
- * monolith. No aliases — every export keeps its canonical name. The
- * pre-split parity snapshots (captured in 43-08a) reproduce verbatim against
- * this barrel.
+ * Barrel re-export of the canonical public API of the agents wiring.
+ * No aliases — every export keeps its canonical name.
  *
  * Decomposition:
- *   - setup-agents-tooling.ts     ≤200L — resolveAgentModel + pure helpers
- *   - setup-agents-runtime.ts     ≤550L — setupSingleAgent + SingleAgent* types
- *   - setup-agents-registry.ts    ≤450L — setupAgents + AgentsResult
+ *   - setup-agents-tooling.ts     — resolveAgentModel + pure helpers
+ *   - setup-agents-runtime.ts     — setupSingleAgent + SingleAgent* types
+ *   - setup-agents-registry.ts    — setupAgents + AgentsResult
  *
  * @module
  */

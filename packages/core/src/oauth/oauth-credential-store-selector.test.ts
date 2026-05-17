@@ -2,10 +2,6 @@
 /**
  * Unit tests for selectOAuthCredentialStore.
  *
- * Created in Phase 35 Plan 35-03 alongside the relocation (the agent-side
- * source never had a co-located test — the relocation adds basic coverage
- * for the selector's two-mode dispatch + the fail-fast error path).
- *
  * Coverage:
  *   1. storage="file" with default factory returns a port (no `encryptedStore` required).
  *   2. storage="file" with injected factory invokes the factory with the right config.

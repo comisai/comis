@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for tool-output-safety.ts (Plan 40-11 / COV-03).
+ * Branch-gap coverage for tool-output-safety.ts.
  *
  * Covers branches the existing tool-output-safety.test.ts does not reach:
  *   - onTagBlockDetected callback present vs. absent (line 105 if + optional chain)

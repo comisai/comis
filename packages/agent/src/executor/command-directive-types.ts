@@ -2,12 +2,11 @@
 /**
  * Command directive boundary types — agent-local mirror.
  *
- * History: these types previously lived in `packages/agent/src/commands/types.ts`.
- * Phase 32 commit 6 (ORCH-EXT-08) moved the canonical definitions to
+ * The canonical definitions live in
  * `@comis/orchestrator/src/commands/types.ts` (where slash-command parsing
  * lives — inbound dispatch, not executor logic).
  *
- * However, agent's executor consumes `CommandDirectives` at its public surface
+ * Agent's executor consumes `CommandDirectives` at its public surface
  * (`AgentExecutor.execute(directives?: CommandDirectives, ...)`), and agent
  * CANNOT depend on `@comis/orchestrator` — that would be circular
  * (orchestrator already depends on agent). To break the cycle, this file
@@ -22,11 +21,10 @@
  * orchestrator and forwarded into agent.execute), so test-side drift will
  * not be caught — keep the maintenance discipline tight.
  *
- * Long-term: a Phase-N follow-up (out of Phase-32 scope) may promote these
- * types to `@comis/core` (the canonical home for cross-package boundary
- * types — see Phase 28's ComisLogger/LogFields promotion). That would
- * eliminate the duplication; until then, the structural-typing seam is
- * the established workaround.
+ * Long-term: these types may eventually be promoted to `@comis/core` (the
+ * canonical home for cross-package boundary types). That would eliminate
+ * the duplication; until then, the structural-typing seam is the
+ * established workaround.
  *
  * @module
  */

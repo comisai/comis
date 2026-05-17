@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary (Phase 41 TS-HYG-07).
+// @allow-throw: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary.
 /**
- * Connection lifecycle helpers (Phase 43 split per FILE-SPLIT-11).
+ * Connection lifecycle helpers.
  *
  * State-first protocol: every helper that touches closure state takes
  * `state: McpClientManagerState` as its first parameter, followed by
- * `deps: McpClientManagerDeps`. Matches Phase 42 pi-executor and Phase
- * 43 telegram-adapter conventions.
+ * `deps: McpClientManagerDeps`. Matches the pi-executor and
+ * telegram-adapter conventions.
  *
  * Owns: connectServer, disconnectServer, disconnectAllServers,
  * reconnectServer, getConnection, getAllConnections. Tool discovery

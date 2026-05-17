@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: web-search SDK boundary wrapper; throws caught by web-search-tool dispatcher AgentTool wrapper (Phase 41 TS-HYG-07).
+// @allow-throw: web-search SDK boundary wrapper; throws caught by web-search-tool dispatcher AgentTool wrapper.
 /**
- * Web-search execution + output formatting (Phase 43 split per FILE-SPLIT-11).
+ * Web-search execution + output formatting.
  *
- * Extracted from the pre-split web-search-tool.ts monolith. Owns:
+ * Owns:
  *   - Parameter schema (WebSearchParams + WebSearchParamsType)
  *   - Module-level cache state (searchCache) + initialization helper + reset
  *   - Per-provider execution wrapper (executeProviderSearch — runs against

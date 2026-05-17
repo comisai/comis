@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Web-search result normalization helpers (Phase 43 split per FILE-SPLIT-11).
+ * Web-search result normalization helpers.
  *
- * Extracted from the pre-split web-search-tool.ts monolith. Owns:
+ * Extracted from the original web-search-tool.ts monolith. Owns:
  *   - Result-shape interfaces (SearchResultItem, CapResult)
  *   - Result capping by char budget (capSearchResults)
  *   - Deep-fetch helper (deepFetchResults — fetches top N pages' full content)

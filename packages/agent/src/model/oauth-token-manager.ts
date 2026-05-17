@@ -8,13 +8,9 @@
  * - Per-profile-ID file lock via injected FileLockPort.withLock (the daemon
  *   composition root wires the canonical `createFileLock()` adapter from
  *   `@comis/core`) — concurrent refresh attempts from multiple processes
- *   serialize; different profiles refresh in parallel. Phase 32 commit 12
- *   (ORCH-EXT-15) flipped this from a module-level direct scheduler import
- *   to a deps field so agent's production source no longer depends on
- *   `@comis/core` at the value-import level. The `createFileLock()` factory
- *   itself relocated from `@comis/scheduler` to `@comis/core` in Phase 35
- *   Plan 35-04 D-01 #1 (the single proper-lockfile adapter now lives in core
- *   alongside the `FileLockPort` interface it satisfies).
+ *   serialize; different profiles refresh in parallel. The factory is
+ *   injected as a deps field so agent's production source does not depend
+ *   on `@comis/core` at the value-import level.
  * - 30s timeout wrapper around pi-ai's getOAuthApiKey to prevent indefinite hang
  *   when auth.openai.com is unreachable.
  * - Real-refresh detection via newCredentials.refresh !== profile.refresh — the
@@ -113,10 +109,8 @@ export interface OAuthTokenManagerDeps {
   /**
    * Cross-process filesystem mutex for per-profile refresh serialization.
    * Injected by the composition root (`@comis/core`'s `createFileLock()`
-   * in production; relocated from `@comis/scheduler` in Phase 35 Plan 35-04
-   * D-01 #1). Phase 32 commit 12 (ORCH-EXT-15) moved this from a
-   * module-level direct scheduler import to a deps field. Stateless port
-   * — sharing one instance across token managers is safe.
+   * in production). Stateless port — sharing one instance across token
+   * managers is safe.
    */
   fileLock: FileLockPort;
   /** Prefix for SecretManager key names (default: "OAUTH_"). */
@@ -543,7 +537,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   // First-fire guard: seed seenProfileIds from the store on the first
   // watcher fire, and SKIP emission for that fire. Without this, the
   // first fire treats every existing profile as "new" and floods
-  // subscribers with N spurious auth:profile_added events (CR-02).
+  // subscribers with N spurious auth:profile_added events.
   let profileIdsSeeded = false;
 
   async function emitProfileAddedEventsAfterReload(): Promise<void> {
@@ -928,9 +922,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 // invalid_grant | …) into the event payload. The
                 // auth:refresh_failed event's `errorKind` field documents
                 // coarse classification — NOT the closed Pino ErrorKind union.
-                // Phase 28 commit 6C renamed RewrittenOAuthError.errorKind →
-                // logErrorKind ("auth"); the discriminator now flows via
-                // `rewritten.code`.
+                // The discriminator flows via `rewritten.code`.
                 errorKind: rewritten.code,
                 hint: rewritten.hint,
                 timestamp: systemNowMs(),
@@ -941,8 +933,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 providerId,
                 // OAuthError.errorKind carries the discriminator for CLI
                 // pattern-matching (`err.errorKind === "refresh_token_reused"`
-                // in cli/src/commands/auth.ts). Read from `rewritten.code`
-                // post-6C.
+                // in cli/src/commands/auth.ts). Read from `rewritten.code`.
                 errorKind: rewritten.code,
                 profileId: profile.profileId,
                 hint: rewritten.hint,
@@ -1019,10 +1010,10 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               eventBus.emit("auth:refresh_failed", {
                 provider: providerId,
                 profileId: profile.profileId,
-                // See comment at the codex bypass branch above (line ~885):
+                // See comment at the codex bypass branch above:
                 // event payload `errorKind` carries the OAuth domain
-                // discriminator, not the closed Pino ErrorKind union. Post-6C,
-                // the discriminator flows via `rewritten.code`.
+                // discriminator, not the closed Pino ErrorKind union. The
+                // discriminator flows via `rewritten.code`.
                 errorKind: rewritten.code,
                 hint: rewritten.hint,
                 timestamp: systemNowMs(),
@@ -1032,7 +1023,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 message: rewritten.userMessage,
                 providerId,
                 // OAuthError.errorKind carries the discriminator for CLI
-                // pattern-matching; read from `rewritten.code` post-6C.
+                // pattern-matching; read from `rewritten.code`.
                 errorKind: rewritten.code,
                 profileId: profile.profileId,
                 hint: rewritten.hint,
@@ -1430,9 +1421,9 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         await watcher.close();
         watcher = undefined;
       }
-      // Wait for any debounce callback that fired between clearTimeout
+        // Wait for any debounce callback that fired between clearTimeout
       // and now to finish — otherwise cache.clear() / eventBus.emit()
-      // races against a disposed manager (WR-04).
+      // races against a disposed manager.
       if (inflightReload) {
         await inflightReload;
       }

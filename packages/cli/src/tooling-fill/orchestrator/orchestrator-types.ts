@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * tooling-fill orchestrator types (Phase 43 split per FILE-SPLIT-10).
+ * tooling-fill orchestrator types.
  *
  * Public types (PromptIO, OrchestratorOpts, OrchestratorResult) and the
  * internal pipeline-stage hand-off types (HintEntry, FilledEntry, SkippedEntry,
  * RollbackOutcome) consumed across the discover/fill/verify leaves. Pure
- * type declarations + the load-bearing literal strings shared across phases
+ * type declarations + the load-bearing literal strings shared across stages
  * (anchored by anti-regression greps in the integration tests).
  *
  * @module

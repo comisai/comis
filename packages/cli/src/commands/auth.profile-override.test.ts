@@ -28,9 +28,8 @@ import { Command } from "commander";
 // -----------------------------------------------------------------------------
 
 // Mock @comis/core — all the OAuth helpers + file-lock + createConsoleLogger
-// relocated here in Phase 35 (D-01 #1/#2/#3 by Plan 35-04; createConsoleLogger
-// by Plan 35-02; WEB-CONTRACTS-03 by Plan 35-05 — closes L12). Single combined
-// mock now that auth.ts imports ALL these symbols from @comis/core.
+// live here. Single combined mock now that auth.ts imports ALL these symbols
+// from @comis/core.
 vi.mock("@comis/core", async () => {
   const actual = await vi.importActual<typeof import("@comis/core")>(
     "@comis/core",
@@ -51,10 +50,9 @@ vi.mock("@comis/core", async () => {
     })),
     selectOAuthCredentialStore: vi.fn(),
     isRemoteEnvironment: vi.fn(() => false),
-    // Phase 35 Plan 35-04 (D-01 #1): createFileLock relocated from
-    // @comis/scheduler (via the deleted agent barrel re-export) to
-    // @comis/core/runtime/file-lock.ts. The mock returns a no-op port —
-    // the tests never exercise the file lock body, only the CLI control flow.
+    // createFileLock lives in @comis/core/runtime/file-lock.ts. The mock
+    // returns a no-op port — the tests never exercise the file lock body,
+    // only the CLI control flow.
     createFileLock: vi.fn(() => ({
       acquire: vi.fn(),
       release: vi.fn(),
@@ -62,9 +60,9 @@ vi.mock("@comis/core", async () => {
       isLocked: vi.fn(async () => false),
       cleanupStaleLocks: vi.fn(async () => 0),
     })),
-    // Phase 35 Plan 35-05 (WEB-CONTRACTS-03 / L12 closure): createConsoleLogger
-    // replaces @comis/infra's createLogger. Returns a no-op logger — auth.ts
-    // tests never exercise the log body, only the CLI control flow.
+    // createConsoleLogger replaces @comis/infra's createLogger. Returns a
+    // no-op logger — auth.ts tests never exercise the log body, only the
+    // CLI control flow.
     createConsoleLogger: vi.fn(() => ({
       level: "info",
       info: vi.fn(),

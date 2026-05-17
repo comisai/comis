@@ -7,7 +7,7 @@
  * Uses timers.setTimeout per-window (NOT setInterval) to avoid timer leaks.
  * Provides destroy() for clean daemon shutdown.
  *
- * Phase 39 PORTS-11/13: time + scheduling injected via ClockPort/TimerPort.
+ * Time and scheduling are injected via ClockPort/TimerPort.
  *
  * @module
  */
@@ -23,7 +23,7 @@ export interface AuditAggregatorOptions {
 }
 
 /**
- * Dependencies for the audit aggregator factory (Phase 39 PORTS-11/13).
+ * Dependencies for the audit aggregator factory.
  */
 export interface AuditAggregatorDeps {
   /** Wall-clock reads for emitted summary timestamps. */
@@ -114,7 +114,7 @@ export function createAuditAggregator(
           timer: deps.timers.setTimeout(() => emitSummary(key, bucket), windowMs),
         };
         // Unref timer so it does not prevent Node process exit.
-        // .unref() preserved per PORTS-04 cancel-safety contract.
+        // .unref() preserved per TimerPort cancel-safety contract.
         bucket.timer.unref();
         buckets.set(key, bucket);
       }

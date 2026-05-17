@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Fixture-driven unit tests for the secret-residency AST walker
- * (MEM-CTX-PORTS-14 part 1).
+ * Fixture-driven unit tests for the secret-residency AST walker.
  *
  * Three fixture files under
  * `test/architecture/fixtures/secret-residency/` exercise the walker:
@@ -10,14 +9,13 @@
  *      (expects zero violations).
  *   2. `leaky-module-level.ts`  — Rule 1 violation: module-level `const`
  *      `secretValue` with `mockStore.getDecrypted(...)` initializer.
- *   3. `leaky-promise-all.ts`   — Rule 2 violation (RES-PIT-31-1):
- *      Promise.all closure captures `secretBinding` from outer scope.
+ *   3. `leaky-promise-all.ts`   — Rule 2 violation: Promise.all closure
+ *      captures `secretBinding` from outer scope.
  *
- * The Rule-2 detection uses PROPER TypeChecker symbol resolution (per
- * I-11 fix in Phase 31 revision iter 2). Text-matching shortcuts are
- * explicitly rejected by the walker — these tests verify the walker
- * correctly resolves the captured `secretBinding` symbol back to its
- * declaration outside the closure.
+ * The Rule-2 detection uses PROPER TypeChecker symbol resolution.
+ * Text-matching shortcuts are explicitly rejected by the walker —
+ * these tests verify the walker correctly resolves the captured
+ * `secretBinding` symbol back to its declaration outside the closure.
  *
  * @module
  */
@@ -47,7 +45,7 @@ function clearCache(): void {
   }
 }
 
-describe("checkSecretResidency walker (MEM-CTX-PORTS-14 part 1)", () => {
+describe("checkSecretResidency walker", () => {
   beforeEach(() => {
     clearCache();
   });
@@ -59,7 +57,7 @@ describe("checkSecretResidency walker (MEM-CTX-PORTS-14 part 1)", () => {
     expect(violations).toEqual([]);
   });
 
-  it("leaky-module-level.ts produces ≥1 violation with kind 'module-level-binding' and bindingName 'secretValue'", () => {
+  it("leaky-module-level.ts produces at least one violation with kind 'module-level-binding' and bindingName 'secretValue'", () => {
     const violations = checkSecretResidency([
       resolve(FIXTURES_DIR, "leaky-module-level.ts"),
     ]);
@@ -69,7 +67,7 @@ describe("checkSecretResidency walker (MEM-CTX-PORTS-14 part 1)", () => {
     expect(v?.kind).toBe("module-level-binding");
   });
 
-  it("leaky-promise-all.ts produces ≥1 violation with kind 'promise-all-closure-escape'", () => {
+  it("leaky-promise-all.ts produces at least one violation with kind 'promise-all-closure-escape'", () => {
     const violations = checkSecretResidency([
       resolve(FIXTURES_DIR, "leaky-promise-all.ts"),
     ]);

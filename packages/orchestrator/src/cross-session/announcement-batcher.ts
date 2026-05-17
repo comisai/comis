@@ -15,10 +15,9 @@ import { withTimeout } from "@comis/shared";
 /** Hard timeout for announceToParent calls (300 seconds / 5 minutes).
  *  Parent agents may call slow tools (image generation at 120s, web search, etc.)
  *  in response to announcements. 30s caused premature fallback + duplicate delivery.
- *  Inlined from packages/daemon/src/sub-agent-runner.ts at Phase 32 commit 11
- *  (ORCH-EXT-11) to remove the orchestrator->daemon back-edge that the relative
- *  import would have introduced after the cross-session move; the daemon-side
- *  constant remains the canonical export for daemon consumers. */
+ *  Inlined locally (rather than imported from packages/daemon/src/sub-agent-runner.ts)
+ *  to avoid an orchestrator -> daemon back-edge; the daemon-side constant
+ *  remains the canonical export for daemon consumers. */
 const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 
 // ---------------------------------------------------------------------------

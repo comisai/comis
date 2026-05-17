@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SDK 5m → 1h cache_control marker upgrade (Phase 42 split per EXEC-SPLIT-02).
+ * SDK 5m → 1h cache_control marker upgrade.
  *
  * The pi-ai SDK places `cache_control: { type: "ephemeral" }` (5m TTL) on
  * tool/system/last-user-message blocks by default. When the session uses
@@ -11,8 +11,6 @@
  * Does NOT touch message markers -- `placeCacheBreakpoints` already
  * assigns zone-aware TTLs and the SDK's auto-placed last-user marker is
  * in the recent zone and should stay at 5m.
- *
- * Lifted verbatim from request-body-injector.ts:1899-1938.
  *
  * @module
  */

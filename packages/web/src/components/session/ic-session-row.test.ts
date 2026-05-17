@@ -7,9 +7,8 @@ import type { SessionInfo } from "../../api/types/index.js";
 import "./ic-session-row.js";
 
 /** Create a session with a parseable key.
- *  CR-01 follow-up to BC-REM-15 (Phase 38): session keys no longer carry an
- *  `agent:<agentId>:` prefix; the agent identity is sourced from the
- *  session row's `agentId` field instead. */
+ *  Session keys do not carry an `agent:<agentId>:` prefix; the agent
+ *  identity is sourced from the session row's `agentId` field instead. */
 function makeSession(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
     key: "myTenant:user123:telegram",

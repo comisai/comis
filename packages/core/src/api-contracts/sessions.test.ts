@@ -2,9 +2,9 @@
 /**
  * Unit tests for the sessions-domain contract registry.
  *
- * Mirrors the per-domain test pattern established in Plans 35-06..35-18:
+ * Mirrors the per-domain test pattern:
  *   - Aggregator sanity: count + method-name presence + scope partitioning.
- *   - BLOCKER 8 single-scope invariant (every contract has scopes.length === 1).
+ *   - Single-scope invariant (every contract has scopes.length === 1).
  *   - INTERNAL_FIELD_NAMES paired sanity (no contract request schema declares
  *     a dispatcher-injected `_X` key; loose-record contracts are exempt).
  *   - Per-contract spot-checks: request acceptance + rejection + optional-field
@@ -84,7 +84,7 @@ describe("SESSIONS_CONTRACTS aggregator", () => {
     ]);
   });
 
-  it("BLOCKER 8: every contract has scopes.length === 1 (Plan 35-20 collapse loop dependency)", () => {
+  it("every contract has scopes.length === 1 (single-scope invariant)", () => {
     for (const c of SESSIONS_CONTRACTS) {
       expect(c.scopes.length, `${c.method} must have exactly one scope`).toBe(1);
     }
@@ -102,7 +102,7 @@ describe("sessions domain contracts do not declare dispatcher internals", () => 
     // schema must either silently strip the internal keys (z.object default)
     // or reject — never echo them back in the parsed output.
     //
-    // Loose-record exclusion (D-05): contracts whose request is a root-level
+    // Loose-record exclusion: contracts whose request is a root-level
     // z.record are skipped — by design they pass through any keys including
     // dispatcher internals. The contract-internal-fields.test.ts architecture
     // test is the authoritative gate (it asserts no contract DECLARES the
@@ -118,8 +118,8 @@ describe("sessions domain contracts do not declare dispatcher internals", () => 
     };
 
     for (const c of SESSIONS_CONTRACTS) {
-      // Skip root-level loose-record requests (none in sessions today, but
-      // future-proof the pattern from Plan 35-17/18).
+      // Skip root-level loose-record requests (none in sessions today —
+      // future-proof the pattern for other domains).
       if (c.request instanceof z.ZodRecord) continue;
 
       const probe = { ...minimalValid, ...internalPayload };

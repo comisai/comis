@@ -9,18 +9,15 @@
  * - status="skipped" → reason is non-empty and not in the blocklist
  *   (blocklist regex /^(TODO|later|tbd)/i — case-insensitive prefix match)
  *
- * Independent of the orchestrator `--check-matrix` flag (Plan 40-08 Task 3),
- * which is the second enforcement path. Two redundant gates by design
- * (threat-model T-40-08-03): even if a contributor removes the orchestrator
- * flag, this architecture test still fails on unsettled cells when
- * `pnpm test` runs the architecture project.
+ * Independent of the orchestrator `--check-matrix` flag, which is the
+ * second enforcement path. Two redundant gates by design: even if a
+ * contributor removes the orchestrator flag, this architecture test still
+ * fails on unsettled cells when `pnpm test` runs the architecture project.
  *
  * Walker analog (filter+assert idiom over imported typed data) is
  * `test/architecture/composition-root.test.ts`. Failure-message rendering
  * uses `formatViolations` (test/support/architecture-helpers.ts) — the
- * canonical Phase 27+ architecture-gate pattern.
- *
- * Phase 40 / Phase C §6.6 / COV-13.
+ * canonical architecture-gate pattern.
  *
  * @module
  */
@@ -60,8 +57,8 @@ const SUGGESTED_FIX_COVERED =
   "Either (a) add the missing test file at the referenced path, OR " +
   "(b) change the cell to status=\"skipped\" with a non-empty case-specific " +
   "reason explaining why an E2E test cannot exist for this combination. " +
-  "The orchestrator --check-matrix flag (COV-14) enforces the same invariant " +
-  "at CI time as the second enforcement path (threat-model T-40-08-03).";
+  "The orchestrator --check-matrix flag enforces the same invariant " +
+  "at CI time as the second enforcement path.";
 
 const SUGGESTED_FIX_SKIPPED =
   "Replace the reason with a case-specific explanation of why this " +
@@ -70,10 +67,9 @@ const SUGGESTED_FIX_SKIPPED =
   "If the cell SHOULD be covered, change status to \"covered\" and reference " +
   "an existing test file at the integration tier.";
 
-const DESIGN_REF = "code-quality-plan-2026-05-10 §6.5, §6.6 / COV-13";
 const ALLOWLIST_REF = "test/e2e/flow-matrix.ts (single source of truth — no separate allowlist)";
 
-describe("e2e-matrix — flow-matrix invariant enforcement (COV-13)", () => {
+describe("e2e-matrix — flow-matrix invariant enforcement", () => {
   it("contains exactly 63 cells (9 channels × 7 flows) with no duplicate (channel, flow) pairs", () => {
     expect(flowMatrix.length).toBe(63);
 
@@ -108,7 +104,6 @@ describe("e2e-matrix — flow-matrix invariant enforcement (COV-13)", () => {
           snippet: `${c.channel}×${c.flow} status="covered" but reference path does not exist`,
         })),
         suggestedFix: SUGGESTED_FIX_COVERED,
-        designRef: DESIGN_REF,
         allowlistRef: ALLOWLIST_REF,
       }),
     ).toEqual([]);
@@ -133,7 +128,6 @@ describe("e2e-matrix — flow-matrix invariant enforcement (COV-13)", () => {
           snippet: `${c.channel}×${c.flow} status="skipped" but reason is empty or blocklisted ("${c.reference}")`,
         })),
         suggestedFix: SUGGESTED_FIX_SKIPPED,
-        designRef: DESIGN_REF,
         allowlistRef: ALLOWLIST_REF,
       }),
     ).toEqual([]);

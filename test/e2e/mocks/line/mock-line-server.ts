@@ -2,11 +2,9 @@
 /**
  * Mock LINE Messaging API server for E2E flow-matrix coverage.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09).
- *
  * Wire surface: an HTTP server speaking just enough of LINE's Messaging
  * API to satisfy a @line/bot-sdk MessagingApiClient configured with
- * baseURL='http://127.0.0.1:<port>' (see Wave A5 plumbing). Endpoints:
+ * baseURL='http://127.0.0.1:<port>'. Endpoints:
  *
  *   - GET  /v2/bot/info                — bot identity for validateLineCredentials
  *   - POST /v2/bot/message/push        — captures bot outbound push messages
@@ -17,8 +15,8 @@
  * `injectInboundMessage` returns the webhook payload for the test to POST
  * to the gateway directly (matches LINE's webhook-only inbound pattern).
  *
- * Security posture (T-MOCK-EXPOSED-PORT): binds loopback only;
- * listen(0) for kernel-allocated port.
+ * Security posture: binds loopback only; listen(0) for kernel-allocated
+ * port.
  *
  * @module
  */

@@ -28,7 +28,7 @@ import {
 
 type DeliveryQueueDbRow = z.infer<typeof DeliveryQueueDbRowSchema>;
 
-// Row mappers (Phase 41 TS-HYG-03)
+// Row mappers
 const deliveryQueueMapper = createRowMapper(DeliveryQueueDbRowSchema);
 const countProjectionMapper = createRowMapper(CountProjectionRowSchema);
 const statusCountMapper = createRowMapper(
@@ -149,7 +149,7 @@ export function createSqliteDeliveryQueue(
   // Two distinct statements (no channelType filter vs. with filter) because
   // better-sqlite3 does not support SQLite's `?1` named-positional syntax
   // for repeated parameters in `.all(value)` calls — passing one value
-  // raises "Too many parameter values were provided" (Plan 40-11 / Rule 1).
+  // raises "Too many parameter values were provided".
   const statusCountsAllStmt = db.prepare(`
     SELECT status, COUNT(*) as count FROM delivery_queue
     GROUP BY status

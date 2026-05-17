@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Render-branch tests for IcSecurityView (Phase 40 Plan 40-15 gap-closure).
+ * Render-branch tests for IcSecurityView.
  *
- * security.ts at baseline reports 37.43% / 19.76% / 23.91% / 34.05%
- * (lines/branches/functions/statements). This file covers the loadState
- * (loading/error/loaded) decision tree, the 7-tab _renderTabContent
- * switch, _renderHealthTab provider-card branches, and _renderSecretsTab
- * empty/populated branches.
+ * Covers the loadState (loading/error/loaded) decision tree, the 7-tab
+ * _renderTabContent switch, _renderHealthTab provider-card branches,
+ * and _renderSecretsTab empty/populated branches.
  *
  * @module
  */

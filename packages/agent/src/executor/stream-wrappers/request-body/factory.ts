@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Request-body injector factory (Phase 42 split per EXEC-SPLIT-02).
+ * Request-body injector factory.
  *
  * Composition root for the four concerns the wrapper consolidates:
  *  1. Cache breakpoints (Anthropic-family) -- breakpoint-orchestration.ts
@@ -19,8 +19,8 @@
  *   - kill-switch.ts          (retention="none" strip)
  *   - ttl-split-estimation.ts (per-TTL token attribution)
  *
- * Public surface unchanged: `createRequestBodyInjector` returns the same
- * `requestBodyInjector` named StreamFnWrapper as before the split.
+ * `createRequestBodyInjector` returns a `requestBodyInjector` named
+ * StreamFnWrapper.
  *
  * @module
  */

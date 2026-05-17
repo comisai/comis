@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: Unknown-table guard in resetTable(); consumed via obs-handlers (daemon RPC @allow-throw boundary per Decision 2 transitive) (Phase 41 TS-HYG-07).
+// @allow-throw: Unknown-table guard in resetTable(); consumed via obs-handlers (daemon RPC @allow-throw boundary, transitive).
 /**
  * ObservabilityStore reset + prune helpers.
  *
- * Phase 43 split (FILE-SPLIT-13): block-moved from the former
- * `packages/memory/src/observability-store.ts` createObservabilityStore
- * factory body. Houses the `@allow-throw` boundary for the unknown-table
- * guard in resetTable().
+ * Houses the `@allow-throw` boundary for the unknown-table guard in
+ * resetTable().
  *
  * @module
  */

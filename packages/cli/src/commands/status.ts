@@ -103,9 +103,8 @@ async function fetchSystemStatus(): Promise<SystemStatus> {
 
   try {
     await withClient(async (client) => {
-      // Fetch daemon/process status via gateway.status RPC (Plan 35-11
-      // retarget — callTyped enforces GatewayStatusContract request/response
-      // under the D-10 gate).
+      // Fetch daemon/process status via gateway.status RPC. callTyped
+      // enforces GatewayStatusContract request/response shape.
       try {
         const gwStatusResult = await callTyped(client, GatewayStatusContract, {});
         status.daemon.status = "online";
@@ -114,9 +113,8 @@ async function fetchSystemStatus(): Promise<SystemStatus> {
         status.daemon.status = "offline";
       }
 
-      // Fetch gateway config for listening address info. Phase 35 Wave C
-      // closure (Plan 35-19): retargeted from stale `config.get` method name
-      // (which the daemon doesn't implement) to ConfigReadContract.
+      // Fetch gateway config for listening address info via the
+      // ConfigReadContract RPC (the daemon does not implement `config.get`).
       try {
         const gwConfig = await callTyped(client, ConfigReadContract, {
           section: "gateway",
@@ -135,7 +133,7 @@ async function fetchSystemStatus(): Promise<SystemStatus> {
         status.gateway.status = "unknown";
       }
 
-      // Fetch channel config (Plan 35-19 retarget — same rationale as
+      // Fetch channel config (via ConfigReadContract — same rationale as
       // the gateway fetch above).
       try {
         const chResult = await callTyped(client, ConfigReadContract, {
@@ -161,8 +159,8 @@ async function fetchSystemStatus(): Promise<SystemStatus> {
         // No channel data available
       }
 
-      // Fetch agent config (agents are at top-level "agents" section).
-      // Plan 35-19 retarget — same rationale as above.
+      // Fetch agent config (agents are at top-level "agents" section)
+      // via ConfigReadContract.
       try {
         const agentResult = await callTyped(client, ConfigReadContract, {
           section: "agents",

@@ -34,8 +34,6 @@
  * @module
  */
 import { readFile } from "node:fs/promises";
-// Phase 35 Plan 35-04 (drift recovery): runOAuthTlsPreflight relocated from
-// @comis/agent to @comis/core.
 import { runOAuthTlsPreflight } from "@comis/core";
 import { getOAuthProvider } from "@mariozechner/pi-ai/oauth";
 import type { ComisLogger } from "@comis/infra";

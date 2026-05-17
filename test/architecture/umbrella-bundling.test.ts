@@ -12,7 +12,7 @@
  *
  * Failure mode this test prevents: developer adds @comis/foo to one surface
  * but forgets the others -> tarball publish-time failure rather than test-time
- * failure (per RESEARCH RES-PIT-4 / ORCH-EXT-04).
+ * failure.
  *
  * Note on `web`: web is bundled (in WORKSPACE_PACKAGES + bundledDependencies)
  * but has NO namespace re-export and NO mirror file (current pattern). The
@@ -120,7 +120,7 @@ describe("umbrella-bundling -- bidirectional 6-way alignment", () => {
         ],
         suggestedFix:
           "Add the new package to ALL_BUNDLED_PACKAGES (this file) AND to WORKSPACE_PACKAGES (prepack.js) AND to bundledDependencies AND to exports AND to mirror file AND to namespace re-export. All 6 surfaces or none.",
-        designRef: "RESEARCH §Pitfall 4 / ORCH-EXT-04",
+        designRef: "umbrella-bundling 6-way alignment",
       }),
     ).toEqual({ onlyInDirs: [], onlyInExpected: [] });
   });
@@ -181,10 +181,10 @@ describe("umbrella-bundling -- bidirectional 6-way alignment", () => {
     ).toEqual([]);
   });
 
-  it("sanity: at least 12 namespaced packages (Pattern E)", () => {
+  it("sanity: at least 12 namespaced packages", () => {
     expect(
       NAMESPACED_PACKAGES.length,
-      "Pattern E sanity: at least 12 packages bundled",
+      "sanity: at least 12 packages bundled",
     ).toBeGreaterThanOrEqual(12);
   });
 });

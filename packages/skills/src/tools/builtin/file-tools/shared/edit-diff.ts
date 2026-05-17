@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: file-tool validation guards; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch (Phase 41 TS-HYG-07).
+// @allow-throw: file-tool validation guards; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch.
 /**
  * @module edit-diff
  * Pure-logic editing algorithms: fuzzy matching (3-step cascade), batch edit

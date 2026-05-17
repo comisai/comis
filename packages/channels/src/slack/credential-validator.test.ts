@@ -206,10 +206,10 @@ describe("credential-validator", () => {
       }
     });
 
-    it("passes slackApiUrl to WebClient when apiRoot is provided (COV-15 E2E seam)", async () => {
-      // Phase 40 / Plan 40-09 / COV-15: apiRoot threads through as
-      // WebClientOptions.slackApiUrl so auth.test() (and all other Web API
-      // calls) hit the 127.0.0.1 mock instead of slack.com/api.
+    it("passes slackApiUrl to WebClient when apiRoot is provided (E2E seam)", async () => {
+      // apiRoot threads through as WebClientOptions.slackApiUrl so
+      // auth.test() (and all other Web API calls) hit the 127.0.0.1 mock
+      // instead of slack.com/api.
       mockAuthTest.mockResolvedValueOnce({ ok: true, user_id: "U", team_id: "T", bot_id: "B" });
       const mockWebClient = vi.mocked(WebClient);
       mockWebClient.mockClear();

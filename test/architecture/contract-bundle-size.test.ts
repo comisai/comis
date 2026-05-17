@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WEB-CONTRACTS-14 bundle-size gate: the generated artifact fits within
- * 120 KB minified + 38 KB gzipped (CONTEXT D-02; raised from initial 100 KB
- * estimate after research measured 190 actual RPC methods, not the
- * originally-projected 33).
- *
- * Phase 35 Wave D Plan 35-20.
+ * Bundle-size gate: the generated contracts artifact fits within
+ * 120 KB minified + 38 KB gzipped (sized for ~190 actual RPC methods).
  *
  * Test strategy: read the committed `contracts.generated.size.json` (produced
  * by `pnpm contracts:generate`) and assert the totals are within budget. The
@@ -46,19 +42,19 @@ interface SizeReportShape {
   readonly overBudget: boolean;
 }
 
-describe("WEB-CONTRACTS-14: bundle-size budget", () => {
+describe("contracts bundle-size budget", () => {
   it("contracts.generated.size.json reports within 120 KB minified + 38 KB gzipped", () => {
     const raw = readFileSync(SIZE_REPORT, "utf8");
     const report = JSON.parse(raw) as SizeReportShape;
 
     expect(
       report.totalMinified,
-      `totalMinified ${report.totalMinified}B exceeds budget ${BUDGET_MINIFIED_BYTES}B (D-02)`,
+      `totalMinified ${report.totalMinified}B exceeds budget ${BUDGET_MINIFIED_BYTES}B`,
     ).toBeLessThanOrEqual(BUDGET_MINIFIED_BYTES);
 
     expect(
       report.totalGzipped,
-      `totalGzipped ${report.totalGzipped}B exceeds budget ${BUDGET_GZIPPED_BYTES}B (D-02)`,
+      `totalGzipped ${report.totalGzipped}B exceeds budget ${BUDGET_GZIPPED_BYTES}B`,
     ).toBeLessThanOrEqual(BUDGET_GZIPPED_BYTES);
 
     expect(report.overBudget, "size report flags overBudget=true").toBe(false);

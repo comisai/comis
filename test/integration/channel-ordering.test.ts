@@ -18,11 +18,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { EchoChannelAdapter } from "@comis/channels";
-// Phase 32 commit 4: channel-manager.ts moved with createChannelManager +
-// ChannelManagerDeps to @comis/orchestrator. processInboundMessage already
-// lived there from commit 3. The dep-inject indirection is preserved (daemon
-// + this integration test still wire processInboundMessage explicitly).
-// Phase 32 commit 8: createCommandQueue + coalesceMessages moved to @comis/orchestrator (ORCH-EXT-08, Wave A close).
+// createChannelManager + ChannelManagerDeps live in @comis/orchestrator
+// alongside processInboundMessage. The dep-inject indirection is preserved
+// (daemon + this integration test wire processInboundMessage explicitly).
 import {
   createChannelManager,
   processInboundMessage,
@@ -41,8 +39,8 @@ import type { NormalizedMessage, ChannelPort } from "@comis/core";
 import { ASYNC_SETTLE_MS } from "../support/timeouts.js";
 
 /**
- * Phase 30 plan 04: ChannelManagerDeps now requires a DeliveryService. Build a
- * real one for integration: empty plugin registry + no-op queue. The
+ * Build a real DeliveryService for integration: empty plugin registry +
+ * no-op queue. ChannelManagerDeps requires a DeliveryService. The
  * DeliveryService captures these in closure and is shared across all
  * makeMinimalDeps callers below.
  */
@@ -138,14 +136,13 @@ function makeMinimalDeps(
       error: vi.fn(),
       debug: vi.fn(),
     },
-    // Phase 30 plan 04: DeliveryService is required on ChannelManagerDeps.
-    // Constructed once per deps object so the inbound pipeline closes over a
-    // working service when it delivers responses (and rejects gracefully when
-    // no hooks/queue are wired — both empty in this integration test).
+    // DeliveryService is required on ChannelManagerDeps. Constructed once
+    // per deps object so the inbound pipeline closes over a working service
+    // when it delivers responses (and rejects gracefully when no hooks/queue
+    // are wired — both empty in this integration test).
     deliveryService: makeRealDeliveryService(eventBus),
-    // Phase 32 commit 3: processInboundMessage is dep-injected so channels
-    // (where channel-manager still lives at commit 3) doesn't back-edge into
-    // @comis/orchestrator. Integration test wires the real implementation.
+    // processInboundMessage is dep-injected to avoid back-edges between
+    // packages. Integration test wires the real implementation.
     processInboundMessage: processInboundMessage as unknown as ChannelManagerDeps["processInboundMessage"],
   };
 }

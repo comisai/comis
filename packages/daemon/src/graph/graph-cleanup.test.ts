@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-coverage tests for graph-cleanup (Plan 40-14).
+ * Branch-coverage tests for graph-cleanup.
  *
  * Exercises both `clearAllTimers` (no-timer / graph-timer / driver-state /
  * wait-handler permutations) and `sweepExpiredGraphs` (retention + maxGraphs
@@ -24,7 +24,7 @@ function makeGraph(overrides: Partial<GraphRunState> = {}): GraphRunState {
   } as GraphRunState;
 }
 
-describe("clearAllTimers (Plan 40-14)", () => {
+describe("clearAllTimers", () => {
   it("clears all node timers in the per-graph nodeTimers map on clearAllTimers", () => {
     const gs = makeGraph({
       nodeTimers: new Map<string, ReturnType<typeof setTimeout>>([
@@ -83,7 +83,7 @@ describe("clearAllTimers (Plan 40-14)", () => {
   });
 });
 
-describe("sweepExpiredGraphs (Plan 40-14)", () => {
+describe("sweepExpiredGraphs", () => {
   it("removes only completed graphs older than the configured retentionMs", () => {
     const now = Date.now();
     const state = {

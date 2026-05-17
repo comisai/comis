@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 #
-# Comis Documentation Validator (Phase 12)
+# Comis Documentation Validator for the OAuth/Codex documentation set.
 #
-# Encodes every grep assertion from .planning/phases/12-codex-oauth-documentation/12-VALIDATION.md
-# Per-Task Verification Map. Runs in <1s and exits 0 only when all SC-12-*
-# assertions pass.
+# Encodes every grep assertion against the docs tree. Runs in <1s and exits 0
+# only when all assertions pass.
 #
 # Usage:
 #   bash scripts/docs-grep-checks.sh                Run all checks; exit 0 on PASS
@@ -108,8 +107,8 @@ check_min_word_count() {
   fi
 }
 
-# check_oq1_invariant — either docs/operations/proxy.mdx exists OR
-# packages/agent/src/model/oauth-errors.ts no longer cites it.
+# check_oq1_invariant — verifies that either docs/operations/proxy.mdx exists
+# OR packages/agent/src/model/oauth-errors.ts no longer cites it.
 check_oq1_invariant() {
   TOTAL=$((TOTAL + 1))
   local proxy_doc="$DOCS_DIR/operations/proxy.mdx"
@@ -119,34 +118,34 @@ check_oq1_invariant() {
     cites=$(grep -c "docs/operations/proxy" "$errors_ts" 2>/dev/null) || cites=0
   fi
   if [ -f "$proxy_doc" ] || [ "$cites" -eq 0 ]; then
-    echo "  ${GREEN}PASS${NC}: OQ-1 invariant (proxy.mdx exists OR oauth-errors.ts citation removed)"
+    echo "  ${GREEN}PASS${NC}: proxy-doc invariant (proxy.mdx exists OR oauth-errors.ts citation removed)"
     PASS=$((PASS + 1))
   else
-    echo "  ${RED}FAIL${NC}: OQ-1 invariant violated (proxy.mdx missing AND oauth-errors.ts still cites it)"
+    echo "  ${RED}FAIL${NC}: proxy-doc invariant violated (proxy.mdx missing AND oauth-errors.ts still cites it)"
     FAIL=$((FAIL + 1))
   fi
 }
 
 # --- Self-test mode -------------------------------------------------------
 # Verifies the script parses and the helpers exist. Does NOT run docs
-# assertions (Wave 0 ships before any docs are written).
+# assertions.
 if [ "${1-}" = "--self-test" ]; then
   echo "  ${GREEN}PASS${NC}: scripts/docs-grep-checks.sh parses (self-test)"
   echo "  (run without --self-test to execute real docs assertions)"
   exit 0
 fi
 
-# --- Main checks (encode every VALIDATION.md row) -------------------------
+# --- Main checks ----------------------------------------------------------
 
 echo
-echo "-- SC-12-1: comis auth commands documented (cli.mdx) --"
+echo "-- comis auth commands documented (cli.mdx) --"
 check_grep_min_count "comis auth section header" '^### `comis auth`' "$DOCS_DIR/reference/cli.mdx" 1
 check_grep_min_count "auth subcommands (login/list/logout/status)" '^#### `auth (login|list|logout|status)`' "$DOCS_DIR/reference/cli.mdx" 4
 check_grep_min_count "--profile flag in auth section" '\-\-profile' "$DOCS_DIR/reference/cli.mdx" 1
 check_grep_min_count "--method device-code flag" '\-\-method device-code' "$DOCS_DIR/reference/cli.mdx" 1
 
 echo
-echo "-- SC-12-6: comis init non-interactive rejection (cli.mdx) --"
+echo "-- comis init non-interactive rejection (cli.mdx) --"
 check_grep_min_count "openai-codex rejection message" 'openai-codex requires interactive login|\-\-non-interactive \-\-provider openai-codex' "$DOCS_DIR/reference/cli.mdx" 1
 
 echo
@@ -158,7 +157,7 @@ check_no_match        "no 'five categories' lingering" 'five categories' "$DOCS_
 check_grep_min_count  "doctor OAuth checks documented" 'doctor.*[Oo]auth|OAuth.*[Ee]xpir|--refresh-test' "$DOCS_DIR/reference/cli.mdx" 1
 
 echo
-echo "-- SC-12-2: oauth.storage in config-yaml.mdx --"
+echo "-- oauth.storage in config-yaml.mdx --"
 check_grep_min_count "oauth section in config-yaml" 'oauth\.storage|^### `oauth`|<Accordion title="oauth"' "$DOCS_DIR/reference/config-yaml.mdx" 1
 check_grep_min_count "both file/encrypted options" '"file"|"encrypted"' "$DOCS_DIR/reference/config-yaml.mdx" 2
 check_grep_min_count "agents.X.oauthProfiles row" 'oauthProfiles' "$DOCS_DIR/reference/config-yaml.mdx" 1
@@ -174,7 +173,7 @@ check_grep_min_count "OAuthCredentialStorePort mentioned" 'OAuthCredentialStoreP
 check_grep_min_count "cross-link to /security/oauth" '/security/oauth' "$DOCS_DIR/reference/secret-manager.mdx" 1
 
 echo
-echo "-- SC-12-4: OAuth credential storage (secrets.mdx) --"
+echo "-- OAuth credential storage (secrets.mdx) --"
 check_grep_min_count "OAuth credential storage section" '^## OAuth credential storage|^### OAuth credential storage|^## OAuth Credential Storage|^### OAuth Credential Storage' "$DOCS_DIR/security/secrets.mdx" 1
 check_grep_exact_count "T-OAUTH-DISK-EXFIL ID" 'T-OAUTH-DISK-EXFIL' "$DOCS_DIR/security/secrets.mdx" 1
 check_grep_exact_count "T-OAUTH-REFRESH-RACE ID" 'T-OAUTH-REFRESH-RACE' "$DOCS_DIR/security/secrets.mdx" 1
@@ -187,7 +186,7 @@ echo "-- security/index.mdx links to oauth.mdx --"
 check_grep_min_count "security index links OAuth card" '/security/oauth' "$DOCS_DIR/security/index.mdx" 1
 
 echo
-echo "-- SC-12-5: quickstart wizard 4-option picker --"
+echo "-- quickstart wizard 4-option picker --"
 check_grep_min_count "Browser (auto-open) label" 'Browser \(auto-open\)' "$DOCS_DIR/get-started/quickstart.mdx" 1
 check_grep_min_count "Browser (manual paste) label" 'Browser \(manual paste\)' "$DOCS_DIR/get-started/quickstart.mdx" 1
 check_grep_min_count "Device code (phone) label" 'Device code \(phone\)' "$DOCS_DIR/get-started/quickstart.mdx" 1
@@ -200,7 +199,7 @@ echo "-- install-vps device-code recommendation --"
 check_grep_min_count "device-code call-out for headless" 'device.code|--method device-code' "$DOCS_DIR/installation/install-vps.mdx" 1
 
 echo
-echo "-- SC-12-3: concepts page (security/oauth.mdx) --"
+echo "-- concepts page (security/oauth.mdx) --"
 check_min_word_count "oauth.mdx >= 900 words" "$DOCS_DIR/security/oauth.mdx" 900
 check_grep_min_count "oauth.mdx >= 7 H2 sections" '^## ' "$DOCS_DIR/security/oauth.mdx" 7
 check_grep_min_count "PKCE flow documented" 'PKCE|verifier|challenge' "$DOCS_DIR/security/oauth.mdx" 3
@@ -216,7 +215,7 @@ echo "-- docs.json registers new pages --"
 check_grep_min_count "security/oauth registered" '"security/oauth"' "$DOCS_DIR/docs.json" 1
 
 echo
-echo "-- OQ-1: forward reference resolved --"
+echo "-- proxy-doc forward-reference resolved --"
 check_oq1_invariant
 
 # --- Result footer --------------------------------------------------------

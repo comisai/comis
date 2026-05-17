@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-break detection — public type surface (Phase 42 split per
- * EXEC-SPLIT-09).
+ * Cache-break detection — public type surface.
  *
  * Type-only module: all public interfaces and the `CacheBreakReason`
  * tagged-union literal. Imported by the factory in cache-state.ts and
  * the provider adapters in anthropic-extractor.ts / gemini-extractor.ts.
- *
- * Split out from cache-state.ts to satisfy the EXEC-SPLIT-10 ≤350L cap.
  *
  * @module
  */
@@ -178,8 +175,8 @@ export interface CacheBreakDetector {
 
 /** Options for createCacheBreakDetector. */
 export interface CacheBreakDetectorOptions {
-  /** Design 3.4: Override max tracked sessions (default: MAX_TRACKING_ENTRIES = 15). */
+  /** Override max tracked sessions (default: MAX_TRACKING_ENTRIES = 15). */
   maxTrackingEntries?: number;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
 }

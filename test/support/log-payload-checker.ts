@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Closed-`ErrorKind` AST walker for Phase 27 (ARCH-BASE-15) and Phase 28
- * (CORE-PORTS-07).
+ * Closed-`ErrorKind` AST walker.
  *
  * Uses `ts.createProgram` + TypeChecker to resolve `errorKind:` expression
  * types regardless of construction shape (object literal, `Object.assign`,
- * spread, member-access). RES-PIT-9 documented these as evasion vectors —
- * source-grep cannot resolve them; the TypeChecker can.
+ * spread, member-access). Source-grep cannot resolve these evasion vectors;
+ * the TypeChecker can.
  *
  * Cache: persistent JSON at
  * `node_modules/.cache/architecture-walker/log-payload-checker.json`.
  * Composite key (mtime + sha256) — both must match for a cache hit, otherwise
  * recompute. `version: 1` invalidates old caches when walker logic changes.
- * Per ARCH-BASE-12.
  *
  * The valid 9-member closed union mirrors AGENTS.md §2.1 (`config | network |
  * auth | validation | timeout | resource | dependency | internal | platform`).
@@ -67,8 +65,8 @@ interface CacheEntry {
 
 /**
  * Cache file shape. `version: 1` is the schema-version field; mismatch (or
- * corrupted JSON) drops the cache and recomputes every entry — RES-PIT-2
- * cache-poisoning mitigation.
+ * corrupted JSON) drops the cache and recomputes every entry — guards against
+ * cache poisoning.
  */
 interface CacheFile {
   readonly version: 1;

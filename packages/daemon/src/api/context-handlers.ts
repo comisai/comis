@@ -1,25 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
- * Context RPC handler module.
+ * Context RPC handler module for DAG recall tools.
+ *
  * Handles context.search, context.inspect, context.recall, context.expand,
  * context.conversations, context.tree, and context.searchByConversation
- * RPC methods for DAG recall.
- * DAG Recall Tools.
+ * RPC methods.
  *
- * Phase 35 Wave C (Plan 35-14): refactored to use the `@comis/core`
- * contract registry. Method keys are computed-property names
- * (`[ContextSearchContract.method]:`) so the bidirectional 1:1
- * architecture test resolves them through `defineContract({ method, ... })`
- * declarations in `packages/core/src/api-contracts/memory.ts` (shared
- * with memory-handlers.ts — both files map to the MemoryApiDeps cluster
- * slice per Phase 34 plan 34-08a). The dispatcher-injected `_X` internal
- * fields are stripped via `stripInternalFields` BEFORE
- * `contract.request.parse(...)` (D-04 Pitfall 6 — never model internals
- * in the contract schema). The `_callerSessionKey` used by `context.search`
- * + `context.recall` to resolve the active DAG conversation is read from
- * rawParams BEFORE the strip step; the admin `_trustLevel` gate (used by
- * the 3 admin-scoped methods) is also read pre-strip.
+ * Uses the `@comis/core` contract registry. Method keys are
+ * computed-property names (`[ContextSearchContract.method]:`) so the
+ * bidirectional 1:1 architecture test resolves them through
+ * `defineContract({ method, ... })` declarations in
+ * `packages/core/src/api-contracts/memory.ts` (shared with
+ * memory-handlers.ts — both files map to the MemoryApiDeps cluster slice).
+ *
+ * The dispatcher-injected `_X` internal fields are stripped via
+ * `stripInternalFields` BEFORE `contract.request.parse(...)` — never model
+ * internals in the contract schema. The `_callerSessionKey` used by
+ * `context.search` + `context.recall` to resolve the active DAG
+ * conversation is read from rawParams BEFORE the strip step; the admin
+ * `_trustLevel` gate (used by the 3 admin-scoped methods) is also read
+ * pre-strip.
  *
  * Bespoke pre-Zod validation is intentionally retained for user-friendly
  * error UX matching the 30+ existing handler-test assertions in
@@ -51,14 +52,13 @@ import type { RpcHandler } from "./types.js";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: MemoryApiDeps (shared with memory-handlers). The
 // dispatcher constructs this handler only inside the `deps.contextStore ?
 // ...` truthy branch, supplying explicit `store`, `config`,
 // `resolveConversationId`, and `rpcCall` fields. The alias narrows those
 // optional cluster-slice fields to required, matching the handler body's
-// direct accesses. DAEMON-API-03 Option A retarget + 34-08b narrowing —
-// handler bodies unchanged.
+// direct accesses.
 import type { MemoryApiDeps } from "./types.js";
 export type ContextHandlerDeps = MemoryApiDeps & {
   store: ContextStorePort;

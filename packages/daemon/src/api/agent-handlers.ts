@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Agent management RPC handler module.
  * Provides 6 handlers for runtime agent fleet management:
@@ -38,11 +38,10 @@ import {
   OPERATION_TIER_MAP,
   DEFAULT_PROVIDER_KEYS,
 } from "@comis/agent";
-// Phase 35 Plan 35-04 (D-01 #5): resolveWorkspaceDir relocated to @comis/core.
 import { resolveWorkspaceDir } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**
@@ -66,10 +65,9 @@ import type { RpcHandler } from "./types.js";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: AgentsApiDeps (shared with model-handlers,
-// provider-handlers). DAEMON-API-03 Option A retarget — handler bodies and
-// call sites unchanged.
+// provider-handlers).
 import type { AgentsApiDeps as AgentHandlerDeps } from "./types.js";
 export type { AgentHandlerDeps };
 
@@ -89,8 +87,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       }
 
       // Bespoke pre-Zod validation FIRST (preserves user-friendly error
-      // messages matching existing handler-test assertions; see Plan 35-06
-      // SUMMARY for rationale).
+      // messages matching existing handler-test assertions).
       const agentId = rawParams.agentId as string | undefined;
       if (!agentId) {
         throw new Error("Missing required parameter: agentId");

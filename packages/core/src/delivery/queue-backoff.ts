@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 30 — Queue backoff schedule + helpers.
+ * Queue backoff schedule + helpers.
  *
- * Relocated from packages/channels/src/shared/deliver-to-channel.ts:94-186 in
- * plan 06 (the standalone file was deleted; QUEUE_BACKOFF_SCHEDULE_MS,
- * computeQueueBackoff, resolveChunkLimit are still consumed by daemon and
- * channels code, so they live in core/src/delivery/ alongside the
- * DeliveryService factory).
+ * QUEUE_BACKOFF_SCHEDULE_MS, computeQueueBackoff, and resolveChunkLimit are
+ * consumed by daemon and channels code, so they live in core/src/delivery/
+ * alongside the DeliveryService factory.
  *
  * @module
  */

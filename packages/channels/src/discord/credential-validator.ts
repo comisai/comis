@@ -23,8 +23,7 @@ export interface DiscordBotInfo {
  * @param token - The Discord bot token
  * @param apiRoot - Optional REST API root URL override (production: undefined;
  *   E2E tests: `http://127.0.0.1:<mock-port>`). When set, the REST client
- *   talks to this URL instead of `https://discord.com/api`. Phase 40 /
- *   Plan 40-09 / COV-15.
+ *   talks to this URL instead of `https://discord.com/api`.
  * @returns DiscordBotInfo on success, Error on failure
  */
 export async function validateDiscordToken(
@@ -38,7 +37,7 @@ export async function validateDiscordToken(
     const { REST, Routes } = await import("discord.js");
     // E2E seam: when caller passes `apiRoot`, point @discordjs/rest at the
     // override URL. Production path leaves the option object untouched so
-    // discord.js uses its built-in default. Phase 40 / Plan 40-09.
+    // discord.js uses its built-in default.
     const rest = apiRoot
       ? new REST({ version: "10", api: apiRoot }).setToken(token)
       : new REST({ version: "10" }).setToken(token);

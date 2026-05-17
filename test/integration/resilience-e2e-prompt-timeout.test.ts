@@ -10,9 +10,8 @@
  * no LLM, no network). Follows the established pattern from
  * test/integration/subagent-pipeline.test.ts.
  *
- * Covers:
- * - TEST-03 (partial): Prompt timeout to error delivery E2E
- * - OBSV-03 (partial): ERROR with errorKind:'internal' verified via mock logger
+ * Covers prompt-timeout to error-delivery end-to-end, plus an ERROR-level
+ * log with errorKind:'internal' verified via mock logger.
  *
  * @module
  */
@@ -31,7 +30,7 @@ import { TypedEventBus } from "@comis/core";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight port wrappers that delegate to globals.
+// Lightweight port wrappers that delegate to globals.
 // ---------------------------------------------------------------------------
 
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
@@ -216,7 +215,7 @@ describe("resilience E2E: prompt timeout pipeline", () => {
     expect(completedEvents[0]!.runId).toBe(runId);
     expect(completedEvents[0]!.success).toBe(false);
 
-    // OBSV-03: Verify ERROR log with errorKind:'internal' (runner catch-all)
+    // Verify ERROR log with errorKind:'internal' (runner catch-all)
     expect(deps.logger!.error).toHaveBeenCalledWith(
       expect.objectContaining({
         errorKind: "internal",

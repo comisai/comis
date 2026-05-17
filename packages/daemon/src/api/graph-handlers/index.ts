@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Graph handlers (Phase 43 split per FILE-SPLIT-05).
+ * Graph handlers.
  *
  * Barrel re-export of the canonical public API of the former
- * `graph-handlers.ts` monolith (1,030L). No aliases — every export keeps
- * its canonical name.
+ * `graph-handlers.ts` monolith. No aliases — every export keeps its
+ * canonical name.
  *
  * @module
  */

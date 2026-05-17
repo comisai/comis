@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary (Phase 41 TS-HYG-07).
+// @allow-throw: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary.
 /**
- * Server discovery + tool listing helpers (Phase 43 split per FILE-SPLIT-11).
+ * Server discovery + tool listing helpers.
  *
  * Transport construction, MCP client construction (with listChanged
  * handler), server metadata extraction, stdio stderr capture, and the

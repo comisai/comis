@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * MCP server management RPC handler module.
  * Handles all MCP server management RPC methods:
  *   mcp.list, mcp.status, mcp.connect, mcp.disconnect, mcp.reconnect, mcp.test
  *
- * Phase 35 Wave C (Plan 35-10): refactored to use the `@comis/core` contract
- * registry. Method keys are computed-property names
- * (`[McpListContract.method]:`) so the bidirectional 1:1 architecture test
- * resolves them through `defineContract({ method, ... })` declarations
+ * Uses the `@comis/core` contract registry. Method keys are computed-property
+ * names (`[McpListContract.method]:`) so the bidirectional 1:1 architecture
+ * test resolves them through `defineContract({ method, ... })` declarations
  * in `packages/core/src/api-contracts/mcp.ts`. The dispatcher-injected
  * `_X` internal fields are stripped via `stripInternalFields` BEFORE
- * `contract.request.parse(...)` (D-04 pitfall 6 — never model internals
- * in the contract schema). NO admin-trust check is performed inside the
- * handler bodies: the trust gate happens at the gateway dispatcher
+ * `contract.request.parse(...)` — never model internals in the contract
+ * schema. NO admin-trust check is performed inside the handler bodies:
+ * the trust gate happens at the gateway dispatcher
  * (`packages/daemon/src/wiring/setup-gateway-api.ts` line 284-287
  * registers ALL 6 mcp.* methods with `"admin"` scope through
  * `registerRpcPassthrough(..., "admin")`); rawParams does not carry
@@ -29,13 +28,6 @@
  * `mcp.status` it asserts the enum-typed status field stays in the
  * 5-value SDK union, and for `mcp.disconnect` it pins the success-only
  * `status: "disconnected"` literal.
- *
- * **BLOCKER 1 exemption.** MCP RPC methods are managed via the web SPA
- * only — `grep -rln 'mcp\\.\\(list\\|status\\|connect\\|disconnect\\|reconnect\\|test\\)'
- * packages/cli/src/commands/` returns empty. The CLI does have a `comis mcp`
- * command surface, but those flows touch `config.read` / `config.patch`
- * for `integrations.mcp.servers` entries — NOT these admin RPCs. Wave C
- * CLI retarget (callTyped wrap) is therefore N/A for this domain.
  *
  * @module
  */
@@ -60,10 +52,9 @@ import type { RpcHandler } from "./types.js";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
-// approval, skill, notification handlers). DAEMON-API-03 Option A retarget —
-// handler bodies and call sites unchanged.
+// approval, skill, notification handlers).
 import type { WorkspaceApiDeps as McpHandlerDeps } from "./types.js";
 export type { McpHandlerDeps };
 
@@ -77,9 +68,9 @@ export type { McpHandlerDeps };
 export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandler> {
   return {
     [McpListContract.method]: async (rawParams) => {
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6). Type-narrow via the contract —
-      // defense-in-depth (mcp.list takes no parameters).
+      // Strip dispatcher-injected _X internals BEFORE contract parse —
+      // never let internals flow into Zod parsing. Type-narrow via the
+      // contract for defense-in-depth (mcp.list takes no parameters).
       const userParams = stripInternalFields(rawParams);
       McpListContract.request.parse(userParams);
 
@@ -97,7 +88,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       }));
       const result = { servers, total: servers.length };
       // Dev-mode response validation gate. Production skips for
-      // cold-start budget (D-10); the daemon side is the trust boundary.
+      // cold-start budget; the daemon side is the trust boundary.
       if (systemGetEnv("NODE_ENV") !== "production") {
         McpListContract.response.parse(result);
       }
@@ -112,8 +103,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const nameRaw = rawParams.server_name as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6).
+      // Strip dispatcher-injected _X internals BEFORE contract parse —
+      // never let internals flow into Zod parsing.
       const userParams = stripInternalFields(rawParams);
       const params = McpStatusContract.request.parse(userParams);
       const name = params.server_name;
@@ -159,8 +150,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
       if (!transportRaw) throw new Error("Missing required parameter: transport");
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6). The parsed `params` provides
+      // Strip dispatcher-injected _X internals BEFORE contract parse —
+      // never let internals flow into Zod parsing. The parsed `params` provides
       // the same field names with type-narrowing.
       const userParams = stripInternalFields(rawParams);
       const params = McpConnectContract.request.parse(userParams);
@@ -217,8 +208,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const nameRaw = rawParams.server_name as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6).
+      // Strip dispatcher-injected _X internals BEFORE contract parse —
+      // never let internals flow into Zod parsing.
       const userParams = stripInternalFields(rawParams);
       const params = McpDisconnectContract.request.parse(userParams);
       const name = params.server_name;
@@ -249,8 +240,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       if (!nameRaw) throw new Error("Missing required parameter: name");
       if (!transportRaw) throw new Error("Missing required parameter: transport");
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6).
+      // Strip dispatcher-injected _X internals BEFORE contract parse —
+      // never let internals flow into Zod parsing.
       const userParams = stripInternalFields(rawParams);
       const params = McpTestContract.request.parse(userParams);
 
@@ -319,8 +310,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const nameRaw = rawParams.server_name as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6).
+      // Strip dispatcher-injected _X internals BEFORE contract parse —
+      // never let internals flow into Zod parsing.
       const userParams = stripInternalFields(rawParams);
       const params = McpReconnectContract.request.parse(userParams);
       const name = params.server_name;

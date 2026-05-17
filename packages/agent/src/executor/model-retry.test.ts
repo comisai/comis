@@ -7,7 +7,7 @@ import { createLastKnownModelTracker } from "../model/last-known-model.js";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Phase 39: port stubs that delegate to globals so vi.useFakeTimers() intercepts.
+// Port stubs that delegate to globals so vi.useFakeTimers() intercepts.
 // ---------------------------------------------------------------------------
 
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {

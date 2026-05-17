@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the memory + context domain Wave C contracts.
+ * Per-contract test for the memory + context domain contracts.
  *
- * Plan 35-14 (Wave C domain #9). Covers the 15 contracts spanning the
- * two daemon handler-factory files that share the `MemoryApiDeps`
- * cluster slice:
+ * Covers the 15 contracts spanning the two daemon handler-factory files
+ * that share the `MemoryApiDeps` cluster slice:
  *   - memory-handlers.ts (8 methods)
  *   - context-handlers.ts (7 methods)
- *
- * Mirrors the structure of `auth.test.ts` (Plan 35-07 template) +
- * `workspace.test.ts` (Plan 35-13 multi-file precedent).
  *
  * @module
  */
@@ -85,14 +81,14 @@ describe("memory + context domain contracts", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INTERNAL_FIELD_NAMES paired sanity (D-04 + Pitfall 6)
+  // INTERNAL_FIELD_NAMES paired sanity
   // -------------------------------------------------------------------------
 
   it("no contract request schema declares any INTERNAL_FIELD_NAMES key", () => {
     // The 15 internal `_X` field names (e.g. `_callerSessionKey`, `_trustLevel`)
     // are dispatcher-injected and MUST be stripped via `stripInternalFields()`
     // BEFORE contract.request.parse(). They MUST NOT appear as keys in any
-    // request schema's top-level shape (D-04 + Pitfall 6).
+    // request schema's top-level shape.
     const internalSet = new Set(INTERNAL_FIELD_NAMES);
     for (const contract of MEMORY_CONTRACTS) {
       const shape = (contract.request as unknown as { shape?: Record<string, unknown> }).shape;
@@ -205,7 +201,7 @@ describe("memory + context domain contracts", () => {
     ).not.toThrow();
   });
 
-  it("memory.stats: response is a loose record (D-05)", () => {
+  it("memory.stats: response is a loose record", () => {
     expect(() =>
       MemoryStatsContract.response.parse({
         totalEntries: 42,
@@ -362,7 +358,7 @@ describe("memory + context domain contracts", () => {
     expect(() => ContextInspectContract.request.parse({ id: "" })).toThrow();
   });
 
-  it("context.inspect: response is a loose record (D-05)", () => {
+  it("context.inspect: response is a loose record", () => {
     expect(() =>
       ContextInspectContract.response.parse({
         type: "summary",

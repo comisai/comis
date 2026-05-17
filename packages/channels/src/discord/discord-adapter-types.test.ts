@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 41 TS-HYG-05 — TDD RED tests for the Discord channel narrowing
- * helper `asTextLike` + structural `DiscordTextLikeChannel` interface.
+ * Tests for the Discord channel narrowing helper `asTextLike` and the
+ * structural `DiscordTextLikeChannel` interface.
  *
- * These tests express the function contract that Plan 41-05 will later
- * import to eliminate the 18 `as any` casts in `discord-actions.ts`.
- *
- * Anti-pattern reminder (41-RESEARCH §"Anti-Patterns" line 425):
  * `asTextLike` is a typed-cast utility, not a fallible computation; the
  * `null` branch IS the "not text-like" signal. This file therefore does
  * NOT import `Result` from `@comis/shared`.
@@ -21,7 +17,7 @@ import {
   type DiscordTextLikeChannel,
 } from "./discord-adapter-types.js";
 
-describe("asTextLike — Discord channel narrowing (TS-HYG-05)", () => {
+describe("asTextLike — Discord channel narrowing", () => {
   it("asTextLike returns null when channel is null", () => {
     expect(asTextLike(null)).toBeNull();
   });
@@ -74,7 +70,7 @@ describe("asTextLike — Discord channel narrowing (TS-HYG-05)", () => {
   });
 });
 
-describe("asThreadInfo — Discord thread iteration narrowing (TS-HYG-05 / TS-HYG-06)", () => {
+describe("asThreadInfo — Discord thread iteration narrowing", () => {
   it("asThreadInfo returns null when the input thread argument is undefined", () => {
     expect(asThreadInfo(undefined)).toBeNull();
   });

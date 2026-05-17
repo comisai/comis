@@ -3,10 +3,8 @@
  * Tests for `setupBackgroundTasks` wiring factory.
  *
  * Asserts deterministic factory output, port-injection contract, and
- * shutdown-handle behavior. Phase 40 / Phase C §6.3.3.
- *
- * Use-case design (§3.3 / COV-10): every `it("...")` description names a
- * use case >=20 chars ending in a recognizable shape.
+ * shutdown-handle behavior. Every `it("...")` description names a use case
+ * with a recognizable shape.
  *
  * @module
  */
@@ -24,10 +22,9 @@ import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { setupBackgroundTasks } from "./setup-background-tasks.js";
 
 // ---------------------------------------------------------------------------
-// Phase 39 port-wrapper pattern (VERBATIM from
-// setup-background-completion-runner.test.ts:14-40). Used for tests where
-// we want real timers but need a port-shaped handle so we can assert
-// cancel() / unref() semantics.
+// Port-wrapper pattern (mirrored from setup-background-completion-runner.test.ts).
+// Used for tests where we want real timers but need a port-shaped handle
+// so we can assert cancel() / unref() semantics.
 // ---------------------------------------------------------------------------
 
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
@@ -84,7 +81,7 @@ function makeRecordingRealTimers(): TimerPort & { handles: TimerHandle[] } {
 // ---------------------------------------------------------------------------
 
 function makeTempDataDir(): string {
-  return mkdtempSync(safePath(tmpdir(), "comis-40-03-bgtasks-"));
+  return mkdtempSync(safePath(tmpdir(), "comis-bgtasks-"));
 }
 
 function cleanupTempDataDir(dir: string): void {

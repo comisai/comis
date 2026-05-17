@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: media-tool boundary; throws caught by AgentTool wrapper (image/video/audio tools) or upstream fromPromise() converter (Phase 41 TS-HYG-07).
+// @allow-throw: media-tool boundary; throws caught by AgentTool wrapper (image/video/audio tools) or upstream fromPromise() converter.
 /**
  * SSRF-guarded HTTP fetch utility.
  *

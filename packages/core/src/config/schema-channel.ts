@@ -56,9 +56,9 @@ export const ChannelEntrySchema = z.strictObject({
      * (`api.telegram.org`, `discord.com/api/v10`, `slack.com/api`,
      * `graph.facebook.com`, `api.line.me`).
      *
-     * Used by `test/e2e/mocks/<channel>/` mock servers per Phase 40 / Plan
-     * 40-09 / COV-15. See also `discordGatewayUrl` (Discord-only, WebSocket
-     * counterpart) on `DiscordChannelEntrySchema`.
+     * Used by `test/e2e/mocks/<channel>/` mock servers. See also
+     * `discordGatewayUrl` (Discord-only, WebSocket counterpart) on
+     * `DiscordChannelEntrySchema`.
      *
      * Note: channels that already have a structured host config (`signal.baseUrl`,
      * `irc.host`+`port`, `email.smtpHost`+`smtpPort`) ignore this field and use
@@ -95,7 +95,7 @@ export const ChannelEntrySchema = z.strictObject({
  * `apiRoot` field — `discord.com/api/v10`) and WebSocket gateway
  * (`gatewayUrl` — `wss://gateway.discord.gg`). E2E tests need to redirect
  * both independently. Production leaves both unset and discord.js uses its
- * defaults. Phase 40 / Plan 40-09 / COV-15.
+ * defaults.
  */
 export const DiscordChannelEntrySchema = ChannelEntrySchema.extend({
   /** Discord gateway WebSocket URL override. Empty/unset → discord.js default. */

@@ -321,10 +321,10 @@ export async function executeAction(
         await handleClose(page);
         break;
       default: {
-        // Inline exhaustive check per Phase 41 TS-HYG-11 + 41-03-SUMMARY.md Decision 1
-        // (STAY INLINE — no shared assertNever helper). Since BrowserAction is a
-        // closed union, this branch is unreachable at compile time; the runtime
-        // fallback to ActionResult handles ill-typed inputs from untyped callers.
+        // Inline exhaustive check (STAY INLINE — no shared assertNever helper).
+        // Since BrowserAction is a closed union, this branch is unreachable at
+        // compile time; the runtime fallback to ActionResult handles ill-typed
+        // inputs from untyped callers.
         const _exhaustive: never = action;
         // Defensive runtime cast for the never-reachable branch only — access the
         // unknown shape's kind for the ActionResult error message.

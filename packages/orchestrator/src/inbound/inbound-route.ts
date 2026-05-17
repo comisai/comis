@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Inbound Pipeline Phase 4: Message Routing.
+ * Inbound Pipeline — Message Routing stage.
  *
  * Handles debounce buffering, group history injection, steer+followup
  * routing (SDK-native), command queue routing, and direct execution
@@ -97,7 +97,7 @@ function assignPriorityLane(
 }
 
 // ---------------------------------------------------------------------------
-// Phase function
+// Stage function
 // ---------------------------------------------------------------------------
 
 /**

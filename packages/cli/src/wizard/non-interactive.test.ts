@@ -18,9 +18,8 @@ import { dirname, resolve } from "node:path";
 
 // Stub the two @comis/core entry points the wizard's non-interactive path
 // touches: safePath (filesystem composition) + createModelCatalog (model
-// validation). createModelCatalog relocated from @comis/agent to @comis/core
-// in Phase 35 Plan 35-04 per D-01 #4. Tests that need a specific catalog
-// response override this mock per-test via
+// validation). Tests that need a specific catalog response override this
+// mock per-test via
 // `vi.mocked(createModelCatalog).mockReturnValueOnce(...)`. We do NOT call
 // `importOriginal()` because @comis/core's real barrel transitively imports
 // node:os/node:fs/promises — the node:os mock below stubs only `homedir`

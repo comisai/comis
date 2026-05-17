@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Port interfaces - Hexagonal architecture boundaries
-// Phase 28 commit 1: runtime values that previously lived alongside the type-only port
-// declarations were moved out of core/src/ports/ (closes L15 per CORE-PORTS-01). The
-// curated re-exports at ../exports/ports.ts retarget consumers to the new homes; this
-// file re-exports types only.
+// Runtime values that previously lived alongside the type-only port
+// declarations were moved out of core/src/ports/. The curated re-exports at
+// ../exports/ports.ts retarget consumers to the new homes; this file
+// re-exports types only.
 
 export type {
   ChannelPort,

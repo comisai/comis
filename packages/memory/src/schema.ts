@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: initSchema() embeddingDimensions DDL precondition guard; invalid input prevents schema interpolation; consumed at bootstrap (daemon entry — daemon.ts boundary) (Phase 41 TS-HYG-07).
+// @allow-throw: initSchema() embeddingDimensions DDL precondition guard; invalid input prevents schema interpolation; consumed at bootstrap (daemon entry — daemon.ts boundary).
 /**
  * SQLite schema initialization for the @comis/memory package.
  *

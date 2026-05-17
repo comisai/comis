@@ -77,7 +77,7 @@ export interface SkillMetadata {
   readonly skillKey?: string;
   /** Main environment variable for grouping (display hint). */
   readonly primaryEnv?: string;
-  /** Dispatch mode tag (metadata-only in this phase). */
+  /** Dispatch mode tag (metadata-only). */
   readonly commandDispatch?: string;
   /**
    * Capability layer -- extracted from `comis.capability` via defensive
@@ -316,7 +316,7 @@ function discoverSkillsFromDir(
     // Skip hidden entries and node_modules
     if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
 
-    // eslint-disable-next-line no-restricted-syntax -- D-14 carve-out: skill discovery legitimately follows symlinks (dedup via realpath, line 358 below); entry.name comes from fs.readdirSync (kernel-validated basename, cannot contain a path separator). safePath's symlink-escape check would reject the intentional symlink-to-sibling pattern.
+    // eslint-disable-next-line no-restricted-syntax -- skill discovery legitimately follows symlinks (dedup via realpath, line 358 below); entry.name comes from fs.readdirSync (kernel-validated basename, cannot contain a path separator). safePath's symlink-escape check would reject the intentional symlink-to-sibling pattern.
     const fullPath = path.join(dir, entry.name);
 
     // Resolve symlinks to determine actual type

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the rpcCall branches of createApiClient (Phase 40 Plan 40-15 gap-closure).
+ * Tests for the rpcCall branches of createApiClient.
  *
  * The existing api-client.test.ts covers only the HTTP-fetch path (no rpcCall
  * argument). This file targets the alternate code branch in every memory/session
@@ -25,7 +25,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // shape mismatches with the generated contract (e.g. single deleteMemory sends
 // {id} but the contract requires {ids}; listSessions forwards agentId/channelType/
 // search but the contract only allows kind/since_minutes). These are pre-
-// existing wrapper bugs orthogonal to Plan 40-15's coverage objective; we
+// existing wrapper bugs orthogonal to this file's coverage objective; we
 // stub the validators to expose the rpcCall delegation branch underneath.
 vi.mock("./contracts.generated.js", () => ({
   validateRequest: () => true,

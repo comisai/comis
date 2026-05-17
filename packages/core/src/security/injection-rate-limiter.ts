@@ -11,7 +11,7 @@
  * Uses timers.setTimeout per-entry with unref() for clean daemon shutdown.
  * Provides destroy() to clear all timers and entries.
  *
- * Phase 39 PORTS-11/13: time + scheduling injected via ClockPort/TimerPort.
+ * Time + scheduling are injected via ClockPort/TimerPort.
  *
  * @module
  */
@@ -32,7 +32,7 @@ export interface InjectionRateLimiterConfig {
 }
 
 /**
- * Dependencies for the injection rate limiter factory (Phase 39 PORTS-11/13).
+ * Dependencies for the injection rate limiter factory.
  */
 export interface InjectionRateLimiterDeps {
   /** Wall-clock reads for sliding-window timestamps. */
@@ -107,7 +107,6 @@ export function createInjectionRateLimiter(
       buckets.delete(key);
     }, entryTtlMs);
     // Unref timer so it does not prevent Node process exit.
-    // .unref() preserved per PORTS-04 cancel-safety contract.
     timer.unref();
     return timer;
   }

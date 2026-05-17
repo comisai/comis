@@ -150,12 +150,10 @@ describe("buildScopedSessionKey", () => {
     });
   });
 
-  // Deleted (Phase 38 CR-01 follow-up to BC-REM-15): "agent prefix" describe
-  // block — the `agentPrefixEnabled` param + `key.agentId` assignment were
-  // removed because the session-key formatter no longer serializes
-  // `agent:<agentId>:`. `key.agentId` is intentionally never set by
-  // `buildScopedSessionKey` post-CR-01; the `agentId` param is retained on
-  // ScopedSessionKeyParams for caller ergonomics only.
+  // The session-key formatter no longer serializes `agent:<agentId>:`;
+  // `key.agentId` is intentionally never set by `buildScopedSessionKey`.
+  // The `agentId` param is retained on ScopedSessionKeyParams for caller
+  // ergonomics only.
 
   describe("thread ID", () => {
     it("sets threadId when provided", () => {

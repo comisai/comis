@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Project-wide no-backward-compat invariant (Phase 38 — BC-REM-02, 03,
- * 04, 05, 06, 07, 21, 23).
+ * Project-wide no-backward-compat invariant.
  *
  * Scope (intentional, by design): production source under `packages/*\/src/`
  * only. This matches the npm-tarball scope — files included in the
@@ -22,53 +21,46 @@
  * memory `feedback_no_backward_compat`) by gating production source at
  * `packages/*\/src/` against:
  *
- *  - BC-REM-02 — text /backward.?compat|backcompat|legacy.?(alias|mode|fallback)/i
+ *  - text /backward.?compat|backcompat|legacy.?(alias|mode|fallback)/i
  *    outside `noBackwardCompatAllowlist` (line-pinned) and outside the
  *    in-file `BC_REM_02_PATH_TAIL_ALLOWLIST` (pre-existing-benign
  *    sub-allowlist; see comment block on the constant).
- *  - BC-REM-03 — `@deprecated` JSDoc annotations (zero permitted; the
- *    v2.1 policy is no-deprecation-period: delete, don't deprecate).
- *  - BC-REM-04 — `agent/src/index.ts` contains no `export { X as Y } from "..."`
- *    alias re-exports (Phase 29 PUB-EXPORTS-03 closure).
- *  - BC-REM-05 — `skills/src/index.ts` + `skills/src/skills/index.ts` do
- *    not re-export names from `@comis/shared` (Phase 33 SKILLS-SPLIT closure).
- *  - BC-REM-06 — `agent/src/index.ts` does not export `createCommandHandler`
- *    or `CommandHandlerDeps` (moved to `@comis/orchestrator` in Phase 32).
- *  - BC-REM-07 — `cli/src/index.ts` public value exports are exactly
- *    `{ withClient, credentialsStep }` (Phase 29 PUB-EXPORTS-02 closure).
- *  - BC-REM-21 — `getGlobalHookRunner` / `hook-runner-global` symbols
- *    return zero hits (Phase 30 closure preserved; defense-in-depth).
- *  - BC-REM-23 — no `eslint-disable` comment cites "legacy" or
- *    "backward compat" as justification (pragma-drift threat T-38-06-01).
+ *  - `@deprecated` JSDoc annotations (zero permitted; the v2.1 policy is
+ *    no-deprecation-period: delete, don't deprecate).
+ *  - `agent/src/index.ts` contains no `export { X as Y } from "..."`
+ *    alias re-exports.
+ *  - `skills/src/index.ts` + `skills/src/skills/index.ts` do not
+ *    re-export names from `@comis/shared`.
+ *  - `agent/src/index.ts` does not export `createCommandHandler` or
+ *    `CommandHandlerDeps` (they live in `@comis/orchestrator`).
+ *  - `cli/src/index.ts` public value exports are exactly
+ *    `{ withClient, credentialsStep }`.
+ *  - `getGlobalHookRunner` / `hook-runner-global` symbols return zero
+ *    hits (defense-in-depth).
+ *  - no `eslint-disable` comment cites "legacy" or "backward compat" as
+ *    justification (pragma-drift guard).
  *
- * Two-tier allowlist model (matches existing architecture-test idiom,
- * see source-rules.test.ts L23_ALLOWLIST):
+ * Two-tier allowlist model:
  *
  *   1. `noBackwardCompatAllowlist` (test/support/architecture-allowlist.ts)
- *      — line-pinned permanent-historical-reference entries. Currently 1
- *      entry: `core/src/config/migrate.ts:1` (the kept Wave 5b config
- *      migration carrying `@migration-since: 2026-04-22; remove-after:
- *      v2.2`). Max 3 entries per BC-REM-22.
+ *      — line-pinned permanent-historical-reference entries.
  *
  *   2. `BC_REM_02_PATH_TAIL_ALLOWLIST` (this file, below) — pre-existing
- *      benign-text path-tails captured at Phase 38 baseline (Wave-5b
- *      close). Each file in this list contains text that matches the
- *      BC-REM-02 regex but is NOT a live BC shim (documentation about
- *      absence/defaults/policy, OR pre-existing BC code paths that fall
- *      outside Phase 38's deletion scope — e.g. web/router aliases,
- *      skills/exec-tool deps-shape doc strings, env-handlers .env-fallback
- *      branch). The architecture rule's purpose is to ratchet against
- *      *new* BC code; pre-existing benign text in this list does not
- *      regress the no-backward-compat ratchet. A future wave that
- *      deletes any of these BC code paths SHRINKS this list (a positive
- *      shrink-only signal); reintroducing a removed entry would require
- *      an explicit `noBackwardCompatAllowlist` entry.
+ *      benign-text path-tails captured as the baseline. Each file in this
+ *      list contains text that matches the BC regex but is NOT a live BC
+ *      shim (documentation about absence/defaults/policy, OR pre-existing
+ *      BC code paths that fall outside the current deletion scope). The
+ *      architecture rule's purpose is to ratchet against *new* BC code;
+ *      pre-existing benign text in this list does not regress the
+ *      no-backward-compat ratchet. A future change that deletes any of
+ *      these BC code paths SHRINKS this list (a positive shrink-only
+ *      signal); reintroducing a removed entry would require an explicit
+ *      `noBackwardCompatAllowlist` entry.
  *
  * Pragma-drift guard: this rule does NOT honor any `// eslint-disable`
- * or `// @no-backward-compat: allow` pragma. BC-REM-23 explicitly forbids
- * justifying a violation via `eslint-disable -- legacy ...`. The only
- * exemption path is the two allowlists above, both of which are visible
- * in test/support and reviewable in PR diffs.
+ * or `// @no-backward-compat: allow` pragma. The only exemption path is
+ * the two allowlists above, both of which are visible in test/support
+ * and reviewable in PR diffs.
  *
  * Pattern analog: `raw-throw.test.ts` (per-line scan with file-path +
  * line-number violation citations) + `source-rules.test.ts` (in-file
@@ -91,12 +83,13 @@ const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
 
 /**
  * Path-tails (suffix match against repo-relative paths) of files that
- * contain text matching the BC-REM-02 regex at Phase 38 baseline but
- * whose text is NOT a live BC shim under Phase 38's deletion scope.
+ * contain text matching the BC regex at the project baseline but whose
+ * text is NOT a live BC shim under the current deletion scope.
  *
  * Each entry must remain documented (one reason per file). When a future
- * wave deletes the BC code path or rewrites the documentation, the entry
- * should be REMOVED from this list (positive ratchet) — never relaxed.
+ * change deletes the BC code path or rewrites the documentation, the
+ * entry should be REMOVED from this list (positive ratchet) — never
+ * relaxed.
  *
  * This list MUST shrink-only. Adding entries requires explicit
  * justification at PR review (the rule's failure mode catches additions
@@ -110,9 +103,9 @@ const BC_REM_02_PATH_TAIL_ALLOWLIST: readonly string[] = [
   "packages/agent/src/model/model-allowlist.ts", // doc-string: empty array = "allow all models (backward compatible)" — default rationale
   "packages/agent/src/model/compaction-model-resolver.ts", // doc-string: "No backward-compat shim per feedback_no_backward_compat.md" — POLICY citation, not BC code
   "packages/agent/src/model/model-registry-adapter.ts", // doc-string mentioning "legacy aliases that ..." — describes local inference catalog
-  "packages/agent/src/executor/cache-detection/cache-state.ts", // doc-comment on optional field default-0 rationale (post-EXEC-SPLIT-09)
+  "packages/agent/src/executor/cache-detection/cache-state.ts", // doc-comment on optional field default-0 rationale
   "packages/agent/src/executor/cache-break-diff-writer.ts", // doc-comment on `?? false` default rationale for newer fields
-  "packages/agent/src/spawn/sub-agent-runner.ts", // legacy-fallback branch — out of Phase 38 scope (spawn pipeline rewrites tracked separately)
+  "packages/agent/src/spawn/sub-agent-runner.ts", // legacy-fallback branch — out of current deletion scope (spawn pipeline rewrites tracked separately)
   "packages/agent/src/session/comis-session-manager.ts", // doc-string about session-mapping carry-over (pre-v2.1 paths still resolvable)
   "packages/agent/src/context-engine/types-core.ts", // doc-string on optional-field default-0 rationale
   "packages/core/src/config/schema-secrets.ts", // doc-strings on default-false / empty-array rationale (zod schema defaults)
@@ -124,20 +117,20 @@ const BC_REM_02_PATH_TAIL_ALLOWLIST: readonly string[] = [
   "packages/core/src/runtime/is-remote-env.ts", // module-doc: "per the no-backward-compat convention" — POLICY citation
   "packages/core/src/event-bus/events-infra.ts", // doc-string on canonical/coexisting-form pair (events-infra event-payload schema)
   "packages/daemon/src/api/types.ts", // doc-comment on optional-field message-id rationale
-  "packages/daemon/src/api/env-handlers.ts", // "legacy fallback" / "Legacy mode" .env-file branch — out of Phase 38 scope (env-handlers refactor tracked separately)
-  "packages/daemon/src/api/session-handlers/session-mutate.ts", // doc-comment about synchronous "backward compatible" inline-result path (Phase 43 FILE-SPLIT-04 retarget; was session-handlers.ts pre-split)
+  "packages/daemon/src/api/env-handlers.ts", // "legacy fallback" / "Legacy mode" .env-file branch — out of current deletion scope (env-handlers refactor tracked separately)
+  "packages/daemon/src/api/session-handlers/session-mutate.ts", // doc-comment about synchronous "backward compatible" inline-result path
   "packages/memory/src/schema.ts", // module-level flag set "for backward compatibility" — schema-init carry-over
-  "packages/memory/src/setup-secrets.ts", // explicit two-mode "legacy mode" branch (no MEMORY_DB_KEY env) — out of Phase 38 scope (secrets-store optionality)
-  // Phase 43 plan 02a (FILE-SPLIT-02) split exec-tool.ts into exec-tool/ subdirectory;
-  // POLICY citation text moved verbatim to exec-types.ts (deps interface docblock) and
-  // index.ts (createExecTool factory docblock).
-  "packages/skills/src/tools/builtin/exec-tool/exec-types.ts", // doc-string: "Backward compatibility is NOT preserved" — POLICY citation (post-split)
-  "packages/skills/src/tools/builtin/exec-tool/index.ts", // doc-string: "Backward compat NOT preserved (memory feedback_no_backward_compat)" — POLICY citation (post-split)
+  "packages/memory/src/setup-secrets.ts", // explicit two-mode "legacy mode" branch (no MEMORY_DB_KEY env) — out of current deletion scope (secrets-store optionality)
+  // exec-tool.ts was split into the exec-tool/ subdirectory; POLICY citation
+  // text lives in exec-types.ts (deps interface docblock) and index.ts
+  // (createExecTool factory docblock).
+  "packages/skills/src/tools/builtin/exec-tool/exec-types.ts", // doc-string: "Backward compatibility is NOT preserved" — POLICY citation
+  "packages/skills/src/tools/builtin/exec-tool/index.ts", // doc-string: "Backward compat NOT preserved (memory feedback_no_backward_compat)" — POLICY citation
   "packages/skills/src/tools/builtin/process-tool.ts", // doc-string: "Backward compatibility is NOT preserved" + "backward compat with the prior positional ..." — POLICY citations
-  "packages/skills/src/platform-tools/tools/browser-tool.ts", // RpcCall-or-deps-object signature; doc-comment describing the two-shape acceptance — out of Phase 38 scope
+  "packages/skills/src/platform-tools/tools/browser-tool.ts", // RpcCall-or-deps-object signature; doc-comment describing the two-shape acceptance — out of current deletion scope
   "packages/skills/src/platform-tools/tools/agents-manage-tool.ts", // doc-string: "default-logger compat shim (per feedback_no_backward_compat.md)" — POLICY citation
-  "packages/web/src/router.ts", // route-aliases-for-backward-compatibility — out of Phase 38 scope (web router consolidation tracked separately)
-  "packages/web/src/utils/health-status.ts", // LEGACY_ALIASES channel-health map — out of Phase 38 scope (channel-status canonicalization tracked separately)
+  "packages/web/src/router.ts", // route-aliases-for-backward-compatibility — out of current deletion scope (web router consolidation tracked separately)
+  "packages/web/src/utils/health-status.ts", // LEGACY_ALIASES channel-health map — out of current deletion scope (channel-status canonicalization tracked separately)
   "packages/web/src/components/nav-bar.ts", // file-level comment "retained for backward compatibility with existing tests"
   "packages/web/src/views/config-editor.ts", // re-export shim doc-comment "for backward compatibility" — module barrel reorganization
 ] as const;
@@ -236,8 +229,8 @@ function findLineHits(
   return hits;
 }
 
-describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () => {
-  it("production source contains no /backward.?compat|backcompat|legacy.?(alias|mode|fallback)/i text outside noBackwardCompatAllowlist + path-tail benign-allowlist (BC-REM-02)", () => {
+describe("no-backward-compat", () => {
+  it("production source contains no /backward.?compat|backcompat|legacy.?(alias|mode|fallback)/i text outside noBackwardCompatAllowlist + path-tail benign-allowlist", () => {
     const pattern = /backward.?compat|backcompat|legacy.?(alias|mode|fallback)/i;
     const allFiles = listAllProductionFiles();
 
@@ -267,12 +260,12 @@ describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () 
       violations,
       formatViolations({
         description:
-          "Production source under packages/*/src/ must not contain backward-compat / legacy-alias / legacy-mode / legacy-fallback text outside the noBackwardCompatAllowlist (line-pinned permanent historical references, max 3 entries per BC-REM-22) and outside the BC_REM_02_PATH_TAIL_ALLOWLIST (pre-existing benign-text files captured at Phase 38 baseline). Scope is intentionally limited to npm-tarball-bundled source (the published @comis/* tarballs from packages/*/src/) — non-shipped paths (test/support/, root configs, scripts/, tools/, website/, packages/comis/ umbrella) are out of scope by design because they do not reach end-users.",
+          "Production source under packages/*/src/ must not contain backward-compat / legacy-alias / legacy-mode / legacy-fallback text outside the noBackwardCompatAllowlist (line-pinned permanent historical references) and outside the BC_REM_02_PATH_TAIL_ALLOWLIST (pre-existing benign-text files). Scope is intentionally limited to npm-tarball-bundled source (the published @comis/* tarballs from packages/*/src/) — non-shipped paths (test/support/, root configs, scripts/, tools/, website/, packages/comis/ umbrella) are out of scope by design because they do not reach end-users.",
         violations,
         suggestedFix:
-          "Delete the legacy code path and its compatibility comment (preferred). Alternatively, if the code is a permanent-historical-reference migration that must remain pending v2.2 cleanup, add a {file, line, reason} entry to noBackwardCompatAllowlist in test/support/architecture-allowlist.ts (max 3 entries per BC-REM-22) and annotate the file with `@migration-since: <YYYY-MM-DD>; @remove-after: <milestone>`. Adding a new file to BC_REM_02_PATH_TAIL_ALLOWLIST is reserved for documented pre-existing benign text — not new BC code. If the offending text is outside packages/*/src/ it is outside this ratchet's scope by design — no allowlist entry needed.",
+          "Delete the legacy code path and its compatibility comment (preferred). Alternatively, if the code is a permanent-historical-reference migration that must remain pending a future cleanup, add a {file, line, reason} entry to noBackwardCompatAllowlist in test/support/architecture-allowlist.ts and annotate the file with `@migration-since: <YYYY-MM-DD>; @remove-after: <milestone>`. Adding a new file to BC_REM_02_PATH_TAIL_ALLOWLIST is reserved for documented pre-existing benign text — not new BC code. If the offending text is outside packages/*/src/ it is outside this ratchet's scope by design — no allowlist entry needed.",
         designRef:
-          "code-quality-plan-2026-05-10.md §11.3 (BC-REM-02), §11.5 / Phase 38 wave-close",
+          "no-backward-compat policy (see CLAUDE.md feedback_no_backward_compat)",
         allowlistRef:
           "noBackwardCompatAllowlist (line-pinned) + BC_REM_02_PATH_TAIL_ALLOWLIST (in-file, this test). Scope: packages/*/src/ only (npm-tarball-bundled source).",
       }),
@@ -285,7 +278,7 @@ describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () 
     ).toBeGreaterThan(0);
   });
 
-  it("production source contains zero @deprecated JSDoc annotations (BC-REM-03)", () => {
+  it("production source contains zero @deprecated JSDoc annotations", () => {
     const pattern = /@deprecated\b/;
     const allFiles = listAllProductionFiles();
     const violations: ViolationCitation[] = [];
@@ -299,14 +292,14 @@ describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () 
           "Production source must contain zero @deprecated JSDoc annotations. The v2.1 policy is no-deprecation-period (feedback_no_backward_compat): delete the deprecated code and retarget consumers atomically.",
         violations,
         suggestedFix:
-          "Delete the @deprecated annotation AND the code it annotates; retarget all consumers in the same commit. If retargeting is non-trivial, split into a follow-up wave but do not ship @deprecated.",
+          "Delete the @deprecated annotation AND the code it annotates; retarget all consumers in the same commit. If retargeting is non-trivial, split into a follow-up change but do not ship @deprecated.",
         designRef:
-          "code-quality-plan-2026-05-10.md §11.2.8 / §11.3 (BC-REM-03)",
+          "no-backward-compat policy (CLAUDE.md feedback_no_backward_compat)",
       }),
     ).toEqual([]);
   });
 
-  it("agent/src/index.ts contains no `export { X as Y } from \"...\"` alias re-exports (BC-REM-04)", () => {
+  it("agent/src/index.ts contains no `export { X as Y } from \"...\"` alias re-exports", () => {
     const indexAbs = resolve(PACKAGES_ROOT, "agent/src/index.ts");
     const text = readFileSync(indexAbs, "utf8");
     const lines = text.split(/\r?\n/);
@@ -335,17 +328,17 @@ describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () 
       violations,
       formatViolations({
         description:
-          "agent/src/index.ts must not contain `export { X as Y } from \"...\"` alias re-exports. Phase 29 PUB-EXPORTS-03 removed every such alias from the agent barrel; this rule pins the closure.",
+          "agent/src/index.ts must not contain `export { X as Y } from \"...\"` alias re-exports. The agent barrel has no alias re-exports; this rule pins that invariant.",
         violations,
         suggestedFix:
           "Delete the alias re-export. Consumers should import from the canonical module (the `from \"...\"` source), not via an alias on the agent index. If the alias is genuinely needed for ergonomics, declare a local binding inside the consumer rather than aliasing on the barrel.",
         designRef:
-          "code-quality-plan-2026-05-10.md §11.2.1 / §11.3 (BC-REM-04)",
+          "no-backward-compat policy (CLAUDE.md feedback_no_backward_compat)",
       }),
     ).toEqual([]);
   });
 
-  it("skills/src/index.ts and skills/src/skills/index.ts do not re-export names from @comis/shared (BC-REM-05)", () => {
+  it("skills/src/index.ts and skills/src/skills/index.ts do not re-export names from @comis/shared", () => {
     const filesToCheck = [
       "packages/skills/src/index.ts",
       "packages/skills/src/skills/index.ts",
@@ -371,17 +364,17 @@ describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () 
       violations,
       formatViolations({
         description:
-          "skills/src/index.ts and skills/src/skills/index.ts must not re-export names from @comis/shared. Consumers of shared types/values should import directly from @comis/shared (Phase 33 SKILLS-SPLIT-* closure).",
+          "skills/src/index.ts and skills/src/skills/index.ts must not re-export names from @comis/shared. Consumers of shared types/values should import directly from @comis/shared.",
         violations,
         suggestedFix:
           "Delete the `export { ... } from \"@comis/shared\"` (or `export *`) line. Update any consumer importing the affected name through @comis/skills to import it from @comis/shared directly.",
         designRef:
-          "code-quality-plan-2026-05-10.md §11.2.1 / §11.3 (BC-REM-05)",
+          "no-backward-compat policy (CLAUDE.md feedback_no_backward_compat)",
       }),
     ).toEqual([]);
   });
 
-  it("agent/src/index.ts does not export createCommandHandler or CommandHandlerDeps (BC-REM-06)", () => {
+  it("agent/src/index.ts does not export createCommandHandler or CommandHandlerDeps", () => {
     const indexAbs = resolve(PACKAGES_ROOT, "agent/src/index.ts");
     const text = readFileSync(indexAbs, "utf8");
     const lines = text.split(/\r?\n/);
@@ -409,17 +402,17 @@ describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () 
       violations,
       formatViolations({
         description:
-          "agent/src/index.ts must not export createCommandHandler or CommandHandlerDeps. Both symbols live in @comis/orchestrator after Phase 32 (ORCH-EXT-08); consumers must import from @comis/orchestrator.",
+          "agent/src/index.ts must not export createCommandHandler or CommandHandlerDeps. Both symbols live in @comis/orchestrator; consumers must import from @comis/orchestrator.",
         violations,
         suggestedFix:
           "Delete the export line. Update any consumer that imports createCommandHandler or CommandHandlerDeps from @comis/agent to import from @comis/orchestrator instead.",
         designRef:
-          "code-quality-plan-2026-05-10.md §11.2.2 / §11.3 (BC-REM-06)",
+          "no-backward-compat policy (CLAUDE.md feedback_no_backward_compat)",
       }),
     ).toEqual([]);
   });
 
-  it("cli/src/index.ts public value exports are exactly { withClient, credentialsStep } (BC-REM-07)", () => {
+  it("cli/src/index.ts public value exports are exactly { withClient, credentialsStep }", () => {
     const cliIndexAbs = resolve(PACKAGES_ROOT, "cli/src/index.ts");
     const text = readFileSync(cliIndexAbs, "utf8");
     const lines = text.split(/\r?\n/);
@@ -456,17 +449,17 @@ describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () 
       violations,
       formatViolations({
         description:
-          "cli/src/index.ts public value exports must be exactly { withClient, credentialsStep } (plus any number of signature-required type re-exports). Phase 29 PUB-EXPORTS-02 narrowed this surface deliberately.",
+          "cli/src/index.ts public value exports must be exactly { withClient, credentialsStep } (plus any number of signature-required type re-exports). This surface was narrowed deliberately.",
         violations,
         suggestedFix:
           "Remove the unexpected export. If the symbol is needed by the CLI bin entry point (cli.ts), import it directly from ./commands/X.js or ./output/X.js — those modules remain importable, but are NOT part of the documented @comis/cli external API.",
         designRef:
-          "code-quality-plan-2026-05-10.md §11.2.2 / §11.3 (BC-REM-07) / Phase 29 PUB-EXPORTS-02",
+          "no-backward-compat policy (CLAUDE.md feedback_no_backward_compat)",
       }),
     ).toEqual([]);
   });
 
-  it("no eslint-disable comment cites 'legacy' or 'backward compat' as justification (BC-REM-23)", () => {
+  it("no eslint-disable comment cites 'legacy' or 'backward compat' as justification", () => {
     // Capture `eslint-disable` (line or block, with-rule or without) where
     // a justification trailing `--` cites "legacy" or "backward compat".
     // The ESLint convention is `eslint-disable-... -- <reason>` (the `--`
@@ -482,21 +475,20 @@ describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () 
       violations,
       formatViolations({
         description:
-          "No eslint-disable comment in production source may cite 'legacy' or 'backward compat' as justification. The pragma-drift threat (T-38-06-01) requires that any BC carve-out flow through the noBackwardCompatAllowlist (line-pinned, review-visible) rather than through per-file pragmas (invisible in PR diffs).",
+          "No eslint-disable comment in production source may cite 'legacy' or 'backward compat' as justification. The pragma-drift threat requires that any BC carve-out flow through the noBackwardCompatAllowlist (line-pinned, review-visible) rather than through per-file pragmas (invisible in PR diffs).",
         violations,
         suggestedFix:
           "Remove the eslint-disable comment. If the underlying lint violation is real, fix the code; if the rule is wrong, fix the rule. If the code path is a permanent-historical-reference BC site, add it to noBackwardCompatAllowlist with a `@migration-since` annotation instead.",
         designRef:
-          "code-quality-plan-2026-05-10.md §11.3 (BC-REM-23) / Phase 38 threat T-38-06-01",
+          "no-backward-compat policy (CLAUDE.md feedback_no_backward_compat)",
       }),
     ).toEqual([]);
   });
 
-  // Defense-in-depth (BC-REM-21): Phase 30 closure deleted every
-  // `getGlobalHookRunner` / `hook-runner-global` symbol. This block
-  // asserts the zero-hits invariant in production source — catches any
-  // accidental reintroduction.
-  it("production source contains no getGlobalHookRunner / hook-runner-global references (BC-REM-21 defense-in-depth)", () => {
+  // Defense-in-depth: both `getGlobalHookRunner` and `hook-runner-global`
+  // symbols were deleted. This block asserts the zero-hits invariant in
+  // production source — catches any accidental reintroduction.
+  it("production source contains no getGlobalHookRunner / hook-runner-global references (defense-in-depth)", () => {
     const pattern = /\bgetGlobalHookRunner\b|hook-runner-global/;
     const allFiles = listAllProductionFiles();
     const violations: ViolationCitation[] = [];
@@ -507,12 +499,12 @@ describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () 
       violations,
       formatViolations({
         description:
-          "Production source must contain zero getGlobalHookRunner / hook-runner-global references. Phase 30 deleted both symbols; there is no replacement. Reintroducing either would re-create the global-singleton anti-pattern the closure resolved.",
+          "Production source must contain zero getGlobalHookRunner / hook-runner-global references. Both symbols have been deleted; there is no replacement. Reintroducing either would re-create the global-singleton anti-pattern.",
         violations,
         suggestedFix:
           "Remove the reference. The hook-runner is now constructed at the composition root and passed via deps; there is no module-level accessor and no global registry.",
         designRef:
-          "code-quality-plan-2026-05-10.md §11.2.10 / §11.3 (BC-REM-21) / Phase 30 hook-runner-global deletion",
+          "no-backward-compat policy (CLAUDE.md feedback_no_backward_compat)",
       }),
     ).toEqual([]);
   });

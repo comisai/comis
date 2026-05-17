@@ -4,8 +4,7 @@
  *
  * Covers: runExaSearch() with mocked fetch — happy path, error status,
  * startPublishedDate/endPublishedDate optional inclusion, missing-results
- * fallback, summary-vs-text description fallback. Plan 40-11 branch-gap
- * closure.
+ * fallback, summary-vs-text description fallback.
  *
  * @module
  */

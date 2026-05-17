@@ -79,8 +79,7 @@ describe("wireGeminiCacheCleanup", () => {
 
     eventBus.emit("session:expired", { sessionKey, reason: "idle" });
 
-    // CR-01 follow-up to BC-REM-15 (Phase 38): `formatSessionKey` no longer
-    // serializes `agentId`; the formatted key is now just
+    // `formatSessionKey` does not serialize `agentId`; the formatted key is
     // `{tenantId}:{userId}:{channelId}` for keys without optional segments.
     expect(cacheManager.dispose).toHaveBeenCalledWith("default:user-1:chan-1");
   });

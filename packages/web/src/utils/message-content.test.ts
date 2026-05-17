@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for message-content utility module (Phase 40 Plan 40-15 gap-closure for COV-03).
+ * Tests for the message-content utility module.
  *
  * Covers stripSilentTokens / stripUserSystemContext / cleanMessageContent. Pure-function
  * transforms with role-based dispatch and regex matching. Every branch of the channel

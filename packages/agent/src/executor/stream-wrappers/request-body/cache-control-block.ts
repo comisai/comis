@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `addCacheControlToLastBlock` + `CACHEABLE_BLOCK_TYPES`
- * (Phase 42 split per EXEC-SPLIT-02).
+ * `addCacheControlToLastBlock` + `CACHEABLE_BLOCK_TYPES`.
  *
  * Extracted as a leaf module to break the import cycle between
  * `cache-breakpoints.ts` and `breakpoint-placement.ts`: both consume the
  * helper but the latter is a sibling, not a child, of the former.
- *
- * Lifted verbatim from request-body-injector.ts:336-377.
  *
  * @module
  */

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Web-search provider dispatch (Phase 43 split per FILE-SPLIT-11).
+ * Web-search provider dispatch.
  *
- * Extracted from the pre-split web-search-tool.ts monolith. Owns:
+ * Owns:
  *   - WebSearchConfig public type
  *   - SearchProviderName alias + FRESHNESS_PROVIDERS allow-set
  *   - Provider-name parsing and chain assembly (parseProvider, buildProviderChain, resolveProvider)
  *   - Per-provider key resolution (resolveApiKey); missingApiKeyPayload is
  *     declared locally and reserved for future use (carries forward the
- *     pre-Phase-43 dead-code stash with its eslint-disable directive).
+ *     dead-code stash with its eslint-disable directive).
  *   - Provider config + orchestrator payload builders (buildProviderConfig, buildOrchestratorPayload)
  *   - Per-call count clamping (resolveSearchCount)
  *
@@ -42,7 +42,7 @@ export const FRESHNESS_PROVIDERS = new Set<SearchProviderName>(["brave", "duckdu
 // Config
 // ---------------------------------------------------------------------------
 
-// @optional-field-count: (b) Cluster-split candidate inherited from pre-Phase-43 web-search-tool.ts. User-facing search-tool config — each `?` is either (i) a top-level setting (provider, apiKey, maxResults, timeoutSeconds, cacheTtlMinutes, fallbackProviders, deepFetch*, totalCharsBudget) or (ii) a per-provider sub-config (perplexity, grok, duckduckgo, searxng, tavily, exa, jina) that is undefined unless the user selected that provider. Future refactor: move per-provider configs into a discriminated-union providers field keyed by provider name. (TS-HYG-13 — Plan 41-08 audit; carried forward through Phase 43 plan 02b subdirectory split per FILE-SPLIT-11.)
+// @optional-field-count: (b) Cluster-split candidate. User-facing search-tool config — each `?` is either (i) a top-level setting (provider, apiKey, maxResults, timeoutSeconds, cacheTtlMinutes, fallbackProviders, deepFetch*, totalCharsBudget) or (ii) a per-provider sub-config (perplexity, grok, duckduckgo, searxng, tavily, exa, jina) that is undefined unless the user selected that provider. Future refactor: move per-provider configs into a discriminated-union providers field keyed by provider name.
 export interface WebSearchConfig {
   /** Search provider: "duckduckgo" (default), "brave", "perplexity", "grok", "searxng", "tavily", "exa", or "jina". */
   provider?: SearchProviderName;

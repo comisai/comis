@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: scheduler wiring guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
+// @allow-throw: scheduler wiring guards; consumed at daemon.ts bootstrap catch boundary.
 /**
  * Per-agent scheduler, browser service, session reset, and task extraction
  * setup: cron schedulers with executeJob callbacks, BrowserService instances
  * with unique CDP ports, SessionResetSchedulers with runtime config, and
  * per-agent task extractors with pluggable LLM extraction.
- * Extracted from daemon.ts steps 6.6.5 through 6.6.5.7 to isolate the
- * per-agent scheduler/browser/reset/task-extraction creation loops from
- * the main wiring sequence.
+ *
+ * Isolates the per-agent scheduler/browser/reset/task-extraction creation
+ * loops from the main daemon wiring sequence.
  * @module
  */
 
@@ -84,9 +84,9 @@ export async function setupSchedulers(deps: {
   systemEventQueue?: SystemEventQueue;
   /** Callback to wake the heartbeat immediately */
   onCronWake?: (reason: string) => void;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
-  /** Timer scheduling (Phase 39 PORTS-13). Threaded into SessionResetScheduler. */
+  /** Timer scheduling. Threaded into SessionResetScheduler. */
   timers: TimerPort;
 }): Promise<SchedulersResult> {
   const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, timers } = deps;
@@ -104,7 +104,7 @@ export async function setupSchedulers(deps: {
     return formatSessionKey(sessionKey);
   }
 
-  // 6.6.5. Initialize per-agent CronSchedulers
+  // Initialize per-agent CronSchedulers
   const cronSchedulers = new Map<string, CronScheduler>();
   const executionTrackers = new Map<string, ReturnType<typeof createExecutionTracker>>();
 
@@ -305,7 +305,7 @@ export async function setupSchedulers(deps: {
     return scheduler;
   }
 
-  // 6.6.5.5. Initialize per-agent BrowserService instances
+  // Initialize per-agent BrowserService instances
   const browserServices = new Map<string, BrowserService>();
   let browserPortOffset = 0;
 
@@ -332,14 +332,13 @@ export async function setupSchedulers(deps: {
     return service;
   }
 
-  // 6.6.5.7. Initialize per-agent SessionResetSchedulers
+  // Initialize per-agent SessionResetSchedulers
   const resetSchedulers = new Map<string, SessionResetScheduler>();
 
-  // Daily-reset cron callback. Phase 32 commit 12 (ORCH-EXT-15) flipped
-  // session-reset-policy.ts from a direct `@comis/scheduler` import to a deps
-  // callback so agent's production source no longer reaches into scheduler.
-  // The closure wraps `computeNextRunAtMs` over a `0 H * * *` cron schedule —
-  // identical behavior to the pre-injection inline call.
+  // Daily-reset cron callback. session-reset-policy.ts receives this via deps
+  // injection (rather than importing `@comis/scheduler` directly) so the
+  // agent package does not reach into scheduler internals. The closure wraps
+  // `computeNextRunAtMs` over a `0 H * * *` cron schedule.
   const computeDailyResetNextRun: ComputeDailyResetNextRun = (
     updatedAt: number,
     hour: number,
@@ -367,7 +366,7 @@ export async function setupSchedulers(deps: {
       },
       computeDailyResetNextRun,
       nowMs: undefined, // Use real clock in production
-      timers,           // Phase 39 PORTS-13
+      timers,
     });
 
     scheduler.start();
@@ -452,7 +451,7 @@ export function setupTaskExtraction(deps: TaskExtractionDeps): TaskExtractionRes
     // Pluggable extraction function -- in production this would wrap an LLM call.
     // For now, create a placeholder that returns empty tasks. The daemon can
     // override this with a real LLM-based extraction when the agent executor
-    // integration is fully wired (Phase TBD).
+    // integration is fully wired.
     const extractFn = async () => {
       // TODO: Wire to agent executor LLM call for real extraction
       return { tasks: [], reasoning: "Extraction function not yet wired to LLM" };

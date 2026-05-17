@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for IcApp keyboard handling, command-palette wiring, skeleton-variant
- * mapping, and view-decision branches (Phase 40 Plan 40-15 gap-closure).
+ * mapping, and view-decision branches.
  *
  * Targets the previously-uncovered range in app.ts:
  *   - _isInputTarget (INPUT/TEXTAREA/SELECT/contentEditable branches)

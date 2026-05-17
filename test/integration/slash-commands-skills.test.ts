@@ -19,7 +19,6 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createSkillRegistry, expandSkillForInvocation } from "@comis/skills";
-// Phase 32 commit 6 (ORCH-EXT-08): commands moved to @comis/orchestrator.
 import { matchPromptSkillCommand, parseSlashCommand } from "@comis/orchestrator";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";

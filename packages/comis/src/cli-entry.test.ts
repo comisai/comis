@@ -6,14 +6,12 @@
  * top-level `await import(safePath(...))` that invokes Commander.js and
  * exits the test process. Instead, this test asserts the file's STATIC
  * properties (shape, deps, header) by reading the source text via
- * `readFileSync` (same idiom as `executor-post-execution.test.ts:41-51`).
+ * `readFileSync` (same idiom as `executor-post-execution.test.ts`).
  *
  * Catches `prepack.js` resolution breakage by pinning the file's @comis/*
  * dependency graph to exactly `@comis/core` — `@comis/cli` must be
  * dynamically resolved via `import.meta.resolve`, never statically imported,
  * so that the bundled-monorepo `npm install -g comisai` path works.
- *
- * Phase 40 / Phase C §6.3.5 / COV-09.
  *
  * @module
  */

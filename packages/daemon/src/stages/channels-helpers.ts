@@ -2,18 +2,16 @@
 /**
  * Channels-stage helpers for daemon.ts's stageChannels.
  *
- * Block-moved verbatim from daemon.ts in Phase 43 Wave 8c (FILE-SPLIT-06):
- *   - buildChannelManagerDeps (daemon.ts:1289-1338)
- *   - buildGraphCoordinatorDeps (daemon.ts:1346-1382)
- *   - buildGraphPreWarm (daemon.ts:1389-1409)
- *   - setupChannelHealthMonitor (daemon.ts:1419-1448)
- *   - createCapabilityPortResolver (daemon.ts:1458-1471)
- *   - wirePostChannelsLifecycle (daemon.ts:1480-1512)
- *   - buildImageGenBundle (daemon.ts:1520-1546)
+ *   - buildChannelManagerDeps
+ *   - buildGraphCoordinatorDeps
+ *   - buildGraphPreWarm
+ *   - setupChannelHealthMonitor
+ *   - createCapabilityPortResolver
+ *   - wirePostChannelsLifecycle
+ *   - buildImageGenBundle
  *
- * Each helper is a top-level function (not a closure) — mechanical block-move
- * is safe per RESEARCH §"No-cycles invariant". Consumed by stageChannels in
- * daemon.ts.
+ * Each helper is a top-level function (not a closure). Consumed by
+ * stageChannels in daemon.ts.
  *
  * @module
  */
@@ -45,7 +43,7 @@ import type { createGraphCoordinator, createNodeTypeRegistry } from "../graph/in
 /**
  * Build the deps object passed to `setupChannels`. Lifted from the inline
  * argument-construction block inside stageChannels to keep the stage body
- * under the DAEMON-API-06 ≤200L cap (helper itself ≤50L per DAEMON-API-07).
+ * small.
  *
  * All closure inputs flow through `deps`. The returned object is consumed
  * verbatim by `setupChannels(...)`; no inline mutation here.
@@ -104,8 +102,7 @@ export function buildChannelManagerDeps(deps: {
 /**
  * Build the deps object passed to `createGraphCoordinator`. Lifted from the
  * inline argument-construction block inside stageChannels to keep the stage
- * body under the DAEMON-API-06 ≤200L cap (helper itself ≤50L per
- * DAEMON-API-07).
+ * body small.
  */
 export function buildGraphCoordinatorDeps(deps: {
   agents: AgentsHandle;
@@ -148,7 +145,7 @@ export function buildGraphCoordinatorDeps(deps: {
 /**
  * Build the optional pre-warm cache config for Anthropic graph executions.
  * Returns undefined if no Anthropic API key is resolvable. Extracted from
- * buildGraphCoordinatorDeps to keep both helpers under DAEMON-API-07 ≤50L.
+ * buildGraphCoordinatorDeps to keep both helpers small.
  */
 export function buildGraphPreWarm(deps: {
   agentsConfig: AgentsHandle["agentsConfig"];
@@ -174,11 +171,10 @@ export function buildGraphPreWarm(deps: {
 
 /**
  * Set up the channel health monitor. Returns `{ monitor, stop }`, subsuming
- * today's `let channelHealthMonitor` + `let stopChannelHealthMonitor`
- * (DAEMON-API-09 refs #10 + #11) into a single helper return value -- both
- * `let`s disappear from stageChannels.
+ * today's `let channelHealthMonitor` + `let stopChannelHealthMonitor` into a
+ * single helper return value -- both `let`s disappear from stageChannels.
  *
- * Extracted to keep stageChannels under the DAEMON-API-06 ≤200L cap.
+ * Extracted to keep stageChannels small.
  */
 export function setupChannelHealthMonitor(deps: {
   adaptersByType: Awaited<ReturnType<typeof setupChannels>>["adaptersByType"];
@@ -216,10 +212,10 @@ export function setupChannelHealthMonitor(deps: {
  * default agent's port. Throws if neither is registered (mirrors setup-tools.ts
  * `agents[agentId] ?? agents[defaultAgentId]` convention).
  *
- * Extracted to keep stageChannels under the DAEMON-API-06 ≤200L cap. The
- * original 17L closure is logically a factory; factory form is clearer.
+ * Extracted to keep stageChannels small. Factory form is clearer than the
+ * original inline closure.
  */
-// @allow-throw: ToolCapabilityPort resolver; consumed at daemon bootstrap catch boundary (Phase 41 TS-HYG-07).
+// @allow-throw: ToolCapabilityPort resolver; consumed at daemon bootstrap catch boundary.
 export function createCapabilityPortResolver(
   toolCapabilityPorts: Map<string, ToolCapabilityPort>,
   defaultAgentId: string,
@@ -240,7 +236,7 @@ export function createCapabilityPortResolver(
  * channelAdapters map, drain + start prune timer, mirror prune lifecycle,
  * delivery-queue logging, and output retention housekeeper.
  *
- * Extracted to keep stageChannels under the DAEMON-API-06 ≤200L cap.
+ * Extracted to keep stageChannels small.
  */
 export async function wirePostChannelsLifecycle(deps: {
   adaptersByType: Awaited<ReturnType<typeof setupChannels>>["adaptersByType"];
@@ -280,7 +276,7 @@ export async function wirePostChannelsLifecycle(deps: {
  * Build the image-generation provider bundle: provider + rate limiter + config.
  * Logs the same info/debug/warn lines as the original inline block.
  *
- * Extracted to keep stageChannels under the DAEMON-API-06 ≤200L cap.
+ * Extracted to keep stageChannels small.
  */
 export function buildImageGenBundle(deps: {
   container: AgentsHandle["container"];

@@ -19,8 +19,8 @@ import { Command } from "commander";
 
 // ---------- Mocks (hoisted) ----------
 
-// importOriginal-based so callTyped (Plan 35-16 Wave C retarget) resolves
-// to the real wrapper while withClient is mocked.
+// importOriginal-based so callTyped resolves to the real wrapper while
+// withClient is mocked.
 vi.mock("../client/rpc-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
   return {
@@ -53,7 +53,7 @@ vi.mock("@mariozechner/pi-ai", () => ({
   getEnvApiKey: vi.fn(),
 }));
 
-// createModelCatalog relocated to @comis/core in Phase 35 Plan 35-04 per D-01 #4.
+// createModelCatalog lives in @comis/core.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {

@@ -155,8 +155,8 @@ describe("createDagAnnotatorLayer", () => {
   });
 
   it("protects memory_search and read tools from annotation", async () => {
-    // Post-BC-REM-11: `file_read` is no longer a protected-tier alias;
-    // use the canonical `read` tool name (also protected-tier).
+    // `file_read` is no longer a protected-tier alias; use the canonical
+    // `read` tool name (also protected-tier).
     const annotator = createDagAnnotatorLayer(
       { annotationKeepWindow: 0, annotationTriggerChars: 0, ephemeralAnnotationKeepWindow: 0 }, // annotate all beyond window
       { estimateTokens },
@@ -348,8 +348,8 @@ describe("createDagAnnotatorLayer", () => {
         { estimateTokens },
       );
 
-      // Protected tools at various positions. Post-BC-REM-11: use canonical
-      // `read` (also protected-tier) in place of the deleted `file_read` alias.
+      // Protected tools at various positions. Use canonical `read` (also
+      // protected-tier) in place of the deleted `file_read` alias.
       const messages: AgentMessage[] = [
         makeToolResult("memory_search", "Memory search result 1"),
         makeToolResult("memory_get", "Memory get result"),
@@ -400,9 +400,8 @@ describe("createDagAnnotatorLayer", () => {
         { estimateTokens },
       );
 
-      // Interleaved: [bash, read, bash, read, bash]. Post-BC-REM-11: use
-      // canonical `read` (also protected-tier) in place of the deleted
-      // `file_read` alias.
+      // Interleaved: [bash, read, bash, read, bash]. Use canonical `read`
+      // (also protected-tier) in place of the deleted `file_read` alias.
       const messages: AgentMessage[] = [
         makeToolResult("bash", "Oldest bash output"),
         makeToolResult("read", "File content 1"),

@@ -2,9 +2,8 @@
 /**
  * INTEGRATION: iMessage channel — file-based shim + credential validator.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts coverage on the
- * `@comis/channels` iMessage subpackage. iMessage uses a file-based
- * fixture (no network) per Wave B7.
+ * Lifts coverage on the `@comis/channels` iMessage subpackage. iMessage
+ * uses a file-based fixture (no network).
  *
  * @module
  */

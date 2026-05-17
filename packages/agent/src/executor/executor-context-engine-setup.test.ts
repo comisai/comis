@@ -17,9 +17,6 @@
  * invoke them directly. createContextEngine itself is unit-tested elsewhere
  * (context-engine.test.ts); this file focuses on the orchestrator wiring.
  *
- * Use-case design (Phase 40 / Phase C §3.3 / COV-10): every `it("...")`
- * description names a use case ≥20 chars ending in a recognizable shape.
- *
  * @module
  */
 

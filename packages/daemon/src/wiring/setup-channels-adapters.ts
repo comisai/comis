@@ -100,9 +100,9 @@ export async function bootstrapAdapters(deps: {
   if (channelConfig.telegram.enabled) {
     const token = (channelConfig.telegram.botToken as string | undefined) || getSecret("TELEGRAM_BOT_TOKEN");
     if (token) {
-      // E2E redirection seam: when channels.telegram.apiRoot is set
-      // (Phase 40 / Plan 40-09), point grammy's Bot constructor at the
-      // override URL. Production leaves it unset.
+      // E2E redirection seam: when channels.telegram.apiRoot is set,
+      // point grammy's Bot constructor at the override URL. Production
+      // leaves it unset.
       const telegramApiRoot = channelConfig.telegram.apiRoot && channelConfig.telegram.apiRoot.length > 0
         ? channelConfig.telegram.apiRoot
         : undefined;
@@ -132,10 +132,10 @@ export async function bootstrapAdapters(deps: {
   if (channelConfig.discord.enabled) {
     const token = (channelConfig.discord.botToken as string | undefined) || getSecret("DISCORD_BOT_TOKEN");
     if (token) {
-      // E2E redirection seam (Phase 40 / Plan 40-09): when discord.apiRoot
-      // is set, both validation (/users/@me) and runtime traffic (REST +
-      // gateway-discovery via /gateway/bot) hit the override URL. Production
-      // leaves it unset and discord.js uses https://discord.com/api.
+      // E2E redirection seam: when discord.apiRoot is set, both validation
+      // (/users/@me) and runtime traffic (REST + gateway-discovery via
+      // /gateway/bot) hit the override URL. Production leaves it unset and
+      // discord.js uses https://discord.com/api.
       const discordApiRoot = channelConfig.discord.apiRoot && channelConfig.discord.apiRoot.length > 0
         ? channelConfig.discord.apiRoot
         : undefined;
@@ -165,10 +165,10 @@ export async function bootstrapAdapters(deps: {
     if (token) {
       const appToken = mode === "socket" ? ((channelConfig.slack.appToken as string | undefined) || getSecret("SLACK_APP_TOKEN")) : undefined;
       const signingSecret = mode === "http" ? ((channelConfig.slack.signingSecret as string | undefined) || getSecret("SLACK_SIGNING_SECRET")) : undefined;
-      // E2E redirection seam (Phase 40 / Plan 40-09 / COV-15): when slack.apiRoot
-      // is set, both auth.test() validation and runtime WebClient traffic hit
-      // the override URL via clientOptions.slackApiUrl. Socket-mode WebSocket
-      // connections cannot be redirected — E2E tests use mode='http'.
+      // E2E redirection seam: when slack.apiRoot is set, both auth.test()
+      // validation and runtime WebClient traffic hit the override URL via
+      // clientOptions.slackApiUrl. Socket-mode WebSocket connections cannot
+      // be redirected — E2E tests use mode='http'.
       const slackApiRoot = channelConfig.slack.apiRoot && channelConfig.slack.apiRoot.length > 0
         ? channelConfig.slack.apiRoot
         : undefined;
@@ -204,9 +204,9 @@ export async function bootstrapAdapters(deps: {
   if (channelConfig.whatsapp.enabled) {
     const authDir = channelConfig.whatsapp.authDir || safePath(safePath(os.homedir(), ".comis"), "whatsapp-auth");
     const validation = await validateWhatsAppAuth({ authDir, printQR: channelConfig.whatsapp.printQR });
-    // E2E redirection seam (Phase 40 / Plan 40-09 / COV-15): when
-    // whatsapp.apiRoot is set, Baileys's WebSocket connects to the override
-    // URL instead of wss://web.whatsapp.com/ws/chat. Production leaves unset.
+    // E2E redirection seam: when whatsapp.apiRoot is set, Baileys's
+    // WebSocket connects to the override URL instead of
+    // wss://web.whatsapp.com/ws/chat. Production leaves unset.
     const whatsappApiRoot = channelConfig.whatsapp.apiRoot && channelConfig.whatsapp.apiRoot.length > 0
       ? channelConfig.whatsapp.apiRoot
       : undefined;
@@ -250,9 +250,9 @@ export async function bootstrapAdapters(deps: {
     const accessToken = (channelConfig.line.botToken as string | undefined) || getSecret("LINE_CHANNEL_ACCESS_TOKEN");
     const channelSecret = (channelConfig.line.channelSecret as string | undefined) || getSecret("LINE_CHANNEL_SECRET");
     if (accessToken && channelSecret) {
-      // E2E redirection seam (Phase 40 / Plan 40-09 / COV-15): when
-      // line.apiRoot is set, the LINE SDK client targets the override URL
-      // (instead of api.line.me). Production leaves unset.
+      // E2E redirection seam: when line.apiRoot is set, the LINE SDK
+      // client targets the override URL (instead of api.line.me).
+      // Production leaves unset.
       const lineApiRoot = channelConfig.line.apiRoot && channelConfig.line.apiRoot.length > 0
         ? channelConfig.line.apiRoot
         : undefined;

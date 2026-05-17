@@ -11,11 +11,10 @@
  *   - default timeout is 1000ms (asserted by the timeout case with no explicit arg)
  *   - the literal RPC method name is "system.ping" — via SystemPingContract
  *
- * Phase 35 Wave C (Plan 35-06): the probe was retargeted from raw
- * `client.call("system.ping")` to `callTyped(client, SystemPingContract, {})`.
- * The mock surface now needs both `withClient` AND `callTyped` because
- * `daemon-guard.ts` imports the typed-RPC wrapper from `../client/rpc-client.js`.
- * The `callMock` argument check is `(method, params)` — `callTyped` always
+ * The probe uses `callTyped(client, SystemPingContract, {})`. The mock
+ * surface needs both `withClient` AND `callTyped` because `daemon-guard.ts`
+ * imports the typed-RPC wrapper from `../client/rpc-client.js`. The
+ * `callMock` argument check is `(method, params)` — `callTyped` always
  * forwards an empty params object for parameterless RPCs.
  *
  * @module

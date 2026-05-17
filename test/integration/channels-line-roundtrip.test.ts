@@ -2,8 +2,7 @@
 /**
  * INTEGRATION: LINE channel — Messaging API wire roundtrip + flex builder.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts coverage on the
- * `@comis/channels` LINE subpackage (validateLineCredentials,
+ * Covers the `@comis/channels` LINE subpackage (validateLineCredentials,
  * buildFlexMessage, buildFlexCarousel).
  *
  * @module

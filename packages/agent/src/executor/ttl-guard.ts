@@ -50,7 +50,7 @@ export interface TtlGuardConfig {
   onTtlExpiry: () => void;
   /** Logger for debug output. */
   logger: ComisLogger;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
 }
 

@@ -7,8 +7,8 @@
  * executeAgent/sendToChannel boundaries. No daemon, no LLM, no network.
  *
  * Covers:
- * - TEST-06: Full pipeline (spawn -> condense -> cast -> announce -> lifecycle hooks)
- * - TEST-07: Concurrent spawn limit enforcement (children + depth + graph bypass)
+ * - Full pipeline (spawn -> condense -> cast -> announce -> lifecycle hooks)
+ * - Concurrent spawn limit enforcement (children + depth + graph bypass)
  * - Lifecycle hook failure graceful degradation
  *
  * @module
@@ -32,7 +32,7 @@ import { TypedEventBus } from "@comis/core";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight port wrappers that delegate to globals.
+// Lightweight port wrappers that delegate to globals.
 // ---------------------------------------------------------------------------
 
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
@@ -167,7 +167,7 @@ function buildIntegrationDeps(overrides?: Partial<SubAgentRunnerDeps>): SubAgent
 describe("subagent pipeline integration", () => {
 
   // -------------------------------------------------------------------------
-  // TEST-06: Full pipeline
+  // Full pipeline
   // -------------------------------------------------------------------------
 
   it("full pipeline: spawn -> condense -> cast -> announce -> lifecycle hooks", async () => {
@@ -282,7 +282,7 @@ describe("subagent pipeline integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // TEST-07: Concurrent spawn children limit enforcement
+  // Concurrent spawn children limit enforcement
   // -------------------------------------------------------------------------
 
   it("concurrent spawns: children limit enforcement", () => {
@@ -425,7 +425,7 @@ describe("subagent pipeline integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Graph spawns bypass children limit (LIMIT-05)
+  // Graph spawns bypass children limit
   // -------------------------------------------------------------------------
 
   it("graph spawns bypass children limit", () => {

@@ -70,10 +70,9 @@ describe("resolveToolMaskingTier", () => {
     expect(resolveToolMaskingTier("read")).toBe("protected");
   });
 
-  it("returns 'standard' for file_read (legacy SDK alias deleted in BC-REM-11)", () => {
-    // Pre-phase-38 this returned 'protected' via a legacy alias for the
-    // pre-rename SDK permission name. @anthropic-ai/sdk 0.91+ emits 'read'
-    // (not 'file_read'); the alias has been removed.
+  it("returns 'standard' for file_read (legacy SDK alias removed)", () => {
+    // @anthropic-ai/sdk 0.91+ emits 'read' (not 'file_read'); the alias has
+    // been removed.
     expect(resolveToolMaskingTier("file_read")).toBe("standard");
   });
 
@@ -125,7 +124,7 @@ describe("resolveToolMaskingTier", () => {
 });
 
 describe("TOOL_MASKING_TIERS", () => {
-  it("has exactly 10 entries (5 protected + 5 ephemeral) — file_read legacy alias deleted in BC-REM-11", () => {
+  it("has exactly 10 entries (5 protected + 5 ephemeral)", () => {
     expect(TOOL_MASKING_TIERS.size).toBe(10);
   });
 

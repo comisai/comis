@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# CLI cold-start performance harness (WEB-CONTRACTS-17, Phase 35 Plan 35-22).
+# CLI cold-start performance harness.
 #
 # Measures median + IQR cold-start latency for three representative CLI
-# commands across two daemon states (up / down). Used to capture the
-# performance baseline before/after the Wave A–D contracts migration so the
-# 50 ms median-regression budget can be verified.
+# commands across two daemon states (up / down). Used to capture a
+# performance baseline so a 50 ms median-regression budget can be verified.
 #
-# Tool selection (CONTEXT D-09):
+# Tool selection:
 #   - hyperfine when available (multi-run median + statistical IQR + JSON
 #     export). Preferred because hyperfine's own warmup and outlier handling
 #     are statistically sound.
@@ -40,7 +39,7 @@ if [ "$DAEMON_STATE" = "down" ]; then
   fi
 fi
 
-# 3 representative CLI commands × 10 invocations (matches D-09 corpus):
+# 3 representative CLI commands × 10 invocations:
 #   - comis status        (most-called CLI command; latency-sensitive)
 #   - comis health        (polled by monitoring scripts)
 #   - comis sessions list (largest response payload; contract-parse cost

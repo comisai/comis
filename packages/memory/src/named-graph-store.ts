@@ -16,7 +16,7 @@ import { systemNowMs } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
 import { NamedGraphRowSchema } from "./row-schemas.js";
 
-// Row mappers (Phase 41 TS-HYG-03)
+// Row mappers
 type NamedGraphRow = z.infer<typeof NamedGraphRowSchema>;
 const namedGraphMapper = createRowMapper(NamedGraphRowSchema);
 const namedGraphListItemMapper = createRowMapper(

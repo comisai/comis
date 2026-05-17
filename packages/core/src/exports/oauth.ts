@@ -2,9 +2,8 @@
 /**
  * OAuth helper re-exports for the @comis/core barrel.
  *
- * Added in Phase 35 Plan 35-03 per WEB-CONTRACTS-02 D-01 #2. Plan 35-05
- * retargets CLI consumers from @comis/agent to @comis/core via these names;
- * Plan 35-04 deletes the agent-side re-exports after the retarget lands.
+ * CLI consumers import these names from @comis/core (no longer from
+ * @comis/agent; the agent-side re-exports have been removed).
  *
  * @module
  */

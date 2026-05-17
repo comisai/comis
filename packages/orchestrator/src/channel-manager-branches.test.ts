@@ -9,8 +9,6 @@
  * - injectMessage adapter-not-found branch
  * - session:expired event listener side effects
  *
- * Phase 40 / Plan 40-12 / COV-03 — orchestrator branches gap closure.
- *
  * @module
  */
 import { describe, it, expect, vi } from "vitest";

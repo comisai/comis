@@ -254,10 +254,10 @@ describe("createModelHandlers - model management", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Plan 40-14 — models.test branch coverage for providerEntries + status paths
+  // models.test branch coverage for providerEntries + status paths
   // -------------------------------------------------------------------------
 
-  describe("models.test (Plan 40-14 branches)", () => {
+  describe("models.test (providerEntries branches)", () => {
     it("reports customModels count for not_configured provider when providerEntries entry is enabled", async () => {
       const deps = makeDeps({
         agents: {}, // no agents using "custom-prov"

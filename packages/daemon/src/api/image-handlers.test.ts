@@ -25,8 +25,8 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-// Plan 35-15: preserve the contract registry exports + stripInternalFields
-// helper that the refactored handler now imports from @comis/core.
+// Preserve the contract registry exports + stripInternalFields helper that
+// the refactored handler now imports from @comis/core.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {

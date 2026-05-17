@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Workspace-handlers contract slice (Phase 43 split per FILE-SPLIT-14).
+ * Workspace-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/workspace-handlers.ts` (12 methods).
- * Block-moved verbatim from the pre-split `api-contracts/workspace.ts`
- * (lines 127-466). Spread order in `WORKSPACE_HANDLERS_CONTRACTS` matches
- * the pre-split `WORKSPACE_CONTRACTS` array (workspace.ts:1110-1123) byte
- * for byte to keep `contracts.generated.*` artifacts byte-identical.
+ * Spread order in `WORKSPACE_HANDLERS_CONTRACTS` is locked in to keep
+ * `contracts.generated.*` artifacts byte-identical across runs.
  *
  * @module
  */
@@ -18,23 +16,22 @@ import { defineContract } from "../types.js";
 // ===========================================================================
 
 /**
- * D-05 loose-record value type. Used for response shapes whose nested
+ * Loose-record value type. Used for response shapes whose nested
  * structure varies per call (Snapshot ref maps, WorkspaceStatus state
  * blocks, etc.) and where tight modeling would pin every sub-field's
  * wire format. Mirrors the precedent in
- * `packages/core/src/api-contracts/observability.ts` (Plan 35-12).
+ * `packages/core/src/api-contracts/observability.ts`.
  */
 const LooseRecord = z.record(z.string(), z.unknown());
 
 /**
  * Workspace.listDir entry shape — directory listing row. Modeled tight
  * because the shape is fully primitive at the leaves and the handler
- * builds it explicitly (workspace-handlers.ts:275-291).
+ * builds it explicitly.
  *
  * `type` is the discriminator (`"file" | "directory"`) — modeled via
- * `z.enum` (allowlist shape #7). `sizeBytes` is present only on files
- * (handler line 288 — conditional spread). `modifiedAt` is the mtime
- * in epoch-milliseconds.
+ * `z.enum`. `sizeBytes` is present only on files (conditional spread).
+ * `modifiedAt` is the mtime in epoch-milliseconds.
  */
 const WorkspaceListEntrySchema = z.object({
   name: z.string(),
@@ -45,8 +42,8 @@ const WorkspaceListEntrySchema = z.object({
 
 /**
  * Workspace.git.status entry — file-level git status row. Modeled tight
- * (workspace-handlers.ts:113-128 `parseStatusLine`). The handler emits
- * 7 distinct `status` values:
+ * (handler's `parseStatusLine`). The handler emits 7 distinct `status`
+ * values:
  *   - "untracked" (both x + y are "?")
  *   - "deleted" (x or y is "D")
  *   - "added" (x is "A")
@@ -71,9 +68,9 @@ const WorkspaceGitStatusEntrySchema = z.object({
 });
 
 /**
- * Workspace.git.log commit entry. Tight model — 4 string fields
- * (workspace-handlers.ts:390-395). All fields are required because
- * the handler always populates them from parsed git-log output.
+ * Workspace.git.log commit entry. Tight model — 4 string fields. All
+ * fields are required because the handler always populates them from
+ * parsed git-log output.
  */
 const WorkspaceGitCommitSchema = z.object({
   sha: z.string(),
@@ -91,11 +88,11 @@ const WorkspaceGitCommitSchema = z.object({
  * workspace directory (existence, file presence list, git-repo flag,
  * bootstrap-state flag, optional state snapshot). RPC scope.
  *
- * Request: `{ agentId }`. The bespoke guard at workspace-handlers.ts:52-58
- * produces "Missing required parameter: agentId" / "Agent not found".
+ * Request: `{ agentId }`. The bespoke guard in the handler produces
+ * "Missing required parameter: agentId" / "Agent not found".
  *
- * Response: D-05 loose record. The underlying `WorkspaceStatus` shape
- * (`@comis/core/workspace/workspace-manager.ts:75-84`) carries 6 fields
+ * Response: loose record. The underlying `WorkspaceStatus` shape
+ * (`@comis/core/workspace/workspace-manager.ts`) carries 6 fields
  * including a nested optional `state` block; modeling tighter would pin
  * the WorkspaceState wire format across daemon restarts.
  */
@@ -110,9 +107,9 @@ export const WorkspaceStatusContract = defineContract({
 
 /**
  * `workspace.readFile` — read a file from the agent's workspace,
- * cap-enforced (1 MiB). RPC scope. The bespoke guard at
- * workspace-handlers.ts:168-170 produces "Missing required parameter:
- * filePath"; `safePath(...)` rejects path traversal.
+ * cap-enforced (1 MiB). RPC scope. The bespoke guard produces
+ * "Missing required parameter: filePath"; `safePath(...)` rejects path
+ * traversal.
  *
  * Response: `{ content: string, sizeBytes: number }`.
  */
@@ -131,9 +128,8 @@ export const WorkspaceReadFileContract = defineContract({
 
 /**
  * `workspace.writeFile` — write a file within the agent's workspace,
- * cap-enforced (512 KiB). ADMIN scope. The bespoke guards
- * (workspace-handlers.ts:191-203) produce operator-friendly errors;
- * `safePath(...)` rejects path traversal.
+ * cap-enforced (512 KiB). ADMIN scope. The bespoke guards produce
+ * operator-friendly errors; `safePath(...)` rejects path traversal.
  *
  * Response: `{ written: true, sizeBytes: number }`.
  */
@@ -233,7 +229,7 @@ export const WorkspaceInitContract = defineContract({
 /**
  * `workspace.git.status` — branch + porcelain status list for the
  * workspace's git repo. RPC scope. Requires `.git/` to exist
- * (assertGitRepo at workspace-handlers.ts:82-87).
+ * (assertGitRepo guard in the handler).
  *
  * Response: `{ branch, clean, entries[] }`. `branch` is the current
  * branch name OR `"HEAD (detached)"` when not on a branch.
@@ -254,7 +250,7 @@ export const WorkspaceGitStatusContract = defineContract({
 /**
  * `workspace.git.log` — git log of the workspace repo, capped at 200
  * commits, default 50. RPC scope. Returns `{ commits: [] }` when the
- * repo has no commits (graceful, handler:378-380).
+ * repo has no commits (graceful).
  *
  * Response: `{ commits: WorkspaceGitCommit[] }`.
  */
@@ -330,9 +326,8 @@ export const WorkspaceGitRestoreContract = defineContract({
 });
 
 /**
- * workspace-handlers slice (12 contracts). Spread order matches the
- * pre-split `WORKSPACE_CONTRACTS` array (workspace.ts:1110-1123) byte
- * for byte — determinism-critical for codegen output stability.
+ * workspace-handlers slice (12 contracts). Spread order is
+ * determinism-critical for codegen output stability.
  */
 export const WORKSPACE_HANDLERS_CONTRACTS = [
   WorkspaceStatusContract,

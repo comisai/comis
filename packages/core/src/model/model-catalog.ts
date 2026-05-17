@@ -9,8 +9,6 @@
  * and hundreds of models, then optionally merged with live scan results
  * that confirm API key validity and discover additional models.
  *
- * Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #4.
- *
  * @module
  */
 
@@ -172,7 +170,7 @@ export interface PerTokenCostRates {
   output: number;
   cacheRead: number;
   cacheWrite: number;
-  /** 49-01: Per-token cost for 1h TTL cache writes.
+  /** Per-token cost for 1h TTL cache writes.
    *  Prefers SDK-supplied value when available; falls back to 2x input rate.
    *  1h TTL = 2x base input rate (Anthropic pricing). */
   cacheWrite1h: number;
@@ -208,7 +206,7 @@ export function resolveModelPricing(
 
   const inputRate = entry.cost.input / 1_000_000;
 
-  // 49-01: cacheWrite1h SDK-preference guard.
+  // cacheWrite1h SDK-preference guard.
   // Derive 1h TTL rate as 2x input (Anthropic pricing).
   // Prefer SDK-supplied value when the cost object includes cacheWrite1h.
   const derived1h = inputRate * 2;
@@ -216,7 +214,7 @@ export function resolveModelPricing(
   let cacheWrite1h = derived1h;
   if (typeof sdkCost.cacheWrite1h === "number" && sdkCost.cacheWrite1h > 0) {
     const sdk1h = sdkCost.cacheWrite1h / 1_000_000;
-    // 49-01: Drift detection -- >5% divergence from derived 2x rate.
+    // Drift detection -- >5% divergence from derived 2x rate.
     // When the SDK provides a cacheWrite1h that differs significantly from
     // the expected 2x-input derivation, callers should log a WARN.
     // model-catalog is stateless (no logger) so we only compute the flag.

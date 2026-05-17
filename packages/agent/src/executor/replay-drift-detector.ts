@@ -52,7 +52,7 @@ export interface DriftCheckInput {
   currentModel: { id?: string; provider?: string; api?: string };
   /** Idle threshold from config (already resolved with default applied). */
   idleMs: number;
-  /** Now() injection for testability. Required (Phase 39 PORTS-11). */
+  /** Now() injection for testability. */
   now: number;
 }
 

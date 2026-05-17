@@ -4,10 +4,9 @@
  *
  * `TimerHandle` is opaque — callers MUST NOT reach inside the handle to clear
  * the raw Node timer. That breaks the .unref() accounting and cancel-safety
- * guarantees of PORTS-04. Always use handle.cancel() / handle.unref().
+ * guarantees. Always use handle.cancel() / handle.unref().
  *
- * Adapter `createSystemTimers()` lives in @comis/infra (Phase 39, PORTS-06).
- * Type-only file.
+ * Adapter `createSystemTimers()` lives in @comis/infra. Type-only file.
  *
  * @module
  */
@@ -19,10 +18,9 @@ export interface TimerHandle {
    * Mark this timer as not blocking event-loop exit.
    * Contract: calling unref() on a cancelled timer is a no-op;
    * calling it twice is a no-op. Mirrors NodeJS.Timeout.unref().
-   * (PORTS-04)
    */
   unref(): void;
-  // NO ref() — YAGNI per PORTS-05. No production caller re-refs.
+  // No ref() — YAGNI. No production caller re-refs.
 }
 
 export interface TimerPort {

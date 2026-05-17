@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception (Phase 41 TS-HYG-07).
+// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.
 /**
  * Daemon control commands: start, stop, status, logs.
  *
@@ -365,8 +365,6 @@ async function handleDaemonStart(): Promise<void> {
         if (await isSystemdActive(manager)) {
           // Verify the CLI can actually talk to the daemon
           try {
-            // Phase 35 Wave C (35-06): retargeted from raw
-            // `client.call("system.ping", {})` to typed-RPC wrapper.
             await withClient(async (client) => callTyped(client, SystemPingContract, {}));
             success("Daemon is already running (systemd)");
           } catch {
@@ -488,11 +486,8 @@ async function stopDirectMode(): Promise<void> {
  */
 async function tryRpcStatus(): Promise<boolean> {
   try {
-    // Phase 35 Wave C closure (Plan 35-19): retargeted from raw
-    // `client.call("config.get", {})` (a stale daemon method name; the
-    // daemon implements `config.read`, not `config.get`) to callTyped
-    // with the ConfigReadContract. ConfigReadContract.response is a
-    // loose record matching the daemon's return shape.
+    // ConfigReadContract.response is a loose record matching the daemon's
+    // return shape for `config.read`.
     const result = await withClient(async (client) => {
       return await callTyped(client, ConfigReadContract, {});
     });

@@ -2,8 +2,6 @@
 /**
  * Mock Discord server for E2E flow-matrix coverage.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09).
- *
  * Wire surface: an HTTP server (REST API) PLUS a WebSocket server (gateway)
  * speaking just enough of Discord's wire protocol to satisfy a discord.js
  * Client. Implemented endpoints/events:

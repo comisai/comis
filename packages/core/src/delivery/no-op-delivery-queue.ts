@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// No-op DeliveryQueuePort factory — relocated from ports/delivery-queue.ts in Phase 28 commit 1
-// (closes L15 per CORE-PORTS-01). Sibling to other core/src/delivery/ utilities.
+// No-op DeliveryQueuePort factory. Sibling to other core/src/delivery/ utilities.
 import { randomUUID } from "node:crypto";
 import { ok } from "@comis/shared";
 import type { DeliveryQueuePort, DeliveryQueueEntry } from "../ports/delivery-queue.js";

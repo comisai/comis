@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 43 wave 8 split (FILE-SPLIT-08): setup-channels.ts → setup-channels/
- * subdirectory. The runtime leaf hosts `buildAndStartChannelManager`
- * (voice pipeline + command queue + slash-command handler + retry engine
- * + lifecycle reactors + approval notifier). The integration matrix
- * (ChannelManager startAll, lifecycle reactor creation, approval notifier
- * shutdown) is exercised by setup-channels-registry.test.ts which invokes
- * setupChannels end-to-end with mocks; this neighbor test pins the
- * symbol-export shape and the deps + result interface key sets for
- * compile-time regression coverage.
+ * The runtime leaf hosts `buildAndStartChannelManager` (voice pipeline +
+ * command queue + slash-command handler + retry engine + lifecycle
+ * reactors + approval notifier). The integration matrix (ChannelManager
+ * startAll, lifecycle reactor creation, approval notifier shutdown) is
+ * exercised by setup-channels-registry.test.ts which invokes setupChannels
+ * end-to-end with mocks; this neighbor test pins the symbol-export shape
+ * and the deps + result interface key sets for compile-time regression
+ * coverage.
  *
  * @module
  */

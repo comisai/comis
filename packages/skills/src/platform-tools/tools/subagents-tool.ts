@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: platform-tool boundary; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch (Phase 41 TS-HYG-07).
+// @allow-throw: platform-tool boundary; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch.
 /**
  * Subagents lifecycle management tool: multi-action tool for listing,
  * killing, and steering running sub-agents.

@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { formatViolations } from "./architecture-helpers.js";
 
-describe("formatViolations -- verbose failure rendering (D-02)", () => {
+describe("formatViolations -- verbose failure rendering", () => {
   it("returns single-line message for empty violations", () => {
     const out = formatViolations({
       description: "Test desc.",

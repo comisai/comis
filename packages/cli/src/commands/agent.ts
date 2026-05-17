@@ -52,9 +52,8 @@ export function registerAgentCommand(program: Command): void {
       try {
         const result = await withSpinner("Fetching agents...", () =>
           withClient(async (client) => {
-            // Phase 35 Wave C closure (Plan 35-19): retargeted from stale
-            // `config.get` method name (daemon implements `config.read`)
-            // to ConfigReadContract.
+            // Retargeted from stale `config.get` method name (daemon implements
+            // `config.read`) to ConfigReadContract.
             return await callTyped(client, ConfigReadContract, {
               section: "agents",
             }) as Record<string, unknown>;

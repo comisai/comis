@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary (Phase 41 TS-HYG-07).
+// @allow-throw: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary.
 /**
- * Tool-call helper (Phase 43 split per FILE-SPLIT-11).
+ * Tool-call helper.
  *
  * State-first protocol: callTool(state, deps, qualifiedName, args).
  * The pure qualifyToolName + parseQualifiedName helpers live in

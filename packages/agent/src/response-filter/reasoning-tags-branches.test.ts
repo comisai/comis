@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for reasoning-tags.ts (Plan 40-11 / COV-03).
+ * Branch-gap coverage for reasoning-tags.ts.
  *
- * The existing reasoning-tags.test.ts covers tag-stripping cases and
- * code-region protection but does not exercise:
- *   - trim mode "none" (line 94)
- *   - trim mode "start" (line 95)
- *   - <final> tag stripping when nested inside code regions (line 52 + isInsideCode true)
- *   - thinking tag detected inside code region (line 73 + isInsideCode true)
- *   - applyTrim default "both" branch
+ * Exercises the trim-mode "none"/"start"/default branches, the <final> and
+ * <thinking> tag handling when nested inside code regions, and the
+ * applyTrim default "both" branch.
  *
  * @module
  */

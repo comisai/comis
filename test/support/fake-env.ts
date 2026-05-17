@@ -4,8 +4,6 @@
  *
  * Matches createSystemEnv shape exactly — only the source differs.
  *
- * Phase 39, PORTS-08.
- *
  * @module
  */
 import type { EnvPort } from "@comis/core";

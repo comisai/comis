@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Cron-delivery event listener registration. Hosts the two `scheduler:job_*`
- * event handlers extracted from setup-channels.ts: `scheduler:job_result`
- * (cron-driven memory review, agent_turn dispatch, raw delivery) and
- * `scheduler:job_suspended` (consecutive-failure suspension notification).
+ * event handlers: `scheduler:job_result` (cron-driven memory review,
+ * agent_turn dispatch, raw delivery) and `scheduler:job_suspended`
+ * (consecutive-failure suspension notification).
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-channels.ts.
  * Per-agent API-key resolution + cron operation-model resolution live here
  * because each cron tick re-derives credentials from the daemon container
  * (no per-cron-job cache); this leaf is the credentials-resolution + event

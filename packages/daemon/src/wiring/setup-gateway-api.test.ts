@@ -108,9 +108,8 @@ describe("registerRpcMethods", () => {
     registerRpcMethods(deps);
 
     const calls = registerMethod.mock.calls;
-    // Phase 35 plan 35-18 (PATTERNS OQ-4 option c): cron.add joins the
-    // session-bridge passthrough list now that the transformer relocated
-    // into cron-handlers.ts. No more dispatcher special-cases.
+    // cron.add joins the session-bridge passthrough list; the WEB-shape
+    // transformer lives in cron-handlers.ts (no dispatcher special-cases).
     const bridgeMethods = [
       "session.send", "session.spawn", "session.status",
       "session.history", "session.search", "cron.list", "cron.add",
@@ -135,16 +134,13 @@ describe("registerRpcMethods", () => {
   });
 
   // -----------------------------------------------------------------------
-  // cron.add passthrough (Phase 35 plan 35-18 — PATTERNS OQ-4 option c)
+  // cron.add passthrough
   //
-  // Pre-Plan-35-18 the dispatcher carried an inline transformer that
-  // converted the WEB on-wire shape (nested `schedule` + `message`) into
-  // the flat fields the handler expected. Per OQ-4 option (c) the
-  // transformer relocated into the cron-handlers.ts handler body.
-  // setup-gateway-api.ts now registers cron.add as a plain rpc passthrough
-  // (no transformation). The normalization is verified by the cron-handlers
-  // unit test ("cron.add" suite, WEB-shape and legacy-flat-shape variants)
-  // and by the gateway-rpc-sse integration test.
+  // setup-gateway-api.ts registers cron.add as a plain rpc passthrough
+  // (no transformation). The WEB-shape -> handler normalization lives in
+  // the cron-handlers.ts handler body. Verified by the cron-handlers unit
+  // test ("cron.add" suite, WEB-shape and legacy-flat-shape variants) and
+  // by the gateway-rpc-sse integration test.
   // -----------------------------------------------------------------------
 
   it("cron.add is registered as a plain rpc passthrough (no transformation)", async () => {

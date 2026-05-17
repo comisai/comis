@@ -56,7 +56,7 @@ function silentLogger() {
   };
 }
 
-// Phase 39 PORTS-11: test clock stub for createCacheBreakDetector.
+// Test clock stub for createCacheBreakDetector.
 const testClock = { now: () => Date.now(), nowDate: () => new Date() };
 
 // ---------------------------------------------------------------------------

@@ -220,10 +220,10 @@ describe("createStubMethods", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 40-14 — trace wrapper + error classifier branch coverage
+// trace wrapper + error classifier branch coverage
 // ---------------------------------------------------------------------------
 
-describe("createDynamicMethodRouter trace logging (Plan 40-14)", () => {
+describe("createDynamicMethodRouter trace logging", () => {
   // Minimal MethodRouterLogger stub (any args, any return)
   function makeLogger() {
     const debug = (...args: unknown[]): void => { calls.debug.push(args); };

@@ -32,11 +32,9 @@ import { withClient, callTyped } from "../client/rpc-client.js";
  */
 export async function isDaemonRunning(timeoutMs = 1000): Promise<boolean> {
   const probe = withClient(async (client) => {
-    // Phase 35 Wave C (35-06): retargeted from raw
-    // `client.call("system.ping")` to `callTyped(SystemPingContract)`.
     // The contract registry is the single source of truth for the
-    // method name; D-10 LOCKED gates request/response Zod parses in
-    // dev mode and trusts the wire shape in production.
+    // method name; request/response Zod parses run in dev mode and
+    // the wire shape is trusted in production.
     await callTyped(client, SystemPingContract, {});
   });
 

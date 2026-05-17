@@ -19,9 +19,8 @@ import {
 } from "../test-helpers.js";
 
 // Mock withClient from rpc-client at module level for ESM hoisting.
-// importOriginal-based so callTyped (Plan 35-19 Wave C closure) resolves
-// to the real wrapper while withClient is mocked. Same pattern as Plan
-// 35-16's agent-behavior.test.ts.
+// importOriginal-based so callTyped resolves to the real wrapper while
+// withClient is mocked. Same pattern as agent-behavior.test.ts.
 vi.mock("../client/rpc-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
   return {
@@ -228,12 +227,12 @@ describe("sessions list --tenant filters by tenant", () => {
   });
 
   it("calls session.list RPC (--tenant CLI flag is a no-op against the contract)", async () => {
-    // Phase 35 Wave C closure (Plan 35-19): the CLI's --tenant flag is
-    // a no-op against the SessionListContract surface. Tenant scoping
-    // flows through the dispatcher-injected `_tenantId` internal
-    // (auth-context-derived), NOT a public request field. The pre-Plan-35-19
-    // CLI sent `{ tenantId: options.tenant }` which the daemon silently
-    // ignored — same observable behavior, now via the typed contract.
+    // The CLI's --tenant flag is a no-op against the SessionListContract
+    // surface. Tenant scoping flows through the dispatcher-injected
+    // `_tenantId` internal (auth-context-derived), NOT a public request
+    // field. Historically the CLI sent `{ tenantId: options.tenant }` which
+    // the daemon silently ignored — same observable behavior, now via the
+    // typed contract.
     const program = createTestProgram();
     registerSessionsCommand(program);
 
@@ -247,13 +246,13 @@ describe("sessions inspect full details", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
-  // Phase 35 Wave C closure (Plan 35-19): SessionStatusContract returns
-  // a flat per-agent runtime stats payload, NOT a wrapped { session: {...} }
-  // shape. The CLI's `key` argument is preserved as display context; the
-  // RPC returns the current agent's status regardless. The CLI no longer
-  // pre-validates "session not found" client-side (the contract returns
-  // valid stats unconditionally — session-not-found cases now surface as
-  // an RPC error from the daemon, caught by the catch block below).
+  // SessionStatusContract returns a flat per-agent runtime stats payload,
+  // NOT a wrapped { session: {...} } shape. The CLI's `key` argument is
+  // preserved as display context; the RPC returns the current agent's
+  // status regardless. The CLI no longer pre-validates "session not found"
+  // client-side (the contract returns valid stats unconditionally —
+  // session-not-found cases now surface as an RPC error from the daemon,
+  // caught by the catch block below).
   const SESSION_STATUS = {
     model: "anthropic:claude-sonnet-4-5",
     agentName: "default",
@@ -374,11 +373,10 @@ describe("sessions delete with --yes sends RPC", () => {
   });
 
   it("sends session.delete RPC with correct session_key when --yes provided", async () => {
-    // Phase 35 Wave C closure (Plan 35-19): the contract uses `session_key`
-    // (snake_case — matches the daemon handler's actual parameter name).
-    // Pre-Plan-35-19 CLI sent `{ key }` which the daemon ignored, then the
-    // handler threw "Missing required parameter: session_key" — this fix
-    // makes delete actually succeed.
+    // The contract uses `session_key` (snake_case — matches the daemon
+    // handler's actual parameter name). Historically the CLI sent `{ key }`
+    // which the daemon ignored, then the handler threw "Missing required
+    // parameter: session_key" — the contract makes delete actually succeed.
     callSpy.mockResolvedValue({
       sessionKey: "test-tenant:user-1:discord-main",
       deleted: true,
@@ -448,8 +446,8 @@ describe("sessions delete without --yes prompts and confirms", () => {
       }),
     );
 
-    // RPC was sent after confirmation. Phase 35 Wave C (Plan 35-19): uses
-    // contract field name `session_key` (snake_case).
+    // RPC was sent after confirmation. Uses contract field name
+    // `session_key` (snake_case).
     expect(callSpy).toHaveBeenCalledWith("session.delete", { session_key: "test-key" });
 
     const output = getSpyOutput(consoleSpy.log);
@@ -577,7 +575,7 @@ describe("sessions delete preserves complex keys", () => {
 
     await program.parseAsync(["node", "test", "sessions", "delete", "complex:key:with:colons", "--yes"]);
 
-    // Phase 35 Wave C (Plan 35-19): uses contract field name `session_key`.
+    // Uses contract field name `session_key`.
     expect(callSpy).toHaveBeenCalledWith("session.delete", { session_key: "complex:key:with:colons" });
   });
 });

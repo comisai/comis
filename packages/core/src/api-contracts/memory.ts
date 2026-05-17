@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Memory + context-domain RPC contracts. Mirrors the two daemon handler
- * factory files that share the `MemoryApiDeps` cluster slice (Phase 34
- * plan 34-08a):
+ * factory files that share the `MemoryApiDeps` cluster slice:
  *
  *   - `packages/daemon/src/api/memory-handlers.ts`  (8 methods)
  *   - `packages/daemon/src/api/context-handlers.ts` (7 methods)
  *
- * Phase 35 Wave C plan 35-14 (Wave C domain #9). Per D-08 (one contract
- * file per logical domain mirroring Phase 34's 11 `*ApiDeps` slices), both
- * handler files map to the SAME ApiDeps slice (`MemoryApiDeps`) and so
- * share one contract file. The aggregator below preserves per-handler
- * grouping via `// --- xxx-handlers.ts ---` comment blocks; the order
- * within the array is documentation-only (the bidirectional 1:1 test
- * treats it as an unordered set).
+ * Both handler files map to the SAME ApiDeps slice (`MemoryApiDeps`) and
+ * so share one contract file (one contract file per logical domain
+ * mirroring the `*ApiDeps` slices). The aggregator below preserves
+ * per-handler grouping via `// --- xxx-handlers.ts ---` comment blocks;
+ * the order within the array is documentation-only (the bidirectional
+ * 1:1 test treats it as an unordered set).
  *
  * **Scope assignments** (mirror `setup-gateway-api.ts` registrations):
  *
@@ -48,10 +46,10 @@
  *   - `context.tree`                 (admin) — setup-gateway-api.ts:169.
  *   - `context.searchByConversation` (admin) — setup-gateway-api.ts:169.
  *
- * **D-05 loose-record use** (Pitfall 6 escape hatch). Multiple response
- * shapes carry deeply nested fields with `Record<string, unknown>` or
- * `JSON.parse(...)`-typed payloads where modelling them tighter would pin
- * the underlying wire format across daemon restarts:
+ * **Loose-record use.** Multiple response shapes carry deeply nested
+ * fields with `Record<string, unknown>` or `JSON.parse(...)`-typed
+ * payloads where modelling them tighter would pin the underlying wire
+ * format across daemon restarts:
  *
  *   - `memory.stats.response` — `MemoryStats` is `Record<string, unknown>`
  *     at the leaf (the underlying impl returns provider-specific keys).
@@ -74,32 +72,17 @@
  *     by `type: "message" | "summary"`; the two variants carry the same
  *     wire shape per handler.
  *
- * **BLOCKER 1 status.** The CLI's `packages/cli/src/commands/memory.ts`
- * contains 4 raw `client.call(...)` sites, but the methods they invoke
- * (`memory.search`, `memory.inspect`, `config.set`) are NOT
- * memory-handlers.ts or context-handlers.ts methods. They are
- * gateway-adapter shims registered in
- * `packages/gateway/src/rpc/rpc-adapters.ts:171-249` that bypass the
+ * **Gateway-adapter shim caveat.** The CLI's `packages/cli/src/commands/memory.ts`
+ * contains raw `client.call(...)` sites for `memory.search`,
+ * `memory.inspect`, and `config.set`. These are NOT memory-handlers.ts or
+ * context-handlers.ts methods — they are gateway-adapter shims registered
+ * in `packages/gateway/src/rpc/rpc-adapters.ts:171-249` that bypass the
  * daemon handler-factory layer. Those methods have no contract in this
  * file (and no daemon-handler-factory entry to map against, per the
- * bidirectional 1:1 architecture test scope). The CLI retarget is
+ * bidirectional 1:1 architecture test scope). The CLI retarget here is
  * scoped to `client.call("memory.search_files"|"memory.get_file"|
  * "memory.store"|"memory.stats"|"memory.browse"|"memory.delete"|
- * "memory.flush"|"memory.export"|"context.*", ...)` sites only — and
- * the CLI's `commands/memory.ts` does not currently contain ANY of
- * those (it calls the gateway-adapter `memory.search` /
- * `memory.inspect` / `config.set` for its 4 subcommands). The
- * acceptance criterion `grep -c 'client\.call("memory\.\|
- * client\.call("context\.' packages/cli/src/commands/memory.ts == 0`
- * thus requires a Rule 1 deviation: the CLI's existing 4 sites point
- * to gateway-adapter methods that have no daemon-handler-factory
- * counterpart and so cannot be retargeted via this plan's contracts.
- * The deviation is documented in SUMMARY.md.
- *
- * **BLOCKER 6 (Wave C precedent).** Per orchestrator directive ("Additive
- * edits to api-contracts/index.ts are accepted; Plan 35-19 owns final
- * atomic edit"), `index.ts` is updated to register
- * `MEMORY_CONTRACTS` (1 import line + 1 spread + 1 re-export).
+ * "memory.flush"|"memory.export"|"context.*", ...)` sites only.
  *
  * @module
  */
@@ -215,12 +198,13 @@ export const MemoryStoreContract = defineContract({
  * The handler returns whatever `deps.memoryApi.stats(tenantId, agentId)`
  * yields; the underlying `MemoryStats` shape carries provider-specific
  * keys (totalEntries, byType, byTrustLevel, byAgent, totalSessions,
- * embeddedEntries, dbSizeBytes, etc.) and is modelled with a D-05 loose
+ * embeddedEntries, dbSizeBytes, etc.) and is modelled with a loose
  * record to avoid pinning the underlying impl's wire format.
  *
  * The CLI's `memory stats` subcommand currently invokes the
  * gateway-adapter `memory.inspect` (which fans out to a different code
- * path), NOT this handler — see the BLOCKER 1 note in the file header.
+ * path), NOT this handler — see the gateway-adapter shim caveat in the
+ * file header.
  */
 export const MemoryStatsContract = defineContract({
   method: "memory.stats",
@@ -244,7 +228,7 @@ export const MemoryStatsContract = defineContract({
  * carries the first 500 chars of content + a typed subset of fields;
  * additional adapter-specific keys (when present on the underlying row)
  * are absent from the projected response. The entries[] item shape is
- * modelled with a D-05 loose-record value-type to forward-compat against
+ * modelled with a loose-record value-type to forward-compat against
  * future memory-adapter additions (a tight model would pin the wire
  * shape across daemon restarts).
  *
@@ -346,7 +330,7 @@ export const MemoryFlushContract = defineContract({
  *
  * Response: `{ entries[], total, offset, limit }` — each entry carries
  * the FULL content + agent attribution + source metadata. The entries[]
- * item shape is modelled with a D-05 loose record to avoid pinning the
+ * item shape is modelled with a loose record to avoid pinning the
  * underlying memory-adapter row format.
  */
 export const MemoryExportContract = defineContract({
@@ -430,7 +414,7 @@ export const ContextSearchContract = defineContract({
  *   - File not found → `"File not found: <id>"`.
  *   - Unknown prefix → `"Unknown ID prefix. Expected 'sum_' or 'file_'..."`.
  *
- * Response: D-05 LOOSE-RECORD. The two variants carry overlapping but
+ * Response: LOOSE RECORD. The two variants carry overlapping but
  * distinct field sets:
  *   - summary: `{ type: "summary", summaryId, content, depth, kind,
  *     tokenCount, earliestAt?, latestAt?, descendantCount, parentIds[],
@@ -440,7 +424,7 @@ export const ContextSearchContract = defineContract({
  *
  * Modelling the discriminated union tightly would require pinning the
  * `kind` enum (varies per compaction strategy) and the per-field
- * nullability (depends on memory-adapter implementation). D-05 loose
+ * nullability (depends on memory-adapter implementation). The loose
  * record preserves the variant discrimination via `type` + lets the
  * underlying types stay authoritative.
  */
@@ -555,8 +539,8 @@ export const ContextExpandContract = defineContract({
  *   - `_trustLevel !== "admin"` → `"Admin access required"`.
  *
  * Response: `{ conversations[], total }`. Each conversation row is the
- * raw `CtxConversationRow` from the context store (D-05 loose-record
- * — modelling the row shape tightly would pin the persistence schema).
+ * raw `CtxConversationRow` from the context store (loose-record —
+ * modelling the row shape tightly would pin the persistence schema).
  */
 export const ContextConversationsContract = defineContract({
   method: "context.conversations",
@@ -661,11 +645,8 @@ export const ContextSearchByConversationContract = defineContract({
  * Memory + context domain contract array. Registered into
  * `API_CONTRACTS_ORDERED` by `packages/core/src/api-contracts/index.ts`.
  *
- * Plan 35-19 (Wave C closure) supersedes the placeholder aggregation in
- * `index.ts` with the final alphabetical aggregation across all 14
- * domains — this array remains unchanged. The grouping below is
- * documentation-only (the bidirectional 1:1 test treats the tuple as an
- * unordered set).
+ * The grouping below is documentation-only (the bidirectional 1:1 test
+ * treats the tuple as an unordered set).
  */
 export const MEMORY_CONTRACTS = [
   // --- memory-handlers.ts ---

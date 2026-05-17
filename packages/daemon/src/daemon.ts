@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits) (Phase 41 TS-HYG-07).
+// @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits).
 /**
  * Daemon Entry Point: thin orchestrator calling setupXxx() factories in sequence.
  *
- * Phase 43 Wave 8c (FILE-SPLIT-06): helpers extracted to `./stages/` (5 modules
- * + 1 barrel); Handle interfaces and SessionStoreBridge moved to
- * `./daemon-types.ts`. This file is now the composition root: 5 stage*
- * orchestrators (each ≤200L per DAEMON-API-06) + main() + 4 small helpers
+ * Helpers live in `./stages/` (5 modules + 1 barrel); Handle interfaces and
+ * SessionStoreBridge live in `./daemon-types.ts`. This file is the
+ * composition root: 5 stage* orchestrators + main() + 4 small helpers
  * (DEFAULT_CONFIG_PATHS / applyInspectDefaultsForLogging /
  * hardenDataDirPermissions / runPreflightDoctor).
  *
@@ -26,9 +25,9 @@ import {
   BackgroundTasksConfigSchema,
 } from "@comis/core";
 import type { PerAgentConfig } from "@comis/core";
-// Phase 39 PORTS-06: runtime adapter factories — constructed at the composition
-// root and threaded through wiring helpers that retarget Date.now / process.env
-// / setTimeout / setInterval (PORTS-11/12/13). Sanctioned construction site.
+// Runtime adapter factories — constructed at the composition root and
+// threaded through wiring helpers that retarget Date.now / process.env /
+// setTimeout / setInterval. Sanctioned construction site.
 import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/infra";
 import { setupSecrets as _setupSecretsImpl, createNamedGraphStore, createContextStore, createObservabilityStore } from "@comis/memory";
 import { createGatewayServer } from "@comis/gateway";
@@ -61,8 +60,7 @@ import {
   createGeminiCacheManager,
   validateProviderOverrides,
 } from "@comis/agent";
-// Phase 35 Plan 35-04 (D-01 #4/#5): createModelCatalog + resolveWorkspaceDir
-// relocated from @comis/agent to @comis/core.
+// createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import type { GeminiCacheManager } from "@comis/agent";
 import { detectSandboxProvider } from "@comis/skills";
@@ -92,7 +90,7 @@ import os from "node:os";
 import { dirname as pathDirname } from "node:path";
 import { inspect } from "node:util";
 
-// Stage-helper imports (FILE-SPLIT-06).
+// Stage-helper imports.
 import {
   seedBundledSkillCreator,
   bootstrapSecretsAndEnv,
@@ -259,7 +257,7 @@ export async function runPreflightDoctor(
 }
 
 // ---------------------------------------------------------------------------
-// Stage 1: foundation (DAEMON-API-06)
+// Stage 1: foundation
 // ---------------------------------------------------------------------------
 
 /**
@@ -277,11 +275,8 @@ export async function runPreflightDoctor(
  *   - background task system + deferred channel/notification refs
  *   - bundled skill-creator seeding (idempotent)
  *
- * Body extracted from main() lines 296→~599. Hard cap: ≤200 lines AST-measured
- * (DAEMON-API-06). Per-line-source order preserved so daemon-lifecycle.test.ts
- * log-sequence assertions remain green.
- *
- * Implements DAEMON-API-06 (part 1 of 5) and DAEMON-API-09 (refs #1-#7).
+ * Hard cap: ≤200 lines AST-measured. Per-line-source order preserved so
+ * daemon-lifecycle.test.ts log-sequence assertions remain green.
  */
 async function stageFoundation(input: {
   overrides: DaemonOverrides;
@@ -304,14 +299,14 @@ async function stageFoundation(input: {
   const envPath = safePath(dataDir, ".env");
   loadEnvFile(envPath);
 
-  // 0.5. Decrypt secrets, merge with env, scrub process.env (DAEMON-API-09 #1-#4)
+  // 0.5. Decrypt secrets, merge with env, scrub process.env.
   const permissionCorrections = hardenDataDirPermissions(dataDir);
   const { mergedEnv, secretStore, secretsCrypto, secretsDb } = bootstrapSecretsAndEnv({
     setupSecrets: _setupSecrets,
     dataDir,
   });
 
-  // 0.6. Phase 39 PORTS-06: runtime adapter construction (composition root). PORTS-18: overrides.timers opt-in for test fake-timers; never set in production.
+  // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
 
   // 1. Bootstrap core container
@@ -323,7 +318,7 @@ async function stageFoundation(input: {
   if (!bootResult.ok) {
     throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
   }
-  // DAEMON-API-09 ref #5: container via const+resolve-then-spread
+  // Container via const+resolve-then-spread.
   const initialContainer = bootResult.value;
   const refResult = resolveConfigSecretRefs(
     initialContainer.config as unknown as Record<string, unknown>,
@@ -386,8 +381,8 @@ async function stageFoundation(input: {
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
   } = await setupMemory({ container, memoryLogger, clock });
 
-  // Observability persistence (dual-write to SQLite)
-  // DAEMON-API-09 refs #6/#7: obsStore + obsPersistence via const+IIFE
+  // Observability persistence (dual-write to SQLite). obsStore +
+  // obsPersistence via const+IIFE.
   const obsConfig = container.config.observability;
   const obsBundle = obsConfig.persistence.enabled
     ? (() => {
@@ -485,7 +480,7 @@ async function stageFoundation(input: {
 }
 
 // ---------------------------------------------------------------------------
-// Stage 2: agents (DAEMON-API-06 part 2 / Plan 34-04)
+// Stage 2: agents
 // ---------------------------------------------------------------------------
 
 /**
@@ -501,16 +496,12 @@ async function stageFoundation(input: {
  *   - approvalGate + restoreApprovalState (extracted helper)
  *   - setupDeliveryQueue (+ channelAdaptersRef placeholder)
  *
- * Body extracted from main() lines 793→1031 of the post-Plan-03 daemon.ts. Hard
- * cap: ≤200 lines AST-measured (DAEMON-API-06). Per-line-source order preserved
- * so daemon-lifecycle.test.ts log-sequence assertions remain green ("Agent
+ * Hard cap: ≤200 lines AST-measured. Per-line-source order preserved so
+ * daemon-lifecycle.test.ts log-sequence assertions remain green ("Agent
  * executor initialized", "Per-agent CronScheduler started").
  *
- * mcpClientManager construction order is preserved (BEFORE setupAgents). Per
- * RESEARCH §"stageAgents" lines 339-341: production-correctness constraint --
- * do not invert.
- *
- * Implements DAEMON-API-06 (part 2 of 5) and DAEMON-API-11 (commit 2 of 5).
+ * mcpClientManager construction order is a production-correctness
+ * constraint: it must be constructed BEFORE setupAgents — do not invert.
  */
 async function stageAgents(input: {
   overrides: DaemonOverrides;
@@ -594,7 +585,7 @@ async function stageAgents(input: {
     // Daemon-global MCP manager threaded into setupSingleAgent for
     // per-agent ToolCapabilityPort adapter construction.
     mcpClientManager,
-    clock, env, timers,  // Phase 39 PORTS-11/12/13
+    clock, env, timers,
   });
 
   // Log operation model resolutions at startup (dry-run validation)
@@ -614,9 +605,9 @@ async function stageAgents(input: {
   // Credential-free env for the exec tool (agent-issued shell commands).
   const execToolEnv = envSubset(container.secretManager, [...SUBPROCESS_SYSTEM]);
 
-  // Deferred wake callback ref -- populated by stageChannels (Plan 05) once
-  // wakeCoalescer is constructed. Same shape as channelPluginsRef / bgNotifyRef
-  // (DAEMON-API-09 cross-stage deferred-ref pattern).
+  // Deferred wake callback ref -- populated by stageChannels once
+  // wakeCoalescer is constructed. Same shape as channelPluginsRef /
+  // bgNotifyRef (cross-stage deferred-ref pattern).
   const cronWakeCallbackRef: { ref?: (reason: string) => void } = {};
 
   // 6.6.4.9. System event queue (created early for cron-heartbeat routing)
@@ -632,7 +623,7 @@ async function stageAgents(input: {
     subprocessEnv,
     systemEventQueue,  // cron-heartbeat routing
     onCronWake: buildDeferredCronWakeCallback(cronWakeCallbackRef, daemonLogger),
-    clock, timers,     // Phase 39 PORTS-11/13
+    clock, timers,
   });
 
   // Post-setupAgents cleanup wiring: session expiry, Gemini cache disposal,
@@ -674,8 +665,8 @@ async function stageAgents(input: {
     getTimeoutMs: () => container.config.approvals?.defaultTimeoutMs ?? 30_000,
     getDenialCacheTtlMs: () => container.config.approvals?.denialCacheTtlMs ?? 60_000,
     getBatchApprovalTtlMs: () => container.config.approvals?.batchApprovalTtlMs ?? 30_000,
-    clock,                // Phase 39 PORTS-11 wall-clock reads
-    timers,               // Phase 39 PORTS-13 setTimeout scheduling
+    clock,                // wall-clock reads
+    timers,               // setTimeout scheduling
     logger: daemonLogger, // Approval cache hit/miss debug logging
   });
 
@@ -714,7 +705,7 @@ async function stageAgents(input: {
 }
 
 // ---------------------------------------------------------------------------
-// Stage 3: channels (DAEMON-API-06 part 3 / Plan 34-05)
+// Stage 3: channels
 // ---------------------------------------------------------------------------
 
 /**
@@ -722,22 +713,18 @@ async function stageAgents(input: {
  *   - channel adapters + composite media resolution + delivery service
  *   - inbound message id resolver
  *   - notification system + background completion runner
- *   - channel health monitor (refs #10 + #11 subsumed via helper return)
+ *   - channel health monitor
  *   - sandbox + image generation providers
  *   - per-agent ToolCapabilityPort resolver (factory helper)
  *   - tools assembly + message preprocessing
  *   - cross-session sender + sub-agent runner
  *   - node type registry + graph coordinator + named graph store
  *   - monitoring (heartbeat runner) + per-agent heartbeat + wake coalescer
- *   - cronWakeCallbackRef populated (DAEMON-API-09 ref #8 cross-stage handoff)
+ *   - cronWakeCallbackRef populated (cross-stage handoff)
  *   - agent management runtime state (suspended set, model catalog, channel cfg)
  *
- * Body extracted from main() lines 1264→1709 of the post-Plan-04 daemon.ts.
- * Hard cap: ≤200 lines AST-measured (DAEMON-API-06). Per-line-source order
- * preserved so daemon-lifecycle.test.ts log-sequence assertions remain green.
- *
- * Implements DAEMON-API-06 (part 3 of 5), DAEMON-API-09 (refs #8-#11), and
- * DAEMON-API-11 (commit 3 of 5).
+ * Hard cap: ≤200 lines AST-measured. Per-line-source order preserved so
+ * daemon-lifecycle.test.ts log-sequence assertions remain green.
  */
 async function stageChannels(input: {
   agents: AgentsHandle;
@@ -758,8 +745,8 @@ async function stageChannels(input: {
   const sessionTrackerRef: { ref?: import("./notification/session-tracker.js").SessionTracker } = {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches assembleToolsForAgent signature from setup-tools.ts
   const toolAssemblerRef: { ref?: (agentId: string, options?: import("./wiring/setup-tools.js").AssembleToolsOptions) => Promise<any[]> } = {};
-  // DAEMON-API-09 ref #9: `{ ref?: T }` indirection captured by onMessageReceived
-  // lambda; populated below once channelCapabilities is available.
+  // `{ ref?: T }` indirection captured by onMessageReceived lambda;
+  // populated below once channelCapabilities is available.
   const inboundMessageIdResolverRef: { ref?: InboundMessageIdResolver } = {};
 
   // 6.6.8. Channels (lifted from main()'s setupChannels; deps via helper)
@@ -804,7 +791,7 @@ async function stageChannels(input: {
   // 6.6.8.0.3. Recover background tasks NOW (after the runner is subscribed)
   backgroundTaskManager.recoverOnStartup();
 
-  // Channel health monitor (refs #10 + #11 subsumed by helper return)
+  // Channel health monitor (start + stop produced by helper).
   const { monitor: channelHealthMonitor, stop: stopChannelHealthMonitor } = setupChannelHealthMonitor({ adaptersByType, daemonLogger, container });
   container.eventBus.on("system:shutdown", () => { stopChannelHealthMonitor?.(); });
   setupChannelHealthLogging({ eventBus: container.eventBus, logger: daemonLogger });
@@ -859,9 +846,9 @@ async function stageChannels(input: {
     runOnce: () => (heartbeatRunner ? heartbeatRunner.runOnce() : Promise.resolve()),
     logger: schedulerLogger,
   });
-  // DAEMON-API-09 ref #8 (cross-stage): populate cronWakeCallbackRef now that
-  // wakeCoalescer is constructed. The setupSchedulers `onCronWake` lambda
-  // (wired in stageAgents) reads `.ref` at call time -- Pitfall 2 avoided.
+  // Cross-stage: populate cronWakeCallbackRef now that wakeCoalescer is
+  // constructed. The setupSchedulers `onCronWake` lambda (wired in
+  // stageAgents) reads `.ref` at call time.
   cronWakeCallbackRef.ref = (reason) => wakeCoalescer.requestHeartbeatNow(reason as WakeReasonKind);
 
   // 6.7.0.2. Agent management runtime state
@@ -891,7 +878,7 @@ async function stageChannels(input: {
 }
 
 // ---------------------------------------------------------------------------
-// Stage 4: gateway (DAEMON-API-06 part 4 / Plan 34-06)
+// Stage 4: gateway
 // ---------------------------------------------------------------------------
 
 /**
@@ -902,12 +889,12 @@ async function stageChannels(input: {
  *   replay.
  * Inputs: ChannelsHandle (yields foundation + agents + channels) + overrides.
  *
- * DAEMON-API-06 (part 4 of 5): hard cap ≤200 lines AST-measured. Five helpers
- * extracted to fit (resolveGatewayTokens, createHotAdd, createHotRemove,
+ * Hard cap ≤200 lines AST-measured. Five helpers extracted to fit
+ * (resolveGatewayTokens, createHotAdd, createHotRemove,
  * buildRpcDispatchDeps, replayContinuationsIfAny).
  *
  * Log-sequence: "Gateway server started" emits inside setupGateway here in
- * source order; daemon-lifecycle.test.ts test#4 unchanged.
+ * source order; daemon-lifecycle.test.ts assertions remain unchanged.
  */
 async function stageGateway(input: {
   overrides: DaemonOverrides;
@@ -957,8 +944,8 @@ async function stageGateway(input: {
     },
   };
 
-  // Mutable shutdown ref for hot-add guard. Populated by stageShutdown (Plan 07)
-  // -- closures read .value at RPC call time, not definition time.
+  // Mutable shutdown ref for hot-add guard. Populated by stageShutdown --
+  // closures read .value at RPC call time, not definition time.
   const shutdownRef: { value?: { readonly isShuttingDown: boolean } } = {};
 
   // Hot-add / hot-remove closures (factory pattern; deps captured by closure)
@@ -992,7 +979,7 @@ async function stageGateway(input: {
   // onGatewayAttachment) into the mutable rpcDispatchDeps reference; handler
   // closures read them at RPC call time, not at wireDispatch time.
   //
-  // INVARIANT (DAEMON-API-09 / WR-05): handler factory bodies in
+  // INVARIANT: handler factory bodies in
   // `packages/daemon/src/api/*-handlers.ts` MUST read these three fields
   // off `deps` at RPC INVOCATION time (`deps.wsConnections`, `deps.mediaDir`,
   // `deps.onGatewayAttachment`). They MUST NOT destructure them at factory
@@ -1050,7 +1037,7 @@ async function stageGateway(input: {
   };
 
   // 7.5. Restart continuation replay (helper enforces source order:
-  // load -> mcp-status -> per-record inject; preserves Pitfall T-34-06-03)
+  // load -> mcp-status -> per-record inject).
   await replayContinuationsIfAny({ channels });
 
   return {
@@ -1062,7 +1049,7 @@ async function stageGateway(input: {
 }
 
 // ---------------------------------------------------------------------------
-// Stage 5: shutdown (DAEMON-API-06 part 5 / Plan 34-07)
+// Stage 5: shutdown
 // ---------------------------------------------------------------------------
 
 /**
@@ -1071,7 +1058,7 @@ async function stageGateway(input: {
  * health-metrics event-bus subscription, emits the startup banner, snapshots
  * last-known-good config, and returns the DaemonInstance to main()'s callers.
  *
- * Hard cap: ≤200 lines AST-measured (DAEMON-API-06).
+ * Hard cap: ≤200 lines AST-measured.
  */
 async function stageShutdown(input: {
   overrides: DaemonOverrides;
@@ -1132,7 +1119,7 @@ async function stageShutdown(input: {
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:
   // stageGateway declared the empty ref + captured it in hot-add closure;
   // here we point .value at the live shutdown handle so the closure reads
-  // .isShuttingDown at call time (T-34-06-04 / T-34-07-03 mitigation).
+  // .isShuttingDown at call time.
   shutdownRef.value = shutdownHandle;
 
   // 8.5. Health logging
@@ -1195,31 +1182,29 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
   await (overrides.preflightDoctor ?? ((fn) => runPreflightDoctor(fn)))(exitFn);
 
-  // Stage 1: foundation (DAEMON-API-06 / Plan 34-03). Owns data-dir + secrets +
-  // bootstrap + logging + observability + memory + obs-persistence + context
-  // store + session mirroring + Gemini cache + background tasks + deferred refs.
+  // Stage 1: foundation. Owns data-dir + secrets + bootstrap + logging +
+  // observability + memory + obs-persistence + context store + session
+  // mirroring + Gemini cache + background tasks + deferred refs.
   const foundation = await stageFoundation({ overrides, startupStartMs, instanceId });
 
-  // Stage 2: agents (DAEMON-API-06 / Plan 34-04). Owns agent executors +
-  // mcpClientManager + schedulers + media + RPC bridge + approval gate (with
-  // restore) + delivery queue.
+  // Stage 2: agents. Owns agent executors + mcpClientManager + schedulers +
+  // media + RPC bridge + approval gate (with restore) + delivery queue.
   const agents = await stageAgents({ overrides, foundation });
 
-  // Stage 3: channels (DAEMON-API-06 / Plan 34-05). Owns channel adapters +
-  // notifications + bg completion runner + sandbox/image-gen + tools + cross-
-  // session + graph + monitoring + heartbeat + wake coalescer + agent runtime
-  // state.
+  // Stage 3: channels. Owns channel adapters + notifications + bg completion
+  // runner + sandbox/image-gen + tools + cross-session + graph + monitoring +
+  // heartbeat + wake coalescer + agent runtime state.
   const channels = await stageChannels({ agents });
 
-  // Stage 4: gateway (DAEMON-API-06 / Plan 34-06). Owns token registry +
-  // session store bridge + shutdown ref slot + hot-add/hot-remove closures +
-  // RPC dispatch deps assembly + gateway server + restart continuation replay.
+  // Stage 4: gateway. Owns token registry + session store bridge + shutdown
+  // ref slot + hot-add/hot-remove closures + RPC dispatch deps assembly +
+  // gateway server + restart continuation replay.
   const gateway = await stageGateway({ overrides, channels, startupStartMs, instanceId });
 
-  // Stage 5: shutdown (DAEMON-API-06 / Plan 34-07). Constructs shutdown handle,
-  // populates gateway.shutdownRef.value (cross-stage deferred-ref), wires health
-  // logging, emits the startup banner (log line 5: "Comis daemon started"), and
-  // returns the DaemonInstance.
+  // Stage 5: shutdown. Constructs shutdown handle, populates
+  // gateway.shutdownRef.value (cross-stage deferred-ref), wires health
+  // logging, emits the startup banner ("Comis daemon started"), and returns
+  // the DaemonInstance.
   return await stageShutdown({ overrides, gateway, startupStartMs, instanceId });
 }
 

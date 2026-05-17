@@ -5,15 +5,14 @@
  * Used across the monorepo wherever a promise needs a hard timeout
  * (MCP tool calls, LLM prompt calls, health checks).
  *
- * Phase 39 PORTS-14: `withTimeout` no longer reads the `setTimeout`/
- * `clearTimeout` globals. Callers supply a `scheduleTimeout` callback
- * that this module invokes; the callback returns a cancel function. The
- * callback is a bare structural type (no port import) so that
- * `@comis/shared` remains a zero-runtime-deps + zero-`@comis/core`-imports
- * leaf package (PORTS-16). Consumers construct the callback at the call
- * site from whatever timer source they already have wired (Pattern A
- * `deps.timers.setTimeout` or Pattern B `systemSetTimeout` from
- * `@comis/core/runtime`).
+ * `withTimeout` does not read the `setTimeout`/`clearTimeout` globals.
+ * Callers supply a `scheduleTimeout` callback that this module invokes;
+ * the callback returns a cancel function. The callback is a bare
+ * structural type (no port import) so that `@comis/shared` remains a
+ * zero-runtime-deps + zero-`@comis/core`-imports leaf package. Consumers
+ * construct the callback at the call site from whatever timer source they
+ * already have wired (Pattern A `deps.timers.setTimeout` or Pattern B
+ * `systemSetTimeout` from `@comis/core/runtime`).
  *
  * @module
  */
@@ -52,7 +51,7 @@ export class TimeoutError extends Error {
  *   its injected `TimerPort` (Pattern A) or the sanctioned-root
  *   `systemSetTimeout`/`systemClearTimeout` helpers (Pattern B). The
  *   signature is a bare structural type — no port import is required
- *   here, preserving the PORTS-16 leaf invariant for `@comis/shared`.
+ *   here, preserving the leaf invariant for `@comis/shared`.
  * @param label - Optional label for the TimeoutError message.
  */
 export function withTimeout<T>(

@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 43 wave 8 split (FILE-SPLIT-08): setup-agents.ts → setup-agents/
- * subdirectory. The registry leaf hosts `setupAgents` (top-level
- * orchestrator) — this test inspects the for-loop that delegates per
- * configured agent to setupSingleAgent (mirrors pre-split
- * setup-agents.test.ts §"setupAgents loop body delegates to
- * setupSingleAgent" + §"AgentsResult includes singleAgentDeps field").
+ * The registry leaf hosts `setupAgents` (top-level orchestrator). This
+ * test inspects the for-loop that delegates per configured agent to
+ * setupSingleAgent.
  *
  * @module
  */

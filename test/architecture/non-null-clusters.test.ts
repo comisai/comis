@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Non-null assertion cluster gate (TS-HYG-12).
+ * Non-null assertion cluster gate.
  *
  * Forward-looking architecture test: prevents regression in the 4 files where
- * Phase 41 Plan 41-06 eliminated concentrated `!.` clusters by introducing the
- * requireGlobalState helper (TS-HYG-12 foundation, Plan 41-03), explicit
- * length-checks, named regex groups, or pinned-narrowed values.
+ * concentrated `!.` clusters were eliminated via the requireGlobalState
+ * helper, explicit length-checks, named regex groups, or pinned-narrowed
+ * values.
  *
  * Any future `<identifier>!.` or `<identifier>!;` in these files trips the
- * gate. See .planning/phases/41-typescript-hygiene/41-RESEARCH.md §"Non-Null
- * Cluster Fixes" for the approved alternatives.
+ * gate. Approved alternatives: requireGlobalState helper, explicit
+ * length-checks, named regex groups, or pin-narrowed values.
  *
  * @module
  */
@@ -29,7 +29,7 @@ const CLUSTER_FILES: readonly string[] = [
   "packages/memory/src/memory-api.ts",
 ] as const;
 
-describe("Non-null assertion cluster gate (TS-HYG-12)", () => {
+describe("Non-null assertion cluster gate", () => {
   it.each(CLUSTER_FILES)(
     "%s contains zero non-null assertion clusters (`!.` or `!;`)",
     (relPath) => {
@@ -52,9 +52,9 @@ describe("Non-null assertion cluster gate (TS-HYG-12)", () => {
       }
       expect(
         offenders,
-        `${relPath} must contain zero non-null assertion clusters (TS-HYG-12). ` +
+        `${relPath} must contain zero non-null assertion clusters. ` +
           `Use requireGlobalState helper, explicit length-checks, named regex groups, ` +
-          `or pin-narrowed values per .planning/phases/41-typescript-hygiene/41-RESEARCH.md §"Non-Null Cluster Fixes". ` +
+          `or pin-narrowed values. ` +
           `Offenders: ${JSON.stringify(offenders, null, 2)}`,
       ).toEqual([]);
     },

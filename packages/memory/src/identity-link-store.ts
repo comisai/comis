@@ -15,7 +15,7 @@ import { systemNowMs } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
 import { IdentityLinkRowSchema } from "./row-schemas.js";
 
-// Row mappers (Phase 41 TS-HYG-03)
+// Row mappers
 const identityLinkMapper = createRowMapper(IdentityLinkRowSchema);
 const canonicalIdProjectionMapper = createRowMapper(
   z.strictObject({ canonical_id: z.string() }),
@@ -52,7 +52,7 @@ export interface IdentityLinkStore {
 }
 
 /** Raw row shape from the identity_links table.
- * SSOT: row-schemas.ts → IdentityLinkRowSchema (Phase 41 TS-HYG-03).
+ * SSOT: row-schemas.ts → IdentityLinkRowSchema.
  */
 type IdentityLinkRow = z.infer<typeof IdentityLinkRowSchema>;
 

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Skill registry module (Phase 43 split per FILE-SPLIT-11).
+ * Skill registry module.
  *
- * Barrel re-export of the canonical public API of the former
- * skill-registry.ts (813L) monolith. No aliases — every export keeps its
+ * Barrel re-export of the canonical public API. Every export keeps its
  * canonical name. Layer order:
  *   - skill-registry-types.ts (pure type declarations + SkillMetadata /
  *     SkillWatcherHandle re-exports)

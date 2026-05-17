@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-package README forbidden-substring source-grep (GUARDRAILS-10).
+ * Per-package README forbidden-substring source-grep.
  *
  * Per-package READMEs must not advertise upstream-dependency relationships
- * forbidden by the design §2.2 target package graph. The substring map below
- * is derived verbatim from §2.2 "Must NOT depend on" columns. Each entry is
- * the `@comis/<name>` form to avoid false-positives on legitimate domain
- * terms (Pitfall 2 — "the cron scheduler" must NOT match `scheduler` in agent
- * README).
+ * forbidden by the target package graph (AGENTS.md §1 Package Map). The
+ * substring map below is derived verbatim from "Must NOT depend on"
+ * columns. Each entry is the `@comis/<name>` form to avoid false-positives
+ * on legitimate domain terms ("the cron scheduler" must NOT match
+ * `scheduler` in agent README).
  *
  * Escape hatch: regions wrapped in `<!-- arch-historical --> ... <!-- /arch-historical -->`
  * HTML comments are stripped before checking. Use sparingly for legitimate
@@ -24,8 +24,8 @@ import { formatViolations } from "../support/architecture-helpers.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
 
-// Derived VERBATIM from design §2.2 "Must NOT depend on" columns
-// (cross-reference: AGENTS.md §1 Package Map).
+// Derived VERBATIM from the package graph "Must NOT depend on" columns
+// (see AGENTS.md §1 Package Map).
 const FORBIDDEN_SUBSTRING_MAP: Record<string, readonly string[]> = {
   "packages/agent/README.md": [
     "@comis/infra", "@comis/memory", "@comis/scheduler", "@comis/channels",
@@ -85,7 +85,7 @@ const FORBIDDEN_SUBSTRING_MAP: Record<string, readonly string[]> = {
   "packages/daemon/README.md": [], // daemon depends on everything; no forbidden subs
   "packages/comis/README.md": [],  // umbrella; mentions everything intentionally
   "packages/web/README.md": [
-    // web has NO project refs (standalone Lit/Vite SPA per §2.2).
+    // web has NO project refs (standalone Lit/Vite SPA).
     "@comis/core", "@comis/infra", "@comis/memory", "@comis/agent",
     "@comis/channels", "@comis/gateway", "@comis/skills", "@comis/scheduler",
     "@comis/cli", "@comis/daemon", "@comis/orchestrator", "@comis/shared",
@@ -94,15 +94,12 @@ const FORBIDDEN_SUBSTRING_MAP: Record<string, readonly string[]> = {
 
 const HISTORICAL_RE = /<!--\s*arch-historical\s*-->[\s\S]*?<!--\s*\/arch-historical\s*-->/g;
 
-describe("readme-no-forbidden-deps (GUARDRAILS-10)", () => {
+describe("readme-no-forbidden-deps", () => {
   for (const [readmePath, forbidden] of Object.entries(FORBIDDEN_SUBSTRING_MAP)) {
     if (forbidden.length === 0) continue;
     it(`${readmePath} contains none of [${forbidden.join(", ")}]`, () => {
       const absolute = resolve(REPO_ROOT, readmePath);
       if (!existsSync(absolute)) {
-        // The orchestrator README is created in Plan 36-05; if this test runs
-        // BEFORE 36-05, the orchestrator-row sanity check below will fail. That
-        // is the intended ordering signal.
         throw new Error(`Expected README missing at HEAD: ${readmePath}`);
       }
       const raw = readFileSync(absolute, "utf8");
@@ -120,15 +117,15 @@ describe("readme-no-forbidden-deps (GUARDRAILS-10)", () => {
         hits,
         formatViolations({
           description:
-            `${readmePath} references forbidden upstream dependencies. The §2.2 target package graph forbids these edges; the README must not advertise them.`,
+            `${readmePath} references forbidden upstream dependencies. The target package graph forbids these edges; the README must not advertise them.`,
           violations: hits.map((h) => ({
             file: `${readmePath}:${h.lineNumber}`,
             line: h.lineNumber,
             snippet: `[${h.needle}] ${h.line}`,
           })),
           suggestedFix:
-            'Remove the forbidden mention OR wrap a legitimate historical reference in <!-- arch-historical --> ... <!-- /arch-historical --> (use sparingly). Forbidden substrings are derived verbatim from design §2.2 "Must NOT depend on" columns.',
-          designRef: "design §2.2 / RES-PIT-20 / GUARDRAILS-10",
+            'Remove the forbidden mention OR wrap a legitimate historical reference in <!-- arch-historical --> ... <!-- /arch-historical --> (use sparingly). Forbidden substrings are derived verbatim from the package graph "Must NOT depend on" columns.',
+          designRef: "AGENTS.md §1 Package Map",
         }),
       ).toEqual([]);
     });
@@ -143,7 +140,7 @@ describe("readme-no-forbidden-deps (GUARDRAILS-10)", () => {
     }
     expect(
       missing,
-      `Missing READMEs: ${missing.join(", ")}. Plan 36-05 creates packages/orchestrator/README.md.`,
+      `Missing READMEs: ${missing.join(", ")}.`,
     ).toEqual([]);
   });
 });

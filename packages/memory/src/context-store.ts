@@ -32,15 +32,14 @@ import {
 } from "./row-schemas.js";
 
 // ---------------------------------------------------------------------------
-// Row mappers (Phase 41 TS-HYG-03)
+// Row mappers
 //
 // Each mapper wraps a Zod schema and returns Result<TRow[]|TRow|undefined,
 // MapperError> from raw better-sqlite3 .all()/.get() output. On validation
 // failure the store DEGRADES SILENTLY (empty array / undefined), preserving
 // the ContextStorePort plain-return contract. Context-store read methods are
 // non-fatal — corrupt rows yield empty result sets, not crashes, which
-// preserves the agent's ability to make forward progress (per Plan 41-04
-// §"Use either pattern... 2. Unwrap-with-default").
+// preserves the agent's ability to make forward progress.
 // ---------------------------------------------------------------------------
 
 const conversationMapper = createRowMapper(CtxConversationRowSchema);

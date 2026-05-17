@@ -1,19 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Smoke + render-decision tests for the 5 pipeline view files
- * (Phase 40 Plan 40-15 gap-closure for COV-03, Option-A coverage measurement).
+ * Smoke + render-decision tests for the 5 pipeline view files.
  *
- * Per the plan's coverage-gate-gotcha analysis, the views/pipelines/* files
- * are NOT transitively imported by any existing test, so Option B (per-package)
- * coverage does not see them at all but Option A (root-level pnpm test) sees
- * them at 0%. This file adds at minimum:
+ * The views/pipelines/* files are NOT transitively imported by any other
+ * test, so root-level coverage measurement saw them at 0%. This file adds
+ * at minimum:
  *   1. Custom-element registration assertion (forces the side-effect import
  *      so all top-level decorators / module bindings execute).
  *   2. Instantiation smoke test (default render path runs without throwing).
  *   3. One or two render-decision branches per file (loading vs populated).
- *
- * The combination lifts each pipelines/* file's Option-A measurement
- * significantly toward the package floor.
  *
  * @module
  */

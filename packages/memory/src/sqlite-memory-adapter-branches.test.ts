@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for sqlite-memory-adapter.ts (COV-03 / Plan 40-11).
+ * Branch-gap coverage for sqlite-memory-adapter.ts.
  *
  * Targets the uncovered branches in search() and update()/delete()/clear()
  * paths that the existing test file doesn't reach:

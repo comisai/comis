@@ -2,8 +2,6 @@
 /**
  * E2E: IRC × DM — wire-level adapter roundtrip against the 127.0.0.1 mock.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09 Wave D).
- *
  * Scope: spawns the production `@comis/channels` IRC adapter against the
  * mock IRC server, drives an inbound PRIVMSG through the mock to the
  * adapter's `MessageHandler`, and asserts the production adapter's
@@ -32,7 +30,7 @@ import { createIrcPlugin } from "@comis/channels";
 import { createMockLogger } from "../support/mock-logger.js";
 import type { ChannelPort, NormalizedMessage } from "@comis/core";
 
-describe("E2E: irc × dm — IRC adapter wire roundtrip against the 127.0.0.1 mock (COV-15)", () => {
+describe("E2E: irc × dm — IRC adapter wire roundtrip against the 127.0.0.1 mock", () => {
   let mock: MockIrcServer;
   let adapter: ChannelPort;
   let receivedInbound: NormalizedMessage[];

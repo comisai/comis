@@ -2,12 +2,10 @@
 /**
  * createBeforeToolCallGuard — proactive tool-call safety guard.
  *
- * Co-equal extraction from pi-executor.ts (Phase 42 split per EXEC-SPLIT-05).
- *
- * Already takes 5 typed parameters (StepCounter, BudgetGuard, CircuitBreaker,
- * ToolRetryBreaker?, MessageSendLimiter?) — EXEMPT from the EXEC-SPLIT-06
- * closure-extraction `state` first-param contract because it was already
- * co-equal at the top level of the pre-split file.
+ * Takes 5 typed parameters (StepCounter, BudgetGuard, CircuitBreaker,
+ * ToolRetryBreaker?, MessageSendLimiter?) — does not follow the
+ * closure-extraction `state` first-param contract because it operates
+ * at the top level of the executor.
  *
  * @module
  */

@@ -3,20 +3,12 @@
  * Daemon-domain RPC contracts. Mirrors
  * `packages/daemon/src/api/daemon-handlers.ts`.
  *
- * Phase 35 Wave C kickoff (Plan 35-06). The daemon-handlers.ts factory
- * currently exposes only 2 methods — `system.ping` and `daemon.setLogLevel`
- * (see file header comment in daemon-handlers.ts: "Covers: system.ping --
- * Health check / liveness probe AND daemon.setLogLevel -- Runtime log
- * level changes"). The plan's <interfaces> block additionally cited
- * `gateway.status`, `gateway.restart`, and `obs.diagnostics` — but those
- * methods live in DIFFERENT handler factory files
- * (`config-handlers.ts` for gateway.*, `obs-handlers.ts` for
- * obs.diagnostics). Per D-08 (one contract file per handler factory file),
- * they will land in their own per-domain Wave C plans (35-07+) — NOT here.
- *
- * Plan 35-06 thus delivers the SMALLEST domain (2 contracts) which is
- * still the right vehicle for proving the Wave C pattern (contract
- * creation → handler refactor → CLI client wrapper).
+ * The daemon-handlers.ts factory currently exposes only 2 methods —
+ * `system.ping` and `daemon.setLogLevel`. Other methods (`gateway.status`,
+ * `gateway.restart`, `obs.diagnostics`) live in different handler factory
+ * files (`config-handlers.ts` for gateway.*, `obs-handlers.ts` for
+ * obs.diagnostics). One contract file per handler factory file — those
+ * methods get their own per-domain contract files.
  *
  * @module
  */

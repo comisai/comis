@@ -86,7 +86,7 @@ export interface StreamSetupDeps {
   tenantId?: string;
   tracingDefaults?: { maxSize: string; maxFiles: number };
   geminiCacheManager?: GeminiCacheManager;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
 }
 
@@ -149,9 +149,9 @@ export interface StreamSetupResult {
 /**
  * Build the ordered stream wrapper chain for a single execution.
  *
- * Pure function with params object ( extraction pattern). All mutable
- * refs and closure state remain in pi-executor.ts orchestrator scope and are
- * accessed via getter callbacks.
+ * Pure function with params object. All mutable refs and closure state
+ * remain in pi-executor.ts orchestrator scope and are accessed via getter
+ * callbacks.
  *
  * @param params - Stream setup parameters including config, deps, and getter callbacks
  * @returns Stream setup result with wrappers array and shared state refs

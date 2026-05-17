@@ -61,11 +61,9 @@ function isValidProvidersResponse(value: unknown): value is { providers: string[
 export async function loadProvidersWithFallback(): Promise<string[]> {
   // RPC-first: daemon may have a richer/scanned catalog.
   try {
-    // Phase 35 Wave C closure (Plan 35-19): retargeted from raw
-    // `client.call("models.list_providers", {})` to callTyped via
-    // ModelsListProvidersContract. The defensive shape-narrowing below
-    // remains in place — daemon version skew or future shape changes
-    // would surface here, not as a crash.
+    // Uses callTyped via ModelsListProvidersContract. The defensive
+    // shape-narrowing below remains in place — daemon version skew or
+    // future shape changes would surface here, not as a crash.
     const result = await withClient(async (client) =>
       callTyped(client, ModelsListProvidersContract, {}),
     );

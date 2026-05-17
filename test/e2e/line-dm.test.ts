@@ -2,13 +2,11 @@
 /**
  * E2E: LINE × DM — Messaging API wire roundtrip against the 127.0.0.1 mock.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09 Wave D).
- *
  * Scope: drives the production `validateLineCredentials` (from
  * @comis/channels) and a raw @line/bot-sdk MessagingApiClient against
  * the mock LINE Messaging API server. Asserts:
- *   1. The apiRoot redirection from Wave A5 flows through @line/bot-sdk
- *      — calling getBotInfo() hits the 127.0.0.1 mock, not api.line.me.
+ *   1. The apiRoot redirection flows through @line/bot-sdk —
+ *      calling getBotInfo() hits the 127.0.0.1 mock, not api.line.me.
  *   2. The mock's POST /v2/bot/message/push endpoint captures bot
  *      outbound messages with the correct recipient + text.
  *
@@ -26,7 +24,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createMockLineServer, type MockLineServer } from "./mocks/line/mock-line-server.js";
 import { validateLineCredentials } from "@comis/channels";
 
-describe("E2E: line × dm — Messaging API wire roundtrip against the 127.0.0.1 mock (COV-15)", () => {
+describe("E2E: line × dm — Messaging API wire roundtrip against the 127.0.0.1 mock", () => {
   let mock: MockLineServer;
   let baseUrl: string;
 

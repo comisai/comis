@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Perf-budget schema check (ARCH-BASE-11 / D-05).
+ * Perf-budget schema check.
  *
  * This test validates the SHAPE of test/architecture/perf-baseline.json,
  * NOT the runtime of `pnpm test` itself. Measuring `pnpm test` from inside
  * `pnpm test` would require a sub-shell (`spawnSync("pnpm", ["test"])`)
  * which would re-run the entire suite recursively — circular.
  *
- * Out-of-band measurement is the procedure (per D-05 + RESEARCH.md Q10):
- *   - Phase 27 PR records pre/post `time pnpm test` numbers in the PR
- *     description; reviewers compare them against perf-baseline.json by hand.
- *   - Subsequent phases that intentionally affect runtime refresh
- *     `perf-baseline.json` with their own measurement and `phase` value.
- *   - The 15-second-per-phase budget (`actual_ms - baseline_ms <= 15000`)
+ * Out-of-band measurement is the procedure:
+ *   - PRs record pre/post `time pnpm test` numbers in the PR description;
+ *     reviewers compare them against perf-baseline.json by hand.
+ *   - Changes that intentionally affect runtime refresh `perf-baseline.json`
+ *     with their own measurement.
+ *   - The 15-second-per-change budget (`actual_ms - baseline_ms <= 15000`)
  *     is enforced **out of band** during PR review, NOT inside this test.
  *     This file only validates the SHAPE of perf-baseline.json so a
  *     malformed baseline cannot ship.
@@ -41,7 +41,7 @@ interface PerfBaseline {
   };
 }
 
-describe("perf-budget (ARCH-BASE-11 / D-05)", () => {
+describe("perf-budget", () => {
   it("perf-baseline.json has the expected schema", () => {
     const raw = JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as PerfBaseline;
     const errors: string[] = [];
@@ -72,8 +72,8 @@ describe("perf-budget (ARCH-BASE-11 / D-05)", () => {
         description: "test/architecture/perf-baseline.json schema mismatch.",
         violations: errors.map((m) => ({ file: BASELINE_PATH, line: 0, snippet: m })),
         suggestedFix:
-          "Re-record the baseline by running `time pnpm test` 3 times on the reference machine and updating perf-baseline.json with the median warm number per D-05.",
-        designRef: "CONTEXT.md D-05 / RESEARCH.md Q10",
+          "Re-record the baseline by running `time pnpm test` 3 times on the reference machine and updating perf-baseline.json with the median warm number.",
+        designRef: "perf-baseline schema",
       }),
     ).toEqual([]);
   });

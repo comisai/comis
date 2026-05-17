@@ -29,7 +29,7 @@ import { OAuthProfileRowSchema } from "./row-schemas.js";
 
 const SCHEMA_VERSION = 1;
 
-// Row shape SSOT: OAuthProfileRowSchema in row-schemas.ts (Phase 41 TS-HYG-03).
+// Row shape SSOT: OAuthProfileRowSchema in row-schemas.ts.
 type OAuthProfileRow = z.infer<typeof OAuthProfileRowSchema>;
 const oauthProfileMapper = createRowMapper(OAuthProfileRowSchema);
 

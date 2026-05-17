@@ -66,7 +66,7 @@ export interface BackgroundTask {
   // In-memory only (not serialized):
   _promise?: Promise<unknown>;
   _abortController?: AbortController;
-  /** Phase 39 PORTS-13: TimerHandle replaces NodeJS.Timeout for cancel-safe shutdown. */
+  /** TimerHandle replaces NodeJS.Timeout for cancel-safe shutdown. */
   _hardTimeoutTimer?: TimerHandle;
 }
 

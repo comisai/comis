@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 43 wave 8 split (FILE-SPLIT-08): setup-agents.ts → setup-agents/
- * subdirectory. The tooling leaf hosts `resolveAgentModel` + pure helpers;
- * this test file mirrors the resolver matrix that used to live in
- * setup-agents.test.ts §"resolveAgentModel" (lines 70-203 pre-split).
+ * Tests for `resolveAgentModel` in the setup-agents tooling leaf.
+ *
+ * Covers the resolver matrix: explicit YAML defaults vs catalog heuristic
+ * vs per-agent overrides; case-insensitive `default` handling; per-provider
+ * catalog-driven model selection.
  *
  * @module
  */

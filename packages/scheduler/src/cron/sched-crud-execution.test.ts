@@ -7,9 +7,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CronStore } from "./cron-store.js";
 import type { CronJob } from "./cron-types.js";
 import { createCronScheduler } from "./cron-scheduler.js";
-// Phase 35 Plan 35-04 (D-01 #1): execution-lock.ts deleted; use FileLockPort
-// from @comis/core via the local shim that matches the old Result<T, string>
-// shape so the tests stay readable.
+// execution-lock.ts was deleted; use FileLockPort from @comis/core via the
+// local shim that matches the old Result<T, string> shape so the tests
+// stay readable.
 import { createFileLock } from "@comis/core";
 import type { Result } from "@comis/shared";
 const _fileLock = createFileLock();

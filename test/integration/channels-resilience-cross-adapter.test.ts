@@ -2,10 +2,10 @@
 /**
  * INTEGRATION: cross-adapter resilience — multi-platform import + lifecycle smoke.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): exercises the `@comis/channels`
- * public-export surface for ALL 9 adapter plugins in a single test file so
- * that integration coverage measures all plugin factory imports (the
- * factories all hit the daemon's setup-channels-adapters import surface).
+ * Exercises the `@comis/channels` public-export surface for ALL 9 adapter
+ * plugins in a single test file so that integration coverage measures all
+ * plugin factory imports (the factories all hit the daemon's
+ * setup-channels-adapters import surface).
  *
  * This is a NON-NETWORK smoke — it imports every adapter plugin and
  * validates that each plugin factory returns a well-formed ChannelPluginPort.

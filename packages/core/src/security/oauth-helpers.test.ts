@@ -3,14 +3,14 @@
  * Pure-function tests for oauth-helpers.ts (consolidated from
  * agent/src/model/oauth-identity.test.ts + oauth-errors.test.ts).
  *
- * Test groups (mirror source layout per RESEARCH.md Open Question #3):
+ * Test groups (mirror source layout):
  *   1. JWT decoding — decodeCodexJwtPayload + resolveCodexStableSubject +
  *      resolveCodexAccessTokenExpiry
  *   2. Identity resolution — resolveCodexAuthIdentity + redactEmailForLog
  *   3. Error catalogue — rewriteOAuthError (6 cases) + CRITICAL ORDERING
  *      invariant + defensive non-Error inputs + the `logErrorKind === "auth"`
- *      closed-union mirror invariant (Phase 28 commit 6C narrowed the prior
- *      `errorKind === code` mirror to a closed Pino ErrorKind value)
+ *      closed-union mirror invariant (the `errorKind === code` mirror was
+ *      narrowed to a closed Pino ErrorKind value)
  *
  * Test fixtures use neutral placeholders (AGENTS.md §2.2): no real emails,
  * tokens, or proprietary error_description strings.
@@ -410,7 +410,7 @@ describe("rewriteOAuthError + RewrittenOAuthError + OAuthErrorCode", () => {
   // Invariants
   // -------------------------------------------------------------------------
   describe("invariants", () => {
-    it("logErrorKind is 'auth' for every classified case (closed-union Pino mirror per Phase 28 commit 6C)", () => {
+    it("logErrorKind is 'auth' for every classified case (closed-union Pino mirror)", () => {
       const cases: Array<{ input: unknown; expectedCode: OAuthErrorCode }> = [
         {
           input: new Error("refresh_token_reused"),

@@ -3,9 +3,9 @@
  * Unit tests for installCompactionTrigger — wires the compaction:flush
  * event bus subscription.
  *
- * Closure-extracted helper (state-first per EXEC-SPLIT-06): the empty
- * state shape is by design (the handler reads from deps only); these
- * tests assert the subscription is registered.
+ * Closure-extracted helper (state-first): the empty state shape is by
+ * design (the handler reads from deps only); these tests assert the
+ * subscription is registered.
  *
  * @module
  */
@@ -14,7 +14,7 @@ import { describe, it, expect } from "vitest";
 import { installCompactionTrigger } from "./compaction-trigger.js";
 import type { PiExecutorDeps } from "./pi-executor.js";
 
-describe("installCompactionTrigger (EXEC-SPLIT-06)", () => {
+describe("installCompactionTrigger", () => {
   it("subscribes to the compaction:flush event", () => {
     const handlers: Record<string, ((event: unknown) => void)[]> = {};
     const logger = {
@@ -43,7 +43,7 @@ describe("installCompactionTrigger (EXEC-SPLIT-06)", () => {
     expect(handlers["compaction:flush"]!.length).toBe(1);
   });
 
-  it("state parameter is named `state` (EXEC-SPLIT-06 contract)", () => {
+  it("state parameter is named `state`", () => {
     // Structural assertion: the function signature has `state` as first param.
     // The actual structural test is in __tests__/architecture.test.ts; here
     // we cross-check the function is callable with the empty state shape.

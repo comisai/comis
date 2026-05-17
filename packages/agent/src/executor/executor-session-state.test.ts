@@ -16,7 +16,7 @@ import {
   setSessionStateClock,
 } from "./executor-session-state.js";
 
-// Phase 39 PORTS-11: initialize module-level clock provider for tests.
+// Initialize module-level clock provider for tests.
 setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
 
 // ---------------------------------------------------------------------------

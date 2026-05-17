@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for cache-detection/cache-state.ts (Phase 42 split per
- * EXEC-SPLIT-09 / EXEC-SPLIT-03).
+ * Unit tests for cache-detection/cache-state.ts.
  *
  * Covers `createCacheBreakDetector`, `clearCacheBreakDetectorSession`,
  * `MAX_TRACKING_ENTRIES`, and all detector behavior (recordPromptState,
@@ -9,12 +8,9 @@
  * notifyContentModification, aliasSession, LRU bounds, model exclusion,
  * tiered server-side attribution, lookback-aware attribution, API error
  * suppression, effort value tracking, cacheControlHash, lazy
- * buildDiffableContent).
- *
- * Behavior moved from the pre-split cache-break-detection.test.ts file;
- * identical describe block contents (cross-cutting tests that exercise
- * the Anthropic adapter together with the detector remain here, not in
- * anthropic-extractor.test.ts).
+ * buildDiffableContent). Cross-cutting tests that exercise the Anthropic
+ * adapter together with the detector remain here, not in
+ * anthropic-extractor.test.ts.
  *
  * @module
  */
@@ -22,7 +18,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ClockPort } from "@comis/core";
 
-// Phase 39 PORTS-11: test-only clock stub.
+// Test-only clock stub.
 const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 import {

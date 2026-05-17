@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC dispatcher boundary itself (line 304 unknown-method + line 320 re-throw); the re-throw IS the JSON-RPC error path -- gateway/method-router catches and converts to JSON-RPC error response (Phase 41 TS-HYG-07).
+// @allow-throw: RPC dispatcher boundary itself (line 304 unknown-method + line 320 re-throw); the re-throw IS the JSON-RPC error path -- gateway/method-router catches and converts to JSON-RPC error response.
 /**
  * Central RPC dispatch router.
  * Merges all 14 domain handler modules into a single dispatch function
- * that routes method names to the correct handler. Replaces the ~1,000-line
- * rpcCallInner switch statement in daemon.ts.
+ * that routes method names to the correct handler.
  *
  * The aggregator dependency type is `ApiDispatchDeps`, defined in
- * `./types.js` as the union of 11 per-domain `*ApiDeps` cluster slices
- * (DAEMON-API-03, Phase 34 plan 08a). This file re-exports it for
- * call-site convenience and never duplicates the field set inline.
+ * `./types.js` as the union of 11 per-domain `*ApiDeps` cluster slices.
+ * This file re-exports it for call-site convenience and never duplicates
+ * the field set inline.
  * @module
  */
 
@@ -53,16 +52,13 @@ import { createProviderHandlers } from "./provider-handlers.js";
 //
 // `ApiDispatchDeps` lives in `./types.js` as the union of 11 per-domain
 // `*ApiDeps` cluster slices. It is re-exported at the top of this file for
-// call-site convenience. The legacy ~198L inline aggregator interface
-// was removed in Phase 34 plan 08a (DAEMON-API-03); the field set is now
-// partitioned across SessionsApiDeps, MemoryApiDeps, ChannelsApiDeps,
-// AgentsApiDeps, OrchestratorApiDeps, WorkspaceApiDeps, ConfigApiDeps,
-// AuthApiDeps, MediaApiDeps, ObservabilityApiDeps, DaemonApiDeps. See
-// RESEARCH §"Per-Handler ApiDeps Slice Inventory" (lines 486-540).
+// call-site convenience. The field set is partitioned across SessionsApiDeps,
+// MemoryApiDeps, ChannelsApiDeps, AgentsApiDeps, OrchestratorApiDeps,
+// WorkspaceApiDeps, ConfigApiDeps, AuthApiDeps, MediaApiDeps,
+// ObservabilityApiDeps, DaemonApiDeps.
 //
-// The 27 still-legacy `*HandlerDeps` interfaces in api/*-handlers.ts remain
-// assignable from ApiDispatchDeps via structural subtyping; plans 34-08b +
-// 34-08c retarget them in two batches.
+// Any remaining legacy `*HandlerDeps` interfaces in api/*-handlers.ts are
+// assignable from ApiDispatchDeps via structural subtyping.
 
 // ---------------------------------------------------------------------------
 // Error classification
@@ -115,19 +111,17 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       oauthCredentialStore: deps.oauthCredentialStore,
     }),
     ...createEnvHandlers(deps),
-    // Phase 31 commit 7 (MEM-CTX-PORTS-13) -- encrypted secret management.
-    // Admin scope is enforced both at registration (setup-gateway-api.ts)
-    // and inside each handler (params._trustLevel === "admin" check).
+    // Encrypted secret management. Admin scope is enforced both at
+    // registration (setup-gateway-api.ts) and inside each handler
+    // (params._trustLevel === "admin" check).
     ...createSecretsHandlers(deps),
-    // Phase 31 commit 11 (MEM-CTX-PORTS-09) -- encrypted OAuth-profile
-    // management. Admin scope enforced at registration + per-handler. The
-    // un-projected OAuthProfile[] (with access/refresh/accountId) lives in
-    // handler closure scope ONLY; the projection strips tokens before the
-    // RPC response. See api/auth-handlers.ts + SECRET-RPC-CHECKLIST.md.
-    // Plan 34-08c — auth-handlers now consumes AuthApiDeps via alias; spread
-    // `...deps` so the cluster slice's required fields (tokenRegistry,
-    // addToTokenStore, removeFromTokenStore) are present alongside the
-    // auth-specific narrow wiring.
+    // Encrypted OAuth-profile management. Admin scope enforced at
+    // registration + per-handler. The un-projected OAuthProfile[] (with
+    // access/refresh/accountId) lives in handler closure scope ONLY; the
+    // projection strips tokens before the RPC response. See
+    // api/auth-handlers.ts. Spread `...deps` so the auth cluster slice's
+    // required fields (tokenRegistry, addToTokenStore, removeFromTokenStore)
+    // are present alongside the auth-specific narrow wiring.
     ...createAuthHandlers({
       ...deps,
       oauthCredentialStore: deps.oauthCredentialStore,
@@ -137,14 +131,13 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     ...createBrowserHandlers(deps),
     ...createSubagentHandlers(deps),
     ...((deps.graphCoordinator || deps.namedGraphStore) ? createGraphHandlers({
-      // Plan 34-08b — handler factory now consumes OrchestratorApiDeps via
-      // alias (narrowed to require graphCoordinator). Spread `...deps` so
-      // broader slice fields (cronSchedulers, executionTrackers, etc.) are
-      // present alongside the narrow per-graph wiring below. The non-null
-      // assertion on graphCoordinator matches the pre-Plan-34-08b behavior:
-      // graph.list/save/load handlers can run with only namedGraphStore set,
-      // but graph.execute/status/cancel handlers crash at runtime — same
-      // semantics as before.
+      // Handler factory consumes OrchestratorApiDeps (narrowed to require
+      // graphCoordinator). Spread `...deps` so broader slice fields
+      // (cronSchedulers, executionTrackers, etc.) are present alongside the
+      // narrow per-graph wiring below. The non-null assertion on
+      // graphCoordinator preserves the long-standing behavior: graph.list /
+      // save / load handlers can run with only namedGraphStore set, but
+      // graph.execute / status / cancel handlers crash at runtime.
       ...deps,
       graphCoordinator: deps.graphCoordinator!,
       defaultAgentId: deps.defaultAgentId,
@@ -155,9 +148,9 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       dataDir: deps.container.config.dataDir || ".",
       nodeTypeRegistry: deps.nodeTypeRegistry,
     }) : {}),
-    // Plan 34-08b — approval-handlers now consumes WorkspaceApiDeps; spread
-    // `...deps` so the cluster slice's required fields (e.g. mcpClientManager,
-    // execGit, container) are present alongside the guarded approvalGate.
+    // approval-handlers consumes WorkspaceApiDeps; spread `...deps` so the
+    // cluster slice's required fields (e.g. mcpClientManager, execGit,
+    // container) are present alongside the guarded approvalGate.
     ...(deps.approvalGate ? createApprovalHandlers({ ...deps, approvalGate: deps.approvalGate }) : {}),
     ...createAgentHandlers({
       ...deps,
@@ -179,9 +172,9 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         logger: deps.logger,
       },
     }),
-    // Plan 34-08b — provider-handlers now consumes AgentsApiDeps via alias;
-    // spread `...deps` so required slice fields (suspendedAgents, modelCatalog)
-    // are present alongside the explicit provider-handler wiring.
+    // provider-handlers consumes AgentsApiDeps; spread `...deps` so required
+    // slice fields (suspendedAgents, modelCatalog) are present alongside the
+    // explicit provider-handler wiring.
     ...createProviderHandlers({
       ...deps,
       agents: deps.agents,
@@ -220,10 +213,9 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         logger: deps.logger,
       },
     }),
-    // Plan 34-08b — mcp-handlers now consumes WorkspaceApiDeps via alias;
-    // spread `...deps` so cluster slice's required fields (e.g. execGit,
-    // approvalGate-bearer-context) are present alongside the mcp-specific
-    // wiring.
+    // mcp-handlers consumes WorkspaceApiDeps; spread `...deps` so cluster
+    // slice's required fields (e.g. execGit, approvalGate-bearer-context)
+    // are present alongside the mcp-specific wiring.
     ...createMcpHandlers({
       ...deps,
       mcpClientManager: deps.mcpClientManager,
@@ -233,12 +225,12 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // a no-op.
       secretManager: deps.container?.secretManager,
     }),
-    // Plan 34-08c — daemon-handlers now consumes DaemonApiDeps via alias;
-    // spread `...deps` so the cluster slice's required `logger` is present
-    // alongside the daemon-specific narrow wiring (logLevelManager).
+    // daemon-handlers consumes DaemonApiDeps; spread `...deps` so the
+    // cluster slice's required `logger` is present alongside the
+    // daemon-specific narrow wiring (logLevelManager).
     ...createDaemonHandlers({ ...deps, logLevelManager: deps.logLevelManager }),
-    // Plan 34-08b — workspace-handlers now consumes WorkspaceApiDeps via
-    // alias; spread `...deps` so cluster slice's required fields are present.
+    // workspace-handlers consumes WorkspaceApiDeps; spread `...deps` so
+    // cluster slice's required fields are present.
     ...createWorkspaceHandlers({
       ...deps,
       agents: deps.agents,
@@ -250,7 +242,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       memoryAdapter: deps.memoryAdapter,
       tenantId: deps.tenantId,
     }),
-    // Heartbeat management handlers — Plan 34-08b: consumes OrchestratorApiDeps.
+    // Heartbeat management handlers — consumes OrchestratorApiDeps.
     ...createHeartbeatHandlers({
       ...deps,
       perAgentRunner: deps.perAgentRunner,
@@ -264,7 +256,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       } : undefined,
       globalHeartbeatConfig: deps.globalHeartbeatConfig,
     }),
-    // Skill management handlers — Plan 34-08b: consumes WorkspaceApiDeps.
+    // Skill management handlers — consumes WorkspaceApiDeps.
     ...createSkillHandlers({
       ...deps,
       skillRegistries: deps.skillRegistries,
@@ -273,17 +265,17 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       container: deps.container,
       eventBus: deps.container.eventBus,
     }),
-    // Proactive v1: Notification handlers — Plan 34-08b: consumes WorkspaceApiDeps.
+    // Proactive v1: Notification handlers — consumes WorkspaceApiDeps.
     ...(deps.notificationService
       ? createNotificationHandlers({ ...deps, notificationService: deps.notificationService })
       : {}),
-    // Proactive v1: Image generation handlers (IMGN)
+    // Proactive v1: Image generation handlers
     ...(deps.imageHandlerDeps
       ? createImageHandlers(deps.imageHandlerDeps)
       : {}),
-    // Context DAG recall handlers (conditional on contextStore) — Plan 34-08b:
-    // consumes MemoryApiDeps via alias. Spread `...deps` so cluster slice's
-    // required fields (memoryApi, memoryAdapter, etc.) are present.
+    // Context DAG recall handlers (conditional on contextStore) — consumes
+    // MemoryApiDeps. Spread `...deps` so cluster slice's required fields
+    // (memoryApi, memoryAdapter, etc.) are present.
     ...(deps.contextStore ? createContextHandlers({
       ...deps,
       store: deps.contextStore,

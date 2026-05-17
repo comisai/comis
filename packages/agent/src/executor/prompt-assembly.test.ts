@@ -163,15 +163,15 @@ function makeParams(overrides?: Partial<PromptAssemblyParams>): PromptAssemblyPa
   if (!(merged.deps as Record<string, unknown>).clock) {
     merged.deps = {
       ...merged.deps,
-      // Phase 39 PORTS-11: required clock for prompt-assembly time reads.
+      // Required clock for prompt-assembly time reads.
       clock: { now: () => Date.now(), nowDate: () => new Date() },
     } as PromptAssemblyParams["deps"];
   }
   if (!(merged.deps as Record<string, unknown>).toolCapabilityPort) {
     merged.deps = {
       ...merged.deps,
-      // Post-BC-REM-11: the static-prompt branch on `isCapabilityIndexEnabled`
-      // was removed (only path emits the residual one-liner). The port stub
+      // The static-prompt branch on `isCapabilityIndexEnabled` was
+      // removed (only path emits the residual one-liner). The port stub
       // is still required by downstream dynamic-preamble consumers that
       // honor the live gate.
       toolCapabilityPort: createCapabilityPortStub({ isCapabilityIndexEnabled: () => false }),
@@ -2119,11 +2119,11 @@ describe("assembleExecutionPrompt", () => {
     // Mid-session toggles MUST NOT retroactively rewrite the cached
     // system-prompt prefix.
     //
-    // Structural mechanism (post-BC-REM-11): the static system prompt no
-    // longer branches on `tooling.capabilityIndex.enabled` — the
-    // capability-index-on path is the only path; the gate-off branch was
-    // deleted. The cache-fence byte-identity invariant therefore holds
-    // trivially under hot-flip — neither turn's prompt depends on the
+    // Structural mechanism: the static system prompt no longer branches
+    // on `tooling.capabilityIndex.enabled` — the capability-index-on
+    // path is the only path; the gate-off branch was deleted. The
+    // cache-fence byte-identity invariant therefore holds trivially
+    // under hot-flip — neither turn's prompt depends on the
     // (now-irrelevant) port toggle. The dynamic-preamble per-turn
     // capability-index renderer respects the live port value, but the
     // cached static prompt is immune.

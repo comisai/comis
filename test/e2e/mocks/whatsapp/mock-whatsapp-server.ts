@@ -2,16 +2,13 @@
 /**
  * Mock WhatsApp WebSocket server for E2E flow-matrix coverage.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09).
- *
  * Wire surface: a WebSocket server emulating WhatsApp Web's gateway
  * endpoint (wss://web.whatsapp.com/ws/chat → ws://127.0.0.1:<port>/ws/chat).
  *
  * IMPORTANT — minimal-viable scope: Baileys' real WhatsApp Web protocol
  * uses encrypted noise-protocol handshakes, Signal-protocol pairing,
  * pre-keys, and a complex multi-device protocol. Faithfully reproducing
- * this in a mock is out of scope for E2E coverage (Plan 40-09 minimal-
- * viable per Wave A operator decision).
+ * this in a mock is out of scope for E2E coverage.
  *
  * Instead, this mock provides a TYPED CAPTURE SHIM: a stand-in WebSocket
  * endpoint that records connection attempts + outgoing frames. Tests

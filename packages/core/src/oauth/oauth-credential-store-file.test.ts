@@ -2,21 +2,18 @@
 /**
  * File-backed adapter tests for `OAuthCredentialStorePort`.
  *
- * Relocated from packages/agent/src/model/oauth-credential-store-file.test.ts
- * in Phase 35 per WEB-CONTRACTS-02 D-01 #2. Only import paths changed:
- *   - `@comis/scheduler` createFileLock → `../runtime/file-lock.js` (core's
- *     canonical FileLockPort adapter relocated in Plan 35-02). Core cannot
- *     depend on @comis/scheduler per AGENTS.md §1 inward-only invariant.
- *   - `@comis/core` OAuthProfile / FileLockPort → relative paths inside core.
+ * Uses `createFileLock` from `../runtime/file-lock.js` (core's canonical
+ * FileLockPort adapter). Core cannot depend on @comis/scheduler per
+ * AGENTS.md §1 inward-only invariant.
  *
- * Coverage groups (unchanged from agent-side test):
+ * Coverage groups:
  *   1. File creation + permissions (SPEC R2)
  *   2. Restart-survives-write (SPEC R2 acceptance)
  *   3. Profile-ID validation (SPEC R5)
- *   4. Schema-version hard-fail (D-07)
+ *   4. Schema-version hard-fail
  *   5. CRUD operations
  *   6. Atomic-write durability
- *   7. Lock-file path sanitization (D-02)
+ *   7. Lock-file path sanitization
  */
 
 import * as fs from "node:fs";
@@ -192,7 +189,7 @@ describe("createOAuthCredentialStoreFile", () => {
     });
 
     // Test 3.6 — env-bootstrap path is a valid identity
-    it("set('openai-codex:env-bootstrap', profile) succeeds (RESEARCH §4 landmine #7)", async () => {
+    it("set('openai-codex:env-bootstrap', profile) succeeds", async () => {
       const store = createOAuthCredentialStoreFile({ dataDir: tmp, fileLock });
       const result = await store.set(
         "openai-codex:env-bootstrap",
@@ -214,10 +211,10 @@ describe("createOAuthCredentialStoreFile", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Group 4 — Schema version hard-fail (D-07)
+  // Group 4 — Schema version hard-fail
   // -------------------------------------------------------------------------
 
-  describe("schema version hard-fail (D-07)", () => {
+  describe("schema version hard-fail", () => {
     // Test 4.1
     it("get() against a file with version: 99 returns err mentioning 'version' and 'Hint: Delete'", async () => {
       fs.writeFileSync(
@@ -355,10 +352,10 @@ describe("createOAuthCredentialStoreFile", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Group 7 — Lock-file path sanitization (D-02)
+  // Group 7 — Lock-file path sanitization
   // -------------------------------------------------------------------------
 
-  describe("lock-file path sanitization (D-02)", () => {
+  describe("lock-file path sanitization", () => {
     // Test 7.1 — sentinel exists at sanitized path
     it("after set(), sentinel exists at the sanitized lock path", async () => {
       const store = createOAuthCredentialStoreFile({ dataDir: tmp, fileLock });
@@ -390,9 +387,9 @@ describe("createOAuthCredentialStoreFile", () => {
       ]);
       expect(r1.ok).toBe(true);
       expect(r2.ok).toBe(true);
-      // Final state must equal one of the two writes (deterministic last-write-wins per
-      // implementation). Plan 05 chooses the precise semantics; here we only assert
-      // that both calls return ok and no torn state remains.
+      // Final state must equal one of the two writes (deterministic last-write-wins
+      // per implementation). Here we only assert that both calls return ok and
+      // no torn state remains.
       const loaded = unwrap(await store.get("openai-codex:user_a@example.com"));
       expect(loaded).toBeDefined();
       expect(["first-write", "second-write"]).toContain(loaded!.access);

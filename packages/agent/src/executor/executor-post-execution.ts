@@ -189,7 +189,7 @@ export interface PostExecutionParams {
     activeRunRegistry?: ActiveRunRegistry;
     embeddingEnqueue?: (entryId: string, content: string) => void;
     workspaceDir: string;
-    /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+    /** Wall-clock + monotonic time reads. */
     clock: ClockPort;
   };
   // Session adapter

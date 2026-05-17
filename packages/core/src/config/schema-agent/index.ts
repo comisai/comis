@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent config schema (Phase 43 split per FILE-SPLIT-14).
+ * Agent config schema.
  *
  * Re-exports all Zod schemas + the top-level AgentConfigSchema. The split
- * keeps AppConfigSchema.agents byte-identical so section-registry-parity.test.ts
- * (CONFIG-DELIV-03) snapshot reproduces verbatim post-split.
+ * keeps AppConfigSchema.agents byte-identical so the section-registry-parity
+ * snapshot reproduces verbatim post-split.
  *
  * Module layout (4 leaves):
  *   - schema-agent-model.ts    — Model selection (Budget, CircuitBreaker,

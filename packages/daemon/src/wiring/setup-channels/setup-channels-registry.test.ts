@@ -45,20 +45,19 @@ vi.mock("@comis/channels", () => ({
     }
     return { shouldDeliver: true, cleanedText: text };
   }),
-  // Phase 30 plan 04: deliverToChannel is no longer imported from @comis/channels
-  // by setup-channels.ts production code — the cron-delivery callsites now use
+  // deliverToChannel is no longer imported from @comis/channels by
+  // setup-channels.ts production code — the cron-delivery callsites use
   // deliveryService.deliverToChannel(). The mocked DeliveryService below
   // delegates to adapter.sendMessage so the existing assertions remain valid.
-  // Phase 32 commit 4: createChannelManager moved to @comis/orchestrator (mocked
-  // below in its own vi.mock block).
+  // createChannelManager lives in @comis/orchestrator (mocked below in its own
+  // vi.mock block).
 }));
 
-// Phase 32 commit 4: orchestrator owns createChannelManager + processInboundMessage.
-// Phase 32 commit 7: orchestrator owns createMessageRouter (moved from agent).
-// Phase 32 commit 8: orchestrator owns createCommandQueue (moved from agent, Wave A close).
-// The mocked createChannelManager preserves the call-assertion pattern; the mocked
-// processInboundMessage is never invoked at call-time because createChannelManager
-// returns the static mockChannelManager.
+// orchestrator owns createChannelManager + processInboundMessage,
+// createMessageRouter, and createCommandQueue. The mocked createChannelManager
+// preserves the call-assertion pattern; the mocked processInboundMessage is
+// never invoked at call-time because createChannelManager returns the static
+// mockChannelManager.
 vi.mock("@comis/orchestrator", () => ({
   createChannelManager: vi.fn(() => mockChannelManager),
   processInboundMessage: vi.fn(async () => {}),
@@ -79,8 +78,8 @@ const mockResolveOperationModel = vi.fn(() => ({
 const mockRunMemoryReview = vi.fn(async () => ({ ok: true as const, value: undefined }));
 
 vi.mock("@comis/agent", () => ({
-  // Phase 32 commit 7: createMessageRouter moved to @comis/orchestrator (mocked above).
-  // Phase 32 commit 8: createCommandQueue moved to @comis/orchestrator (mocked above, Wave A close).
+  // createMessageRouter and createCommandQueue moved to @comis/orchestrator
+  // (mocked above).
   sanitizeAssistantResponse: vi.fn((text: string) => text),
   resolveOperationModel: (...args: unknown[]) => mockResolveOperationModel(...args),
   resolveProviderFamily: vi.fn((p: string) => p),
@@ -88,8 +87,8 @@ vi.mock("@comis/agent", () => ({
 }));
 
 vi.mock("@comis/core", async () => {
-  // Phase 30 plan 04: production setupChannels imports createDeliveryService
-  // and createNoOpDeliveryQueue from @comis/core; the fake mirrors the
+  // Production setupChannels imports createDeliveryService and
+  // createNoOpDeliveryQueue from @comis/core; the fake mirrors the
   // previously-mocked deliverToChannel behavior (delegate to
   // adapter.sendMessage) so existing assertions keep working.
   return {
@@ -98,12 +97,11 @@ vi.mock("@comis/core", async () => {
     createDeliveryOrigin: vi.fn((input: any) => Object.freeze({ ...input })),
     safePath: vi.fn((base: string, ...segs: string[]) => [base, ...segs].join("/")),
     RetryConfigSchema: { parse: vi.fn(() => ({ maxAttempts: 3, minDelayMs: 500, maxDelayMs: 30000, jitter: true, respectRetryAfter: true, markdownFallback: true })) },
-    // Phase 30 plan 02: createRetryEngine + initTelegramFileGuardConfig moved
-    // from @comis/channels to @comis/core (alongside the delivery helpers).
+    // createRetryEngine + initTelegramFileGuardConfig live in @comis/core
+    // (alongside the delivery helpers).
     createRetryEngine: vi.fn(() => mockRetryEngine),
     initTelegramFileGuardConfig: vi.fn(),
-    // Phase 30 plan 04: DeliveryService factory + no-op queue used by the
-    // composition root.
+    // DeliveryService factory + no-op queue used by the composition root.
     createDeliveryService: vi.fn(() => ({
       deliverToChannel: vi.fn(async (adapter: any, channelId: string, text: string) => {
         await adapter.sendMessage(channelId, text);
@@ -127,7 +125,7 @@ vi.mock("@comis/skills", () => ({
 
 import { setupChannels, type ChannelsDeps } from "./index.js";
 import { bootstrapAdapters } from "../setup-channels-adapters.js";
-// Phase 32 commit 4: createChannelManager moved with channel-manager.ts to @comis/orchestrator.
+// createChannelManager lives in @comis/orchestrator (alongside channel-manager.ts).
 import { createChannelManager } from "@comis/orchestrator";
 
 // ---------------------------------------------------------------------------
@@ -180,7 +178,7 @@ function makeContainer(): { container: AppContainer; eventHandlers: EventHandler
       }),
       emit: vi.fn(),
     },
-    // Phase 30 plan 04: setup-channels constructs DeliveryService via
+    // setup-channels constructs DeliveryService via
     // createDeliveryService({ hookRunner: container.hookRunner, ... }). Mocked
     // here so the composition-root construction step doesn't blow up.
     hookRunner: { runBeforeDelivery: vi.fn(), runAfterDelivery: vi.fn() },

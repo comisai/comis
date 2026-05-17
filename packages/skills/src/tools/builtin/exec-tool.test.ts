@@ -897,8 +897,7 @@ describe("createExecTool", () => {
       // Verify the dead code (fullOutputBuf.length > MAX_PERSIST_BYTES) has been removed
       // by checking the source code structure. The _spillCapped flag is the correct driver.
       const sourceDir = dirname(fileURLToPath(import.meta.url));
-      // Phase 43 plan 02a (FILE-SPLIT-02): foreground-mode persistence logic
-      // moved from exec-tool.ts to exec-tool/exec-foreground.ts.
+      // Foreground-mode persistence logic lives at exec-tool/exec-foreground.ts.
       const sourceCode = readFileSync(join(sourceDir, "exec-tool", "exec-foreground.ts"), "utf-8");
       // The old dead code pattern should NOT exist
       expect(sourceCode).not.toContain("fullOutputBuf.length > MAX_PERSIST_BYTES");
@@ -1291,7 +1290,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
     expect(details.exitCode).toBe(42);
   });
 
-  it("stderr is captured", async () => {
+  it("captures stderr output from the executed command", async () => {
     const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", { command: "echo compat-err >&2" });
     const details = result.details as { stderr: string };
@@ -2160,8 +2159,7 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner", () =>
     const path = await import("node:path");
     const url = await import("node:url");
     const here = path.dirname(url.fileURLToPath(import.meta.url));
-    // Phase 43 plan 02a (FILE-SPLIT-02): escalateToBackground moved to
-    // exec-tool/exec-background.ts in the subdirectory split.
+    // escalateToBackground lives at exec-tool/exec-background.ts.
     const src = fs.readFileSync(path.resolve(here, "exec-tool", "exec-background.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -2183,8 +2181,7 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner", () =>
     const path = await import("node:path");
     const url = await import("node:url");
     const here = path.dirname(url.fileURLToPath(import.meta.url));
-    // Phase 43 plan 02a (FILE-SPLIT-02): buildExecEnv (data-env merge site)
-    // moved to exec-tool/exec-shared.ts in the subdirectory split.
+    // buildExecEnv (data-env merge site) lives at exec-tool/exec-shared.ts.
     const src = fs.readFileSync(path.resolve(here, "exec-tool", "exec-shared.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")

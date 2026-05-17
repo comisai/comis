@@ -4,10 +4,9 @@
  *
  * Gated by the `COMIS_TEST_SILENT_FAIL_FLAG` environment variable (which
  * names a file path). When the env var is set AND that file exists, the
- * next call to tryInjectSilentFailure() consumes the file atomically and
- * returns a synthetic silent-LLM-failure result. This lets operators
- * validate the FINDING-2 retry/reuseSessionKey code path end-to-end
- * without waiting for Anthropic's real API to fail silently.
+ * next call to tryInjectSilentFailure() consumes the file atomically and * returns a synthetic silent-LLM-failure result. This lets operators
+ * validate the silent-failure retry / reuseSessionKey code path
+ * end-to-end without waiting for Anthropic's real API to fail silently.
  *
  * Safety:
  * - Env var is ABSENT in every shipped config (installer, examples, docs).
@@ -51,7 +50,7 @@ interface Logger {
  * through to real execution.
  *
  * @param logger - For WARN on successful injection, DEBUG on unexpected FS errors.
- * @param env - EnvPort for reading the test-only fault flag env vars (Phase 39 PORTS-12).
+ * @param env - EnvPort for reading the test-only fault flag env vars.
  * @param context - Extra fields attached to the WARN log (agentId, sessionKey, etc.).
  * @returns SilentFailureInjection when fault fired; undefined otherwise.
  */
@@ -60,7 +59,7 @@ export function tryInjectSilentFailure(
   env: EnvPort,
   context: Record<string, unknown> = {},
 ): SilentFailureInjection | undefined {
-  // Phase 39 PORTS-12: env reads via injected port (was process.env).
+  // Env reads via injected port (not process.env) so tests can stub.
   const faultFlag = env.get("COMIS_TEST_SILENT_FAIL_FLAG");
   if (!faultFlag) return undefined;
 
@@ -107,7 +106,7 @@ export function tryInjectSilentFailure(
   logger.warn(
     {
       ...context,
-      hint: "COMIS_TEST_SILENT_FAIL_FLAG consumed -- this turn returns synthetic error for FINDING-2 retry-path testing",
+      hint: "COMIS_TEST_SILENT_FAIL_FLAG consumed -- this turn returns synthetic error for silent-failure retry-path testing",
       errorKind: "dependency" as const,
     },
     "Synthetic silent LLM failure injected for retry-path testing",

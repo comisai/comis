@@ -3,7 +3,7 @@
  * Unit tests for bootstrapSession + decodeExecutionOverrides — pre-lock
  * setup helpers.
  *
- * Closure-extracted helpers (state-first per EXEC-SPLIT-06): tests cover
+ * Closure-extracted helpers (state-first): tests cover
  * (a) bootstrap result shape (ExecutionResult init + sep flag + plan ref),
  * (b) override decode writes to MutableRefs not via closure capture.
  *
@@ -53,7 +53,7 @@ const baseConfig = {
   sep: { enabled: true },
 } as unknown as PerAgentConfig;
 
-describe("bootstrapSession (EXEC-SPLIT-06)", () => {
+describe("bootstrapSession", () => {
   it("returns initialized ExecutionResult + sep flag + executionPlanRef", async () => {
     const resolveProviderApiKey = vi.fn().mockResolvedValue("api-key");
     const deps = {
@@ -86,7 +86,7 @@ describe("bootstrapSession (EXEC-SPLIT-06)", () => {
   });
 });
 
-describe("decodeExecutionOverrides (EXEC-SPLIT-06)", () => {
+describe("decodeExecutionOverrides", () => {
   it("writes cacheRetention to the MutableRef from overrides", () => {
     const cacheRetentionRef = makeRef<CacheRetention | undefined>(undefined);
     const adaptiveRetentionRef = makeRef<AdaptiveCacheRetention | undefined>(undefined);

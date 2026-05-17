@@ -13,7 +13,7 @@ import type { EmbeddingPort, ClockPort } from "@comis/core";
 import { createEmbeddingCircuitBreaker } from "./setup-memory.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
-// Phase 39 PORTS-11: test clock.
+// Test clock.
 const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 // ---------------------------------------------------------------------------

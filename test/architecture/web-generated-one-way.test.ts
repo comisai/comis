@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WEB-CONTRACTS-16 lock-in: code generation is ONE-WAY (core → web).
+ * Code generation is ONE-WAY (core → web).
  *
  * `packages/web/src/api/contracts.generated.{ts,json,size.json}` is the
  * codegen output of `pnpm contracts:generate` — it is consumed by the web
@@ -14,8 +14,6 @@
  * than `@comis/web` and asserts no source file imports any path matching
  * `web/src/api/contracts.generated`. Empty allowlist; defense-in-depth
  * against any future PR that would create a back-edge.
- *
- * RESEARCH §"WEB-CONTRACTS-16: Generation is one-way" (line 107).
  *
  * @module
  */
@@ -58,7 +56,7 @@ const WEB_PACKAGE = "web";
  */
 const ONE_WAY_VIOLATION_PATTERN = /["'][^"']*web\/src\/api\/contracts\.generated/;
 
-describe("Web contracts.generated.* is consumed ONE-WAY (WEB-CONTRACTS-16)", () => {
+describe("Web contracts.generated.* is consumed ONE-WAY", () => {
   it("no workspace package OTHER than @comis/web imports from web/src/api/contracts.generated", () => {
     const offenders = findBackEdgeImports();
     expect(
@@ -67,7 +65,7 @@ describe("Web contracts.generated.* is consumed ONE-WAY (WEB-CONTRACTS-16)", () 
         description: `Code generation is one-way (core → web). No workspace package other than @comis/web may import from packages/web/src/api/contracts.generated.* — that would invert the codegen seam.`,
         violations: offenders.map((o) => ({ file: o.file, line: o.line, snippet: o.snippet })),
         suggestedFix: `If the server side needs the same contract data, import API_CONTRACTS / API_CONTRACTS_ORDERED from @comis/core/api-contracts (the SOURCE of the codegen, not its OUTPUT). The generated artifact is for the browser only.`,
-        designRef: "WEB-CONTRACTS-16 — Phase 35 RESEARCH §'Generation is one-way' (line 107)",
+        designRef: "Code generation is one-way (core → web); the browser-side artifact has no server-side consumers",
       }),
     ).toEqual([]);
     // Sanity: we actually walked at least one non-web package, otherwise

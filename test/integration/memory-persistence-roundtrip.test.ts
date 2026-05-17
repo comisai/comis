@@ -2,8 +2,7 @@
 /**
  * INTEGRATION: memory persistence roundtrip — real SQLite, close & reopen.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts integration-tier coverage
- * for `@comis/memory` (currently 51.12% — needs ~29pp). Exercises the
+ * Lifts integration-tier coverage for `@comis/memory`. Exercises the
  * production `SqliteMemoryAdapter` against a real SQLite database in
  * a vitest tmp dir (NOT ~/.comis/), proves entries survive close+reopen,
  * and runs hybrid search across the persisted store.

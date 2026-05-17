@@ -11,8 +11,8 @@ import type { BackgroundTasksConfig, ClockPort, TimerPort, TimerHandle } from "@
 import type { BackgroundTaskOrigin } from "./background-task-types.js";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight port wrappers that delegate to globals so
-// vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
+// Lightweight port wrappers that delegate to globals so vi.useFakeTimers()
+// continues to intercept Date.now / setTimeout below.
 // ---------------------------------------------------------------------------
 
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {

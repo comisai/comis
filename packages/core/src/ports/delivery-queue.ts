@@ -8,8 +8,8 @@
  *
  * Crash-Safe Delivery Queue.
  *
- * The createNoOpDeliveryQueue() factory lives at ../delivery/no-op-delivery-queue.ts
- * as of Phase 28 commit 1 (closes L15 per CORE-PORTS-01); this file is now type-only.
+ * The createNoOpDeliveryQueue() factory lives at ../delivery/no-op-delivery-queue.ts;
+ * this file is now type-only.
  *
  * @module
  */

@@ -3,31 +3,15 @@
  * Observability-domain RPC contracts. Mirrors
  * `packages/daemon/src/api/obs-handlers.ts`.
  *
- * Phase 35 Wave C plan 35-12 (Wave C domain #7). The obs-handlers.ts
- * factory exposes 18 admin-scoped methods. Every method is gated by
- * `registerRpcPassthrough(..., "admin")` in
- * `packages/daemon/src/wiring/setup-gateway-api.ts` lines 116–124, so
- * every contract carries `scopes: ["admin"] as const`. Most methods
- * additionally perform an in-handler `_trustLevel === "admin"` check
- * for defense in depth; two methods (`obs.context.pipeline` +
- * `obs.context.dag`) rely SOLELY on the gateway-router scope gate (no
- * in-handler check — handler bodies pass through directly to the
- * context-pipeline collector).
- *
- * **Plan-vs-reality count correction (Rule 1 auto-fix).** The plan's
- * `<truths>` block stated "~22 contracts" and asserted `obs.diagnostics`
- * was already migrated by Plan 35-06. Reality:
- *   - `packages/daemon/src/api/obs-handlers.ts` lists **18 methods**
- *     (head-of-file comment says "13 handlers" but that comment is
- *     stale — the file has grown since the Phase-424 dual-source
- *     refactor).
- *   - `obs.diagnostics` is in `obs-handlers.ts` (NOT
- *     `daemon-handlers.ts`); the daemon.ts contract file's comment
- *     correctly notes it lives in a "different handler factory file"
- *     and is deferred to a later Wave C plan.
- *   - Grep across `packages/core/src/api-contracts/*.ts` confirms NO
- *     existing `obs.*` / `agent.cacheStats` / `memory.embeddingCache`
- *     contract — all 18 methods land here.
+ * The obs-handlers.ts factory exposes 18 admin-scoped methods. Every
+ * method is gated by `registerRpcPassthrough(..., "admin")` in
+ * `packages/daemon/src/wiring/setup-gateway-api.ts`, so every contract
+ * carries `scopes: ["admin"] as const`. Most methods additionally
+ * perform an in-handler `_trustLevel === "admin"` check for defense in
+ * depth; two methods (`obs.context.pipeline` + `obs.context.dag`) rely
+ * SOLELY on the gateway-router scope gate (no in-handler check —
+ * handler bodies pass through directly to the context-pipeline
+ * collector).
  *
  * The 18 methods (alphabetical within sub-group):
  *
@@ -35,7 +19,7 @@
  *   - `obs.diagnostics` (admin) — Query diagnostic events by
  *     category / time / limit. Returns `{ events, counts }` where
  *     `events` is a merged array (in-memory + SQLite) of
- *     DiagnosticEvent objects (loose-modeled per D-05).
+ *     DiagnosticEvent objects (loose-modeled).
  *
  *   Billing (5):
  *   - `obs.billing.byProvider` (admin) — `{ providers: ProviderBilling[] }`.
@@ -68,14 +52,14 @@
  *   - `obs.reset`        (admin) — `{ reset: true, rowsDeleted }`.
  *   - `obs.reset.table`  (admin) — `{ reset: true, table, rowsDeleted }`.
  *
- * **D-05 loose-record use.** Many response shapes (DiagnosticEvent,
+ * **Loose-record use.** Many response shapes (DiagnosticEvent,
  * DeliveryContext, ChannelActivity, ProviderBilling, PipelineSnapshot,
  * DagCompactionSnapshot) carry deeply nested fields, optional members,
  * and `Record<string, unknown>` sub-fields (e.g.,
  * `DiagnosticEvent.data`, `DeliveryContext.metadata`,
  * `PipelineSnapshot.evictionCategories`). Modelling them tighter would
- * require pinning every sub-shape's wire format — out of scope per
- * D-05. The escape hatch is `z.record(z.string(), z.unknown())` (and
+ * require pinning every sub-shape's wire format. The escape hatch is
+ * `z.record(z.string(), z.unknown())` (and
  * `z.array(z.record(z.string(), z.unknown()))` for array-valued
  * payloads). All wire-observable shapes pass through this projection
  * cleanly because the handler's TypeScript types are structurally
@@ -83,8 +67,8 @@
  * suite (61 tests in obs-handlers.test.ts) remains the authoritative
  * shape validator.
  *
- * **BLOCKER 1 exemption (web-SPA only — verified via empty grep).**
- * The CLI has ZERO `client.call("obs.*"|"agent.cacheStats"|"memory.embeddingCache", ...)`
+ * **CLI exemption (web-SPA only — verified via empty grep).** The CLI
+ * has ZERO `client.call("obs.*"|"agent.cacheStats"|"memory.embeddingCache", ...)`
  * sites — confirmed by:
  *   ```
  *   grep -rln 'client\.call("obs\.\|client\.call("agent\.cacheStats\|client\.call("memory\.embeddingCache' packages/cli/src/
@@ -93,22 +77,20 @@
  *
  * The 18 observability methods are dispatched ONLY from the web SPA
  * (`packages/web/src/views/`) where the contract registry is consumed
- * via the codegen-generated artifact (Wave D — packages/web/src/api/
+ * via the codegen-generated artifact (packages/web/src/api/
  * contracts.generated.ts). The CLI doctor probes consume the
  * OAuthCredentialStorePort directly (NOT via obs.*) — see
  * `packages/cli/src/doctor/checks/oauth-health.ts` which has zero
- * obs/agent/memory RPC calls. The same BLOCKER 1 exemption pattern
- * established by Plans 35-09 (tokens) and 35-10 (mcp) applies here.
+ * obs/agent/memory RPC calls.
  *
  * **Two in-handler-admin-check exceptions (`obs.context.*`).** Both
  * `obs.context.pipeline` and `obs.context.dag` lack an explicit
- * `if (_trustLevel !== "admin") throw …` check in the handler body
- * (obs-handlers.ts lines 484–497). They rely on the gateway router's
- * `registerRpcPassthrough(..., "admin")` registration as the sole
- * trust gate. The contract `scopes: ["admin"]` is consistent with the
- * gateway-side gate; the test suite at obs-handlers.test.ts:643-694
- * deliberately calls these handlers without `_trustLevel` and expects
- * success — preserving this contract makes the contract layer
+ * `if (_trustLevel !== "admin") throw …` check in the handler body.
+ * They rely on the gateway router's `registerRpcPassthrough(..., "admin")`
+ * registration as the sole trust gate. The contract `scopes: ["admin"]`
+ * is consistent with the gateway-side gate; the test suite deliberately
+ * calls these handlers without `_trustLevel` and expects success —
+ * preserving this contract makes the contract layer
  * registration-plane-agnostic.
  *
  * @module
@@ -117,7 +99,7 @@ import { z } from "zod";
 import { defineContract } from "./types.js";
 
 // ---------------------------------------------------------------------------
-// Shared sub-schemas — D-05 loose-record projection.
+// Shared sub-schemas — loose-record projection.
 // ---------------------------------------------------------------------------
 
 /**
@@ -128,12 +110,11 @@ import { defineContract } from "./types.js";
  * modeling tightly would require pinning every sub-shape's wire
  * format and breaking the contract on every minor handler addition.
  *
- * Per D-05, `z.record(z.string(), z.unknown())` is the documented
- * escape hatch for arbitrary-shaped record payloads. The handler's
- * TypeScript types remain authoritative — the contract is type
- * narrowing + defense-in-depth + a dev-mode response.parse() gate
- * that catches the "field with wrong primitive type" class of
- * regressions.
+ * `z.record(z.string(), z.unknown())` is the documented escape hatch
+ * for arbitrary-shaped record payloads. The handler's TypeScript
+ * types remain authoritative — the contract is type narrowing +
+ * defense-in-depth + a dev-mode response.parse() gate that catches
+ * the "field with wrong primitive type" class of regressions.
  */
 const ObsRecord = z.record(z.string(), z.unknown());
 
@@ -188,7 +169,7 @@ const DiagnosticCategorySchema = z.enum(["usage", "webhook", "message", "session
  * handler converts via `Date.now() - sinceMs` for the SQLite query).
  *
  * Response: `{ events, counts }` where `events` is a merged array
- * of DiagnosticEvent-shaped rows (loose per D-05) sorted by
+ * of DiagnosticEvent-shaped rows (loose-modeled) sorted by
  * `timestamp` desc, and `counts` is a `Record<category, number>`
  * snapshot returned by `diagnosticCollector.getCounts()`.
  */
@@ -220,7 +201,7 @@ export const ObsDiagnosticsContract = defineContract({
  * Response: `{ providers: ProviderBilling[] }`. Each row carries
  * `{ provider, totalCost, totalTokens, callCount, totalCacheSaved?,
  *   models: Array<{ model, cost, tokens, calls }> }` — modeled loose
- * per D-05 (nested model array would otherwise require tight pinning).
+ * (nested model array would otherwise require tight pinning).
  */
 export const ObsBillingByProviderContract = defineContract({
   method: "obs.billing.byProvider",
@@ -303,7 +284,7 @@ export const ObsBillingBySessionContract = defineContract({
  * Request: `{ sinceMs? }`.
  *
  * Response: BillingSnapshot directly (handler:301-306). Includes
- * `totalCacheSaved` aggregation introduced by Phase 424.
+ * `totalCacheSaved` aggregation.
  */
 export const ObsBillingTotalContract = defineContract({
   method: "obs.billing.total",
@@ -328,7 +309,7 @@ export const ObsBillingTotalContract = defineContract({
  * Response: Array of `{ hour, tokens }` (TokenUsagePoint[]) — the
  * handler returns the bare array (handler:335). Modeled as
  * `z.array(z.record(z.string(), z.unknown()))` per the
- * array-of-loose-records pattern (D-05).
+ * array-of-loose-records pattern.
  *
  * Note: at the contract level the bare array-of-records is the
  * response root. `z.array` IS in the 12-shape allowlist; root-level
@@ -354,8 +335,8 @@ export const ObsBillingUsage24hContract = defineContract({
  *
  * Response: `{ channels: ChannelActivity[] }`. Each row carries
  * `{ channelId, channelType, lastActiveAt, messagesSent,
- *   messagesReceived }` — modeled loose per D-05 (uniform with the
- * other channel shapes).
+ *   messagesReceived }` — modeled loose (uniform with the other
+ * channel shapes).
  */
 export const ObsChannelsAllContract = defineContract({
   method: "obs.channels.all",
@@ -432,7 +413,7 @@ export const ObsChannelsGetContract = defineContract({
  *
  * Response: `{ deliveries: DeliveryContext[] }` (handler:447). Each
  * row carries 11+ fields including a nested `steps` array and
- * `metadata` record — modeled loose per D-05.
+ * `metadata` record — modeled loose.
  */
 export const ObsDeliveryRecentContract = defineContract({
   method: "obs.delivery.recent",
@@ -481,10 +462,10 @@ export const ObsDeliveryStatsContract = defineContract({
  * `obs.context.pipeline` — Context engine pipeline snapshots
  * (PipelineSnapshot ring buffer). Admin scope at the gateway router
  * — handler body has NO in-handler `_trustLevel` check (the gateway
- * router's `registerRpcPassthrough(..., "admin")` registration at
- * setup-gateway-api.ts:121-122 is the sole gate). The contract
- * scope reflects the gateway-level gate; the bidirectional 1:1
- * architecture test is registration-plane-agnostic.
+ * router's `registerRpcPassthrough(..., "admin")` registration is
+ * the sole gate). The contract scope reflects the gateway-level
+ * gate; the bidirectional 1:1 architecture test is
+ * registration-plane-agnostic.
  *
  * Request: `{ agentId?, limit? }`.
  *
@@ -492,7 +473,7 @@ export const ObsDeliveryStatsContract = defineContract({
  * Returns `[]` when `contextPipelineCollector` is undefined
  * (handler:487 nullish-coalesce). PipelineSnapshot has 14+ fields
  * including nested `layers` array + `evictionCategories` record —
- * modeled loose per D-05.
+ * modeled loose.
  */
 export const ObsContextPipelineContract = defineContract({
   method: "obs.context.pipeline",
@@ -518,7 +499,7 @@ export const ObsContextPipelineContract = defineContract({
  *
  * Response: Bare array of DagCompactionSnapshot rows (handler:496).
  * Returns `[]` when `contextPipelineCollector` is undefined.
- * DagCompactionSnapshot has 8 fields — modeled loose per D-05.
+ * DagCompactionSnapshot has 8 fields — modeled loose.
  */
 export const ObsContextDagContract = defineContract({
   method: "obs.context.dag",
@@ -543,7 +524,7 @@ export const ObsContextDagContract = defineContract({
  *
  * Response: `{ providers, totalCacheSaved }`. Each row in `providers`
  * carries `{ provider, model, callCount, totalCost, totalCacheSaved,
- *   cacheHitRate }` (handler:516-525) — modeled loose per D-05.
+ *   cacheHitRate }` (handler:516-525) — modeled loose.
  * `totalCacheSaved` is the sum across all rows (handler:527).
  *
  * Returns `{ providers: [], totalCacheSaved: 0 }` when `obsStore`
@@ -703,10 +684,6 @@ export const ObsResetTableContract = defineContract({
  * Observability contract array. Registered into
  * `API_CONTRACTS_ORDERED` by
  * `packages/core/src/api-contracts/index.ts`.
- *
- * Plan 35-19 (Wave C closure) supersedes the placeholder aggregation
- * in `index.ts` with the final alphabetical aggregation across all
- * 14 domains — this array remains unchanged.
  *
  * Order: alphabetical by method name. The bidirectional 1:1
  * architecture test treats this array as an unordered set, so

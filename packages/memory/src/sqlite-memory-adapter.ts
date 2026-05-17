@@ -30,7 +30,7 @@ import { truncateForEmbedding } from "./embedding-batch-indexer.js";
 import { openSqliteDatabase } from "./sqlite-adapter-base.js";
 import { systemNowMs } from "@comis/core";
 
-// Row mappers (Phase 41 TS-HYG-03)
+// Row mappers
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
 const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
 
@@ -94,7 +94,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
       tx();
 
       const durationMs = systemNowMs() - startMs;
-      // Finding 14: hasEmbedding=false implies embedding will be queued for background generation
+      // hasEmbedding=false implies embedding will be queued for background generation
       this.logger?.debug({ durationMs, op: "store", hasEmbedding: !!entry.embedding, embeddingQueued: !entry.embedding, memoryType }, "Memory store complete");
       return ok(entry);
     } catch (e: unknown) {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Web search tool module (Phase 43 split per FILE-SPLIT-11).
+ * Web search tool module.
  *
  * Barrel + thin createWebSearchTool factory. The factory body delegates to:
  *   - `executeWebSearch` (web-search-formatting.ts) — orchestrator

@@ -4,15 +4,13 @@
  * text and rejects the prompt BEFORE any LLM call when the operator budget
  * would be exceeded.
  *
- * Phase 42 split per EXEC-SPLIT-07 — was lines 324-348 of the pre-split
- * `executor-prompt-runner.ts`. Pure function: returns either `{ kind: "ok" }`
- * or `{ kind: "rejected", result }` where the rejection result is the final
- * `PromptRunResult` the orchestrator must propagate. Side effects limited to
- * the `result` mutation that pre-split code performed in place (finishReason
- * + response) — kept identical for byte-parity with the integration suite.
+ * Pure function: returns either `{ kind: "ok" }` or `{ kind: "rejected", result }`
+ * where the rejection result is the final `PromptRunResult` the orchestrator
+ * must propagate. Side effects limited to the `result` mutation (finishReason +
+ * response) — kept for byte-parity with the integration suite.
  *
- * Per EXEC-SPLIT-08 this module imports types only from
- * `./prompt-runner-types.js` — never from `./prompt-runner.js`.
+ * Imports types only from `./prompt-runner-types.js` to avoid a cycle with
+ * `./prompt-runner.js`.
  *
  * @module
  */
@@ -30,7 +28,7 @@ export type BudgetPrecheckOutcome =
  * Estimate prompt cost and reject if it would exceed the operator's
  * configured budget. When `skipPrompt` is true (standalone /command),
  * the check is bypassed and the function returns `{ kind: "ok" }`
- * unconditionally — matching pre-split semantics.
+ * unconditionally.
  */
 export function precheckBudget(
   params: RunPromptParams,

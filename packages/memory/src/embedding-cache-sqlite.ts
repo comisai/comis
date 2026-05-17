@@ -22,7 +22,6 @@ import { systemClearInterval, systemNowMs, systemSetInterval } from "@comis/core
 import { createRowMapper } from "./row-mapper.js";
 import { BatchCacheRowSchema } from "./row-schemas.js";
 
-// Row mapper (Phase 41 TS-HYG-03)
 const batchCacheMapper = createRowMapper(BatchCacheRowSchema);
 
 // ---------------------------------------------------------------------------

@@ -5,9 +5,8 @@
  * Provides `comis sessions [list|inspect|delete]` subcommands
  * for managing conversation sessions via the daemon RPC interface.
  *
- * Phase 35 Wave C plan 35-19 (Wave C CLOSURE): retargets from raw
- * `client.call(...)` to typed `callTyped(client, <Contract>, params)`.
- * Three sites migrated: session.list, session.status, session.delete.
+ * Uses typed `callTyped(client, <Contract>, params)` for the three
+ * surfaces: session.list, session.status, session.delete.
  *
  * @module
  */
@@ -98,8 +97,6 @@ export function registerSessionsCommand(program: Command): void {
         // internal (which is auth-context-derived), not the public request.
         // The contract's `kind`/`since_minutes` fields are optional; the empty
         // request matches the default-list-all behavior.
-        // (Pre-Plan-35-19 sent `tenantId: options.tenant` which the daemon
-        // also ignored — same observable behavior, now via the typed contract.)
         const result = await withSpinner("Fetching sessions...", () =>
           withClient(async (client) => {
             return await callTyped(client, SessionListContract, {});
@@ -153,8 +150,7 @@ export function registerSessionsCommand(program: Command): void {
         // session.status returns agent/session runtime stats. The CLI's
         // `key` argument is currently a no-op against the contract — the
         // handler reads the agent context from the dispatcher-injected
-        // `_agentId` internal, not from a user-supplied key. Pre-Plan-35-19
-        // CLI sent `{ key }` which the daemon also ignored.
+        // `_agentId` internal, not from a user-supplied key.
         const statusResult = await withSpinner("Fetching session...", () =>
           withClient(async (client) => {
             return await callTyped(client, SessionStatusContract, {});
@@ -217,10 +213,7 @@ export function registerSessionsCommand(program: Command): void {
         await withSpinner("Deleting session...", () =>
           withClient(async (client) => {
             // The contract uses `session_key` (snake_case — matches the
-            // daemon handler parameter name). Pre-Plan-35-19 CLI sent
-            // `{ key }` which the daemon ignored, then the handler threw
-            // "Missing required parameter: session_key" — this fix makes
-            // the delete actually succeed.
+            // daemon handler parameter name).
             return await callTyped(client, SessionDeleteContract, {
               session_key: key,
             });

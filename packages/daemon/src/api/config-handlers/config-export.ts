@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
- * Config export / rollback / gc / restart RPC handlers (Phase 43 split per FILE-SPLIT-03).
+ * Config export / rollback / gc / restart RPC handlers.
  *
  * Whole-section + git-versioned + lifecycle handlers:
  *   - config.apply: replace an entire section (vs. config.patch's dot-merge)
@@ -77,7 +77,7 @@ export function bindConfigExportHandlers(
         );
       }
 
-      // Strip dispatcher internals + run contract parse (D-04 + D-05 loose record).
+      // Strip dispatcher internals + run contract parse (loose record).
       const userParams = stripInternalFields(rawParams);
       const params = ConfigApplyContract.request.parse(userParams);
 

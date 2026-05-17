@@ -9,11 +9,9 @@
  */
 
 import type { NormalizedMessage, SessionKey, ChannelPort } from "@comis/core";
-// Session-key builder retargeted from @comis/agent to relative orchestrator-internal
-// at Phase 32 commit 9 (ORCH-EXT-08; Wave B start). The builder + DmScopeMode type
-// moved to packages/orchestrator/src/session-key/session-key-builder.ts. Same D2
-// pattern (Wave 4/6/7/8): orchestrator's own TS build cannot import its own
-// published package name, so the retarget destination is the relative path.
+// Session-key builder lives at packages/orchestrator/src/session-key/session-key-builder.ts.
+// Orchestrator's own TS build cannot import its own published package name, so the import
+// must use the relative path.
 import { buildScopedSessionKey, extractThreadId } from "../session-key/session-key-builder.js";
 import type { DmScopeMode } from "../session-key/session-key-builder.js";
 import type { AgentExecutor } from "@comis/agent";

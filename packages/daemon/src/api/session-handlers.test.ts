@@ -1015,14 +1015,14 @@ describe("createSessionHandlers - session management", () => {
       expect(response.sessions[0]!).toHaveProperty("createdAt");
     });
 
-    // Deleted (Phase 38 BC-REM-15): "scopes results to caller agentId" and
-    // "agentId scoping works for search mode too" — these asserted on the
+    // Two tests removed: "scopes results to caller agentId" and "agentId
+    // scoping works for search mode too" — they asserted on the
     // session.search agentId filter at session-handlers.ts:445 which reads
     // `parsed?.agentId` from parseFormattedSessionKey output. The parser
-    // branch that extracted agentId from `agent:`-prefixed keys was deleted
-    // in BC-REM-15 (INTENTIONAL BREAK #1). The filter still runs but
-    // `parsed?.agentId` is always undefined post-deletion, so the filter
-    // behavior the tests asserted is no longer the production behavior.
+    // branch that extracted agentId from `agent:`-prefixed keys was
+    // deleted (intentional break). The filter still runs but
+    // `parsed?.agentId` is always undefined, so the filter behavior the
+    // tests asserted is no longer the production behavior.
 
     it("returns raw snippets when summarizeSession is undefined", async () => {
       const deps = makeScopedDeps();

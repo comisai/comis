@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Channel management RPC handler module.
  * Handles all channel management RPC methods:
@@ -9,13 +9,12 @@
  * Extracted into its own module following the factory pattern from
  * memory-handlers.ts for independent testability.
  *
- * Phase 35 Wave C plan 35-17: refactored to computed-property keys
- * `[<Contract>.method]:` so the bidirectional 1:1 architecture test
- * resolves them to the registry. Per-method pipeline: bespoke pre-Zod
- * guards FIRST (using rawParams reads — preserves user-friendly error
- * messages matching the existing handler-test assertions) →
- * stripInternalFields → request.parse → existing business logic
- * UNCHANGED → dev-mode response.parse (D-10).
+ * Handlers use computed-property keys (`[<Contract>.method]:`) so the
+ * bidirectional 1:1 architecture test resolves them to the registry.
+ * Per-method pipeline: bespoke pre-Zod guards FIRST (using rawParams
+ * reads — preserves user-friendly error messages matching the existing
+ * handler-test assertions) → stripInternalFields → request.parse →
+ * existing business logic UNCHANGED → dev-mode response.parse.
  *
  * @module
  */
@@ -39,7 +38,7 @@ import { persistToConfig } from "./shared/persist-to-config.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**
@@ -53,9 +52,9 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
-// Single source of truth: ChannelsApiDeps (shared with message-handlers).
-// DAEMON-API-03 Option A retarget — handler bodies and call sites unchanged.
+// Re-aliased from the cluster slice in api/types.ts. Single source of truth:
+// ChannelsApiDeps (shared with message-handlers). Handler bodies and call
+// sites unchanged.
 import type { ChannelsApiDeps as ChannelHandlerDeps } from "./types.js";
 export type { ChannelHandlerDeps };
 

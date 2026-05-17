@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: gateway routes wiring re-raise; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
+// @allow-throw: gateway routes wiring re-raise; consumed at daemon.ts bootstrap catch boundary.
 /**
  * Gateway HTTP routes + server lifecycle orchestrator.
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-gateway.ts.
  * Hosts the top-level `setupGateway` orchestrator that composes the rpc
  * + admin leaves: builds the dynamic router (rpc), wires the gateway
  * server (with optional web dashboard), mounts all HTTP routes via
@@ -12,8 +11,8 @@
  * NOTE on naming: this leaf is named `setup-gateway-routes.ts` because the
  * concern is HTTP route binding + server lifecycle. The sibling
  * `packages/daemon/src/wiring/setup-gateway-routes.ts` (one directory up)
- * is the older HTTP-route-implementation helper (`mountGatewayRoutes`) that
- * predates Phase 43 — this leaf imports from it via `../setup-gateway-routes.js`.
+ * is the older HTTP-route-implementation helper (`mountGatewayRoutes`) —
+ * this leaf imports from it via `../setup-gateway-routes.js`.
  *
  * @module
  */

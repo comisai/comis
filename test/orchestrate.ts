@@ -59,13 +59,13 @@ interface VitestJsonOutput {
 }
 
 // ---------------------------------------------------------------------------
-// --check-matrix flag (COV-14)
+// --check-matrix flag
 //
 // Inspect test/e2e/flow-matrix.ts and exit non-zero if any cell is unsettled.
 // Skips the integration-test run. Mirrors the invariants enforced by
-// test/architecture/e2e-matrix.test.ts (COV-13) — the two enforcement paths
-// are redundant by design (threat-model T-40-08-03): even if a contributor
-// removes this flag handling, the architecture test still catches drift.
+// test/architecture/e2e-matrix.test.ts — the two enforcement paths are
+// redundant by design: even if a contributor removes this flag handling,
+// the architecture test still catches drift.
 //
 // Branch placement: TOP of the script (before the banner) so the matrix
 // check is a fast-path that never spawns vitest. Argument parsing uses

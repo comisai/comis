@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PORTS-16 leaf-package invariant for `@comis/shared`.
+ * Leaf-package invariant for `@comis/shared`.
  *
  * `@comis/shared` is the inward-most leaf of the dependency graph (depended on
  * by `@comis/core` and everything downstream). It MUST NOT import from
@@ -11,12 +11,11 @@
  * source import (including subpath imports like `@comis/core/runtime`) and
  * fails the build on any non-zero match.
  *
- * Closure gate: Phase 39 (PORTS) Plan 39-09 — the third closure gate of the
- * phase. Plan 39-08 reshaped `@comis/shared`'s `withTimeout` and
- * `createTTLCache` utilities to accept their time/timer dependencies via bare
- * structural callback parameters (`(cb, ms) => () => void` and `() => number`),
- * preserving the leaf invariant. This test makes that invariant a build-failing
- * regression ratchet.
+ * `@comis/shared`'s `withTimeout` and `createTTLCache` utilities accept
+ * their time/timer dependencies via bare structural callback parameters
+ * (`(cb, ms) => () => void` and `() => number`), preserving the leaf
+ * invariant. This test makes that invariant a build-failing regression
+ * ratchet.
  *
  * @module
  */
@@ -42,7 +41,7 @@ function listTsFiles(dir: string): string[] {
   return out;
 }
 
-describe("PORTS-16: @comis/shared remains leaf (zero @comis/core source imports)", () => {
+describe("@comis/shared remains leaf (zero @comis/core source imports)", () => {
   it("packages/shared/src/**/*.ts has zero `from \"@comis/core\"` imports", () => {
     const files = listTsFiles(SHARED_SRC);
     const offenders: string[] = [];

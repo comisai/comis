@@ -97,10 +97,9 @@ describe("validateLineCredentials", () => {
     }
   });
 
-  it("passes baseURL to MessagingApiClient when apiRoot is provided (COV-15 E2E seam)", async () => {
-    // Phase 40 / Plan 40-09 / COV-15: apiRoot threads through as
-    // httpClientConfig.baseURL so getBotInfo() hits the 127.0.0.1 mock
-    // instead of api.line.me.
+  it("passes baseURL to MessagingApiClient when apiRoot is provided (E2E seam)", async () => {
+    // apiRoot threads through as httpClientConfig.baseURL so getBotInfo()
+    // hits the 127.0.0.1 mock instead of api.line.me.
     mockGetBotInfo.mockResolvedValueOnce({
       displayName: "Mock", userId: "U", basicId: "@m", chatMode: "bot", markAsReadMode: "auto",
     });

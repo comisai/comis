@@ -27,11 +27,11 @@ import {
 } from "@mariozechner/pi-ai/oauth";
 import type { FileLockPort } from "@comis/core";
 
-// Per Phase 32 commit 12 (ORCH-EXT-15) the production OAuthTokenManager no
-// longer imports `@comis/scheduler`'s `createFileLock` directly — it consumes
-// a `FileLockPort` from `OAuthTokenManagerDeps.fileLock`. The shared
-// `mockWithLock` spy is now exposed via the deps `fileLock` field constructed
-// inside `legacyOAuthDeps()` and `makeFileLockStub()`.
+// The production OAuthTokenManager does not import `@comis/scheduler`'s
+// `createFileLock` directly — it consumes a `FileLockPort` from
+// `OAuthTokenManagerDeps.fileLock`. The shared `mockWithLock` spy is exposed
+// via the deps `fileLock` field constructed inside `legacyOAuthDeps()` and
+// `makeFileLockStub()`.
 //
 // `mockWithLock` invokes the supplied callback inline, so refresh-path tests
 // observe the same control flow they did under the previous scheduler-mock
@@ -1298,10 +1298,10 @@ describe("OAuthTokenManager — port-backed", () => {
   // ---------------------------------------------------------------------------
 
   describe("H. hot-path cache", () => {
-    // REMOVED (Phase 40 / COV-11 / plan 40-06): persisted-write cache-coherency
-    // is already exercised by two existing tests in this file and by the
-    // integration suite — adding a third assertion would duplicate coverage
-    // without strengthening the invariant.
+    // REMOVED: persisted-write cache-coherency is already exercised by two
+    // existing tests in this file and by the integration suite — adding a
+    // third assertion would duplicate coverage without strengthening the
+    // invariant.
     //
     //   1. Unit:        oauth-token-manager.test.ts line ~1920 "bypass success
     //      path — cache.set, store.set called, auth:token_rotated emitted"
@@ -2059,9 +2059,6 @@ describe("refresh_token_reused detection", () => {
 
     // Lock contract: every refresh attempt invokes fileLock.withLock with the
     // per-profile sentinel path. Two parallel callers → two lock acquisitions.
-    // (Phase 32 commit 13 will route this through the FileLockPort via the
-    // composition root, at which point the mock surface itself moves up to the
-    // port boundary.)
     expect(mockWithLock).toHaveBeenCalledTimes(2);
     const lockPath0 = mockWithLock.mock.calls[0]?.[0] as string;
     const lockPath1 = mockWithLock.mock.calls[1]?.[0] as string;

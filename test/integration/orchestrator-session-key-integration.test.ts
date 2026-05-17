@@ -2,9 +2,7 @@
 /**
  * INTEGRATION: orchestrator session-key — DM scope + thread isolation.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts integration-tier coverage
- * for `@comis/orchestrator` (currently 47.69% — needs ~32pp). Exercises
- * the production session-key builder + thread-id extractor against
+ * Exercises the production session-key builder + thread-id extractor against
  * realistic NormalizedMessage fixtures.
  *
  * @module

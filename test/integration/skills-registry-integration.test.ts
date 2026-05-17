@@ -2,8 +2,7 @@
 /**
  * INTEGRATION: skills registry — discovery + prompt invocation.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts integration-tier coverage
- * for `@comis/skills` (currently 27.83% — needs ~52pp). Drives the
+ * Lifts integration-tier coverage for `@comis/skills`. Drives the
  * production `createSkillRegistry` + `expandSkillForInvocation` against
  * a real filesystem in vitest's tmp dir.
  *

@@ -2,8 +2,7 @@
 /**
  * INTEGRATION: agent safety primitives — circuit-breaker + tool-output-safety.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts integration-tier coverage
- * for `@comis/agent` (currently 44.34% — needs ~36pp). Exercises:
+ * Exercises:
  *   - createCircuitBreaker lifecycle (open → halfOpen → closed)
  *   - sanitizeToolOutput against the canonical instruction patterns
  *   - createToolImageSanitizer pass-through

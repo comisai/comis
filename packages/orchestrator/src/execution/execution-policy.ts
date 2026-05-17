@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Execution Pipeline Phase 1: Send Policy and Trust Routing.
+ * Execution pipeline send-policy + trust-routing stage.
  *
  * Evaluates the send policy gate, resolves sender trust level,
  * and applies elevated reply model/prompt routing.

@@ -2,9 +2,8 @@
 /**
  * INTEGRATION: Signal channel — signal-cli HTTP/SSE adapter integration.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts coverage on the
- * `@comis/channels` Signal subpackage by spawning the production adapter
- * against the loopback-bound signal-cli mock.
+ * Spawns the production `@comis/channels` Signal adapter against the
+ * loopback-bound signal-cli mock to lift coverage on the Signal subpackage.
  *
  * @module
  */

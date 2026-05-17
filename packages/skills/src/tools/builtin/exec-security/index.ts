@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Exec command security module (Phase 43 split per FILE-SPLIT-11).
+ * Exec command security module.
  *
- * Barrel re-export of the canonical public API of the former
- * exec-security.ts (1,153L) monolith. No aliases — every export keeps its
- * canonical name. Internal layer order: sandbox (low-level primitives) →
- * pre-check (pre-pipeline gates) → allowlist (denylist + pipeline + exit
- * codes). The barrel re-exports the union of all three.
+ * Barrel re-export of the canonical public API. No aliases — every export
+ * keeps its canonical name. Internal layer order: sandbox (low-level
+ * primitives) → pre-check (pre-pipeline gates) → allowlist (denylist +
+ * pipeline + exit codes). The barrel re-exports the union of all three.
  *
  * @module
  */

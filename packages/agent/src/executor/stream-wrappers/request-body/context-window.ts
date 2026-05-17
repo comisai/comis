@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * 1M context-window beta-header injection + sticky-on beta-header latches
- * (Phase 42 split per EXEC-SPLIT-02).
+ * 1M context-window beta-header injection + sticky-on beta-header latches.
  *
- * Lifted verbatim from request-body-injector.ts. Exposes:
+ * Exposes:
  *  - `CONTEXT_1M_BETA` (internal, consumed by factory)
  *  - `sessionBetaHeaderLatches` (module-level state, mutated by factory)
  *  - `parseHeaderList` (internal helper, consumed by factory)

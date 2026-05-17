@@ -4,7 +4,7 @@
  *
  * Covers: runJinaSearch() with mocked fetch — JSON happy path, plain-text
  * fallback, API error payload detection, non-OK status, and missing-field
- * branches in the result mapper. Plan 40-11 branch-gap closure.
+ * branches in the result mapper.
  *
  * @module
  */

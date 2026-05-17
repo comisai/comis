@@ -21,7 +21,7 @@ import type { SessionLatch } from "./session-latch.js";
 import { createCacheBreakDetector } from "./cache-detection/index.js";
 
 // ---------------------------------------------------------------------------
-// Module-level clock provider (Phase 39 PORTS-11)
+// Module-level clock provider
 // ---------------------------------------------------------------------------
 // The executor session-state module holds module-level Maps (sessionDeliveredGuides,
 // sessionToolSchemaSnapshots, etc.) for cross-turn state. These can't accept
@@ -37,14 +37,14 @@ export function setSessionStateClock(clock: ClockPort): void {
 
 function getNow(): number {
   if (!moduleClock) {
-    // @allow-throw: module-level Map cannot return Result; surface mis-wiring at first access (Phase 39 PORTS-11)
+    // @allow-throw: module-level Map cannot return Result; surface mis-wiring at first access
     throw new Error("executor-session-state: clock not initialized — call setSessionStateClock() at daemon startup");
   }
   return moduleClock.now();
 }
 
 // ---------------------------------------------------------------------------
-// Design 4.1: Bounded session Maps with LRU eviction + TTL
+// Bounded session Maps with LRU eviction + TTL
 // ---------------------------------------------------------------------------
 
 /** Maximum number of entries per session state map before LRU eviction. */
@@ -425,7 +425,7 @@ let cacheBreakDetectorInstance: ReturnType<typeof createCacheBreakDetector> | un
 export function getCacheBreakDetector(logger: { debug: (...args: unknown[]) => void; info: (...args: unknown[]) => void }): ReturnType<typeof createCacheBreakDetector> {
   if (!cacheBreakDetectorInstance) {
     if (!moduleClock) {
-      // @allow-throw: module-level singleton cannot return Result; surface mis-wiring at first access (Phase 39 PORTS-11)
+      // @allow-throw: module-level singleton cannot return Result; surface mis-wiring at first access
       throw new Error("executor-session-state: clock not initialized — call setSessionStateClock() before getCacheBreakDetector()");
     }
     cacheBreakDetectorInstance = createCacheBreakDetector(logger, { clock: moduleClock });

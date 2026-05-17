@@ -2,19 +2,17 @@
 /**
  * Recursive walker over a Zod schema; throws on forbidden shapes.
  *
- * Phase 35 — WEB-CONTRACTS-11 (allowlist) + CONTEXT D-06 + D-07.
- *
  * Shared by:
- *   - scripts/contracts/generate-web-artifact.ts (codegen-time gate, Wave D)
- *   - test/architecture/api-contracts-allowlist.test.ts (pnpm test gate, Wave A)
+ *   - scripts/contracts/generate-web-artifact.ts (codegen-time gate)
+ *   - test/architecture/api-contracts-allowlist.test.ts (pnpm test gate)
  *
- * Walker placement per 35-PATTERNS.md OQ-1 option (a): scripts/contracts/ is
- * the codegen home; the architecture test imports it via relative cross-tree
- * path. Single-source-of-truth avoids drift.
+ * Placed under scripts/contracts/ — the codegen home; the architecture
+ * test imports it via relative cross-tree path. Single-source-of-truth
+ * avoids drift.
  *
  * ZodAny / ZodUnknown are NOT in the top-level allowlist — they only pass as
  * the value-type inside z.record(z.string(), z.unknown()) (the loose-modeling
- * escape hatch for graph.execute / config.patch per CONTEXT D-05).
+ * escape hatch for graph.execute / config.patch).
  *
  * @module
  */
@@ -53,8 +51,7 @@ export function assertOnlyAllowlistShapes(
     throw new Error(
       `Contract ${method} ${direction} at path [${path.join(".") || "<root>"}] uses ` +
         `forbidden Zod shape "${className}". Allowlist: ${[...SUPPORTED_SHAPE_NAMES].join(", ")}. ` +
-        `To extend the allowlist, edit scripts/contracts/supported-zod-shapes.ts and ` +
-        `update WEB-CONTRACTS-11 + 35-CONTEXT.md D-07.`,
+        `To extend the allowlist, edit scripts/contracts/supported-zod-shapes.ts.`,
     );
   }
   // Recurse into composite shapes.

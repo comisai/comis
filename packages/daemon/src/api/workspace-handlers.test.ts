@@ -5,8 +5,7 @@ import type { ComisLogger } from "@comis/infra";
 import type { PerAgentConfig } from "@comis/core";
 import { PathTraversalError } from "@comis/core";
 import { ok, err } from "@comis/shared";
-// Phase 35 Plan 35-04 (D-01 #5): workspace helpers relocated from @comis/agent
-// to @comis/core.
+// Workspace helpers live in @comis/core.
 import { DEFAULT_TEMPLATES, WORKSPACE_FILE_NAMES, WORKSPACE_SUBDIRS } from "@comis/core";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";

@@ -52,7 +52,7 @@ export function validateInput(params: {
   rateLimiter?: InjectionRateLimiter;
   eventBus: TypedEventBus;
   logger: ComisLogger;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
 }): InputGuardResult {
   const { msg, sessionKey, agentId, inputValidator, inputGuard, rateLimiter, eventBus, logger, clock } = params;

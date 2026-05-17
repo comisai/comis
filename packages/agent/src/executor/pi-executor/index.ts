@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PiExecutor factory + co-equal helpers (Phase 42 split per EXEC-SPLIT-05).
+ * PiExecutor factory + co-equal helpers.
  *
  * Named re-exports only — no `as` aliases. The canonical public names
  * (createPiExecutor + PiExecutorDeps + createBeforeToolCallGuard +
- * mergeSessionStats) are preserved byte-identical from the pre-split
- * `pi-executor.ts` so the EXEC-SPLIT-11 parity snapshot reproduces
- * verbatim post-split.
+ * mergeSessionStats) are preserved byte-identical so the parity snapshot
+ * reproduces verbatim.
  *
  * @module
  */

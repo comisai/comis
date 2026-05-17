@@ -1,23 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // @comis/core exports — Delivery primitives.
 //
-// Phase 30 plan 02 (CONFIG-DELIV-04, -05): the channel-platform-agnostic
-// delivery helpers (formatForChannel, chunkForDelivery, chunkBlocks,
-// RetryEngine, isPermanentError) moved from @comis/channels/shared/* into
-// core/src/delivery/ so the upcoming createDeliveryService (plan 03) and
-// production caller migration (plan 04) keep `core → channels` one-way
-// (per AGENTS.md §1).
+// The channel-platform-agnostic delivery helpers (formatForChannel,
+// chunkForDelivery, chunkBlocks, RetryEngine, isPermanentError) live in
+// core/src/delivery/ so that `core → channels` stays one-way per AGENTS.md §1.
 //
 // The Markdown IR pipeline that underlies formatForChannel and chunkForDelivery
 // (markdown-ir, ir-renderer, ir-chunker, markdown-tables, sanitize-for-plain-text,
-// table-converter, telegram-file-ref-guard) moved alongside as a Rule 3
-// blocking-issue fix — see 30-02-SUMMARY.md "Deviations from Plan". Those
-// internals are intentionally NOT exported from this aggregator: the public
-// surface gain is only the 7 names listed below (formatForChannel,
-// chunkForDelivery + ChunkForDeliveryOptions, chunkBlocks, createRetryEngine +
-// RetryEngine, isPermanentError + PERMANENT_ERROR_PATTERNS) plus the
-// telegram-file-ref-guard symbols the daemon needs at bootstrap. createDeliveryService
-// + DeliveryService will be appended here by plan 03.
+// table-converter, telegram-file-ref-guard) lives alongside as a Rule 3 fix.
+// Those internals are intentionally NOT exported from this aggregator: the
+// public surface is limited to the names below plus the telegram-file-ref-guard
+// symbols the daemon needs at bootstrap.
 
 export { formatForChannel } from "../delivery/format-for-channel.js";
 export { chunkForDelivery } from "../delivery/chunk-for-delivery.js";
@@ -53,13 +46,11 @@ export {
   AMBIGUOUS_EXTENSIONS,
 } from "../delivery/telegram-file-ref-guard.js";
 
-// Phase 30 plan 03 — delivery type re-exports.
+// Delivery type re-exports.
 //
-// These 5 types were declared in packages/channels/src/shared/deliver-to-channel.ts
-// before plan 03. They are now owned by core/src/delivery/types.ts so the new
-// createDeliveryService factory below can reference them without introducing a
-// `core → channels` back-edge. Channels keeps a thin re-export shim for surface
-// continuity until plan 06 deletes deliver-to-channel.ts entirely.
+// These 5 types are owned by core/src/delivery/types.ts so the createDeliveryService
+// factory below can reference them without introducing a `core → channels`
+// back-edge.
 export type {
   DeliveryStrategy,
   DeliveryAdapter,
@@ -68,12 +59,9 @@ export type {
   DeliveryResult,
 } from "../delivery/types.js";
 
-// Phase 30 plan 03 — DeliveryService factory + interfaces. Replaces the
-// standalone deliverToChannel free function in channels with a
-// `createDeliveryService(deps): DeliveryService` factory in core. Closes the
-// L14 (global hook runner) and L26 (optional deps) preconditions. The
-// standalone export in channels was deleted in plan 06; callers now invoke
-// the method form `deps.deliveryService.deliverToChannel(adapter, ...)`.
+// DeliveryService factory + interfaces. Provides a `createDeliveryService(deps):
+// DeliveryService` factory in core; callers invoke the method form
+// `deps.deliveryService.deliverToChannel(adapter, ...)`.
 export {
   createDeliveryService,
 } from "../delivery/delivery-service.js";
@@ -82,10 +70,8 @@ export type {
   DeliveryServiceDeps,
 } from "../delivery/delivery-service.js";
 
-// Phase 30 plan 06 — queue-backoff helpers relocated from
-// packages/channels/src/shared/deliver-to-channel.ts (deleted in plan 06).
-// Consumed by daemon's setup-delivery.ts (drain loop) and by the
-// DeliveryService factory itself.
+// Queue-backoff helpers. Consumed by daemon's setup-delivery.ts (drain loop)
+// and by the DeliveryService factory itself.
 export {
   QUEUE_BACKOFF_SCHEDULE_MS,
   computeQueueBackoff,

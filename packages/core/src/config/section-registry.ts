@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 30 — Single source of truth for config-section metadata.
+ * Single source of truth for config-section metadata.
  *
- * Replaces the previously-duplicated `SECTION_SCHEMAS` maps in
- * schema-serializer.ts (16 sections) and field-metadata.ts (18 sections)
- * plus the standalone `MANAGED_SECTIONS` array in managed-sections.ts
- * (5 entries). Each section gets one canonical entry; per-view flags
+ * Each section gets one canonical entry; per-view flags
  * (`schemaSerializable`, `fieldMetadataVisible`) determine subset
  * membership, and `managedRedirect` carries top-level redirect metadata
  * for the 3 fully-managed sections (providers, channels, agents).
  *
  * Sub-path redirects (`integrations.mcp.servers`, `gateway.tokens`)
  * remain in `SUB_PATH_MANAGED_REDIRECTS` because their keys are not
- * top-level section names (per design §7.2 + RESEARCH §I.6 Option a).
+ * top-level section names.
  *
  * NOT a public export — implementation detail. Public API surface remains
  * `getConfigSchema`, `getConfigSections`, `getFieldMetadata`,
@@ -48,10 +45,10 @@ import { StreamingConfigSchema } from "./schema-streaming.js";
 import { ToolingConfigSchema } from "./schema-tooling.js";
 
 // ---------------------------------------------------------------------------
-// ManagedSectionRedirect (moved here from managed-sections.ts in Phase 30
-// to break the source-level cycle that the no-cycles architecture invariant
-// rejects). managed-sections.ts re-exports the type for back-compat with
-// existing `import type { ManagedSectionRedirect } from "./managed-sections.js"`
+// ManagedSectionRedirect lives here to break the source-level cycle that the
+// no-cycles architecture invariant rejects. managed-sections.ts re-exports
+// the type for back-compat with existing
+// `import type { ManagedSectionRedirect } from "./managed-sections.js"`
 // consumers and the public config index.
 // ---------------------------------------------------------------------------
 

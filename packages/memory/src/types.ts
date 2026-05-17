@@ -86,8 +86,7 @@ export interface NamedGraphRow {
 // --- Context store row types ---
 //
 // The 9 `Ctx*Row` interfaces previously declared here are now the single
-// source-of-truth in `@comis/core/src/ports/context-store-types.ts`
-// (Phase 31 commit 1 / MEM-CTX-PORTS-03). Memory consumers should import
-// them from `@comis/core` (or transitively re-exported from
-// `@comis/memory`'s public index). Database schema and persisted column
-// layout are unchanged (MEM-CTX-PORTS-17).
+// source-of-truth in `@comis/core/src/ports/context-store-types.ts`.
+// Memory consumers should import them from `@comis/core` (or transitively
+// re-exported from `@comis/memory`'s public index). Database schema and
+// persisted column layout are unchanged.

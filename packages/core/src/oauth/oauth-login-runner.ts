@@ -2,10 +2,6 @@
 /**
  * OAuth login orchestrator for OpenAI Codex.
  *
- * Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #2.
- * The agent-side source remains in place (Wave A additive); Plan 35-04
- * deletes the agent re-export after CLI Plan 35-05 retargets.
- *
  * Wraps pi-ai's loginOpenAICodex with VPS-aware handlers, manual-paste
  * fallback (15s + 1s grace mirroring OpenClaw), and error rewriting for
  * 2 user-friendly mappings (unsupported_region, callback_validation_failed)

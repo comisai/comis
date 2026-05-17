@@ -6,8 +6,6 @@
  * instead of process-global — tests can construct multiple independent clocks
  * without ceremony.
  *
- * Phase 39, PORTS-08.
- *
  * @module
  */
 import type { ClockPort } from "@comis/core";

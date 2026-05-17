@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// OAuth profile-ID validation — relocated from ports/oauth-credential-store.ts in Phase 28 commit 1
-// (closes L15 per CORE-PORTS-01). Per RESEARCH.md Open Question #1: combine with security domain;
-// distinct file rather than folded into oauth-helpers.ts (commit 5) so commit 1 is purely mechanical
-// (no cross-commit coupling — a planner reviewer can revert commit 1 independently of commit 5).
+// OAuth profile-ID validation. Lives in the security domain as a distinct
+// file (rather than folded into oauth-helpers.ts) so it can be reverted /
+// audited independently.
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 

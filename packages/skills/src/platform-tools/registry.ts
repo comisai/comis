@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Platform tool descriptor registry — SKILLS-SPLIT-06 / SKILLS-SPLIT-08.
+ * Platform tool descriptor registry.
  *
  * Single source of truth for the platform-tool set. Daemon's
  * `setup-tools.ts` consumes this registry via
@@ -8,13 +8,12 @@
  * 38+ factory calls inline.
  *
  * Each descriptor exports:
- *   - `name`: opaque identifier matching the snapshot baseline (NOTE: the
- *     descriptor `name` is a registry-side label that follows the Plan 01
- *     parity-test contract; it is NOT required to equal the underlying
- *     `AgentTool.name`. The actual tool `.name` may differ — e.g. the
- *     `image` descriptor builds an AgentTool whose `.name` is `image_analyze`.
- *     Plan 01's parity-test list is the contract. See 33-01-SUMMARY.md
- *     "Why Plan 03 Will Need to Reconcile" for the divergence rationale.)
+ *   - `name`: opaque identifier matching the snapshot baseline. NOTE: the
+ *     descriptor `name` is a registry-side label following the parity-test
+ *     contract; it is NOT required to equal the underlying `AgentTool.name`.
+ *     The actual tool `.name` may differ — e.g. the `image` descriptor
+ *     builds an AgentTool whose `.name` is `image_analyze`. The parity-test
+ *     list is the contract.
  *   - `category`: documentation taxonomy (memory, session, agent, messaging, etc.)
  *   - `build(ctx)`: invokes the per-tool factory with runtime context.
  *     Returns `AgentTool` for unconditional descriptors, or `AgentTool | undefined`
@@ -23,10 +22,10 @@
  *     false are filtered out before `build` is invoked.
  *
  * Architecture: this file is the public surface of the `./platform-tools`
- * subpath (per Phase 33 SKILLS-SPLIT-02). Factory imports are local-relative
- * (`./tools/*.js`); helper imports are local-relative (`./tool-helpers.js`).
- * `ComisLogger` is imported from `@comis/core` (NOT `@comis/infra`) per
- * RES-ARCH-2 — Plan 04 enforces zero infra imports in skills.
+ * subpath. Factory imports are local-relative (`./tools/*.js`); helper
+ * imports are local-relative (`./tool-helpers.js`). `ComisLogger` is
+ * imported from `@comis/core` (NOT `@comis/infra`) — skills enforce zero
+ * infra imports.
  *
  * @module
  */
@@ -34,7 +33,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { ComisLogger } from "@comis/core";
 
 // Import every platform-tool factory function. Local relative paths because
-// the factory files live under `./tools/` (per Plan 02 source restructure).
+// the factory files live under `./tools/`.
 import { createCronTool } from "./tools/cron-tool.js";
 import { createUnifiedMemoryTool } from "./tools/unified-memory-tool.js";
 import { createUnifiedSessionTool } from "./tools/unified-session-tool.js";
@@ -100,8 +99,7 @@ export type RpcCall = (method: string, params: Record<string, unknown>) => Promi
  * Fields with `unknown` types reflect the deliberate decoupling between
  * the registry's public surface and the daemon's internal port types;
  * each descriptor's `build` callback casts to the concrete factory-expected
- * type via `as never`. A future refactor could tighten these via generics
- * but is out of scope for Phase 33 (per registry threat-model T-33-06).
+ * type via `as never`. A future refactor could tighten these via generics.
  */
 export interface PlatformToolBuildContext {
   readonly agentId: string;

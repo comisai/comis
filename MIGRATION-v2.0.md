@@ -4,34 +4,28 @@ This document lists every export removed from a `@comis/*` package's
 public surface between v1.x and v2.0. Apply the replacement listed below
 at each call site.
 
-For the full v2.0 milestone scope, see
-`.planning/design/architecture-redesign-v3-2026-05-08.md`. For per-phase
-detail, see the v2.0 phase directories under `.planning/phases/2[7-9]-*`
-and `.planning/phases/3[0-6]-*`.
+## Public Export Cleanup
 
-## Phase 29: Public Export Cleanup
-
-Phase 29 shrinks each package's `src/index.ts` to "exports with at least
-one in-repo consumer or an explicit supported-external-API policy
-entry." Closes architecture-allowlist entries L9, L10, L11.
+Each package's `src/index.ts` is shrunk to "exports with at least one
+in-repo consumer or an explicit supported-external-API policy entry."
 
 ### `@comis/agent`
 
-Closes L10 (PUB-EXPORTS-03). The two backward-compat aliases that
-mirrored the canonical session-lifecycle names are dropped. Every
-workspace consumer (3 files in `packages/channels/src/shared/`) was
-retargeted to the canonical names in the same atomic commit.
+The two backward-compat aliases that mirrored the canonical
+session-lifecycle names are dropped. Every workspace consumer (3 files
+in `packages/channels/src/shared/`) was retargeted to the canonical
+names in the same atomic commit.
 
 | Removed Export | Kind | Canonical Replacement | Notes |
 |----------------|------|-----------------------|-------|
-| `createSessionManager` | value | `createSessionLifecycle` | Renamed from `session-manager.ts` → `session-lifecycle.ts` pre-v2.0; the alias dies in Phase 29. |
+| `createSessionManager` | value | `createSessionLifecycle` | Renamed from `session-manager.ts` to `session-lifecycle.ts`; the alias is now removed. |
 | `SessionManager` | type | `SessionLifecycle` | Same rename. Note: distinct `ComisSessionManager` / `createComisSessionManager` / `createEphemeralComisSessionManager` symbols remain unchanged. |
 
 ### `@comis/skills`
 
-Closes L11 (PUB-EXPORTS-04). The skills re-export of a `@comis/shared`
-symbol was dead since inception — every in-repo consumer (4 files in
-`packages/agent/src/`) already imports from the canonical source.
+The skills re-export of a `@comis/shared` symbol was dead since
+inception — every in-repo consumer (4 files in `packages/agent/src/`)
+already imports from the canonical source.
 
 | Removed Export | Kind | Canonical Replacement | Notes |
 |----------------|------|-----------------------|-------|
@@ -39,11 +33,11 @@ symbol was dead since inception — every in-repo consumer (4 files in
 
 ### `@comis/cli`
 
-Closes L9 (PUB-EXPORTS-01 + PUB-EXPORTS-02). The `@comis/cli` public
-surface narrows to **exactly three documented external-API entries**:
-`withClient` (RPC connection helper), `credentialsStep` (wizard step
-exposed for integration tests and embed-and-extend), and `RpcClient`
-(type — required by `withClient`'s signature).
+The `@comis/cli` public surface narrows to **exactly three documented
+external-API entries**: `withClient` (RPC connection helper),
+`credentialsStep` (wizard step exposed for integration tests and
+embed-and-extend), and `RpcClient` (type — required by `withClient`'s
+signature).
 
 All `register*Command` factories and output utilities
 (`success`/`error`/`warn`/`info`/`json`/`renderTable`/`renderKeyValue`/
@@ -63,16 +57,16 @@ registrations — those use cases were never supported and break in v2.0.
 
 Two additional `register*Command` factories — `registerAuthCommand`
 and `registerProvidersCommand` — were never exported from
-`@comis/cli/src/index.ts` in v1.x (verified via Phase 29 research).
-They are bin-only in v2.0 by the same pattern as the 18 factories
-above. This resolves the dual-CLI divergence (PUB-EXPORTS-02).
+`@comis/cli/src/index.ts` in v1.x. They are bin-only in v2.0 by the
+same pattern as the 18 factories above.
 
 ## Namespace surface (`comisai` umbrella)
 
 The `comisai` umbrella package (`packages/comis/src/index.ts`) re-exports
 each `@comis/*` package as a namespace
 (`import * as cli from "@comis/cli"; export { cli };`). The namespace's
-surface auto-reflects the underlying package's exports. After Phase 29:
+surface auto-reflects the underlying package's exports. After the
+cleanup:
 
 - `comisai.skills.extractMcpServerName` no longer resolves — use `comisai.shared.extractMcpServerName` (or import from `@comis/shared` directly).
 - `comisai.agent.createSessionManager` and the `comisai.agent.SessionManager` type no longer resolve — use `comisai.agent.createSessionLifecycle` and `comisai.agent.SessionLifecycle`.
@@ -80,14 +74,14 @@ surface auto-reflects the underlying package's exports. After Phase 29:
 
 ## Verification
 
-Phase 29 closures are enforced programmatically:
+Export closures are enforced programmatically:
 
 - `test/architecture/public-export-consumers.test.ts` AST-walks every
   package's `src/index.ts` and fails on any orphan export (no consumer +
   no `test/support/public-api-policy.ts` entry).
 - `test/architecture/allowlist-shrink.test.ts` enforces that
   `test/support/architecture-allowlist.ts` only shrinks across
-  base..head commits — L9/L10/L11 closures are accepted decreases.
+  base..head commits — closures are accepted decreases.
 
 Both tests run in `pnpm test`. The full v2.0 validation gate is
 `pnpm build && pnpm test && pnpm lint:security`.

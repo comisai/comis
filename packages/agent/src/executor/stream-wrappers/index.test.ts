@@ -3,11 +3,8 @@
  * Smoke test for `stream-wrappers/index.ts` barrel.
  *
  * Asserts the public export surface matches the source-of-truth — catches
- * silent export deletion / shadowing. Mirrors the same idiom used by the
- * gateway sub-barrel smoke tests added in plan 40-04 (e.g.
- * `packages/gateway/src/web/index.test.ts`).
- *
- * Phase 40 / Phase C §6.3.1 / COV-06.
+ * silent export deletion / shadowing. Mirrors the gateway sub-barrel smoke
+ * tests at `packages/gateway/src/web/index.test.ts`.
  *
  * @module
  */
@@ -72,8 +69,8 @@ describe("stream-wrappers/index — barrel exports smoke contract", () => {
 
   it("exports at least 19 named value exports (silent-deletion guard)", () => {
     // Count of value (not type-only) exports declared in index.ts. If a future
-    // change drops one of the named exports below this threshold, this test
-    // catches the silent regression.
+    // change drops one of the named exports below this threshold, the silent
+    // regression is caught here.
     const exportKeys = Object.keys(barrel).filter((k) => barrel[k as keyof typeof barrel] !== undefined);
     expect(exportKeys.length).toBeGreaterThanOrEqual(19);
   });

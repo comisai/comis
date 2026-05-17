@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { tryInjectSilentFailure } from "./fault-injector.js";
 import type { EnvPort } from "@comis/core";
 
-// Phase 39 PORTS-12: test EnvPort that reads from process.env so the
-// existing process.env-based test setup keeps working.
+// Test EnvPort that reads from process.env so the existing
+// process.env-based test setup keeps working.
 // eslint-disable-next-line no-restricted-syntax -- test-only env stub
 const testEnv: EnvPort = {
   // eslint-disable-next-line no-restricted-syntax -- test-only env stub

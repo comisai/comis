@@ -20,7 +20,7 @@ import { isVecAvailable } from "./schema.js";
 import { createRowMapper } from "./row-mapper.js";
 import { IdProjectionRowSchema } from "./row-schemas.js";
 
-// Row mappers (Phase 41 TS-HYG-03).
+// Row mappers.
 //
 // Note: the original code cast `as FtsSearchRow[]` (and `as VecSearchRow[]`),
 // but the SQL in `searchByText` only SELECTs `m.id, fts.rank` (NO content
@@ -30,9 +30,9 @@ import { IdProjectionRowSchema } from "./row-schemas.js";
 // The previous fictional cast never crashed because the consumer reads only
 // `id` / `rank` / `distance` (subsets of the declared shape).
 //
-// Plan 41-04 TS-HYG-03 retargets to z.strictObject schemas that match the
-// ACTUAL SELECT shape (not the aspirational interface). This catches drift
-// going forward — extending the SELECT requires updating the schema.
+// We use z.strictObject schemas that match the ACTUAL SELECT shape (not
+// the aspirational interface). This catches drift going forward —
+// extending the SELECT requires updating the schema.
 const ftsSearchActualShape = z.strictObject({
   id: z.string(),
   rank: z.number(),

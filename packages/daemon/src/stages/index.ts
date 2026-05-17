@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Daemon stage helpers (Phase 43 split per FILE-SPLIT-06).
+ * Daemon stage helpers.
  *
  * Helper bundles consumed by daemon.ts's 5 stage* orchestrators
  * (stageFoundation/Agents/Channels/Gateway/Shutdown). Each helper is
- * a top-level function (not a closure) — mechanical block-move from
- * the pre-split daemon.ts.
+ * a top-level function (not a closure).
  *
  * @module
  */

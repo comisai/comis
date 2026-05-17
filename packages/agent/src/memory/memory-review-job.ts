@@ -125,11 +125,11 @@ function filterSessions(
   config: MemoryReviewConfig,
   watermark: ReviewWatermark,
 ): SessionDetailedEntry[] {
-  // CR-01 follow-up to BC-REM-15 (Phase 38): session keys no longer carry an
-  // `agent:<agentId>:` prefix, so the prior per-agent prefix filter has been
-  // dropped. Memory review now iterates every session in the agent's tenant
-  // (the caller passes `tenantId` to `sessionStore.listDetailed`); per-agent
-  // isolation is handled by the per-agent workspace-scoped watermark file
+  // Session keys do not carry an `agent:<agentId>:` prefix, so there is no
+  // per-agent prefix filter. Memory review iterates every session in the
+  // agent's tenant (the caller passes `tenantId` to
+  // `sessionStore.listDetailed`); per-agent isolation is handled by the
+  // per-agent workspace-scoped watermark file
   // (`safePath(workspacePath, ".memory-review-watermark")`).
   return sessions
     .filter((s) => {

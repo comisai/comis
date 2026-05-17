@@ -534,9 +534,9 @@ describe("whitelist exports", () => {
   });
 });
 
-// ── createRowMapper — generic factory (TS-HYG-01, TS-HYG-02) ─────────
+// ── createRowMapper — generic factory ───────────────────────────────
 
-describe("createRowMapper — generic factory (TS-HYG-01, TS-HYG-02)", () => {
+describe("createRowMapper — generic factory", () => {
   it("createRowMapper parseRow rejects mismatched schema with row-validation-failed code", () => {
     const schema = z.strictObject({ id: z.string(), count: z.number() });
     const mapper = createRowMapper(schema);

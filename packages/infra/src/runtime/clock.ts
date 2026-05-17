@@ -7,8 +7,6 @@
  * Date.now() / new Date() calls inside this file are exempt from the
  * globals architecture rule by classifier, not by allowlist entry.
  *
- * Phase 39, PORTS-06.
- *
  * @module
  */
 import type { ClockPort } from "@comis/core";

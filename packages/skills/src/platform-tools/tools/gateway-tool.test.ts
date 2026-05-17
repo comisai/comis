@@ -10,10 +10,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // `mockedIsDocker.mockReturnValue(true)`. `vi.hoisted` keeps the mock
 // reference alive across the hoisting `vi.mock` performs.
 //
-// Phase 33 SKILLS-SPLIT-09: retargeted from `@comis/infra` to `@comis/core`
-// after `isDocker` moved per RES-ARCH-2. The mock factory must now preserve
-// real core exports instead of replacing them with the previous stub-only
-// shape — otherwise `tryGetContext` etc. resolve to `undefined`.
+// The mock factory must preserve real core exports instead of replacing them
+// with a stub-only shape — otherwise `tryGetContext` etc. resolve to
+// `undefined`.
 const { mockedIsDocker } = vi.hoisted(() => ({ mockedIsDocker: vi.fn(() => false) }));
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();

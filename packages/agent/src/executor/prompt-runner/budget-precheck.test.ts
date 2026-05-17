@@ -2,10 +2,9 @@
 /**
  * Unit tests for the budget pre-check helper.
  *
- * Phase 42 EXEC-SPLIT-07: split from executor-prompt-runner.test.ts. The
- * budget pre-check has a clean pure-function interface (params + messageText
- * + skipPrompt → outcome) so it is testable in isolation without the full
- * deps surface a runPrompt invocation would require.
+ * The budget pre-check has a clean pure-function interface (params +
+ * messageText + skipPrompt → outcome) so it is testable in isolation
+ * without the full deps surface a runPrompt invocation would require.
  */
 import { describe, it, expect, vi } from "vitest";
 

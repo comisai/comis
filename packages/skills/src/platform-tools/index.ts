@@ -5,14 +5,10 @@
  * Re-exports the tool output helpers (jsonResult, imageResult, readEnumParam,
  * createActionGate, etc.), the messaging / admin-manage / platform-action
  * factory shells, and the 38+ RPC-coupled per-tool factories that live under
- * `./tools/`. Per Phase 33 (SKILLS-SPLIT-01..04, RES-ARCH-1), this is one of
- * the three subpath exports — the daemon's wiring uses it (alongside the `.`
- * subpath for skill registry / bridge symbols and `./tools` for built-in /
- * media / integration factories) to compose the per-agent tool set.
- *
- * The descriptor registry (`createPlatformToolRegistry`) lands in Plan 03
- * (33-03-PLAN.md / SKILLS-SPLIT-06) — at this commit the file does not exist
- * yet, so the re-export line is intentionally omitted.
+ * `./tools/`. This is one of the three subpath exports — the daemon's wiring
+ * uses it (alongside the `.` subpath for skill registry / bridge symbols and
+ * `./tools` for built-in / media / integration factories) to compose the
+ * per-agent tool set.
  *
  * @module
  */
@@ -119,7 +115,7 @@ export { createMcpManageTool } from "./tools/mcp-manage-tool.js";
 export { createBackgroundTasksTool } from "./tools/background-tasks-tool.js";
 
 // ===========================================================================
-// Phase 33 SKILLS-SPLIT-06 -- Descriptor Registry
+// Descriptor Registry
 // ===========================================================================
 
 export { createPlatformToolRegistry } from "./registry.js";

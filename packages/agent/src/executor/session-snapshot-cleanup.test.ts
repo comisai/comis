@@ -184,7 +184,7 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionLastResponseTs).toHaveBeenCalledWith(expectedKey);
     });
 
-    it("formats session key without agent prefix even when agentId is set (CR-01 follow-up to BC-REM-15)", () => {
+    it("formats session key without agent prefix even when agentId is set", () => {
       let capturedHandler: ((payload: { sessionKey: { agentId: string; tenantId: string; userId: string; channelId: string }; reason: string }) => void) | undefined;
       const eventBus = {
         on: vi.fn((_event: string, handler: typeof capturedHandler) => {

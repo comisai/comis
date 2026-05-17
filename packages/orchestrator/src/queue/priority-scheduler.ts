@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: priority-scheduler shutdown guard; consumed by inbound-pipeline boundary catch (Phase 41 TS-HYG-07).
+// @allow-throw: priority-scheduler shutdown guard; consumed by inbound-pipeline boundary catch.
 /**
  * Priority Scheduler: Multi-lane queue scheduling with per-lane concurrency.
  *

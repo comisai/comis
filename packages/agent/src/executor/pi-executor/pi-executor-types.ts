@@ -5,8 +5,6 @@
  * creating a cyclic import with `pi-executor.ts` (which itself imports
  * those helpers).
  *
- * Phase 42 split per EXEC-SPLIT-05/06.
- *
  * @module
  */
 
@@ -171,10 +169,10 @@ export interface PiExecutorDeps {
   backgroundTaskManager?: BackgroundTaskManager;
   /** Max message.send/reply calls per execution (0 = unlimited, default: 3). */
   maxSendsPerExecution?: number;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
-  /** Environment-variable reads (Phase 39 PORTS-12). Required for fault-injector and model-retry env reads. */
+  /** Environment-variable reads. Required for fault-injector and model-retry env reads. */
   env: EnvPort;
-  /** Timer scheduling (Phase 39 PORTS-13). Required by executor-prompt-runner (race timers) and prompt-timeout. */
+  /** Timer scheduling. Required by executor-prompt-runner (race timers) and prompt-timeout. */
   timers: TimerPort;
 }

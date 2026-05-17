@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Cache-break detection — LruMap, module-level session state, and the
- * `createCacheBreakDetector` factory (Phase 42 split per EXEC-SPLIT-09).
+ * `createCacheBreakDetector` factory.
  *
  * Hosts the closure that captures the LRU-bounded per-session map.
  * Public types live in cache-state-types.ts; provider adapters live in
@@ -59,7 +59,7 @@ interface DetectorState {
   compacted: boolean;
   /** Most recent agentId from recordPromptState, used for CacheBreakEvent. */
   agentId: string;
-  /** G-09: Set by notifyContentModification() when observation masking or microcompaction modifies content. */
+  /** Set by notifyContentModification() when observation masking or microcompaction modifies content. */
   contentModified: boolean;
 }
 
@@ -97,7 +97,7 @@ export function createCacheBreakDetector(
   const maxEntries = options.maxTrackingEntries ?? MAX_TRACKING_ENTRIES;
   const clock = options.clock;
 
-  // Design 3.4: Create LRU map with WARN on eviction
+  // Create LRU map with WARN on eviction.
   sessionDetectorState = createLruMap<string, DetectorState>(maxEntries, (evictedKey) => {
     if (logger.warn) {
       logger.warn(
@@ -197,7 +197,7 @@ export function createCacheBreakDetector(
         return null;
       }
 
-      // G-09: Content modification (observation masking or microcompaction) -- dual-check suppression.
+      // Content modification (observation masking or microcompaction) -- dual-check suppression.
       // Evaluate pendingChanges to determine if a genuine prompt state change co-occurred.
       // If no real changes: suppress the event and reset baseline.
       // If real changes: emit the event with correct attribution (using original baseline).
@@ -240,7 +240,7 @@ export function createCacheBreakDetector(
 
       // Attribute reason
       const changes = state.pendingChanges ?? NO_CHANGES;
-      // W4: Thread messageBlockCount for lookback window detection (default 0 for backward compat)
+      // Thread messageBlockCount for lookback window detection (default 0 for backward compat)
       const conversationBlockCount = input.messageBlockCount ?? 0;
       const reason = attributeReason(changes, state.ttlExpired, input.lastResponseElapsedMs, conversationBlockCount);
 
@@ -272,7 +272,7 @@ export function createCacheBreakDetector(
         currentTools: currContent?.tools,
         // Thread effort value for downstream consumers
         effortValue: state.currentSnapshot.effortValue,
-        // W4: Thread conversation block count for lookback observability
+        // Thread conversation block count for lookback observability
         conversationBlockCount: conversationBlockCount > 0 ? conversationBlockCount : undefined,
         // Thread breakpoint budget context for cache break enrichment
         breakpointBudget: state.currentSnapshot.breakpointBudget,

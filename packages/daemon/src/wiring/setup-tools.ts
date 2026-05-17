@@ -20,7 +20,7 @@ import {
 } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
 import type { SessionTrackerRegistry } from "@comis/agent";
-// Phase 35 Plan 35-04 (D-01 #5): workspace helpers relocated to @comis/core.
+// Workspace helpers live in @comis/core.
 import {
   WORKSPACE_FILE_NAMES,
   DEFAULT_TEMPLATES,
@@ -30,8 +30,8 @@ import { stat as fsStat } from "node:fs/promises";
 import type { PerAgentConfig } from "@comis/core";
 import type { ImageGenerationPort } from "@comis/core";
 // Skills-concern symbols staying on the `.` subpath (policy, pipeline, MCP
-// bridge, credential injection, link understanding). Per Phase 33 Plan 02
-// these symbols live in packages/skills/src/skills/index.ts.
+// bridge, credential injection, link understanding). These symbols live
+// in packages/skills/src/skills/index.ts.
 import {
   TOOL_PROFILES,
   TOOL_GROUPS,
@@ -46,13 +46,11 @@ import {
   type CredentialInjector,
 } from "@comis/skills";
 
-// Tool capability adapters + factories moved to the `./tools` subpath per
-// Phase 33 SKILLS-SPLIT-02 / RES-ARCH-1. Exec / process / apply-patch tool
-// factories, file-state tracker, media-persistence / image-sanitizer all
-// live under packages/skills/src/tools/. Daemon imports them from the
-// dedicated subpath to surface the architectural boundary in the type
-// system (Plan 04 hardens this when the transitional kitchen-sink
-// re-exports in skills/index.ts get dropped).
+// Tool capability adapters + factories live on the `./tools` subpath.
+// Exec / process / apply-patch tool factories, file-state tracker,
+// media-persistence / image-sanitizer all live under
+// packages/skills/src/tools/. Daemon imports them from the dedicated
+// subpath to surface the architectural boundary in the type system.
 import {
   createExecTool,
   createProcessTool,
@@ -69,9 +67,9 @@ import {
   type MediaPersistenceService,
 } from "@comis/skills/tools";
 
-// Descriptor registry on the `./platform-tools` subpath -- Phase 33
-// SKILLS-SPLIT-06 / SKILLS-SPLIT-08. Replaces the prior inline 38-call
-// enumeration of `createXTool(agentRpc, ...)` factories.
+// Descriptor registry on the `./platform-tools` subpath. Replaces the
+// prior inline 38-call enumeration of `createXTool(agentRpc, ...)`
+// factories.
 import {
   createPlatformToolRegistry,
   type PlatformToolBuildContext,
@@ -234,9 +232,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
    * registry by `conditional` predicates and invokes each surviving
    * descriptor's `build(ctx)` callback with a runtime context. This replaces
    * the prior 175-line `agentPlatformTools` closure that hand-enumerated
-   * 38 `createXTool(agentRpc, ...)` factory calls (Phase 33 SKILLS-SPLIT-08).
-   * The exec / process / apply-patch tools stay enumerated inline below --
-   * they are `./tools` subpath (built-in non-platform) per RES-ARCH-1.
+   * 38 `createXTool(agentRpc, ...)` factory calls. The exec / process /
+   * apply-patch tools stay enumerated inline below — they are `./tools`
+   * subpath (built-in non-platform).
    */
   const PLATFORM_TOOL_REGISTRY = createPlatformToolRegistry();
 
@@ -358,7 +356,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
     const agentConfig = agents[agentId] ?? agents[defaultAgentId];
 
-    // Use the agent's own skills config (SkillsConfigSchema defaults apply if not specified)
+    // Use the agent's own skills config (SkillsConfigSchema defaults apply if not specified).
     const skillsConfig: SkillsConfig = agentConfig?.skills ?? SkillsConfigSchema.parse({});
 
     // Resolve relative discoveryPaths against dataDir so ./skills -> ~/.comis/skills
@@ -379,11 +377,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       readOnlyPaths.push(logsDir);
     }
 
-    // Create per-agent rpcCall that injects _agentId
+    // Create per-agent rpcCall that injects _agentId.
     const agentRpc = createAgentRpcCall(agentId);
-    // Phase 33 SKILLS-SPLIT-08: per-agent build context for the descriptor
-    // registry. The 38+ platform-tool factory calls that used to live inline
-    // here now live in packages/skills/src/platform-tools/registry.ts.
+    // Per-agent build context for the descriptor registry. The platform-tool
+    // factory calls live in packages/skills/src/platform-tools/registry.ts.
     // The 4 truly-conditional tools (background_tasks, image_generate,
     // unified_context, browser) carry `conditional` predicates on the
     // registry side; daemon filters via .filter(d => !d.conditional ||
@@ -396,9 +393,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     // The exec/process/apply-patch tools remain enumerated inline below the
     // registry call (their per-call config involves the sandbox provider,
     // workspace dir, tool-results dir resolver, and capability port -- too
-    // complex to fit the descriptor `build(ctx)` shape; per RES-ARCH-1
-    // they're `./tools` subpath, not platform-tools, so they don't belong
-    // in the platform-tool registry).
+    // complex to fit the descriptor `build(ctx)` shape; they're `./tools`
+    // subpath, not platform-tools, so they don't belong in the platform-tool
+    // registry).
     const agentPlatformTools: PlatformToolProvider = () => {
       const ctx: PlatformToolBuildContext = {
         agentId,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Gateway RPC bridge + adapter wiring. Phase 43 wave 8 split per FILE-SPLIT-08.
+ * Gateway RPC bridge + adapter wiring.
  * Hosts setupRpcBridge (deferred dispatch), buildRpcAdapterDeps (the 7-method
  * adapter struct consumed by createDynamicMethodRouter), extractAttachmentMarkers
  * (gateway JSONL → conversation history bridging), and buildDynamicRouterAndRegister.

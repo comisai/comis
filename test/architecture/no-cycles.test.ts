@@ -16,7 +16,7 @@
  *
  * The DIST-MODE madge gate AND `tsc -b --dry` gate (ARCH-BASE-14's third
  * belt) live in .github/workflows/ci.yml as post-`pnpm build` CI steps —
- * NOT here, since they require dist/ artifacts. See Plan 02 Task 3.
+ * NOT here, since they require dist/ artifacts.
  *
  * @module
  */
@@ -49,14 +49,13 @@ const WORKSPACE_PACKAGES = [
 ] as const;
 
 /**
- * BASELINE_INTRA_PACKAGE_CYCLES (Phase 27 baseline — 46 entries).
+ * BASELINE_INTRA_PACKAGE_CYCLES — pre-existing within-package cycles
+ * recorded as an allowlist so the gate is GREEN at landing while still
+ * catching ANY new cycle. Entries are removed as the underlying cycles
+ * are broken.
  *
  * madge source-mode walks `.ts` import statements (mixed value + type) and
- * reports cycles. Phase 27 records the CURRENT pre-existing within-package
- * cycle set so the gate is GREEN at landing while still catching ANY new
- * cycle introduced after Phase 27. Wave 3+ phases (and Plan 06's
- * allowlist-shrink coverage if extended in Phase 36) drive this set
- * downward — entries are removed as the underlying cycles are broken.
+ * reports cycles.
  *
  * Format: each entry is the cycle's MEMBER FILES sorted alphabetically and
  * joined by `|`. The canonicalization is required because madge reports
@@ -65,24 +64,22 @@ const WORKSPACE_PACKAGES = [
  * new file to an existing cycle (or a new file that introduces a different
  * cycle) produces a different canonical key and trips the gate.
  *
- * NOTE on dist-mode parity: dist-mode madge (CI gate per Plan 02 Task 3)
- * walks `.d.ts` and reports a different cycle set (Plan 02 SUMMARY recorded
- * 20 dist-mode cycles). The two are complementary; this baseline is for
- * source mode only.
+ * NOTE on dist-mode parity: dist-mode madge (CI gate) walks `.d.ts` and
+ * reports a different cycle set. The two are complementary; this baseline
+ * is for source mode only.
  */
 const BASELINE_INTRA_PACKAGE_CYCLES: ReadonlySet<string> = new Set([
   "agent/src/bootstrap/sections/tool-descriptions.ts|agent/src/bootstrap/sections/tooling-sections.ts",
   "agent/src/context-engine/types-compaction.ts|agent/src/context-engine/types-core.ts",
   "agent/src/executor/executor-post-execution.ts|agent/src/executor/pi-executor.ts",
   "agent/src/model/oauth-device-code.ts|agent/src/model/oauth-login-runner.ts",
-  // Phase 35 Plan 35-03 (WEB-CONTRACTS-02 D-01 #2) relocated oauth-device-code +
-  // oauth-login-runner from @comis/agent to @comis/core. The intra-pair cycle
-  // (login-runner's device-code dispatch ↔ device-code's LoginError type-import)
-  // is preserved verbatim under the new core path. The agent-side cycle entry
-  // above stays live until Plan 35-04 deletes the agent source files.
+  // oauth-device-code + oauth-login-runner have both an agent-side and a
+  // core-side cycle entry. The intra-pair cycle (login-runner's device-code
+  // dispatch ↔ device-code's LoginError type-import) is preserved verbatim
+  // under both paths until the agent-side source files are deleted.
   "core/src/oauth/oauth-device-code.ts|core/src/oauth/oauth-login-runner.ts",
-  // Phase 32 commit 3: paths retargeted channels/src/shared/ -> orchestrator/src/{inbound,execution}/
-  // (file moves preserved the cycles; baseline tracks paths, not behavior).
+  // File moves under channels/src/shared/ -> orchestrator/src/{inbound,execution}/
+  // preserved the cycles; baseline tracks paths, not behavior.
   "orchestrator/src/execution/execution-deliver.ts|orchestrator/src/execution/execution-pipeline.ts",
   "orchestrator/src/execution/execution-execute.ts|orchestrator/src/execution/execution-pipeline.ts",
   "orchestrator/src/execution/execution-filter.ts|orchestrator/src/execution/execution-pipeline.ts",
@@ -110,25 +107,18 @@ const BASELINE_INTRA_PACKAGE_CYCLES: ReadonlySet<string> = new Set([
   "cli/src/wizard/index.ts|cli/src/wizard/steps/12-finish.ts",
   "core/src/config/include-resolver.ts|core/src/config/layered.ts|core/src/config/loader.ts",
   "core/src/ports/channel-plugin.ts|core/src/ports/channel.ts",
-  // Phase 32 commit 11 (ORCH-EXT-11) moved announcement-batcher.ts +
-  // announcement-dead-letter.ts from daemon to @comis/orchestrator; the
-  // three legacy daemon-side cycle entries that referenced them are
-  // no longer reproducible (the source files do not exist), removed here.
-  // Phase 34 plan 01 (DAEMON-API-01) moved sub-agent-runner.ts +
-  // sub-agent-result-processor.ts to @comis/agent/spawn; the intra-pair
-  // cycle is preserved verbatim under the new path (entry below).
+  // sub-agent-runner.ts + sub-agent-result-processor.ts live under
+  // @comis/agent/spawn; the intra-pair cycle is preserved verbatim under
+  // the path entry below.
   "daemon/src/observability/channel-activity-tracker.ts|daemon/src/observability/index.ts",
   "daemon/src/observability/channel-activity-tracker.ts|daemon/src/observability/index.ts|daemon/src/observability/obs-persistence-wiring.ts",
   "daemon/src/observability/context-pipeline-collector.ts|daemon/src/observability/index.ts",
   "daemon/src/observability/delivery-tracer.ts|daemon/src/observability/index.ts",
   "daemon/src/observability/diagnostic-collector.ts|daemon/src/observability/index.ts",
-  // Phase 34 plan 01 (DAEMON-API-01) replaces the prior
-  // "daemon/src/sub-agent-result-processor.ts|daemon/src/sub-agent-runner.ts"
-  // entry with the new @comis/agent/spawn path-pair below.
   "agent/src/spawn/sub-agent-result-processor.ts|agent/src/spawn/sub-agent-runner.ts",
   "gateway/src/oauth/oauth-callback-route.ts|gateway/src/server/hono-server.ts",
-  // Phase 33: paths retargeted skills/src/integrations/ -> skills/src/tools/integrations/
-  // (file moves preserved the cycles; baseline tracks paths, not behavior).
+  // File moves under skills/src/integrations/ -> skills/src/tools/integrations/
+  // preserved the cycles; baseline tracks paths, not behavior.
   "skills/src/tools/integrations/media-handler-audio.ts|skills/src/tools/integrations/media-handler-factory.ts|skills/src/tools/integrations/media-preprocessor.ts",
   "skills/src/tools/integrations/media-handler-audio.ts|skills/src/tools/integrations/media-preprocessor.ts",
   "skills/src/tools/integrations/media-handler-document.ts|skills/src/tools/integrations/media-preprocessor.ts",
@@ -145,7 +135,7 @@ function canonicalizeCycle(cycle: readonly string[]): string {
 }
 
 describe("no-cycles -- intra-package via madge (ARCH-BASE-05, source mode)", () => {
-  it("packages/*/src introduces no NEW source-level circular import paths beyond the Phase 27 baseline", async () => {
+  it("packages/*/src introduces no NEW source-level circular import paths beyond the recorded baseline", async () => {
     const rootPaths = WORKSPACE_PACKAGES.map((p) =>
       resolve(REPO_ROOT, `packages/${p}/src`),
     );
@@ -167,7 +157,7 @@ describe("no-cycles -- intra-package via madge (ARCH-BASE-05, source mode)", () 
       newCycles,
       formatViolations({
         description:
-          "madge detected NEW source-level circular import paths in packages/*/src that are not in the Phase 27 BASELINE_INTRA_PACKAGE_CYCLES allowlist.",
+          "madge detected NEW source-level circular import paths in packages/*/src that are not in the BASELINE_INTRA_PACKAGE_CYCLES allowlist.",
         violations: newCycles.map((cycle) => ({
           file: "(intra-package cycle)",
           line: 0,
@@ -176,9 +166,9 @@ describe("no-cycles -- intra-package via madge (ARCH-BASE-05, source mode)", () 
         suggestedFix:
           "Break the cycle by extracting shared types to @comis/core/ports, or by inverting one of the import directions. Type-only imports still count — consider `import type { ... }` to break runtime cycles, but architecture cycles still fail this rule.",
         designRef:
-          "design §2.2 / §4.4 step 5a (madge dual-mode invariant; dist-mode lives in .github/workflows/ci.yml per Plan 02 Task 3)",
+          "madge dual-mode invariant (dist-mode runs in .github/workflows/ci.yml)",
         allowlistRef:
-          "BASELINE_INTRA_PACKAGE_CYCLES (Phase 27 baseline — 46 entries; shrink-only by convention)",
+          "BASELINE_INTRA_PACKAGE_CYCLES (shrink-only by convention)",
       }),
     ).toEqual([]);
   });
@@ -237,8 +227,8 @@ describe("no-cycles -- cross-package via Tarjan SCC (ARCH-BASE-05)", () => {
           snippet: cycle.join(" -> "),
         })),
         suggestedFix:
-          "Cross-package cycles cause stale-build risks (tsbuildinfo poisoning per RES-PIT-2) and runtime cycles. Break the cycle by extracting shared types to @comis/core/ports OR moving the consumer to a different package.",
-        designRef: "design §2.2 (target graph is acyclic) / RES-PIT-2",
+          "Cross-package cycles cause stale-build risks (tsbuildinfo poisoning) and runtime cycles. Break the cycle by extracting shared types to @comis/core/ports OR moving the consumer to a different package.",
+        designRef: "target graph is acyclic",
       }),
     ).toEqual([]);
   });

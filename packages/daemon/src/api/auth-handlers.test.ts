@@ -2,10 +2,10 @@
 /**
  * Unit tests for createAuthHandlers (auth.list + auth.logout).
  *
- * Phase 31 commit 11 (MEM-CTX-PORTS-09). The two daemon-side handlers gate
- * the encrypted-mode CLI auth subcommands. The single non-negotiable
- * invariant is that `access`/`refresh`/`accountId` from OAuthProfile NEVER
- * cross the daemon -> CLI boundary -- the canary tests below assert that.
+ * The two daemon-side handlers gate the encrypted-mode CLI auth subcommands.
+ * The single non-negotiable invariant is that `access`/`refresh`/`accountId`
+ * from OAuthProfile NEVER cross the daemon -> CLI boundary -- the canary
+ * tests below assert that.
  *
  * @module
  */
@@ -106,7 +106,7 @@ function makeProfile(overrides: Partial<OAuthProfile> = {}): OAuthProfile {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("createAuthHandlers (MEM-CTX-PORTS-09)", () => {
+describe("createAuthHandlers", () => {
   // -------------------------------------------------------------------------
   // auth.list (token-stripping projection)
   // -------------------------------------------------------------------------

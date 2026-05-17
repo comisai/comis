@@ -3,8 +3,7 @@ import { defineConfig } from "vitest/config";
 
 /**
  * Codegen-script unit tests live in this directory alongside the codegen
- * source (RESEARCH §"Determinism rules" + Plan 35-20 acceptance criteria
- * cite `scripts/contracts/generate.test.ts` as the codegen unit suite).
+ * source — `scripts/contracts/generate.test.ts` is the codegen unit suite.
  *
  * These tests are wired into `pnpm test` via the root `vitest.config.ts`
  * `projects` array. They run alongside the package unit suites and

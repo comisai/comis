@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Rendered tool cache + per-tool memoization (Phase 42 split per EXEC-SPLIT-02).
+ * Rendered tool cache + per-tool memoization.
  *
  * Ensures byte-identical tool JSON across turns when composition is
  * unchanged. On aggregate cache miss, per-tool content-addressed
@@ -10,8 +10,6 @@
  * from a prior turn, skip per-tool hash recomputation — tool composition
  * is guaranteed stable because no MCP tool connect/disconnect can change
  * schemas.
- *
- * Lifted verbatim from request-body-injector.ts:1277-1324.
  *
  * @module
  */

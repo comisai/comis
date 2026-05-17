@@ -18,7 +18,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-// Phase 32 commit 6 (ORCH-EXT-08): commands moved to @comis/orchestrator.
 import {
   parseSlashCommand,
   createCommandHandler,

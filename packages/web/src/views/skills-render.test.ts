@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Render-branch tests for IcSkillsView (Phase 40 Plan 40-15 gap-closure).
+ * Render-branch tests for IcSkillsView.
  *
  * skills.ts at baseline reports 40.97% / 26.51% / 27.77% / 38.69%
  * (lines/branches/functions/statements). This file covers:

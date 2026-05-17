@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: integration/SDK boundary wrapper; throws caught by AgentTool wrapper at consumer site (Phase 41 TS-HYG-07).
+// @allow-throw: integration/SDK boundary wrapper; throws caught by AgentTool wrapper at consumer site.
 import type { ImageGenerationPort, ImageGenInput, ImageGenOutput } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";

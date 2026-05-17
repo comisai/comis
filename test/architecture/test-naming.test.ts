@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Test-naming architecture gate (COV-10).
+ * Test-naming architecture gate.
  *
  * Walks every *.test.ts file in the repository and asserts every
  * `describe(...)` / `it(...)` / `test(...)` description satisfies three
@@ -8,24 +8,22 @@
  *
  *   (1) BLOCKLIST — does NOT match the anchored exact-match blocklist
  *       /^(works|happy path|test \d+|sanity|smoke)$/i. Applies to ALL
- *       three kinds (describe, it, test). Plan 40-06's COV-11 cleanup
- *       guarantees the current state is 0 matches.
+ *       three kinds (describe, it, test).
  *
  *   (2) MIN-LENGTH — is at least 20 characters. Applies to `it(...)` /
  *       `test(...)` only — `describe(...)` is the subject-under-test
  *       label (commonly a single function or class name) per BDD idiom
- *       and is not the use-case description. The design's §3.3 use-case
- *       contract is for `it(...)` descriptions.
+ *       and is not the use-case description.
  *
  *   (3) USE-CASE SHAPE — passes a permissive heuristic that accepts any
  *       of: (a) BDD precondition prefix (when / given / on), (b) any
  *       English-verb token anywhere in the description (curated stem
  *       set), (c) "Subject: detail" colon-pattern (e.g. "session:
  *       expired after TTL"), (d) test-numbering prefix like "Test 2 —"
- *       or "g)". The heuristic is intentionally lenient — design §3.3
- *       allows noun-phrase descriptions that describe observable
- *       behavior, and the plan explicitly states "false positives ...
- *       are NOT acceptable". Applies to `it(...)` / `test(...)` only.
+ *       or "g)". The heuristic is intentionally lenient — noun-phrase
+ *       descriptions that describe observable behavior are allowed, and
+ *       false positives must be avoided. Applies to `it(...)` /
+ *       `test(...)` only.
  *
  * Source-text parsing: `extractDescriptions(source)` strips JSDoc and
  * line comments BEFORE running the description regex. Without this,
@@ -33,18 +31,15 @@
  * captured as fake test calls. Templated descriptions (`describe(\`...
  * ${expr}...\`, ...)`) are not flagged because we only walk
  * STRING-LITERAL form first arguments — dynamic identifiers and
- * template-expression literals are skipped (an intentional false
- * negative per the design's "false negatives acceptable" principle).
+ * template-expression literals are skipped intentionally.
  *
  * Inline allowlist (`testNamingAllowlist` imported from
  * `test/support/architecture-allowlist.ts`) carries the current-state
  * offenders. The shrink ratchet in `allowlist-shrink.test.ts` enforces
  * the list SHRINKS monotonically over time — adding entries requires
- * PR-review citing the reason. Future plans MUST drive the allowlist
- * toward empty by renaming legacy short descriptions OR extending
- * VERB_FORMS / heuristic regexes.
- *
- * Phase 40 / Phase C §3.3 / §6.7 / COV-10.
+ * PR-review citing the reason. Drive the allowlist toward empty by
+ * renaming legacy short descriptions OR extending VERB_FORMS / heuristic
+ * regexes.
  *
  * @module
  */
@@ -460,7 +455,7 @@ const VERB_FORMS: ReadonlySet<string> = new Set([
   "multiple","single","one","two","three","four","five","six","seven","eight","nine","ten",
   // Mode-prefix words common in this codebase ("minimal mode excludes", "full mode defers"):
   "minimal","full","preview","draft","strict","loose",
-  // Additional verbs surfaced during Plan 40-10 self-test against the repo:
+  // Additional verbs surfaced by self-test against the repo:
   "suspend","suspends","suspended","suspending",
   "resume","resumes","resumed","resuming",
   "bypass","bypasses","bypassed","bypassing",
@@ -538,7 +533,7 @@ const VERB_FORMS: ReadonlySet<string> = new Set([
   "stays","stay","stayed","staying",
   "elapses","elapse","elapsed","elapsing",
   "wakes","wake","woke","woken","waking",
-  // More verbs surfaced by self-test against the repo (Plan 40-10):
+  // More verbs surfaced by self-test against the repo:
   "floor","floors","floored","flooring",
   "lowercase","lowercases","lowercased","lowercasing",
   "uppercase","uppercases","uppercased","uppercasing",
@@ -569,11 +564,11 @@ const VERB_FORMS: ReadonlySet<string> = new Set([
   "fallback","fallbacks",
   "pre-fire","pre-fires","pre-fired","pre-firing",
   "snapshot","snapshots","snapshotted","snapshotting",
-  // Plan 40-17 — VERB_FORMS extension to close legitimate heuristic-miss
-  // entries from testNamingAllowlist. Each addition is reviewed for
-  // false-positive risk: it must be a common English verb / verb-form-noun
-  // whose presence in a description signals legitimate use-case intent.
-  // (BLOCKLIST_RE still catches bare anti-patterns like "works" alone.)
+  // VERB_FORMS extensions for legitimate heuristic-miss entries from
+  // testNamingAllowlist. Each addition must be a common English verb /
+  // verb-form-noun whose presence in a description signals legitimate
+  // use-case intent. (BLOCKLIST_RE still catches bare anti-patterns like
+  // "works" alone.)
   "declare","declares","declared","declaring",
   "work","works","worked","working",
   "isolation","enforcement",
@@ -692,15 +687,13 @@ function repoRelative(absPath: string): string {
 // `test/support/architecture-allowlist.ts` as `testNamingAllowlist`.
 //
 // Each entry exempts a SINGLE (file, line) coordinate from predicate 2
-// (min-length) or predicate 3 (use-case shape). Plan 40-10 captures
-// the current state; the shrink-only ratchet in
-// `test/architecture/allowlist-shrink.test.ts` enforces this list
-// SHRINKS over time. Future plans add tests by renaming legacy
-// short descriptions OR extending VERB_FORMS / heuristic regexes.
+// (min-length) or predicate 3 (use-case shape). The shrink-only ratchet
+// in `test/architecture/allowlist-shrink.test.ts` enforces this list
+// SHRINKS over time. Future changes add tests by renaming legacy short
+// descriptions OR extending VERB_FORMS / heuristic regexes.
 //
-// Predicate 1 (anchored blocklist) is NEVER allowlisted — Plan 40-06's
-// COV-11 cleanup leaves the codebase at 0 blocklist matches, and any
-// regression is a hard fail.
+// Predicate 1 (anchored blocklist) is NEVER allowlisted — the codebase
+// is at 0 blocklist matches, and any regression is a hard fail.
 // ---------------------------------------------------------------------------
 
 const allowlistKey = (file: string, line: number, text: string): string =>
@@ -747,7 +740,7 @@ function collectAllDescriptions(): readonly CollectedDescription[] {
 // Gate
 // ---------------------------------------------------------------------------
 
-describe("validates test-naming use-case description invariants (COV-10)", () => {
+describe("validates test-naming use-case description invariants", () => {
   const allDescriptions = collectAllDescriptions();
 
   it("rejects test descriptions matching the implementation-detail blocklist /^(works|happy path|test \\d+|sanity|smoke)$/i", () => {
@@ -767,8 +760,7 @@ describe("validates test-naming use-case description invariants (COV-10)", () =>
           snippet: `${v.kind}("${v.text}")`,
         })),
         suggestedFix:
-          "Rename the descriptor to a use-case-shape phrase ≥20 chars (e.g., \"works\" → \"applies the configured policy when input matches\"). See design §3.3 / §6.7.",
-        designRef: "code-quality-plan §3.3, §6.7, COV-10",
+          "Rename the descriptor to a use-case-shape phrase ≥20 chars (e.g., \"works\" → \"applies the configured policy when input matches\").",
         allowlistRef:
           "no allowlist — the blocklist is anchored exact-match (compound descriptors like \"smoke-level contract\" are NOT in the blocklist)",
       }),
@@ -797,7 +789,6 @@ describe("validates test-naming use-case description invariants (COV-10)", () =>
         })),
         suggestedFix:
           "Expand the descriptor to name the observable behavior in ≥20 characters. Anti-pattern: \"happy path\" (10), \"returns ok\" (10), \"works fine\" (10). Use-case-shape: \"returns Result.ok with payload when input is valid\" (50).",
-        designRef: "code-quality-plan §3.3, §6.7, COV-10",
         allowlistRef:
           "testNamingAllowlist (test/support/architecture-allowlist.ts) — for legitimate short descriptions or temporary deferrals",
       }),
@@ -823,7 +814,6 @@ describe("validates test-naming use-case description invariants (COV-10)", () =>
         })),
         suggestedFix:
           "Rephrase to start with a verb (\"returns\", \"rejects\", \"applies\", ...) OR a BDD precondition (\"when X, ...\") OR use \"Subject: behavior\" form. If the heuristic misclassifies a legitimate description, either (1) add the missing verb to VERB_FORMS in test/architecture/test-naming.test.ts, or (2) add the (file, line, text) tuple to testNamingAllowlist with a justifying reason.",
-        designRef: "code-quality-plan §3.3, §6.7, COV-10",
         allowlistRef:
           "testNamingAllowlist (test/support/architecture-allowlist.ts) and VERB_FORMS (same file)",
       }),

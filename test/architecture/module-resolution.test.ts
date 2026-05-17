@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * moduleResolution allowlist (SKILLS-SPLIT-05).
+ * moduleResolution allowlist.
  *
  * Asserts every consumer tsconfig in the workspace uses a subpath-aware
  * module-resolution mode: `NodeNext`, `node16`, or `bundler`. Legacy
  * `"node"` is the only mode that does NOT honor `exports`-map subpaths;
- * if reintroduced, Phase 33's 3-subpath exports (per SKILLS-SPLIT-01..04)
- * would silently break -- bare-package imports like `@comis/skills/tools`
+ * if reintroduced, the workspace's subpath exports (e.g.
+ * `@comis/skills/tools`) would silently break — bare-package imports
  * would fail to resolve, falling back to the deleted package-root `main`
  * field.
  *
- * Per RES-PIT-5 in 33-RESEARCH.md, this test is the regression guard
- * against a future PR that "drops ESM strictness" by switching to legacy
- * `"node"` resolution.
+ * This test is the regression guard against a future PR that "drops ESM
+ * strictness" by switching to legacy `"node"` resolution.
  *
  * The base config MUST define `moduleResolution`; per-package configs MAY
  * inherit from base (mr === undefined is allowed). Only `packages/web/`
@@ -33,7 +32,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
 
 /**
- * The three subpath-aware moduleResolution modes (per RES-ARCH-6).
+ * The three subpath-aware moduleResolution modes.
  * `node16` is the legacy alias for `NodeNext` in TS 5.x; `bundler` is
  * the Vite/web-target equivalent.
  */
@@ -41,7 +40,7 @@ const SUBPATH_AWARE = ["NodeNext", "node16", "bundler"] as const;
 
 /**
  * Every tsconfig file in the workspace this rule applies to.
- * Broader than WORKSPACE_PACKAGES (which excludes web + comis); SKILLS-SPLIT-05
+ * Broader than WORKSPACE_PACKAGES (which excludes web + comis); the rule
  * covers ALL consumer tsconfigs because any of them could regress.
  */
 const TSCONFIG_FILES = [
@@ -75,7 +74,7 @@ function structureViolation(raw: string): ViolationCitation {
   return { file: raw, line: 0 };
 }
 
-describe("moduleResolution allowlist (SKILLS-SPLIT-05)", () => {
+describe("moduleResolution allowlist", () => {
   it("every consumer tsconfig uses NodeNext, node16, or bundler", () => {
     const violations: string[] = [];
     for (const file of TSCONFIG_FILES) {
@@ -96,7 +95,7 @@ describe("moduleResolution allowlist (SKILLS-SPLIT-05)", () => {
       // to one of the allowlist values. Anything else is a violation.
       if (mr && !(SUBPATH_AWARE as readonly string[]).includes(mr)) {
         violations.push(
-          `${file}: moduleResolution="${mr}" not in [${SUBPATH_AWARE.join(", ")}] (per SKILLS-SPLIT-05 / RES-PIT-5)`,
+          `${file}: moduleResolution="${mr}" not in [${SUBPATH_AWARE.join(", ")}]`,
         );
       }
     }
@@ -104,13 +103,12 @@ describe("moduleResolution allowlist (SKILLS-SPLIT-05)", () => {
       violations,
       formatViolations({
         description:
-          "Every consumer tsconfig must use a subpath-aware moduleResolution: NodeNext, node16, or bundler. Legacy 'node' breaks Phase 33's exports-map subpaths.",
+          "Every consumer tsconfig must use a subpath-aware moduleResolution: NodeNext, node16, or bundler. Legacy 'node' breaks the workspace's exports-map subpaths.",
         violations: violations.map(structureViolation),
         suggestedFix:
           "Set compilerOptions.moduleResolution to 'NodeNext' (preferred for Node-target packages) or 'bundler' (for browser/Vite targets like @comis/web). Inheriting from tsconfig.base.json (no override) is also valid.",
         designRef:
-          "design §10.2 (subpath exports require subpath-aware resolution) + 33-RESEARCH.md RES-ARCH-6 / RES-PIT-5",
-        allowlistRef: "SKILLS-SPLIT-05",
+          "subpath exports require subpath-aware resolution",
       }),
     ).toEqual([]);
   });

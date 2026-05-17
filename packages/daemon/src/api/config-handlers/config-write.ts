@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
- * Config write (patch) RPC handler (Phase 43 split per FILE-SPLIT-03).
+ * Config write (patch) RPC handler.
  *
  * Carries the heaviest config-mutation logic:
  *   - config.patch: dot-notation patch into AppConfig with credential guard,
@@ -100,8 +100,8 @@ export function bindConfigWriteHandlers(
       }
       const key = (rawParams.key ?? (rawPath && rawPath.includes(".") ? rawPath.slice(rawPath.indexOf(".") + 1) : undefined)) as string | undefined;
       // Strip dispatcher internals + run contract parse for type narrowing +
-      // dev-mode defense-in-depth (D-04). The contract accepts loose value
-      // shape (union of string|number|boolean|record) per D-05.
+      // dev-mode defense-in-depth. The contract accepts loose value
+      // shape (union of string|number|boolean|record).
       const userParams = stripInternalFields(rawParams);
       // Inject the resolved section/key BEFORE the parse so the wire-format
       // (section, key, value) and the legacy (path, value) forms both parse

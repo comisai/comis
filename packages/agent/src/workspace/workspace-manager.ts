@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: workspace-manager re-raise of non-EEXIST fs errors (line 101); consumed by daemon bootstrap (daemon.ts catch boundary) (Phase 41 TS-HYG-07).
+// @allow-throw: workspace-manager re-raise of non-EEXIST fs errors (line 101); consumed by daemon bootstrap (daemon.ts catch boundary).
 import { safePath, systemNowMs } from "@comis/core";
 import { execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs/promises";

@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cron-handlers contract slice (Phase 43 split per FILE-SPLIT-14).
+ * Cron-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/cron-handlers.ts` (8 methods — cron.* +
- * scheduler.wake). Block-moved verbatim from the pre-split
- * `api-contracts/orchestrator.ts` (lines 162-427). Spread order in
- * `CRON_HANDLERS_CONTRACTS` matches the pre-split `ORCHESTRATOR_CONTRACTS`
- * array (orchestrator.ts:1099-1106) byte for byte to keep
- * `contracts.generated.*` artifacts byte-identical.
+ * scheduler.wake). The spread order in `CRON_HANDLERS_CONTRACTS` is
+ * load-bearing for `contracts.generated.*` artifacts byte-identical output.
  *
  * @module
  */
@@ -26,25 +23,20 @@ import { defineContract } from "../types.js";
  * `cron.add` — Register a new scheduled cron job. Rpc-scoped per
  * setup-gateway-api.ts:130-157. Handler path: cron-handlers.ts:71-133.
  *
- * **PATTERNS OQ-4 transformer relocation.** Pre-Plan-35-18, the dispatcher
- * carried an inline transformer that converted the web `CronJobInput` payload
- * (nested `schedule` + `message`) into the flat fields the handler expects.
- * Per OQ-4 option (c), the transformer moves into the handler body. The
- * contract describes the WEB on-wire shape (nested `schedule.{kind,expr,tz,
- * everyMs,at}` + `message`); the handler body accepts BOTH the web shape
+ * The contract describes the WEB on-wire shape (nested `schedule.{kind,expr,
+ * tz,everyMs,at}` + `message`); the handler body accepts BOTH the web shape
  * (nested) AND the legacy chat-tool shape (flat `schedule_kind` /
- * `schedule_every_ms` / etc.) to preserve the 14+ existing handler-test
- * invocations.
+ * `schedule_every_ms` / etc.) to preserve existing handler-test invocations.
  *
  * Bespoke pre-Zod validation: duplicate job-name guard reads name on
  * rawParams.name BEFORE the schedule normalization (preserves the
  * "A job named X already exists" message-text contract).
  *
- * Request: `{ name, agentId?, schedule, message }` (web web shape) — the
+ * Request: `{ name, agentId?, schedule, message }` (web shape) — the
  * handler also accepts `{ name, schedule_kind, schedule_every_ms?,
  * schedule_expr?, timezone?, schedule_at?, payload_kind?, payload_text }`
- * (legacy flat shape). Loose-record on `schedule` per D-05 (variant inner
- * shape per schedule.kind).
+ * (legacy flat shape). Loose-record on `schedule` (variant inner shape per
+ * schedule.kind).
  *
  * Response: `{ jobId, name, schedule, model? }`. `schedule` is the normalized
  * CronSchedule shape (`{ kind: "every" | "cron" | "at", ... }`).
@@ -98,8 +90,8 @@ export const CronAddContract = defineContract({
  * Response: `{ jobs: Job[] }`. Each Job carries `id`, `name`, `agentId`,
  * `enabled`, `schedule`, `payload`, `sessionTarget`, `nextRunAtMs?`,
  * `lastRunAtMs?`, `consecutiveErrors`, `createdAtMs`, optional
- * `deliveryTarget`. The Job entries are loose-records per D-05 — the schedule
- * + payload + deliveryTarget inner shapes vary by job kind.
+ * `deliveryTarget`. The Job entries are loose-records — the schedule +
+ * payload + deliveryTarget inner shapes vary by job kind.
  */
 export const CronListContract = defineContract({
   method: "cron.list",
@@ -283,9 +275,7 @@ export const SchedulerWakeContract = defineContract({
 
 /**
  * cron-handlers slice (8 contracts — cron.* + scheduler.wake). Spread order
- * matches the pre-split `ORCHESTRATOR_CONTRACTS` array (orchestrator.ts:
- * 1099-1106) byte for byte — determinism-critical for codegen output
- * stability.
+ * is determinism-critical for codegen output stability.
  */
 export const CRON_HANDLERS_CONTRACTS = [
   CronAddContract,

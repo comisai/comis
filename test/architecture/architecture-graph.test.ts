@@ -1,28 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Dual-graph alignment test (ARCH-BASE-02).
+ * Dual-graph alignment test.
  *
  * Asserts three invariants:
  *   1. Every packages/*\/tsconfig.json `references` block aligns with the
- *      §2.2 target package graph (closed set — GUARDRAILS-02; no allowlist).
+ *      §2.2 target package graph (closed set; no allowlist).
  *   2. Every packages/*\/package.json `dependencies` (filtered to @comis/*)
- *      aligns with the §2.2 target graph (closed Phase 36 GUARDRAILS-02 — no allowlist).
+ *      aligns with the §2.2 target graph (closed set; no allowlist).
  *   3. The two graphs (#1 + #2) match each other — drift between
  *      tsconfig refs and package.json deps is a covert source of cycles
  *      and stale-build risk. Filtered through DRIFT_ALLOWLIST for
- *      INTENTIONAL divergences (empty as of Phase 35 Plan 35-05 — see
- *      DRIFT_ALLOWLIST inline comment).
+ *      INTENTIONAL divergences (currently empty — see DRIFT_ALLOWLIST
+ *      inline comment).
  *
  * Also asserts:
  *   - test/architecture/tsconfig.madge.json `paths` block has exactly
- *     14 entries (12 workspace packages + 2 skills subpaths per
- *     SKILLS-SPLIT-04; `web` and `comis` umbrella excluded). Pitfall 5
- *     (RES-PIT-5) regression coverage; Phase 33 expanded from 12 → 14.
+ *     14 entries (12 workspace packages + 2 skills subpaths; `web` and
+ *     `comis` umbrella excluded). Pitfall-5 regression coverage; the
+ *     count grew from 12 to 14 with the skills package split.
  *
- * NOTE: ARCH-BASE-14's dist-mode madge gate AND `tsc -b --dry` gate live
- * in .github/workflows/ci.yml (Plan 02 Task 3) — NOT here. This file's
- * scope is "tsconfig + package.json static-graph alignment", which is a
- * different concern from runtime cycle detection.
+ * NOTE: the dist-mode madge gate AND `tsc -b --dry` gate live in
+ * .github/workflows/ci.yml — NOT here. This file's scope is
+ * "tsconfig + package.json static-graph alignment", which is a different
+ * concern from runtime cycle detection.
  *
  * @module
  */
@@ -39,7 +39,7 @@ import {
 /**
  * Parse a legacy "<path><sep><message>" violation string into a structured
  * ViolationCitation so `formatViolations()` renders the path in the file
- * field and the issue prose in the snippet block (CR-WR-01).
+ * field and the issue prose in the snippet block.
  *
  * Accepts both `packages/X/file.json <message>` and `packages/X: <message>`
  * shapes; falls back to the whole string as `file` when no separator
@@ -79,31 +79,23 @@ const WORKSPACE_PACKAGES = [
 type WorkspacePackage = (typeof WORKSPACE_PACKAGES)[number];
 
 /**
- * §2.2 target package graph (current state with L1-L26 allowlist still open).
+ * §2.2 target package graph.
  *
  * Each value is the set of @comis/* packages that the key package SHOULD
  * reference in BOTH tsconfig.json `references` and package.json `dependencies`.
- * Phase 27 records the current graph; Phase 28+ phases narrow it.
  *
  * NOTE on cli: TARGET_GRAPH.cli does NOT include "agent" because cli's
- * tsconfig.json does not reference ../agent (verified post-Phase-31 commit 12:
- * cli/tsconfig.json references = [shared, core, infra] — no ../agent and
- * no ../memory). cli/package.json DOES depend on @comis/agent for runtime
- * substring imports per L17. This intentional divergence is allowlisted via
- * DRIFT_ALLOWLIST below. The @comis/memory edge was closed in Phase 31
- * commit 12 (MEM-CTX-PORTS-02): both cli/package.json `dependencies` and
- * cli/tsconfig.json `references` dropped @comis/memory after the secrets +
- * auth subcommands migrated to daemon RPC (MEM-CTX-PORTS-09).
+ * tsconfig.json does not reference ../agent. cli/package.json no longer
+ * depends on @comis/agent either; the previous runtime substring imports
+ * were retargeted to @comis/core. The @comis/memory edge was closed when
+ * the secrets + auth subcommands migrated to daemon RPC.
  *
- * NOTE on agent vs skills: at plan-authoring time, packages/agent does NOT
- * import @comis/skills (only structural-typing comments reference it). So
- * agent's TARGET_GRAPH after Phase 31 commit 4 is [shared, core, scheduler]
- * — no skills edge, and the memory edge was cut. Phase 28 commit 2
- * (CORE-PORTS-05 / L12) had already cut the @comis/infra edge; Phase 31
- * commit 4 (MEM-CTX-PORTS-01 + MEM-CTX-PORTS-07) closes the memory edge
- * by retargeting agent's type-only imports to @comis/core (ContextStorePort
- * + SessionStorePort + row DTOs) and moving the lone value-import
- * (createOAuthProfileStoreEncrypted) to daemon's setup-agents.ts.
+ * NOTE on agent vs skills: packages/agent does NOT import @comis/skills
+ * (only structural-typing comments reference it). agent's TARGET_GRAPH is
+ * [shared, core, scheduler] — no skills edge, no infra edge, no memory edge.
+ * Agent's type-only imports for ContextStorePort + SessionStorePort + row
+ * DTOs resolve through @comis/core, and the lone OAuth-store value-import
+ * lives in daemon's setup-agents.ts.
  */
 const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   shared: new Set(),
@@ -111,35 +103,28 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   infra: new Set(["shared", "core"]),
   memory: new Set(["shared", "core"]),
   scheduler: new Set(["shared", "core"]),
-  // skills: Phase 33 cut the infra edge (SKILLS-SPLIT-09). Logger type imports from @comis/core;
-  // isDocker moved to packages/core/src/runtime/is-docker.ts (RES-ARCH-2).
+  // skills: no infra edge. Logger type imports from @comis/core; isDocker
+  // lives at packages/core/src/runtime/is-docker.ts.
   skills: new Set(["shared", "core"]),
   // agent: structurally references skills' types only (comments) — no actual
-  // import edge, so no skills entry here. Phase 28 commit 2 (CORE-PORTS-05 /
-  // L12) cut the @comis/infra edge: logger contract types canonically live
-  // in @comis/core after the move. Phase 31 commit 4 (MEM-CTX-PORTS-01 +
-  // MEM-CTX-PORTS-07) cut the @comis/memory edge: agent's type-only imports
-  // resolve through @comis/core; the OAuth-store value-import moved to daemon.
+  // import edge, so no skills entry here. No @comis/infra edge: logger
+  // contract types canonically live in @comis/core. No @comis/memory edge:
+  // agent's type-only imports resolve through @comis/core; the OAuth-store
+  // value-import lives in daemon.
   agent: new Set(["shared", "core", "scheduler"]),
-  // channels: L1 closed in Phase 32 commit 5 (ORCH-EXT-12). Agent dep dropped
-  // from both package.json and tsconfig.json after the 8 shared/ pipeline
-  // carriers (inbound + execution) moved to @comis/orchestrator in commits
-  // 3-4. Phase 28 commit 2 (CORE-PORTS-05 / L12) cut the @comis/infra edge
-  // earlier.
+  // channels: no agent dep — the shared/ pipeline carriers (inbound +
+  // execution) moved to @comis/orchestrator. No @comis/infra edge either.
   channels: new Set(["shared", "core"]),
-  // orchestrator: bootstrap commit only — empty src/, no actual import edges yet.
-  // Phase 32 target graph: orchestrator depends on shared, core, agent, channels
-  // per ORCH-EXT-01 (design §2.2 + §9.5 acceptance criteria).
+  // orchestrator: depends on shared, core, agent, channels per design §2.2
+  // + §9.5 acceptance criteria.
   orchestrator: new Set(["shared", "core", "agent", "channels"]),
-  // gateway: L4 closed in Phase 28 commit 5 (CORE-PORTS-14) — the agent
-  // OAuth-helpers back-edge is cut; OAuth helpers now live in @comis/core.
+  // gateway: no agent OAuth-helpers back-edge — OAuth helpers live in
+  // @comis/core.
   gateway: new Set(["shared", "core"]),
-  // cli: L12 closed in Phase 35 Plan 35-05 (WEB-CONTRACTS-03) — cli no
-  // longer depends on @comis/infra. L17 closed in Phase 35 Plan 35-04
-  // (WEB-CONTRACTS-02) — cli no longer depends on @comis/agent. The
-  // cli:agent entry in DRIFT_ALLOWLIST is removed alongside. Memory edge
-  // closed in Phase 31 commit 12 (MEM-CTX-PORTS-02). Result: cli's
-  // workspace dep graph collapses to {shared, core}.
+  // cli: no longer depends on @comis/infra, @comis/agent, or @comis/memory.
+  // Every CLI @comis/agent import was retargeted to @comis/core; the
+  // secrets + auth subcommands migrated to daemon RPC. cli's workspace
+  // dep graph collapses to {shared, core}.
   cli: new Set(["shared", "core"]),
   daemon: new Set([
     "shared",
@@ -162,18 +147,11 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
  * Format: `"${packageShortName}:${depShortName}"` — both strings have the
  * `@comis/` prefix STRIPPED.
  *
- * Phase 35 Plan 35-05 (WEB-CONTRACTS-03) — DRIFT_ALLOWLIST is now empty:
- *   cli:agent was removed when Phase 35 Plan 35-04 (WEB-CONTRACTS-02 / L17
- *   closure) retargeted every CLI @comis/agent import to @comis/core; the
- *   stale @comis/agent dep in cli/package.json was dropped in this plan
- *   alongside the @comis/infra closure.
+ * The allowlist is currently empty.
  *
  * The allowlist mechanism mirrors test/support/architecture-allowlist.ts
- * shrink-only semantics: entries can be REMOVED (when the underlying L-ID
- * closes) but should NOT be ADDED without a refactor PR + L-ID assignment +
- * design-doc citation. PR review catches additions; future Phase 36 work may
- * extend Plan 06's allowlist-shrink test to also gate this set
- * programmatically.
+ * shrink-only semantics: entries can be REMOVED but should NOT be ADDED
+ * without a refactor PR + design-doc citation. PR review catches additions.
  */
 const DRIFT_ALLOWLIST: ReadonlySet<string> = new Set();
 
@@ -204,7 +182,7 @@ function readTsconfigRefs(pkg: string): Set<string> {
   );
 }
 
-describe("architecture-graph -- dual-graph alignment (ARCH-BASE-02)", () => {
+describe("architecture-graph -- dual-graph alignment", () => {
   it("test/architecture/tsconfig.madge.json paths block has exactly 14 @comis/* entries", () => {
     const tsconfigMadge = JSON.parse(
       readFileSync(TSCONFIG_MADGE_PATH, "utf8"),
@@ -215,7 +193,7 @@ describe("architecture-graph -- dual-graph alignment (ARCH-BASE-02)", () => {
     const keys = Object.keys(paths);
     expect(
       keys.length,
-      "tsconfig.madge.json must have exactly 14 paths entries (12 workspace packages + 2 new skills subpaths per SKILLS-SPLIT-04; Phase 33)",
+      "tsconfig.madge.json must have exactly 14 paths entries (12 workspace packages + 2 skills subpaths)",
     ).toBe(14);
     for (const k of keys) {
       expect(
@@ -223,15 +201,14 @@ describe("architecture-graph -- dual-graph alignment (ARCH-BASE-02)", () => {
         `path key ${k} must start with @comis/`,
       ).toBe(true);
       const target = paths[k]?.[0] ?? "";
-      // Pitfall 5 (RES-PIT-5): path target must point at a SOURCE file under
-      // packages/*/src/ — never under dist/. Post-Phase-33 the skills subpath
-      // entries point at packages/skills/src/{skills,tools,platform-tools}/index.ts
-      // (per SKILLS-SPLIT-04), so the legacy "ends with /src/index.ts" check
-      // is broadened to "contains /src/ AND ends with /index.ts AND does not
+      // path target must point at a SOURCE file under packages/*/src/ —
+      // never under dist/. The skills subpath entries point at
+      // packages/skills/src/{skills,tools,platform-tools}/index.ts, so the
+      // check is "contains /src/ AND ends with /index.ts AND does not
       // contain /dist/".
       expect(
         target.includes("/src/") && target.endsWith("/index.ts") && !target.includes("/dist/"),
-        `path target ${target} must point at a /src/.../index.ts file (NOT dist — RES-PIT-5)`,
+        `path target ${target} must point at a /src/.../index.ts file (NOT dist)`,
       ).toBe(true);
     }
   });
@@ -241,9 +218,8 @@ describe("architecture-graph -- dual-graph alignment (ARCH-BASE-02)", () => {
     for (const pkg of WORKSPACE_PACKAGES) {
       const actual = readTsconfigRefs(pkg);
       const expected = TARGET_GRAPH[pkg];
-      // The Phase 27 baseline is exact-match per package: TARGET_GRAPH already
-      // accounts for L1-L26 open edges. Future phases narrow TARGET_GRAPH as
-      // L-IDs close; the test stays exact.
+      // Baseline is exact-match per package: TARGET_GRAPH is the source of
+      // truth for the allowed graph; the test stays exact.
       for (const requiredDep of expected) {
         if (!actual.has(requiredDep)) {
           violations.push(
@@ -269,13 +245,13 @@ describe("architecture-graph -- dual-graph alignment (ARCH-BASE-02)", () => {
       violations,
       formatViolations({
         description:
-          "tsconfig.json `references` blocks must align with the §2.2 target package graph (CLOSED SET per GUARDRAILS-02 — no allowlist).",
+          "tsconfig.json `references` blocks must align with the §2.2 target package graph (CLOSED SET — no allowlist).",
         violations: violations.map(structureViolation),
         suggestedFix:
-          'Add the missing `{ "path": "../<dep>" }` reference, OR remove the unknown reference. If the divergence is intentional and tracked by an L-ID, update TARGET_GRAPH in this file and cite the L-ID with an inline comment.',
+          'Add the missing `{ "path": "../<dep>" }` reference, OR remove the unknown reference. If the divergence is intentional, update TARGET_GRAPH in this file with an inline rationale.',
         designRef:
-          "design §2.2 (target package graph) / GUARDRAILS-02 (closed set; no L-ID allowlist)",
-        allowlistRef: "(none — closed set per GUARDRAILS-02)",
+          "design §2.2 (target package graph) — closed set, no allowlist",
+        allowlistRef: "(none — closed set)",
       }),
     ).toEqual([]);
   });
@@ -293,10 +269,9 @@ describe("architecture-graph -- dual-graph alignment (ARCH-BASE-02)", () => {
         }
       }
       for (const extraDep of actual) {
-        // DRIFT_ALLOWLIST tracked intentional pkg-json/tsconfig divergences
-        // (e.g., legacy cli:agent runtime dep without tsconfig ref). Phase 35
-        // Plan 35-05 (WEB-CONTRACTS-03) emptied DRIFT_ALLOWLIST; any future
-        // divergence requires a PR + L-ID assignment.
+        // DRIFT_ALLOWLIST tracks intentional pkg-json/tsconfig divergences
+        // (e.g., a runtime dep without a tsconfig ref). DRIFT_ALLOWLIST is
+        // currently empty; any future divergence requires a PR.
         const driftKey = `${pkg}:${extraDep}`;
         if (DRIFT_ALLOWLIST.has(driftKey)) continue;
         if (!expected.has(extraDep)) {
@@ -316,12 +291,12 @@ describe("architecture-graph -- dual-graph alignment (ARCH-BASE-02)", () => {
       violations,
       formatViolations({
         description:
-          "package.json @comis/* `dependencies` must align with the §2.2 target package graph (CLOSED SET per GUARDRAILS-02 — no allowlist).",
+          "package.json @comis/* `dependencies` must align with the §2.2 target package graph (CLOSED SET — no allowlist).",
         violations: violations.map(structureViolation),
         suggestedFix:
-          'Add the missing `"@comis/<dep>": "workspace:*"` to dependencies, OR remove the unknown dep. If the divergence is intentional and tracked by an L-ID, update TARGET_GRAPH or DRIFT_ALLOWLIST in this file with an inline rationale.',
-        designRef: "design §2.2 / GUARDRAILS-02 (closed set)",
-        allowlistRef: "(none — closed set per GUARDRAILS-02; DRIFT_ALLOWLIST is empty post-Phase-35)",
+          'Add the missing `"@comis/<dep>": "workspace:*"` to dependencies, OR remove the unknown dep. If the divergence is intentional, update TARGET_GRAPH or DRIFT_ALLOWLIST in this file with an inline rationale.',
+        designRef: "design §2.2 (closed set)",
+        allowlistRef: "(none — closed set; DRIFT_ALLOWLIST is empty)",
       }),
     ).toEqual([]);
   });
@@ -353,22 +328,22 @@ describe("architecture-graph -- dual-graph alignment (ARCH-BASE-02)", () => {
       formatViolations({
         description:
           "tsconfig `references` and package.json `dependencies` (filtered to @comis/*) must match exactly — drift is a stale-build hazard. " +
-          "Intentional divergences are recorded in the DRIFT_ALLOWLIST constant at the top of this test file (empty as of Phase 35 Plan 35-05 — WEB-CONTRACTS-03). " +
-          "If a new divergence is intentional, add it to DRIFT_ALLOWLIST in this file with an inline rationale + L-ID; the allowlist follows shrink-only semantics by convention.",
+          "Intentional divergences are recorded in the DRIFT_ALLOWLIST constant at the top of this test file (currently empty). " +
+          "If a new divergence is intentional, add it to DRIFT_ALLOWLIST in this file with an inline rationale; the allowlist follows shrink-only semantics by convention.",
         violations: violations.map(structureViolation),
         suggestedFix:
           "Both files must list the same set of @comis/* deps. If a package needs a type-only reference (no runtime), keep it in tsconfig refs AND package.json devDependencies (or use workspace:* in dependencies for runtime). " +
-          "For intentional divergence, see DRIFT_ALLOWLIST in this file — adding entries requires a PR review + L-ID assignment + design-doc citation.",
-        designRef: "design §2.2 / GUARDRAILS-02 (closed set)",
-        allowlistRef: "(none — closed set per GUARDRAILS-02; DRIFT_ALLOWLIST is empty post-Phase-35)",
+          "For intentional divergence, see DRIFT_ALLOWLIST in this file — adding entries requires a PR review + design-doc citation.",
+        designRef: "design §2.2 (closed set)",
+        allowlistRef: "(none — closed set; DRIFT_ALLOWLIST is empty)",
       }),
     ).toEqual([]);
   });
 
   it("every DRIFT_ALLOWLIST entry corresponds to a live divergence (catch stale exemptions)", () => {
-    // Without this gate, closing a divergence in a later phase without
-    // pruning the matching DRIFT_ALLOWLIST entry leaves a stale exemption
-    // that silently blesses any future regression on the same edge (CR-WR-06).
+    // Without this gate, closing a divergence without pruning the matching
+    // DRIFT_ALLOWLIST entry leaves a stale exemption that silently blesses
+    // any future regression on the same edge.
     const stale: string[] = [];
     for (const entry of DRIFT_ALLOWLIST) {
       const [pkg, dep] = entry.split(":") as [WorkspacePackage, string];
@@ -396,7 +371,7 @@ describe("architecture-graph -- dual-graph alignment (ARCH-BASE-02)", () => {
         violations: stale.map(structureViolation),
         suggestedFix:
           "Remove the stale entry from DRIFT_ALLOWLIST. The allowlist follows shrink-only semantics by convention; an entry whose divergence is gone must be pruned in the same PR that closed the divergence.",
-        designRef: "design §2.2 / §1.3 L17",
+        designRef: "design §2.2",
         allowlistRef: "DRIFT_ALLOWLIST (shrink-only by convention)",
       }),
     ).toEqual([]);

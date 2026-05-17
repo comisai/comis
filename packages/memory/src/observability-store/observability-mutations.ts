@@ -2,10 +2,8 @@
 /**
  * ObservabilityStore mutation helpers (WRITES).
  *
- * Phase 43 split (FILE-SPLIT-13): block-moved from the former
- * `packages/memory/src/observability-store.ts` createObservabilityStore
- * factory body. Each `bind*` function creates the prepared statements its
- * methods need (closure-captured) and returns the partial handle slice.
+ * Each `bind*` function creates the prepared statements its methods need
+ * (closure-captured) and returns the partial handle slice.
  *
  * @module
  */

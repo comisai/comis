@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Type-only port surface for OAuth credential persistence.
-// PROFILE_ID_RE + validateProfileId live in ../security/profile-id.ts as of Phase 28
-// commit 1 (closes L15 per CORE-PORTS-01).
+// PROFILE_ID_RE + validateProfileId live in ../security/profile-id.ts.
 import type { Result } from "@comis/shared";
 
 /**

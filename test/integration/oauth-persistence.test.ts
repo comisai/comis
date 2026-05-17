@@ -381,8 +381,8 @@ describe("OAuth persistence (integration)", () => {
           .filter((c) => c.payload?.hint === "env-override-ignored");
         expect(warnsWithDriftHint).toHaveLength(1);
         // Per AGENTS.md §2.7, Pino `errorKind` is a closed union, so the
-        // WARN payload carries the literal "auth" (Phase 28 commit 6B).
-        // The semantic discriminator flows via `hint: "env-override-ignored"`.
+        // WARN payload carries the literal "auth". The semantic
+        // discriminator flows via `hint: "env-override-ignored"`.
         expect(warnsWithDriftHint[0]!.payload.errorKind).toBe("auth");
 
         // Stored profile is canonical — refresh was NOT updated to the

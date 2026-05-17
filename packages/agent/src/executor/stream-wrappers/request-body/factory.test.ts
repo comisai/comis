@@ -2054,7 +2054,7 @@ describe("breakpoint cap increase", () => {
   });
 });
 
-// describe("getMinCacheableTokens") — extracted to cache-breakpoints.test.ts (Phase 42 EXEC-SPLIT-03).
+// describe("getMinCacheableTokens") — extracted to cache-breakpoints.test.ts.
 
 describe("tool definition caching", () => {
   let logger: ReturnType<typeof createMockLogger>;
@@ -2419,7 +2419,7 @@ describe("lookback window enforcement", () => {
 });
 
 // describe("CACHEABLE_BLOCK_TYPES") + describe("addCacheControlToLastBlock thinking exclusion")
-// — extracted to cache-breakpoints.test.ts (Phase 42 EXEC-SPLIT-03).
+// — extracted to cache-breakpoints.test.ts.
 describe("breakpoint strategy config", () => {
   let logger: ReturnType<typeof createMockLogger>;
 
@@ -2926,11 +2926,9 @@ describe("createRequestBodyInjector — defer_loading injection", () => {
   // Source-level regression that the local supportsToolSearch helper was
   // removed in favor of the shared export from tool-deferral.ts.
   //
-  // Post-Phase-42 EXEC-SPLIT-02: the defer_loading injection logic
-  // (formerly in request-body-injector.ts) moved to
-  // request-body/tool-deferral-injection.ts. The relative path to the
-  // shared helper deepened one level (../tool-deferral.js →
-  // ../../tool-deferral.js).
+  // The defer_loading injection logic lives in
+  // request-body/tool-deferral-injection.ts and imports the shared helper
+  // via `../../tool-deferral.js`.
   it("does NOT declare its own `function supportsToolSearch` (uses shared helper)", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
@@ -3843,7 +3841,7 @@ describe("per-tool content-addressed memoization", () => {
   });
 });
 
-// describe("per-model cache retention override") — extracted to cache-breakpoints.test.ts (Phase 42 EXEC-SPLIT-03).
+// describe("per-model cache retention override") — extracted to cache-breakpoints.test.ts.
 
 describe("Per-model kill switch strips ALL cache_control markers", () => {
   let logger: ReturnType<typeof createMockLogger>;
@@ -5400,8 +5398,8 @@ describe("sticky-on beta header latches", () => {
 });
 
 // Pure-function describes for clearStaleThinkingBlocks (5 tests) extracted to
-// tool-result-clearing.test.ts (Phase 42 EXEC-SPLIT-03). Integration tests
-// (via createRequestBodyInjector) stay below.
+// tool-result-clearing.test.ts. Integration tests (via
+// createRequestBodyInjector) stay below.
 describe("clearStaleThinkingBlocks (integration)", () => {
   let logger: ReturnType<typeof createMockLogger>;
 
@@ -5891,7 +5889,7 @@ describe("gap closure: single TTL estimation pass with text extraction", () => {
   });
 });
 
-// describe("sortToolsForCacheStability") — extracted to cache-breakpoints.test.ts (Phase 42 EXEC-SPLIT-03).
+// describe("sortToolsForCacheStability") — extracted to cache-breakpoints.test.ts.
 
 // ---------------------------------------------------------------------------
 // Zone-aware retention tests

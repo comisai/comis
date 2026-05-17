@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: builtin tool boundary; throws caught by AgentTool wrapper (Phase 41 TS-HYG-07).
+// @allow-throw: builtin tool boundary; throws caught by AgentTool wrapper.
 /**
  * Auto-provisioning for external tool binaries (ripgrep, fd).
  *

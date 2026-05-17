@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: monitoring source systemctl invocation error; consumed via monitoring-source aggregator try/catch chain (Phase 41 TS-HYG-07).
+// @allow-throw: monitoring source systemctl invocation error; consumed via monitoring-source aggregator try/catch chain.
 /**
  * systemd Service HeartbeatSourcePort implementation.
  * Monitors systemd service health by checking for failed services

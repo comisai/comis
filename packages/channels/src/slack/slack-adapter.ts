@@ -51,8 +51,8 @@ export interface SlackAdapterDeps {
    * `clientOptions.slackApiUrl = apiRoot`. Production callers leave this
    * undefined and bolt uses its default (`https://slack.com/api`).
    *
-   * Phase 40 / Plan 40-09 / COV-15 — production seam for the wire-level E2E
-   * mock chat-platform fixture (test/e2e/mocks/slack/).
+   * Production seam for the wire-level E2E mock chat-platform fixture
+   * (test/e2e/mocks/slack/).
    *
    * Note: this only redirects Web API REST traffic. Socket Mode WebSocket
    * connections go to `wss://wss-primary.slack.com` and cannot be redirected
@@ -96,8 +96,8 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
     },
 
     async start(): Promise<Result<void, Error>> {
-      // Fail fast on invalid credentials. Pass apiRoot if set (Phase 40 /
-      // Plan 40-09 / COV-15) so auth.test() hits the redirection mock.
+      // Fail fast on invalid credentials. Pass apiRoot if set so auth.test()
+      // hits the redirection mock.
       const credResult = await validateSlackCredentials({
         botToken: deps.botToken,
         mode: deps.mode,
@@ -137,7 +137,6 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         // E2E seam: when deps.apiRoot is set, bolt's underlying WebClient
         // receives slackApiUrl=apiRoot via clientOptions. Production path
         // omits clientOptions entirely (byte-identical to the prior shape).
-        // Phase 40 / Plan 40-09 / COV-15.
         const clientOptionsOverride = deps.apiRoot
           ? { clientOptions: { slackApiUrl: deps.apiRoot } }
           : {};

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the workspace-umbrella Wave C contracts
- * (Plan 35-13).
+ * Per-contract tests for the workspace-umbrella contracts.
  *
  * The 5 handler factories under the WorkspaceApiDeps slice expose 36
  * methods total — 12 workspace + 13 browser + 4 admin.approval + 6
@@ -204,7 +203,7 @@ describe("workspace-umbrella domain contracts", () => {
   // INTERNAL_FIELD_NAMES paired sanity test
   // -------------------------------------------------------------------------
 
-  it("no contract request schema declares any INTERNAL_FIELD_NAMES key (D-04)", () => {
+  it("no contract request schema declares any INTERNAL_FIELD_NAMES key", () => {
     // Use a probe-object pattern: a request schema that DECLARED an internal
     // key would either accept the probe (if `.passthrough()`) or reject it
     // (strict mode). The 12-shape allowlist mode is implicit non-strict (no
@@ -224,7 +223,7 @@ describe("workspace-umbrella domain contracts", () => {
   // -------------------------------------------------------------------------
 
   describe("workspace.writeFile (representative — workspace-handlers cluster)", () => {
-    it("method name", () => {
+    it("exposes the canonical method name", () => {
       expect(WorkspaceWriteFileContract.method).toBe("workspace.writeFile");
     });
 
@@ -290,7 +289,7 @@ describe("workspace-umbrella domain contracts", () => {
   // -------------------------------------------------------------------------
 
   describe("admin.approval.resolve (representative — approval-handlers cluster)", () => {
-    it("method name", () => {
+    it("exposes the canonical method name", () => {
       expect(AdminApprovalResolveContract.method).toBe("admin.approval.resolve");
     });
 
@@ -359,7 +358,7 @@ describe("workspace-umbrella domain contracts", () => {
   // -------------------------------------------------------------------------
 
   describe("skills.upload (representative — skill-handlers cluster)", () => {
-    it("method name", () => {
+    it("exposes the canonical method name", () => {
       expect(SkillsUploadContract.method).toBe("skills.upload");
     });
 
@@ -436,7 +435,7 @@ describe("workspace-umbrella domain contracts", () => {
   // -------------------------------------------------------------------------
 
   describe("browser.navigate (representative — browser-handlers cluster)", () => {
-    it("method name", () => {
+    it("exposes the canonical method name", () => {
       expect(BrowserNavigateContract.method).toBe("browser.navigate");
     });
 
@@ -490,7 +489,7 @@ describe("workspace-umbrella domain contracts", () => {
   // -------------------------------------------------------------------------
 
   describe("notification.send (representative — notification-handlers cluster)", () => {
-    it("method name", () => {
+    it("exposes the canonical method name", () => {
       expect(NotificationSendContract.method).toBe("notification.send");
     });
 

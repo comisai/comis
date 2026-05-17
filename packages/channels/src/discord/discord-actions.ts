@@ -20,9 +20,7 @@ import {
   type GuildChannelManager,
   type TextChannel,
 } from "discord.js";
-// Phase 41 TS-HYG-06: Discord channel narrowing helpers replace the
-// previous untyped-cast call sites (18 in this file, 5 adjacent in
-// discord-adapter.ts per 41-03-SUMMARY.md Decision 3).
+// Discord channel narrowing helpers replace untyped-cast call sites.
 // asTextLike returns a structural-subset DiscordTextLikeChannel for
 // text-like channels (messages/send/edit/delete/setTopic/setRateLimitPerUser/
 // sendTyping/threads.*); asThreadInfo returns DiscordThreadInfo for the
@@ -149,7 +147,7 @@ export async function executeDiscordAction(
         // BaseGuildTextChannel (DMs / forum threads omit topic — handled via
         // the `undefined` check below). The structural projection is local to
         // this site; the canonical DiscordTextLikeChannel contract intentionally
-        // omits these read-only metadata fields (Plan 41-02 §interface scope).
+        // omits these read-only metadata fields.
         const ch = tc as DiscordTextLikeChannel & {
           readonly name?: string;
           readonly topic?: string | null;
@@ -244,8 +242,7 @@ export async function executeDiscordAction(
           // asThreadInfo() returns null for thread objects with unexpected
           // shape (missing/wrong-typed id/name/archived/memberCount/messageCount).
           // Skip those rather than emitting partial / `?? 0` placeholders —
-          // the helper enforces a strict per-field type guard (Plan 41-02
-          // DiscordThreadInfo).
+          // the helper enforces a strict per-field type guard.
           const info = asThreadInfo(t);
           if (!info) continue;
           threads.push(info);

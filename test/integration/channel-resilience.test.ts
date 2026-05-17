@@ -34,10 +34,9 @@ import {
   createChannelManager,
   type ChannelManagerDeps,
 } from "@comis/orchestrator";
-// Phase 40 Plan 07 fix: createRetryEngine lives in @comis/core, not channels.
-// The stale subpath import broke when retry-engine was carved out to core.
+// createRetryEngine lives in @comis/core, not channels.
 import { createRetryEngine } from "@comis/core";
-// Phase 32 commit 8: applyOverflowPolicy moved to @comis/orchestrator (ORCH-EXT-08, Wave A close).
+// applyOverflowPolicy lives in @comis/orchestrator.
 import { applyOverflowPolicy } from "@comis/orchestrator";
 import {
   RetryConfigSchema,

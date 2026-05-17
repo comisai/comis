@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Multi-zone + single-breakpoint placement primitives (Phase 42 split per EXEC-SPLIT-02).
+ * Multi-zone + single-breakpoint placement primitives.
  *
- * Extracted from cache-breakpoints.ts to keep that module under the
- * EXEC-SPLIT-10 ≤600L per-subdirectory cap. Hosts the breakpoint-placement
- * primitives: `placeSingleBreakpoint`, `placeCacheBreakpoints`, and the
- * `BreakpointOptions` interface they share.
- *
- * Lifted verbatim from request-body-injector.ts:379-689.
+ * Hosts the breakpoint-placement primitives: `placeSingleBreakpoint`,
+ * `placeCacheBreakpoints`, and the `BreakpointOptions` interface they share.
  *
  * @module
  */

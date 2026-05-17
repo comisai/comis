@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Execution Pipeline Phase 2: LLM Execution.
+ * Execution pipeline stage: LLM execution.
  *
  * Runs the LLM execution with timeout, thinking tag filter, typing
  * indicator management, tool TTL tracking, and abort signal setup.
@@ -13,7 +13,6 @@ import type { ChannelPort, NormalizedMessage, SessionKey, PerChannelStreamingCon
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs, systemSetInterval, systemClearInterval, systemScheduleTimeout } from "@comis/core";
 import { withTimeout, TimeoutError } from "@comis/shared";
 import type { AgentExecutor } from "@comis/agent";
-// Phase 32 commit 6: CommandDirectives moved into orchestrator (ORCH-EXT-08).
 import type { CommandDirectives } from "../commands/index.js";
 import { sanitizeAssistantResponse, createThinkingTagFilter } from "@comis/agent";
 
@@ -60,7 +59,7 @@ export interface ExecuteResult {
 }
 
 // ---------------------------------------------------------------------------
-// Phase function
+// Pipeline stage function
 // ---------------------------------------------------------------------------
 
 /**
@@ -213,7 +212,7 @@ export async function executeLlm(
         timedOut: true,
       };
     }
-    // @allow-throw: re-raise non-TimeoutError to the inbound orchestrator pipeline (executeAndDeliver -> inbound-route); channel-adapter context catches and converts to user-visible degraded response. Boundary adapter pattern per 41-03-SUMMARY.md Decision 2 (channel/RPC inbound boundaries). Phase 41 TS-HYG-07.
+    // @allow-throw: re-raise non-TimeoutError to the inbound orchestrator pipeline (executeAndDeliver -> inbound-route); channel-adapter context catches and converts to user-visible degraded response. Boundary adapter pattern for channel/RPC inbound boundaries.
     throw err;
   }
 

@@ -6,11 +6,6 @@
  * + the Pino debug-log canonical fields + the submodule binding label.
  * Behavioral verification of the rendered output lives in the renderer unit
  * test (capability-index-context.test.ts) and integration tests.
- *
- * Phase 42 EXEC-SPLIT-07: split from executor-prompt-runner.test.ts. The
- * envelope wrapping + dynamic preamble assembly moved into
- * envelope-wrapper.ts (wrapEnvelope); this file retargets the source path
- * accordingly.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";

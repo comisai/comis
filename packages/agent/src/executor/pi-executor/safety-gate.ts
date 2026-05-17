@@ -4,8 +4,6 @@
  * provider-level degradation pre-check, per-agent circuit breaker, and
  * test-only silent-LLM-failure fault injection.
  *
- * Phase 42 split per EXEC-SPLIT-05/06.
- *
  * Closure-extraction protocol: state-by-parameter (Readonly<SafetyGateState>),
  * never via closure capture. The single mutable field this helper writes is
  * the `result` (finishReason / response / llmCalls / stepsExecuted) — that

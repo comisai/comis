@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for api-contracts/internals.ts (COV-03 / Plan 40-11).
- *
- * Closes the 2 missing branch-paths in stripInternalFields():
+ * Branch coverage for api-contracts/internals.ts stripInternalFields():
  *   - INTERNAL_SET.has(k) === true (key dropped)
  *   - INTERNAL_SET.has(k) === false (key kept)
  *

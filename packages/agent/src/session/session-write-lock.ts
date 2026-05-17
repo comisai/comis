@@ -7,11 +7,8 @@
  * `FileLockPort`. Different sessions use different lock files (per-session,
  * not global) so they do not block each other.
  *
- * Phase 32 commit 12 (ORCH-EXT-15) flipped the implementation from a direct
- * `proper-lockfile` import to the `FileLockPort` contract — daemon
- * composition supplies `createFileLock()` from `@comis/core` (the single
- * proper-lockfile adapter in the workspace, relocated from `@comis/scheduler`
- * to `@comis/core` in Phase 35 Plan 35-04 D-01 #1). The same port instance
+ * Daemon composition supplies `createFileLock()` from `@comis/core` (the
+ * single proper-lockfile adapter in the workspace). The same port instance
  * is reused by oauth-credential-store-file and oauth-token-manager so all
  * three agent lock surfaces converge on one adapter.
  *
@@ -40,7 +37,7 @@ export interface LockedSessionStoreOptions {
   /** Retry delay base in ms (default: 500). */
   retryMinTimeout?: number;
   /**
-   * Optional logger. When provided, WR-07 structured-cause logging fires
+   * Optional logger. When provided, structured-cause logging fires
    * before the FileLockPort's discriminated error union is collapsed to
    * the legacy "locked" | "error" string. Without it, observability is
    * limited to the collapsed return value — callers cannot distinguish
@@ -130,12 +127,12 @@ export async function withSessionLock<T>(
   if (lockResult.error.kind === "locked") {
     return err("locked" as const);
   }
-  // WR-07: the FileLockPort returns a discriminated error union with
-  // structured fields (kind, cause). We collapse it to a string for the
-  // public API, but the underlying cause (ELOCKED chain vs EACCES on the
-  // lock directory vs disk-full) is useful for operator triage. If a
-  // logger is provided, emit a structured warn line BEFORE the collapse
-  // so the cause survives in the log stream.
+  // The FileLockPort returns a discriminated error union with structured
+  // fields (kind, cause). We collapse it to a string for the public API,
+  // but the underlying cause (ELOCKED chain vs EACCES on the lock
+  // directory vs disk-full) is useful for operator triage. If a logger is
+  // provided, emit a structured warn line BEFORE the collapse so the
+  // cause survives in the log stream.
   if (options?.logger) {
     options.logger.warn(
       {

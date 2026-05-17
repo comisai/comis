@@ -10,7 +10,7 @@ import type {
 } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight TimerPort wrapper that delegates to globals so
+// Lightweight TimerPort wrapper that delegates to globals so
 // vi.useFakeTimers() continues to intercept setInterval below.
 // ---------------------------------------------------------------------------
 
@@ -41,7 +41,7 @@ import type { SessionStore, SessionDetailedEntry } from "@comis/memory";
 // helper that daemon composition (setup-schedulers.ts) wires into agent's
 // SessionResetSchedulerDeps.computeDailyResetNextRun in production. The
 // production source (session-reset-policy.ts) does NOT import this — agent's
-// production source is scheduler-free after Phase 32 commit 12.
+// production source is scheduler-free.
 import { computeNextRunAtMs } from "@comis/scheduler";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import {

@@ -2,17 +2,13 @@
 /**
  * Public types for the daemon entry point.
  *
- * Originally moved from daemon.ts to reduce its size and provide a dedicated
- * single source of truth for the daemon's public interface types.
- *
- * Phase 43 Wave 8c (FILE-SPLIT-06) extension: absorbs the four inter-stage
- * Handle interfaces (FoundationHandle, AgentsHandle, ChannelsHandle,
- * GatewayHandle), the SessionStoreBridge structural type, the
- * GatewayPreDispatchSlice helper Pick, and the PermissionCorrection record.
- * Block-moved verbatim from daemon.ts so daemon.ts and the new stages/*
- * helper modules can share the type surface without an import cycle (helpers
- * accept handles as parameters; daemon.ts composes them into the DaemonInstance
- * return).
+ * Single source of truth for the daemon's public interface types and the
+ * inter-stage Handle interfaces (FoundationHandle, AgentsHandle,
+ * ChannelsHandle, GatewayHandle), the SessionStoreBridge structural type,
+ * the GatewayPreDispatchSlice helper Pick, and the PermissionCorrection
+ * record. Shared between daemon.ts and the stages/* helper modules
+ * without an import cycle (helpers accept handles as parameters; daemon.ts
+ * composes them into the DaemonInstance return).
  *
  * @module
  */
@@ -102,7 +98,7 @@ import type { InboundMessageIdResolver } from "./wiring/inbound-message-id-resol
 import type { SecretStorePort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Permission record (block-moved from daemon.ts:189-193 in FILE-SPLIT-06)
+// Permission record
 // ---------------------------------------------------------------------------
 
 /**
@@ -212,13 +208,13 @@ export interface DaemonOverrides {
   /** Override native-dep preflight check for tests that don't need the probe. */
   preflightDoctor?: (exitFn: (code: number) => void) => Promise<void>;
   /**
-   * Override TimerPort at composition root (Phase 39 PORTS-18).
+   * Override TimerPort at composition root.
    *
    * When provided, replaces the production `createSystemTimers()` adapter in
    * the daemon composition root. The integration test wires a `createFakeTimers()`
    * here so it can observe `unref()` / `cancel()` invocations on every long-
    * running interval scheduled during bootstrap, then assert (after shutdown)
-   * that every entry was either cancelled or unref'd — proving Phase 39's
+   * that every entry was either cancelled or unref'd — proving the
    * `.unref()` preservation contract.
    *
    * Production must never set this; the override is test-only.
@@ -227,18 +223,17 @@ export interface DaemonOverrides {
 }
 
 // ---------------------------------------------------------------------------
-// Inter-stage Handle interfaces (block-moved from daemon.ts in FILE-SPLIT-06)
+// Inter-stage Handle interfaces
 // ---------------------------------------------------------------------------
 
 /**
  * Handle returned by `stageFoundation`. Consumed by later stages (stageAgents,
- * stageChannels, stageGateway, stageShutdown — Plans 04-07) and by the
- * remainder of `main()` until those stages absorb the destructure.
+ * stageChannels, stageGateway, stageShutdown) and by the remainder of `main()`.
  *
  * Every field listed here is either:
  *   - consumed by a later stage call, OR
  *   - returned to callers via DaemonInstance, OR
- *   - read by main()'s tail (Plans 04-07 absorb these reads).
+ *   - read by main()'s tail.
  */
 export interface FoundationHandle {
   // Core (4 fields)
@@ -246,8 +241,8 @@ export interface FoundationHandle {
   dataDir: string;
   configPaths: string[];
   envPath: string;
-  // Phase 39 PORTS-06 runtime adapters (constructed at composition root,
-  // threaded through later stages and consumer factories).
+  // Runtime adapters (constructed at composition root, threaded through
+  // later stages and consumer factories).
   clock: import("@comis/core").ClockPort;
   env: import("@comis/core").EnvPort;
   timers: import("@comis/core").TimerPort;
@@ -320,11 +315,10 @@ export interface FoundationHandle {
  * Handle returned by `stageAgents`. Extends `FoundationHandle` so main() and
  * later stages can keep a single destructure surface.
  *
- * Plan 34-04 extracts the agent-runtime startup block (agents map, executors,
- * mcpClientManager, schedulers, media, RPC bridge, approval gate with restore,
- * delivery queue) from main() into stageAgents. cronWakeCallbackRef is a
- * deferred-ref slot populated by stageChannels (Plan 05) once wakeCoalescer
- * is constructed.
+ * stageAgents owns the agent-runtime startup block (agents map, executors,
+ * mcpClientManager, schedulers, media, RPC bridge, approval gate with
+ * restore, delivery queue). cronWakeCallbackRef is a deferred-ref slot
+ * populated by stageChannels once wakeCoalescer is constructed.
  */
 export interface AgentsHandle extends FoundationHandle {
   // Agents (core)
@@ -392,12 +386,11 @@ export interface AgentsHandle extends FoundationHandle {
  * Handle returned by `stageChannels`. Extends `AgentsHandle` so main() and
  * later stages keep a single destructure surface.
  *
- * Plan 34-05 extracts the channel-runtime startup block (channel adapters,
+ * stageChannels owns the channel-runtime startup block (channel adapters,
  * cross-session sender + subAgentRunner, sandbox/image-gen providers, tools,
  * heartbeat, wake coalescer, graph coordinator, monitoring, agent management
- * runtime state) from main() into stageChannels. The deferred cronWakeCallback
- * ref (DAEMON-API-09 ref #8) is populated inside stageChannels once
- * wakeCoalescer is constructed.
+ * runtime state). The deferred cronWakeCallback ref is populated inside
+ * stageChannels once wakeCoalescer is constructed.
  */
 export interface ChannelsHandle extends AgentsHandle {
   // Channels (core)
@@ -410,7 +403,7 @@ export interface ChannelsHandle extends AgentsHandle {
   commandQueue: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
   deliveryService: Awaited<ReturnType<typeof setupChannels>>["deliveryService"];
   inboundMessageIdResolver: InboundMessageIdResolver;
-  // Channel health monitor (refs #10 + #11 subsumed by helper return value)
+  // Channel health monitor (refs subsumed by helper return value)
   channelHealthMonitor: ChannelHealthMonitor | undefined;
   stopChannelHealthMonitor: (() => void) | undefined;
   // Notifications + background completion
@@ -473,14 +466,14 @@ export type SessionStoreBridge = {
 
 /**
  * Handle returned by `stageGateway`. Extends `ChannelsHandle` so main() and
- * `stageShutdown` (Plan 07) can read every field constructed across all four
- * runtime stages. Carries ~13 new fields covering token registry, session
- * store bridge, hot-add/hot-remove closures, RPC dispatch deps, gateway server
+ * `stageShutdown` can read every field constructed across all four runtime
+ * stages. Carries ~13 new fields covering token registry, session store
+ * bridge, hot-add/hot-remove closures, RPC dispatch deps, gateway server
  * handle, active execution tracker, and WebSocket connection manager.
  *
  * The `shutdownRef` slot is declared empty inside stageGateway and populated
- * by `stageShutdown` (Plan 07) once the live shutdown handle is constructed
- * (hot-add closures read `.value` at RPC call time, not at definition time).
+ * by `stageShutdown` once the live shutdown handle is constructed (hot-add
+ * closures read `.value` at RPC call time, not at definition time).
  */
 export interface GatewayHandle extends ChannelsHandle {
   // Token registry (4 fields)
@@ -490,7 +483,7 @@ export interface GatewayHandle extends ChannelsHandle {
   resolvedGatewayTokens: Array<{ id: string; secret: string; scopes: string[] }>;
   // Session store bridge (1 field)
   sessionStoreBridge: SessionStoreBridge;
-  // Shutdown ref (populated by stageShutdown -- Plan 07)
+  // Shutdown ref (populated by stageShutdown)
   shutdownRef: { value?: { readonly isShuttingDown: boolean } };
   // Hot-add / hot-remove closures (2 fields)
   hotAdd: (agentId: string, config: PerAgentConfig) => Promise<void>;

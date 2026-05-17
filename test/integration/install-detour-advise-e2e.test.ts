@@ -36,9 +36,9 @@ import {
 import { DAEMON_STARTUP_MS } from "../support/timeouts.js";
 import { createEventAwaiter } from "../support/event-awaiter.js";
 import type { TypedEventBus } from "@comis/core";
-// Phase 33 SKILLS-SPLIT-08: exec / process registry moved to the `./tools`
-// subpath after Plan 03 (the `.` subpath barrel no longer re-exports them
-// because daemon imports them from `@comis/skills/tools` directly).
+// exec / process registry are imported from the `./tools` subpath; the
+// `.` subpath barrel does not re-export them because daemon imports them
+// from `@comis/skills/tools` directly.
 import { createExecTool, createProcessRegistry } from "@comis/skills/tools";
 // Test-only stub. Allowed import from test/integration/ — the architecture-grep
 // (packages/skills/src/__tests__/architecture.test.ts) scopes only

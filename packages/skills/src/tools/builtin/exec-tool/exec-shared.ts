@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: builtin tool boundary; throws caught by AgentTool wrapper (Phase 41 TS-HYG-07).
+// @allow-throw: builtin tool boundary; throws caught by AgentTool wrapper.
 /**
- * Exec tool shared helpers (Phase 43 split per FILE-SPLIT-02).
+ * Exec tool shared helpers.
  *
- * Extracted from `exec-tool.ts` (1,626L monolith) on 2026-05-16. Block-move
- * of the 10 module-level helpers (resolveCwd, killTree, buildSpawnCommand,
+ * Extracted from `exec-tool.ts` (1,626L monolith). Block-move of the 10
+ * module-level helpers (resolveCwd, killTree, buildSpawnCommand,
  * resolveDataEnv, commandUsesRawInterpreter, resolveSecretRefs, ecosystemFor,
  * buildInstallDetourHint, buildSoftStopErrorTemplate, buildInstallDetourEventPayload)
  * plus two factory-body extractions (evaluateInstallDetourGate, buildExecEnv)
- * required to keep `index.ts` thin per the FILE-SPLIT-02 plan.
+ * required to keep `index.ts` thin.
  *
  * @module
  */
@@ -356,7 +356,7 @@ function buildInstallDetourEventPayload(
 }
 
 // ---------------------------------------------------------------------------
-// Factory-body extractions (Phase 43 — keep index.ts thin)
+// Factory-body extractions (keep index.ts thin)
 // ---------------------------------------------------------------------------
 
 /**
@@ -372,7 +372,7 @@ export interface InstallDetourGateOutcome {
 /**
  * Run the install-detour policy gate BEFORE any subprocess spawn. Decision
  * computed ONCE here, propagated to event emission + ProcessSession + envelope.
- * Block-extracted from createExecTool factory (lines 711-862 of pre-split).
+ * Block-extracted from the createExecTool factory.
  */
 export async function evaluateInstallDetourGate(deps: {
   command: string;
@@ -483,7 +483,7 @@ export async function evaluateInstallDetourGate(deps: {
 /**
  * Build the final environment record for the subprocess by merging:
  *   baseEnv → dataEnv → userEnv → resolvedSecretEnv (last wins on collision).
- * Block-extracted from createExecTool factory (lines 931-978 of pre-split).
+ * Block-extracted from the createExecTool factory.
  */
 export function buildExecEnv(deps: {
   workspacePath: string;

@@ -95,10 +95,9 @@ describe("credential-validator / validateDiscordToken", () => {
     }
   });
 
-  it("passes 'api' option to discord.js REST when apiRoot is provided (COV-15 E2E seam)", async () => {
-    // Phase 40 / Plan 40-09 / COV-15: apiRoot threads through to
-    // @discordjs/rest constructor so E2E tests can redirect to a 127.0.0.1
-    // mock instead of discord.com/api.
+  it("passes 'api' option to discord.js REST when apiRoot is provided (E2E seam)", async () => {
+    // apiRoot threads through to @discordjs/rest constructor so E2E tests
+    // can redirect to a 127.0.0.1 mock instead of discord.com/api.
     mockGet.mockResolvedValueOnce({ id: "1", username: "bot", discriminator: "0" });
 
     await validateDiscordToken("tok", "http://127.0.0.1:54321");

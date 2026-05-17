@@ -99,15 +99,14 @@ export { initContextSchema } from "./context-schema.js";
 // Context store (DAG mode CRUD)
 export { createContextStore } from "./context-store.js";
 
-// Generic Row mapper factory (TS-HYG-01, TS-HYG-02)
-// Plan 41-04 consumes createRowMapper(schema) at every SQLite call-site
-// retarget to replace `db.prepare(...).all() as Foo[]` casts.
+// Generic Row mapper factory.
+// Consumed via createRowMapper(schema) at every SQLite call-site to
+// replace `db.prepare(...).all() as Foo[]` casts.
 export { createRowMapper } from "./row-mapper.js";
 export type { RowMapper, MapperError } from "./row-mapper.js";
 
-// Per-row Zod schemas (TS-HYG-01)
+// Per-row Zod schemas.
 // One schema per memory-package SQLite row interface. Consumer-side only
-// (NOT in @comis/core/ports — preserves core's zero-runtime-Zod boundary,
-// RESEARCH §"Pitfall 7"). Plan 41-04 consumes these as the argument to
-// createRowMapper(schema).
+// (NOT in @comis/core/ports — preserves core's zero-runtime-Zod boundary).
+// Consumed as the argument to createRowMapper(schema).
 export * from "./row-schemas.js";

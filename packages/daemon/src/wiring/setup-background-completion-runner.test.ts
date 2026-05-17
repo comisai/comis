@@ -8,7 +8,7 @@ import { createBackgroundTaskManager } from "@comis/agent";
 import { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight port wrappers that delegate to globals.
+// Lightweight port wrappers that delegate to globals.
 // ---------------------------------------------------------------------------
 
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
@@ -346,10 +346,10 @@ describe("setupBackgroundCompletionRunner", () => {
     });
 
     it("recovered task WITHOUT preserved state DOES re-emit background_task:failed (regression)", () => {
-      // Seed a task file representing the legacy / pre-Phase-2 case (no
-      // dispatchState on disk). The manager assigns the default
-      // dispatchState='pending' on recovery, and re-emits because the
-      // dispatcher must be given a chance to route post-restart.
+      // Seed a task file representing the legacy case (no dispatchState on
+      // disk). The manager assigns the default dispatchState='pending' on
+      // recovery, and re-emits because the dispatcher must be given a chance
+      // to route post-restart.
       const origin = buildOrigin({ agentId: "regression-agent" });
       const seeded: Record<string, unknown> = {
         id: "regression-task-1",
@@ -359,7 +359,7 @@ describe("setupBackgroundCompletionRunner", () => {
         completedAt: Date.now() - 4000,
         error: "Daemon restarted while task was running",
         origin,
-        // No dispatchState — represents pre-Phase-2 file format.
+        // No dispatchState — represents legacy file format.
       };
       const agentDir = safePath(dataDir, origin.agentId);
       mkdirSync(agentDir, { recursive: true });

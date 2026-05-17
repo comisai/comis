@@ -7,4 +7,4 @@ userInvocable: true
 
 # SDK Fallback Skill
 
-Phase 24 fixture C. Neither operator hint nor `comis.capability` metadata is provided. The capability index falls back to the reserved `prompt-skills` cluster (design §4.2.1 fallback rule).
+Fixture: neither operator hint nor `comis.capability` metadata is provided. The capability index falls back to the reserved `prompt-skills` cluster.

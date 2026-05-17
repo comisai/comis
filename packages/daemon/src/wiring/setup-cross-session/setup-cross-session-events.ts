@@ -2,11 +2,11 @@
 /**
  * Proxy typing event listener registration for cross-session messaging.
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-cross-session.ts.
- * Hosts the `typing:proxy_start` / `typing:proxy_stop` event handlers and the
- * TTL sweep timer that the registry orchestrator wires after sub-agent runner
- * construction. The handlers create per-run TypingController instances scoped
- * to the parent-channel adapter and clean up on graceful shutdown.
+ * Hosts the `typing:proxy_start` / `typing:proxy_stop` event handlers and
+ * the TTL sweep timer that the registry orchestrator wires after
+ * sub-agent runner construction. The handlers create per-run
+ * TypingController instances scoped to the parent-channel adapter and
+ * clean up on graceful shutdown.
  *
  * @module
  */

@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: foundation-stage bootstrap helpers; throws are caught by daemon.ts main().catch at the composition root (Phase 41 TS-HYG-07).
+// @allow-throw: foundation-stage bootstrap helpers; throws are caught by daemon.ts main().catch at the composition root.
 /**
  * Foundation-stage helpers for daemon.ts's stageFoundation.
  *
- * Block-moved verbatim from daemon.ts in Phase 43 Wave 8c (FILE-SPLIT-06):
- *   - seedBundledSkillCreator (daemon.ts:386-422)
- *   - bootstrapSecretsAndEnv (daemon.ts:434-476)
- *   - wireConfigGitManager  (daemon.ts:483-510)
+ * Holds:
+ *   - seedBundledSkillCreator
+ *   - bootstrapSecretsAndEnv
+ *   - wireConfigGitManager
  *   - scrubProcessEnv + SENSITIVE_PREFIXES + SENSITIVE_EXACT_KEYS
- *     (daemon.ts:122-183, moved here together with bootstrapSecretsAndEnv to
- *     avoid an import cycle — bootstrapSecretsAndEnv is the sole caller; the
- *     scrub helper is internal to the secrets-bootstrap path)
+ *     (co-located with bootstrapSecretsAndEnv to avoid an import cycle —
+ *     bootstrapSecretsAndEnv is the sole caller; the scrub helper is internal
+ *     to the secrets-bootstrap path)
  *
- * Each helper is a top-level function (not a closure) — mechanical block-move
- * is safe per RESEARCH §"No-cycles invariant". Consumed by stageFoundation in
- * daemon.ts.
+ * Each helper is a top-level function (not a closure). Consumed by
+ * stageFoundation in daemon.ts.
  *
  * @module
  */
@@ -31,8 +30,8 @@ import { fileURLToPath } from "node:url";
 import { resolve as pathResolve } from "node:path";
 
 // ---------------------------------------------------------------------------
-// process.env scrub (block-moved from daemon.ts:122-183 — bootstrapSecretsAndEnv
-// is the sole caller; co-located here to avoid an import cycle through daemon.ts).
+// process.env scrub — bootstrapSecretsAndEnv is the sole caller; co-located
+// here to avoid an import cycle through daemon.ts.
 // ---------------------------------------------------------------------------
 
 /**
@@ -66,7 +65,7 @@ const SENSITIVE_EXACT_KEYS = new Set([
  * Called AFTER mergedEnv snapshot is built but BEFORE bootstrap().
  * Preserves operational vars: COMIS_*, PATH, HOME, NODE_ENV, etc.
  *
- * COMIS_* PRESERVATION (WR-08): `COMIS_DATA_DIR` and `COMIS_CONFIG_PATHS` are
+ * COMIS_* PRESERVATION: `COMIS_DATA_DIR` and `COMIS_CONFIG_PATHS` are
  * INTENTIONALLY preserved across the scrub. They are filesystem-layout
  * pointers, not credentials -- subprocesses (MCP stdio servers, exec tools,
  * the apply-patch helper) need them to locate the daemon's data dir.
@@ -106,10 +105,6 @@ function scrubProcessEnv(): void {
  * Seed the bundled skill-creator skill into the user's data directory.
  * Idempotent: only writes if the destination is missing OR the bundled
  * version is newer than the installed version (frontmatter `version:` field).
- *
- * Extracted from `main()` (Phase 34 commit 3) to keep `stageFoundation`
- * under the DAEMON-API-06 200-line cap. Lifted verbatim from the original
- * inline block (36 lines) -- no behavior change.
  */
 export function seedBundledSkillCreator(deps: {
   dataDir: string;
@@ -119,10 +114,8 @@ export function seedBundledSkillCreator(deps: {
   const skillsTarget = safePath(dataDir, "skills");
   const skillCreatorDest = safePath(skillsTarget, "skill-creator");
   const __filename = fileURLToPath(import.meta.url);
-  // Phase 43 FILE-SPLIT-06 path-depth update: was `../../bundled-skills/skill-creator`
-  // (relative to daemon.ts in packages/daemon/src/); now in stages/ subdirectory
-  // one level deeper, so the relative path needs one extra `../` to reach
-  // packages/daemon/bundled-skills/skill-creator.
+  // Relative path resolves to packages/daemon/bundled-skills/skill-creator from
+  // this file's location in packages/daemon/src/stages/.
   const bundledSrc = pathResolve(__filename, "../../../bundled-skills/skill-creator");
   if (!existsSync(bundledSrc)) return;
   const bundledSkillMd = safePath(bundledSrc, "SKILL.md");
@@ -154,14 +147,9 @@ export function seedBundledSkillCreator(deps: {
 }
 
 /**
- * Bootstrap secrets and build merged-env / process.env scrub. Extracted from
- * stageFoundation to fit the DAEMON-API-06 ≤200-line cap. Returns a bundle of
- * the secret store + crypto + db handle and the merged-env map. The control
- * flow (decryptAll throws → fatal; null secretsBootResult → no-op) is the same
- * as the original inline form.
- *
- * Implements DAEMON-API-09 refs #1-#4 (mergedEnv / secretStore / secretsCrypto
- * / secretsDb) via single-IIFE init.
+ * Bootstrap secrets and build merged-env / process.env scrub. Returns a
+ * bundle of the secret store + crypto + db handle and the merged-env map.
+ * Control flow: decryptAll throws → fatal; null secretsBootResult → no-op.
  */
 export function bootstrapSecretsAndEnv(deps: {
   setupSecrets: typeof _setupSecretsImpl;
@@ -209,8 +197,7 @@ export function bootstrapSecretsAndEnv(deps: {
 
 /**
  * Build a `ConfigGitManager` bound to `configDir` (or `undefined` if no config
- * file was resolved). Extracted from stageFoundation to fit the DAEMON-API-06
- * ≤200-line cap.
+ * file was resolved).
  */
 export function wireConfigGitManager(deps: {
   configDir: string;

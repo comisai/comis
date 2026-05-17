@@ -2,13 +2,11 @@
 /**
  * E2E: Slack × DM — Web API wire roundtrip against the 127.0.0.1 mock.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09 Wave D).
- *
  * Scope: drives the production `validateSlackCredentials` (from
  * @comis/channels) and a raw @slack/web-api WebClient against the mock
  * Slack Web API server. Asserts:
- *   1. The apiRoot redirection from Wave A3 flows through @slack/web-api
- *      — calling auth.test() hits the 127.0.0.1 mock, not slack.com.
+ *   1. The apiRoot redirection flows through @slack/web-api — calling
+ *      auth.test() hits the 127.0.0.1 mock, not slack.com.
  *   2. The mock's POST /api/chat.postMessage endpoint captures bot
  *      outbound messages with the correct channel + text.
  *
@@ -16,8 +14,7 @@
  * mode='http' requires the daemon's gateway port to host webhook endpoints
  * (a daemon-level concern). The Web API surface tested here is the
  * load-bearing outbound surface. Inbound is covered by the mock's
- * 'pending-inbound' marker which test/integration/-tier tests will
- * consume in a future plan.
+ * 'pending-inbound' marker which test/integration/-tier tests can consume.
  *
  * @module
  */
@@ -26,7 +23,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createMockSlackServer, type MockSlackServer } from "./mocks/slack/mock-slack-server.js";
 import { validateSlackCredentials } from "@comis/channels";
 
-describe("E2E: slack × dm — Web API wire roundtrip against the 127.0.0.1 mock (COV-15)", () => {
+describe("E2E: slack × dm — Web API wire roundtrip against the 127.0.0.1 mock", () => {
   let mock: MockSlackServer;
   let baseUrl: string;
 

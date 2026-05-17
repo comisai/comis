@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Reconnection engine (Phase 43 split per FILE-SPLIT-11).
+ * Reconnection engine for the MCP client.
  *
  * Owns the auto-reconnect lifecycle: handleDisconnection (entry point
  * called by transport/client lifecycle callbacks + by callTool on
@@ -9,14 +9,12 @@
  * shared wireClientLifecycleCallbacks helper used by both
  * connectServer and reconnectionLoop.
  *
- * State-first protocol per Phase 42 pi-executor and Phase 43
- * telegram-adapter conventions.
+ * Uses the state-first protocol shared with the pi-executor and
+ * telegram-adapter modules.
  *
- * Extracted into its own file (Rule 2 deviation from the plan's
- * 5-module layout) to keep mcp-client-connect.ts under the 500-line
+ * Kept in its own file to hold mcp-client-connect.ts under the 500-line
  * per-leaf cap; reconnection is a self-contained engine whose only
- * external entry point is handleDisconnection, which makes it a clean
- * additional leaf rather than a connect-internal helper.
+ * external entry point is handleDisconnection.
  *
  * @module
  */

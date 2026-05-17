@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: @allow-throw boundary: media-resolver throw inside fromPromise(); converted to Result.err by ssrfFetcher boundary adapter (Phase 41 TS-HYG-07).
+// @allow-throw: media-resolver throw inside fromPromise(); converted to Result.err by ssrfFetcher boundary adapter.
 /**
  * Discord MediaResolverPort adapter.
  *

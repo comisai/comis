@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: @allow-throw boundary: cron scheduler boundary error; consumed by setup-schedulers daemon-wiring catch (daemon.ts bootstrap) (Phase 41 TS-HYG-07).
+// @allow-throw: cron scheduler boundary error; consumed by setup-schedulers daemon-wiring catch (daemon.ts bootstrap).
 import type { TypedEventBus } from "@comis/core";
 import type { CronStore } from "./cron-store.js";
 import type { CronJob } from "./cron-types.js";

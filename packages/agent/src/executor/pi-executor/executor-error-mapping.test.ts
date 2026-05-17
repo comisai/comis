@@ -2,9 +2,8 @@
 /**
  * Unit tests for finalizeLockResult — post-withSession outcome handling.
  *
- * Closure-extracted helper (state-first per EXEC-SPLIT-06): tests cover
- * the three branches (success, session_reset, lock failure) without
- * standing up the full executor.
+ * Closure-extracted helper: tests cover the three branches (success,
+ * session_reset, lock failure) without standing up the full executor.
  *
  * @module
  */
@@ -40,7 +39,7 @@ function makeNoopLogger() {
 
 const sessionKey = { tenantId: "t", channelId: "c", userId: "u" } as SessionKey;
 
-describe("finalizeLockResult (EXEC-SPLIT-06)", () => {
+describe("finalizeLockResult", () => {
   it("returns the inner success value unchanged when lock acquired and no reset", async () => {
     const result = makeResult({ finishReason: "stop", response: "ok" });
     const lockResult: LockResult<ExecutionResult> = { ok: true, value: result };

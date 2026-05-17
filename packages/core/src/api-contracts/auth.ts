@@ -3,9 +3,8 @@
  * Auth-domain RPC contracts. Mirrors
  * `packages/daemon/src/api/auth-handlers.ts`.
  *
- * Phase 35 Wave C plan 35-07 (Wave C domain #2). The auth-handlers.ts
- * factory exposes 2 admin-scoped methods that gate encrypted-OAuth-store
- * profile management:
+ * The auth-handlers.ts factory exposes 2 admin-scoped methods that gate
+ * encrypted-OAuth-store profile management:
  *
  *   - `auth.list`   (admin) — list stored OAuth profiles, projected
  *                              through {@link RedactedOAuthProfileSchema}
@@ -117,9 +116,5 @@ export const AuthLogoutContract = defineContract({
 /**
  * Auth-domain contract array. Registered into
  * `API_CONTRACTS_ORDERED` by `packages/core/src/api-contracts/index.ts`.
- *
- * Plan 35-19 (Wave C closure) supersedes the placeholder aggregation in
- * `index.ts` with the final alphabetical aggregation across all 14
- * domains — this array remains unchanged.
  */
 export const AUTH_CONTRACTS = [AuthListContract, AuthLogoutContract] as const;

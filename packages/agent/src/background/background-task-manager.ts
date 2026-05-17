@@ -34,9 +34,9 @@ export interface BackgroundTaskManagerOpts {
     warn(obj: Record<string, unknown>, msg: string): void;
     debug(obj: Record<string, unknown>, msg: string): void;
   };
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
-  /** Timer scheduling (Phase 39 PORTS-13). Hard-timeout setTimeout uses .unref(). */
+  /** Timer scheduling. Hard-timeout setTimeout uses .unref(). */
   timers: TimerPort;
   maxPerAgent?: number;
   maxTotal?: number;
@@ -170,7 +170,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           manager.fail(taskId, new Error("Hard timeout exceeded"));
         }
       }, maxBackgroundDurationMs);
-      timer.unref();   // PRESERVED — TimerHandle has .unref() per PORTS-04
+      timer.unref();   // TimerHandle exposes .unref() by contract.
       task._hardTimeoutTimer = timer;
 
       tasks.set(taskId, task);
@@ -301,7 +301,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
               {
                 taskId: task.id,
                 dispatchState: task.dispatchState,
-                hint: "Pre-restart dispatch state preserved; skipping re-emit (D-S2 recovery-without-events)",
+                hint: "Pre-restart dispatch state preserved; skipping re-emit (recovery-without-events)",
               },
               "Recovery: skipped re-emit",
             );

@@ -1,6 +1,6 @@
 # @comis/orchestrator
 
-Inbound message orchestration, execution coordination, and cross-session messaging for the [Comis](https://github.com/comisai/comis) platform. Extracted from `@comis/agent` and `@comis/channels` in the v2.0 architecture redesign (Phase 32) so that channels remain transport-only and agent remains executor-only.
+Inbound message orchestration, execution coordination, and cross-session messaging for the [Comis](https://github.com/comisai/comis) platform. Extracted from `@comis/agent` and `@comis/channels` in the v2.0 architecture redesign so that channels remain transport-only and agent remains executor-only.
 
 ## What's Inside
 
@@ -24,7 +24,7 @@ Inbound message orchestration, execution coordination, and cross-session messagi
 ### Channel Manager
 
 - **`createChannelManager()`** -- Lifecycle factory for the inbound/execution loop. Owns the channel adapter set, the per-channel state, and the `processInboundMessage` callback wiring.
-- **`createOrchestrator()`** -- Canonical-name alias of `createChannelManager` (ORCH-EXT-01).
+- **`createOrchestrator()`** -- Canonical-name alias of `createChannelManager`.
 - See `AUDIT.md` for the 51-field `ChannelManagerDeps` shape and audit-coverage gate.
 
 ### Commands

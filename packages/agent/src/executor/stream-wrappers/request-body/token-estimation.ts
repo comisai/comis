@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-block token estimation for TTL split accounting (Phase 42 split per EXEC-SPLIT-02).
- *
- * Lifted verbatim from request-body-injector.ts:1093-1096.
+ * Per-block token estimation for TTL split accounting.
  *
  * @module
  */

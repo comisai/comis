@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * tooling-fill orchestrator (Phase 43 split per FILE-SPLIT-10).
+ * tooling-fill orchestrator.
  *
  * Thin orchestrator + barrel: composes discover → fill → verify pipeline
  * stages and re-exports the canonical public surface
  * (runToolingFill + PromptIO/OrchestratorOpts/OrchestratorResult types).
- *
- * No `as` aliases; the names stay byte-identical to pre-split so the
- * FILE-SPLIT-10 parity snapshot reproduces verbatim post-split.
  *
  * Pipeline data flow:
  *   discoverTools(opts) → { doc, rawYaml, configJs, entries }

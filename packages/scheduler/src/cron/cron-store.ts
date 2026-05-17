@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: @allow-throw boundary: file-IO + lock-acquisition errors in CronStore; consumed via daemon cron-handlers + setup-schedulers (Decision 2 transitive) (Phase 41 TS-HYG-07).
+// @allow-throw: boundary for file-IO + lock-acquisition errors in CronStore; consumed via daemon cron-handlers + setup-schedulers.
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import type { CronJob } from "./cron-types.js";
 import { CronJobSchema } from "./cron-types.js";
-// Phase 35 Plan 35-04 (D-01 #1): createFileLock relocated from
-// scheduler/execution/execution-lock.ts to @comis/core. Scheduler internals
-// now consume the canonical FileLockPort.withLock() API directly via
-// @comis/core. The old withExecutionLock helper (Result<T, "locked" | "error">
-// shape) is gone — the FileLockPort returns Result<T, LockError> where
+// Scheduler internals consume the canonical FileLockPort.withLock() API
+// from @comis/core. The FileLockPort returns Result<T, LockError> where
 // LockError = { kind: "locked" | "error", message: string }.
 import { createFileLock } from "@comis/core";
 import type { SchedulerLogger } from "../shared-types.js";
@@ -53,9 +50,7 @@ const LOCK_OPTIONS = { staleMs: 30_000, updateMs: 5_000 };
 export function createCronStore(filePath: string, logger?: SchedulerLogger): CronStore {
   const lockPath = `${filePath}.lock`;
   const mutex = createMutex();
-  // Phase 35 Plan 35-04 (D-01 #1): use the canonical FileLockPort.withLock()
-  // adapter from @comis/core instead of the deleted scheduler-internal
-  // withExecutionLock helper. Stateless factory — one instance per CronStore.
+  // Stateless factory — one instance per CronStore.
   const fileLock = createFileLock();
 
   /** Internal load: reads and parses the store file. */

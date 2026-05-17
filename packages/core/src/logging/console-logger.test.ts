@@ -2,7 +2,7 @@
 /**
  * Unit tests for `createConsoleLogger()` — Pino-free structured logger.
  *
- * WEB-CONTRACTS-04. Covers:
+ * Covers:
  *   - one JSON line per call with level + msg
  *   - object-arg merging into the line
  *   - child() merges bindings (shallow)
@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createConsoleLogger } from "./console-logger.js";
 
-describe("createConsoleLogger (WEB-CONTRACTS-04)", () => {
+describe("createConsoleLogger", () => {
   let writes: string[];
   let restore: () => void;
 

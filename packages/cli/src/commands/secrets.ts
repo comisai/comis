@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception (Phase 41 TS-HYG-07).
+// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.
 /**
  * Secret management commands: init, set, get, list, delete, import, audit.
  *
  * Provides `comis secrets [init|set|get|list|delete|import|audit]` subcommands
  * for managing encrypted secrets.
  *
- * Per Phase 31 (MEM-CTX-PORTS-09, design §8.2.7) the store-backed subcommands
- * (set, get, list, delete, import) route through daemon RPC -- the CLI no
- * longer opens the encrypted SQLite store directly. Each store-backed
- * subcommand gates on a 200ms `requireDaemonOrExit()` probe and exits with
- * code 4 (DaemonRequired) on failure (see util/daemon-required.ts).
+ * Store-backed subcommands (set, get, list, delete, import) route through
+ * daemon RPC -- the CLI no longer opens the encrypted SQLite store directly.
+ * Each store-backed subcommand gates on a 200ms `requireDaemonOrExit()` probe
+ * and exits with code 4 (DaemonRequired) on failure (see util/daemon-required.ts).
  *
  * `secrets init` is daemon-free -- it calls the `writeMasterKeyIfAbsent`
  * core helper to generate/persist `SECRETS_MASTER_KEY` in `~/.comis/.env`.

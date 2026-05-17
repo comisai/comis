@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for shared health-status utility module (Phase 40 Plan 40-15 gap-closure for COV-03).
+ * Tests for shared health-status utility module.
  *
  * Covers normalize/getHealthVisual/showUptime + the HEALTH_STATUS map. Pure logic — no
  * DOM dependencies. Every branch in normalizeChannelStatus is exercised: valid state

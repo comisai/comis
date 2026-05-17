@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WEB-CONTRACTS-13 CI drift gate: `pnpm contracts:generate` produces zero
- * diff against the committed artifacts. If a contract is added/modified/
- * removed without rerunning the generator, this test fails.
- *
- * Phase 35 Wave D Plan 35-20 (WARNING 3 fix — wired into pnpm test via
- * vitest.config.ts `projects: ["packages/*", "test/architecture"]`).
+ * CI drift gate: `pnpm contracts:generate` produces zero diff against the
+ * committed artifacts. If a contract is added/modified/removed without
+ * rerunning the generator, this test fails.
  *
  * Test strategy:
  *   1. Run `runCodegen()` in-process — produces a fresh CodegenResult.
@@ -13,9 +10,6 @@
  *   3. Compare byte-for-byte. Any mismatch indicates either:
  *      - A contract added/changed without rerunning `pnpm contracts:generate`.
  *      - A non-determinism regression in the codegen pipeline.
- *
- * RESEARCH §"Determinism rules (RES-PIT-19)" item 4 — this is the
- * authoritative CI drift gate.
  *
  * @module
  */
@@ -28,7 +22,7 @@ import {
   OUT_SIZE,
 } from "../../scripts/contracts/generate-web-artifact.js";
 
-describe("WEB-CONTRACTS-13: codegen drift gate", () => {
+describe("contract codegen drift gate", () => {
   it("pnpm contracts:generate is a no-op against the committed artifacts", () => {
     // Snapshot the committed files BEFORE rerunning codegen.
     const committedTs = readFileSync(OUT_TS, "utf8");

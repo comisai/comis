@@ -4,13 +4,12 @@
  * timeout cost estimation (ghost cost), and OutputGuard scanning of the
  * user-visible error message.
  *
- * Phase 42 split per EXEC-SPLIT-07 — was lines 1188-1385 of the pre-split
- * `executor-prompt-runner.ts`. Owns every operation that runs when the
- * retry loop returned `promptSucceeded: false` and the orchestrator must
- * surface a terminal failure.
+ * Owns every operation that runs when the retry loop returned
+ * `promptSucceeded: false` and the orchestrator must surface a terminal
+ * failure.
  *
- * Per EXEC-SPLIT-08 this module imports types only from
- * `./prompt-runner-types.js` — never from `./prompt-runner.js`.
+ * This module imports types only from `./prompt-runner-types.js` — never
+ * from `./prompt-runner.js` (no back-edge into the runner).
  *
  * @module
  */

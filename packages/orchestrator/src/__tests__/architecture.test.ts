@@ -5,22 +5,18 @@
  * Forbidden-import rules:
  *   - Production source MUST NOT import @comis/{scheduler, memory, gateway,
  *     skills, cli, daemon, infra}. Orchestrator depends only on
- *     @comis/{shared, core, agent, channels} per design §2.2 target graph.
- *   - Logger contract types come from @comis/core, not @comis/infra
- *     (Phase 28 / CORE-PORTS-05 / L12 closed).
+ *     @comis/{shared, core, agent, channels}.
+ *   - Logger contract types come from @comis/core, not @comis/infra.
  *
- * `imports from @comis/channels public exports only` invariant — enabled at
- * Phase 32 commit 5 (ORCH-EXT-20). At commit 1 this is a todo placeholder
- * because no source files exist in orchestrator yet.
+ * `imports from @comis/channels public exports only` invariant — the
+ * orchestrator may import only the public @comis/channels surface.
  *
  * Symbol-presence regex (createOrchestrator | ChannelManager |
- * processInboundMessage) — todo placeholder at commit 1 (symbols arrive in
- * commits 3-14). Activates at commit 14 final.
+ * processInboundMessage) — verifies the public surface is present.
  *
- * ChannelManagerDeps audit-coverage — ACTIVATED at commit 4 (OQ-2 resolution).
- * The audit doc lives at packages/orchestrator/AUDIT.md (OQ-1 resolution:
- * option-b — co-located with the package). CHANNEL_MANAGER_PATH points at
- * the orchestrator-side source (moved from channels/src/shared/ at commit 4).
+ * ChannelManagerDeps audit-coverage — the audit doc lives at
+ * packages/orchestrator/AUDIT.md (co-located with the package).
+ * CHANNEL_MANAGER_PATH points at the orchestrator-side source.
  *
  * @module
  */
@@ -37,9 +33,7 @@ const SRC_ROOT = resolve(here, "..");
 const PKG_ROOT = resolve(SRC_ROOT, "..");
 const REPO_ROOT = resolve(PKG_ROOT, "../..");
 
-// Audit-coverage paths (Phase 32 OQ-1 resolution: option-b — co-located with package).
-// Commit 4 retargeted CHANNEL_MANAGER_PATH to the orchestrator location after
-// the cross-package git-mv (source landed at packages/orchestrator/src/).
+// Audit-coverage paths (co-located with the orchestrator package).
 const AUDIT_PATH = resolve(PKG_ROOT, "AUDIT.md");
 const CHANNEL_MANAGER_PATH = resolve(
   REPO_ROOT,
@@ -48,8 +42,7 @@ const CHANNEL_MANAGER_PATH = resolve(
 
 // Hard-forbidden: never permitted, no allowlist. Orchestrator depends only on
 // @comis/{shared, core, agent, channels}. @comis/infra is forbidden because
-// logger contract types canonically live in @comis/core (Phase 28 commit 2 /
-// CORE-PORTS-05 / L12 closure).
+// logger contract types canonically live in @comis/core.
 const HARD_FORBIDDEN_PACKAGES = [
   "@comis/scheduler",
   "@comis/memory",
@@ -81,12 +74,10 @@ describe("@comis/orchestrator -- architecture invariants", () => {
             forbidden === "@comis/infra"
               ? "Replace `import type { ComisLogger | LogFields | ErrorKind } from \"@comis/infra\"` with `... from \"@comis/core\"`. The Pino-free structural ComisLogger contract canonically lives in @comis/core."
               : "@comis/orchestrator depends only on @comis/{shared, core, agent, channels}. Move the dependency to the right tier (core ports for type contracts; daemon for composition) or inject through deps.",
-          designRef: "design §2.2 target graph + §9.5 acceptance criteria",
+          designRef: "orchestrator depends only on @comis/{shared, core, agent, channels}",
         }),
       ).toEqual([]);
-      // Pattern E sanity check -- at commit 1 the src/ dir has only index.ts
-      // (no production code yet), so checkedFiles == 1 is acceptable.
-      // The assertion is "at least one file walked" not "many".
+      // Sanity check -- assert at least one file was walked.
       expect(
         checkedFiles,
         "sanity: findForbiddenImports walked at least one orchestrator/src file",
@@ -94,9 +85,9 @@ describe("@comis/orchestrator -- architecture invariants", () => {
     });
   }
 
-  // Phase 32 commit 5 (ORCH-EXT-20 / L22 closed): orchestrator imports from
-  // the public @comis/channels surface only — no @comis/channels/dist/*,
-  // no @comis/channels/src/*, no relative paths into channels.
+  // Orchestrator imports from the public @comis/channels surface only —
+  // no @comis/channels/dist/*, no @comis/channels/src/*, no relative
+  // paths into channels.
   it("imports from @comis/channels public exports only (no internal subpaths)", () => {
     // Forbid @comis/channels/dist/* and @comis/channels/src/* (private subpath imports)
     const subpathForbidden = ["@comis/channels/dist", "@comis/channels/src"];
@@ -108,7 +99,7 @@ describe("@comis/orchestrator -- architecture invariants", () => {
       expect(
         violations,
         formatViolations({
-          description: `@comis/orchestrator must NOT import ${subpath} (use only the public @comis/channels surface per ORCH-EXT-13 / L22 closed).`,
+          description: `@comis/orchestrator must NOT import ${subpath} (use only the public @comis/channels surface).`,
           violations: violations.map((v) => ({
             file: v.file,
             line: v.line,
@@ -116,8 +107,8 @@ describe("@comis/orchestrator -- architecture invariants", () => {
             snippet: v.snippet,
           })),
           suggestedFix:
-            "Import from `@comis/channels` (public surface) instead. Helpers consumed from channels must be exported via packages/channels/src/index.ts (per Plan 02 inventory bucket B).",
-          designRef: "design §1.3 L22 / §9.5 acceptance criteria / ORCH-EXT-13 / ORCH-EXT-20",
+            "Import from `@comis/channels` (public surface) instead. Helpers consumed from channels must be exported via packages/channels/src/index.ts.",
+          designRef: "orchestrator depends only on the public @comis/channels surface",
         }),
       ).toEqual([]);
       expect(
@@ -146,7 +137,7 @@ describe("@comis/orchestrator -- architecture invariants", () => {
         })),
         suggestedFix:
           "Use `import { ... } from \"@comis/channels\"` (the public surface) instead of relative paths.",
-        designRef: "design §9.5 acceptance criteria",
+        designRef: "orchestrator must not reach into the channels package via relative paths",
       }),
     ).toEqual([]);
   });
@@ -157,11 +148,9 @@ describe("@comis/orchestrator -- architecture invariants", () => {
     // ChannelManager + processInboundMessage are types, not runtime values — the
     // type-presence check is enforced at compile time by tsc consuming this file.
     // The `createOrchestrator` runtime check above is the falsifiable signal.
-  }, 30_000); // Plan 40-11: extend timeout for runtime import under v8 coverage instrumentation
+  }, 30_000); // extend timeout for runtime import under v8 coverage instrumentation
 
-  // Audit-coverage architecture test (ACTIVATED at Phase 32 commit 4 — OQ-2 resolution).
-  // channel-manager.ts moved to packages/orchestrator/src/ at commit 4 (this commit);
-  // CHANNEL_MANAGER_PATH retargeted accordingly. The audit doc at
+  // Audit-coverage architecture test: the audit doc at
   // packages/orchestrator/AUDIT.md must align row-for-row with ChannelManagerDeps.
   it("every ChannelManagerDeps field appears in audit document", () => {
     // 1. Parse the audit Markdown table at packages/orchestrator/AUDIT.md.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Project-wide globals invariant (HYG-07, HYG-08, HYG-10, HYG-11, HYG-12).
+ * Project-wide globals invariant.
  *
  * Forbids direct calls to `Date.now()`, `new Date(...)`, `process.env[...]`,
  * `setTimeout(...)`, `setInterval(...)`, `clearTimeout(...)`,
@@ -14,19 +14,15 @@
  * exempts `.unref()` / `.cancel()` / `.ref()` calls on `TimerHandle` /
  * `NodeJS.Timeout` / `NodeJS.Immediate`.
  *
- * Phase 39 (PORTS) closes every flagged site by retargeting to injected
- * `ClockPort` / `EnvPort` / `TimerPort` deps. Phase 37 seeds
- * `globalsAllowlist` with one entry per current callable-global site
- * outside `BOOTSTRAP_PATH_PATTERNS` (~360+1 entries, including the
- * HYG-12 marker). All entries are tagged `removedIn: "phase-B"`; Phase
- * 39 (PORTS) removes each entry atomically as the corresponding site
- * is retargeted through ClockPort/EnvPort/TimerPort (design doc §5.2
- * steps 7-8). No entry is allowed to outlive its retarget.
+ * Each flagged site is closed by retargeting to injected `ClockPort` /
+ * `EnvPort` / `TimerPort` deps. `globalsAllowlist` carries one entry per
+ * still-pending callable-global site outside `BOOTSTRAP_PATH_PATTERNS`;
+ * entries are removed atomically as each site is retargeted. No entry is
+ * allowed to outlive its retarget.
  *
- * Fixture validation (HYG-11) runs BEFORE the production scan: the
- * classifier must produce ≥7 violations on `globals-positive.ts` and
- * 0 violations on `globals-negative.ts` before we trust its production
- * output.
+ * Fixture validation runs BEFORE the production scan: the classifier
+ * must produce ≥7 violations on `globals-positive.ts` and 0 violations
+ * on `globals-negative.ts` before we trust its production output.
  *
  * @module
  */
@@ -105,7 +101,7 @@ function listAllProductionFiles(): string[] {
   return out;
 }
 
-describe("globals — classifier fixture-positive (HYG-10, HYG-11)", () => {
+describe("globals — classifier fixture-positive", () => {
   beforeEach(() => resetCacheForTest());
   it("globals-positive fixture produces ≥7 violations (one per pattern)", () => {
     const fixture = resolve(FIXTURES_DIR, "globals-positive.ts");
@@ -129,7 +125,7 @@ describe("globals — classifier fixture-positive (HYG-10, HYG-11)", () => {
   });
 });
 
-describe("globals — classifier fixture-negative (HYG-10, HYG-11)", () => {
+describe("globals — classifier fixture-negative", () => {
   beforeEach(() => resetCacheForTest());
   it("globals-negative fixture produces 0 violations", () => {
     const fixture = resolve(FIXTURES_DIR, "globals-negative.ts");
@@ -149,14 +145,12 @@ describe("globals — classifier fixture-negative (HYG-10, HYG-11)", () => {
         })),
         suggestedFix:
           "Adjust the classifier so the named CLEAN case is no longer matched. Negative fixtures pin the boundary of classifier correctness. Common bugs: comment-traversal, type-only-import recognition, or missing TypeChecker exemption for TimerHandle/NodeJS.Timeout receivers.",
-        designRef:
-          "code-quality-plan §4.5 (5) / Phase A / D-GLOB-03 — TypeChecker exemption for TimerHandle.unref()",
       }),
     ).toEqual([]);
   });
 });
 
-describe("globals — production source (HYG-07, HYG-08, HYG-12)", () => {
+describe("globals — production source", () => {
   beforeEach(() => resetCacheForTest());
   it("no NEW callable global outside bootstrap regex + globalsAllowlist", () => {
     const allFiles = listAllProductionFiles();
@@ -178,7 +172,7 @@ describe("globals — production source (HYG-07, HYG-08, HYG-12)", () => {
       newViolations,
       formatViolations({
         description:
-          "Production source outside the bootstrap/runtime adapter allowlist directly calls a forbidden global. Phase 39 (PORTS) closes these by retargeting to injected ClockPort / EnvPort / TimerPort.",
+          "Production source outside the bootstrap/runtime adapter allowlist directly calls a forbidden global. Close these by retargeting to injected ClockPort / EnvPort / TimerPort.",
         violations: newViolations.map((v) => ({
           file: repoRelative(v.file),
           line: v.line,
@@ -186,9 +180,7 @@ describe("globals — production source (HYG-07, HYG-08, HYG-12)", () => {
           snippet: `${v.pattern} — use injected port (clock/env/timers) instead`,
         })),
         suggestedFix:
-          "Inject ClockPort / EnvPort / TimerPort via deps and retarget. See design §4.2 (5) + §5.2 + Phase B (PORTS-11..13). If a NEW sanctioned path is required, EXTEND BOOTSTRAP_PATH_PATTERNS in test/support/globals-classifier.ts (don't add an allowlist entry).",
-        designRef:
-          "code-quality-plan §4.2 (5) / Phase A / HYG-07 / Phase B PORTS-11..13",
+          "Inject ClockPort / EnvPort / TimerPort via deps and retarget. If a NEW sanctioned path is required, EXTEND BOOTSTRAP_PATH_PATTERNS in test/support/globals-classifier.ts (don't add an allowlist entry).",
         allowlistRef:
           "globalsAllowlist (test/support/architecture-allowlist.ts)",
       }),

@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent config — Top-level runtime composition (Phase 43 split per
- * FILE-SPLIT-14).
+ * Agent config — Top-level runtime composition.
  *
- * Block-moved verbatim from the pre-split `config/schema-agent.ts` (lines
- * 683-939). Owns the top-level `AgentConfigSchema` (composed from all
- * sibling-leaf primitives), per-agent scheduler/heartbeat schemas,
- * `PerAgentConfigSchema`, and `AgentsMapSchema`.
+ * Owns the top-level `AgentConfigSchema` (composed from all sibling-leaf
+ * primitives), per-agent scheduler/heartbeat schemas, `PerAgentConfigSchema`,
+ * and `AgentsMapSchema`.
  *
  * This leaf is the COMPOSITION ROOT — imports from sibling leaves
  * (model/context/prompt) plus external sibling schemas (skills, secrets,

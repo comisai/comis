@@ -5,7 +5,7 @@ import type { InjectionRateLimiter } from "./injection-rate-limiter.js";
 import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight port wrappers that delegate to globals so
+// Lightweight port wrappers that delegate to globals so
 // vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
 // ---------------------------------------------------------------------------
 

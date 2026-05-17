@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for oauth-login-runner.ts.
- *
- * Relocated from packages/agent/src/model/oauth-login-runner.test.ts in
- * Phase 35 per WEB-CONTRACTS-02 D-01 #2. Sibling import paths unchanged.
  */
 import {
   describe,

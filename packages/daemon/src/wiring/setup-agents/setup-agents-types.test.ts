@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 43 wave 8 split (FILE-SPLIT-08): setup-agents.ts → setup-agents/
- * subdirectory. The types leaf has no executable bodies; this test pins
- * the canonical key sets of `SingleAgentDeps` and `SingleAgentResult` so
- * post-split additions/renames surface here as compile + assertion
- * failures (independent of the broader parity gate).
+ * Pins the canonical key sets of `SingleAgentDeps` and `SingleAgentResult`
+ * so additions/renames surface here as compile + assertion failures
+ * (independent of the broader parity gate). The types leaf has no
+ * executable bodies.
  *
  * @module
  */
@@ -79,7 +78,7 @@ describe("setup-agents-types", () => {
     expect(interfaceStart).toBeGreaterThan(-1);
     const interfaceEnd = source.indexOf("\n}", interfaceStart);
     const interfaceBlock = source.slice(interfaceStart, interfaceEnd);
-    // All 8 declared fields still present after the split.
+    // All 8 declared fields still present.
     expect(interfaceBlock).toContain("executor:");
     expect(interfaceBlock).toContain("workspaceDir:");
     expect(interfaceBlock).toContain("costTracker:");
@@ -97,7 +96,7 @@ describe("setup-agents-types", () => {
     // The next top-level export-keyword starts SingleAgentResult.
     const interfaceEnd = source.indexOf("\nexport ", interfaceStart + 1);
     const interfaceBlock = source.slice(interfaceStart, interfaceEnd);
-    // 7 required shared-dependency fields (mirrors original setup-agents.test.ts §SingleAgentDeps).
+    // 7 required shared-dependency fields the registry must thread.
     expect(interfaceBlock).toContain("container:");
     expect(interfaceBlock).toContain("memoryAdapter:");
     expect(interfaceBlock).toContain("sessionStore:");

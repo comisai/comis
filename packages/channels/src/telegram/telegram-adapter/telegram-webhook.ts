@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: Telegram SDK boundary throws; consumed by adapter try/catch + inbound-pipeline catch (Phase 41 TS-HYG-07 entries preserved from pre-split telegram-adapter.ts lineRanges [[125, 125], [503, 503], [551, 551]]).
+// @allow-throw: Telegram SDK boundary throws; consumed by adapter try/catch + inbound-pipeline catch.
 /**
- * Telegram webhook + HTML helpers (Phase 43 split per FILE-SPLIT-12).
+ * Telegram webhook + HTML helpers.
  *
  * Pure utilities consumed by the lifecycle, inbound, and outbound leaves.
  * No closure-captured state: all functions take their inputs as explicit
@@ -14,9 +14,8 @@
  *     they can retry as plain text.
  *   - sendWithThreadFallback: thread-not-found retry wrapper used by
  *     outbound sends + sendAttachment for forum-topic fallback.
- *   - shouldUseRunner: replaces the inline `if (!deps.webhookUrl)` branch
- *     in the pre-split start(); makes the polling vs webhook transport
- *     decision an explicit pure function.
+ *   - shouldUseRunner: makes the polling vs webhook transport decision an
+ *     explicit pure function based on whether a webhook URL is configured.
  *
  * Per AGENTS.md no-cycles invariant: this leaf only imports from types
  * and from @comis/core for ComisLogger; no sibling-leaf imports.
@@ -108,8 +107,7 @@ export async function sendWithThreadFallback<T>(
 
 /**
  * Decide whether start() should boot the @grammyjs/runner polling loop
- * or defer to webhook delivery. Mirrors the pre-split inline branch
- * `if (!deps.webhookUrl)`.
+ * or defer to webhook delivery.
  *
  * Returns `true` to start the runner (polling mode), `false` to skip it
  * (webhook mode; the host process is expected to drive bot.handleUpdate

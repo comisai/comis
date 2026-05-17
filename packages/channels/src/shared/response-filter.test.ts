@@ -191,6 +191,6 @@ describe("filterResponse", () => {
       expect(fromShared.NO_REPLY_TOKEN).toBe("NO_REPLY");
       expect(fromChannels.NO_REPLY_TOKEN).toBe(fromShared.NO_REPLY_TOKEN);
       expect(fromChannels.NO_REPLY_TOKEN).toBe("NO_REPLY");
-    }, 30_000); // Plan 40-11: extend timeout for dynamic barrel import under v8 coverage instrumentation
+    }, 30_000); // Extend timeout for dynamic barrel import under v8 coverage instrumentation
   });
 });

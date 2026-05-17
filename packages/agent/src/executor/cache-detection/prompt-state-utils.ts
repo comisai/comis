@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Cache-break detection — pure utilities for prompt-state fingerprinting
- * and change detection (Phase 42 split per EXEC-SPLIT-09).
+ * and change detection.
  *
  * Functions in this module are pure (no closure captures, no module-level
  * state). Used by the factory in cache-state.ts and the provider adapters
@@ -145,7 +145,7 @@ export function buildPendingChanges(prev: PromptStateSnapshot, curr: PromptState
  * Priority: model > system > tools > retention > metadata > headers > extra_body > effort >
  *           cache_control > lookback_window > TTL > tiered server attribution.
  *
- * W4: conversationBlockCount enables lookback window detection before TTL fallthrough.
+ * conversationBlockCount enables lookback window detection before TTL fallthrough.
  */
 export function attributeReason(
   changes: PendingChanges,
@@ -165,7 +165,7 @@ export function attributeReason(
   if (changes.effortChanged) return "effort_changed";
   if (changes.cacheControlChanged) return "cache_control_changed";
   if (ttlExpired) return "ttl_expiry";
-  // W4: Lookback window exceeded -- conversation grew beyond cache anchoring range.
+  // Lookback window exceeded -- conversation grew beyond cache anchoring range.
   // cacheRead drops to system prefix baseline but no client-side changes explain it.
   // This is expected behavior for long conversations, NOT a server eviction.
   // Threshold: 20 blocks matches Anthropic's documented lookback window.

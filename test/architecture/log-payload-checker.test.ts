@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Project-wide closed-`errorKind` invariant (ARCH-BASE-15 + L16).
+ * Project-wide closed-`errorKind` invariant.
  *
  * Runs the log-payload-checker AST walker against every packages/*\/src
  * production file (excluding `*.test.ts` and the standard exclude
- * directories), filters violations against the L16 baseline allowlist
- * captured at Phase 27 plan-execution time, and asserts that no NEW
- * violations have been introduced since the baseline was recorded.
+ * directories), filters violations against the in-file baseline
+ * allowlist, and asserts that no NEW violations have been introduced
+ * since the baseline was recorded.
  *
- * Phase 28 commit 6B (CORE-PORTS-07) closes L16 by either annotating
- * each off-union literal as a valid `ErrorKind` member OR escalating
- * to a closed-union value at the call site. After Phase 28 lands, the
- * L16 baseline shrinks to zero and the test enforces strictly-closed
- * enforcement.
+ * The closed-union enforcement either annotates each off-union literal
+ * as a valid `ErrorKind` member OR escalates to a closed-union value at
+ * the call site. The baseline below is empty, so the test enforces
+ * strict closed-union enforcement.
  *
  * Baseline shape: each entry is a string `<relpath>:<line>:<literal>`
  * where `relpath` is the path relative to the repository root, `line`
@@ -50,31 +49,25 @@ const WORKSPACE_PACKAGES = [
 ] as const;
 
 /**
- * L16 BASELINE — closed in Phase 28 commit 6B (CORE-PORTS-07).
+ * Closed-union `errorKind` baseline — currently empty.
  *
- * The Phase 27 baseline carried 160 off-union `errorKind` literal sites
- * (130 `<unresolved type>` from TypeChecker widening + 30 actual off-union
- * literals such as `performance`, `delivery`, `transient`, `permanent`,
- * `io`, `state`, `data`, `operational`, `retrieval_failure`,
- * `unsupported_region`, `callback_validation_failed`, `invalid_grant`,
- * `refresh_token_reused`, `identity_decode_failed`, `callback_timeout`).
+ * Prior off-union `errorKind` literal sites (e.g. `performance`,
+ * `delivery`, `transient`, `permanent`, `io`, `state`, `data`,
+ * `operational`, `retrieval_failure`, `unsupported_region`,
+ * `callback_validation_failed`, `invalid_grant`, `refresh_token_reused`,
+ * `identity_decode_failed`, `callback_timeout`) have all been retired
+ * via two passes:
+ *   1. Adding `as const` to in-union literals so TypeChecker preserves
+ *      the literal type (mechanical fix).
+ *   2. Replacing off-union literals with the closest closed-union value.
+ *   3. Routing every OAuth-derived logger payload to `errorKind: "auth"`.
  *
- * Wave 7 (this commit) closed L16 by:
- *   1. Adding `as const` to in-union literals so TypeChecker preserves the
- *      literal type (mechanical fix — most of the 130 `<unresolved type>` sites).
- *   2. Replacing off-union literals with the closest closed-union value
- *      per the per-site mapping table in 28-07-SUMMARY.md.
- *   3. Routing every OAuth-derived logger payload to `errorKind: "auth"`
- *      per D-03 (rewritten.code / rewritten.errorKind / result.error.code
- *      reads removed entirely from the 9 OAuth WARN sites — making Wave 8
- *      a pure type-narrow with zero consumer-code touched).
- *
- * The set is now empty; the architecture rule asserts strictly-closed
+ * The set is empty; the architecture rule asserts strictly-closed
  * enforcement. ANY new off-union literal in `errorKind:` position fails
- * the gate immediately (D-01 immediate-fail).
+ * the gate immediately.
  */
 const L16_BASELINE_VIOLATIONS = new Set<string>([
-  // No baseline violations remain (Phase 28 commit 6B closed L16).
+  // No baseline violations remain.
 ]);
 
 /**
@@ -125,8 +118,8 @@ function listAllProductionFiles(): string[] {
   return out;
 }
 
-describe("log-payload-checker -- closed errorKind invariant (ARCH-BASE-15 + L16)", () => {
-  it("no NEW off-union errorKind literals beyond L16 baseline", () => {
+describe("log-payload-checker -- closed errorKind invariant", () => {
+  it("no NEW off-union errorKind literals beyond the empty baseline", () => {
     const allFiles = listAllProductionFiles();
     const violations = checkLogPayloads(allFiles);
 
@@ -142,7 +135,7 @@ describe("log-payload-checker -- closed errorKind invariant (ARCH-BASE-15 + L16)
       newViolations,
       formatViolations({
         description:
-          "New off-union `errorKind` literals detected — outside the L16 baseline. Phase 27 records the baseline; Phase 28 commit 6B closes L16.",
+          "New off-union `errorKind` literals detected — outside the closed-union baseline.",
         violations: newViolations.map((v) => ({
           file: `${v.file}:${v.line}:${v.character}`,
           line: v.line,
@@ -152,8 +145,8 @@ describe("log-payload-checker -- closed errorKind invariant (ARCH-BASE-15 + L16)
         suggestedFix:
           "Use one of the 9 valid ErrorKind values per AGENTS.md §2.1. If a new kind is genuinely required, the closed union must be extended via design-doc amendment (NOT a feature PR).",
         designRef:
-          "AGENTS.md §2.1 / design §1.3 L16 / Phase 28 commit 6B (CORE-PORTS-07)",
-        allowlistRef: "L16 + L16_BASELINE_VIOLATIONS (in-file sub-allowlist)",
+          "AGENTS.md §2.1 / design §1.3",
+        allowlistRef: "L16_BASELINE_VIOLATIONS (in-file sub-allowlist)",
       }),
     ).toEqual([]);
 

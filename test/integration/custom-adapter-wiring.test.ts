@@ -1,24 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CWIRE: Custom Adapter Wiring & Integration Tests
+ * Custom Adapter Wiring & Integration Tests.
  *
  * Package-level integration tests for ChannelManager adapter wiring
  * (combined direct + registry adapter lists, failure isolation, active
  * count tracking) and ChannelRegistry event emission, plus daemon-level
  * E2E tests verifying custom adapter registration and dispatch.
- *
- *   CWIRE-01: startAll() starts direct adapters only when no registry
- *   CWIRE-02: startAll() starts registry-only adapters when deps.adapters empty
- *   CWIRE-03: startAll() builds combined list from both sources
- *   CWIRE-04: failed adapter start() is logged and skipped
- *   CWIRE-05: channel:registered event fires with correct payload
- *   CWIRE-06: channel:deregistered event fires on unregisterChannel
- *   CWIRE-07: getCapabilities returns full capability object
- *   CWIRE-08: streaming support query via capabilities
- *   CWIRE-09: edit support determines operation availability
- *   CWIRE-10: daemon boots and adapter registry is accessible
- *   CWIRE-11: custom EchoChannelAdapter registered on daemon registry
- *   CWIRE-12: custom adapter dispatch via registry (sendMessage + fetchMessages)
  *
  * Uses port 8504 for daemon-level tests.
  */
@@ -32,8 +19,7 @@ import {
   EchoChannelAdapter,
   type ChannelRegistry,
 } from "@comis/channels";
-// Phase 32 commit 4: createChannelManager + ChannelManagerDeps moved with
-// channel-manager.ts to @comis/orchestrator.
+// createChannelManager + ChannelManagerDeps live in @comis/orchestrator.
 import {
   createChannelManager,
   processInboundMessage,
@@ -181,17 +167,17 @@ function makeMinimalDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManage
       })),
     })),
     logger: makeLogger(),
-    // Phase 30 plan 04: DeliveryService is required on ChannelManagerDeps. The
-    // CWIRE suite only exercises startAll() / stopAll() lifecycle, never the
-    // inbound pipeline, so the service is fine as a noop stub.
+    // DeliveryService is required on ChannelManagerDeps. The CWIRE suite
+    // only exercises startAll() / stopAll() lifecycle, never the inbound
+    // pipeline, so the service is fine as a noop stub.
     deliveryService: {
       deliverToChannel: vi.fn(async () => ({ ok: true, value: { ok: true } })) as any,
     } as any,
-    // Phase 32 commit 4: processInboundMessage is dep-injected on
-    // ChannelManagerDeps (added at commit 3 when channels could not back-edge
-    // import orchestrator). The CWIRE tests do not invoke it directly — they
-    // only assert combined-adapter-list lifecycle — so the real function is a
-    // safe choice; nothing observable depends on its return path here.
+    // processInboundMessage is dep-injected on ChannelManagerDeps so
+    // channels does not back-edge import orchestrator. The CWIRE tests do
+    // not invoke it directly — they only assert combined-adapter-list
+    // lifecycle — so the real function is a safe choice; nothing
+    // observable depends on its return path here.
     processInboundMessage: processInboundMessage as unknown as ChannelManagerDeps["processInboundMessage"],
     ...overrides,
   };
@@ -201,13 +187,13 @@ function makeMinimalDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManage
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("CWIRE: Custom Adapter Wiring & Integration", () => {
+describe("Custom Adapter Wiring & Integration", () => {
   // -------------------------------------------------------------------------
-  // ChannelManager combined adapter list (CWIRE-01 through CWIRE-04)
+  // ChannelManager combined adapter list
   // -------------------------------------------------------------------------
 
-  describe("ChannelManager combined adapter list (CWIRE-01 through CWIRE-04)", () => {
-    it("CWIRE-01: startAll() starts direct adapters only when no channelRegistry provided", async () => {
+  describe("ChannelManager combined adapter list", () => {
+    it("startAll() starts direct adapters only when no channelRegistry provided", async () => {
       const adapterA = createMockAdapter({ channelId: "a", channelType: "direct-a" });
       const adapterB = createMockAdapter({ channelId: "b", channelType: "direct-b" });
       const deps = makeMinimalDeps({ adapters: [adapterA, adapterB] });
@@ -220,7 +206,7 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
       expect(adapterB.start).toHaveBeenCalled();
     });
 
-    it("CWIRE-02: startAll() starts registry-only adapters when deps.adapters is empty", async () => {
+    it("startAll() starts registry-only adapters when deps.adapters is empty", async () => {
       const eventBus = new TypedEventBus();
       const pluginRegistry = createPluginRegistry({ eventBus });
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
@@ -242,7 +228,7 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
       expect(manager.activeCount).toBe(2);
     });
 
-    it("CWIRE-03: startAll() builds combined list from both direct adapters and registry plugins", async () => {
+    it("startAll() builds combined list from both direct adapters and registry plugins", async () => {
       const eventBus = new TypedEventBus();
       const pluginRegistry = createPluginRegistry({ eventBus });
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
@@ -263,7 +249,7 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
       expect(manager.activeCount).toBe(2); // 1 direct + 1 registry
     });
 
-    it("CWIRE-04: failed adapter start() is logged and skipped, other adapters proceed", async () => {
+    it("failed adapter start() is logged and skipped, other adapters proceed", async () => {
       const failingAdapter = createMockAdapter({
         channelId: "fail-adapter",
         channelType: "fail-type",
@@ -291,11 +277,11 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // ChannelRegistry event emission (CWIRE-05, CWIRE-06)
+  // ChannelRegistry event emission
   // -------------------------------------------------------------------------
 
-  describe("ChannelRegistry event emission (CWIRE-05, CWIRE-06)", () => {
-    it("CWIRE-05: channel:registered event fires with correct channelType, pluginId, capabilities, timestamp", () => {
+  describe("ChannelRegistry event emission", () => {
+    it("channel:registered event fires with correct channelType, pluginId, capabilities, timestamp", () => {
       const eventBus = new TypedEventBus();
       const pluginRegistry = createPluginRegistry({ eventBus });
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
@@ -319,7 +305,7 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
       expect(events[0].timestamp).toBeGreaterThan(0);
     });
 
-    it("CWIRE-06: channel:deregistered event fires on unregisterChannel with correct payload", () => {
+    it("channel:deregistered event fires on unregisterChannel with correct payload", () => {
       const eventBus = new TypedEventBus();
       const pluginRegistry = createPluginRegistry({ eventBus });
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
@@ -343,11 +329,11 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Capability feature negotiation (CWIRE-07 through CWIRE-09)
+  // Capability feature negotiation
   // -------------------------------------------------------------------------
 
-  describe("capability feature negotiation (CWIRE-07 through CWIRE-09)", () => {
-    it("CWIRE-07: getCapabilities returns full capability object for registered channel", () => {
+  describe("capability feature negotiation", () => {
+    it("getCapabilities returns full capability object for registered channel", () => {
       const eventBus = new TypedEventBus();
       const pluginRegistry = createPluginRegistry({ eventBus });
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
@@ -392,7 +378,7 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
       expect(caps!.threading.maxDepth).toBe(5);
     });
 
-    it("CWIRE-08: capability-driven feature check: streaming support query", () => {
+    it("capability-driven feature check: streaming support query", () => {
       const eventBus = new TypedEventBus();
       const pluginRegistry = createPluginRegistry({ eventBus });
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
@@ -440,7 +426,7 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
       expect(shouldStream("nonexistent")).toBe(false);
     });
 
-    it("CWIRE-09: capability-driven feature check: edit support determines operation availability", () => {
+    it("capability-driven feature check: edit support determines operation availability", () => {
       const eventBus = new TypedEventBus();
       const pluginRegistry = createPluginRegistry({ eventBus });
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
@@ -483,10 +469,10 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Daemon-level custom adapter E2E (CWIRE-10 through CWIRE-12)
+  // Daemon-level custom adapter E2E
   // -------------------------------------------------------------------------
 
-  describe("Daemon-level custom adapter E2E (CWIRE-10 through CWIRE-12)", () => {
+  describe("Daemon-level custom adapter E2E", () => {
     let handle: TestDaemonHandle;
     let registry: Map<string, ChannelPort>;
     let echoAdapter: EchoChannelAdapter;
@@ -511,14 +497,14 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
       }
     }, 30_000);
 
-    it("CWIRE-10: daemon boots successfully and adapter registry is accessible", () => {
+    it("daemon boots successfully and adapter registry is accessible", () => {
       expect(handle).toBeDefined();
       expect(registry).toBeInstanceOf(Map);
       expect(handle.authToken).toBeTruthy();
       expect(typeof handle.authToken).toBe("string");
     });
 
-    it("CWIRE-11: custom EchoChannelAdapter registered on daemon registry is accessible", () => {
+    it("custom EchoChannelAdapter registered on daemon registry is accessible", () => {
       echoAdapter = new EchoChannelAdapter({
         channelId: "custom-e2e",
         channelType: "custom-e2e",
@@ -529,8 +515,8 @@ describe("CWIRE: Custom Adapter Wiring & Integration", () => {
       expect(registry.has("custom-e2e")).toBe(true);
     });
 
-    it("CWIRE-12: custom adapter dispatch via registry works for sendMessage and fetchMessages", async () => {
-      // Use the adapter registered in CWIRE-11
+    it("custom adapter dispatch via registry works for sendMessage and fetchMessages", async () => {
+      // Use the adapter registered in the previous test.
       const adapter = registry.get("custom-e2e") as EchoChannelAdapter;
       expect(adapter).toBeDefined();
 

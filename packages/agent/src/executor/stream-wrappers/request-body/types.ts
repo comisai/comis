@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Request-body injector public types (Phase 42 split per EXEC-SPLIT-02).
+ * Request-body injector public types.
  *
- * Lifted verbatim from request-body-injector.ts to break the factory's import
+ * Lifted out of request-body-injector.ts to break the factory's import
  * cycle with the leaf modules. The barrel (index.ts) re-exports
- * RequestBodyInjectorConfig under the canonical name; consumer surface
- * unchanged.
+ * RequestBodyInjectorConfig under the canonical name.
  *
  * @module
  */
@@ -23,7 +22,7 @@ import type { BlockStabilityTracker } from "../../block-stability-tracker.js";
  * Controls cache breakpoints, 1M beta header, service_tier, and store injection.
  */
 export interface RequestBodyInjectorConfig {
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
   /** Getter for per-execution cache retention override. */
   getCacheRetention: () => CacheRetention | undefined;

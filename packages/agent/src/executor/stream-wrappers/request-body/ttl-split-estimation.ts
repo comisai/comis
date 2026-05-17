@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-TTL token estimation from final cache_control markers
- * (Phase 42 split per EXEC-SPLIT-02).
+ * Per-TTL token estimation from final cache_control markers.
  *
  * Counts tokens under 5m vs 1h `cache_control` markers across the final
  * `result.system`, `result.tools`, and `result.messages` blocks. Used by
  * the bridge to attribute `cacheWriteTokens` cost between the two TTL
  * tiers. Runs AFTER all breakpoint placement and kill-switch stripping so
  * counts reflect the exact markers sent to the API.
- *
- * Lifted verbatim from request-body-injector.ts:2042-2100.
  *
  * @module
  */

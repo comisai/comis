@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Media + image-domain RPC contracts. Mirrors the two daemon handler
- * factory files that share the `MediaApiDeps` cluster slice (Phase 34
- * plan 34-08a):
+ * factory files that share the `MediaApiDeps` cluster slice:
  *
  *   - `packages/daemon/src/api/media-handlers.ts`  (15 methods)
  *   - `packages/daemon/src/api/image-handlers.ts`  ( 1 method)
  *
- * Phase 35 Wave C plan 35-15 (Wave C domain #10). Per D-08 (one contract
- * file per logical domain mirroring Phase 34's 11 `*ApiDeps` slices), both
- * handler files map to the SAME ApiDeps slice (`MediaApiDeps` — with
+ * Both handler files map to the SAME ApiDeps slice (`MediaApiDeps` — with
  * image-handlers receiving the nested `imageHandlerDeps` sub-shape) and so
  * share one contract file. The aggregator below preserves per-handler
  * grouping via `// --- xxx-handlers.ts ---` comment blocks; the order
@@ -45,9 +42,9 @@
  *                                          tool to provider + channel
  *                                          delivery).
  *
- * **D-05 loose-record use** (Pitfall 6 escape hatch). Multiple response
- * shapes carry nested adapter-specific fields where modeling them tighter
- * would pin underlying wire formats across daemon restarts:
+ * **Loose-record use** (escape hatch). Multiple response shapes carry
+ * nested adapter-specific fields where modeling them tighter would pin
+ * underlying wire formats across daemon restarts:
  *
  *   - `media.providers.response` — top-level keys mirror the provider
  *     groups (stt/tts/vision/documentExtraction/linkUnderstanding); each
@@ -65,22 +62,11 @@
  * and similar URL-typed params are bare `z.string()`; the handler validates
  * via `validateUrl` from `@comis/core/security` when the URL is fetched),
  * z.number, z.boolean, z.literal, z.enum, z.array, z.union, z.nullable,
- * z.optional, z.record (D-05 loose-record value-type).
+ * z.optional, z.record (loose-record value-type).
  *
- * **BLOCKER 1 status.** The CLI has ZERO `client.call("media.*"|"audio.*"|
- * "image.*", ...)` sites (verified via the grep `grep -rln 'client\.call(
- * "media\.\|client\.call("audio\.\|client\.call("image\.' packages/cli/src/`
- * → empty). The 16 handler-factory methods covered by this plan have ZERO
- * CLI consumers in scope — same BLOCKER 1 EXEMPTION pattern as Plans 35-09
- * (tokens), 35-10 (mcp), 35-12 (observability), 35-13 (workspace umbrella),
- * 35-14 (memory + context). The doctor probes the plan's <interfaces>
- * block speculated about do not exist (the CLI's doctor command does NOT
- * invoke media/audio/image RPC methods).
- *
- * **BLOCKER 6 (Wave C precedent).** Per orchestrator directive ("Additive
- * edits to api-contracts/index.ts are accepted; Plan 35-19 owns final
- * atomic edit"), `index.ts` is updated to register `MEDIA_CONTRACTS`
- * (1 import line + 1 spread + 1 re-export).
+ * The CLI has ZERO `client.call("media.*"|"audio.*"|"image.*", ...)` sites:
+ * these 16 handler-factory methods have no CLI consumers in scope. The
+ * CLI's doctor command does NOT invoke media/audio/image RPC methods.
  *
  * @module
  */
@@ -244,7 +230,7 @@ export const LinkProcessContract = defineContract({
  *     integrations.media.transcription settings" }`.
  *   - STT provider returns `err()` → `{ error: result.error.message }`.
  *
- * Response: D-05 LOOSE-RECORD. Two variants — success carries
+ * Response: loose-record. Two variants — success carries
  * `{ text, language, durationMs }`; failure carries `{ error: string }`
  * (the handler returns the `error` shape WITHOUT throwing for the
  * missing-parameter / not-configured / provider-error cases).
@@ -567,7 +553,7 @@ export const MediaTestLinkContract = defineContract({
  * media-pipeline groups (stt / tts / vision / documentExtraction /
  * linkUnderstanding). Admin-scoped (setup-gateway-api.ts line 192).
  *
- * Response: D-05 LOOSE-RECORD. Each top-level group is either `null`
+ * Response: loose-record. Each top-level group is either `null`
  * (provider not configured) or an object with group-specific keys (e.g.,
  * `vision.providers` is the dynamic `[...registry.keys()]` array,
  * `vision.videoCapable` is the filtered subset, `tts.voice`/`tts.format`
@@ -606,7 +592,7 @@ export const MediaProvidersContract = defineContract({
  *     exceeded: max <N> images per hour" }`.
  *   - Provider returns `err()` → `{ success: false, error: <message> }`.
  *
- * Response: D-05 LOOSE-RECORD. Three variants — failure (`success:
+ * Response: loose-record. Three variants — failure (`success:
  * false` + `error`), delivered (`success: true, delivered: true,
  * mimeType`), and base64 fallback (`success: true, imageBase64,
  * mimeType`). Tight discriminated-union modeling would pin the variant

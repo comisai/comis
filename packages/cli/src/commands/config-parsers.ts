@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Configuration command parsers/formatters (Phase 43 split per FILE-SPLIT-10).
+ * Configuration command parsers/formatters.
  *
- * Extracted from `config.ts` to drop it below the 800L cap. These are pure
- * transformations: no RPC calls, no fs I/O, no side effects beyond the
- * documented in-place mutation in `resolveEnvRefs` (which mirrors the
- * original inline behavior — the caller passes a transient merge result).
+ * These are pure transformations: no RPC calls, no fs I/O, no side effects
+ * beyond the documented in-place mutation in `resolveEnvRefs` (the caller
+ * passes a transient merge result).
  *
  * @module
  */

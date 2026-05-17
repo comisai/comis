@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: @allow-throw boundary: ACP HTTP server route handler; throws caught by Hono framework error-handler boundary (Phase 41 TS-HYG-07).
+// @allow-throw: ACP HTTP server route handler; throws caught by Hono framework error-handler boundary.
 /**
  * ACP Agent Server — Agent Communication Protocol implementation for IDE integration.
  *

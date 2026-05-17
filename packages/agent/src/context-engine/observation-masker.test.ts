@@ -74,10 +74,9 @@ function makeOffloadedToolResult(toolCallId: string, toolName: string): AgentMes
 }
 
 function makeMaskedToolResult(toolCallId: string, toolName: string): AgentMessage {
-  // Phase 38 BC-REM-16: helper now emits the canonical
-  // `[Tool result summarized:` prefix. The pre-deletion helper emitted
-  // `[Tool result cleared:` which `isAlreadyMasked` no longer recognizes
-  // post-deletion — see cleanup-helpers.ts (INTENTIONAL BREAK #2).
+  // Helper emits the canonical `[Tool result summarized:` prefix; the
+  // earlier `[Tool result cleared:` prefix is no longer recognized by
+  // `isAlreadyMasked` — see cleanup-helpers.ts.
   return {
     role: "toolResult",
     toolCallId,
@@ -203,8 +202,8 @@ describe("createObservationMaskerLayer", () => {
       makeToolResult("tc_store", "memory_store", "Stored successfully"),
       makeUserMsg("Q4"),
       makeAssistantMsg("A4"),
-      // Post-BC-REM-11: use canonical `read` (protected-tier) in place of
-      // the deleted `file_read` alias.
+      // Use canonical `read` (protected-tier) — the legacy `file_read`
+      // alias has been removed.
       makeToolResult("tc_file", "read", "File contents here..."),
       // 4 more bash results that will be within keep window (3)
       makeUserMsg("Q5"),
@@ -1137,9 +1136,8 @@ describe("createObservationMaskerLayer", () => {
         makeToolResult("tc_mem_store", "memory_store", "stored ok"),
         makeUserMsg("Q4"),
         makeAssistantMsg("A4"),
-        // Post-BC-REM-11: `file_read` is no longer a protected-tier alias;
-        // use the canonical `read` tool name (also protected-tier) to keep
-        // 5-protected-tool coverage.
+        // `file_read` is no longer a protected-tier alias; use the
+        // canonical `read` tool name to keep 5-protected-tool coverage.
         makeToolResult("tc_read", "read", "file content"),
         makeUserMsg("Q5"),
         makeAssistantMsg("A5"),
@@ -1221,9 +1219,8 @@ describe("createObservationMaskerLayer", () => {
       const layer = createObservationMaskerLayer(config);
 
       // [bash, read, bash, read, bash] with observationKeepWindow=2
-      // -> 2 most recent bash kept, read all kept. Post-BC-REM-11: use
-      // canonical `read` (also protected-tier) in place of the deleted
-      // `file_read` alias.
+      // -> 2 most recent bash kept, read all kept. Uses canonical `read`
+      // (protected-tier) instead of the removed `file_read` alias.
       const messages: AgentMessage[] = [
         makeUserMsg("Q1"),
         makeAssistantMsg("A1"),

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: builtin tool boundary; throws caught by AgentTool wrapper (Phase 41 TS-HYG-07).
+// @allow-throw: builtin tool boundary; throws caught by AgentTool wrapper.
 /**
- * Exec tool module (Phase 43 split per FILE-SPLIT-02).
+ * Exec tool module.
  *
  * Barrel + thin createExecTool factory. The factory body delegates to:
  *   - `evaluateInstallDetourGate` / `buildExecEnv` (exec-shared.ts)

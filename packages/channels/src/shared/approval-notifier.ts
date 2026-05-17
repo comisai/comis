@@ -26,8 +26,8 @@ export interface ApprovalNotifierDeps {
   /** Delivery queue for crash-safe persistence. */
   deliveryQueue?: DeliveryQueuePort;
   /** DeliveryService constructed once at the daemon composition root.
-   *  Phase 30 plan 04 (CONFIG-DELIV-05) — the single delivery callsite below
-   *  uses `deps.deliveryService.deliverToChannel(...)` instead of the
+   *  The single delivery callsite below uses
+   *  `deps.deliveryService.deliverToChannel(...)` rather than a
    *  free-standing standalone export. */
   deliveryService: DeliveryService;
 }
@@ -93,9 +93,8 @@ export function createApprovalNotifier(deps: ApprovalNotifierDeps): ApprovalNoti
         `Approve or deny via web console, or reply: /approve ${requestIdShort} or /deny ${requestIdShort}`,
       ].join("\n");
 
-      // Fire-and-forget: don't block the event bus. Phase 30 plan 04: method
-      // form via threaded DeliveryService; deliveryQueue is captured in closure
-      // at construction.
+      // Fire-and-forget: don't block the event bus. Method form via threaded
+      // DeliveryService; deliveryQueue is captured in closure at construction.
       deps.deliveryService.deliverToChannel(adapter, chatId, text, { skipChunking: true })
         .then((result) => {
         if (!result.ok || !result.value.ok) {

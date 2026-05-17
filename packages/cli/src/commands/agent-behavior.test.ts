@@ -19,8 +19,8 @@ import {
 } from "../test-helpers.js";
 
 // Mock withClient from rpc-client at module level for ESM hoisting.
-// importOriginal-based so callTyped (Plan 35-16 Wave C retarget) resolves
-// to the real wrapper while withClient is mocked.
+// importOriginal-based so callTyped resolves to the real wrapper while
+// withClient is mocked.
 vi.mock("../client/rpc-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
   return {
@@ -34,8 +34,7 @@ vi.mock("../output/spinner.js", () => ({
   withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
 }));
 
-// Mock @comis/core for ensureWorkspace/resolveWorkspaceDir used in create
-// (relocated from @comis/agent in Phase 35 Plan 35-04 per D-01 #5).
+// Mock @comis/core for ensureWorkspace/resolveWorkspaceDir used in create.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {

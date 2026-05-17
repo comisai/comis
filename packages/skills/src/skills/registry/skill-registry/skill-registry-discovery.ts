@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Skill registry discovery + matching algorithms (Phase 43 split per FILE-SPLIT-11).
+ * Skill registry discovery + matching algorithms.
  *
- * Extracted from the pre-split skill-registry.ts monolith. Owns:
+ * Owns:
  *   - Tokenization (tokenize)
  *   - allowed/denied filter (isSkillEligible)
  *   - Relevance scoring against a tokenized query (scoreRelevance)
- *   - Factory-body extraction: loadPromptSkillImpl — the file-IO + manifest +
- *     content-scan + audit pipeline for level-2 (load) progressive disclosure
+ *   - loadPromptSkillImpl — the file-IO + manifest + content-scan + audit
+ *     pipeline for level-2 (load) progressive disclosure
  *
  * These are the deterministic, reusable helpers — no closure state, all
  * inputs are passed explicitly (cache map is mutated as the documented
@@ -94,11 +94,6 @@ export function scoreRelevance(queryTokens: Set<string>, skill: SkillMetadata): 
  * malformed `comis.capability` block, validates the manifest, sanitizes the
  * body, runs content scanning, emits audit events, and caches the resulting
  * {@link PromptSkillContent} in `promptCache`.
- *
- * Behavior byte-identical to the pre-Phase-43 inline factory-body method
- * `createSkillRegistry().loadPromptSkill`. Extracted to keep
- * skill-registry-cache.ts's factory body under the per-leaf 500-line cap
- * (FILE-SPLIT-11 / Phase 43 plan 02b).
  *
  * Side effects: on `ok()`, `promptCache.set(name, ...)` is called. On any
  * `err()` return, the cache is NOT mutated.

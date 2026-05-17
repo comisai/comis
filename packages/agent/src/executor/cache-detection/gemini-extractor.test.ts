@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for cache-detection/gemini-extractor.ts (Phase 42 split per
- * EXEC-SPLIT-09 / EXEC-SPLIT-03).
+ * Unit tests for cache-detection/gemini-extractor.ts.
  *
  * Covers `extractGeminiPromptState` — the Gemini-native adapter.
- * Behavior moved from the pre-split cache-break-detection.test.ts file;
- * identical describe block contents.
  *
  * @module
  */

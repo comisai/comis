@@ -14,9 +14,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ok, err } from "@comis/shared";
 import type { ChannelPort, SendMessageOptions } from "@comis/core";
 import { RetryConfigSchema, validateUrl, createRetryEngine, createBlockRetryGuard } from "@comis/core";
-// Phase 32 commit 6 (ORCH-EXT-08, OQ-4 final): createCommandHandler +
-// parseSlashCommand + CommandHandlerDeps moved to @comis/orchestrator.
-// createCostTracker stays at @comis/agent (lives in agent/src/budget/).
+// createCommandHandler + parseSlashCommand + CommandHandlerDeps live in
+// @comis/orchestrator; createCostTracker lives in @comis/agent (agent/src/budget/).
 import { createCostTracker } from "@comis/agent";
 import { createCommandHandler, parseSlashCommand } from "@comis/orchestrator";
 import type { CommandHandlerDeps } from "@comis/orchestrator";

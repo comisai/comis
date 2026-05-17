@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Tarball smoke test (GUARDRAILS-12).
+ * Tarball smoke test.
  *
  * Packs the umbrella `comisai` package via `pnpm --filter comisai pack`,
  * extracts the resulting tarball, and asserts that every workspace package
@@ -15,11 +15,10 @@
  *   2. The set of bundled directories equals the set of WORKSPACE_PACKAGES
  *      entries (every expected package present; no extras).
  *   3. Every bundled `@comis/<pkg>` has a non-empty `dist/` subdirectory.
- *   4. `node_modules/@comis/orchestrator/dist/` exists (explicit Phase 36
- *      check — guards against silent regression of the orchestrator
- *      extraction landed in Phase 32).
+ *   4. `node_modules/@comis/orchestrator/dist/` exists (explicit check —
+ *      guards against silent regression of the orchestrator extraction).
  *
- * Pitfall-3 defense-in-depth checks (run AFTER cleanup):
+ * Working-tree defense-in-depth checks (run AFTER cleanup):
  *   a. `git status --porcelain packages/comis/package.json` is empty.
  *      The `prepack.js` rewrite of `workspace:*` → real versions is expected
  *      to be reverted by `postpack.js` from `package.json.workspace-backup`.
@@ -29,17 +28,13 @@
  *      `postpack.js` removes it after restoring; we verify it was cleaned up.
  *
  * Precondition: `pnpm build` must have been run — the smoke test does NOT
- * invoke build itself (Pitfall 4 — avoid duplicate work in CI). The CI
- * workflow's `Build` step satisfies this for CI; local runs need a
- * preceding `pnpm build`.
+ * invoke build itself (avoid duplicate work in CI). The CI workflow's
+ * `Build` step satisfies this for CI; local runs need a preceding
+ * `pnpm build`.
  *
  * Exit codes:
  *   0 — all assertions passed.
  *   1 — at least one assertion failed (details printed to stderr).
- *
- * Design ref: Phase 36 / GUARDRAILS-12; research §"Pattern 4: Tarball smoke
- * test" (lines 430-512) and §"Pitfall 3: Tarball smoke test mutates working
- * tree" (lines 571-582).
  */
 
 import { execSync } from "node:child_process";
@@ -200,19 +195,19 @@ try {
   }
   ok(`every WORKSPACE_PACKAGES entry has a populated dist/ subdirectory`);
 
-  // Assertion 4 — orchestrator/dist explicitly present (Phase 36 acceptance)
+  // Assertion 4 — orchestrator/dist explicitly present
   const orchestratorDist = join(comisModulesDir, "orchestrator/dist");
   if (!existsSync(orchestratorDist)) {
-    fail(`@comis/orchestrator/dist/ missing from tarball (Phase 36 explicit check)`);
+    fail(`@comis/orchestrator/dist/ missing from tarball (explicit check)`);
   } else {
-    ok(`@comis/orchestrator/dist/ present (Phase 36 explicit check)`);
+    ok(`@comis/orchestrator/dist/ present (explicit check)`);
   }
 } finally {
   // Step 6 — Cleanup tmpdir.
   rmSync(packDest, { recursive: true, force: true });
 }
 
-// --- Step 7: Pitfall-3 defense-in-depth checks (AFTER tmpdir cleanup) ---
+// --- Step 7: Working-tree defense-in-depth checks (AFTER tmpdir cleanup) ---
 
 // Check (a): working tree clean for packages/comis/package.json.
 try {

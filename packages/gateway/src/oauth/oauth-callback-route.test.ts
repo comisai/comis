@@ -228,21 +228,21 @@ describe("createOAuthCallbackRoute", () => {
     }
   });
 
-  // REMOVED (Phase 40 / COV-11 / plan 40-06): the full happy-path is
-  // covered by test/integration/oauth-gateway-callback.test.ts line 113
-  // "validates state, exchanges code, stores profile, emits
-  // auth:profile_bootstrapped, returns 200 HTML" — that test name is the
-  // verbatim original todo description. Replicating it as a unit test
-  // would require mocking the full fetch + store + event-bus chain and
-  // would duplicate the integration tier's coverage without strengthening
-  // the invariant. This file's header (line 15-16) already documents the
-  // delegation: "covered by the integration test; stays it.todo here".
+  // The full happy-path is covered by
+  // test/integration/oauth-gateway-callback.test.ts line 113 ("validates
+  // state, exchanges code, stores profile, emits
+  // auth:profile_bootstrapped, returns 200 HTML"). Replicating it as a unit
+  // test would require mocking the full fetch + store + event-bus chain
+  // and would duplicate the integration tier's coverage without
+  // strengthening the invariant. This file's header (line 15-16)
+  // documents the delegation: "covered by the integration test; stays
+  // it.todo here".
 
   // -------------------------------------------------------------------------
-  // Plan 40-14 — additional branch coverage for the exchange + persistence
-  // paths. These run against vi.spyOn(globalThis, 'fetch') stubs and a
-  // mocked OAuthCredentialStorePort; they exercise rejection branches that
-  // the integration test cannot deterministically simulate.
+  // Additional branch coverage for the exchange + persistence paths. These
+  // run against vi.spyOn(globalThis, 'fetch') stubs and a mocked
+  // OAuthCredentialStorePort; they exercise rejection branches that the
+  // integration test cannot deterministically simulate.
   // -------------------------------------------------------------------------
 
   it("returns 500 Login Failed when token exchange returns non-OK response with body-text", async () => {

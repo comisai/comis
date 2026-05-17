@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Graph-handlers contract slice (Phase 43 split per FILE-SPLIT-14).
+ * Graph-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/graph-handlers.ts` (12 methods — graph.*).
- * Block-moved verbatim from the pre-split `api-contracts/orchestrator.ts`
- * (lines 429-827). Spread order in `GRAPH_HANDLERS_CONTRACTS` matches the
- * pre-split `ORCHESTRATOR_CONTRACTS` array (orchestrator.ts:1108-1119) byte
- * for byte to keep `contracts.generated.*` artifacts byte-identical.
+ * Spread order in `GRAPH_HANDLERS_CONTRACTS` is determinism-critical for
+ * codegen output stability.
  *
  * **Naming clash (benign).** `packages/daemon/src/api/graph-handlers.ts` (the
  * daemon factory) shares a base filename with this contract file. The two are
  * imported by distinct paths (`@comis/core` vs. `@comis/daemon` internals) so
- * the collision is purely cosmetic — keep matching names per Phase 35
- * convention.
+ * the collision is purely cosmetic — keep matching names by convention.
  *
  * @module
  */
@@ -29,7 +26,7 @@ import { defineContract } from "../types.js";
 
 /**
  * `graph.define` — Validate a graph structure and return node count + execution
- * order WITHOUT executing. Rpc-scoped per setup-gateway-api.ts:317-321.
+ * order WITHOUT executing. Rpc-scoped.
  * Handler path: graph-handlers.ts:397-411.
  *
  * Bespoke pre-Zod validation:
@@ -81,10 +78,9 @@ export const GraphDefineContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `graph.execute` — Validate + start a GraphCoordinator run. Rpc-scoped per
- * setup-gateway-api.ts:317-321. Handler path: graph-handlers.ts:413-492.
+ * `graph.execute` — Validate + start a GraphCoordinator run. Rpc-scoped. Handler path: graph-handlers.ts:413-492.
  *
- * **D-05 loose-record (request + response).** Graph schema authority lives in
+ * **Loose-record (request + response).** Graph schema authority lives in
  * `@comis/orchestrator` and is not yet stabilized for contract pinning.
  * Request + response BOTH modelled as `z.record(z.string(), z.unknown())`.
  * The handler's parseExecutionGraph + validateAndSortGraph is the
@@ -114,7 +110,7 @@ export const GraphExecuteContract = defineContract({
 
 /**
  * `graph.status` — Per-graph status snapshot OR list-recent fallback.
- * Rpc-scoped per setup-gateway-api.ts:317-321. Handler path:
+ * Rpc-scoped. Handler path:
  * graph-handlers.ts:494-562.
  *
  * Bespoke pre-Zod validation:
@@ -124,7 +120,7 @@ export const GraphExecuteContract = defineContract({
  *   nor graph_id is provided, the handler returns a list-recent + concurrency
  *   stats variant.
  *
- * Response is a discriminated 2-variant via D-05 loose-record (the per-graph
+ * Response is a discriminated 2-variant via loose-record (the per-graph
  * variant carries `{ graphId, status, isTerminal, executionOrder, nodes,
  * stats }`; the list variant carries `{ graphs, concurrency }`). Loose-record
  * because the inner shapes differ significantly.
@@ -145,8 +141,7 @@ export const GraphStatusContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `graph.cancel` — Cancel a running graph. Rpc-scoped per
- * setup-gateway-api.ts:317-321. Handler path: graph-handlers.ts:564-585.
+ * `graph.cancel` — Cancel a running graph. Rpc-scoped. Handler path: graph-handlers.ts:564-585.
  *
  * Bespoke pre-Zod validation:
  *   - Agent-to-agent messaging disabled → throws.
@@ -174,8 +169,7 @@ export const GraphCancelContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `graph.save` — Persist a named graph to the namedGraphStore. Rpc-scoped per
- * setup-gateway-api.ts:317-321. Handler path: graph-handlers.ts:591-620.
+ * `graph.save` — Persist a named graph to the namedGraphStore. Rpc-scoped. Handler path: graph-handlers.ts:591-620.
  *
  * Bespoke pre-Zod validation:
  *   - `!deps.namedGraphStore` → `"Named graph storage not available"`.
@@ -183,7 +177,7 @@ export const GraphCancelContract = defineContract({
  *   - parseExecutionGraph + validateTypeConfigs runs (same as graph.define).
  *
  * Request: `{ label, id?, agentId?, nodes, edges?, settings? }`. Settings is
- *   a loose-record per D-05 (varies per saved graph).
+ *   a loose-record (varies per saved graph).
  *
  * Response: `{ id, saved }`.
  */
@@ -209,8 +203,7 @@ export const GraphSaveContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `graph.load` — Load a persisted named graph by id. Rpc-scoped per
- * setup-gateway-api.ts:317-321. Handler path: graph-handlers.ts:622-648.
+ * `graph.load` — Load a persisted named graph by id. Rpc-scoped. Handler path: graph-handlers.ts:622-648.
  *
  * Bespoke pre-Zod validation:
  *   - `!deps.namedGraphStore` → `"Named graph storage not available"`.
@@ -220,7 +213,7 @@ export const GraphSaveContract = defineContract({
  * Request: `{ id }`.
  *
  * Response: `{ ...entry, nodes, edges }` where entry contains tenantId,
- *   agentId, label, settings, createdAtMs, etc. Loose-record per D-05.
+ *   agentId, label, settings, createdAtMs, etc. Loose-record.
  */
 export const GraphLoadContract = defineContract({
   method: "graph.load",
@@ -236,8 +229,7 @@ export const GraphLoadContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `graph.list` — List persisted named graphs. Rpc-scoped per
- * setup-gateway-api.ts:317-321. Handler path: graph-handlers.ts:650-662.
+ * `graph.list` — List persisted named graphs. Rpc-scoped. Handler path: graph-handlers.ts:650-662.
  *
  * Bespoke pre-Zod validation:
  *   - `!deps.namedGraphStore` → `"Named graph storage not available"`.
@@ -264,8 +256,7 @@ export const GraphListContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `graph.delete` — Soft-delete a persisted named graph. Rpc-scoped per
- * setup-gateway-api.ts:317-321. Handler path: graph-handlers.ts:664-681.
+ * `graph.delete` — Soft-delete a persisted named graph. Rpc-scoped. Handler path: graph-handlers.ts:664-681.
  *
  * Bespoke pre-Zod validation:
  *   - `!deps.namedGraphStore` → `"Named graph storage not available"`.
@@ -292,8 +283,7 @@ export const GraphDeleteContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `graph.outputs` — Per-node outputs (in-memory or disk fallback). Rpc-scoped
- * per setup-gateway-api.ts:317-321. Handler path: graph-handlers.ts:687-753.
+ * `graph.outputs` — Per-node outputs (in-memory or disk fallback). Rpc-scoped. Handler path: graph-handlers.ts:687-753.
  *
  * Bespoke pre-Zod validation:
  *   - Missing graphId or non-string → `"Missing required parameter: graphId"`.
@@ -322,8 +312,7 @@ export const GraphOutputsContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `graph.runs` — List graph run history from disk. Rpc-scoped per
- * setup-gateway-api.ts:317-321. Handler path: graph-handlers.ts:759-820.
+ * `graph.runs` — List graph run history from disk. Rpc-scoped. Handler path: graph-handlers.ts:759-820.
  *
  * Bespoke pre-Zod validation:
  *   - `!deps.dataDir` → `"dataDir not configured — cannot read graph runs"`.
@@ -354,7 +343,7 @@ export const GraphRunsContract = defineContract({
 
 /**
  * `graph.runDetail` — Per-graph run detail (node outputs + artifacts) from
- * disk. Rpc-scoped per setup-gateway-api.ts:317-321. Handler path:
+ * disk. Rpc-scoped. Handler path:
  * graph-handlers.ts:822-910.
  *
  * Bespoke pre-Zod validation:
@@ -395,7 +384,7 @@ export const GraphRunDetailContract = defineContract({
 
 /**
  * `graph.deleteRun` — Delete a graph run directory (irrecoverable).
- * Rpc-scoped per setup-gateway-api.ts:317-321. Handler path:
+ * Rpc-scoped. Handler path:
  * graph-handlers.ts:912-930.
  *
  * Bespoke pre-Zod validation:
@@ -420,9 +409,8 @@ export const GraphDeleteRunContract = defineContract({
 });
 
 /**
- * graph-handlers slice (12 contracts — graph.*). Spread order matches the
- * pre-split `ORCHESTRATOR_CONTRACTS` array (orchestrator.ts:1108-1119) byte
- * for byte — determinism-critical for codegen output stability.
+ * graph-handlers slice (12 contracts — graph.*). Spread order is
+ * determinism-critical for codegen output stability.
  */
 export const GRAPH_HANDLERS_CONTRACTS = [
   GraphDefineContract,

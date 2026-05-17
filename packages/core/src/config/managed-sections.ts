@@ -16,13 +16,12 @@
  * @module
  */
 
-// ManagedSectionRedirect interface (Phase 30, CONFIG-DELIV-02):
-// declared in section-registry.ts so the registry can own its own type
-// without importing back from this file (which would re-introduce the
-// section-registry.ts ↔ managed-sections.ts source-level cycle that the
-// architecture no-cycles invariant rejects). Re-exported here so existing
-// consumers reading `import type { ManagedSectionRedirect } from
-// "./managed-sections.js"` (or via the public config index) keep working
+// ManagedSectionRedirect interface is declared in section-registry.ts so the
+// registry can own its own type without importing back from this file (which
+// would re-introduce the section-registry.ts <-> managed-sections.ts source-
+// level cycle that the architecture no-cycles invariant rejects). Re-exported
+// here so existing consumers reading `import type { ManagedSectionRedirect }
+// from "./managed-sections.js"` (or via the public config index) keep working
 // unchanged.
 import {
   SECTION_REGISTRY,
@@ -35,11 +34,11 @@ export type { ManagedSectionRedirect } from "./section-registry.js";
 /**
  * Registered managed sections.
  *
- * Derived from the single SECTION_REGISTRY source of truth (Phase 30,
- * CONFIG-DELIV-02): top-level redirects live on each section entry's
- * `managedRedirect` field (3: providers, channels, agents), sub-path
- * redirects whose keys are NOT top-level section names live in
- * `SUB_PATH_MANAGED_REDIRECTS` (2: integrations.mcp.servers, gateway.tokens).
+ * Derived from the single SECTION_REGISTRY source of truth: top-level
+ * redirects live on each section entry's `managedRedirect` field (3:
+ * providers, channels, agents), sub-path redirects whose keys are NOT
+ * top-level section names live in `SUB_PATH_MANAGED_REDIRECTS` (2:
+ * integrations.mcp.servers, gateway.tokens).
  *
  * Order matters: longest pathPrefix first, so getManagedSectionRedirect picks
  * the most specific match (e.g., "integrations.mcp.servers" wins over a
@@ -132,11 +131,11 @@ export function formatRedirectHint(
     );
   }
 
-  // Bug B: inline the dedicated tool's action enum + required
-  // fields so the LLM can call it without a separate discover_tools round-
-  // trip. Positioned AFTER the Recovery example (so the example is the first
-  // thing the model sees) and BEFORE the mutablePaths block (which is the
-  // alternative path for already-existing entries).
+  // Inline the dedicated tool's action enum + required fields so the LLM can
+  // call it without a separate discover_tools round-trip. Positioned AFTER
+  // the Recovery example (so the example is the first thing the model sees)
+  // and BEFORE the mutablePaths block (which is the alternative path for
+  // already-existing entries).
   if (redirect.schemaFragment) {
     parts.push(`Tool actions: ${redirect.schemaFragment.actions.join(", ")}.`);
     if (redirect.schemaFragment.requiredByAction) {

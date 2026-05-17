@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 43 wave 8 split (FILE-SPLIT-08): setup-cross-session.ts →
- * setup-cross-session/ subdirectory. Graph leaf neighbor test:
- * `resolveGraphCacheRetention` is fully exercised via the parity snapshot
- * (43-08a) which captures its 5-case matrix; this test pins the symbol-
- * export shape, the `SUB_AGENT_TOOL_DENYLIST` membership, and the
+ * Graph leaf neighbor test for the setup-cross-session split. Pins the
+ * symbol-export shape, the `SUB_AGENT_TOOL_DENYLIST` membership, and the
  * `MIN_SUB_AGENT_STEPS` integer constant for compile-time regression
- * coverage. The `buildExecuteSubAgent` closure-builder integration
- * matrix (parent intersection, ceiling, denylist, graph tool sort, spawn
- * packet, model resolution, cache retention) is exercised end-to-end by
+ * coverage. The `buildExecuteSubAgent` closure-builder integration matrix
+ * (parent intersection, ceiling, denylist, graph tool sort, spawn packet,
+ * model resolution, cache retention) is exercised end-to-end by
  * setup-cross-session-runtime.test.ts through the setupCrossSession
  * invocation.
  *

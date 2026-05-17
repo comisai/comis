@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Public-export consumer presence test (ARCH-BASE-03 + ARCH-BASE-08).
+ * Public-export consumer presence test.
  *
  * For each workspace package, AST-scan every named export from
  * packages/<pkg>/src/index.ts. Assert each exported symbol has at least
  * one in-repo consumer (file outside the package importing it from
  * @comis/<pkg>) OR a documented entry in test/support/public-api-policy.ts.
  *
- * Anything else is a dead export — narrowed in Phase 29 (PUB-EXPORTS-01..05).
+ * Anything else is a dead export.
  *
  * Pattern: scan all `import` statements project-wide; bucket by imported
  * symbol; cross-reference against each package's index.ts AST. The
@@ -218,7 +218,7 @@ function listConsumers(packageName: string): Map<string, string[]> {
       } else if (
         // `export { X } from "@comis/<packageName>"` — re-export chain.
         // Without this, a symbol that is alive only via re-export chains
-        // looks like an orphan and inflates PUBLIC_API_POLICY noise (CR-WR-05).
+        // looks like an orphan and inflates PUBLIC_API_POLICY noise.
         ts.isExportDeclaration(node) &&
         node.moduleSpecifier &&
         ts.isStringLiteral(node.moduleSpecifier) &&
@@ -238,7 +238,7 @@ function listConsumers(packageName: string): Map<string, string[]> {
   return consumers;
 }
 
-describe("public-export-consumers (ARCH-BASE-03 + ARCH-BASE-08)", () => {
+describe("public-export-consumers", () => {
   for (const pkg of PACKAGES) {
     it(`every named export from @comis/${pkg}/src/index.ts has an in-repo consumer or policy entry`, () => {
       const exports = listPublicExports(pkg);
@@ -251,13 +251,12 @@ describe("public-export-consumers (ARCH-BASE-03 + ARCH-BASE-08)", () => {
       expect(
         orphans,
         formatViolations({
-          description: `@comis/${pkg}/src/index.ts has dead exports — narrowed in Phase 29 (PUB-EXPORTS-01..05).`,
+          description: `@comis/${pkg}/src/index.ts has dead exports.`,
           violations: orphans.map((o) => ({
             file: `${o.file} (export: ${o.name}, kind: ${o.kind})`,
             line: 0,
           })),
           suggestedFix: `Either remove the export from packages/${pkg}/src/index.ts (preferred), or add it to test/support/public-api-policy.ts under "@comis/${pkg}" with a rationale comment if it is part of the documented external API surface.`,
-          designRef: "design §1.3 L9/L10/L11 / Phase 29 (PUB-EXPORTS-01..05)",
           allowlistRef: "L9, L10, L11 (per package)",
         }),
       ).toEqual([]);

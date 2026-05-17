@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
- * Graph handler helpers (Phase 43 split per FILE-SPLIT-05).
+ * Graph handler helpers.
  *
  * Pure helpers shared across the mutate / query / export handler bundles.
  * No closures, no factory: every helper is a pure function or interface so
@@ -29,7 +29,7 @@ import {
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**
@@ -43,13 +43,12 @@ export const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: OrchestratorApiDeps (shared with cron, heartbeat,
 // subagent handlers). The dispatcher constructs this handler only when at
 // least one of `graphCoordinator | namedGraphStore` is defined, so the alias
 // narrows `graphCoordinator` to required (matching the handler body's direct
-// `deps.graphCoordinator.method()` access). DAEMON-API-03 Option A retarget
-// + 34-08b narrowing — handler bodies unchanged.
+// `deps.graphCoordinator.method()` access).
 import type { OrchestratorApiDeps } from "../types.js";
 export type GraphHandlerDeps = OrchestratorApiDeps & {
   graphCoordinator: import("../../graph/graph-coordinator.js").GraphCoordinator;
@@ -347,7 +346,7 @@ export function schemaToExample(schema: z.ZodObject<z.ZodRawShape>): Record<stri
  * Validate typeConfig for all typed nodes against driver config schemas.
  * Called in graph.define and graph.execute handlers after buildGraphInput().
  * Throws on validation failure with a schemaToExample hint for LLM self-correction.
- * When registry has no driver for a typeId, skip validation (drivers registered in Phases 455-456).
+ * When registry has no driver for a typeId, skip validation.
  */
 export function validateTypeConfigs(
   graph: ExecutionGraph,
@@ -357,7 +356,7 @@ export function validateTypeConfigs(
   for (const node of graph.nodes) {
     if (node.typeId) {
       const driver = registry.get(node.typeId);
-      if (!driver) continue; // Driver not registered yet (Phases 455-456)
+      if (!driver) continue; // Driver not registered yet
       const result = driver.configSchema.safeParse(node.typeConfig ?? {});
       if (!result.success) {
         const errors = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);

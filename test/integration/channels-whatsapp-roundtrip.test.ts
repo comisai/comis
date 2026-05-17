@@ -2,10 +2,9 @@
 /**
  * INTEGRATION: WhatsApp channel — WebSocket capture-shim + auth validator.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts coverage on the
- * `@comis/channels` WhatsApp subpackage. Baileys' real protocol cannot
- * complete inside vitest, so this is a capture-only smoke that proves
- * the `apiRoot` indirection flows through.
+ * Lifts coverage on the `@comis/channels` WhatsApp subpackage. Baileys'
+ * real protocol cannot complete inside vitest, so this is a capture-only
+ * smoke that proves the `apiRoot` indirection flows through.
  *
  * @module
  */

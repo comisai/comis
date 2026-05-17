@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-coverage tests for system-resources-source (Plan 40-14).
+ * Branch-coverage tests for system-resources-source.
  *
  * The platform-specific memory branches (vm_stat parse / /proc/meminfo
  * parse) are exercised via mocked execFile + readFile. The CPU usage

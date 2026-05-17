@@ -2,8 +2,6 @@
 /**
  * Mock iMessage bridge for E2E flow-matrix coverage.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09).
- *
  * Wire surface: this mock is NOT a network server (unlike its siblings).
  * The iMessage adapter spawns an `imsg` CLI subprocess and talks JSON-RPC
  * to it over stdin/stdout. The mock provides a SHELL-SCRIPT bridge that
@@ -125,7 +123,7 @@ export function createMockIMessageServer(): MockIMessageServer {
       //                          "params":<parsed>}
       // The shim is deliberately minimal — it does NOT validate the JSON.
       const shim = `#!/bin/sh
-# Mock imsg shim for E2E tests — Phase 40 / Plan 40-09 / COV-15.
+# Mock imsg shim for E2E tests.
 TEMPDIR='${tempDir}'
 OUTBOX="$TEMPDIR/outbox.jsonl"
 INBOX="$TEMPDIR/inbox.jsonl"

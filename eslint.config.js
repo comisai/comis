@@ -17,16 +17,13 @@ export default tseslint.config(
       // ts.createSourceFile). They are not compiled; lint rules like
       // no-unused-vars or ban-ts-comment do not apply meaningfully.
       "test/support/__fixtures__/**",
-      // Phase 31 plan 08 (MEM-CTX-PORTS-14 part 1) — secret-residency
-      // walker fixtures live under test/architecture/fixtures/ (per plan
-      // spec; the path differs from test/support/__fixtures__ because the
-      // walker's source-rule integration in source-rules.test.ts cites
-      // them alongside the other architecture-test fixtures). Same
-      // exemption rationale as test/support/__fixtures__/.
+      // Secret-residency walker fixtures live under test/architecture/fixtures/;
+      // the walker's source-rule integration in source-rules.test.ts cites
+      // them alongside the other architecture-test fixtures. Same exemption
+      // rationale as test/support/__fixtures__/.
       "test/architecture/fixtures/**",
-      // Phase 35 Wave D Plan 35-20 — generated artifacts from
-      // `pnpm contracts:generate` (Plan 35-20 OQ-3). The file carries an
-      // `/* eslint-disable */` directive in its header banner, but adding
+      // Generated artifact from `pnpm contracts:generate`. The file carries
+      // an `/* eslint-disable */` directive in its header banner, but adding
       // it to global ignores is belt-and-suspenders + avoids the parser
       // ever having to walk the 190-contract literal.
       "packages/web/src/api/contracts.generated.ts",
@@ -53,8 +50,8 @@ export default tseslint.config(
   },
 
   // Node build scripts (ESM/CJS) need node globals: process, console, require, etc.
-  // `.mjs` is included for Plan 36-06's scripts/smoke/tarball-smoke.mjs (and any
-  // future ESM Node scripts in the same locations).
+  // `.mjs` is included for scripts/smoke/tarball-smoke.mjs (and any future ESM
+  // Node scripts in the same locations).
   {
     files: [
       "packages/*/scripts/**/*.js",

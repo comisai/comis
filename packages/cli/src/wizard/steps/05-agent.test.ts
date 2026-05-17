@@ -20,8 +20,7 @@ import { INITIAL_STATE } from "../types.js";
 // Mock @clack/prompts to prevent import errors (loaded transitively via barrel)
 vi.mock("@clack/prompts", () => ({}));
 
-// Mock @comis/core for createModelCatalog (relocated from @comis/agent in
-// Phase 35 Plan 35-04 per D-01 #4).
+// Mock @comis/core for createModelCatalog.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {

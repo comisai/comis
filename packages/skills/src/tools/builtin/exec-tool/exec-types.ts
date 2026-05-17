@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Exec tool types and parameter schema (Phase 43 split per FILE-SPLIT-02).
+ * Exec tool types and parameter schema.
  *
- * Extracted from `exec-tool.ts` (1,626L monolith) on 2026-05-16. No behavioral
- * change — pure mechanical block-move of the interfaces, the Zod-like TypeBox
- * schema, and the module-private constants consumed by foreground/background
- * helpers.
+ * Holds the interfaces, the TypeBox parameter schema, and the module-private
+ * constants consumed by foreground/background helpers in this directory.
  *
  * @module
  */

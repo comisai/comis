@@ -19,7 +19,7 @@ import { formatSessionKey, type SessionKey, type TypedEventBus } from "@comis/co
 import type { SessionResetPolicyConfig, ComputeDailyResetNextRun, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight TimerPort wrapper that delegates to globals.
+// Lightweight TimerPort wrapper that delegates to globals.
 // ---------------------------------------------------------------------------
 
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
@@ -45,8 +45,7 @@ const testTimers: TimerPort = {
   setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
 };
 // Test-only @comis/scheduler import — see session-reset-policy.test.ts for
-// rationale. Production agent source no longer imports scheduler after Phase 32
-// commit 12.
+// rationale. Production agent source no longer imports scheduler.
 import { computeNextRunAtMs } from "@comis/scheduler";
 import { createSessionLifecycle, type SessionLifecycle } from "./session-lifecycle.js";
 import {

@@ -2,7 +2,6 @@
 /**
  * Graph-execution wiring for cross-session sub-agent spawns.
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-cross-session.ts.
  * Hosts the `executeSubAgent` closure builder + graph-tree primitives:
  * `resolveGraphCacheRetention` (depth-aware leaf-node retention), the
  * `SUB_AGENT_TOOL_DENYLIST` ten-tool set (management tools that would
@@ -117,12 +116,10 @@ export type ExecuteSubAgentFn = (
  * closure captures the daemon container + session store + tool assembler +
  * executor resolver, plus FileLockPort for the ephemeral session adapter.
  *
- * Behavior parity-locked to the pre-Phase-43 executeSubAgent body at
- * setup-cross-session.ts:230-664: spawn-packet construction, sub-agent
- * tool intersection (parent → ceiling → denylist), graph tool sorting,
- * parent context summarization, sub-agent model resolution, cache
- * retention selection, ephemeral vs persistent session adapter, and
- * runWithContext propagation.
+ * Covers spawn-packet construction, sub-agent tool intersection (parent →
+ * ceiling → denylist), graph tool sorting, parent context summarization,
+ * sub-agent model resolution, cache retention selection, ephemeral vs
+ * persistent session adapter, and runWithContext propagation.
  */
 export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgentFn {
   const { container, sessionStore, assembleToolsForAgent, getExecutor } = deps;

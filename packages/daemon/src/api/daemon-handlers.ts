@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Daemon infrastructure RPC handler methods.
  * Covers:
  *   system.ping      -- Health check / liveness probe
  *   daemon.setLogLevel -- Runtime log level changes (in-memory only, resets on restart)
  *
- * Phase 35 Wave C (Plan 35-06): refactored to use the `@comis/core`
- * contract registry. Method keys are computed-property names
- * (`[DaemonSetLogLevelContract.method]:`) so the bidirectional 1:1
- * architecture test resolves them through `defineContract({ method, ... })`
- * declarations in `packages/core/src/api-contracts/daemon.ts`. The
- * dispatcher-injected `_X` internal fields are stripped via
- * `stripInternalFields` BEFORE `contract.request.parse(...)` (D-04 pitfall
- * 6 — never model internals in the contract schema).
+ * Method keys are computed-property names (`[DaemonSetLogLevelContract.method]:`)
+ * so the bidirectional 1:1 architecture test resolves them through
+ * `defineContract({ method, ... })` declarations in
+ * `packages/core/src/api-contracts/daemon.ts`. The dispatcher-injected `_X`
+ * internal fields are stripped via `stripInternalFields` BEFORE
+ * `contract.request.parse(...)` — internals must never be modeled in the
+ * contract schema.
  *
  * The bespoke pre-Zod validation (admin gate, level whitelist, missing-
  * level guard) is intentionally retained. The contract parse runs AFTER
@@ -36,10 +35,9 @@ import type { RpcHandler } from "./types.js";
 
 /** Dependencies required by daemon handlers.
  *
- * Re-aliased from the cluster slice in api/types.ts (Plan 34-08a; alias retarget
- * in Plan 34-08c). Single source of truth: DaemonApiDeps (smallest slice in the
- * 11-slice partition — log-level control only). DAEMON-API-03 Option A retarget —
- * handler body unchanged.
+ * Re-aliased from the cluster slice in api/types.ts. Single source of truth:
+ * DaemonApiDeps (smallest slice in the 11-slice partition — log-level control
+ * only).
  */
 import type { DaemonApiDeps as DaemonHandlerDeps } from "./types.js";
 export type { DaemonHandlerDeps };
@@ -68,8 +66,8 @@ export function createDaemonHandlers(deps: DaemonHandlerDeps): Record<string, Rp
 
     [DaemonSetLogLevelContract.method]: async (rawParams) => {
       // Admin trust check uses the dispatcher-injected `_trustLevel` —
-      // intentionally NOT modeled in the contract schema (D-04). Read
-      // from rawParams BEFORE the strip-and-parse step.
+      // intentionally NOT modeled in the contract schema. Read from
+      // rawParams BEFORE the strip-and-parse step.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for log level changes");
@@ -94,8 +92,8 @@ export function createDaemonHandlers(deps: DaemonHandlerDeps): Record<string, Rp
         );
       }
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6).
+      // Strip dispatcher-injected _X internals BEFORE contract parse —
+      // internals must never be modeled in the contract schema.
       const userParams = stripInternalFields(rawParams);
       // Contract parse narrows types for the rest of the body. By
       // construction, this cannot fail when the bespoke checks above

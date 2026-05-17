@@ -4,8 +4,6 @@
  * SEP execution-plan ref + per-execution retention/min-tokens overrides
  * decoded from `ExecutionOverrides`.
  *
- * Phase 42 split per EXEC-SPLIT-05/06.
- *
  * Closure-extraction protocol: state-by-parameter
  * (Readonly<SessionBootstrapState>). The mutable retention/min-tokens
  * references that the factory's downstream wrappers / cleanup paths require

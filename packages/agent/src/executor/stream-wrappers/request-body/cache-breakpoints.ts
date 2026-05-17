@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache breakpoint helpers + adaptive TTL promotion
- * (Phase 42 split per EXEC-SPLIT-02).
+ * Cache breakpoint helpers + adaptive TTL promotion.
  *
  * Hosts (directly):
  *  - `resolveCacheRetention` (public): per-model cache-retention override resolution.
@@ -21,8 +20,6 @@
  *    from `./breakpoint-placement.js`
  *  - `clearSessionCadenceTracker`, cadence threshold constants from
  *    `./cadence-tracker.js`
- *
- * Lifted verbatim from request-body-injector.ts (line ranges noted per-section).
  *
  * @module
  */

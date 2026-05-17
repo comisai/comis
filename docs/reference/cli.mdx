@@ -156,7 +156,7 @@ OAuth authentication management for subscription-based providers (currently Open
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--provider <id>` | `string` | _required_ | OAuth provider id. Must be `openai-codex` (other providers ship in later phases). |
+| `--provider <id>` | `string` | _required_ | OAuth provider id. Must be `openai-codex`. |
 | `--remote` | `boolean` | _auto_ | Force remote/headless mode (no browser open). Auto-detected via `SSH_CLIENT`, `SSH_TTY`, missing `DISPLAY`. |
 | `--local` | `boolean` | _auto_ | Force local/desktop mode (attempt browser open). Inverse of `--remote`. |
 | `--profile <id>` | `string` | _derived_ | Override the auto-derived profile id (`<provider>:<email-from-jwt>`). Provider portion of the override must match `--provider`. |
@@ -265,8 +265,8 @@ Configuration management commands for validating, viewing, modifying, and versio
 | `config history` | Display config change history (git-backed) |
 | `config diff [sha]` | Display config diff against HEAD or a specific commit |
 | `config rollback <sha>` | Restore config from a previous commit |
-| `config sync-tooling` | Discover MCPs/skills and sync the `tooling:` config block (Phase 25) |
-| `config tooling-fill [hint]` | Fill `description` + `replacesPackages` on a tooling hint via the live agent (Phase 26) |
+| `config sync-tooling` | Discover MCPs/skills and sync the `tooling:` config block |
+| `config tooling-fill [hint]` | Fill `description` + `replacesPackages` on a tooling hint via the live agent |
 
 #### `config validate`
 

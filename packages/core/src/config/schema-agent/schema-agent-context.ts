@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent config — Session lifecycle, context engine, and context guard
- * schemas (Phase 43 split per FILE-SPLIT-14).
+ * Agent config — Session lifecycle, context engine, and context guard schemas.
  *
- * Block-moved verbatim from the pre-split `config/schema-agent.ts`:
- *   - Session lifecycle (lines 186-316): ResetPolicy, SessionResetPolicy,
- *     DmScope, Pruning, SessionCompaction.
- *   - Context engine (lines 318-454): ContextEngineConfig (pipeline + DAG
- *     modes; output escalation; post-batch continuation).
- *   - Context guard (lines 456-496): ContextPruningConfig, SourceGateConfig.
+ * Owns:
+ *   - Session lifecycle: ResetPolicy, SessionResetPolicy, DmScope, Pruning,
+ *     SessionCompaction.
+ *   - Context engine: ContextEngineConfig (pipeline + DAG modes; output
+ *     escalation; post-batch continuation).
+ *   - Context guard: ContextPruningConfig, SourceGateConfig.
  *
  * Imports nothing from sibling leaves (model/context/prompt/runtime) —
  * one-directional dependency graph; the top-level `AgentConfigSchema` in
@@ -76,10 +75,10 @@ export const SessionResetPolicySchema = z.strictObject({
  * - "per-channel-peer": one session per channel+peer (default)
  * - "per-account-channel-peer": includes bot account identifier in channel for multi-bot isolation
  *
- * Note: the `agentPrefix` field was removed in Phase 38 (CR-01 follow-up to
- * BC-REM-15). It is no longer accepted — operators with `agentPrefix: true`
- * in their YAML will see a strict-object validation error at config load.
- * Agent isolation is now handled out-of-band (per-agent workspaces, etc.).
+ * Note: the `agentPrefix` field has been removed. It is no longer accepted
+ * — operators with `agentPrefix: true` in their YAML will see a
+ * strict-object validation error at config load. Agent isolation is now
+ * handled out-of-band (per-agent workspaces, etc.).
  */
 export const DmScopeConfigSchema = z.strictObject({
   /** DM scope mode controlling session isolation granularity */

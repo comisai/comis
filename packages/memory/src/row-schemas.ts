@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 41 TS-HYG-01: Zod schemas for memory-package SQLite row types.
+ * Zod schemas for memory-package SQLite row types.
  *
  * One schema per row interface. Used by `createRowMapper(schema)` in
  * `row-mapper.ts` to replace `db.prepare(...).all() as Foo[]` casts at
- * every SQLite call site (Plan 41-04 retargeting).
+ * every SQLite call site.
  *
  * Schemas live HERE (consumer-side `memory/`) and NOT in
  * `@comis/core/ports/*` to preserve core's zero-runtime-Zod-dependency
- * boundary (RESEARCH §"Pitfall 7"). Core's port files remain type-only
- * — adding `import { z } from "zod"` there would widen the public
- * dependency surface.
+ * boundary. Core's port files remain type-only — adding
+ * `import { z } from "zod"` there would widen the public dependency
+ * surface.
  *
  * ## Sectional layout
  *
@@ -32,12 +32,12 @@
  *    delivery-mirror-adapter, delivery-queue-adapter, identity-link-store,
  *    embedding-cache-sqlite. The source interfaces are file-internal
  *    (no `export`); these schemas become the single-source-of-truth that
- *    Plan 41-04 retargets to (via `z.infer<typeof XxxRowSchema>`).
+ *    consumers retarget to (via `z.infer<typeof XxxRowSchema>`).
  *
  * ## Conventions
  *
  * - Every schema is `z.strictObject(...)` — rejects unknown extra columns
- *   per RESEARCH Pitfall 7 (defense-in-depth against schema drift).
+ *   (defense-in-depth against schema drift).
  * - JSON-encoded TEXT columns are typed as `z.string()` here (the
  *   row-level shape). Parsing happens downstream in the consumer.
  * - SQLite stores booleans as `INTEGER` (0/1). Schemas use
@@ -335,7 +335,7 @@ export const SessionDetailedEntrySchema = z.strictObject({
 export type SessionDetailedEntryFromSchema = z.infer<typeof SessionDetailedEntrySchema>;
 
 // =====================================================================
-// 4. Internal DB-row schemas (single-source-of-truth for Plan 41-04
+// 4. Internal DB-row schemas (single-source-of-truth for consumer
 // retargeting; source interfaces are file-internal in their adapters)
 // =====================================================================
 
@@ -619,12 +619,12 @@ export const BatchCacheRowSchema = z.strictObject({
 export type BatchCacheRowFromSchema = z.infer<typeof BatchCacheRowSchema>;
 
 // =====================================================================
-// 5. Common projection shapes (Plan 41-04 frequently encounters these)
+// 5. Common projection shapes (frequently encountered)
 // =====================================================================
 
 /**
  * Schema for single-column id projections (`SELECT id FROM ...`).
- * Common at TS-HYG-03 call sites — replaces `Array<{ id: string }>` casts.
+ * Replaces `Array<{ id: string }>` casts at call sites.
  */
 export const IdProjectionRowSchema = z.strictObject({
   id: z.string(),

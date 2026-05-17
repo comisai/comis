@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
- * Shared config-handler helpers (Phase 43 split per FILE-SPLIT-03).
+ * Shared config-handler helpers.
  *
  * Private helpers + shared types used by the write-side bundles. No
  * closures, no factory: every export is a pure function, type alias, or
@@ -24,11 +24,9 @@ import { type GitCommitMetadata, systemGetEnv, systemNowMs, systemNowDate } from
 import type { ComisLogger } from "@comis/infra";
 import { resolveProviderCredential } from "../shared/credential-resolver.js";
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a; alias retarget
-// in Plan 34-08c). Single source of truth: ConfigApiDeps (shared with env-handlers).
-// The handler factory continues to consume ConfigHandlerDeps as before; the
-// alias means call sites and handler bodies don't change. DAEMON-API-03 Option A
-// retarget — handler bodies unchanged.
+// Single source of truth: ConfigApiDeps (shared with env-handlers). The handler
+// factory continues to consume ConfigHandlerDeps as before; the alias means call
+// sites and handler bodies don't change.
 import type { ConfigApiDeps as ConfigHandlerDeps } from "../types.js";
 export type { ConfigHandlerDeps };
 

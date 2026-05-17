@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: file-tool validation guards; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch (Phase 41 TS-HYG-07).
+// @allow-throw: file-tool validation guards; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch.
 /**
  * Native ls tool: directory listing with alphabetical sort, type indicators,
  * dotfile inclusion, and path security.

@@ -77,10 +77,10 @@ export function systemClearTimeout(handle: SystemTimeoutHandle): void {
  * Equivalent to:
  *   `(cb, ms) => { const h = systemSetTimeout(cb, ms); return () => systemClearTimeout(h); }`
  *
- * Phase 39 PORTS-14: `@comis/shared` cannot import `TimerPort` (PORTS-16 leaf
- * invariant), so its `withTimeout` takes the bare structural callback type.
- * This helper is the canonical Pattern-B adapter from the sanctioned-root
- * timeout helpers to that callback shape.
+ * `@comis/shared` cannot import `TimerPort` (leaf-invariant), so its
+ * `withTimeout` takes the bare structural callback type. This helper is
+ * the canonical Pattern-B adapter from the sanctioned-root timeout
+ * helpers to that callback shape.
  */
 export function systemScheduleTimeout(cb: () => void, ms: number): () => void {
   const handle = setTimeout(cb, ms);

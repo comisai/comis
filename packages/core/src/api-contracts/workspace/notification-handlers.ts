@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Notification-handlers contract slice (Phase 43 split per FILE-SPLIT-14).
+ * Notification-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/notification-handlers.ts` (1 method).
- * Block-moved verbatim from the pre-split `api-contracts/workspace.ts`
- * (lines 1045-1090). Spread order in `NOTIFICATION_HANDLERS_CONTRACTS`
- * matches the pre-split `WORKSPACE_CONTRACTS` array (workspace.ts:1151)
- * byte for byte to keep `contracts.generated.*` artifacts byte-identical.
+ * Spread order in `NOTIFICATION_HANDLERS_CONTRACTS` is determinism-critical
+ * for codegen output stability (`contracts.generated.*` byte-identity).
  *
  * @module
  */
@@ -27,13 +25,12 @@ import { defineContract } from "../types.js";
  *
  * Request: `{ message, priority?, channel_type?, channel_id?, origin? }`.
  * The contract uses the snake_case names the handler reads
- * (notification-handlers.ts:65-66 — `channel_type` / `channel_id`)
- * because tools call into the daemon with snake_case keys; the
- * handler is responsible for the camelCase mapping at the service
- * boundary. `priority` is `z.enum(["low","normal","high","critical"])`
- * — the handler casts directly without validation, but the enum here
- * documents the intended set + lets the dev-mode response parse catch
- * future drift.
+ * (`channel_type` / `channel_id`) because tools call into the daemon
+ * with snake_case keys; the handler is responsible for the camelCase
+ * mapping at the service boundary. `priority` is
+ * `z.enum(["low","normal","high","critical"])` — the handler casts
+ * directly without validation, but the enum here documents the
+ * intended set + lets the dev-mode response parse catch future drift.
  *
  * Response: `{ success: boolean, entryId?: string, error?: string }`
  * — modeled as a union of the success shape and the error shape via
@@ -61,9 +58,8 @@ export const NotificationSendContract = defineContract({
 });
 
 /**
- * notification-handlers slice (1 contract). Spread order matches the
- * pre-split `WORKSPACE_CONTRACTS` array (workspace.ts:1151) byte for
- * byte — determinism-critical for codegen output stability.
+ * notification-handlers slice (1 contract). Spread order is
+ * determinism-critical for codegen output stability.
  */
 export const NOTIFICATION_HANDLERS_CONTRACTS = [
   NotificationSendContract,

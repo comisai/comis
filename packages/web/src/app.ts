@@ -436,8 +436,8 @@ export class IcApp extends LitElement {
         this._eventDispatcher.start(baseUrl, token);
 
         // Wire SSE events to globalState for badge counts.
-        // Phase 41 TS-HYG-12: use requireGlobalState (from Plan 41-03) to surface
-        // null misuse as a typed throw instead of silent non-null assertions.
+        // Use requireGlobalState to surface null misuse as a typed throw
+        // instead of silent non-null assertions.
         this._approvalUnsub = this._eventDispatcher.addEventListener(
           "approval:requested",
           () => {

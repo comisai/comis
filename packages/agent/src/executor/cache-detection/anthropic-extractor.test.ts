@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for cache-detection/anthropic-extractor.ts (Phase 42 split
- * per EXEC-SPLIT-09 / EXEC-SPLIT-03).
+ * Unit tests for cache-detection/anthropic-extractor.ts.
  *
  * Covers `extractAnthropicPromptState` — the Anthropic Messages API adapter.
- * Behavior moved from the pre-split cache-break-detection.test.ts file;
- * identical describe block contents. Cross-cutting tests that exercise the
- * adapter together with the detector factory remain in cache-state.test.ts.
+ * Cross-cutting tests that exercise the adapter together with the detector
+ * factory live in cache-state.test.ts.
  *
  * @module
  */

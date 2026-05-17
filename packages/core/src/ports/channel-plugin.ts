@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Type-only port surface for channel plugin metadata.
 // ChannelCapabilitySchema (Zod runtime value) + ChannelCapability (z.infer) live in
-// ../domain/channel-capability.ts as of Phase 28 commit 1 (closes L15 per CORE-PORTS-01).
-// This file is now type-only; the public surface still re-exports ChannelCapability through
-// ../exports/domain.ts and ../exports/ports.ts so consumers see no shape change.
+// ../domain/channel-capability.ts. This file is type-only; the public surface
+// still re-exports ChannelCapability through ../exports/domain.ts and
+// ../exports/ports.ts so consumers see no shape change.
 import type { PluginPort } from "./plugin.js";
 import type { ChannelPort } from "./channel.js";
 import type { ChannelCapability } from "../domain/channel-capability.js";

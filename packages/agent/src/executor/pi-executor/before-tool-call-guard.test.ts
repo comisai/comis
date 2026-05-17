@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for createBeforeToolCallGuard — proactive tool-call safety
- * guard. Migrated verbatim from pi-executor.test.ts (Phase 42 split per
- * EXEC-SPLIT-05).
+ * guard.
  *
  * @module
  */

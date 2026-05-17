@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-coverage tests for disk-space-source (Plan 40-14).
+ * Branch-coverage tests for disk-space-source.
  *
  * Exercises the three result branches of `check()`:
  *   1. fs.statfs() error path (errors.length > 0)

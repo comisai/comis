@@ -5,11 +5,8 @@
  * validateInput is the input-sanitization perimeter: it runs structural
  * validation, jailbreak scoring, and progressive injection-rate cooldown
  * on every inbound message before it reaches the agent loop. The function
- * accepts an injected ClockPort (Phase 39 PORTS-11) so timestamps on the
- * emitted security events are deterministic in tests.
- *
- * Use-case design (Phase 40 / Phase C §3.3 / COV-10): every `it("...")`
- * description names a use case ≥20 chars ending in a recognizable shape.
+ * accepts an injected ClockPort so timestamps on the emitted security
+ * events are deterministic in tests.
  *
  * @module
  */

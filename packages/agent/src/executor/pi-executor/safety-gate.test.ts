@@ -2,9 +2,9 @@
 /**
  * Unit tests for runSafetyGates — pre-lock safety gate composition.
  *
- * Closure-extracted helper (state-first per EXEC-SPLIT-06): tests confirm
- * each gate translates a failed check into the correct ExecutionResult
- * finishReason without exercising the full PiExecutor surface.
+ * Closure-extracted state-first helper: tests confirm each gate translates a
+ * failed check into the correct ExecutionResult finishReason without
+ * exercising the full PiExecutor surface.
  *
  * @module
  */
@@ -67,7 +67,7 @@ const baseCtx = {
   provider: "anthropic",
 };
 
-describe("runSafetyGates (EXEC-SPLIT-06)", () => {
+describe("runSafetyGates", () => {
   it("returns passed=true when every gate is green", () => {
     const result = makeResult();
     const deps = makeDeps();

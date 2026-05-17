@@ -200,10 +200,10 @@ describe("createWhatsAppAdapter", () => {
       expect(callArgs).not.toHaveProperty("waWebSocketUrl");
     });
 
-    it("threads apiRoot to makeWASocket as waWebSocketUrl when set (COV-15 E2E seam)", async () => {
-      // Phase 40 / Plan 40-09 / COV-15: when deps.apiRoot is set, Baileys'
-      // SocketConfig.waWebSocketUrl receives the override URL so the bot
-      // connects to the 127.0.0.1 mock instead of web.whatsapp.com.
+    it("threads apiRoot to makeWASocket as waWebSocketUrl when set (E2E seam)", async () => {
+      // When deps.apiRoot is set, Baileys' SocketConfig.waWebSocketUrl
+      // receives the override URL so the bot connects to the 127.0.0.1 mock
+      // instead of web.whatsapp.com.
       vi.mocked(validateWhatsAppAuth).mockResolvedValue(
         ok({ authDir: "/tmp/wa-test-auth", isFirstRun: false }),
       );

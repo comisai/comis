@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ObservabilityStore module (Phase 43 split per FILE-SPLIT-13).
+ * ObservabilityStore module.
  *
  * Barrel re-export of the canonical public API of the former
  * `observability-store.ts` monolith. No `as` aliases: every export keeps

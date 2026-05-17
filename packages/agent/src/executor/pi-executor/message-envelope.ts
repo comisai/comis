@@ -4,8 +4,6 @@
  * outcome (success, stuck-session, thrown exception) into the canonical
  * `ExecutionResult` fields the post-execution layer expects.
  *
- * Phase 42 split per EXEC-SPLIT-05/06.
- *
  * Closure-extraction protocol: state-by-parameter
  * (Readonly<MessageEnvelopeState>). The `result` is mutated in place
  * (finishReason / response / errorContext) — the orchestrator and the

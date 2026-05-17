@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: Telegram SDK boundary throws; consumed by adapter try/catch + inbound-pipeline catch (Phase 41 TS-HYG-07 entries preserved from pre-split telegram-adapter.ts).
+// @allow-throw: Telegram SDK boundary throws; consumed by adapter try/catch + inbound-pipeline catch.
 /**
- * Telegram outbound dispatch (Phase 43 split per FILE-SPLIT-12).
+ * Telegram outbound dispatch.
  *
  * State-first wrappers around every outbound operation that the adapter
  * handle exposes:

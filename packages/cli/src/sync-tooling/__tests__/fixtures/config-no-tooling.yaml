@@ -1,5 +1,5 @@
 # Fixture: config without a `tooling:` block.
-# Consumed by Wave 1 generate-skeleton tests + Wave 4 integration test.
+# Consumed by generate-skeleton unit tests and the integration test.
 
 integrations:
   mcp:

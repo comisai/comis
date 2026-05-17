@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Memory RPC handler module.
  * Handles all memory-related RPC methods:
@@ -7,17 +7,17 @@
  *   memory.stats, memory.browse, memory.delete, memory.flush, memory.export
  * Extracted from daemon.ts rpcCallInner for independent testability.
  *
- * Phase 35 Wave C (Plan 35-14): refactored to use the `@comis/core`
- * contract registry. Method keys are computed-property names
- * (`[MemoryStoreContract.method]:`) so the bidirectional 1:1
- * architecture test resolves them through `defineContract({ method, ... })`
- * declarations in `packages/core/src/api-contracts/memory.ts`. The
- * dispatcher-injected `_X` internal fields are stripped via
- * `stripInternalFields` BEFORE `contract.request.parse(...)` (D-04
- * Pitfall 6 — never model internals in the contract schema). The admin
- * trust check (where applicable) reads `rawParams._trustLevel` BEFORE
- * the strip step; the optional `_agentId` fallback for the agent-side
- * memory.store path is ALSO read from rawParams pre-strip.
+ * Uses the `@comis/core` contract registry. Method keys are
+ * computed-property names (`[MemoryStoreContract.method]:`) so the
+ * bidirectional 1:1 architecture test resolves them through
+ * `defineContract({ method, ... })` declarations in
+ * `packages/core/src/api-contracts/memory.ts`. The dispatcher-injected
+ * `_X` internal fields are stripped via `stripInternalFields` BEFORE
+ * `contract.request.parse(...)` — never model internals in the contract
+ * schema. The admin trust check (where applicable) reads
+ * `rawParams._trustLevel` BEFORE the strip step; the optional `_agentId`
+ * fallback for the agent-side memory.store path is ALSO read from
+ * rawParams pre-strip.
  *
  * The bespoke pre-Zod validation (admin gate, missing-content guard,
  * ids array presence + non-empty check, etc.) is intentionally retained
@@ -53,9 +53,9 @@ import type { RpcHandler } from "./types.js";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: MemoryApiDeps (shared with context-handlers).
-// DAEMON-API-03 Option A retarget — handler bodies and call sites unchanged.
+// Handler bodies and call sites are unchanged by the alias.
 import type { MemoryApiDeps as MemoryHandlerDeps } from "./types.js";
 export type { MemoryHandlerDeps };
 
@@ -295,7 +295,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
     },
 
     [MemoryDeleteContract.method]: async (rawParams) => {
-      // Admin gate FIRST — separate from the contract schema (D-04).
+      // Admin gate FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for memory deletion");
@@ -334,7 +334,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
     },
 
     [MemoryFlushContract.method]: async (rawParams) => {
-      // Admin gate FIRST — separate from the contract schema (D-04).
+      // Admin gate FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for memory flush");

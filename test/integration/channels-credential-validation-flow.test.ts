@@ -2,9 +2,9 @@
 /**
  * INTEGRATION: cross-adapter credential validation — flow tests.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): exercises the public credential
- * validators across all 9 channel adapters in a single integration suite
- * to lift the credential-validator coverage lines.
+ * Exercises the public credential validators across all 9 channel adapters
+ * in a single integration suite to lift the credential-validator coverage
+ * lines.
  *
  * Validators are called against mock loopback servers OR with deliberately
  * empty / invalid inputs to exercise the err branches. The goal is to

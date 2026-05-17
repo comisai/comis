@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
  * Skill management RPC handler methods.
  * Covers:
@@ -9,17 +9,15 @@
  *   skills.delete  -- Remove a skill folder
  *   skills.create  -- Create a new skill from SKILL.md content
  *   skills.update  -- Update an existing skill's content
- * Extracted from setup-gateway-api.ts.
  *
- * Phase 35 Wave C (Plan 35-13 Task 2): refactored to use the
- * `@comis/core` contract registry. Method keys are computed-property
- * names (`[SkillsListContract.method]:`) so the bidirectional 1:1
- * architecture test resolves them through `defineContract({ method, ... })`
- * declarations in `packages/core/src/api-contracts/workspace.ts` (the
- * workspace umbrella file groups all 5 handlers that share the
- * `WorkspaceApiDeps` slice). The dispatcher-injected `_X` internal
- * fields are stripped via `stripInternalFields` BEFORE
- * `contract.request.parse(...)` (D-04 pitfall 6).
+ * Uses the `@comis/core` contract registry. Method keys are
+ * computed-property names (`[SkillsListContract.method]:`) so the
+ * bidirectional 1:1 architecture test resolves them through
+ * `defineContract({ method, ... })` declarations in
+ * `packages/core/src/api-contracts/workspace.ts` (the workspace umbrella
+ * file groups all 5 handlers that share the `WorkspaceApiDeps` slice).
+ * The dispatcher-injected `_X` internal fields are stripped via
+ * `stripInternalFields` BEFORE `contract.request.parse(...)`.
  *
  * Two of the 6 methods (`skills.create` + `skills.update`) are NOT
  * registered in setup-gateway-api.ts (gateway-tool / agent-tool
@@ -36,12 +34,11 @@
  * contract parse runs AFTER and serves as type narrowing +
  * defense-in-depth.
  *
- * Note: the original handler also accepted `_agentId` (from internals)
- * as a fallback for `agentId` (e.g., skill-handlers.ts:96-98). After
- * `stripInternalFields(rawParams)` removes `_agentId`, the fallback
- * must resolve from the RAW params BEFORE the strip step. The
- * refactor preserves this by reading `_agentId` from `rawParams` and
- * threading it through as the calling-agent identity.
+ * Note: the handler accepts `_agentId` (from internals) as a fallback
+ * for `agentId`. After `stripInternalFields(rawParams)` removes
+ * `_agentId`, the fallback must resolve from the RAW params BEFORE the
+ * strip step — `_agentId` is read from `rawParams` and threaded
+ * through as the calling-agent identity.
  * @module
  */
 
@@ -68,7 +65,7 @@ const logger = createLogger({ name: "skill-handlers" });
 const SKILL_NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**
@@ -130,10 +127,8 @@ async function fetchGitHubDir(
   return files;
 }
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
 // Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
-// approval, mcp, notification handlers). DAEMON-API-03 Option A retarget —
-// handler bodies and call sites unchanged.
+// approval, mcp, notification handlers).
 import type { WorkspaceApiDeps as SkillHandlerDeps } from "./types.js";
 export type { SkillHandlerDeps };
 

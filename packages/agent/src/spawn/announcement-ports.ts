@@ -10,9 +10,9 @@
  * depends on `@comis/agent` — a direct dependency would close a cycle).
  *
  * The pattern matches the existing inlining in
- * `packages/orchestrator/src/cross-session/announcement-dead-letter.ts`
- * (Phase 32 commit 11, ORCH-EXT-11), which inlined the structural shape of
- * `SubAgentRunnerLogger` to break the inverse back-edge.
+ * `packages/orchestrator/src/cross-session/announcement-dead-letter.ts`,
+ * which inlined the structural shape of `SubAgentRunnerLogger` to break
+ * the inverse back-edge.
  *
  * Concrete orchestrator instances (returned by `createAnnouncementBatcher` /
  * `createAnnouncementDeadLetterQueue`) are structurally assignable to these

@@ -8,10 +8,8 @@ import {
 } from "./session-key-parser.js";
 
 describe("parseSessionKeyString", () => {
-  // CR-01 follow-up to BC-REM-15 (Phase 38): the browser parser no longer
-  // recognizes the legacy `agent:<agentId>:` prefix. The daemon parser
-  // dropped it in BC-REM-15, and the daemon emitter dropped it in the
-  // CR-01 follow-up. This parser mirrors the daemon.
+  // The browser parser does not recognize the legacy `agent:<agentId>:`
+  // prefix; it mirrors the daemon parser/emitter, which never emits it.
 
   it("parses a basic 3-part key", () => {
     const result = parseSessionKeyString("myTenant:user123:discord");
@@ -81,16 +79,10 @@ describe("parseSessionKeyString", () => {
     expect(parseSessionKeyString(undefined as any)).toBeUndefined();
   });
 
-  // Deleted (Phase 38 CR-01 follow-up to BC-REM-15): "parses a full session
-  // key with agent prefix", "handles agent prefix with exactly 5 parts",
-  // "falls through to non-agent parsing when agent prefix has < 5 parts" —
-  // the `agent:` prefix is no longer recognized by either parser.
-
-  it("treats a stray `agent:` prefix as ordinary tenant/user/channel parts (post-CR-01)", () => {
-    // `agent:bot:ten:usr:ch` was previously parsed as agentId="bot",
-    // tenantId="ten", userId="usr", channelId="ch". Post-CR-01 the prefix
-    // is no longer special-cased — the parser simply consumes the first
-    // three colon-separated parts as tenantId / userId / channelId.
+  it("treats a stray `agent:` prefix as ordinary tenant/user/channel parts", () => {
+    // The `agent:` prefix is no longer special-cased — the parser simply
+    // consumes the first three colon-separated parts as
+    // tenantId / userId / channelId.
     const result = parseSessionKeyString("agent:bot:ten:usr:ch");
     expect(result).toEqual({
       tenantId: "agent",

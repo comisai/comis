@@ -1,7 +1,7 @@
-# Comis Test Configuration (CLI + Daemon Integration Tests for Plan 40-16)
+# Comis Test Configuration (CLI + Daemon Integration Tests)
 #
 # Dedicated port (8762) and memory database for the CLI ↔ daemon
-# integration test suite added in Plan 40-16 (COV-04 gap closure).
+# integration test suite.
 
 tenantId: "test"
 logLevel: "debug"

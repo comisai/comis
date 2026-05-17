@@ -2,16 +2,14 @@
 /**
  * Smoke tests for the thin runPrompt orchestrator.
  *
- * Phase 42 EXEC-SPLIT-07: the orchestrator is the composition root that
- * sequences the four phase modules (envelope-wrapper → budget-precheck →
- * retry-loop → output-escalation). Behavioral end-to-end coverage of
- * runPrompt's full pipeline lives in the integration suite
+ * The orchestrator is the composition root that sequences the four phase
+ * modules (envelope-wrapper → budget-precheck → retry-loop →
+ * output-escalation). Behavioral end-to-end coverage of runPrompt's full
+ * pipeline lives in the integration suite
  * (test/integration/agent-routing-resolution.test.ts +
- * agent-routing-daemon.test.ts) because the dependency-construction cost
- * for a unit test exceeds the value of a unit-level assertion (RESEARCH
- * §"Pattern 1": invocation requires AgentSession + ModelRegistry +
- * BudgetGuard + CostTracker + AuthRotationAdapter + ProviderHealthMonitor +
- * full deps surface — too expensive for a unit test).
+ * agent-routing-daemon.test.ts) because invocation requires AgentSession +
+ * ModelRegistry + BudgetGuard + CostTracker + AuthRotationAdapter +
+ * ProviderHealthMonitor + full deps surface — too expensive for a unit test.
  *
  * This file pins the structural invariants of the orchestrator: it imports
  * each phase module, it calls them in sequence, and it propagates early-

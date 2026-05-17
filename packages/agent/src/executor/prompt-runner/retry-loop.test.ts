@@ -2,7 +2,6 @@
 /**
  * Structural tests for the retry-loop module entry point.
  *
- * Phase 42 EXEC-SPLIT-07: split from executor-prompt-runner.test.ts.
  * Behavioral coverage of the model retry pipeline lives in
  * model-retry.test.ts (the underlying retry-with-failover helper) and the
  * integration suite. This file pins the stuck-session early-return shape
@@ -56,7 +55,7 @@ describe("retry-loop.ts — stuck-session guard", () => {
   });
 });
 
-describe("retry-loop.ts — silent-failure delegation (EXEC-SPLIT-08 dependency-direction)", () => {
+describe("retry-loop.ts — silent-failure delegation (dependency-direction)", () => {
   it("delegates to silent-failure-handlers for each classified branch", () => {
     expect(source).toMatch(/from\s+"\.\/silent-failure-handlers\.js"/);
     expect(source).toMatch(/handleSignedReplay/);
@@ -66,7 +65,7 @@ describe("retry-loop.ts — silent-failure delegation (EXEC-SPLIT-08 dependency-
     expect(source).toMatch(/declareSilentTerminalFailure/);
   });
 
-  it("does NOT import from prompt-runner.ts (EXEC-SPLIT-08 dependency-direction)", () => {
+  it("does NOT import from prompt-runner.ts (dependency-direction)", () => {
     expect(source).not.toMatch(/from\s+"\.\/prompt-runner\.js"/);
   });
 

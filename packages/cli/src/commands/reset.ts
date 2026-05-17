@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception (Phase 41 TS-HYG-07).
+// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.
 /**
  * Reset utility command: sessions, config, workspace.
  *
@@ -98,9 +98,8 @@ async function resetSessions(dataDir: string): Promise<void> {
   try {
     await withSpinner("Clearing sessions via daemon...", () =>
       withClient(async (client) => {
-        // Phase 35 Wave C (35-19) — typed RPC. The contract response is
-        // { sessions: SessionInfo[], total }; we iterate the typed array
-        // and delete each by sessionKey.
+        // Typed RPC. The contract response is { sessions: SessionInfo[], total };
+        // iterate the typed array and delete each by sessionKey.
         const result = await callTyped(client, SessionListContract, {});
         if (result.total === 0) return;
         for (const session of result.sessions) {

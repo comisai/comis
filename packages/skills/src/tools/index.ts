@@ -14,10 +14,10 @@
  *     extractors (file/PDF/composite/page renderer), image sanitizer,
  *     outbound media parser, media preprocessor
  *
- * Per Phase 33 RES-ARCH-1, the `.` subpath skill registry / bridge / policy
- * concerns live separately under `../skills/`. The architecture invariant
- * (skills → tools is FORBIDDEN, tools → skills is allowed in limited cases)
- * is enforced by `__tests__/architecture.test.ts`.
+ * The `.` subpath skill registry / bridge / policy concerns live separately
+ * under `../skills/`. The architecture invariant (skills → tools is FORBIDDEN,
+ * tools → skills is allowed in limited cases) is enforced by
+ * `__tests__/architecture.test.ts`.
  *
  * Public API — every export has a verified external consumer.
  *

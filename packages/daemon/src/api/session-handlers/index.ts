@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Session handlers (Phase 43 split per FILE-SPLIT-04).
+ * Session handlers barrel.
  *
- * Barrel re-export of the canonical public API of the former
- * `session-handlers.ts` monolith (1,089L). No aliases — every export keeps
- * its canonical name.
+ * Re-exports the canonical public API for session/agent RPC handlers.
  *
  * @module
  */

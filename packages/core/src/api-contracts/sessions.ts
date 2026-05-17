@@ -2,16 +2,9 @@
 /**
  * Sessions-domain RPC contracts. Mirrors the single daemon handler factory
  * file `packages/daemon/src/api/session-handlers.ts` that owns the
- * `SessionsApiDeps` cluster slice (Phase 34 plan 34-08a):
+ * `SessionsApiDeps` cluster slice:
  *
  *   - `session-handlers.ts`  (12 methods — session.* + agents.list)
- *
- * Phase 35 Wave C plan 35-19 (Wave C CLOSURE; final domain). Sessions was
- * deliberately saved for last because the session-key parser is shared
- * with the wizard, so migration drift here would surface most visibly
- * in wizard integration tests. Closing this plan completes Wave C —
- * after this commit ALL 27 daemon handler-factory files use the contract
- * pattern.
  *
  * **Scope assignments** (mirror `setup-gateway-api.ts` registrations):
  *
@@ -29,9 +22,9 @@
  *
  *   admin (setup-gateway-api.ts:203-207 — "Agent management admin"):
  *   - `agents.list`         (admin — fleet read; OWNED BY session-handlers.ts:272
- *                                    per Plan 35-16's note: "agents.list is NOT in
- *                                    agents.ts" — the handler ownership is in
- *                                    session-handlers.ts, so the contract lives here)
+ *                                    — the handler ownership is in
+ *                                    session-handlers.ts even though the name
+ *                                    suggests agents.ts, so the contract lives here)
  *
  *   admin (setup-gateway-api.ts:213-215 — "Session management admin"):
  *   - `session.list`        (admin — fleet read)
@@ -40,8 +33,8 @@
  *   - `session.export`      (admin — full transcript dump)
  *   - `session.compact`     (admin — destructive summarization)
  *
- * **D-05 loose-record use** (Pitfall 6 escape hatch). The transcript /
- * messages surface in session.* responses carries arbitrary message
+ * **Loose-record use** (escape hatch). The transcript / messages surface
+ * in session.* responses carries arbitrary message
  * payloads (provider-specific shapes — Anthropic / OpenAI / Google
  * differ on tool_use blocks, image parts, audio parts, etc.). Pinning
  * the per-message shape would re-encode the entire provider matrix in
@@ -79,25 +72,12 @@
  *
  * **Allowlist compliance.** All schemas use the 12-shape allowlist:
  * z.object, z.string, z.number, z.boolean, z.literal, z.array, z.optional,
- * z.nullable, z.record (D-05 loose-record value-type — used in 8 distinct
+ * z.nullable, z.record (loose-record value-type — used in 8 distinct
  * field positions). No refinements (`.url()`, `.regex()`, `.refine`,
  * `.transform`).
  *
- * **BLOCKER 1 closure for sessions (CLI retarget — Plan 35-19 Task 1).**
- * Three CLI command files retargeted to callTyped in this plan:
- *   - packages/cli/src/commands/sessions.ts — 3 sites (session.list,
- *     session.status, session.delete)
- *   - packages/cli/src/commands/reset.ts   — 2 sites (session.list,
- *     session.delete inside the resetSessions loop)
- *
- * **BLOCKER 6 (Wave C atomic edit owned by Plan 35-19 Task 2).** Plan 35-19
- * supersedes the cumulative additive edits from 35-06..35-18 in
- * api-contracts/index.ts with a single clean alphabetically-sorted
- * registry — see Task 2 in 35-19-PLAN.md.
- *
- * **BLOCKER 8 single-scope invariant.** Every contract in this file has
- * exactly ONE scope (scopes.length === 1). Verified by an inline test
- * in sessions.test.ts.
+ * **Single-scope invariant.** Every contract in this file has exactly ONE
+ * scope (scopes.length === 1). Verified by an inline test in sessions.test.ts.
  *
  * @module
  */
@@ -120,7 +100,7 @@ import { defineContract } from "./types.js";
  * and reads costTrackers / stepCounters maps with a fallback).
  *
  * Request: `{}` (the `_agentId` internal field is dispatcher-injected — NOT
- * declared in the contract per Pitfall 6).
+ * declared in the contract).
  *
  * Response: `{ model, agentName, tokensUsed: { totalTokens, totalCost },
  * stepsExecuted, maxSteps }`. All numeric leaves are tight; the nested
@@ -148,9 +128,8 @@ export const SessionStatusContract = defineContract({
 
 /**
  * `agents.list` — Return the array of configured agent IDs. Owned by
- * session-handlers.ts:272-274 (NOT agent-handlers.ts — see Plan 35-16
- * note "agents.list is NOT in agents.ts"). Admin-scoped per
- * setup-gateway-api.ts:203-207.
+ * session-handlers.ts:272-274 (NOT agent-handlers.ts despite the name).
+ * Admin-scoped per setup-gateway-api.ts:203-207.
  *
  * Bespoke pre-Zod: none.
  *
@@ -180,8 +159,8 @@ export const AgentsListContract = defineContract({
  *
  * Request: `{ kind?, since_minutes? }`. The dispatcher injects
  * `_callerMetadata`, `_callerSessionKey`, `_tenantId` AFTER the contract
- * parse — those are NOT modeled here (Pitfall 6). The handler reads them
- * from rawParams BEFORE strip.
+ * parse — those are NOT modeled here. The handler reads them from
+ * rawParams BEFORE strip.
  *
  * Response: `{ sessions: SessionInfo[], total }`. Each `SessionInfo` is
  * tight-modeled (sessionKey / agentId / userId / channelId / kind / counts /
@@ -237,7 +216,7 @@ export const SessionListContract = defineContract({
  *   - `mode: "search"` → `{ results: SearchResult[], total }` — matching
  *     results with snippet / score / timestamp; summary is optional.
  *
- * D-05 LOOSE-RECORD: response is a loose record because the two variants
+ * LOOSE-RECORD: response is a loose record because the two variants
  * carry disjoint top-level keys (`sessions + total` vs `results + total`).
  * Tight discriminated-union modeling would require pinning per-variant
  * field sets across daemon restarts on every CrossSessionSender shape addition.
@@ -330,12 +309,12 @@ export const SessionHistoryContract = defineContract({
  *
  * Request: `{ session_key, text, mode?, timeout_ms?, max_turns?, agent_id? }`.
  * The dispatcher injects `_callerSessionKey`, `_callerChannelType`,
- * `_callerChannelId` — NOT declared in the contract (Pitfall 6).
+ * `_callerChannelId` — NOT declared in the contract here.
  *
  * Response: LooseRecord at root. The handler delegates to
  * `crossSessionSender.send` whose return shape varies by mode (sync
  * response on `wait`/`ping-pong`, just `{ delivered }` on
- * `fire-and-forget`). D-05 — pinning the per-mode shape would re-encode
+ * `fire-and-forget`). Pinning the per-mode shape would re-encode
  * CrossSessionSender's return-shape matrix in the contract.
  */
 export const SessionSendContract = defineContract({
@@ -378,10 +357,10 @@ export const SessionSendContract = defineContract({
  *   - async-running: `{ runId, async: true }`.
  *   - async-queued: `{ runId, async: true, queued: true }`.
  *
- * D-05 LOOSE-RECORD: response is loose at root — tight discriminated-union
+ * LOOSE-RECORD: response is loose at root — tight discriminated-union
  * modeling would require pinning the per-variant disjoint fields, and the
  * sub-agent runner's return shape is expected to grow as the spawn packet
- * surface evolves (Phase 33's spawn-packet retrofit added 5 new fields).
+ * surface evolves.
  */
 export const SessionSpawnContract = defineContract({
   method: "session.spawn",
@@ -427,8 +406,8 @@ export const SessionSpawnContract = defineContract({
  * total }` for some providers; runners may add cache fields).
  *
  * Intrinsic registration (no explicit setup-gateway-api.ts entry); same
- * pattern as scheduler.wake (Plan 35-18) and delivery.queue.status
- * (Plan 35-17). Scope: "rpc" per the rpc-dispatch default.
+ * pattern as scheduler.wake and delivery.queue.status. Scope: "rpc" per
+ * the rpc-dispatch default.
  */
 export const SessionRunStatusContract = defineContract({
   method: "session.run_status",

@@ -2,26 +2,21 @@
 /**
  * Cross-process FileLockPort contract test - OAuth lock failure mode.
  *
- * Exercises the THIRD consumer of FileLockPort (per RES-ARCH-2 + RES-PIT-4):
- * a daemon crash mid-refresh leaves a stale lock on disk; the next process
- * must reclaim it after proper-lockfile's `stale: <ms>` timeout.
+ * Exercises the third consumer of FileLockPort: a daemon crash mid-refresh
+ * leaves a stale lock on disk; the next process must reclaim it after
+ * proper-lockfile's `stale: <ms>` timeout.
  *
  * Pattern: spawn a Node child process that acquires the lock then exits
  * abruptly (process.exit(1)) without releasing. The parent then attempts
  * re-acquisition; with stale: <small> the second attempt succeeds.
  *
- * Phase 28 (D-10): runs against TODAY's direct-proper-lockfile usage in
+ * Exercises FileLockPort against direct-proper-lockfile usage in
  * agent/src/model/oauth-{credential-store-file,token-manager}.ts.
- * Phase 32 commit 13 (ORCH-EXT-15) retargets to FileLockPort; this test
- * stays green.
  *
- * Test home rationale (Assumption A1 in RESEARCH.md): packages/agent/src/oauth/
- * directory does NOT exist. OAuth lock call sites live at:
+ * Test home rationale: packages/agent/src/oauth/ does NOT exist. OAuth
+ * lock call sites live at:
  *   - packages/agent/src/model/oauth-credential-store-file.ts (set + delete)
  *   - packages/agent/src/model/oauth-token-manager.ts (refreshUnderLock)
- *
- * Cross-process spawn pattern lifted verbatim from
- * test/integration/oauth-doctor.test.ts:80-113.
  *
  * @module
  */
@@ -81,7 +76,7 @@ describe("OAuth FileLockPort contract — cross-process stale-lock recovery", ()
   });
 
   it("after process crash mid-refresh (lock held + exit without release), next process reclaims after stale timeout", async () => {
-    // Phase 1: child acquires + exits without releasing (simulates daemon
+    // Step 1: child acquires + exits without releasing (simulates daemon
     // crash mid-refresh).
     const child = await spawnLockHolder({ lockPath, holdMs: 50, staleMs: 1000 });
     expect(
@@ -89,7 +84,7 @@ describe("OAuth FileLockPort contract — cross-process stale-lock recovery", ()
       "child intentionally exits with code 1 to simulate crash",
     ).toBe(1);
 
-    // Phase 2: parent waits past the stale timeout, then attempts
+    // Step 2: parent waits past the stale timeout, then attempts
     // re-acquisition. Use proper-lockfile directly (matches today's agent
     // OAuth call-site impl).
     const lockfile = await import("proper-lockfile");
@@ -146,12 +141,10 @@ describe("OAuth FileLockPort contract — cross-process stale-lock recovery", ()
   it("idempotent release: double-release does not throw", async () => {
     // The agent call sites tolerate double-release via the finally{} swallow
     // pattern at session-write-lock.ts:127-131. The FileLockPort.release
-    // CONTRACT (per D-09) promises ok(undefined) for already-released paths -
-    // Phase 32 commit 13 (ORCH-EXT-15) will normalize this when agent routes
-    // through the port via createFileLock().release(). Until then, this test
+    // contract promises ok(undefined) for already-released paths. This test
     // documents that proper-lockfile's RAW double-unlock throws, AND that the
-    // FileLockPort's release() (createFileLock from @comis/core in Phase 35
-    // Plan 35-04 per D-01 #1) absorbs it idempotently.
+    // FileLockPort's release() (createFileLock from @comis/core) absorbs it
+    // idempotently.
 
     const lockfile = await import("proper-lockfile");
     const { createFileLock } = await import("@comis/core");
@@ -171,8 +164,7 @@ describe("OAuth FileLockPort contract — cross-process stale-lock recovery", ()
     ).toBe(true);
 
     // Sub-case 2: FileLockPort.release() is idempotent (the port wraps the
-    // throw and returns ok(undefined)). This is the contract Phase 32 will
-    // route the agent call sites through.
+    // throw and returns ok(undefined)).
     const port = createFileLock();
     const acq = await port.acquire(lockPath, { staleMs: 5000 });
     expect(acq.ok).toBe(true);

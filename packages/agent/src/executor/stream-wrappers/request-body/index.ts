@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Request-body injector public surface (Phase 42 split per EXEC-SPLIT-02).
+ * Request-body injector public surface.
  *
  * Composition root: re-exports the leaf modules' canonical public symbols
  * and hosts the `createRequestBodyInjector` factory. Factory lives in a
  * sibling module (`./factory.js`) because its body is ~1,000L of
  * composition logic that cannot fit in an ~80L barrel.
  *
- * Public surface (15 symbols + 1 type) matches the original
- * `request-body-injector.ts` verbatim under canonical names — no aliases.
+ * Public surface (15 symbols + 1 type) uses canonical names — no aliases.
  *
  * @module
  */

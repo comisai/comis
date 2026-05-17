@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Callable-global classifier for Phase 37 (HYG-07, HYG-10).
+ * Callable-global classifier.
  *
  * Walks every caller-supplied production .ts file as part of a single
  * `ts.createProgram` so the TypeChecker can resolve `.unref()` /
  * `.cancel()` / `.ref()` method-call receivers to `TimerHandle` /
- * `NodeJS.Timeout` / `NodeJS.Immediate` (D-GLOB-03 — exemption from the
+ * `NodeJS.Timeout` / `NodeJS.Immediate` (exempt from the
  * forbidden-global gate).
  *
  * Classification: walks every CallExpression / NewExpression /
@@ -19,8 +19,7 @@
  *   - `clearInterval(...)`      — same shape
  *
  * Bootstrap-path exemption: files matching any pattern in
- * `BOOTSTRAP_PATH_PATTERNS` (the corrected list from RESEARCH.md
- * Landmines §1) are skipped before classification.
+ * `BOOTSTRAP_PATH_PATTERNS` are skipped before classification.
  *
  * TimerHandle/NodeJS.Timeout exemption: a CallExpression of the form
  * `<receiver>.unref()` / `.cancel()` / `.ref()` is skipped when the
@@ -73,25 +72,22 @@ export interface GlobalsViolation {
 }
 
 /**
- * Bootstrap-path exemption regex set per D-GLOB-02 (AGENTS.md §2.2
- * sanctioned paths). Corrected from CONTEXT.md per RESEARCH.md
- * Landmines §1: `packages/shared/src/runtime/` does NOT exist on disk;
- * `packages/core/src/env-layer.ts` does NOT exist (actual path is
- * `packages/core/src/config/env-layer.ts`).
+ * Bootstrap-path exemption regex set (AGENTS.md §2.2 sanctioned paths).
+ * Notes:
+ *   - `packages/shared/src/runtime/` does NOT exist on disk.
+ *   - `packages/core/src/env-layer.ts` does NOT exist (actual path is
+ *     `packages/core/src/config/env-layer.ts`).
  *
- * If a future phase adds `packages/shared/src/runtime/`, the regex
- * extends — the planner should not preemptively add a regex for a
- * directory that doesn't exist (matches the source-rule literal
- * interpretation per RESEARCH.md line 1322).
+ * If a future change adds `packages/shared/src/runtime/`, this regex set
+ * extends — no preemptive entries for directories that don't exist.
  */
 const BOOTSTRAP_PATH_PATTERNS: readonly RegExp[] = [
   /packages\/daemon\/src\/daemon\.ts$/,
-  // Phase 43 FILE-SPLIT-06: helpers extracted from daemon.ts in Plan 43-08c
-  // live under packages/daemon/src/stages/ and are part of the daemon
-  // composition root (each is consumed by exactly one daemon.ts stage*
-  // function). They inherit the bootstrap-path exemption — moving these
-  // helpers out of daemon.ts must not surface direct process.env / Date.now
-  // calls as new globals violations.
+  // Helpers extracted from daemon.ts live under packages/daemon/src/stages/
+  // and are part of the daemon composition root (each is consumed by exactly
+  // one daemon.ts stage* function). They inherit the bootstrap-path exemption
+  // — moving these helpers out of daemon.ts must not surface direct
+  // process.env / Date.now calls as new globals violations.
   /packages\/daemon\/src\/stages\//,
   /packages\/cli\/src\/cli\.ts$/,
   /packages\/cli\/src\/index\.ts$/,
@@ -121,8 +117,8 @@ interface CacheEntry {
 
 /**
  * Cache file shape. `version: 1` is the schema-version field; mismatch
- * (or corrupted JSON) drops the cache and recomputes — RES-PIT-2
- * cache-poisoning mitigation. Bump to 2 when rule semantics change.
+ * (or corrupted JSON) drops the cache and recomputes — cache-poisoning
+ * mitigation. Bump to 2 when rule semantics change.
  */
 interface CacheFile {
   readonly version: 1;
@@ -194,13 +190,12 @@ function extractSnippet(sf: ts.SourceFile, line1Indexed: number): string {
 /**
  * True if `node` is a CallExpression like `receiver.unref()` /
  * `.cancel()` / `.ref()` where the receiver type resolves to
- * `TimerHandle` (Phase 39 port), `Timeout` (NodeJS.Timeout), or
+ * `TimerHandle` (the port), `Timeout` (NodeJS.Timeout), or
  * `Immediate` (NodeJS.Immediate).
  *
- * Per D-GLOB-03 and RESEARCH.md Landmine §2: today `TimerHandle` doesn't
- * exist yet (Phase 39 introduces it); the live 60 `.unref()` sites all
- * resolve to `NodeJS.Timeout`. When Phase 39 lands, the check naturally
- * extends (existing logic catches `TimerHandle` by symbol name).
+ * The check matches by symbol name, so adding a new TimerHandle-shaped
+ * type (or introducing TimerHandle itself in a later refactor) extends
+ * the exemption automatically without code changes here.
  */
 function isTimerHandleMethodCall(
   node: ts.CallExpression,
@@ -261,12 +256,11 @@ function classifyNode(
   //   - `process.env.NODE_ENV`              (the outer PropAccess wraps this one)
   //   - `process.env["HOME"]`               (the outer ElemAccess wraps this one)
   //   - `process.env.X = "..."`             (LHS of assignment — same inner PropAccess)
-  // Per RESEARCH.md edge case 8: process.env mutation IS flagged because
-  // AGENTS.md §2.2 forbids both directions outside sanctioned paths.
-  // Flagging at the inner `process.env` node dedupes naturally — the outer
-  // PropAccess / ElemAccess / AssignmentExpression isn't itself flagged
-  // because its `node.expression` is the inner `process.env` PropAccess,
-  // not a `process` Identifier.
+  // process.env mutation IS flagged because AGENTS.md §2.2 forbids both
+  // directions outside sanctioned paths. Flagging at the inner `process.env`
+  // node dedupes naturally — the outer PropAccess / ElemAccess /
+  // AssignmentExpression isn't itself flagged because its `node.expression`
+  // is the inner `process.env` PropAccess, not a `process` Identifier.
   if (
     ts.isPropertyAccessExpression(node) &&
     ts.isIdentifier(node.expression) &&
@@ -297,9 +291,9 @@ export interface ClassifyGlobalsOptions {
  * Classify callable-global expressions in every file from `rootFiles`.
  *
  * Builds a single `ts.createProgram` so the TypeChecker can resolve
- * cross-file types (TimerHandle from Phase 39 or NodeJS.Timeout from
- * @types/node). Uses persistent mtime+sha256 cache keyed on file
- * content; cache hit re-renders snippets from live source.
+ * cross-file types (TimerHandle, NodeJS.Timeout from @types/node, etc).
+ * Uses persistent mtime+sha256 cache keyed on file content; cache hit
+ * re-renders snippets from live source.
  *
  * Bootstrap-path-matching files are skipped BEFORE classification
  * (controlled by `options.respectBootstrapPaths`, default `true`).

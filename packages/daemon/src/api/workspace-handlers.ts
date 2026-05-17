@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Workspace file and git management RPC handlers.
  * Provides 12 workspace methods for operator-side management:
@@ -12,43 +12,39 @@
  * operations use safePath for traversal prevention. All git pathspecs
  * use -- separator to prevent flag injection.
  *
- * Phase 35 Wave C (Plan 35-13 Task 1): refactored to use the
- * `@comis/core` contract registry. Method keys are computed-property
+ * Uses the `@comis/core` contract registry. Method keys are computed-property
  * names (`[WorkspaceStatusContract.method]:`) so the bidirectional 1:1
  * architecture test resolves them through `defineContract({ method, ... })`
  * declarations in `packages/core/src/api-contracts/workspace.ts`. The
  * dispatcher-injected `_X` internal fields are stripped via
- * `stripInternalFields` BEFORE `contract.request.parse(...)` (D-04
- * pitfall 6 — never model internals in the contract schema). Each
- * handler's admin trust check reads `rawParams._trustLevel` BEFORE
- * the strip step (the gate stays separate from the contract schema
- * per D-04). The bespoke pre-Zod validation (admin gate, agentId /
- * agent existence guard, filePath presence guard, allowlist guards
- * for subdir + fileName, file-size guards) is intentionally retained
- * for user-friendly error UX. The contract parse runs AFTER and serves
- * to (a) narrow params types for the rest of the handler body and (b)
- * provide a defense-in-depth gate against future drift. The dev-mode
- * `Contract.response.parse(...)` gate before each return doubles as a
- * shape-regression canary.
+ * `stripInternalFields` BEFORE `contract.request.parse(...)` (never
+ * model internals in the contract schema). Each handler's admin trust
+ * check reads `rawParams._trustLevel` BEFORE the strip step (the gate
+ * stays separate from the contract schema). The bespoke pre-Zod
+ * validation (admin gate, agentId / agent existence guard, filePath
+ * presence guard, allowlist guards for subdir + fileName, file-size
+ * guards) is intentionally retained for user-friendly error UX. The
+ * contract parse runs AFTER and serves to (a) narrow params types for
+ * the rest of the handler body and (b) provide a defense-in-depth gate
+ * against future drift. The dev-mode `Contract.response.parse(...)`
+ * gate before each return doubles as a shape-regression canary.
  *
  * @module
  */
 
 import {
   safePath,
-  // Phase 35 Plan 35-04 (D-01 #5): workspace helpers relocated from
-  // @comis/agent to @comis/core.
+  // Workspace helpers from @comis/core.
   getWorkspaceStatus,
   ensureWorkspace,
   DEFAULT_TEMPLATES,
   WORKSPACE_FILE_NAMES,
   WORKSPACE_SUBDIRS,
   type WorkspaceFileName,
-  // Phase 35 Plan 35-13 Task 1: contract registry for the workspace
-  // umbrella (12 workspace.* + 13 browser.* + approval/skill/notification
-  // appended in Task 2). The handler refactor uses computed-property
-  // method keys so the bidirectional 1:1 architecture test sees the
-  // contract↔handler pairing.
+  // Contract registry for the workspace umbrella (12 workspace.* + 13
+  // browser.* + approval/skill/notification). The handler uses
+  // computed-property method keys so the bidirectional 1:1 architecture
+  // test sees the contract↔handler pairing.
   WorkspaceStatusContract,
   WorkspaceReadFileContract,
   WorkspaceWriteFileContract,
@@ -76,23 +72,21 @@ import type { RpcHandler } from "./types.js";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: WorkspaceApiDeps (shared with browser, approval,
-// mcp, skill, notification handlers). DAEMON-API-03 Option A retarget —
-// handler bodies and call sites unchanged.
+// mcp, skill, notification handlers).
 import type { WorkspaceApiDeps as WorkspaceHandlerDeps } from "./types.js";
 export type { WorkspaceHandlerDeps };
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**
  * Run `contract.response.parse(result)` only when NODE_ENV !== "production".
  * Daemon side is the trust boundary; in production the trust check is
- * the in-handler logic, not the contract parse. Mirrors the D-10 gate
- * pattern used in auth-handlers / secrets-handlers / config-handlers /
- * obs-handlers.
+ * the in-handler logic, not the contract parse. Mirrors the gate pattern
+ * used in auth-handlers / secrets-handlers / config-handlers / obs-handlers.
  */
 const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 

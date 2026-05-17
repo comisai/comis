@@ -6,23 +6,14 @@
  * across processes. Uses file system locks with stale detection
  * and periodic mtime updates for liveness proof.
  *
- * Relocated from `@comis/scheduler/src/execution/execution-lock.ts` in Phase 35
- * Plan 35-02 per Decision D-01 #1 (closes architecture-allowlist entries
- * L6/L17/L19). Plan 35-04 removes the scheduler-side adapter once the agent
- * re-export and CLI consumers are retargeted; until then BOTH copies coexist
- * (purely additive in Wave A per the no-backward-compat convention).
- *
  * The `createFileLock(): FileLockPort` factory is the canonical adapter target
- * for non-scheduler consumers (CLI, agent OAuth call sites, agent session-
- * write-lock). Phase 28 commit 3 (CORE-PORTS-09) introduced the factory;
- * Phase 32 commit 13 (ORCH-EXT-15) routed agent's OAuth + session-write-lock
- * through it. Plan 35-05 retargets CLI consumers.
+ * for non-scheduler consumers (CLI, agent OAuth call sites, agent
+ * session-write-lock).
  *
- * The `withExecutionLock` + `isLocked` named-export helpers below are
- * preserved verbatim from the scheduler source for byte-equivalence; they
- * have no in-repo consumer FROM @comis/core (the scheduler-side caller
- * `cron-store.ts` still imports them from `../execution/execution-lock.js`).
- * Their relocation strategy is a Plan 35-04 concern.
+ * The `withExecutionLock` + `isLocked` named-export helpers below are the
+ * legacy direct-call surface; they have no in-repo consumer from @comis/core
+ * (the scheduler-side caller `cron-store.ts` still imports them from its
+ * own `../execution/execution-lock.js`).
  */
 
 import type { Result } from "@comis/shared";
@@ -155,18 +146,15 @@ function isAlreadyReleasedError(e: unknown): boolean {
 /**
  * Production FileLockPort factory backed by proper-lockfile.
  *
- * Phase 28 commit 3 (CORE-PORTS-09): this is the canonical adapter. Phase 32
- * commit 13 (ORCH-EXT-15) injects it through agent's session-write-lock
- * + OAuth call sites and removes agent's direct proper-lockfile dependency
- * (closes L24).
+ * Injected through agent's session-write-lock + OAuth call sites so agent has
+ * no direct proper-lockfile dependency.
  *
- * Per D-08 the factory is zero-arg; per-call `LockOptions` live on every
- * method call. Per D-09 the error shape preserves today's ELOCKED detection
+ * The factory is zero-arg; per-call `LockOptions` live on every method call.
+ * The error shape preserves today's ELOCKED detection
  * (`{ kind: "locked" | "error", message }`).
  *
  * `acquire` returns a release-callback (`Result<() => Promise<void>, LockError>`)
- * matching proper-lockfile's native `lock(path, opts) => Promise<release>`
- * shape — verified at agent/src/session/session-write-lock.ts:107 (RES-A2).
+ * matching proper-lockfile's native `lock(path, opts) => Promise<release>` shape.
  */
 export function createFileLock(): FileLockPort {
   return {
@@ -174,7 +162,7 @@ export function createFileLock(): FileLockPort {
       lockPath: string,
       opts: LockOptions = {},
     ): Promise<Result<() => Promise<void>, LockError>> {
-      // Same prep as withExecutionLock lines 64-71: ensure dir + sentinel exist.
+      // Same prep as withExecutionLock: ensure dir + sentinel exist.
       const dir = path.dirname(lockPath);
       await fs.mkdir(dir, { recursive: true });
       try {
@@ -238,8 +226,8 @@ export function createFileLock(): FileLockPort {
         return ok(value);
       } catch (fnErr) {
         // Propagate errors thrown by fn — preserve today's withExecutionLock
-        // semantics (lines 89-91: if fn throws, finally still releases; the
-        // throw propagates). FileLockPort returns Result, so wrap as
+        // semantics (if fn throws, finally still releases; the throw
+        // propagates). FileLockPort returns Result, so wrap as
         // err({ kind: "error", … }).
         return err({ kind: "error", message: String(fnErr) });
       } finally {
@@ -247,7 +235,7 @@ export function createFileLock(): FileLockPort {
           await release();
         } catch {
           // Lock may have been compromised; ignore release error per
-          // existing pattern at lines 96-98.
+          // the withExecutionLock pattern above.
         }
       }
     },
@@ -264,7 +252,7 @@ export function createFileLock(): FileLockPort {
       lockDir: string,
       maxAgeMs: number = 3_600_000,
     ): Promise<number> {
-      // Mirror agent/src/session/session-write-lock.ts:149-185 logic:
+      // Mirror agent/src/session/session-write-lock.ts cleanup logic:
       //   1. readdir lockDir (ENOENT → 0)
       //   2. for each `*.lock` regular file
       //   3. skip if mtime is younger than maxAgeMs

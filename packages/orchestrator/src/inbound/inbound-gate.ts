@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Inbound Pipeline Phase 3: Message Gate.
+ * Inbound Pipeline — Message Gate stage.
  *
  * Evaluates auto-reply rules, handles slash commands (/send, /approve,
  * /deny, /config, /stop, general commands), reset triggers, and prompt
@@ -12,9 +12,8 @@
 
 import type { ChannelPort, NormalizedMessage, SessionKey, AutoReplyEngineConfig } from "@comis/core";
 import { formatSessionKey, systemNowMs } from "@comis/core";
-// Phase 32 commit 6: command parsers/matchers moved into orchestrator (ORCH-EXT-08).
-// Use local relative imports — orchestrator depends on @comis/agent for other
-// symbols but commands now live inside this package.
+// Command parsers/matchers live inside this orchestrator package; use local
+// relative imports so the gate does not pull them via @comis/agent.
 import { parseSlashCommand, matchPromptSkillCommand } from "../commands/index.js";
 
 import type { InboundPipelineDeps } from "./inbound-pipeline.js";

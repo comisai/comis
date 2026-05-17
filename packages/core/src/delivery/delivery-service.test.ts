@@ -1,28 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 30 plan 03 — smoke tests for createDeliveryService.
- * Phase 30 plan 05 — migrated 55-callsite full-pipeline tests.
+ * Tests for createDeliveryService.
  *
  * The first top-level `describe` block ("createDeliveryService — factory
- * contract") is the 9-test smoke suite from plan 03 (lifecycle, hook
- * invocation, traceId propagation, suppressError preservation, closure
- * capture).
+ * contract") is a 9-test smoke suite (lifecycle, hook invocation, traceId
+ * propagation, suppressError preservation, closure capture).
  *
  * The second top-level `describe` block ("DeliveryService — full pipeline
  * behavior") is the migrated 55-callsite suite from
- * `packages/channels/src/shared/deliver-to-channel.test.ts` (deleted in plan
- * 05). Every free-standing `deliverToChannel(adapter, ..., deps)` call has
- * been rewritten to `service.deliverToChannel(adapter, ..., options)` where
+ * `packages/channels/src/shared/deliver-to-channel.test.ts`. Every
+ * free-standing `deliverToChannel(adapter, ..., deps)` call has been
+ * rewritten to `service.deliverToChannel(adapter, ..., options)` where
  * `service: DeliveryService` is constructed via `makeDeliveryService(...)`
- * from `test/support/factories.ts` (closes CONFIG-DELIV-05 test half;
- * CONFIG-DELIV-09 behavior parity).
+ * from `test/support/factories.ts`.
  *
- * Three plain-helper describe blocks from the source file (`resolveChunkLimit`,
- * `computeQueueBackoff`, `QUEUE_BACKOFF_SCHEDULE_MS`) test internal helpers
- * that are file-local in `delivery-service.ts` (not exported) and whose
- * channels-side originals are deleted in plan 06. Their behaviour is
- * exercised implicitly via the pipeline tests below (chunk-limit defaults,
- * backoff scheduling on transient failures); no separate test stays here.
+ * The internal helpers `resolveChunkLimit`, `computeQueueBackoff`, and
+ * `QUEUE_BACKOFF_SCHEDULE_MS` are file-local in `delivery-service.ts` (not
+ * exported); their behaviour is exercised implicitly via the pipeline tests
+ * below (chunk-limit defaults, backoff scheduling on transient failures).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -48,8 +43,8 @@ import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 /**
  * Build a no-op HookRunner with vi.fn() spies on every method. The fields
  * are typed via the `as unknown as HookRunner` escape hatch because the real
- * `HookRunner` interface has ~14 methods (Phase 28's gateway/session hooks),
- * and the smoke tests only exercise the delivery ones.
+ * `HookRunner` interface has ~14 methods (including the gateway/session
+ * hooks), and the smoke tests only exercise the delivery ones.
  */
 function makeNoopHookRunner(
   overrides: Partial<HookRunner> = {},
@@ -94,7 +89,7 @@ function makeDeps(
   };
 }
 
-describe("createDeliveryService — factory contract (CONFIG-DELIV-04, smoke-level contract)", () => {
+describe("createDeliveryService — factory contract (smoke-level)", () => {
   it("Test 1: returns a DeliveryService with a deliverToChannel method", () => {
     const service: DeliveryService = createDeliveryService(makeDeps());
     expect(typeof service.deliverToChannel).toBe("function");
@@ -233,7 +228,7 @@ describe("createDeliveryService — factory contract (CONFIG-DELIV-04, smoke-lev
 });
 
 // =============================================================================
-// Phase 30 plan 05 migration — full pipeline behaviour (CONFIG-DELIV-05, -09)
+// Full pipeline behaviour
 // =============================================================================
 //
 // Migrated from packages/channels/src/shared/deliver-to-channel.test.ts (55
@@ -310,7 +305,7 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
   };
 }
 
-describe("DeliveryService — full pipeline behavior (CONFIG-DELIV-05, CONFIG-DELIV-09)", () => {
+describe("DeliveryService — full pipeline behavior", () => {
   // -------------------------------------------------------------------------
   // Empty text
   // -------------------------------------------------------------------------
@@ -1040,11 +1035,10 @@ describe("DeliveryService — full pipeline behavior (CONFIG-DELIV-05, CONFIG-DE
       // delivery:enqueued — SqliteDeliveryQueueAdapter is the sole source of
       // that signal, and the no-op variant has nothing persistent to enqueue).
       //
-      // Phase 30 plan 03 made deliveryQueue REQUIRED in DeliveryServiceDeps —
-      // the "deliveryQueue absent → zero queue events" semantics that this
-      // test originally asserted (against the standalone deliverToChannel) no
-      // longer has a representable code path. The replacement assertion: the
-      // no-op queue is benign — no failure/retry signals leak through.
+      // deliveryQueue is REQUIRED in DeliveryServiceDeps, so the
+      // "deliveryQueue absent → zero queue events" semantics no longer has a
+      // representable code path. The assertion here: the no-op queue is
+      // benign — no failure/retry signals leak through.
       const service = makeDeliveryService({ eventBus });
 
       const result = await service.deliverToChannel(adapter, "chat-1", "Hello");

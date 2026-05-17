@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Production no-op factory for ToolCapabilityPort — relocated from ports/no-op-tool-capability.ts
- * in Phase 28 commit 1 (closes L15 per CORE-PORTS-01).
+ * Production no-op factory for ToolCapabilityPort.
  *
  * Returns an empty-defaults adapter that is safe to inject from any production
  * code path. Used as the production no-op until the live daemon-side adapter

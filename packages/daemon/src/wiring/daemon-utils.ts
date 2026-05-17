@@ -43,13 +43,14 @@ export function authorizeChannelAccess(
  * Build a CronSchedule from rpcCall params.
  *
  * `kind` is the canonical closed-union discriminator from @comis/scheduler's
- * CronSchedule type per Phase 41 TS-HYG-11. The switch's default branch uses
- * `const _exhaustive: never = kind;` per 41-03-SUMMARY.md Decision 1 (inline
- * exhaustive checks, no shared assertNever helper).
+ * CronSchedule type. The switch's default branch uses
+ * `const _exhaustive: never = kind;` (inline exhaustive check, no shared
+ * assertNever helper).
  *
  * The throw is permanent: this function is called from daemon RPC handlers
- * (cron-handlers.ts) which classify as @allow-throw boundaries per Decision 2
- * (rpc-dispatch.ts:306-321 wraps and converts to JSON-RPC error response).
+ * (cron-handlers.ts) which classify as @allow-throw boundaries — the
+ * rpc-dispatch.ts wrapper (lines 306-321) converts thrown errors into
+ * JSON-RPC error responses.
  */
 export function buildCronSchedule(kind: CronSchedule["kind"], params: Record<string, unknown>): CronSchedule {
   switch (kind) {
@@ -65,7 +66,7 @@ export function buildCronSchedule(kind: CronSchedule["kind"], params: Record<str
       return { kind: "at" as const, at: params.schedule_at as string };
     default: {
       const _exhaustive: never = kind;
-      // @allow-throw: called from daemon RPC handlers (cron-handlers.ts); RPC dispatcher converts to JSON-RPC error response per 41-03-SUMMARY.md Decision 2. Phase 41 TS-HYG-07.
+      // @allow-throw: called from daemon RPC handlers (cron-handlers.ts); RPC dispatcher converts to JSON-RPC error response.
       throw new Error(`Unknown schedule kind: ${String(_exhaustive)}`);
     }
   }

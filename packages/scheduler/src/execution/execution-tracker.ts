@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: @allow-throw boundary: scheduler-execution state-tracking guard; consumed via daemon scheduler wiring catch (daemon.ts bootstrap boundary) (Phase 41 TS-HYG-07).
+// @allow-throw: scheduler-execution state-tracking guard; consumed via daemon scheduler wiring catch (daemon.ts bootstrap boundary).
 /**
  * JSONL-based execution tracking with auto-prune and anomaly detection.
  *

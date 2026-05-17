@@ -2,16 +2,15 @@
 /**
  * Shutdown-stage helpers for daemon.ts's stageShutdown.
  *
- * Block-moved verbatim from daemon.ts in Phase 43 Wave 8c (FILE-SPLIT-06):
- *   - readDbSizeMetrics (daemon.ts:2251-2266)
- *   - computeAndKillStuckSubAgents (daemon.ts:2273-2305)
- *   - wireHealthLogging (daemon.ts:2307-2351)
- *   - buildStartupBannerManifest (daemon.ts:2359-2387)
- *   - emitStartupBanner (daemon.ts:2389-2430)
+ * Helpers extracted from daemon.ts:
+ *   - readDbSizeMetrics
+ *   - computeAndKillStuckSubAgents
+ *   - wireHealthLogging
+ *   - buildStartupBannerManifest
+ *   - emitStartupBanner
  *
- * Each helper is a top-level function (not a closure) — mechanical block-move
- * is safe per RESEARCH §"No-cycles invariant". Consumed by stageShutdown in
- * daemon.ts.
+ * Each helper is a top-level function (not a closure) — no cycles into
+ * daemon.ts. Consumed by stageShutdown in daemon.ts.
  *
  * @module
  */
@@ -79,8 +78,7 @@ export function computeAndKillStuckSubAgents(deps: {
 }
 
 /**
- * Wire eventBus health subscriptions to structured logger metrics. Lifted from
- * the ~88L block in main() (single largest extraction win for stageShutdown).
+ * Wire eventBus health subscriptions to structured logger metrics.
  * Reads metrics from the observability event bus, prunes prompt timeouts,
  * computes stuck-sub-agent counters, force-kills sub-agents past threshold,
  * and emits the canonical "Daemon health" DEBUG line.
@@ -133,8 +131,8 @@ export function wireHealthLogging(deps: {
 
 /**
  * Emit startup banner + docker restart-policy warn + OAuth TLS preflight.
- * Lifted from the ~25L block in main(). Emits the canonical
- * "Comis daemon started" INFO line (log line 5 in daemon-lifecycle.test.ts).
+ * Emits the canonical "Comis daemon started" INFO line (log line 5 in
+ * daemon-lifecycle.test.ts).
  */
 /** Build the startup-banner manifest sub-object (secrets/memory/agents/skills/gateway). */
 export function buildStartupBannerManifest(deps: {

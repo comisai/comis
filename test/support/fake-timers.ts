@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeTimers: a per-test TimerPort with deterministic advance(ms) and
- * unref() recording for PORTS-18 shutdown assertions (PORTS-08, PORTS-09).
+ * unref() recording for shutdown assertions.
  *
  * Records every scheduled timer entry so the daemon-shutdown integration
  * test can assert "every long-running interval registered before bootstrap
- * shutdown was either cancelled or unref'd" (PORTS-18).
+ * shutdown was either cancelled or unref'd".
  *
- * Mirrors the createSystemTimers cancel-safety contract (PORTS-04):
+ * Mirrors the createSystemTimers cancel-safety contract:
  *   - unref() on cancelled = no-op
  *   - unref() twice = no-op
  *   - cancel() twice = no-op
- *
- * Phase 39, PORTS-08, PORTS-09.
  *
  * @module
  */
@@ -30,7 +28,7 @@ export interface FakeTimerEntry {
 export interface FakeTimers extends TimerPort {
   /** Move synthetic time forward, firing scheduled callbacks whose deadline passed. */
   advance(ms: number): void;
-  /** Snapshot of all scheduled entries with cancel/unref state (PORTS-09). */
+  /** Snapshot of all scheduled entries with cancel/unref state. */
   unrefRecord(): ReadonlyArray<FakeTimerEntry>;
 }
 

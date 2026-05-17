@@ -3,10 +3,9 @@
  * Smoke test for `gateway/src/openai/index.ts` public barrel.
  *
  * Asserts the public export surface matches the source-of-truth — catches
- * silent export deletion / shadowing. Phase 40 / Phase C §6.3.4 / COV-08.
+ * silent export deletion / shadowing.
  *
- * NOTE: Cohort 1 plan PATTERNS.md inventory listed 3 route factories, but the
- * live source-of-truth exports 6 values: 3 utilities/schemas from
+ * The live source-of-truth exports 9 values: 3 utilities/schemas from
  * `openai-types.ts` (`ChatCompletionRequestSchema`, `ChatMessageSchema`,
  * `StreamOptionsSchema`, `createOpenAIError`, `mapFinishReason`) plus the
  * 3 route factories (`createOpenaiCompletionsRoute`, `createOpenaiModelsRoute`,

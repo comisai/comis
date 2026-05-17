@@ -27,11 +27,12 @@ import { systemDateFrom, systemNowMs } from "@comis/core";
 
 /**
  * Local mirror of the scheduler's CronSchedule + CronPayload discriminator
- * literals (per Phase 41 TS-HYG-11). Web cannot import from @comis/scheduler
- * (boundary policy — see "DO NOT import" comment above), so the closed unions
- * are reproduced inline. If the scheduler adds a new kind, web TypeScript will
- * silently accept the wire payload as "unknown discriminator" until this local
- * mirror is updated; that drift is intentional per the bounded-context rule.
+ * literals. Web cannot import from @comis/scheduler (boundary policy — see
+ * "DO NOT import" comment above), so the closed unions are reproduced
+ * inline. If the scheduler adds a new kind, web TypeScript will silently
+ * accept the wire payload as "unknown discriminator" until this local
+ * mirror is updated; that drift is intentional per the bounded-context
+ * rule.
  */
 interface SchedulerCronJob {
   id: string;

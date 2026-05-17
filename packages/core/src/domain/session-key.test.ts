@@ -183,12 +183,12 @@ describe("SessionKey", () => {
       expect(formatSessionKey(key)).toBe("acme-corp:admin:ops");
     });
 
-    // CR-01 follow-up to BC-REM-15 (Phase 38): `formatSessionKey` no longer
-    // emits an `agent:<agentId>:` prefix when `key.agentId` is set. The
-    // `SessionKey.agentId` field is retained on the schema for caller
-    // ergonomics but is intentionally not serialized — agent isolation
-    // happens out-of-band (per-agent workspace dirs, watermark files, etc.).
-    it("does NOT emit agent prefix when agentId is set (BC-REM-15 / CR-01)", () => {
+    // `formatSessionKey` does not emit an `agent:<agentId>:` prefix when
+    // `key.agentId` is set. The `SessionKey.agentId` field is retained on
+    // the schema for caller ergonomics but is intentionally not serialized
+    // — agent isolation happens out-of-band (per-agent workspace dirs,
+    // watermark files, etc.).
+    it("does NOT emit agent prefix when agentId is set", () => {
       const key: SessionKey = {
         tenantId: "default",
         userId: "user-42",
@@ -208,7 +208,7 @@ describe("SessionKey", () => {
       expect(formatSessionKey(key)).toBe("default:user-42:general:thread:t123");
     });
 
-    it("emits identical output for agentId-set and agentId-unset keys (BC-REM-15 / CR-01)", () => {
+    it("emits identical output for agentId-set and agentId-unset keys", () => {
       const withAgent: SessionKey = {
         tenantId: "default",
         userId: "u1",

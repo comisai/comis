@@ -4,10 +4,10 @@
  *
  * Every RPC method on the gateway has exactly one `ApiContract` entry — the
  * bidirectional 1:1 invariant is enforced in
- * `test/architecture/api-contracts-bidirectional.test.ts` (WEB-CONTRACTS-07).
+ * `test/architecture/api-contracts-bidirectional.test.ts`.
  *
- * Phase 35 CONTEXT D-05 (barrel-only): external consumers import these types
- * from `"@comis/core"`, never from a sub-path.
+ * Barrel-only: external consumers import these types from `"@comis/core"`,
+ * never from a sub-path.
  *
  * @module
  */
@@ -42,6 +42,6 @@ export function defineContract<
 /**
  * Method-name string narrowing point. Within `@comis/core` this is the broad
  * `string` alias; the generated `packages/web/src/api/contracts.generated.ts`
- * (Wave D) narrows it to a literal union via `keyof typeof CONTRACTS`.
+ * narrows it to a literal union via `keyof typeof CONTRACTS`.
  */
 export type MethodName = string;

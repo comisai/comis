@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Render-branch tests for IcApprovalQueue (Phase 40 Plan 40-15 gap-closure).
+ * Render-branch tests for IcApprovalQueue.
  *
- * approval-queue.ts at baseline reports 24.55% / 35.71% / 16.32% / 24.3%
- * (lines/branches/functions/statements). The component switches on the
- * activeSubTab attribute ("rules" vs "pending") and renders two large
- * disjoint trees. This file covers:
+ * The component switches on the activeSubTab attribute ("rules" vs "pending")
+ * and renders two large disjoint trees. This file covers:
  *   - render() activeSubTab routing (rules / pending)
  *   - _renderPendingContent empty pending + populated pending + bulk action
  *     disabled-state + history-divider section + empty resolved + populated

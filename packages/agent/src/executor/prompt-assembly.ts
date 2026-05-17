@@ -247,7 +247,7 @@ export interface PromptAssemblyParams {
      * statically enforce this restriction.
      */
     toolCapabilityPort: ToolCapabilityPort;
-    /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+    /** Wall-clock + monotonic time reads. */
     clock: import("@comis/core").ClockPort;
   };
   msg: NormalizedMessage;

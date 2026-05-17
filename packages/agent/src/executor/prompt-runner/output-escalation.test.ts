@@ -2,7 +2,6 @@
 /**
  * Structural tests for the output-escalation module.
  *
- * Phase 42 EXEC-SPLIT-07: split from executor-prompt-runner.test.ts.
  * Behavioral coverage of output escalation, success-path response
  * processing (empty-recovery, SEP extraction, post-batch continuation,
  * budget continuation), and failure-path overflow recovery lives in the
@@ -14,7 +13,7 @@
  *   - error-classifier.test.ts (classifyError, classifyPromptTimeout)
  *
  * This file pins the structural invariants of the output-escalation entry
- * point + the EXEC-SPLIT-08 dependency-direction.
+ * point and the dependency direction (no import from prompt-runner.ts).
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -52,8 +51,8 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
   });
 });
 
-describe("output-escalation.ts — dependency-direction (EXEC-SPLIT-08)", () => {
-  it("does NOT import from prompt-runner.ts (EXEC-SPLIT-08 dependency-direction)", () => {
+describe("output-escalation.ts — dependency direction", () => {
+  it("does NOT import from prompt-runner.ts (dependency direction invariant)", () => {
     expect(source).not.toMatch(/from\s+"\.\/prompt-runner\.js"/);
   });
 

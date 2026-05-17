@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Approval-handlers contract slice (Phase 43 split per FILE-SPLIT-14).
+ * Approval-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/approval-handlers.ts` (4 methods).
- * Block-moved verbatim from the pre-split `api-contracts/workspace.ts`
- * (lines 727-850). Spread order in `APPROVAL_HANDLERS_CONTRACTS` matches
- * the pre-split `WORKSPACE_CONTRACTS` array (workspace.ts:1139-1142) byte
- * for byte to keep `contracts.generated.*` artifacts byte-identical.
+ * Spread order in `APPROVAL_HANDLERS_CONTRACTS` matches the previous
+ * `WORKSPACE_CONTRACTS` array byte for byte to keep
+ * `contracts.generated.*` artifacts byte-identical.
  *
  * @module
  */
@@ -18,9 +17,8 @@ import { defineContract } from "../types.js";
 // ===========================================================================
 
 /**
- * D-05 loose-record value type. Same definition as in
- * `workspace-handlers.ts` — module-private (not exported) so the
- * cross-file duplication is safe.
+ * Loose-record value type. Same definition as in `workspace-handlers.ts`
+ * — module-private (not exported) so the cross-file duplication is safe.
  */
 const LooseRecord = z.record(z.string(), z.unknown());
 
@@ -30,7 +28,7 @@ const LooseRecord = z.record(z.string(), z.unknown());
 
 /**
  * Approval-request projection for the `admin.approval.pending` listing.
- * D-05 loose record — the server-side `ApprovalRequest` schema uses
+ * Loose record — the server-side `ApprovalRequest` schema uses
  * `z.strictObject` plus `z.string().uuid()` refinement which is OUTSIDE
  * the 12-shape allowlist. Modeling each pending request as a loose
  * record preserves the wire shape (the gate emits the full
@@ -94,15 +92,12 @@ export const AdminApprovalResolveContract = defineContract({
  * `admin.approval.resolveAll` — bulk-resolve all pending requests
  * (optionally filtered to a single session). ADMIN scope.
  *
- * **Plan-vs-reality (Rule 1).** Plan 35-13 inventoried 3 admin.approval
- * methods (pending, resolve, clearDenialCache); reality is 4 — the
- * handler factory at approval-handlers.ts:69-89 exposes `resolveAll`
- * which is NOT registered in setup-gateway-api.ts (the gateway router
- * only registers pending/resolve/clearDenialCache at line 199-201).
- * The bidirectional 1:1 architecture test walks handler-factory
- * PropertyAssignment keys (registration-plane-agnostic — comment
- * inside the test header lines 32-41), so a contract is MANDATORY
- * for the 1:1 mapping to pass.
+ * The handler factory exposes `resolveAll` which is NOT registered in
+ * setup-gateway-api.ts (the gateway router only registers pending/
+ * resolve/clearDenialCache). The bidirectional 1:1 architecture test
+ * walks handler-factory PropertyAssignment keys
+ * (registration-plane-agnostic), so a contract is MANDATORY for the
+ * 1:1 mapping to pass.
  *
  * The contract scope `["admin"]` reflects the namespace prefix
  * (`admin.approval.`) — every admin.approval.* handler is admin-gated
@@ -151,8 +146,8 @@ export const AdminApprovalClearDenialCacheContract = defineContract({
 
 /**
  * approval-handlers slice (4 contracts). Spread order matches the
- * pre-split `WORKSPACE_CONTRACTS` array (workspace.ts:1139-1142) byte
- * for byte — determinism-critical for codegen output stability.
+ * previous `WORKSPACE_CONTRACTS` array byte for byte — determinism-critical
+ * for codegen output stability.
  */
 export const APPROVAL_HANDLERS_CONTRACTS = [
   AdminApprovalPendingContract,

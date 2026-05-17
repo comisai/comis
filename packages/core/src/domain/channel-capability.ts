@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Channel capability Zod schema + inferred type — relocated from ports/channel-plugin.ts in Phase 28 commit 1
-// (closes L15 per CORE-PORTS-01). Channel-shaped runtime metadata; sibling to other domain Zod schemas.
+// Channel capability Zod schema + inferred type.
+// Channel-shaped runtime metadata; sibling to other domain Zod schemas.
 import { z } from "zod";
 
 /**

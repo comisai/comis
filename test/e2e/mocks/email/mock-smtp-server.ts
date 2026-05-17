@@ -2,8 +2,6 @@
 /**
  * Mock SMTP capture server for E2E flow-matrix coverage.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09 scaffolding for human review).
- *
  * Wire surface: a minimal SMTP server speaking enough of RFC 5321 to capture
  * mail bodies sent by a nodemailer-style SMTP client. The implementation is
  * the simplest possible "Lookalike SMTP that the email adapter cannot tell
@@ -21,8 +19,7 @@
  * via the standard test config YAML.
  *
  * IMAP (inbound mail) is NOT in this file — the IMAP mock is a separate
- * concern (file-based Maildir polled by the adapter); see Plan 40-09
- * Task 3 step 2 design for the planned shape.
+ * concern (file-based Maildir polled by the adapter).
  *
  * @module
  */
@@ -250,7 +247,7 @@ export function createMockSmtpServer(): MockSmtpServer {
       // which the email adapter polls from a separate fixture (file-based
       // Maildir). Throwing here makes the deviation explicit at call sites.
       throw new Error(
-        "Mock SMTP server does not accept inbound injection — use the IMAP/Maildir fixture for inbound mail (Plan 40-09 deferred)",
+        "Mock SMTP server does not accept inbound injection — use the IMAP/Maildir fixture for inbound mail",
       );
     },
     reset() {

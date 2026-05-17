@@ -2,8 +2,6 @@
 /**
  * E2E: Email × DM — SMTP wire roundtrip against the 127.0.0.1 mock.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09 Wave D).
- *
  * Scope: drives a real `nodemailer` SMTP transport (the same library
  * the production `EmailChannelAdapter` uses internally) against the
  * mock SMTP capture server. Asserts the full SMTP transaction
@@ -19,10 +17,9 @@
  *
  * What this does NOT prove: the EmailChannelAdapter's IMAP polling
  * for inbound mail (a separate fixture, file-based Maildir per
- * mock-smtp-server.ts:67-71 commentary) — that's deferred to a
- * follow-on plan because the email adapter's start() opens BOTH
- * IMAP and SMTP and a partial-startup pattern is not currently
- * supported in the production factory.
+ * mock-smtp-server.ts:67-71 commentary) — the email adapter's
+ * start() opens BOTH IMAP and SMTP and a partial-startup pattern is
+ * not currently supported in the production factory.
  *
  * @module
  */
@@ -31,7 +28,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createMockSmtpServer, type MockSmtpServer } from "./mocks/email/mock-smtp-server.js";
 import { createTransport, type Transporter } from "nodemailer";
 
-describe("E2E: email × dm — SMTP wire roundtrip against the 127.0.0.1 mock (COV-15)", () => {
+describe("E2E: email × dm — SMTP wire roundtrip against the 127.0.0.1 mock", () => {
   let mock: MockSmtpServer;
   let transport: Transporter;
 

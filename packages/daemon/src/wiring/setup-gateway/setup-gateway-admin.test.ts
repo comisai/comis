@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 43 wave 8 split (FILE-SPLIT-08): setup-gateway.ts → setup-gateway/
- * subdirectory. Admin leaf tests for trust-level derivation,
- * `/config` chat command trust gates, the redacted execution-request
- * log-field builder, and the destroySession source guard (the gateway
- * adapter's session:expired emission with "gateway-reset" reason).
+ * Admin leaf tests for trust-level derivation, `/config` chat command trust
+ * gates, the redacted execution-request log-field builder, and the
+ * destroySession source guard (the gateway adapter's session:expired emission
+ * with "gateway-reset" reason).
  *
  * @module
  */
@@ -180,7 +179,7 @@ describe("buildExecutionRequestedLogFields", () => {
 describe("buildSlashCommandDeps destroySession emits session:expired", () => {
   it("source contains session:expired emission with gateway-reset reason", async () => {
     // The gateway destroySession callback is deeply nested inside the
-    // setupGateway-built CommandHandlerDeps adapter. Post-split it lives in
+    // setupGateway-built CommandHandlerDeps adapter; it lives in
     // setup-gateway-admin.ts (buildSlashCommandDeps). This structural test
     // verifies the source contains the expected emission so regressions
     // surface without a full gateway-server harness.

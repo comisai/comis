@@ -2,25 +2,19 @@
 /**
  * Gateway-stage helpers for daemon.ts's stageGateway.
  *
- * Block-moved verbatim from daemon.ts in Phase 43 Wave 8c (FILE-SPLIT-06):
- *   - resolveGatewayTokens (daemon.ts:1781-1811)
- *   - createHotAdd (daemon.ts:1819-1849)
- *   - createHotRemove (daemon.ts:1855-1894)
- *   - buildImageHandlerDeps (daemon.ts:1902-1914)
- *   - buildTokenStoreMutators (daemon.ts:1916-1931)
- *   - buildContextEngineConfig (daemon.ts:1933-1940)
- *   - buildRpcDispatchDeps (daemon.ts:1945-1993)
- *   - buildSyntheticRestartMessage (daemon.ts:2002-2029)
- *   - replayContinuationsIfAny (daemon.ts:2038-2074)
+ * Top-level helpers (not closures) consumed by stageGateway in daemon.ts:
+ *   - resolveGatewayTokens
+ *   - createHotAdd / createHotRemove
+ *   - buildImageHandlerDeps
+ *   - buildTokenStoreMutators
+ *   - buildContextEngineConfig
+ *   - buildRpcDispatchDeps
+ *   - buildSyntheticRestartMessage
+ *   - replayContinuationsIfAny
  *
- * Each helper is a top-level function (not a closure) — mechanical block-move
- * is safe per RESEARCH §"No-cycles invariant". Consumed by stageGateway in
- * daemon.ts.
- *
- * The DEFAULT_CONFIG_PATHS constant is imported from daemon.ts (one-line
- * re-export). To avoid an import cycle (daemon.ts → gateway-helpers.ts →
- * daemon.ts), DEFAULT_CONFIG_PATHS-shaped data is passed in via deps when
- * buildRpcDispatchDeps needs it.
+ * To avoid an import cycle (daemon.ts → gateway-helpers.ts → daemon.ts),
+ * `DEFAULT_CONFIG_PATHS`-shaped data is passed in via deps when
+ * `buildRpcDispatchDeps` needs it rather than imported back from daemon.ts.
  *
  * @module
  */
@@ -42,8 +36,6 @@ import type { ChannelsHandle, GatewayPreDispatchSlice } from "../daemon-types.js
 
 /**
  * Resolve gateway tokens from config (config -> env -> auto-generated).
- * Extracted from stageGateway to fit the DAEMON-API-06 ≤200L cap. Lifts the
- * 24L config-token resolution block verbatim.
  */
 export function resolveGatewayTokens(deps: {
   container: ChannelsHandle["container"];
@@ -80,10 +72,9 @@ export function resolveGatewayTokens(deps: {
 /**
  * Factory: hot-add agent closure. Returns the closure that captures
  * destructured Maps + setupSingleAgent + shutdownRef + eventBus by reference
- * (all consumers hold the same Map references). Extracted to fit stageGateway
- * under the DAEMON-API-06 ≤200L cap.
+ * (all consumers hold the same Map references).
  */
-// @allow-throw: hot-add agent closure throws during shutdown; consumed at daemon bootstrap catch boundary (Phase 41 TS-HYG-07).
+// @allow-throw: hot-add agent closure throws during shutdown; consumed at daemon bootstrap catch boundary.
 export function createHotAdd(deps: {
   channels: ChannelsHandle;
   shutdownRef: { value?: { readonly isShuttingDown: boolean } };
@@ -117,8 +108,7 @@ export function createHotAdd(deps: {
 }
 
 /**
- * Factory: hot-remove agent closure. Mirror of createHotAdd. Extracted to fit
- * stageGateway under the DAEMON-API-06 ≤200L cap.
+ * Factory: hot-remove agent closure. Mirror of createHotAdd.
  */
 export function createHotRemove(deps: {
   channels: ChannelsHandle;
@@ -165,8 +155,6 @@ export function createHotRemove(deps: {
  * Build the image-handler deps used by the RPC dispatch's image handlers.
  * Returns undefined when image generation is disabled (no provider or rate
  * limiter wired in stageChannels).
- *
- * Extracted to fit stageGateway under the DAEMON-API-06 ≤200L cap.
  */
 export function buildImageHandlerDeps(deps: {
   channels: ChannelsHandle;
@@ -184,8 +172,7 @@ export function buildImageHandlerDeps(deps: {
 
 /**
  * Build the token store mutators (addToTokenStore + removeFromTokenStore) used
- * by the gateway's token-management handlers. Extracted to fit stageGateway
- * under the DAEMON-API-06 ≤200L cap.
+ * by the gateway's token-management handlers.
  */
 export function buildTokenStoreMutators(deps: {
   runtimeTokens: Array<{ id: string; secretBuf: Buffer; scopes: string[] }>;
@@ -206,8 +193,7 @@ export function buildTokenStoreMutators(deps: {
 
 /**
  * Build the context-engine config used by the RPC dispatch's context handlers.
- * Reads the default agent's contextEngine sub-tree with fallbacks. Extracted
- * to fit stageGateway under the DAEMON-API-06 ≤200L cap.
+ * Reads the default agent's contextEngine sub-tree with fallbacks.
  */
 export function buildContextEngineConfig(channels: ChannelsHandle): { maxRecallsPerDay: number; maxExpandTokens: number; recallTimeoutMs: number } {
   const { agentsConfig: agents, defaultAgentId } = channels;
@@ -219,10 +205,9 @@ export function buildContextEngineConfig(channels: ChannelsHandle): { maxRecalls
 }
 
 /**
- * Build the rpcDispatchDeps literal. Single largest extraction (was ~76L).
+ * Build the rpcDispatchDeps literal.
  * Returns the full ApiDispatchDeps shape consumed by `wireDispatch` -- every
  * field name MUST match the ApiDispatchDeps aggregator in api/types.ts.
- * Extracted to fit stageGateway under the DAEMON-API-06 ≤200L cap.
  */
 export function buildRpcDispatchDeps(deps: {
   channels: ChannelsHandle;
@@ -258,9 +243,8 @@ export function buildRpcDispatchDeps(deps: {
     tokenRegistry: g.tokenRegistry,
     ...buildTokenStoreMutators({ runtimeTokens: g.runtimeTokens, removedTokenIds: g.removedTokenIds }),
     memoryWriteValidator: validateMemoryWrite,
-    // Plan 34-08b: MemoryApiDeps.eventBus now accepts the full
-    // AppContainer["eventBus"] type. The legacy down-cast to `{ emit }` is
-    // unnecessary and was rejected by the broadened cluster slice.
+    // MemoryApiDeps.eventBus accepts the full AppContainer["eventBus"] type;
+    // no down-cast to `{ emit }` is needed.
     eventBus: c.container.eventBus,
     mcpClientManager: c.mcpClientManager, contextStore: c.contextStore,
     contextEngineConfig: buildContextEngineConfig(c),
@@ -278,9 +262,7 @@ export function buildRpcDispatchDeps(deps: {
 /**
  * Build the synthetic-restart message payload for a single continuation
  * record. Rehydrates chat-type metadata so downstream resolveChatType /
- * isGroupMessage classify the resumed session correctly. Extracted from
- * replayContinuationsIfAny to keep the per-record loop under the
- * DAEMON-API-07 ≤50L helper cap.
+ * isGroupMessage classify the resumed session correctly.
  */
 export function buildSyntheticRestartMessage(deps: {
   record: ReturnType<typeof loadContinuations>[number];
@@ -314,9 +296,8 @@ export function buildSyntheticRestartMessage(deps: {
 /**
  * Replay restart continuations from disk if any. Owns the block that
  * loads persisted continuation records and re-injects synthetic restart
- * messages through channelManager. Extracted to fit stageGateway under the
- * DAEMON-API-06 ≤200L cap; per-record message construction further
- * extracted into buildSyntheticRestartMessage to fit DAEMON-API-07 ≤50L.
+ * messages through channelManager. Per-record message construction lives in
+ * `buildSyntheticRestartMessage`.
  */
 export async function replayContinuationsIfAny(deps: {
   channels: ChannelsHandle;

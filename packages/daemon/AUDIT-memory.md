@@ -1,11 +1,11 @@
-# MemoryApiDeps Audit (Phase 34)
+# MemoryApiDeps Audit
 
 **Generated:** 2026-05-12
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:105–139`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
 **Field count:** 18 (7 required + 11 optional + 0 stale-fallback)
-**OQ-1 resolution:** Option B (co-located with @comis/daemon package). `feedback_no_planning_commits` policy + `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
+**Location:** Co-located with the `@comis/daemon` package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
 
 ## Field Classification
 

@@ -1,19 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the config + env + gateway-infrastructure
- * domain Wave C contracts.
- *
- * Plan 35-11 (Wave C domain #6). Mirrors the structure of
- * `packages/core/src/api-contracts/mcp.test.ts` (Plan 35-10's
- * template — closest analog by combined domain size + admin-only
- * scope + presence of `z.record` escape-hatch shapes).
+ * Per-contract test for the config + env + gateway-infrastructure domain.
  *
  * Coverage:
  *   - Method name assertions (one per of the 12 methods)
  *   - All-admin-scoped assertion (mirrors setup-gateway-api.ts:80-84
  *     + 341-343 + the in-handler `_trustLevel` gates for env.*)
  *   - Request acceptance/rejection for each method
- *   - Response acceptance for each method (including the D-05
+ *   - Response acceptance for each method (including the
  *     loose-record escape-hatch shapes on config.patch/apply, the
  *     graceful-degradation `error` field on config.history/diff,
  *     and the residency-canary shape on env.set/env.list)
@@ -179,7 +173,7 @@ describe("config + env + gateway-infrastructure contracts", () => {
   });
 
   // ------------------------------------------------------------------------
-  // config.patch — D-05 LOCKED loose-record validation
+  // config.patch — loose-record validation
   // ------------------------------------------------------------------------
 
   it("config.patch: request accepts the canonical { section, key, value } shape", () => {
@@ -201,7 +195,7 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).not.toThrow();
   });
 
-  it("config.patch: request accepts a nested value tree (D-05 loose record)", () => {
+  it("config.patch: request accepts a nested value tree (loose record)", () => {
     expect(() =>
       ConfigPatchContract.request.parse({
         section: "integrations",

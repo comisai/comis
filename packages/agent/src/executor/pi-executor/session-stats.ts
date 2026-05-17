@@ -2,12 +2,6 @@
 /**
  * mergeSessionStats — SDK session-stats delegation helper.
  *
- * Co-equal extraction from pi-executor.ts (Phase 42 split per EXEC-SPLIT-05).
- *
- * Already takes 2 typed parameters — EXEMPT from the EXEC-SPLIT-06
- * closure-extraction `state` first-param contract because it was already
- * co-equal at the top level of the pre-split file.
- *
  * @module
  */
 

@@ -48,10 +48,9 @@ function makeMockCredentialStore(): OAuthCredentialStorePort {
 }
 
 /**
- * Mock FileLockPort — Phase 32 commit 12 (ORCH-EXT-15) added `fileLock` to
- * the `oauth` block of AuthProviderConfig. The mock `withLock` invokes the
- * supplied callback inline so refresh-path tests behave identically to the
- * pre-injection (proper-lockfile-direct) path.
+ * Mock FileLockPort. The mock `withLock` invokes the supplied callback inline
+ * so refresh-path tests behave identically to the pre-injection
+ * (proper-lockfile-direct) path.
  */
 function makeMockFileLock(): FileLockPort {
   return {

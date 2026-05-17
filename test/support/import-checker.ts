@@ -12,19 +12,18 @@
  *   - import-shaped strings inside template literals (parsed as
  *     `StringLiteral`, not `ImportDeclaration`)
  *   - value-import vs type-only-import distinction via the optional
- *     `valueImportsOnly` flag (Phase 36 GUARDRAILS-04/-05 added — used
- *     by composition-root.test.ts and infra-runtime-scope.test.ts to
- *     allow `import type { ComisLogger } from "@comis/infra"` while
- *     still flagging runtime value-imports).
+ *     `valueImportsOnly` flag — used by composition-root.test.ts and
+ *     infra-runtime-scope.test.ts to allow
+ *     `import type { ComisLogger } from "@comis/infra"` while still
+ *     flagging runtime value-imports.
  *
- * Closes the source-grep evasion vector documented in
- * `.planning/phases/27-architecture-boundary-test-baseline/27-RESEARCH.md`
- * RES-PIT-8 and the T-27-02 mitigation in plan 27-01.
+ * Closes a source-grep evasion vector: regex matchers miss multi-line
+ * imports, comment-blocks, and template-literal lookalikes.
  *
  * Result shape mirrors `test/support/source-grep.ts` `SourceGrepResult` so
- * per-package architecture tests can use the uniform Pattern E sanity
- * check `expect(result.checkedFiles, "sanity").toBeGreaterThan(0)`
- * regardless of which helper they call.
+ * per-package architecture tests can use the uniform sanity check
+ * `expect(result.checkedFiles, "sanity").toBeGreaterThan(0)` regardless
+ * of which helper they call.
  *
  * @module
  */
@@ -58,10 +57,9 @@ export interface ImportViolation {
  * parsed and counted toward `checkedFiles`, but their violations are
  * dropped.
  *
- * `valueImportsOnly` (Phase 36 GUARDRAILS-04/-05) skips type-only
- * `ImportDeclaration`s so that `import type { X } from "@comis/foo"`
- * does NOT count as a violation. See the field doc for exact semantics
- * on mixed-form imports.
+ * `valueImportsOnly` skips type-only `ImportDeclaration`s so that
+ * `import type { X } from "@comis/foo"` does NOT count as a violation.
+ * See the field doc for exact semantics on mixed-form imports.
  */
 export interface FindForbiddenImportsOptions {
   readonly rootDir: string;
@@ -80,8 +78,8 @@ export interface FindForbiddenImportsOptions {
    * Pure side-effect imports (`import "@comis/foo"`) have no symbol
    * binding at all and are likewise skipped under this flag.
    *
-   * Default: false (every Phase 27–35 caller relies on this — closing
-   * the flag preserves all existing per-package architecture tests).
+   * Default: false (every existing caller relies on this — closing
+   * the flag preserves all per-package architecture tests).
    *
    * Behavior matrix:
    *   - `import type { X } from "@comis/foo"` → skipped
@@ -161,8 +159,8 @@ export function findForbiddenImports(
         // filters); allowlisted entries are then skipped before parsing
         // to save I/O while preserving the count. Bump BEFORE the
         // allowlist `continue` so the count reflects "files the helper
-        // considered" (Pattern K invariant). The increment is deliberately
-        // ahead of `ts.createSourceFile` -- existing tests in
+        // considered". The increment is deliberately ahead of
+        // `ts.createSourceFile` -- existing tests in
         // `import-checker.test.ts` assert that allowlisted files still
         // contribute to `checkedFiles > 0`.
         checkedFiles++;
@@ -182,16 +180,17 @@ export function findForbiddenImports(
             ts.isStringLiteral(node.moduleSpecifier) &&
             // Match exact package OR any subpath (`@comis/agent/dist/foo`).
             // CLAUDE.md §9 forbids `@comis/<pkg>/dist/...` subpaths anyway,
-            // and L-ID allowlists key on file paths — a subpath import would
-            // otherwise smuggle past every rule keyed on the bare package name.
+            // and architecture allowlists key on file paths — a subpath
+            // import would otherwise smuggle past every rule keyed on the
+            // bare package name.
             (node.moduleSpecifier.text === opts.forbiddenPackage ||
               node.moduleSpecifier.text.startsWith(
                 `${opts.forbiddenPackage}/`,
               ))
           ) {
-            // Phase 36 GUARDRAILS-04/-05: type-only filter (default false
-            // preserves backwards compat with every Phase 27–35 caller).
-            // See FindForbiddenImportsOptions.valueImportsOnly doc for the
+            // Type-only filter (default false preserves backwards compat
+            // with every existing caller). See
+            // FindForbiddenImportsOptions.valueImportsOnly doc for the
             // full behavior matrix; the checks below mirror that contract.
             if (opts.valueImportsOnly === true) {
               const clause = node.importClause;

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent config — Model selection schemas (Phase 43 split per FILE-SPLIT-14).
+ * Agent config — Model selection schemas.
  *
- * Block-moved verbatim from the pre-split `config/schema-agent.ts` (lines
- * 13-184). Owns budget limits, circuit breaker thresholds, model route
- * overrides, fallback model entries, auth profile rotation, model failover
+ * Owns budget limits, circuit breaker thresholds, model route overrides,
+ * fallback model entries, auth profile rotation, model failover
  * configuration, prompt timeouts, and per-operation model overrides.
  *
  * Imports nothing from sibling leaves (model/context/prompt/runtime) —

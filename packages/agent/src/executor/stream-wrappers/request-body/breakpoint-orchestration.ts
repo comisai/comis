@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-breakpoint orchestration phase (Phase 42 split per EXEC-SPLIT-02).
+ * Cache-breakpoint orchestration stage of the request-body factory pipeline.
  *
- * Hosts "Concern 1: Cache breakpoints (Anthropic-family)" of the factory
- * pipeline:
+ * Hosts "Concern 1: Cache breakpoints (Anthropic-family)":
  *  1. Resolve per-model retention + latch
  *  2. Multi-block system prompt injection
  *  3. First system block hash debug log
@@ -17,10 +16,8 @@
  * 11. Mature-conversation diagnostics (fence-unset + budget-exhausted)
  *
  * Returns the resolved retention so the factory can pass it to downstream
- * phases (marker upgrade, skipCacheWrite shared-prefix, kill switch,
+ * stages (marker upgrade, skipCacheWrite shared-prefix, kill switch,
  * adaptive TTL promotion).
- *
- * Lifted verbatim from request-body-injector.ts:1466-1794.
  *
  * @module
  */
@@ -41,9 +38,9 @@ import { injectToolDeferral } from "./tool-deferral-injection.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
 
 /**
- * Run the cache-breakpoint orchestration phase. Mutates `result.system`,
+ * Run the cache-breakpoint orchestration stage. Mutates `result.system`,
  * `result.tools`, and `result.messages` in place. Returns the
- * resolvedRetention for downstream phases.
+ * resolvedRetention for downstream stages.
  *
  * No-op (returns undefined) when `!needsCacheBreakpoints`.
  */

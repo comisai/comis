@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Encrypted OAuth-profile management RPC handlers.
  *
@@ -17,31 +17,29 @@
  * packages/core/src/ports/oauth-credential-store.ts lines 46-52).
  *
  * NOTE: there is intentionally NO `auth.login` daemon RPC method either.
- * Daemon-assisted OAuth login is out of scope for Phase 31 per design §8.2.7
- * (would require its own threat-model amendment).
+ * Daemon-assisted OAuth login is out of scope (would require its own
+ * threat-model amendment).
  *
  * Reviewers: this file returns OAuth-token-bearing data structurally (the
  * un-projected `OAuthProfile[]` lives in handler closure scope between the
  * `list()` call and the projection). Apply the same residency discipline as
- * core/src/security/SECRET-RPC-CHECKLIST.md -- plan 31-08's
- * `checkSecretResidency` walker scope INCLUDES this file (Rule 1 + Rule 2).
- * Verify before merging any change.
+ * core/src/security/SECRET-RPC-CHECKLIST.md -- the `checkSecretResidency`
+ * walker scope INCLUDES this file (Rule 1 + Rule 2). Verify before merging
+ * any change.
  *
  * Storage: OAuthCredentialStorePort (encrypted secrets.db via AES-256-GCM in
  * encrypted mode; the file-backed selector throws if storage is "encrypted"
  * and no encryptedStore is injected -- this handler is only registered when
  * the daemon has an encrypted store).
  *
- * Phase 35 Wave C (Plan 35-07): refactored to use the `@comis/core`
- * contract registry. Method keys are computed-property names
- * (`[AuthListContract.method]:`) so the bidirectional 1:1 architecture
- * test resolves them through `defineContract({ method, ... })`
- * declarations in `packages/core/src/api-contracts/auth.ts`. The
- * dispatcher-injected `_X` internal fields are stripped via
- * `stripInternalFields` BEFORE `contract.request.parse(...)` (D-04
- * pitfall 6 — never model internals in the contract schema). The admin
- * trust check reads `rawParams._trustLevel` BEFORE the strip step (the
- * gate stays separate from the contract schema per D-04).
+ * Uses the `@comis/core` contract registry. Method keys are computed-property
+ * names (`[AuthListContract.method]:`) so the bidirectional 1:1 architecture
+ * test resolves them through `defineContract({ method, ... })` declarations in
+ * `packages/core/src/api-contracts/auth.ts`. The dispatcher-injected `_X`
+ * internal fields are stripped via `stripInternalFields` BEFORE
+ * `contract.request.parse(...)` — never model internals in the contract
+ * schema. The admin trust check reads `rawParams._trustLevel` BEFORE the
+ * strip step (the gate stays separate from the contract schema).
  *
  * The bespoke pre-Zod validation (admin gate, profileId presence guard,
  * config-pointer error for no-encrypted-store) is intentionally retained
@@ -74,11 +72,10 @@ import type { RpcHandler } from "./types.js";
 
 /** Dependencies required by auth handlers.
  *
- * Re-aliased from the cluster slice in api/types.ts (Plan 34-08a; alias retarget
- * in Plan 34-08c). Single source of truth: AuthApiDeps (shared with
- * secrets-handlers + token-handlers). The cluster slice was widened in 34-08c
- * to cover auth-handler fields (oauthCredentialStore, container, logger).
- * DAEMON-API-03 Option A retarget — handler body unchanged.
+ * Re-aliased from the cluster slice in api/types.ts. Single source of
+ * truth: AuthApiDeps (shared with secrets-handlers + token-handlers). The
+ * cluster slice covers auth-handler fields (oauthCredentialStore, container,
+ * logger).
  */
 import type { AuthApiDeps as AuthHandlerDeps } from "./types.js";
 export type { AuthHandlerDeps };
@@ -147,8 +144,8 @@ export function createAuthHandlers(
     [AuthListContract.method]: async (rawParams) => {
       const startMs = systemNowMs();
       // Admin trust check uses the dispatcher-injected `_trustLevel` —
-      // intentionally NOT modeled in the contract schema (D-04). Read
-      // from rawParams BEFORE the strip-and-parse step.
+      // intentionally NOT modeled in the contract schema. Read from
+      // rawParams BEFORE the strip-and-parse step.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for auth.list");
@@ -171,10 +168,9 @@ export function createAuthHandlers(
         return emptyResult;
       }
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6). Then type-narrow via the
-      // contract — `params.provider` becomes `string | undefined` without
-      // an `as` cast.
+      // Strip dispatcher-injected _X internals BEFORE contract parse,
+      // then type-narrow via the contract — `params.provider` becomes
+      // `string | undefined` without an `as` cast.
       const userParams = stripInternalFields(rawParams);
       const params = AuthListContract.request.parse(userParams);
 
@@ -220,7 +216,7 @@ export function createAuthHandlers(
       // Dev-mode residency canary: `response.parse(...)` rejects any
       // accidental access/refresh/accountId fields (they're intentionally
       // absent from RedactedOAuthProfileSchema). Production skips the
-      // parse for cold-start budget compliance (WEB-CONTRACTS-17).
+      // parse for cold-start budget compliance.
       if (systemGetEnv("NODE_ENV") !== "production") {
         AuthListContract.response.parse(result);
       }
@@ -234,7 +230,7 @@ export function createAuthHandlers(
      */
     [AuthLogoutContract.method]: async (rawParams) => {
       const startMs = systemNowMs();
-      // Admin gate FIRST (separate from the contract schema per D-04).
+      // Admin gate FIRST (separate from the contract schema).
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for auth.logout");

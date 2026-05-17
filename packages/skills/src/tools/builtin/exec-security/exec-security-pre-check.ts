@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Exec command security — pre-pipeline sanitization gates
- * (Phase 43 split per FILE-SPLIT-11).
+ * Exec command security — pre-pipeline sanitization gates.
  *
- * Extracted from `exec-security.ts` (1,153L monolith) on 2026-05-16. Owns
- * the gates that run BEFORE compound-splitting in the validation pipeline:
+ * Owns the gates that run BEFORE compound-splitting in the validation
+ * pipeline:
  *   - sanitizeCommandInput (Gate 0: invisible-char detection)
  *   - extractHeredoc (heredoc auto-split for stdin interpreters)
  *   - detectShellSubstitutions (Gate 1)

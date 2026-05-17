@@ -35,8 +35,7 @@ vi.mock("node:fs/promises", () => ({
   readFile: mockReadFile,
 }));
 
-// Phase 35 Plan 35-04 (drift recovery): runOAuthTlsPreflight relocated from
-// @comis/agent to @comis/core.
+// runOAuthTlsPreflight is exposed from @comis/core.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {

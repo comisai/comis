@@ -2,8 +2,8 @@
 import type { ChannelPort, NormalizedMessage, SessionKey, DeliveryService } from "@comis/core";
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
 import type { AgentExecutor } from "@comis/agent";
-// Phase 32 commit 8: queue types moved to orchestrator (ORCH-EXT-08, Wave A close).
-// Relative paths used because orchestrator cannot import its own published name.
+// Queue types live in orchestrator. Relative paths used because orchestrator
+// cannot import its own published name.
 import type { FollowupTrigger } from "../queue/followup-trigger.js";
 import type { CommandQueue } from "../queue/command-queue.js";
 import { ok } from "@comis/shared";
@@ -18,8 +18,8 @@ import type {
 } from "@comis/channels";
 
 // Mock createBlockPacer to capture config and control delivery behavior.
-// block-pacer.ts stays in @comis/channels (bucket-A internal) until commit 4 —
-// see packages/orchestrator/HELPER-OWNERSHIP-INVENTORY.md.
+// block-pacer.ts lives in @comis/channels (bucket-A internal) — see
+// packages/orchestrator/HELPER-OWNERSHIP-INVENTORY.md.
 let capturedPacerConfig: PacerConfig | undefined;
 vi.mock("@comis/channels", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/channels")>();
@@ -103,10 +103,10 @@ function makeEventBus() {
   } as any;
 }
 
-// Phase 30 plan 04: ExecutionPipelineDeps requires a DeliveryService. The fake
-// delegates to adapter.sendMessage so the existing assertions (which observe
-// adapter call shape — replyTo, threadId, extra, per-block chunking) remain
-// valid. Mirrors the previously-vi.mock'd `deliverToChannel` pattern.
+// ExecutionPipelineDeps requires a DeliveryService. The fake delegates to
+// adapter.sendMessage so the existing assertions (which observe adapter call
+// shape — replyTo, threadId, extra, per-block chunking) remain valid.
+// Mirrors the previously-vi.mock'd `deliverToChannel` pattern.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake
 function makeFakeDeliveryService(): DeliveryService {
   return {

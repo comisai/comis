@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Discovery phase of `comis config tooling-fill` (Phase 43 split per
- * FILE-SPLIT-10).
+ * Discovery stage of `comis config tooling-fill`.
  *
  * Loads the config file (raw + JS view + AST), enumerates hint entries from
  * `tooling.{mcp,skills}.capabilityHints`, applies the --all stub-only filter,
@@ -9,7 +8,7 @@
  *
  * Returns a `DiscoverOutcome` with either a `bail` exit (early-return) or
  * the surviving hint entries + the parsed Document + raw YAML to pass to
- * the fill/verify phases.
+ * the fill/verify stages.
  *
  * Pure of process I/O — only fs.readFileSync, yaml.parseDocument, and
  * `@comis/core`'s loadConfigFile (per AGENTS.md §2.4 separation).

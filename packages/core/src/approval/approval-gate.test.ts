@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight port wrappers that delegate to globals so
+// Lightweight port wrappers that delegate to globals so
 // vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
 // ---------------------------------------------------------------------------
 

@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 43 wave 8 split (FILE-SPLIT-08): setup-agents.ts → setup-agents/
- * subdirectory. The runtime leaf hosts `setupSingleAgent` (per-agent
- * factory) — this test file inspects its source body for skillRegistry
- * + OutputGuard + canary token + OAuth wiring + safePath discipline
- * (mirroring the pre-split setup-agents.test.ts describes that targeted
- * the per-agent factory body, lines 24-279 pre-split).
+ * Tests for the setup-agents runtime leaf hosting `setupSingleAgent` —
+ * inspects its source body for skillRegistry + OutputGuard + canary token
+ * + OAuth wiring + safePath discipline.
  *
  * @module
  */
@@ -15,10 +12,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { setupSingleAgent } from "./setup-agents-runtime.js";
-// selectOAuthCredentialStore relocated from @comis/agent to @comis/core in
-// Phase 35 Plan 35-04 per D-01 #2. Its consuming call-site lives in
+// selectOAuthCredentialStore's consuming call-site lives in
 // setup-agents-runtime.ts (and setup-agents-registry.ts), so its tests stay
-// co-located with the runtime leaf post-split.
+// co-located with the runtime leaf.
 import {
   selectOAuthCredentialStore,
   type OAuthCredentialStorePort,
@@ -122,14 +118,12 @@ describe("setupSingleAgent OAuth wiring", () => {
   });
 
   it("selects encrypted-mode adapter via selectOAuthCredentialStore branch", () => {
-    // Daemon side after Phase 31 commit 4 (MEM-CTX-PORTS-07): the daemon
-    // constructs the encrypted store inline (it owns secretsDb + secretsCrypto)
-    // and injects it into the selector via `encryptedStore`. The selector
-    // body itself no longer imports @comis/memory; it just returns the
-    // injected port for encrypted mode.
-    // Post-split (Phase 43 wave 8): selectOAuthCredentialStore is invoked
-    // from setup-agents-registry.ts; createOAuthProfileStoreEncrypted is also
-    // value-imported there (it constructs the encrypted store inline).
+    // The daemon constructs the encrypted store inline (it owns secretsDb +
+    // secretsCrypto) and injects it into the selector via `encryptedStore`.
+    // The selector body itself does not import @comis/memory; it just returns
+    // the injected port for encrypted mode. selectOAuthCredentialStore is
+    // invoked from setup-agents-registry.ts; createOAuthProfileStoreEncrypted
+    // is also value-imported there (it constructs the encrypted store inline).
     const registrySource = readFileSync(
       join(__dirname, "setup-agents-registry.ts"),
       "utf-8",
@@ -138,8 +132,8 @@ describe("setupSingleAgent OAuth wiring", () => {
     expect(registrySource).toContain('import { createOAuthProfileStoreEncrypted } from "@comis/memory"');
     expect(registrySource).toContain("createOAuthProfileStoreEncrypted(deps.secretsDb, deps.secretsCrypto)");
     expect(registrySource).toMatch(/selectOAuthCredentialStore\(\{[\s\S]*?encryptedStore[\s\S]*?\}\)/);
-    // Selector body lives in @comis/core (Phase 35 Plan 35-03 / D-01 #2)
-    // and now returns the injected port without touching any memory factory.
+    // Selector body lives in @comis/core and returns the injected port
+    // without touching any memory factory.
     const selectorSource = readFileSync(
       join(__dirname, "..", "..", "..", "..", "core", "src", "oauth", "oauth-credential-store-selector.ts"),
       "utf-8",
@@ -149,11 +143,9 @@ describe("setupSingleAgent OAuth wiring", () => {
     );
     expect(helperBody).toContain('storage === "encrypted"');
     expect(helperBody).toContain("return encryptedStore");
-    // Phase 32 commit 12 (ORCH-EXT-15): file factory now consumes the
-    // daemon-injected FileLockPort alongside dataDir.
+    // File factory consumes the daemon-injected FileLockPort alongside dataDir.
     expect(helperBody).toContain("fileFactory({ dataDir, fileLock })");
-    // Negative assertion: the selector source must NOT import @comis/memory
-    // (Phase 31 commit 4 cut MEM-CTX-PORTS-01's last value-import).
+    // Negative assertion: the selector source must NOT import @comis/memory.
     expect(selectorSource).not.toContain('from "@comis/memory"');
   });
 });
@@ -171,9 +163,9 @@ describe("selectOAuthCredentialStore", () => {
   }
 
   /**
-   * Minimal FileLockPort stub. Phase 32 commit 12 (ORCH-EXT-15) added
-   * `fileLock` to SelectOAuthCredentialStoreInput. The file branch forwards
-   * it into the file factory; the encrypted branch ignores it.
+   * Minimal FileLockPort stub. `fileLock` is required on
+   * SelectOAuthCredentialStoreInput; the file branch forwards it into the
+   * file factory, while the encrypted branch ignores it.
    */
   function makeFileLockStub(): import("@comis/core").FileLockPort {
     return {

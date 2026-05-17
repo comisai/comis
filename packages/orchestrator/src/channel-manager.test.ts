@@ -1,30 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AgentExecutor, SessionLifecycle } from "@comis/agent";
-// Phase 32 commit 7: MessageRouter moved to orchestrator (ORCH-EXT-08).
-// Phase 32 commit 8: CommandQueue moved to orchestrator (ORCH-EXT-08, Wave A close).
-// Relative paths used because orchestrator cannot import its own published name.
+// MessageRouter and CommandQueue live in this package; relative paths used
+// because orchestrator cannot import its own published name.
 import type { MessageRouter } from "./routing/message-router.js";
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { ChannelPort, NormalizedMessage, MessageHandler, DeliveryService } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
-// Phase 32 commit 4: channel-manager.ts joined this package from
-// packages/channels/src/shared/. The test is now co-located with the source
-// (packages/orchestrator/src/channel-manager.test.ts) and imports the real
-// production module + the real processInboundMessage via same-package relative
-// paths. Previously (commit 3) the test sat at orchestrator/src/__tests__/ and
-// imported createChannelManager from "@comis/channels" — that indirection is
-// gone now that the production source is here.
 import { createChannelManager, type ChannelManagerDeps } from "./channel-manager.js";
 import { processInboundMessage as realProcessInboundMessage } from "./inbound/inbound-pipeline.js";
 
-// Phase 30 plan 04: ChannelManagerDeps requires a DeliveryService. The fake's
-// deliverToChannel delegates to adapter.sendMessage so all the existing
-// assertions on adapter.sendMessage (chunking, replyTo extraction, per-platform
-// behavior) keep working — the assertions are observing the adapter call shape,
-// not the in-between DeliveryService call. This mirrors the
-// previously-vi.mock'd `deliverToChannel` pattern.
+// ChannelManagerDeps requires a DeliveryService. The fake's deliverToChannel
+// delegates to adapter.sendMessage so all the existing assertions on
+// adapter.sendMessage (chunking, replyTo extraction, per-platform behavior)
+// keep working — the assertions are observing the adapter call shape, not
+// the in-between DeliveryService call.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake
 function makeFakeDeliveryService(): DeliveryService {
   return {
@@ -147,17 +138,15 @@ function makeDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManagerDeps {
     createExecutor: vi.fn(() => executor),
     adapters: [makeAdapter()],
     logger: createMockLogger(),
-    // Phase 30 plan 04: DeliveryService is required on ChannelManagerDeps. The
-    // fake delegates to adapter.sendMessage so the existing assertions remain
-    // valid (assertions observe adapter call shape, not the in-between layer).
+    // DeliveryService is required on ChannelManagerDeps. The fake delegates
+    // to adapter.sendMessage so the existing assertions remain valid
+    // (assertions observe adapter call shape, not the in-between layer).
     deliveryService: makeFakeDeliveryService(),
-    // Phase 32 commit 3: processInboundMessage is injected (channel-manager no
-    // longer static-imports it — moved to @comis/orchestrator at this commit).
-    // Default wires the REAL implementation so existing test assertions on
-    // executor.execute / adapter.sendMessage / preprocessMessage / etc. still
-    // exercise the full inbound pipeline. Individual tests that want a spy
-    // override this field via the `overrides` parameter. At commit 4 channel-
-    // manager moves to orchestrator and the indirection unwinds.
+    // processInboundMessage is injected. Default wires the REAL
+    // implementation so existing test assertions on executor.execute /
+    // adapter.sendMessage / preprocessMessage / etc. still exercise the
+    // full inbound pipeline. Individual tests that want a spy override
+    // this field via the `overrides` parameter.
     processInboundMessage: realProcessInboundMessage as unknown as ChannelManagerDeps["processInboundMessage"],
     ...overrides,
   };

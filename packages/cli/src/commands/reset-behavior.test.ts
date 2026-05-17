@@ -25,9 +25,8 @@ vi.mock("@clack/prompts", () => ({
   cancel: vi.fn(),
 }));
 
-// importOriginal-based so callTyped (Plan 35-19 Wave C closure) resolves
-// to the real wrapper while withClient is mocked. Same pattern as Plan
-// 35-16's agent-behavior.test.ts.
+// importOriginal-based so callTyped resolves to the real wrapper while
+// withClient is mocked. Same pattern as agent-behavior.test.ts.
 vi.mock("../client/rpc-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
   return {

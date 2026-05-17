@@ -29,8 +29,8 @@ import {
   isWhatsAppGroupJid,
   isWhatsAppUserJid,
   extractJidPhone,
-  // Shared (channels-side surface remaining after Phase 32 commit 4 — channel-manager
-  // moved to @comis/orchestrator; createTypingController stays in channels)
+  // Shared (channels-side surface — channel-manager lives in
+  // @comis/orchestrator; createTypingController stays in channels)
   createTypingController,
 } from "./index.js";
 
@@ -69,7 +69,7 @@ describe("@comis/channels barrel exports", () => {
   });
 
   it("exports shared infrastructure", () => {
-    // Phase 32 commit 4: createChannelManager moved to @comis/orchestrator.
+    // createChannelManager lives in @comis/orchestrator;
     // createTypingController remains in @comis/channels public surface.
     expect(typeof createTypingController).toBe("function");
   });

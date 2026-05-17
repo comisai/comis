@@ -167,8 +167,8 @@ function substituteString(
   // Step 3: Perform actual substitution
   working = working.replace(ENV_VAR_PATTERN, (_match, varName: string) => {
     // Step 2's missing-var loop above already guarantees presence; this defensive
-    // null-coalesce keeps the type system happy without a non-null assertion
-    // (Phase 41 TS-HYG-12). The empty-string fallback is unreachable in practice.
+    // null-coalesce keeps the type system happy without a non-null assertion.
+    // The empty-string fallback is unreachable in practice.
     return getSecret(varName) ?? "";
   });
 

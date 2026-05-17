@@ -8,12 +8,11 @@
  * @comis/daemon, @comis/orchestrator). infra is a low-level logging
  * + utility package; nothing downstream may flow back into it.
  *
- * Note (L12 closed in Phase 28 commit 2 / CORE-PORTS-05): the Pino-free
- * structural ComisLogger contract + LogFields + ErrorKind +
- * VALID_LOG_LEVELS + isValidLogLevel canonically live in @comis/core.
- * @comis/infra is now Pino-runtime-only; `infra/src/logging/logger.ts`
- * imports ComisLogger as a type alias from @comis/core (assignability
- * proof: `infra/src/logging/__tests__/logger-contract.test.ts`).
+ * Note: the Pino-free structural ComisLogger contract + LogFields +
+ * ErrorKind + VALID_LOG_LEVELS + isValidLogLevel canonically live in
+ * @comis/core. @comis/infra is Pino-runtime-only; `infra/src/logging/
+ * logger.ts` imports ComisLogger as a type alias from @comis/core
+ * (assignability proof: `infra/src/logging/__tests__/logger-contract.test.ts`).
  *
  * @module
  */
@@ -58,8 +57,8 @@ describe("@comis/infra -- architecture invariants", () => {
             snippet: v.snippet,
           })),
           suggestedFix:
-            "If a type is needed, move it to @comis/core; if a runtime value, the dependency direction is wrong (infra is downstream-of nothing in the §2.2 target package graph).",
-          designRef: "design §2.2 / L12 (logger types canonical location)",
+            "If a type is needed, move it to @comis/core; if a runtime value, the dependency direction is wrong (infra is downstream-of nothing in the target package graph).",
+          designRef: "logger types canonical location",
         }),
       ).toEqual([]);
       // Pattern E sanity check: helper actually walked production source files.
@@ -68,12 +67,11 @@ describe("@comis/infra -- architecture invariants", () => {
   }
 
   it("infra/src/logging/logger.ts imports ComisLogger contract from @comis/core", () => {
-    // Phase 28 commit 2 (CORE-PORTS-05) closed L12: the Pino-free structural
-    // ComisLogger contract canonically lives in @comis/core, not @comis/infra.
-    // The infra logger module retypes its `ComisLogger` alias to point at the
-    // core contract; the assignability proof in
-    // `infra/src/logging/__tests__/logger-contract.test.ts` guarantees the
-    // Pino-backed runtime impl satisfies the structural shape.
+    // The Pino-free structural ComisLogger contract canonically lives in
+    // @comis/core, not @comis/infra. The infra logger module retypes its
+    // `ComisLogger` alias to point at the core contract; the assignability
+    // proof in `infra/src/logging/__tests__/logger-contract.test.ts`
+    // guarantees the Pino-backed runtime impl satisfies the structural shape.
     //
     // This rule guards the source-grep boundary so a future edit that
     // recreates a local `pino.Logger<...>` alias (without going through the
@@ -84,17 +82,15 @@ describe("@comis/infra -- architecture invariants", () => {
       content.includes(
         'import type { ComisLogger as CoreComisLogger } from "@comis/core"',
       ),
-      "L12 (closed in Phase 28 commit 2 / CORE-PORTS-05): infra/src/logging/logger.ts " +
-        'must `import type { ComisLogger as CoreComisLogger } from "@comis/core"`. ' +
+      'infra/src/logging/logger.ts must `import type { ComisLogger as CoreComisLogger } from "@comis/core"`. ' +
         "The Pino-free structural ComisLogger contract canonically lives in @comis/core; " +
         "infra's runtime Pino factory must retype its ComisLogger alias to point at it.",
     ).toBe(true);
     expect(
       content.includes("export type ComisLogger = CoreComisLogger"),
-      "L12 (closed in Phase 28 commit 2 / CORE-PORTS-05): infra/src/logging/logger.ts " +
-        "must `export type ComisLogger = CoreComisLogger`. Re-aliasing keeps every " +
-        "call-site name inside infra unchanged while moving the contract canonical " +
-        "home to @comis/core.",
+      "infra/src/logging/logger.ts must `export type ComisLogger = CoreComisLogger`. " +
+        "Re-aliasing keeps every call-site name inside infra unchanged while moving " +
+        "the contract canonical home to @comis/core.",
     ).toBe(true);
   });
 });

@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure-function tests for cache-breakpoints.ts + cache-control-block.ts
- * (Phase 42 EXEC-SPLIT-02 / EXEC-SPLIT-03 — module-aligned test neighbor).
+ * Pure-function tests for cache-breakpoints.ts + cache-control-block.ts.
  *
- * Extracted from factory.test.ts (the integration suite). Hosts describes
- * that test the public surface without invoking createRequestBodyInjector:
+ * Hosts describes that test the public surface without invoking
+ * createRequestBodyInjector:
  *
  *  - getMinCacheableTokens (cache-breakpoints.ts)
  *  - CACHEABLE_BLOCK_TYPES (cache-control-block.ts re-export)
  *  - addCacheControlToLastBlock (cache-control-block.ts re-export)
  *  - resolveCacheRetention (cache-breakpoints.ts) -- per-model retention overrides
  *  - sortToolsForCacheStability (cache-breakpoints.ts)
- *
- * All describes lifted verbatim from request-body-injector.test.ts (the
- * pre-split test file at HEAD~1 prior to the rename to factory.test.ts).
  *
  * @module
  */

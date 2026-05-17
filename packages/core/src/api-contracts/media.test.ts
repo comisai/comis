@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the media + image domain Wave C contracts.
+ * Per-contract test for the media + image domain contracts.
  *
- * Plan 35-15 (Wave C domain #10). Covers the 16 contracts spanning the
- * two daemon handler-factory files that share the `MediaApiDeps` cluster
- * slice:
+ * Covers the 16 contracts spanning the two daemon handler-factory files that
+ * share the `MediaApiDeps` cluster slice:
  *   - media-handlers.ts (15 methods)
  *   - image-handlers.ts ( 1 method)
- *
- * Mirrors the structure of `memory.test.ts` (Plan 35-14 2-handler-factory
- * precedent) + `workspace.test.ts` (Plan 35-13 multi-file precedent).
  *
  * @module
  */
@@ -90,14 +86,14 @@ describe("media + image domain contracts", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INTERNAL_FIELD_NAMES paired sanity (D-04 + Pitfall 6)
+  // INTERNAL_FIELD_NAMES paired sanity
   // -------------------------------------------------------------------------
 
   it("no contract request schema declares any INTERNAL_FIELD_NAMES key", () => {
     // The 15 internal `_X` field names (e.g. `_callerSessionKey`, `_trustLevel`)
     // are dispatcher-injected and MUST be stripped via `stripInternalFields()`
     // BEFORE contract.request.parse(). They MUST NOT appear as keys in any
-    // request schema's top-level shape (D-04 + Pitfall 6).
+    // request schema's top-level shape.
     const internalSet = new Set(INTERNAL_FIELD_NAMES);
     for (const contract of MEDIA_CONTRACTS) {
       const shape = (contract.request as unknown as { shape?: Record<string, unknown> }).shape;
@@ -240,7 +236,7 @@ describe("media + image domain contracts", () => {
     expect(() => AudioTranscribeContract.request.parse({})).not.toThrow();
   });
 
-  it("audio.transcribe: response is a loose record (D-05 — success + error variants)", () => {
+  it("audio.transcribe: response is a loose record (success + error variants)", () => {
     expect(() =>
       AudioTranscribeContract.response.parse({
         text: "hello",
@@ -476,7 +472,7 @@ describe("media + image domain contracts", () => {
     expect(() => MediaProvidersContract.request.parse({})).not.toThrow();
   });
 
-  it("media.providers: response is a loose record (D-05 — variable provider config)", () => {
+  it("media.providers: response is a loose record (variable provider config)", () => {
     expect(() =>
       MediaProvidersContract.response.parse({
         stt: { provider: "configured" },
@@ -511,7 +507,7 @@ describe("media + image domain contracts", () => {
     ).not.toThrow();
   });
 
-  it("image.generate: response is a loose record (D-05 — 3 delivery variants)", () => {
+  it("image.generate: response is a loose record (3 delivery variants)", () => {
     // failure variant
     expect(() =>
       ImageGenerateContract.response.parse({

@@ -6,8 +6,6 @@
  * compression branch paths that are otherwise reached only via the full
  * integration pipeline.
  *
- * Phase 40 / Plan 40-12 / COV-03 — orchestrator branches gap closure.
- *
  * @module
  */
 import { describe, it, expect, vi } from "vitest";

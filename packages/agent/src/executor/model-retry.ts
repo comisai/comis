@@ -76,9 +76,9 @@ export interface ModelRetryParams {
     lastKnownModel?: LastKnownModelTracker;
     /** Callback to receive the resetTimer function from the resettable prompt timeout. */
     onResetTimer?: (resetFn: () => void) => void;
-    /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+    /** Wall-clock + monotonic time reads. */
     clock: ClockPort;
-    /** Timer scheduling (Phase 39 PORTS-13). Short-retry uses timers.setTimeout. */
+    /** Timer scheduling. Short-retry uses timers.setTimeout. */
     timers: TimerPort;
   };
 }
@@ -92,7 +92,7 @@ export interface ModelRetryResult {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers (moved from pi-executor.ts -- only used by fallback loop)
+// Helpers used by the fallback loop
 // ---------------------------------------------------------------------------
 
 /**

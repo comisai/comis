@@ -3,8 +3,9 @@
  * DaemonContext: The full typed container of all wired daemon services.
  * This interface describes every service, adapter, and resolver that the
  * daemon's main() function creates during startup. Extraction functions
- * in Phases 169-172 accept DaemonContext (or a partial subset) as input
- * and return partial results that assemble into it.
+ * accept DaemonContext (or a partial subset) as input and return partial
+ * results that assemble into it.
+ *
  * DaemonContext is the single source of truth for the daemon's wired
  * dependency graph -- eliminating ad-hoc parameter lists and preventing
  * circular imports between extraction modules.
@@ -18,7 +19,6 @@ import type { SqliteMemoryAdapter, createSessionStore, createEmbeddingQueue, Mem
 import type { HeartbeatRunner, CronScheduler, createExecutionTracker } from "@comis/scheduler";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { BrowserService, RpcCall, LinkRunner } from "@comis/skills";
-// Phase 32 commit 4: ChannelManager type moved with channel-manager.ts to @comis/orchestrator.
 import type { ChannelManager } from "@comis/orchestrator";
 import type { DeviceIdentity } from "@comis/core";
 
@@ -38,9 +38,8 @@ import type { createSubAgentRunner } from "@comis/agent";
 /**
  * The full container of wired daemon services, passed between
  * `wireXxx()` and `setupXxx()` functions during daemon decomposition.
- * Each field corresponds to a local variable in the current daemon.ts
- * main() function. As extraction progresses (Phases 169-173), setup
- * functions will populate subsets of this context incrementally.
+ * Each field corresponds to a local variable in the daemon.ts main()
+ * function; setup functions populate subsets of this context incrementally.
  */
 export interface DaemonContext {
   // -- Core ------------------------------------------------------------------

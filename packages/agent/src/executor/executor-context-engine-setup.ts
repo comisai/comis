@@ -57,7 +57,7 @@ export interface ContextEngineSetupDeps {
    * with fallthrough to authStorage for non-OAuth providers.
    */
   oauthManager?: OAuthTokenManager;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
 }
 
@@ -136,7 +136,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // contextEngineOverrides removed from ExecutionOverrides -- compaction model resolved via operationModels chain
   const contextEngineConfig = config.contextEngine ?? ContextEngineConfigSchema.parse({});
 
-  // --- Replay drift memo (Fix #2) -----------------------------------------
+  // --- Replay drift memo ---------------------------------------------------
   // Memoized per-execute() so all pipeline runs in a single execute() see a
   // consistent decision (cleaner + scrubber must agree). The closure reads
   // the latest model identity each time (handles cycleModel mid-execute).
@@ -242,8 +242,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       if (drift?.drop) return 0;
       return undefined; // Use default keepTurns
     },
-    // Replay drift mode getter (Fix #2): activates the
-    // signature-replay-scrubber pipeline layer when drift is detected.
+    // Replay drift mode getter: activates the signature-replay-scrubber
+    // pipeline layer when drift is detected.
     getReplayDriftMode: () => computeDriftIfNeeded(),
 
     // LLM compaction deps

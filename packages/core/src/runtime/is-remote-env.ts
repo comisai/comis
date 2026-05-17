@@ -11,13 +11,6 @@
  * so operators can override the heuristic when it guesses wrong (e.g. tmux
  * over SSH where DISPLAY is set by tunneling but they still want manual paste).
  *
- * Relocated from `@comis/agent/src/model/oauth-env.ts` in Phase 35 Plan 35-02
- * per Decision D-01 #3 (CLI cuts its `@comis/agent` import surface; the helper
- * is pure, so co-locating it next to is-docker.ts in core/src/runtime/ has no
- * runtime cost). The agent-side copy stays in place per the no-backward-compat
- * convention — Plan 35-05 deletes it once CLI consumers retarget to
- * `@comis/core`.
- *
  * @module
  */
 

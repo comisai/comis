@@ -3,17 +3,15 @@
  * Architecture invariants for @comis/gateway.
  *
  * Forbidden-import rules:
- *   - Production source MUST NOT import @comis/agent. Phase 28 commit 5
- *     (CORE-PORTS-14 / L4 closure) moved the OAuth helpers
- *     (resolveCodexAuthIdentity, rewriteOAuthError, redactEmailForLog) to
- *     @comis/core/security; gateway now imports them from @comis/core.
- *     The L4 allowlist is closed (unconditional rule).
+ *   - Production source MUST NOT import @comis/agent. The OAuth helpers
+ *     (resolveCodexAuthIdentity, rewriteOAuthError, redactEmailForLog) live
+ *     in @comis/core/security; gateway imports them from @comis/core.
  *   - Production source MUST NOT import @comis/cli, @comis/skills,
  *     @comis/scheduler, @comis/memory, @comis/channels, @comis/daemon,
- *     @comis/orchestrator. gateway is a transport-only layer; the §2.2
- *     target package graph allows only @comis/{shared, core}.
+ *     @comis/orchestrator. gateway is a transport-only layer; the target
+ *     package graph allows only @comis/{shared, core}.
  *
- * Binding rule (design §5.3):
+ * Binding rule:
  *   - oauth-callback-route.ts imports the OAuth helpers from @comis/core
  *     (not @comis/agent).
  *
@@ -60,12 +58,12 @@ describe("@comis/gateway -- architecture invariants", () => {
           })),
           suggestedFix:
             forbidden === "@comis/agent"
-              ? "Phase 28 commit 5 / L4 closure: OAuth helpers (resolveCodexAuthIdentity, rewriteOAuthError, redactEmailForLog) live in @comis/core/security. Replace `from \"@comis/agent\"` with `from \"@comis/core\"`."
-              : "gateway is a transport-only layer; allowed deps per §2.2 are only @comis/{shared, core}.",
+              ? "OAuth helpers (resolveCodexAuthIdentity, rewriteOAuthError, redactEmailForLog) live in @comis/core/security. Replace `from \"@comis/agent\"` with `from \"@comis/core\"`."
+              : "gateway is a transport-only layer; allowed deps are only @comis/{shared, core}.",
           designRef:
             forbidden === "@comis/agent"
-              ? "design §5.2 + §1.3 L4 (closed in Phase 28 commit 5 / CORE-PORTS-14)"
-              : "design §2.2 (target package graph)",
+              ? "OAuth helpers consolidated in @comis/core/security"
+              : "target package graph",
         }),
       ).toEqual([]);
       expect(checkedFiles, "sanity: findForbiddenImports walked at least one gateway/src file").toBeGreaterThan(0);
@@ -73,10 +71,9 @@ describe("@comis/gateway -- architecture invariants", () => {
   }
 
   // -------------------------------------------------------------------------
-  // Phase 28 commit 5 (CORE-PORTS-14 / L4 closure) — binding rule from design
-  // §5.3. Asserts the gateway's OAuth callback route imports the helpers from
-  // @comis/core (the single source of truth post-consolidation), not from a
-  // back-edge into @comis/agent (deleted in the same commit).
+  // Asserts the gateway's OAuth callback route imports the helpers from
+  // @comis/core (the single source of truth), not from a back-edge into
+  // @comis/agent.
   // -------------------------------------------------------------------------
 
   it("imports oauth helpers from @comis/core", () => {
@@ -89,7 +86,7 @@ describe("@comis/gateway -- architecture invariants", () => {
     if (!/from\s+"@comis\/core"/.test(source)) missing.push('import from "@comis/core" (path)');
     expect(
       missing,
-      "gateway/src/oauth/oauth-callback-route.ts must import resolveCodexAuthIdentity + rewriteOAuthError + redactEmailForLog from @comis/core (post-L4-closure single source).",
+      "gateway/src/oauth/oauth-callback-route.ts must import resolveCodexAuthIdentity + rewriteOAuthError + redactEmailForLog from @comis/core.",
     ).toEqual([]);
   });
 });

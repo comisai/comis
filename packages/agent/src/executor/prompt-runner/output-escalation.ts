@@ -8,12 +8,8 @@
  * timeout cost estimation) live in `./failure-path.js` so each module
  * stays at or below the 500L cap.
  *
- * Phase 42 split per EXEC-SPLIT-07 — was lines 876-1187 of the pre-split
- * `executor-prompt-runner.ts` (the failure-path region 1188-1385 moved to
- * `failure-path.ts`).
- *
- * Per EXEC-SPLIT-08 this module imports types only from
- * `./prompt-runner-types.js` — never from `./prompt-runner.js`.
+ * This module imports types only from `./prompt-runner-types.js` — never
+ * from `./prompt-runner.js`.
  *
  * @module
  */

@@ -3,17 +3,16 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: [],
-    // Phase 40 / Plan 40-09 / COV-15: test/e2e is the wire-level
-    // end-to-end project — spawns real daemons against 127.0.0.1 mock
-    // chat-platform servers. Has its own vitest.config.ts (no coverage
-    // thresholds; e2e tier owns its own scope per AGENTS.md §2.5).
+    // test/e2e is the wire-level end-to-end project — spawns real daemons
+    // against 127.0.0.1 mock chat-platform servers. Has its own
+    // vitest.config.ts (no coverage thresholds; e2e tier owns its own
+    // scope per AGENTS.md §2.5).
     projects: ["packages/*", "test/architecture", "test/e2e", "scripts/contracts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
-      // Phase 40 COV-01 / design §3.5: measurement scope is production source only.
+      // Measurement scope is production source only.
       include: ["packages/*/src/**/*.ts"],
-      // Phase 40 COV-01 / design §3.5 exclusion list (verbatim):
       exclude: [
         "**/*.test.ts",
         "**/__tests__/**",
@@ -24,18 +23,16 @@ export default defineConfig({
         "packages/web/src/**/*.css.ts",
         "packages/web/src/api/contracts.generated.ts",
       ],
-      // Phase 40 COV-05 monotonic ramp protocol: per-package floors derived from
-      // baseline JSON captured under .planning/code-quality/coverage-baseline-<date>/.
-      // Plan 40-07 (Cohort 2) ramps each floor toward the final 90/85/90/90 target.
-      // NOTE: integration-tier coverage (`pnpm test:integration --coverage`) measures
-      // in-process imports only — subprocess daemon code is the E2E tier's territory.
+      // Monotonic ramp protocol: per-package floors are derived from a
+      // measured baseline and ramp each floor toward the final
+      // 90/85/90/90 target. NOTE: integration-tier coverage
+      // (`pnpm test:integration --coverage`) measures in-process imports
+      // only — subprocess daemon code is the E2E tier's territory.
       //
-      // COV-03 / COV-05: per-package floor thresholds — Math.floor(measured) so the
-      // floor is strictly ≤ measured (no off-by-one fail on first run). Baseline
-      // captured 2026-05-15 (Phase 40 Wave 0); see
-      // .planning/code-quality/coverage-baseline-2026-05-15/README.md for the
-      // measured-vs-floor table. The `comis` umbrella package (re-export-only,
-      // no test files) is intentionally floored at 0/0/0/0 — no enforcement.
+      // Per-package floor thresholds — Math.floor(measured) so the floor
+      // is strictly ≤ measured (no off-by-one fail on first run). The
+      // `comis` umbrella package (re-export-only, no test files) is
+      // intentionally floored at 0/0/0/0 — no enforcement.
       thresholds: {
         "packages/shared/src/**/*.ts":       { lines: 97, branches: 92, functions: 96,  statements: 97 },
         "packages/core/src/**/*.ts":         { lines: 91, branches: 79, functions: 91,  statements: 91 },

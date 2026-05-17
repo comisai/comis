@@ -2,13 +2,13 @@
 /**
  * `comis auth` CLI command tree.
  *
- * Four subcommands with storage-mode-branching (Phase 31, MEM-CTX-PORTS-09):
+ * Four subcommands with storage-mode-branching:
  *
  * - `comis auth login`   — interactive OAuth login (browser + manual paste).
  *                          Runs locally for file-backed storage; encrypted
- *                          storage fails fast (daemon-assisted login is out
- *                          of scope for Phase 31 per design §8.2.7). Accepts
- *                          `--profile <id>` to override the storage key.
+ *                          storage fails fast (daemon-assisted login is not
+ *                          yet supported). Accepts `--profile <id>` to
+ *                          override the storage key.
  * - `comis auth list`    — list stored profiles. File-mode reads the local
  *                          file store; encrypted-mode calls daemon RPC
  *                          `auth.list` (token-stripped projection).
@@ -29,7 +29,7 @@
  * through `withClient` (after `requireDaemonOrExit`) or uses the existing
  * `openOAuthStoreFromConfig` helper unchanged. The helper itself fails fast
  * on encrypted storage (defense-in-depth) — encrypted mode never reaches
- * `selectOAuthCredentialStore` from this file post-31-04.
+ * `selectOAuthCredentialStore` from this file.
  *
  * Only `--provider openai-codex` is supported for `auth login` today. Other
  * providers ship later. The `--provider` filter on `list` / `status` is
@@ -58,21 +58,17 @@ import {
   selectOAuthCredentialStore,
   loginOpenAICodexOAuth,
   isRemoteEnvironment,
-  // Phase 35 Plan 35-04 (D-01 #1/#2/#3): D-01 symbol groups all consumed
-  // from @comis/core. createFileLock relocated from @comis/scheduler;
-  // OAuth helpers relocated from @comis/agent. CLI no longer routes
-  // through the @comis/agent barrel for any of these.
+  // createFileLock and OAuth helpers are consumed from @comis/core.
+  // CLI no longer routes through the @comis/agent barrel for these.
   createFileLock,
-  // Phase 35 Plan 35-05 (WEB-CONTRACTS-03 / L12 closure): createConsoleLogger
-  // is the Pino-free replacement for @comis/infra's createLogger (Plan 35-02
-  // shipped the relocation). CLI no longer imports from @comis/infra.
+  // createConsoleLogger is the Pino-free logger for CLI use.
+  // CLI does not import from @comis/infra.
   createConsoleLogger,
   type OAuthError,
 } from "@comis/core";
-// Phase 35 Wave C (Plan 35-07): auth.list / auth.logout RPC calls go
-// through `callTyped(client, <Contract>, params)` so the typed RPC
-// surface (D-10 LOCKED VALIDATE gate + bidirectional 1:1 architecture
-// test) covers this file. The contracts mirror `auth-handlers.ts` —
+// auth.list / auth.logout RPC calls go through
+// `callTyped(client, <Contract>, params)` so the typed RPC surface
+// validates this file. The contracts mirror `auth-handlers.ts` —
 // see `packages/core/src/api-contracts/auth.ts`.
 import { AuthListContract, AuthLogoutContract } from "@comis/core";
 import { error, info, success } from "../output/format.js";
@@ -209,7 +205,7 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
   const dataDir = safePath(homedir(), ".comis");
   // CLI composition root: construct the FileLockPort adapter here so agent's
   // selectOAuthCredentialStore can stay scheduler-free. Single instance per
-  // CLI invocation — short-lived and stateless (per Phase 32 commit 12).
+  // CLI invocation — short-lived and stateless.
   const fileLock = createFileLock();
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const envPaths = process.env.COMIS_CONFIG_PATHS;
@@ -477,7 +473,7 @@ export function registerAuthCommand(program: Command): void {
         await requireDaemonOrExit();
         try {
           // callTyped enforces the AuthListContract request/response
-          // schemas under the D-10 VALIDATE gate (dev or
+          // schemas under the VALIDATE gate (dev or
           // COMIS_CLI_VALIDATE=1). Production skips the parse for
           // cold-start budget compliance — the daemon side always parses.
           const result = await withClient(async (client) =>
@@ -541,7 +537,7 @@ export function registerAuthCommand(program: Command): void {
       if (storage === "encrypted") {
         await requireDaemonOrExit();
         try {
-          // callTyped enforces AuthLogoutContract under the D-10 gate.
+          // callTyped enforces AuthLogoutContract under the VALIDATE gate.
           const result = await withClient(async (client) =>
             callTyped(client, AuthLogoutContract, {
               profileId: opts.profile,
@@ -625,7 +621,7 @@ export function registerAuthCommand(program: Command): void {
       if (storage === "encrypted") {
         await requireDaemonOrExit();
         try {
-          // callTyped enforces AuthListContract under the D-10 gate.
+          // callTyped enforces AuthListContract under the VALIDATE gate.
           // The contract response shape (RedactedOAuthProfileSchema) is
           // assignable to DisplayProfile (same fields plus structural
           // optionality on email + displayName).

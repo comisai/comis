@@ -7,9 +7,9 @@ import { createMessageHandlers, type MessageHandlerDeps } from "./message-handle
 import { ok } from "@comis/shared";
 import type { ChannelPort, AttachmentPayload, ChannelPluginPort, ChannelCapability, DeliveryService } from "@comis/core";
 
-// Phase 30 plan 04: MessageHandlerDeps requires a DeliveryService. The fake
-// delegates to adapter.sendMessage so existing message.send / message.reply
-// assertions on adapter.sendMessage stay valid.
+// MessageHandlerDeps requires a DeliveryService. The fake delegates to
+// adapter.sendMessage so existing message.send / message.reply assertions on
+// adapter.sendMessage stay valid.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake
 function makeFakeDeliveryService(): DeliveryService {
   return {

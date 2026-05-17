@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: Unknown config section guard in serializeSection(); consumed via daemon config-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).
+// @allow-throw: Unknown config section guard in serializeSection(); consumed via daemon config-handlers (@allow-throw boundary).
 /**
  * Config schema serializer: converts Zod schemas to JSON Schema for agent introspection.
  *
@@ -21,10 +21,10 @@ import { SECTION_REGISTRY } from "./section-registry.js";
 /**
  * Maps config section names to their Zod schema objects.
  *
- * Derived from SECTION_REGISTRY (Phase 30, CONFIG-DELIV-02). The legacy
- * standalone SECTION_SCHEMAS literal previously held its own 16-entry list
- * and drifted from field-metadata.ts and managed-sections.ts. Now there is
- * a single source of truth.
+ * Derived from SECTION_REGISTRY. The legacy standalone SECTION_SCHEMAS
+ * literal previously held its own 16-entry list and drifted from
+ * field-metadata.ts and managed-sections.ts. Now there is a single source
+ * of truth.
  */
 const SECTION_SCHEMAS: Record<string, z.ZodType> = Object.fromEntries(
   Object.entries(SECTION_REGISTRY)

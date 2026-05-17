@@ -8,8 +8,6 @@
  * Catches `prepack.js` bundling regressions and silent re-export shadowing
  * (e.g., a future PR replacing `export *` with a hand-rolled wrapper).
  *
- * Phase 40 / Phase C §6.3.5 / COV-09.
- *
  * @module
  */
 

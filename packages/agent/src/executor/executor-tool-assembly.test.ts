@@ -16,8 +16,8 @@
  * discovery tracker) so the test focuses on the merge / override / wiring
  * decisions in this module itself.
  *
- * Use-case design (Phase 40 / Phase C §3.3 / COV-10): every `it("...")`
- * description names a use case ≥20 chars ending in a recognizable shape.
+ * Use-case design: every `it("...")` description names a use case ≥20 chars
+ * ending in a recognizable shape.
  *
  * @module
  */

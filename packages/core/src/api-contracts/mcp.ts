@@ -3,9 +3,9 @@
  * MCP-server-management RPC contracts. Mirrors
  * `packages/daemon/src/api/mcp-handlers.ts`.
  *
- * Phase 35 Wave C plan 35-10 (Wave C domain #5). The mcp-handlers.ts
- * factory exposes 6 admin-scoped methods that gate the runtime
- * lifecycle of MCP (Model Context Protocol) server connections:
+ * The mcp-handlers.ts factory exposes 6 admin-scoped methods that gate
+ * the runtime lifecycle of MCP (Model Context Protocol) server
+ * connections:
  *
  *   - `mcp.list`        (admin) — enumerate active MCP server connections
  *                                  with status + tool counts + per-server
@@ -46,28 +46,21 @@
  * "mcp.connect", "mcp.disconnect", "mcp.reconnect", "mcp.test"],
  * "admin")`).
  *
- * **BLOCKER 1 exemption.** `mcp.*` RPC methods are managed via the web SPA
- * only — no CLI consumer exists for any of the 6 methods in
+ * The `mcp.*` RPC methods are managed via the web SPA only — no CLI
+ * consumer exists for any of the 6 methods in
  * `packages/cli/src/commands/`. The CLI does have a `comis mcp` command
  * surface (managing config-side `integrations.mcp.servers` entries), but
  * those flows touch `config.read` / `config.patch` — NOT `mcp.list` /
- * `mcp.status` / etc. Wave D codegen will source any future web-side
- * types from this contract registry; for now, no CLI retarget is needed.
+ * `mcp.status` / etc.
  *
- * **Plan-vs-handler shape corrections (Rule 1 — mirrors Plan 35-09
- * precedent).** The plan's `<interfaces>` block enumerated the request
- * shapes with `id: string` as the canonical server identifier. Reality
- * (mcp-handlers.ts lines 51, 82, 128, 142, 191): the handler reads
- * `server_name` for 4 of the 6 methods (status, connect, disconnect,
- * reconnect) and `name` for `mcp.test` (line 142). The contract request
- * schemas model the ACTUAL handler-read param names verbatim (single
- * source of truth per D-08); modelling `id` would have broken the
- * existing mcp-handlers.test.ts assertions on `server_name`/`name`
- * params. `mcp.connect` and `mcp.reconnect` ALSO carry `headers`
- * (Record<string, string>) — not in the plan's <interfaces> block, but
- * present in handler lines 96 + 211 + the existing test assertions
- * (mcp-handlers.test.ts lines 241-256 + 446-463 verify `headers`
- * pass-through).
+ * **Request param names match the handler.** mcp-handlers.ts (lines 51,
+ * 82, 128, 142, 191) reads `server_name` for 4 of the 6 methods (status,
+ * connect, disconnect, reconnect) and `name` for `mcp.test` (line 142).
+ * The contract request schemas model the ACTUAL handler-read param names
+ * verbatim. `mcp.connect` and `mcp.reconnect` ALSO carry `headers`
+ * (Record<string, string>), present in handler lines 96 + 211 + the
+ * existing test assertions (mcp-handlers.test.ts lines 241-256 + 446-463
+ * verify `headers` pass-through).
  *
  * Response shapes match the handler's actual return values verbatim:
  *   - `mcp.list` returns `{ servers: ServerListEntry[], total: number }`
@@ -95,8 +88,7 @@
  *     are optional and conditional on success/failure paths.
  *
  * Status enum is the 5-value `McpConnectionStatus` from
- * `packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts`
- * (post-Phase-43-FILE-SPLIT-11):
+ * `packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts`:
  * `"connected" | "disconnected" | "connecting" | "reconnecting" | "error"`.
  *
  * Capabilities is `Record<string, unknown>` from the SDK
@@ -116,16 +108,14 @@ import { defineContract } from "./types.js";
 
 /**
  * MCP transport protocols. Mirrors the `McpServerConfig.transport` union
- * in `packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts`
- * (post-Phase-43-FILE-SPLIT-11):
+ * in `packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts`:
  * `"stdio" | "sse" | "http"`. The 12-shape allowlist permits `z.enum`.
  */
 const McpTransportEnum = z.enum(["stdio", "sse", "http"]);
 
 /**
  * MCP connection statuses. Mirrors `McpConnectionStatus` in
- * `packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts`
- * (post-Phase-43-FILE-SPLIT-11).
+ * `packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts`.
  * The 5-value union is closed (no new states without an SDK change).
  */
 const McpConnectionStatusEnum = z.enum([
@@ -139,7 +129,7 @@ const McpConnectionStatusEnum = z.enum([
 /**
  * Server-info / serverVersion shape from the MCP SDK
  * (`getServerVersion()` returns `{ name, version }` or undefined).
- * Mirrors `McpConnection.serverInfo` in mcp-client/mcp-client-types.ts (post-Phase-43-FILE-SPLIT-11).
+ * Mirrors `McpConnection.serverInfo` in mcp-client/mcp-client-types.ts.
  */
 const McpServerInfoSchema = z.object({
   name: z.string(),
@@ -148,7 +138,7 @@ const McpServerInfoSchema = z.object({
 
 /**
  * MCP tool-definition shape returned by the SDK after connect. Mirrors
- * `McpToolDefinition` in mcp-client/mcp-client-types.ts (post-Phase-43-FILE-SPLIT-11). The response side
+ * `McpToolDefinition` in mcp-client/mcp-client-types.ts. The response side
  * for `mcp.status` projects to the 3 user-facing fields the handler
  * exposes (line 64-68): `name`, `qualifiedName`, `description`.
  * `inputSchema` is intentionally omitted from the wire response shape —
@@ -235,10 +225,8 @@ export const McpListContract = defineContract({
  * (mcp-handlers.ts:51) and raises `"Missing required parameter:
  * server_name"` when absent (line 52). Non-empty by contract via
  * `z.string().min(1)`; bespoke pre-Zod guard at handler line 52 produces
- * the user-friendly UX. NOTE: the plan's <interfaces> block stated
- * `{ id?: string }` (optional, key=id); reality reads `server_name`
- * REQUIRED — modelling `id` would have broken the existing
- * mcp-handlers.test.ts assertions (lines 149-200 all use `server_name`).
+ * the user-friendly UX. The handler reads `server_name` REQUIRED;
+ * mcp-handlers.test.ts lines 149-200 all assert on `server_name`.
  *
  * Response: full `McpStatusServerSchema` projection. Empty `tools` array
  * is permitted (a connected server may export no tools — see
@@ -276,10 +264,9 @@ export const McpStatusContract = defineContract({
  * Response: `{ name, status, toolCount, tools: string[] }` (handler lines
  * 119-124). `tools` is a `string[]` of tool NAMES (NOT
  * `McpToolDefinition[]`) — handler maps `result.value.tools.map((t) =>
- * t.name)`. NOTE: the plan's <interfaces> block stated `{ id }` as the
- * request id; reality reads `server_name` REQUIRED — modelling `id` would
- * have broken the existing mcp-handlers.test.ts assertions and the actual
- * RPC wire format consumed by the web SPA.
+ * t.name)`. The handler reads `server_name` REQUIRED; this matches both
+ * the existing mcp-handlers.test.ts assertions and the actual RPC wire
+ * format consumed by the web SPA.
  */
 export const McpConnectContract = defineContract({
   method: "mcp.connect",
@@ -317,8 +304,7 @@ export const McpConnectContract = defineContract({
  * (server not found) throw "MCP server not found" before the return — so
  * `status` is effectively the literal `"disconnected"`. Modeled as
  * `z.literal("disconnected")` to capture the success-only shape (same
- * pattern as `TokensRevokeContract.response.revoked: z.literal(true)`
- * established in Plan 35-09).
+ * pattern as `TokensRevokeContract.response.revoked: z.literal(true)`).
  */
 export const McpDisconnectContract = defineContract({
   method: "mcp.disconnect",
@@ -386,11 +372,10 @@ export const McpReconnectContract = defineContract({
  *
  * Request: `{ name, transport, command?, args?, url?, env?, headers? }`.
  *   - `name` (string, min(1)) — server identifier. NOTE the handler reads
- *     `name` (NOT `server_name`) — mcp-handlers.ts line 142. The plan's
- *     `<interfaces>` block stated `{ id }`; reality reads `name`
- *     REQUIRED. The handler internally namespaces the test connection to
- *     `__test__<name>` (line 148) to avoid collision with a production
- *     server of the same identifier.
+ *     `name` (NOT `server_name`) — mcp-handlers.ts line 142. The handler
+ *     internally namespaces the test connection to `__test__<name>` (line
+ *     148) to avoid collision with a production server of the same
+ *     identifier.
  *   - `transport` (enum stdio|sse|http) — required (handler line 144-145).
  *   - All other fields mirror `mcp.connect`'s optional fallback shape.
  *
@@ -429,10 +414,6 @@ export const McpTestContract = defineContract({
 /**
  * MCP-domain contract array. Registered into
  * `API_CONTRACTS_ORDERED` by `packages/core/src/api-contracts/index.ts`.
- *
- * Plan 35-19 (Wave C closure) supersedes the placeholder aggregation in
- * `index.ts` with the final alphabetical aggregation across all 14
- * domains — this array remains unchanged.
  */
 export const MCP_CONTRACTS = [
   McpListContract,

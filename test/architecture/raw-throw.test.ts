@@ -1,24 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Project-wide raw-throw invariant (HYG-04).
+ * Project-wide raw-throw invariant.
  *
  * Forbids `throw new XError(...)` and `throw <identifier>;` patterns in
- * production source under `packages/*\/src/`. Phase 41 (TS-HYG-07/08)
- * retrofits each violation to Result.err, an `@allow-throw` boundary
- * adapter, or an `assertNever` exhaustive check.
+ * production source under `packages/*\/src/`. Violations are retrofitted to
+ * Result.err, an `@allow-throw` boundary adapter, or an `assertNever`
+ * exhaustive check.
  *
  * Exception zones (NOT flagged):
  *   - `packages/{shared,core}/src/security/` — canonical safe-path /
  *     redaction code where throws are the boundary contract
  *   - `packages/*\/src/safety/` — safety adapters
- *   - any file ending with `/error-mapper.ts` — Phase D's error-mapper
- *     factory pattern
+ *   - any file ending with `/error-mapper.ts` — error-mapper factory pattern
  *   - any file containing the literal substring `// @allow-throw:` or
- *     `@allow-throw:` anywhere in its source (forward-looking — none exist
- *     today; the rule pre-installs the annotation mechanism)
+ *     `@allow-throw:` anywhere in its source
  *
  * Allowlist filter: `{file, lineRanges[0][0]}` key shape per PATTERNS.md
- * — anchors on the FIRST range's start line. Plan 05 seeds one entry per
+ * — anchors on the FIRST range's start line. Seeded with one entry per
  * file (consolidating all line-ranges into one entry per file at seed
  * time) so the multi-range complexity is forward-looking.
  *
@@ -45,22 +43,18 @@ const FIXTURES_DIR = resolve(here, "fixtures");
  * continuation lines (`* @throws ...` would not satisfy `^\s*throw`
  * because of the leading `*`). Negative fixture pins this guard.
  *
- * Constructor alternation note (Plan 05 Rule 1 deviation): the must-have
- * regex in the plan locks `[A-Z]\w*Error\s*\(`, but `[A-Z]\w*Error`
- * cannot match the bare class name `Error` (no prefix char available to
- * satisfy `[A-Z]` then literal `Error`). Plain `throw new Error(...)`
- * is the most common raw-throw form (RESEARCH.md §"Raw-throw sites":
- * 549 plain `throw new Error(` sites alone) and is named verbatim in
- * the locked positive fixture (`// VIOLATION: throw new Error` /
- * `throw new Error("invalid state");`) — fixture + regex were therefore
- * jointly inconsistent. Widening to `[A-Z]\w*\s*\(` matches every
- * capitalized constructor (`Error`, `MyError`, `RangeError`,
- * `OAuthError`, `NonInteractiveError`, …) and is what makes the
- * positive-fixture's 6 violations all classify. The negative fixture's
- * string-literal / line-comment / JSDoc `@throws` cases remain
+ * Constructor alternation: an `[A-Z]\w*Error\s*\(` regex cannot match the
+ * bare class name `Error` (no prefix char available to satisfy `[A-Z]`
+ * before literal `Error`). Plain `throw new Error(...)` is the most common
+ * raw-throw form (~549 plain `throw new Error(` sites in the codebase) and
+ * is named verbatim in the locked positive fixture
+ * (`// VIOLATION: throw new Error` / `throw new Error("invalid state");`).
+ * Widening to `[A-Z]\w*\s*\(` matches every capitalized constructor
+ * (`Error`, `MyError`, `RangeError`, `OAuthError`, `NonInteractiveError`,
+ * …) so the positive-fixture's 6 violations all classify. The negative
+ * fixture's string-literal / line-comment / JSDoc `@throws` cases remain
  * negative because the `^\s*` anchor and quote-count filter both still
- * apply unchanged. See SUMMARY.md "Deviations from Plan" for full
- * trace.
+ * apply unchanged.
  */
 const RAW_THROW_RE =
   /^\s*throw\s+(new\s+[A-Z]\w*\s*\(|[a-z_][a-zA-Z0-9_]*(\s+as\s+[A-Z]\w*)?\s*[;,])/;
@@ -79,8 +73,8 @@ function repoRelative(absPath: string): string {
 
 /**
  * True if the file path is inside a sanctioned exception zone where raw
- * throws are the boundary contract. Per RESEARCH.md §"Rule 2" exception
- * zones + the forward-looking `@allow-throw:` annotation mechanism.
+ * throws are the boundary contract, or covered by the `@allow-throw:`
+ * annotation mechanism.
  *
  * Note: passing a relative path (prefixed `packages/...`) is sufficient
  * because the regex anchors check the substring.
@@ -94,9 +88,7 @@ function isInExceptionZone(relFile: string): boolean {
 
 /**
  * True if the file's source contains the literal substring
- * `@allow-throw:` (file-level opt-out — forward-looking per RESEARCH.md
- * line 211 "zero current @allow-throw annotations" — but the mechanism
- * is wired so Phase 41 can use it).
+ * `@allow-throw:` (file-level opt-out for sanctioned boundary throws).
  */
 function hasAllowThrowAnnotation(absPath: string): boolean {
   const content = readFileSync(absPath, "utf8");
@@ -105,7 +97,7 @@ function hasAllowThrowAnnotation(absPath: string): boolean {
 
 /**
  * Walks every production .ts file under `packages/*\/src/`. Clones the
- * pattern from Plan 02 (file-size.test.ts) and Plan 04 (untyped-sqlite).
+ * walker pattern used by file-size.test.ts and untyped-sqlite.test.ts.
  */
 function walkProductionFiles(dir: string, out: string[]): void {
   let entries;
@@ -165,7 +157,7 @@ function listAllProductionFiles(): string[] {
  * `^\s*` anchor handles JSDoc continuation lines (`* @throws`) and
  * line-comments (`//`) by definition (a line starting with `*` or `//`
  * does not satisfy `^\s*throw`), but string-literal occurrences inside
- * a multi-line string need the in-line filter from Plan 04.
+ * a multi-line string need the in-line quote-count filter below.
  */
 function findRawThrowHits(file: string): RawThrowHit[] {
   const content = readFileSync(file, "utf8");
@@ -174,8 +166,7 @@ function findRawThrowHits(file: string): RawThrowHit[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     // Clone the regex per line for safety; this regex has no /g or /y
-    // flag so lastIndex state is not a concern, but the pattern is
-    // consistent with Plan 04's RES-PIT-8 guard.
+    // flag so lastIndex state is not a concern.
     const re = new RegExp(RAW_THROW_RE.source);
     const match = re.exec(line);
     if (!match) continue;
@@ -193,7 +184,7 @@ function findRawThrowHits(file: string): RawThrowHit[] {
   return hits;
 }
 
-describe("raw-throw — production source forbids raw throw outside boundary modules (HYG-04)", () => {
+describe("raw-throw — production source forbids raw throw outside boundary modules", () => {
   it("fixture validation: positive fixture produces ≥6 violations, negative fixture produces 0", () => {
     const positiveFile = resolve(FIXTURES_DIR, "raw-throw-positive.ts");
     const negativeFile = resolve(FIXTURES_DIR, "raw-throw-negative.ts");
@@ -219,7 +210,7 @@ describe("raw-throw — production source forbids raw throw outside boundary mod
         suggestedFix:
           "Adjust the regex or per-line filter so the named CLEAN case is no longer matched. Negative fixtures pin the boundary of the classifier's correctness.",
         designRef:
-          "code-quality-plan §4.5 (5) / Phase A / D-FIX-01 — fixture-driven classifier correctness",
+          "fixture-driven classifier correctness",
       }),
     ).toEqual([]);
   });
@@ -228,7 +219,7 @@ describe("raw-throw — production source forbids raw throw outside boundary mod
     const allFiles = listAllProductionFiles();
 
     // Build allowlist key set: {file, firstLineRangeStart}.
-    // Plan 05 seeds one entry per file with consolidated lineRanges.
+    // The allowlist seeds one entry per file with consolidated lineRanges.
     const allowlistedFiles = new Set(
       rawThrowAllowlist.map((e) => e.file),
     );
@@ -253,9 +244,9 @@ describe("raw-throw — production source forbids raw throw outside boundary mod
           snippet: v.snippet,
         })),
         suggestedFix:
-          "Convert to `Result.err(...)` per design §7.2.3; OR move the throwing code to `packages/*/src/safety/` or an `error-mapper.ts` boundary adapter; OR add `// @allow-throw: <reason>` to the file (forward-looking — Phase D introduces this annotation); OR add a rawThrowAllowlist entry to test/support/architecture-allowlist.ts with removedIn: \"phase-D\".",
+          "Convert to `Result.err(...)`; OR move the throwing code to `packages/*/src/safety/` or an `error-mapper.ts` boundary adapter; OR add `// @allow-throw: <reason>` to the file; OR add a rawThrowAllowlist entry to test/support/architecture-allowlist.ts.",
         designRef:
-          "code-quality-plan §4.2 (2) / Phase A / HYG-04 / Phase D TS-HYG-07/08",
+          "raw-throw architecture invariant",
         allowlistRef:
           "rawThrowAllowlist (test/support/architecture-allowlist.ts)",
       }),

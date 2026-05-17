@@ -2,13 +2,10 @@
 /**
  * Master-key file helpers — daemon-free `secrets init` body.
  *
- * Lifted from packages/cli/src/commands/secrets.ts:226-258 in Phase 31
- * commit 5 (MEM-CTX-PORTS-09 row "secrets init → daemon-free core helper").
- * The CLI's `secrets init` subcommand is now a thin wrapper that calls
- * `writeMasterKeyIfAbsent` (CLI rewrite lands in plan 31-10).
- *
  * Pure filesystem + crypto. No daemon required. Safe to call from any
- * context where the caller can `chmod` the user's home directory.
+ * context where the caller can `chmod` the user's home directory. The
+ * CLI's `secrets init` subcommand is a thin wrapper that calls
+ * `writeMasterKeyIfAbsent`.
  *
  * @module
  */
@@ -31,9 +28,6 @@ export interface MasterKeyWriteResult {
 
 /**
  * Generate a 32-byte hex master key.
- *
- * Pure function. Identical to the inline `randomBytes(32).toString("hex")`
- * call at the start of the current `secrets init` body.
  *
  * @returns 64-character hex string (32 bytes encoded)
  */

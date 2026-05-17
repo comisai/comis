@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for graph-templates utility module (Phase 40 Plan 40-15 gap-closure for COV-03).
+ * Tests for graph-templates utility module.
  *
  * Covers all 11 pre-built graph template factories + the GRAPH_TEMPLATES catalog
  * shape. Each template factory is pure (no side effects) and returns a topologically

@@ -2,21 +2,16 @@
 /**
  * INTEGRATION: Discord channel — REST wire roundtrip against the 127.0.0.1 mock.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): integration-tier coverage lift
- * for the `@comis/channels` Discord subpackage. The plan asks for cross-
- * package integration tests that exercise channel-adapter production code
- * paths from inside the integration suite (so coverage measures hit the
- * dist/ artifacts the integration project aliases @comis/* to).
+ * Integration-tier exercise of the `@comis/channels` Discord subpackage:
+ * the test runs channel-adapter production code paths from inside the
+ * integration suite (so coverage measures hit the dist/ artifacts that
+ * the integration project aliases @comis/* to).
  *
- * Reuses the Plan 40-09 mock-Discord server from test/e2e/mocks/discord/.
- * The mock is loopback-bound, kernel-allocated-port, and accepts the same
- * wire shape discord.js produces — so the integration test can validate
- * the production credential validator, REST path, and gateway-URL
+ * Reuses the mock-Discord server from test/e2e/mocks/discord/. The mock
+ * is loopback-bound, kernel-allocated-port, and accepts the same wire
+ * shape discord.js produces — so the integration test can validate the
+ * production credential validator, REST path, and gateway-URL
  * indirection without spawning a real daemon.
- *
- * Coverage target: lifts channels/discord production imports
- * (validateDiscordToken, discord-resolver, format-discord, message-mapper,
- * media-handler) into the integration tier from 0%.
  *
  * @module
  */

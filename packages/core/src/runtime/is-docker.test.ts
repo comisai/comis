@@ -11,14 +11,14 @@
  *      `/.dockerenv`. We match `\b(docker|containerd|kubepods)\b` against
  *      `/proc/1/cgroup` contents.
  *
- * WEB-CONTRACTS-05: two-probe form. Either probe returning a positive signal
- * → `isDocker()` returns true. Both negative or throwing → false.
+ * Two-probe form: either probe returning a positive signal → `isDocker()`
+ * returns true. Both negative or throwing → false.
  *
  * @module
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-describe("isDocker (WEB-CONTRACTS-05)", () => {
+describe("isDocker", () => {
   beforeEach(() => {
     vi.resetModules();
   });

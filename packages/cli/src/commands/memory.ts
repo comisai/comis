@@ -68,11 +68,10 @@ export function registerMemoryCommand(program: Command): void {
       }
 
       try {
-        // Phase 35 Wave C closure (Plan 35-19): pre-Plan-35-19 called the
-        // stale `memory.search` method name (the daemon never implemented
-        // that name — only `memory.search_files` + `context.search`).
-        // Retargeted to ContextSearchContract which is the closest
-        // semantic match (full-text search over message + summary content).
+        // Routed via ContextSearchContract — the daemon exposes
+        // `memory.search_files` + `context.search` (no `memory.search`);
+        // ContextSearchContract is the closest semantic match (full-text
+        // search over message + summary content).
         const result = await withSpinner("Searching memory...", () =>
           withClient(async (client) => {
             return await callTyped(client, ContextSearchContract, {
@@ -119,11 +118,10 @@ export function registerMemoryCommand(program: Command): void {
     .option("--format <format>", "Output format (detail|json)", "detail")
     .action(async (id: string, options: { format: string }) => {
       try {
-        // Phase 35 Wave C closure (Plan 35-19): pre-Plan-35-19 called the
-        // stale `memory.inspect` method (no daemon handler). Retargeted to
-        // ContextInspectContract which retrieves a single entry by id —
-        // the closest semantic match. The response is a loose record;
-        // we coerce to MemoryEntry shape for rendering.
+        // Routed via ContextInspectContract — there is no `memory.inspect`
+        // daemon handler. ContextInspectContract retrieves a single entry
+        // by id (the closest semantic match). The response is a loose
+        // record; we coerce to MemoryEntry shape for rendering.
         const result = await withSpinner("Fetching entry...", () =>
           withClient(async (client) => {
             return await callTyped(client, ContextInspectContract, { id });
@@ -176,9 +174,7 @@ export function registerMemoryCommand(program: Command): void {
     .option("--format <format>", "Output format (detail|json)", "detail")
     .action(async (options: { format: string }) => {
       try {
-        // Phase 35 Wave C closure (Plan 35-19): pre-Plan-35-19 called the
-        // stale `memory.inspect` method with no args expecting a `stats`
-        // wrapper. Retargeted to MemoryStatsContract — the actual daemon
+        // Routed via MemoryStatsContract — the daemon's
         // memory-statistics surface. Response is a loose record; the
         // values matter, not the precise shape.
         const result = await withSpinner("Fetching memory stats...", () =>
@@ -275,13 +271,10 @@ export function registerMemoryCommand(program: Command): void {
       }
 
       try {
-        // Phase 35 Wave C closure (Plan 35-19): pre-Plan-35-19 called the
-        // stale `config.set` method (no daemon handler). Retargeted to
-        // MemoryFlushContract which is the real flush surface. The
-        // tenant filter maps to `tenant_id`; the generic `--filter
-        // key=value` flag was a no-op against the old call too (the
-        // daemon never implemented `config.set` with section=memory),
-        // so dropping it here preserves observable behavior.
+        // Routed via MemoryFlushContract — the actual flush surface.
+        // The tenant filter maps to `tenant_id`; the generic
+        // `--filter key=value` flag is a no-op here (there is no
+        // `config.set` handler with section=memory).
         await withSpinner("Clearing memory entries...", () =>
           withClient(async (client) => {
             const flushParams: { tenant_id?: string } = {};

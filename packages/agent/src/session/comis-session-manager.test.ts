@@ -5,10 +5,9 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { SessionKey } from "@comis/core";
-// Test-only core import — production session-write-lock no longer depends
-// on scheduler/proper-lockfile after Phase 32 commit 12; the FileLockPort
-// adapter is constructed by the test harness instead. createFileLock relocated
-// from @comis/scheduler to @comis/core in Phase 35 Plan 35-04 per D-01 #1.
+// Test-only core import — production session-write-lock does not depend on
+// proper-lockfile; the FileLockPort adapter is constructed by the test
+// harness instead.
 import { createFileLock } from "@comis/core";
 import { createComisSessionManager } from "./comis-session-manager.js";
 

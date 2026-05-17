@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Message and platform-action RPC handler methods.
  * Covers 11 methods:
  *   message.send, message.reply, message.react, message.edit,
  *   message.delete, message.fetch, message.attach,
  *   discord.action, telegram.action, slack.action, whatsapp.action
- * Extracted from daemon.ts rpcCallInner switch block.
  *
- * Phase 35 Wave C plan 35-17: refactored to computed-property keys
- * `[<Contract>.method]:` so the bidirectional 1:1 architecture test
- * resolves them to the registry. Per-method pipeline preserves the
- * existing handler bodies — Zod parse runs AFTER stripInternalFields
- * and serves as type narrowing + dev-mode response shape check.
+ * Uses computed-property keys `[<Contract>.method]:` so the bidirectional
+ * 1:1 architecture test resolves them to the registry. Per-method pipeline:
+ * Zod parse runs AFTER stripInternalFields and serves as type narrowing +
+ * dev-mode response shape check.
  *
  * @module
  */
@@ -45,7 +43,7 @@ import { resolveAdapter, authorizeChannelAccess } from "../wiring/daemon-utils.j
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**
@@ -60,9 +58,8 @@ export interface WsBroadcaster {
   broadcast(method: string, params: unknown): boolean;
 }
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: ChannelsApiDeps (shared with channel-handlers).
-// DAEMON-API-03 Option A retarget — handler bodies and call sites unchanged.
 import type { ChannelsApiDeps as MessageHandlerDeps } from "./types.js";
 export type { MessageHandlerDeps };
 

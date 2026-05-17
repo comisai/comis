@@ -3,7 +3,7 @@
  * Smoke test for `gateway/src/web/index.ts` public barrel.
  *
  * Asserts the public export surface matches the source-of-truth — catches
- * silent export deletion / shadowing. Phase 40 / Phase C §6.3.4 / COV-08.
+ * silent export deletion / shadowing.
  *
  * @module
  */

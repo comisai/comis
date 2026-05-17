@@ -2,10 +2,7 @@
 /**
  * Bundle-size measurement for `packages/web/src/api/contracts.generated.ts`.
  *
- * Phase 35 Wave D Plan 35-20 (CONTEXT D-02 + RESEARCH §"Size measurement
- * architecture" lines 781–818).
- *
- * Budget (D-02, raised from initial 100 KB / 30 KB):
+ * Budget:
  *   - 120 KB minified  (`BUDGET_MINIFIED_BYTES`)
  *   - 38 KB  gzipped   (`BUDGET_GZIPPED_BYTES`)
  *
@@ -18,19 +15,18 @@
  *      sufficient to flag per-contract bloat outliers.
  *
  * Determinism: esbuild's minify is deterministic for the same input + pinned
- * version (RESEARCH §"Determinism rules" item 6 + [CITED: esbuild release
- * notes "minify is deterministic"]). The pinned version is in package.json
- * devDependencies.
+ * version (per the esbuild release notes "minify is deterministic"). The
+ * pinned version is in package.json devDependencies.
  *
  * @module
  */
 import { transformSync } from "esbuild";
 import { gzipSync } from "node:zlib";
 
-/** Budget: 120 KB minified — CONTEXT D-02. */
+/** Budget: 120 KB minified. */
 export const BUDGET_MINIFIED_BYTES = 120_000;
 
-/** Budget: 38 KB gzipped — CONTEXT D-02. */
+/** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;
 
 /**
@@ -59,14 +55,12 @@ export interface SizeReport {
   /** Per-method size estimate (request JSON + response JSON, post-strigify bytes). */
   readonly perContract: Readonly<Record<string, number>>;
   /**
-   * Intentionally null to preserve byte-deterministic reruns. Documented in
-   * CONTEXT §"contracts.generated.size.json shape" + RESEARCH §"Determinism
-   * rules" item 2 (no timestamps).
+   * Intentionally null to preserve byte-deterministic reruns (no timestamps).
    */
   readonly generatedAt: null;
   /**
    * Intentionally null — Node version sensitivity is verified by codegen test
-   * (RESEARCH §"Determinism rules" item 5) and is not part of the artifact.
+   * and is not part of the artifact.
    */
   readonly nodeVersion: null;
 }

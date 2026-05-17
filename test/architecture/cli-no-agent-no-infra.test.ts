@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WEB-CONTRACTS-02 + WEB-CONTRACTS-03 lock-in: CLI imports neither
- * @comis/agent nor @comis/infra. Closes L17 (Plan 35-04) + L12 (Plan 35-05)
- * architecture allowlists at the top-level defense-in-depth boundary.
+ * Lock-in: CLI imports neither @comis/agent nor @comis/infra. Top-level
+ * defense-in-depth boundary at the architecture-allowlist level.
  *
  * Mirrors the per-package architecture test in
  * packages/cli/src/__tests__/architecture.test.ts but additionally
- * grep-asserts the JSON config files (package.json + tsconfig.json) per
- * 35-PATTERNS.md lines 536-541 — so a future PR that re-adds a workspace dep
- * or tsconfig reference is caught by the architecture suite before any
- * source-level import regression.
+ * grep-asserts the JSON config files (package.json + tsconfig.json) — so
+ * a future PR that re-adds a workspace dep or tsconfig reference is
+ * caught by the architecture suite before any source-level import
+ * regression.
  *
  * @module
  */
@@ -24,7 +23,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
 const CLI_SRC = resolve(REPO_ROOT, "packages/cli/src");
 
-describe("CLI no @comis/agent + no @comis/infra (WEB-CONTRACTS-02 + 03)", () => {
+describe("CLI no @comis/agent + no @comis/infra", () => {
   for (const forbidden of ["@comis/agent", "@comis/infra"] as const) {
     it(`cli/src imports do NOT include ${forbidden}`, () => {
       const { violations, checkedFiles } = findForbiddenImports({
@@ -42,8 +41,8 @@ describe("CLI no @comis/agent + no @comis/infra (WEB-CONTRACTS-02 + 03)", () => 
             column: v.column,
             snippet: v.snippet,
           })),
-          suggestedFix: `Retarget the import to @comis/core; see .planning/phases/35-gateway-cli-web-contracts/35-CONTEXT.md D-01 (agent symbols) and Plan 35-02 (infra symbols).`,
-          designRef: "WEB-CONTRACTS-02 + WEB-CONTRACTS-03",
+          suggestedFix: `Retarget the import to @comis/core.`,
+          designRef: "CLI must not depend on @comis/agent or @comis/infra",
         }),
       ).toEqual([]);
       expect(

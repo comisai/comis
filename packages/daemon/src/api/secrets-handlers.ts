@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Encrypted secret management RPC handlers.
  *
@@ -9,27 +9,26 @@
  *   - `secrets.list`                  -- list secret NAMES + metadata (admin-only, values NEVER returned)
  *   - `secrets.delete <name>`         -- remove a secret (admin-only, audited)
  *
- * (`secrets.import` is composed at the CLI side as N x `secrets.set` per
- * Phase 31 Open Question #4 -- no new RPC method.)
+ * (`secrets.import` is composed at the CLI side as N x `secrets.set` --
+ * no dedicated RPC method.)
  *
  * Reviewers: see core/src/security/SECRET-RPC-CHECKLIST.md before merging
- * any change. The residency invariant (MEM-CTX-PORTS-14) hinges on this
- * file passing both the source-rule AST walker (plan 31-08) and the
- * test/integration/secret-rpc-residency.test.ts behavioral test (plan 31-13).
+ * any change. The secret-residency invariant hinges on this file passing
+ * both the source-rule AST walker and the
+ * test/integration/secret-rpc-residency.test.ts behavioral test.
  *
  * Storage: SecretStorePort (encrypted secrets.db via AES-256-GCM). Plaintext
  * never leaves the handler closure; the return-path is the SOLE output.
  *
- * Phase 35 Wave C (Plan 35-08): refactored to use the `@comis/core`
- * contract registry. Method keys are computed-property names
- * (`[SecretsGetContract.method]:`) so the bidirectional 1:1 architecture
- * test resolves them through `defineContract({ method, ... })`
- * declarations in `packages/core/src/api-contracts/secrets.ts`. The
- * dispatcher-injected `_X` internal fields are stripped via
- * `stripInternalFields` BEFORE `contract.request.parse(...)` (D-04
- * pitfall 6 — never model internals in the contract schema). The admin
- * trust check reads `rawParams._trustLevel` BEFORE the strip step (the
- * gate stays separate from the contract schema per D-04).
+ * Handlers use the `@comis/core` contract registry. Method keys are
+ * computed-property names (`[SecretsGetContract.method]:`) so the
+ * bidirectional 1:1 architecture test resolves them through
+ * `defineContract({ method, ... })` declarations in
+ * `packages/core/src/api-contracts/secrets.ts`. The dispatcher-injected
+ * `_X` internal fields are stripped via `stripInternalFields` BEFORE
+ * `contract.request.parse(...)` (never model internals in the contract
+ * schema). The admin trust check reads `rawParams._trustLevel` BEFORE
+ * the strip step (the gate stays separate from the contract schema).
  *
  * The bespoke pre-Zod validation (admin gate, name pattern guard, length
  * caps, redaction-placeholder guard) is intentionally retained for
@@ -100,10 +99,9 @@ function createTokenBucket(maxTokens: number, windowMs: number) {
 
 /** Dependencies required by secrets handlers.
  *
- * Re-aliased from the cluster slice in api/types.ts (Plan 34-08a; alias retarget
- * in Plan 34-08c). Single source of truth: AuthApiDeps (shared with auth-handlers
- * + token-handlers). The cluster slice was widened in 34-08c to cover
- * secrets-handler fields (container, logger). DAEMON-API-03 Option A retarget —
+ * Re-aliased from the cluster slice in api/types.ts. Single source of
+ * truth: AuthApiDeps (shared with auth-handlers + token-handlers). The
+ * cluster slice covers secrets-handler fields (container, logger);
  * handler body unchanged.
  */
 import type { AuthApiDeps as SecretsHandlerDeps } from "./types.js";
@@ -144,7 +142,7 @@ export function createSecretsHandlers(
      */
     [SecretsGetContract.method]: async (rawParams) => {
       const startMs = systemNowMs();
-      // Admin trust check FIRST — separate from the contract schema (D-04).
+      // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for secrets.get");
@@ -186,10 +184,10 @@ export function createSecretsHandlers(
         );
       }
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6). Then type-narrow via the
-      // contract — defense-in-depth; the bespoke guard above already
-      // ensures `name` is a valid non-empty pattern-matching string.
+      // Strip dispatcher-injected _X internals BEFORE contract parse.
+      // Then type-narrow via the contract — defense-in-depth; the bespoke
+      // guard above already ensures `name` is a valid non-empty
+      // pattern-matching string.
       const userParams = stripInternalFields(rawParams);
       const params = SecretsGetContract.request.parse(userParams);
       const name = params.name;
@@ -256,7 +254,7 @@ export function createSecretsHandlers(
       // in `SecretsGetContract.response` (as `z.string().optional()`) —
       // unlike `secrets.list` where any leak fails-closed. Here the parse
       // serves as a defense-in-depth shape check (e.g., `exists` must be
-      // a boolean). Production skips for cold-start budget (D-10).
+      // a boolean). Production skips for cold-start budget.
       if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsGetContract.response.parse(result);
       }
@@ -271,7 +269,7 @@ export function createSecretsHandlers(
      */
     [SecretsSetContract.method]: async (rawParams) => {
       const startMs = systemNowMs();
-      // Admin trust check FIRST — separate from the contract schema (D-04).
+      // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for secrets.set");
@@ -338,9 +336,9 @@ export function createSecretsHandlers(
         );
       }
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse
-      // (D-04 + 35-RESEARCH.md Pitfall 6). The contract parse runs AFTER
-      // the bespoke guards and serves as type-narrowing + defense-in-depth.
+      // Strip dispatcher-injected _X internals BEFORE contract parse.
+      // The contract parse runs AFTER the bespoke guards and serves as
+      // type-narrowing + defense-in-depth.
       const userParams = stripInternalFields(rawParams);
       const params = SecretsSetContract.request.parse(userParams);
       const name = params.name;
@@ -423,7 +421,7 @@ export function createSecretsHandlers(
      */
     [SecretsListContract.method]: async (rawParams) => {
       const startMs = systemNowMs();
-      // Admin trust check FIRST — separate from the contract schema (D-04).
+      // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for secrets.list");
@@ -482,7 +480,7 @@ export function createSecretsHandlers(
       // accidentally adds a `value` field on a row has the value REMOVED
       // from the parsed output BEFORE the response crosses the daemon →
       // CLI boundary. Production skips the parse for cold-start budget
-      // compliance (WEB-CONTRACTS-17); dev/test catches structural drift.
+      // compliance; dev/test catches structural drift.
       if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsListContract.response.parse(result);
       }
@@ -496,7 +494,7 @@ export function createSecretsHandlers(
      */
     [SecretsDeleteContract.method]: async (rawParams) => {
       const startMs = systemNowMs();
-      // Admin trust check FIRST — separate from the contract schema (D-04).
+      // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for secrets.delete");

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for cache-detection/lru-map.ts (Phase 42 split per
- * EXEC-SPLIT-09).
+ * Unit tests for cache-detection/lru-map.ts.
  *
  * Targeted coverage of the LRU-bounded Map: get/set/delete/clear/has/size,
  * insertion-order tracking, MRU-on-get, and capacity-bounded eviction with

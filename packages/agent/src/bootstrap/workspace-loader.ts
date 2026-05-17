@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: workspace-loader re-raise (non-ENOENT errors); outer caller is daemon bootstrap which catches at daemon.ts entry (Phase 41 TS-HYG-07).
+// @allow-throw: workspace-loader re-raise (non-ENOENT errors); outer caller is daemon bootstrap which catches at daemon.ts entry.
 /**
  * Workspace file loader for bootstrap context injection.
  *

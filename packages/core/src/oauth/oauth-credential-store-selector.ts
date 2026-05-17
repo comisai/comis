@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: Unknown storage-backend guard; consumed at bootstrap composition-root (daemon.ts catch boundary per AGENTS.md §6.2) (Phase 41 TS-HYG-07).
+// @allow-throw: Unknown storage-backend guard; consumed at bootstrap composition-root (daemon.ts catch boundary per AGENTS.md §6.2).
 /**
  * OAuth credential store selector.
  *
- * Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #2.
- * The agent-side source remains in place (Wave A additive); Plan 35-04
- * deletes the agent re-export after CLI Plan 35-05 retargets.
- *
  * Decides between file-backed and encrypted (daemon-supplied) OAuth credential
- * stores based on configuration. Phase 31 commit 4 cut the memory value-import
- * (`createOAuthProfileStoreEncrypted`) from this file; the encrypted-mode
- * branch now consumes a daemon-injected `OAuthCredentialStorePort` instead
+ * stores based on configuration. The memory value-import
+ * (`createOAuthProfileStoreEncrypted`) is not imported here; the encrypted-mode
+ * branch consumes a daemon-injected `OAuthCredentialStorePort` instead
  * of constructing one via memory's factory.
  *
  * Daemon composition (`packages/daemon/src/wiring/setup-agents.ts`) is now
@@ -45,11 +41,10 @@ export interface SelectOAuthCredentialStoreInput {
   dataDir: string;
   /**
    * Cross-process filesystem mutex used by the file-backed adapter for
-   * per-profile-ID locking. REQUIRED when `storage === "file"`. Phase 32
-   * commit 12 (ORCH-EXT-15) introduced this dep so the file adapter no
-   * longer imports `@comis/scheduler` directly. Daemon + CLI composition
-   * roots construct the port via `createFileLock()` from `@comis/core`
-   * (Phase 35 Plan 35-02 relocated the canonical adapter from scheduler).
+   * per-profile-ID locking. REQUIRED when `storage === "file"`. The file
+   * adapter consumes this port so it does not import `@comis/scheduler`
+   * directly. Daemon + CLI composition roots construct the port via
+   * `createFileLock()` from `@comis/core`.
    *
    * Ignored when `storage === "encrypted"` (the encrypted store has its
    * own SQLite-backed serialization and does not use proper-lockfile).
@@ -77,8 +72,7 @@ export interface SelectOAuthCredentialStoreInput {
  *
  * The encrypted-mode store is constructed by the daemon composition root
  * (which owns `secretsDb` + `secretsCrypto`) and injected via `encryptedStore`.
- * CLI consumers can only pass `storage: "file"` in Phase 31 — see design
- * §8.2.7 "auth login encrypted fail-fast".
+ * CLI consumers can only pass `storage: "file"`.
  */
 export function selectOAuthCredentialStore(
   input: SelectOAuthCredentialStoreInput,
@@ -95,8 +89,7 @@ export function selectOAuthCredentialStore(
         "OAuth storage mode is 'encrypted' but no encrypted store was injected. " +
           "Daemon composition (setup-agents.ts) must construct the encrypted store " +
           "via createOAuthProfileStoreEncrypted(secretsDb, secretsCrypto) and pass " +
-          "it via deps.encryptedStore. CLI commands cannot supply this in Phase 31 — " +
-          "see design §8.2.7 'auth login encrypted fail-fast'.",
+          "it via deps.encryptedStore. CLI commands cannot supply this.",
       );
     }
     return encryptedStore;

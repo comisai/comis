@@ -21,8 +21,8 @@ import {
 } from "../test-helpers.js";
 
 // Mock withClient from rpc-client at module level for ESM hoisting.
-// Plan 35-19 Wave C closure: importOriginal-based mock so callTyped
-// resolves to the real wrapper while withClient is mocked.
+// importOriginal-based mock so callTyped resolves to the real wrapper
+// while withClient is mocked.
 vi.mock("../client/rpc-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
   return {

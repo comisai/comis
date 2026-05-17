@@ -2,8 +2,6 @@
 /**
  * Mock Telegram Bot API server for E2E flow-matrix coverage.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09).
- *
  * Wire surface: an HTTP server speaking just enough of Telegram's Bot API
  * (https://core.telegram.org/bots/api) to satisfy the grammy adapter under
  * test. Implemented endpoints:
@@ -16,16 +14,15 @@
  *   - POST /bot<TOKEN>/* — generic accept-and-record fallback so unknown
  *     method calls (setMyCommands, getChat, etc.) don't crash the adapter.
  *
- * Security posture (T-MOCK-EXPOSED-PORT, mirrors mock-oauth-server.ts):
- * binds to loopback (127.0.0.1) only — never a wildcard host — so the
- * mock is unreachable from the LAN. Kernel allocates the port via
- * `server.listen(0)` to avoid port-collision races between parallel test
- * runs.
+ * Security posture (mirrors mock-oauth-server.ts): binds to loopback
+ * (127.0.0.1) only — never a wildcard host — so the mock is unreachable
+ * from the LAN. Kernel allocates the port via `server.listen(0)` to avoid
+ * port-collision races between parallel test runs.
  *
- * The telegram adapter's `apiRoot` config field (see Wave A1) accepts
- * a URL like `http://127.0.0.1:<port>` and grammy uses it as the API
- * root — no path-prefix needed. The mock therefore matches paths of
- * shape `/bot<TOKEN>/<method>`.
+ * The telegram adapter's `apiRoot` config field accepts a URL like
+ * `http://127.0.0.1:<port>` and grammy uses it as the API root — no
+ * path-prefix needed. The mock therefore matches paths of shape
+ * `/bot<TOKEN>/<method>`.
  *
  * @module
  */

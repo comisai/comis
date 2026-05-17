@@ -65,10 +65,10 @@ export function createInboundMessageIdResolver(
 ): InboundMessageIdResolver {
   const ttlMs = opts.ttlMs ?? 60 * 60 * 1000;
   const maxEntries = opts.maxEntries ?? 10_000;
-  // Phase 39 PORTS-15: shared's createTTLCache requires a non-null `nowMs`.
-  // The sanctioned-root `systemNowMs` from @comis/core/runtime is the
-  // canonical Pattern-B indirection for daemon-internal helpers that have
-  // no Deps interface to inject a ClockPort into.
+  // shared's createTTLCache requires a non-null `nowMs`. The sanctioned-root
+  // `systemNowMs` from @comis/core/runtime is the canonical Pattern-B
+  // indirection for daemon-internal helpers that have no Deps interface to
+  // inject a ClockPort into.
   const cache: TTLCache<InboundIdRecord> = createTTLCache({
     ttlMs,
     maxEntries,

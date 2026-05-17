@@ -3,14 +3,14 @@
 
 export { safePath, PathTraversalError } from "./safe-path.js";
 
-// Master-key file helpers (Phase 31 commit 5 — MEM-CTX-PORTS-09; daemon-free `secrets init` body)
+// Master-key file helpers (daemon-free `secrets init` body)
 export { writeMasterKeyIfAbsent, generateMasterKey } from "./master-key.js";
 export type { MasterKeyWriteResult } from "./master-key.js";
 
 // OAuth profile-ID validation
 export { validateProfileId, PROFILE_ID_RE } from "./profile-id.js";
 
-// OAuth helpers (consolidated from agent in Phase 28 commit 5; CORE-PORTS-14 / L4 closure)
+// OAuth helpers
 export {
   decodeCodexJwtPayload,
   resolveCodexAuthIdentity,

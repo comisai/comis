@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Execution Pipeline Phase 3: Response Filtering.
+ * Execution pipeline response-filtering stage.
  *
  * Handles response sanitization, response filtering (NO_REPLY/HEARTBEAT_OK
  * suppression), outbound media delivery, voice response pipeline, and
@@ -29,7 +29,7 @@ import {
 // Deps narrowing
 // ---------------------------------------------------------------------------
 
-/** Minimal deps needed for the filter phase. */
+/** Minimal deps needed for the filter stage. */
 export type FilterDeps = Pick<
   ExecutionPipelineDeps,
   | "eventBus"
@@ -46,13 +46,13 @@ export type FilterDeps = Pick<
 // Result type
 // ---------------------------------------------------------------------------
 
-/** Result of the filter phase. */
+/** Result of the filter stage. */
 export type FilterResult =
   | { deliver: true; text: string }
   | { deliver: false; reason: string };
 
 // ---------------------------------------------------------------------------
-// Phase function
+// Stage function
 // ---------------------------------------------------------------------------
 
 /**

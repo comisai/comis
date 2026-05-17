@@ -7,7 +7,6 @@
  * ChannelManager + lifecycle reactors + approval notifier (delegated to
  * setup-channels-runtime.ts).
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-channels.ts.
  * Holds the `ChannelsDeps` / `ChannelsResult` interfaces and the
  * `setupChannels` entry that the daemon composition root calls.
  *
@@ -65,7 +64,7 @@ export interface ChannelsResult {
   commandQueue?: CommandQueue;
   /** DeliveryService constructed once at the daemon composition root. Threaded
    *  through setupCrossSession + createMessageHandlers so all production callers
-   *  share a single closure-captured deps record (Phase 30 plan 04). */
+   *  share a single closure-captured deps record. */
   deliveryService: DeliveryService;
 }
 
@@ -196,17 +195,17 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   // Initialize Telegram file-ref guard config
   initTelegramFileGuardConfig(container.config.telegramFileRefGuard);
 
-  // Phase 30 plan 04: Construct DeliveryService ONCE at the daemon composition
-  // root. The closure captures hookRunner + deliveryQueue + eventBus, so all
-  // production callers below use the method form `deliveryService.deliverToChannel(...)`
-  // instead of threading the optional 5th-arg `deps?: DeliverToChannelDeps`.
-  // The reference is also threaded through ChannelManagerDeps, ApprovalNotifierDeps,
+  // Construct DeliveryService ONCE at the daemon composition root. The
+  // closure captures hookRunner + deliveryQueue + eventBus, so all production
+  // callers below use the method form `deliveryService.deliverToChannel(...)`
+  // instead of threading an optional 5th-arg deps record. The reference is
+  // also threaded through ChannelManagerDeps, ApprovalNotifierDeps,
   // MessageHandlerDeps, and the cross-session-sender deps so every callsite
   // sees the same closure-captured deps record. `deps.deliveryQueue` is
   // always defined in production (real SQLite queue when enabled,
-  // createNoOpDeliveryQueue when disabled — see setup-delivery.ts), but the
-  // defensive `?? createNoOpDeliveryQueue()` preserves Phase-29 compatibility
-  // in case a downstream caller passes undefined.
+  // createNoOpDeliveryQueue when disabled — see setup-delivery.ts); the
+  // defensive `?? createNoOpDeliveryQueue()` guards against a downstream
+  // caller passing undefined.
   const deliveryService: DeliveryService = createDeliveryService({
     hookRunner: container.hookRunner,
     deliveryQueue: deps.deliveryQueue ?? createNoOpDeliveryQueue(),

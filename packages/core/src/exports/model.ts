@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Model catalog re-exports for the @comis/core barrel (D-01 #4).
-// Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #4.
+// Model catalog re-exports for the @comis/core barrel (relocated from @comis/agent).
 export {
   createModelCatalog,
   resolveModelPricing,

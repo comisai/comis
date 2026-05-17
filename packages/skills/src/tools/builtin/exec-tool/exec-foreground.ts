@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Exec foreground execution (Phase 43 split per FILE-SPLIT-02).
+ * Exec foreground execution.
  *
- * Extracted from `exec-tool.ts` (1,626L monolith) on 2026-05-16. Pure
- * mechanical block-move of `executeForeground` (lines 1149-1497 of
- * pre-split exec-tool.ts). Calls `escalateToBackground` from exec-background
- * for the auto-bg escalation path; no cycle (background does not call back
- * into foreground).
+ * Calls `escalateToBackground` from exec-background for the auto-bg escalation
+ * path; no cycle (background does not call back into foreground).
  *
  * @module
  */

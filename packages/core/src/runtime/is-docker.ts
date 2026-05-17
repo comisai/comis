@@ -2,7 +2,7 @@
 /**
  * Detect whether we are running inside a Docker container.
  *
- * Two-probe form (WEB-CONTRACTS-05):
+ * Two-probe form:
  *  1. `existsSync("/.dockerenv")` — Docker creates this marker file at PID 1's
  *     filesystem root for standard images.
  *  2. `/proc/1/cgroup` regex match — fallback for rootless / minimal images
@@ -16,11 +16,6 @@
  *
  * Defensive: any probe error returns false. We never throw out of a runtime
  * detection helper.
- *
- * Moved from `@comis/infra` in Phase 33 (SKILLS-SPLIT-09 + RES-ARCH-2);
- * upgraded with the cgroup fallback in Phase 35 (WEB-CONTRACTS-05). The
- * infra-side copy at `packages/infra/src/runtime/is-docker.ts` is retained
- * until Phase 35 Plan 35-05 retargets CLI consumers.
  *
  * @module
  */

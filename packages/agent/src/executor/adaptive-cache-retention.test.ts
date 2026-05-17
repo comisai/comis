@@ -368,7 +368,7 @@ describe("createStaticRetention", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Turn-count-based escalation (design 2.4) — canonical path after BC-REM-11
+// Turn-count-based escalation (design 2.4)
 // ---------------------------------------------------------------------------
 
 describe("createAdaptiveCacheRetention turn-based escalation", () => {

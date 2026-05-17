@@ -18,7 +18,6 @@ import {
   type SessionKey,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
-// Phase 32 commit 6 (ORCH-EXT-08): see ./command-directive-types.ts for rationale.
 import type { CommandDirectives } from "./command-directive-types.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import type { ExecutionResult } from "./types.js";
@@ -34,7 +33,7 @@ export interface CommandHandlerDeps {
   eventBus: import("@comis/core").TypedEventBus;
   modelRegistry: import("@mariozechner/pi-coding-agent").ModelRegistry;
   workspaceDir: string;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
 }
 

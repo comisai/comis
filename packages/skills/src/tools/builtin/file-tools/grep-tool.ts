@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: file-tool validation guards; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch (Phase 41 TS-HYG-07).
+// @allow-throw: file-tool validation guards; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch.
 /**
  * Native grep tool: file content search via ripgrep subprocess with 3 output
  * modes, path validation, and correct exit code handling.

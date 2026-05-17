@@ -2,9 +2,8 @@
 /**
  * INTEGRATION: Slack channel — Web API wire roundtrip + format helpers.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts coverage on the
- * `@comis/channels` Slack subpackage (validateSlackCredentials,
- * escapeSlackMrkdwn, slack-resolver).
+ * Covers the `@comis/channels` Slack subpackage:
+ * validateSlackCredentials, escapeSlackMrkdwn, slack-resolver.
  *
  * @module
  */

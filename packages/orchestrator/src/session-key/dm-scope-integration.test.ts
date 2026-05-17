@@ -112,8 +112,6 @@ describe("DM Scope Integration", () => {
     expect(formatted).toBe("default:user-123:channel-789:peer:user-123:guild:guild-abc");
   });
 
-  // Deleted (Phase 38 BC-REM-15): "agent prefix roundtrip" test covered the
-  // since-deleted parser branch that recovered agentId from the formatted key.
   // INTENTIONAL BREAK #1 — formatSessionKey still emits `agent:` prefix when
   // agentId is set, but parseFormattedSessionKey no longer extracts it.
 
@@ -133,10 +131,9 @@ describe("DM Scope Integration", () => {
     expect(parsed!.threadId).toBe("thread-789");
   });
 
-  // Deleted (Phase 38 BC-REM-15): "full roundtrip: agent prefix + guild +
-  // thread all recovered" — the agent-prefix portion of the roundtrip is no
-  // longer supported. parseFormattedSessionKey returns agentId === undefined
-  // for `agent:`-prefixed keys post-deletion (INTENTIONAL BREAK #1).
+  // The agent-prefix portion of the roundtrip is no longer supported.
+  // parseFormattedSessionKey returns agentId === undefined for `agent:`-prefixed
+  // keys (INTENTIONAL BREAK #1).
 
   it("extractThreadId returns channelId for Discord threads (parentChannelId set)", () => {
     const msg = makeDmMessage({

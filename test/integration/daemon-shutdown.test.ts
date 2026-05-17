@@ -29,7 +29,7 @@ describe("Daemon Shutdown", () => {
     handle = await startTestDaemon({
       configPath: SHUTDOWN_CONFIG_PATH,
       logStream: logCapture.stream,
-      // PORTS-18: swap the production TimerPort for createFakeTimers so the
+      // Swap the production TimerPort for createFakeTimers so the
       // describe block at the bottom of this file can read the unref/cancel
       // record after shutdown and assert no long-running interval leaked.
       useFakeTimers: true,
@@ -236,7 +236,7 @@ describe("Daemon Shutdown", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // PORTS-18: Timer cleanup contract
+  // Timer cleanup contract
   //
   // The harness was started with `useFakeTimers: true`, so the daemon's
   // composition root used `createFakeTimers()` from `test/support/fake-timers.ts`
@@ -253,14 +253,14 @@ describe("Daemon Shutdown", () => {
   // practice — they fire before any reasonable shutdown completes — so we
   // exclude them from the assertion.
   //
-  // A regression in this test means Phase 39 Waves 4-7 dropped a `.unref()` or
-  // `cancel()` call somewhere in the daemon-lifetime cleanup wiring. The leaked
-  // entry's `delay`, `kind`, and `registeredAt` help correlate to the call site.
+  // A regression here means a `.unref()` or `cancel()` call was dropped in the
+  // daemon-lifetime cleanup wiring. The leaked entry's `delay`, `kind`, and
+  // `registeredAt` help correlate to the call site.
   // ---------------------------------------------------------------------------
 
-  describe("PORTS-18: Timer cleanup contract", () => {
+  describe("Timer cleanup contract", () => {
     it("every long-running interval was cancelled or unref'd before shutdown completion", () => {
-      expect(shutdownTriggered, "PORTS-18 requires shutdown to have run first").toBe(true);
+      expect(shutdownTriggered, "timer cleanup check requires shutdown to have run first").toBe(true);
       const record = handle.getTimerRecord();
       expect(
         record,

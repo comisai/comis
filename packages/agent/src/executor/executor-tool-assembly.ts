@@ -102,7 +102,7 @@ export interface ToolAssemblyDeps {
   };
   /** Resolve platform message character limit for a channel type. */
   getChannelMaxChars?: (channelType: string) => number | undefined;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
 }
 
@@ -179,8 +179,8 @@ export interface ToolAssemblyParams {
  * guide wrapping, schema pruning, schema snapshots, provider normalization,
  * and mutation serializer.
  *
- * Pure function with params object ( extraction pattern). All mutable
- * refs and closure state remain in pi-executor.ts orchestrator scope.
+ * Pure function with params object. All mutable refs and closure state
+ * remain in pi-executor.ts orchestrator scope.
  *
  * @param params - Tool assembly parameters
  * @returns Tool assembly result with all outputs needed by the orchestrator

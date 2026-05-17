@@ -7,10 +7,8 @@ const packages = resolve(__dirname, "../../packages");
 /**
  * Vitest project for end-to-end channel × flow tests.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09).
- *
  * Scope: tests under `test/e2e/<channel>-<flow>.test.ts` that spawn a real
- * daemon via the Phase 39 port-injected test harness (`test/support/
+ * daemon via the port-injected test harness (`test/support/
  * daemon-harness.ts`), drive a message through a 127.0.0.1 mock chat-
  * platform server (`test/e2e/mocks/<channel>/`), and assert the agent's
  * outbound response on the mock's captured-events stream.
@@ -18,17 +16,17 @@ const packages = resolve(__dirname, "../../packages");
  * Why a SEPARATE project rather than appending to `test/vitest.config.ts`:
  *   1. E2E tests boot a real daemon (slow setup), so they need their own
  *      timeout budget and isolation policy.
- *   2. Per Plan 40-09 sub-decision: "clean separation from test/integration/"
- *      — the e2e tier has its own coverage threshold lifecycle independent
- *      of the integration tier's monotonic ramp.
+ *   2. Clean separation from test/integration/ — the e2e tier has its own
+ *      coverage threshold lifecycle independent of the integration tier's
+ *      monotonic ramp.
  *   3. The integration project's include glob explicitly does NOT cover
  *      test/e2e/**, so the project boundary is structural.
  *
  * No coverage thresholds at the project level — e2e tests stress the
  * daemon's BOOT path and channel adapters, not unit-level invariants;
  * the unit (packages/*) and integration (test/integration/) projects
- * own the coverage gates per their own coverage scope contracts. See
- * AGENTS.md §2.5 / COV-03 / COV-04.
+ * own the coverage gates per their own coverage scope contracts (see
+ * AGENTS.md §2.5).
  *
  * @module
  */
@@ -71,9 +69,8 @@ export default defineConfig({
     pool: "forks",
     maxConcurrency: 1,
     retry: 1,
-    // Allow CI to pass while Wave D is mid-flight; once Wave D lands the
-    // 18-30 channel × flow tests this can be left as-is — vitest only
-    // applies the `pass when zero tests` rule when zero tests match.
+    // Vitest only applies the `pass when zero tests` rule when zero tests
+    // match, so this stays safe once the e2e suite has tests.
     passWithNoTests: true,
     env: {
       COMIS_REPO_ROOT: resolve(__dirname, "../.."),

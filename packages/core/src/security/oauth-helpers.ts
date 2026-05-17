@@ -14,15 +14,14 @@
  * MUST be tested BEFORE invalid_grant — refresh_token_reused is a SPECIFIC kind
  * of invalid_grant; the more-specific matcher must win.
  *
- * Field convention (post-Phase-28): `code` is the OAuth domain discriminator
- * (consumed by CLI, events, tests via switch on the 6 OAuthErrorCode values).
+ * Field convention: `code` is the OAuth domain discriminator (consumed by
+ * CLI, events, tests via switch on the 6 OAuthErrorCode values).
  * `logErrorKind` is the closed-Pino-ErrorKind mirror (always "auth"); logger
  * payloads use `errorKind: "auth"` directly OR destructure `logErrorKind`. The
- * old `errorKind: string` mirror was removed in Phase 28 commit 6C — the
  * 9-member closed ErrorKind union prevents domain values from leaking into
  * Pino log streams. Consumers carrying the discriminator into downstream
  * shapes (OAuthError.errorKind, auth:refresh_failed event payload) read
- * `rewritten.code` directly — that field is unchanged.
+ * `rewritten.code` directly.
  *
  * @module
  */
@@ -175,25 +174,18 @@ export type OAuthErrorCode =
 /**
  * Output record carrying both UX-facing text and Pino-log-field values.
  *
- * Phase 28 commit 6C narrowed the prior `errorKind: string` mirror to
- * `logErrorKind: ErrorKind` (always "auth"). Domain consumers switch on `code`
- * (the OAuth discriminator); logger payloads use `logErrorKind` (the closed-union
- * mirror that satisfies the AGENTS.md §2.7 logging contract).
+ * Domain consumers switch on `code` (the OAuth discriminator); logger
+ * payloads use `logErrorKind` (the closed-union mirror that satisfies the
+ * AGENTS.md §2.7 logging contract).
  *
- * Commit 6B (plan 07) retargeted every WARN/ERROR logger consumer that read
- * `result.errorKind` to use the literal `"auth"` directly. Commit 6C (plan 08)
- * additionally retargets the four `eventBus.emit("auth:refresh_failed", …)` /
- * `return err({…})` sites in `oauth-token-manager.ts` and the one CLI-message
- * site in `oauth-health.ts` from `rewritten.errorKind` to `rewritten.code` —
- * those carriers preserve the OAuth-domain discriminator value (still
+ * `rewritten.code` carries the OAuth-domain discriminator value (one of
  * "refresh_token_reused" | "invalid_grant" | …) into the OAuthError + event
- * payload contracts; `rewritten.code` carries the same value the old
- * string-typed `errorKind` field used to carry.
+ * payload contracts.
  */
 export interface RewrittenOAuthError {
   /** Domain discriminator. NOT a logger-payload value. */
   code: OAuthErrorCode;
-  /** Always "auth" — closed-union mirror for Pino logs. Replaces the prior `errorKind: string`. */
+  /** Always "auth" — closed-union mirror for Pino logs. */
   logErrorKind: ErrorKind;
   /** Concrete, paste-ready message for CLI stderr. */
   userMessage: string;

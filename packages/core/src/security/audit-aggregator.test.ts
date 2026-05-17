@@ -5,8 +5,8 @@ import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight port wrappers that delegate to globals so
-// vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
+// Lightweight port wrappers that delegate to globals so vi.useFakeTimers()
+// continues to intercept Date.now / setTimeout below.
 // ---------------------------------------------------------------------------
 
 const testClock: ClockPort = {

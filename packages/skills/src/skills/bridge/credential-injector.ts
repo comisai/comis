@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary (Phase 41 TS-HYG-07).
+// @allow-throw: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary.
 /**
  * Credential injector: Transparent HTTP credential injection for agent tools.
  *

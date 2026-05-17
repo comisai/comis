@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for load-env.ts (COV-03 / Plan 40-11).
+ * Branch-gap coverage for load-env.ts.
  *
  * Targets the parse-loop branches in loadEnvFile() that the existing
- * load-env.test.ts (assertEnvLoaded happy-path only) does not exercise:
- *   - blank/comment lines skip (line 73)
- *   - no-= lines skip (line 76)
- *   - double-quoted value strip (line 82)
- *   - single-quoted value strip (line 84)
- *   - existing-key skip (line 90)
+ * happy-path load-env.test.ts does not exercise:
+ *   - blank/comment lines skip
+ *   - no-= lines skip
+ *   - double-quoted value strip
+ *   - single-quoted value strip
+ *   - existing-key skip
  *
  * @module
  */

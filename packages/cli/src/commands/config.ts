@@ -222,7 +222,7 @@ export function registerConfigCommand(program: Command): void {
       try {
         await withClient(async (client) => {
           // ConfigPatchContract.request.value accepts the wire-observable
-          // primitive | record | array-of-record union (D-05 loose record).
+          // primitive | record | array-of-record union (loose record).
           // The `value` here is JSON-parsed from the CLI arg (or raw string
           // fallback) — already in the allowed shape. callTyped's contract
           // input type widens to z.input, which for the union is

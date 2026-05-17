@@ -70,19 +70,19 @@ export type { ModelAliasResolver, ModelAliasResolverDeps } from "./model/model-a
 export { createContextWindowResolver } from "./model/context-window-resolver.js";
 export type { ContextWindowResolver, ContextWindowResolverDeps } from "./model/context-window-resolver.js";
 
-// Phase 35 (WEB-CONTRACTS-02, D-01): the following re-exports moved to
-// @comis/core. CLI + daemon consumers retarget to @comis/core via the barrel.
-//   - createFileLock                          → @comis/core (Plan 35-02)
-//   - createConsoleLogger / isDocker          → @comis/core (Plan 35-02)
-//   - isRemoteEnvironment                     → @comis/core (Plan 35-02)
-//   - selectOAuthCredentialStore              → @comis/core (Plan 35-03)
-//   - loginOpenAICodexOAuth + types           → @comis/core (Plan 35-03)
-//   - OAuthError                              → @comis/core (Plan 35-03)
-//   - createOAuthCredentialStoreFile + types  → @comis/core (Plan 35-03)
-//   - loginOpenAICodexDeviceCode + types      → @comis/core (Plan 35-03)
-//   - runOAuthTlsPreflight + types            → @comis/core (Plan 35-04)
-//   - createModelCatalog + types              → @comis/core (Plan 35-04)
-//   - ensureWorkspace / resolveWorkspaceDir   → @comis/core (Plan 35-04)
+// The following re-exports live in @comis/core; CLI + daemon consumers
+// retarget to @comis/core via the barrel:
+//   - createFileLock
+//   - createConsoleLogger / isDocker
+//   - isRemoteEnvironment
+//   - selectOAuthCredentialStore
+//   - loginOpenAICodexOAuth + types
+//   - OAuthError
+//   - createOAuthCredentialStoreFile + types
+//   - loginOpenAICodexDeviceCode + types
+//   - runOAuthTlsPreflight + types
+//   - createModelCatalog + types
+//   - ensureWorkspace / resolveWorkspaceDir
 // OAuth token manager runtime stays here because chokidar + pi-ai/oauth deps
 // are out of scope for core. The types (OAuthTokenManager, OAuthTokenManagerDeps,
 // OAuthError) are duplicated in @comis/core/oauth/oauth-token-manager.ts as
@@ -115,9 +115,8 @@ export type { AuthUsageTracker, ProfileStats, ProfileUsageInput } from "./model/
 export { createLastKnownModelTracker } from "./model/last-known-model.js";
 export type { LastKnownModelTracker, LastKnownModelEntry } from "./model/last-known-model.js";
 
-// Routing symbols (router factory, resolver, router type) — moved to
-// @comis/orchestrator in Phase 32 commit 7 (ORCH-EXT-08). Consumers import
-// from @comis/orchestrator now.
+// Routing symbols (router factory, resolver, router type) live in
+// @comis/orchestrator. Consumers import from @comis/orchestrator.
 
 // Session lifecycle (renamed from session-manager.ts)
 export { createSessionLifecycle } from "./session/session-lifecycle.js";
@@ -127,13 +126,13 @@ export type { SessionLifecycle, SessionLifecycleOptions } from "./session/sessio
 export { createSessionLabelStore } from "./session/session-label-store.js";
 export type { SessionLabelStore } from "./session/session-label-store.js";
 
-// Session key builder moved to @comis/orchestrator at Phase 32 commit 9 (ORCH-EXT-08 / Wave B start).
-// The builder + its co-located test + dm-scope-integration.test.ts relocated to
-// packages/orchestrator/src/session-key/. Surgical extraction: other files in
+// Session key builder lives in @comis/orchestrator. The builder + its
+// co-located test + dm-scope-integration.test.ts live at
+// packages/orchestrator/src/session-key/. Other files in
 // packages/agent/src/session/ (lifecycle, write-lock, reset-policy, label-store)
-// stay in agent. Consumers (orchestrator/src/inbound/inbound-resolve.ts) now use
-// the relative orchestrator-internal import path; external consumers (none in-tree
-// post-move) would import from @comis/orchestrator.
+// stay in agent. Consumers (orchestrator/src/inbound/inbound-resolve.ts) use
+// the relative orchestrator-internal import path; external consumers import
+// from @comis/orchestrator.
 
 // Session write lock (per-session filesystem locking)
 export { withSessionLock, cleanupStaleLocks } from "./session/session-write-lock.js";
@@ -173,10 +172,10 @@ export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 export { createRagRetriever, formatMemorySection } from "./rag/rag-retriever.js";
 export type { RagRetriever, RagRetrieverDeps } from "./rag/rag-retriever.js";
 
-// Queue: moved to @comis/orchestrator in Phase 32 commit 8 (ORCH-EXT-08, Wave A close).
+// Queue symbols live in @comis/orchestrator:
 // createCommandQueue, CommandQueue, DebounceBuffer, FollowupTrigger, PriorityScheduler,
 // coalesceMessages, applyOverflowPolicy, SessionLane, and all related *Deps / *Stats types
-// now live at packages/orchestrator/src/queue/ and re-export from @comis/orchestrator.
+// live at packages/orchestrator/src/queue/ and re-export from @comis/orchestrator.
 
 // Bootstrap (workspace loading & system prompt assembly)
 export {
@@ -203,16 +202,15 @@ export type {
   ToolDescriptionContext,
 } from "./bootstrap/index.js";
 
-// Commands (slash command parser & handler) — moved to @comis/orchestrator in
-// Phase 32 commit 6 (ORCH-EXT-08). Consumers import from @comis/orchestrator now.
+// Commands (slash command parser & handler) live in @comis/orchestrator.
+// Consumers import from @comis/orchestrator.
 
-// Workspace — Phase 35 Plan 35-04 (D-01 #5): the workspace public API moved
-// to @comis/core. The agent-internal workspace/ subdir is retained because
-// agent internals (bootstrap-loader, executor, etc.) consume it via relative
-// paths; only the public barrel re-exports are deleted here.
-// One holdover: isHeartbeatContentEffectivelyEmpty is consumed by daemon
-// heartbeat code via the agent barrel and was NOT part of D-01's relocation
-// scope (it sits next to the workspace helpers as a workspace-state probe).
+// Workspace public API lives in @comis/core. The agent-internal workspace/
+// subdir is retained because agent internals (bootstrap-loader, executor, etc.)
+// consume it via relative paths; only the public barrel re-exports are deleted
+// here. One holdover: isHeartbeatContentEffectivelyEmpty is consumed by daemon
+// heartbeat code via the agent barrel (it sits next to the workspace helpers
+// as a workspace-state probe).
 export { isHeartbeatContentEffectivelyEmpty } from "./workspace/index.js";
 
 // File-state tracker registry (per-session lifetime)

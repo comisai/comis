@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Environment secret management RPC handler.
  * Provides:
@@ -9,14 +9,13 @@
  *   1. SecretStorePort (encrypted secrets.db via AES-256-GCM) -- preferred
  *   2. .env file append (legacy fallback when master key not configured)
  *
- * Phase 35 Wave C (Plan 35-11): refactored to use the `@comis/core`
- * contract registry. Method keys are computed-property names
- * (`[EnvSetContract.method]:`) so the bidirectional 1:1 architecture
- * test resolves them through `defineContract({ method, ... })`
- * declarations in `packages/core/src/api-contracts/config.ts`
- * (the env-handlers domain ships in the SAME contract file as the
- * config-handlers domain because both consume the same
- * `ConfigApiDeps` cluster slice).
+ * Uses the `@comis/core` contract registry. Method keys are computed-
+ * property names (`[EnvSetContract.method]:`) so the bidirectional 1:1
+ * architecture test resolves them through `defineContract({ method, ... })`
+ * declarations in `packages/core/src/api-contracts/config.ts` (the
+ * env-handlers domain ships in the SAME contract file as the
+ * config-handlers domain because both consume the same `ConfigApiDeps`
+ * cluster slice).
  *
  * The bespoke pre-Zod validation (admin gate, rate-limit,
  * ENV_KEY_PATTERN regex, MAX_KEY_LENGTH / MAX_VALUE_LENGTH,
@@ -88,11 +87,9 @@ function createTokenBucket(maxTokens: number, windowMs: number) {
 
 /** Dependencies required by env handlers.
  *
- * Re-aliased from the cluster slice in api/types.ts (Plan 34-08a; alias retarget
- * in Plan 34-08c). Single source of truth: ConfigApiDeps (shared with
- * config-handlers). The cluster slice was widened in 34-08c to cover env-handler
- * fields (secretStore, logger). DAEMON-API-03 Option A retarget — handler body
- * unchanged.
+ * Re-aliased from the cluster slice in api/types.ts. Single source of
+ * truth: ConfigApiDeps (shared with config-handlers). The cluster slice
+ * covers env-handler fields (secretStore, logger).
  */
 import type { ConfigApiDeps as EnvHandlerDeps } from "./types.js";
 export type { EnvHandlerDeps };
@@ -374,7 +371,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       // accidental `value`/`plaintext`/`secret`/`ciphertext` fields on
       // a secret row (they're intentionally absent from
       // `EnvListEntrySchema`). Production skips the parse for
-      // cold-start budget compliance (WEB-CONTRACTS-17).
+      // cold-start budget compliance.
       if (systemGetEnv("NODE_ENV") !== "production") {
         EnvListContract.response.parse(result);
       }

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram lifecycle helpers (Phase 43 split per FILE-SPLIT-12).
+ * Telegram lifecycle helpers.
  *
- * State-first wrappers around the pre-split createTelegramAdapter
- * lifecycle methods:
+ * State-first wrappers around the createTelegramAdapter lifecycle methods:
  *   - startLifecycle  -> token validation, webhook-secret validation,
  *                        setMyCommands, inbound-handler wiring, runner
  *                        boot (or webhook deferral).
@@ -47,9 +46,9 @@ export async function startLifecycle(
   state: TelegramAdapterState,
   deps: TelegramAdapterDeps,
 ): Promise<Result<void, Error>> {
-  // Fail fast on invalid token. Pass apiRoot if set (Wave A1 / Plan 40-09)
-  // so the in-adapter validation also targets the redirection mock;
-  // otherwise the validator hits api.telegram.org and 401s in E2E tests.
+  // Fail fast on invalid token. Pass apiRoot if set so the in-adapter
+  // validation also targets the redirection mock; otherwise the validator
+  // hits api.telegram.org and 401s in E2E tests.
   const tokenResult = await validateBotToken(deps.botToken, deps.apiRoot);
   if (!tokenResult.ok) {
     deps.logger.error(

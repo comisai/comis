@@ -74,43 +74,39 @@ describe("@comis/core -- architecture invariants", () => {
   });
 
   it("exports FileLockPort interface from core/src/ports/file-lock.ts", () => {
-    // Phase 28 commit 3 (CORE-PORTS-08) — binding rule from design §5.3.
-    // Asserts the new type-only port file exists and exports the expected
+    // Asserts the type-only port file exists and exports the expected
     // names (FileLockPort + LockOptions + LockError). The "ports/*.ts is
-    // type-only" rule below (ARCH-BASE-07 / L15) gates that the file is
-    // type-only; this test asserts the export shape.
+    // type-only" rule below gates that the file is type-only; this test
+    // asserts the export shape.
     const portFile = resolve(SRC_ROOT, "ports/file-lock.ts");
     const source = readFileSync(portFile, "utf8");
     const missing: string[] = [];
     if (!/export\s+interface\s+FileLockPort\b/.test(source)) missing.push("FileLockPort");
     if (!/export\s+interface\s+LockOptions\b/.test(source)) missing.push("LockOptions");
     if (!/export\s+type\s+LockError\b/.test(source)) missing.push("LockError");
-    if (!/cleanupStaleLocks\s*\(/.test(source)) missing.push("cleanupStaleLocks (RES-ARCH-2)");
+    if (!/cleanupStaleLocks\s*\(/.test(source)) missing.push("cleanupStaleLocks");
     expect(
       missing,
-      "core/src/ports/file-lock.ts must export FileLockPort + LockOptions + LockError and the FileLockPort surface must include cleanupStaleLocks (RES-ARCH-2 closes the design §5.2 enumeration gap).",
+      "core/src/ports/file-lock.ts must export FileLockPort + LockOptions + LockError and the FileLockPort surface must include cleanupStaleLocks.",
     ).toEqual([]);
   });
 
   it("exports ContextStorePort interface from core/src/ports/context-store.ts", () => {
-    // Phase 28 commit 4 (CORE-PORTS-13) — binding rule from design §5.3.
-    // Asserts the new type-only port file exists and declares the
-    // ContextStorePort interface (per Claude's Discretion in 28-CONTEXT.md).
-    // The "ports/*.ts is type-only" rule below (ARCH-BASE-07 / L15) gates
-    // that the file is type-only; this test asserts the export shape.
+    // Asserts the type-only port file exists and declares the
+    // ContextStorePort interface. The "ports/*.ts is type-only" rule below
+    // gates that the file is type-only; this test asserts the export shape.
     //
-    // Phase 31 commit 1 (RES-PIT-5) landed the row DTOs at
-    // core/src/ports/context-store-types.ts.
+    // Row DTOs live at core/src/ports/context-store-types.ts.
     //
-    // History of the memory-side declaration (kept for grep / git-blame context):
-    //   • Phase 28 era — `export interface ContextStore { ... }` (full mirror;
+    // Historical context for the memory-side declaration:
+    //   • Earlier — `export interface ContextStore { ... }` (full mirror;
     //     enforced via method-count parity).
-    //   • Phase 31 commit 2 (MEM-CTX-PORTS-05) — `export type ContextStore =
-    //     ContextStorePort` (alias is structurally faithful by definition).
-    //   • Post-cleanup terminal state (this branch) — no `ContextStore`
-    //     declaration in memory pkg; ContextStorePort from @comis/core is
-    //     the single source of truth. All daemon + internal memory
-    //     consumers import the Port from core directly.
+    //   • Intermediate — `export type ContextStore = ContextStorePort`
+    //     (alias is structurally faithful by definition).
+    //   • Terminal state (this branch) — no `ContextStore` declaration in
+    //     memory pkg; ContextStorePort from @comis/core is the single
+    //     source of truth. All daemon + internal memory consumers import
+    //     the Port from core directly.
     //
     // Accept any of the three states; flag drift only if the port is missing
     // OR an interface-form declaration drifts from method-count parity.
@@ -129,7 +125,7 @@ describe("@comis/core -- architecture invariants", () => {
     );
     const memInterfaceMatch = /export\s+interface\s+ContextStore\b/.test(memorySource);
     if (!memAliasMatch && memInterfaceMatch) {
-      // Phase 28-era path: interface form exists — gate method-count parity.
+      // Interface-form path: gate method-count parity.
       const memBlock = /export\s+interface\s+ContextStore\b[\s\S]*?\n\}/.exec(
         memorySource,
       );
@@ -148,18 +144,17 @@ describe("@comis/core -- architecture invariants", () => {
     // (Port is canonical) — no drift gate needed.
     expect(
       missing,
-      "core/src/ports/context-store.ts must export the ContextStorePort interface (per Claude's Discretion in 28-CONTEXT.md, Pattern 5 in 28-PATTERNS.md). Post-cleanup terminal state: memory pkg no longer declares a `ContextStore` type — the Port from @comis/core is the single source of truth.",
+      "core/src/ports/context-store.ts must export the ContextStorePort interface. Terminal state: memory pkg no longer declares a `ContextStore` type — the Port from @comis/core is the single source of truth.",
     ).toEqual([]);
   });
 
   it("OAuth rewritten errors expose code (OAuthErrorCode) and logErrorKind (closed Pino ErrorKind), with no string-typed errorKind field", () => {
-    // Phase 28 commit 6C (CORE-PORTS-15 + CORE-PORTS-16) — binding rule from
-    // design §5.3. Closes L21. The RewrittenOAuthError interface in
-    // core/src/security/oauth-helpers.ts must expose:
+    // The RewrittenOAuthError interface in core/src/security/oauth-helpers.ts
+    // must expose:
     //   - `code: OAuthErrorCode` (domain discriminator)
     //   - `logErrorKind: ErrorKind` (closed-Pino-union mirror)
     // and MUST NOT declare an `errorKind:` field (string-typed mirror was the
-    // pre-6C shape; renamed to logErrorKind in 6C). The architecture rule
+    // historical shape; renamed to logErrorKind). The architecture rule
     // structurally gates future regressions — any reintroduction of an
     // `errorKind` field on this interface fails the build.
     const oauthFile = resolve(SRC_ROOT, "security/oauth-helpers.ts");
@@ -178,7 +173,7 @@ describe("@comis/core -- architecture invariants", () => {
       }
       if (/^[ \t]*errorKind\s*:/m.test(ifaceBody)) {
         missing.push(
-          "STRING-TYPED `errorKind` FIELD STILL PRESENT (must be removed per 6C — rename to logErrorKind)",
+          "STRING-TYPED `errorKind` FIELD STILL PRESENT (must be removed — rename to logErrorKind)",
         );
       }
     }
@@ -189,7 +184,7 @@ describe("@comis/core -- architecture invariants", () => {
     }
     expect(
       missing,
-      "core/src/security/oauth-helpers.ts must declare RewrittenOAuthError with `code: OAuthErrorCode` + `logErrorKind: ErrorKind`, with no string-typed `errorKind` field (Phase 28 commit 6C closure of L21; design §5.3).",
+      "core/src/security/oauth-helpers.ts must declare RewrittenOAuthError with `code: OAuthErrorCode` + `logErrorKind: ErrorKind`, with no string-typed `errorKind` field.",
     ).toEqual([]);
   });
 
@@ -213,21 +208,21 @@ describe("@comis/core -- architecture invariants", () => {
 });
 
 /* ---------------------------------------------------------------------- */
-/*  ARCH-BASE-07: core/src/ports/*.ts port-shape (type-only) enforcement  */
+/*  core/src/ports/*.ts port-shape (type-only) enforcement                */
 /* ---------------------------------------------------------------------- */
 
 /**
- * L15 sub-allowlist — files in packages/core/src/ports/ that legitimately
+ * Sub-allowlist — files in packages/core/src/ports/ that legitimately
  * contain runtime imports / value declarations.
  *
- * Phase 28 commit 1 (CORE-PORTS-01) closed L15: the runtime helpers that
- * previously lived under core/src/ports/ (ChannelCapabilitySchema,
- * createNoOpDeliveryQueue, createNoOpDeliveryMirror, createNoOpCapabilityPort,
- * validateProfileId, PROFILE_ID_RE) moved to non-ports/ home modules
- * (../domain/channel-capability.ts, ../delivery/no-op-delivery-{queue,mirror}.ts,
- * ../tool-capability/no-op-tool-capability.ts, ../security/profile-id.ts), and
- * the curated re-exports at ../exports/ports.ts retarget consumers to those
- * new homes so the @comis/core public surface stayed byte-identical.
+ * Runtime helpers that previously lived under core/src/ports/
+ * (ChannelCapabilitySchema, createNoOpDeliveryQueue, createNoOpDeliveryMirror,
+ * createNoOpCapabilityPort, validateProfileId, PROFILE_ID_RE) moved to
+ * non-ports/ home modules (../domain/channel-capability.ts,
+ * ../delivery/no-op-delivery-{queue,mirror}.ts,
+ * ../tool-capability/no-op-tool-capability.ts, ../security/profile-id.ts),
+ * and the curated re-exports at ../exports/ports.ts retarget consumers to
+ * those new homes so the @comis/core public surface stayed byte-identical.
  *
  * After the move, every file under core/src/ports/*.ts is type-only:
  *   - all imports are `import type`
@@ -236,10 +231,7 @@ describe("@comis/core -- architecture invariants", () => {
  *   - re-exports (`export type { ... } from "..."`) are allowed; the AST
  *     walker only flags ImportDeclarations and locally-declared exports.
  *
- * The allowlist is therefore empty. Re-extending it would re-open L15 and
- * is a regression — the parent L15 entry has been removed from
- * test/support/architecture-allowlist.ts. The shrink-only test
- * (test/architecture/allowlist-shrink.test.ts) gates the parent entry.
+ * The allowlist is therefore empty. Re-extending it is a regression.
  */
 const L15_PORT_SHAPE_ALLOWLIST: ReadonlySet<string> = new Set<string>();
 
@@ -319,7 +311,7 @@ function findRuntimeShapeViolations(
   return violations;
 }
 
-describe("@comis/core -- port-shape (ARCH-BASE-07 / L15)", () => {
+describe("@comis/core -- port-shape", () => {
   it("packages/core/src/ports/*.ts files are type-only (import type ... only; no runtime values)", () => {
     const portFiles = listPortFiles();
     const offenders: Array<{
@@ -343,8 +335,7 @@ describe("@comis/core -- port-shape (ARCH-BASE-07 / L15)", () => {
       formatViolations({
         description:
           "Files in packages/core/src/ports/*.ts must be TYPE-ONLY (every import is `import type {...}` and there are no top-level runtime value declarations). " +
-          "L15 closes in Phase 28 commit (CORE-PORTS-01) when current runtime helpers move out of core/src/ports/. " +
-          "If a runtime helper genuinely needs to live in ports/ as a Phase 27 baseline state, add its basename VERBATIM to L15_PORT_SHAPE_ALLOWLIST in this file with a rationale comment + L-ID citation.",
+          "If a runtime helper genuinely needs to live in ports/ temporarily, add its basename VERBATIM to L15_PORT_SHAPE_ALLOWLIST in this file with a rationale comment.",
         violations: offenders.map((o) => ({
           file: o.file,
           line: o.line,
@@ -353,11 +344,10 @@ describe("@comis/core -- port-shape (ARCH-BASE-07 / L15)", () => {
         })),
         suggestedFix:
           "Move the runtime helper out of core/src/ports/ to a non-port core module (e.g., core/src/security/, core/src/delivery/, core/src/no-op/). " +
-          "Update curated re-exports at core/src/exports/ports.ts so the public surface of @comis/core stays byte-identical (per design §5.2). " +
-          "If the move is deferred to Phase 28, add the file's basename to L15_PORT_SHAPE_ALLOWLIST with a rationale comment.",
-        designRef:
-          'design §5.2 ("Move runtime values out of core/src/ports/...core/src/ports/*.ts becomes type-only before new ports are added") / §1.3 L15',
-        allowlistRef: "L15 + L15_PORT_SHAPE_ALLOWLIST (in-file sub-allowlist)",
+          "Update curated re-exports at core/src/exports/ports.ts so the public surface of @comis/core stays byte-identical. " +
+          "If the move is deferred, add the file's basename to L15_PORT_SHAPE_ALLOWLIST with a rationale comment.",
+        designRef: 'core/src/ports/*.ts must be type-only before new ports are added',
+        allowlistRef: "L15_PORT_SHAPE_ALLOWLIST (in-file sub-allowlist)",
       }),
     ).toEqual([]);
     expect(
@@ -368,22 +358,21 @@ describe("@comis/core -- port-shape (ARCH-BASE-07 / L15)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 31 commit 1 (MEM-CTX-PORTS-03 + MEM-CTX-PORTS-04) — Port-DTO residency
-// invariants (text-level / regex — complementary to the TS-compiler-API
-// walker in test/architecture/source-rules.test.ts wired by Task 4).
+// Port-DTO residency invariants (text-level / regex — complementary to the
+// TS-compiler-API walker in test/architecture/source-rules.test.ts).
 // Row DTOs live in core/src/ports/{context-store,session-store}-types.ts
 // (NOT inline in port files, NOT in core/src/domain/).
 // ---------------------------------------------------------------------------
 
-describe("Phase 31 — port-DTO residency text-level checks (MEM-CTX-PORTS-03 + MEM-CTX-PORTS-04 complementary)", () => {
+describe("port-DTO residency text-level checks", () => {
   const PORTS_DIR_P31 = resolve(SRC_ROOT, "ports");
   const DOMAIN_DIR_P31 = resolve(SRC_ROOT, "domain");
 
-  it("every Ctx*Row name appearing in context-store.ts source-text is exported from context-store-types.ts (MEM-CTX-PORTS-04 complementary)", () => {
-    // COMPLEMENTARY check — the primary AST-level check is the TS-compiler-API
-    // walker wired in test/architecture/source-rules.test.ts (Task 4). This
-    // regex check additionally catches Ctx*Row names mentioned in comments
-    // or non-method-signature positions in context-store.ts.
+  it("every Ctx*Row name appearing in context-store.ts source-text is exported from context-store-types.ts", () => {
+    // Complementary check — the primary AST-level check is the
+    // TS-compiler-API walker wired in test/architecture/source-rules.test.ts.
+    // This regex check additionally catches Ctx*Row names mentioned in
+    // comments or non-method-signature positions in context-store.ts.
     const portFile = readFileSync(resolve(PORTS_DIR_P31, "context-store.ts"), "utf8");
     const typesFile = readFileSync(resolve(PORTS_DIR_P31, "context-store-types.ts"), "utf8");
     const ctxRowNames = new Set(
@@ -396,12 +385,12 @@ describe("Phase 31 — port-DTO residency text-level checks (MEM-CTX-PORTS-03 + 
     for (const name of ctxRowNames) {
       expect(
         typesFile,
-        `${name} (used in context-store.ts) must be exported from context-store-types.ts (MEM-CTX-PORTS-04 complementary)`,
+        `${name} (used in context-store.ts) must be exported from context-store-types.ts`,
       ).toMatch(new RegExp(`export\\s+interface\\s+${name}\\b`));
     }
   });
 
-  it("session-store.ts declares SessionStorePort with exactly 7 methods (MEM-CTX-PORTS-03)", () => {
+  it("session-store.ts declares SessionStorePort with exactly 7 methods", () => {
     const portFile = readFileSync(resolve(PORTS_DIR_P31, "session-store.ts"), "utf8");
     expect(portFile).toMatch(/export\s+interface\s+SessionStorePort\b/);
     const expectedMethods = [
@@ -416,12 +405,12 @@ describe("Phase 31 — port-DTO residency text-level checks (MEM-CTX-PORTS-03 + 
     for (const m of expectedMethods) {
       expect(
         portFile,
-        `SessionStorePort must declare method ${m}() (MEM-CTX-PORTS-03)`,
+        `SessionStorePort must declare method ${m}()`,
       ).toMatch(new RegExp(`\\b${m}\\s*\\(`));
     }
   });
 
-  it("no Ctx*Row or Session{Data,ListEntry,DetailedEntry} types live in core/src/domain/ (preserves domain/persistence boundary per design §8.2.1)", () => {
+  it("no Ctx*Row or Session{Data,ListEntry,DetailedEntry} types live in core/src/domain/ (preserves domain/persistence boundary)", () => {
     if (!existsSync(DOMAIN_DIR_P31)) return; // domain dir is optional
     const domainFiles = readdirSync(DOMAIN_DIR_P31).filter(
       (f) => f.endsWith(".ts") && !f.endsWith(".test.ts"),
@@ -439,17 +428,16 @@ describe("Phase 31 — port-DTO residency text-level checks (MEM-CTX-PORTS-03 + 
     }
     expect(
       offenders,
-      "Row DTOs must live in core/src/ports/, NOT core/src/domain/. Move declarations to context-store-types.ts or session-store-types.ts (MEM-CTX-PORTS-03, design §8.2.1).",
+      "Row DTOs must live in core/src/ports/, NOT core/src/domain/. Move declarations to context-store-types.ts or session-store-types.ts.",
     ).toEqual([]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Phase 31 commit 7 (MEM-CTX-PORTS-13 / MEM-CTX-PORTS-14 part 3 /
-// RES-PIT-31-3) -- secrets-handlers integrity invariants.
+// secrets-handlers integrity invariants.
 // ---------------------------------------------------------------------------
 
-describe("Phase 31 -- secrets-handlers integrity (MEM-CTX-PORTS-13 + 14 part 3 / RES-PIT-31-3)", () => {
+describe("secrets-handlers integrity", () => {
   const HANDLERS_FILE = resolve(
     SRC_ROOT,
     "..",
@@ -474,7 +462,7 @@ describe("Phase 31 -- secrets-handlers integrity (MEM-CTX-PORTS-13 + 14 part 3 /
     "SECRET-RPC-CHECKLIST.md",
   );
 
-  it("secrets-handlers.ts leading comment references core/src/security/SECRET-RPC-CHECKLIST.md (MEM-CTX-PORTS-14 part 3)", () => {
+  it("secrets-handlers.ts leading comment references core/src/security/SECRET-RPC-CHECKLIST.md", () => {
     const contents = readFileSync(HANDLERS_FILE, "utf8");
     // Grab the leading JSDoc block (everything before the first `*/` line).
     const leadingCommentEnd = contents.indexOf("\n */");
@@ -485,31 +473,27 @@ describe("Phase 31 -- secrets-handlers integrity (MEM-CTX-PORTS-13 + 14 part 3 /
     const leadingComment = contents.slice(0, leadingCommentEnd + 4);
     expect(
       leadingComment,
-      "secrets-handlers.ts leading comment must reference core/src/security/SECRET-RPC-CHECKLIST.md (MEM-CTX-PORTS-14 part 3).",
+      "secrets-handlers.ts leading comment must reference core/src/security/SECRET-RPC-CHECKLIST.md.",
     ).toMatch(/core\/src\/security\/SECRET-RPC-CHECKLIST\.md/);
 
-    // I-10 fix (Phase 31 revision iter 2): also verify the referenced file
-    // ACTUALLY EXISTS at the cited path. Without this assertion, a future
-    // rename of core/src/security/ (e.g., Phase 34) silently breaks the
-    // reference -- the leading-comment grep would still match but point
-    // at a dead path.
+    // Verify the referenced file ACTUALLY EXISTS at the cited path. Without
+    // this assertion, a future rename of core/src/security/ silently breaks
+    // the reference -- the leading-comment grep would still match but
+    // point at a dead path.
     expect(
       existsSync(CHECKLIST_FILE),
       `core/src/security/SECRET-RPC-CHECKLIST.md must exist at the path referenced from secrets-handlers.ts leading comment. Resolved path: ${CHECKLIST_FILE}. If core/src/security/ was renamed, update both the file location AND the leading-comment reference in secrets-handlers.ts.`,
     ).toBe(true);
   });
 
-  it("every secrets.* contract is admin-scoped (RES-PIT-31-3 — post-Plan-35-20 collapse)", async () => {
-    // Phase 35 Wave D Plan 35-20 BLOCKER 8 closure: setup-gateway-api.ts
-    // collapsed from 14 string-array registerRpcPassthrough calls to a
-    // single for-loop over API_CONTRACTS_ORDERED. The pre-Plan-35-20
-    // version of this test grepped the dispatcher source for literal
-    // "secrets.*" method names + their adjacent scope arg; the post-
-    // collapse dispatcher contains no method literals.
+  it("every secrets.* contract is admin-scoped", async () => {
+    // setup-gateway-api.ts iterates API_CONTRACTS_ORDERED in a single
+    // for-loop over the contract registry — there are no method-name
+    // literals in the dispatcher source.
     //
     // The architectural invariant (every secrets.* method registered at
     // admin scope on the dynamic router) is preserved by verifying it
-    // through the contract registry, which is now the SINGLE SOURCE OF
+    // through the contract registry, which is the SINGLE SOURCE OF
     // TRUTH. The collapse loop in setup-gateway-api.ts iterates this
     // registry — so if every contract declares scope "admin", every
     // method registers at admin scope on the router.
@@ -534,7 +518,7 @@ describe("Phase 31 -- secrets-handlers integrity (MEM-CTX-PORTS-13 + 14 part 3 /
     const setupContents = readFileSync(SETUP_GATEWAY_RPC_FILE, "utf8");
     expect(
       setupContents,
-      "setup-gateway-api.ts must register methods through the API_CONTRACTS_ORDERED collapse loop (Plan 35-20 BLOCKER 8 fix).",
+      "setup-gateway-api.ts must register methods through the API_CONTRACTS_ORDERED collapse loop.",
     ).toMatch(/for\s*\(\s*const\s+c\s+of\s+API_CONTRACTS_ORDERED\s*\)/);
 
     // The load-bearing security invariant: every secrets.* contract MUST
@@ -544,42 +528,38 @@ describe("Phase 31 -- secrets-handlers integrity (MEM-CTX-PORTS-13 + 14 part 3 /
     for (const c of secretContracts) {
       expect(
         c.scopes,
-        `Contract ${c.method} must declare scopes: ["admin"] (RES-PIT-31-3 — Plan 35-20 collapse loop honors c.scopes directly). Actual scopes: ${JSON.stringify(c.scopes)}.`,
+        `Contract ${c.method} must declare scopes: ["admin"]. Actual scopes: ${JSON.stringify(c.scopes)}.`,
       ).toEqual(["admin"]);
     }
   });
 });
 
 // ---------------------------------------------------------------------------
-// Phase 39 commit 1 (PORTS-01..05) — ClockPort / EnvPort / TimerPort exports
-// and PORTS-05 YAGNI guard (TimerHandle has NO ref() method).
+// ClockPort / EnvPort / TimerPort exports and YAGNI guard (TimerHandle has
+// NO ref() method).
 //
-// These tests are written FIRST (TDD RED): they intentionally fail until
-// commit 2 lands the three type-only port files in packages/core/src/ports/
-// and the barrel update at packages/core/src/ports/index.ts.
-//
-// Test strategy mirrors the existing Phase 28 file-lock / context-store
-// checks above: a `readFileSync` + regex grep against the on-disk source
-// is the load-bearing assertion. Vitest's esbuild transformer erases
+// Test strategy mirrors the file-lock / context-store checks above: a
+// `readFileSync` + regex grep against the on-disk source is the
+// load-bearing assertion. Vitest's esbuild transformer erases
 // `type _t = import("../ports/index.js").ClockPort` to `any`, so a pure
 // type-only assertion would silently pass even when the port file is
-// missing. The grep assertions are the binding TDD RED signal.
+// missing. The grep assertions are the binding signal.
 // ---------------------------------------------------------------------------
 
-describe("Phase 39 ports (PORTS-01/02/03/04/05)", () => {
+describe("clock / env / timer ports", () => {
   const PORTS_DIR_P39 = resolve(SRC_ROOT, "ports");
   const INDEX_PATH_P39 = resolve(PORTS_DIR_P39, "index.ts");
 
-  it("ClockPort interface lives in core/src/ports/clock.ts (PORTS-01) and is re-exported from index.ts", () => {
+  it("ClockPort interface lives in core/src/ports/clock.ts and is re-exported from index.ts", () => {
     const portFile = resolve(PORTS_DIR_P39, "clock.ts");
     expect(
       existsSync(portFile),
-      "packages/core/src/ports/clock.ts must exist (PORTS-01, design §5.2(1))",
+      "packages/core/src/ports/clock.ts must exist",
     ).toBe(true);
     const source = readFileSync(portFile, "utf8");
     expect(
       source,
-      "clock.ts must declare `export interface ClockPort` with now() and nowDate() (PORTS-01)",
+      "clock.ts must declare `export interface ClockPort` with now() and nowDate()",
     ).toMatch(/export\s+interface\s+ClockPort\b/);
     expect(source, "ClockPort must declare now()").toMatch(/\bnow\s*\(\s*\)\s*:/);
     expect(source, "ClockPort must declare nowDate()").toMatch(/\bnowDate\s*\(\s*\)\s*:/);
@@ -591,16 +571,16 @@ describe("Phase 39 ports (PORTS-01/02/03/04/05)", () => {
     ).toMatch(/export\s+type\s+\{\s*ClockPort\s*\}\s+from\s+"\.\/clock\.js"/);
   });
 
-  it("EnvPort interface lives in core/src/ports/env.ts (PORTS-02) with get() + snapshot() and is re-exported from index.ts", () => {
+  it("EnvPort interface lives in core/src/ports/env.ts with get() + snapshot() and is re-exported from index.ts", () => {
     const portFile = resolve(PORTS_DIR_P39, "env.ts");
     expect(
       existsSync(portFile),
-      "packages/core/src/ports/env.ts must exist (PORTS-02, design §5.2(2))",
+      "packages/core/src/ports/env.ts must exist",
     ).toBe(true);
     const source = readFileSync(portFile, "utf8");
     expect(
       source,
-      "env.ts must declare `export interface EnvPort` (PORTS-02)",
+      "env.ts must declare `export interface EnvPort`",
     ).toMatch(/export\s+interface\s+EnvPort\b/);
     expect(source, "EnvPort must declare get(key: string)").toMatch(
       /\bget\s*\(\s*key\s*:\s*string\s*\)/,
@@ -610,7 +590,7 @@ describe("Phase 39 ports (PORTS-01/02/03/04/05)", () => {
     );
     expect(
       source,
-      "EnvPort.snapshot must return Readonly<Record<string, string | undefined>> (T-39-01-02 mitigation)",
+      "EnvPort.snapshot must return Readonly<Record<string, string | undefined>>",
     ).toMatch(/Readonly<Record<string,\s*string\s*\|\s*undefined>>/);
 
     const indexSource = readFileSync(INDEX_PATH_P39, "utf8");
@@ -620,11 +600,11 @@ describe("Phase 39 ports (PORTS-01/02/03/04/05)", () => {
     ).toMatch(/export\s+type\s+\{\s*EnvPort\s*\}\s+from\s+"\.\/env\.js"/);
   });
 
-  it("TimerHandle and TimerPort live in core/src/ports/timer.ts (PORTS-03/04) and are re-exported from index.ts", () => {
+  it("TimerHandle and TimerPort live in core/src/ports/timer.ts and are re-exported from index.ts", () => {
     const portFile = resolve(PORTS_DIR_P39, "timer.ts");
     expect(
       existsSync(portFile),
-      "packages/core/src/ports/timer.ts must exist (PORTS-03, design §5.2(3))",
+      "packages/core/src/ports/timer.ts must exist",
     ).toBe(true);
     const source = readFileSync(portFile, "utf8");
     expect(source, "timer.ts must declare `export interface TimerHandle`").toMatch(
@@ -633,10 +613,10 @@ describe("Phase 39 ports (PORTS-01/02/03/04/05)", () => {
     expect(source, "timer.ts must declare `export interface TimerPort`").toMatch(
       /export\s+interface\s+TimerPort\b/,
     );
-    // PORTS-04 shape: TimerHandle.cancelled is readonly boolean; cancel() + unref() exist.
+    // TimerHandle.cancelled is readonly boolean; cancel() + unref() exist.
     expect(
       source,
-      "TimerHandle must declare readonly cancelled: boolean (PORTS-04)",
+      "TimerHandle must declare readonly cancelled: boolean",
     ).toMatch(/\breadonly\s+cancelled\s*:\s*boolean\b/);
     expect(source, "TimerHandle must declare cancel(): void").toMatch(
       /\bcancel\s*\(\s*\)\s*:\s*void\b/,
@@ -664,11 +644,11 @@ describe("Phase 39 ports (PORTS-01/02/03/04/05)", () => {
     ).toMatch(/export\s+type\s+\{\s*TimerPort\s*,\s*TimerHandle\s*\}\s+from\s+"\.\/timer\.js"/);
   });
 
-  it("TimerHandle deliberately omits ref() per YAGNI (PORTS-05)", () => {
+  it("TimerHandle deliberately omits ref() per YAGNI", () => {
     const portFile = resolve(PORTS_DIR_P39, "timer.ts");
     expect(
       existsSync(portFile),
-      "packages/core/src/ports/timer.ts must exist for the PORTS-05 YAGNI guard to bind",
+      "packages/core/src/ports/timer.ts must exist for the YAGNI guard to bind",
     ).toBe(true);
     const source = readFileSync(portFile, "utf8");
 
@@ -682,29 +662,28 @@ describe("Phase 39 ports (PORTS-01/02/03/04/05)", () => {
     ).not.toBeNull();
     const body = handleBlock![0];
     // Strip comments before scanning — the body legitimately contains the
-    // string "ref()" inside `// NO ref() — YAGNI per PORTS-05`, which is
-    // documentation about the absence of the member. We only care about
-    // actual TypeScript member declarations.
+    // string "ref()" inside documentation about the absence of the member.
+    // We only care about actual TypeScript member declarations.
     const bodyNoComments = body
       // strip /* ... */ block comments
       .replace(/\/\*[\s\S]*?\*\//g, "")
       // strip // line comments (to end of line)
       .replace(/\/\/[^\n]*/g, "");
     // Match a method member literally named `ref` (boundary-anchored), not
-    // `unref`. Production callers re-refing a timer is a known YAGNI surface;
-    // PORTS-05 freezes that out.
+    // `unref`. Production callers re-refing a timer is a YAGNI surface
+    // frozen out by the port shape.
     const refMember = /(?<![A-Za-z0-9_])ref\s*\(\s*\)/.exec(bodyNoComments);
     expect(
       refMember,
-      "TimerHandle MUST NOT declare a ref() method per PORTS-05 (YAGNI). Found a ref()-shaped member in the interface body.",
+      "TimerHandle MUST NOT declare a ref() method (YAGNI). Found a ref()-shaped member in the interface body.",
     ).toBeNull();
   });
 
-  it("type-only structural assertions for ClockPort/EnvPort/TimerPort/TimerHandle (PORTS-01..05 contract documentation)", () => {
+  it("type-only structural assertions for ClockPort/EnvPort/TimerPort/TimerHandle (contract documentation)", () => {
     // These remain as living contract documentation; vitest's esbuild
-    // transformer erases the type queries, so the *binding* RED signal is
-    // the grep-based assertions above. After GREEN these compile when
-    // running `tsc --noEmit` on the test file standalone (the package
+    // transformer erases the type queries, so the *binding* signal is
+    // the grep-based assertions above. These compile when running
+    // `tsc --noEmit` on the test file standalone (the package
     // tsconfig excludes __tests__, so the type system check is advisory).
     type _Clock = import("../ports/index.js").ClockPort;
     type _Env = import("../ports/index.js").EnvPort;

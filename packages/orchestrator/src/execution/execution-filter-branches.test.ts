@@ -7,8 +7,6 @@
  * canned-empty-on-stop ack, NO_REPLY filtering, voice-response pipeline
  * branches, outbound-media branches.
  *
- * Phase 40 / Plan 40-12 / COV-03 — orchestrator branches gap closure.
- *
  * @module
  */
 import { describe, it, expect, vi } from "vitest";

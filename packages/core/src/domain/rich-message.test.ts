@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for domain/rich-message.ts (COV-03 / Plan 40-11).
+ * Branch-gap coverage for domain/rich-message.ts.
  *
  * Closes the 4 missing branch-paths:
  *   - parseRichButtons safeParse success vs. !success branches

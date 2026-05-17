@@ -6,11 +6,11 @@ import { ok } from "@comis/shared";
 
 import { matchesResetTrigger, processInboundMessage } from "./inbound-pipeline.js";
 
-// Phase 30 plan 04: vi.mock("./deliver-to-channel.js", ...) replaced with an
-// injected fake DeliveryService (research §H.2 Option 2). The fake's
-// deliverToChannel delegates to adapter.sendMessage so existing assertions on
-// adapter.sendMessage still work (avoids formatForChannel HTML conversion).
-// This aligns the test with the new production DI shape.
+// DeliveryService is injected as a per-test fake (rather than via
+// vi.mock("./deliver-to-channel.js")). The fake's deliverToChannel delegates
+// to adapter.sendMessage so existing assertions on adapter.sendMessage still
+// work (avoids formatForChannel HTML conversion). This matches the production
+// DI shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake
 function makeFakeDeliveryService(): DeliveryService {
   return {
@@ -177,8 +177,7 @@ function makeMinimalDeps(overrides?: Partial<InboundPipelineDeps>): InboundPipel
         finishReason: "stop" as const,
       })),
     })),
-    // Phase 30 plan 04: per-test injected DeliveryService fake (replaces the
-    // vi.mock("./deliver-to-channel.js") block previously at file top).
+    // Per-test injected DeliveryService fake (see the helper at file top).
     deliveryService: makeFakeDeliveryService(),
     ...overrides,
   };

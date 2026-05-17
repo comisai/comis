@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: OAuth device-code flow validation throws (state validation, response-shape guards); consumed via auth-handlers daemon RPC (@allow-throw per Decision 2). State-machine throws are caller-bounded — the device-code orchestrator catches at each transition boundary. (Phase 41 TS-HYG-07).
+// @allow-throw: OAuth device-code flow validation throws (state validation, response-shape guards); consumed via auth-handlers daemon RPC. State-machine throws are caller-bounded — the device-code orchestrator catches at each transition boundary.
 /**
  * OAuth device-code login for OpenAI Codex.
  *
- * Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #2.
- * Sibling-dependency of `loginOpenAICodexOAuth` (also relocated this plan):
- * the login runner dispatches to `loginOpenAICodexDeviceCode` when callers
- * select `method: "device-code"`, so both files must live together.
- * The agent-side source remains in place (Wave A additive); Plan 35-04
- * deletes the agent re-export after CLI Plan 35-05 retargets.
+ * Sibling-dependency of `loginOpenAICodexOAuth`: the login runner dispatches
+ * to `loginOpenAICodexDeviceCode` when callers select `method: "device-code"`,
+ * so both files live together in @comis/core.
  *
  * Port of the upstream device-code reference module with Comis-specific
  * adaptations:

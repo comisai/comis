@@ -920,7 +920,7 @@ export class IcChatConsole extends LitElement {
     }
 
     try {
-      // Closed-union retype per Phase 41 TS-HYG-11: session.list returns kind ∈
+      // Closed-union retype: session.list returns kind ∈
       // {"dm", "group", "sub-agent"} per session-handlers.ts:413-417 derivation
       // (parentSessionKey -> "sub-agent" | guildId -> "group" | else "dm").
       const result = await this.rpcClient.call<{

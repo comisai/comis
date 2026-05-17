@@ -3,10 +3,8 @@
  * Tests for `setupNotifications` wiring factory.
  *
  * Asserts deterministic factory output, port-injection contract, and
- * downstream-service registration behavior. Phase 40 / Phase C §6.3.3 row 2.
- *
- * Use-case design (§3.3 / COV-10): every `it("...")` description names a
- * use case >=20 chars ending in a recognizable shape.
+ * downstream-service registration behavior. Every `it("...")` description
+ * names a use case >=20 chars ending in a recognizable shape.
  *
  * @module
  */

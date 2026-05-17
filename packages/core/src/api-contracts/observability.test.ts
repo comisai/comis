@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the observability-domain Wave C contracts
- * (Plan 35-12).
+ * Per-contract test for the observability-domain contracts.
  *
  * The handler factory `packages/daemon/src/api/obs-handlers.ts` exposes
  * 18 admin-scoped methods. The tests below cover:
@@ -434,7 +433,7 @@ describe("observability-domain contracts", () => {
     expect(() => ObsDeliveryStatsContract.request.parse({})).not.toThrow();
   });
 
-  it("obs.delivery.stats: response shape", () => {
+  it("obs.delivery.stats: parses the response shape", () => {
     expect(() =>
       ObsDeliveryStatsContract.response.parse({
         total: 15,
@@ -562,7 +561,7 @@ describe("observability-domain contracts", () => {
     expect(() => ObsGetCacheStatsContract.request.parse({})).not.toThrow();
   });
 
-  it("obs.getCacheStats: response shape", () => {
+  it("obs.getCacheStats: parses the response shape", () => {
     expect(() =>
       ObsGetCacheStatsContract.response.parse({
         cacheHitRate: 0.4,
@@ -696,7 +695,7 @@ describe("observability-domain contracts", () => {
   });
 
   // -------------------------------------------------------------------------
-  // No INTERNAL_FIELD_NAMES leakage (D-04 paired-test sanity)
+  // No INTERNAL_FIELD_NAMES leakage (paired-test sanity)
   // -------------------------------------------------------------------------
 
   it("no contract request schema declares any _X internal key", () => {

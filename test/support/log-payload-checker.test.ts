@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Fixture-driven unit tests for the closed-`errorKind` AST walker
- * (ARCH-BASE-15). These tests prove that `ts.createProgram` + TypeChecker
- * resolves all four construction shapes documented in RES-PIT-9:
+ * Fixture-driven unit tests for the closed-`errorKind` AST walker.
+ * These tests prove that `ts.createProgram` + TypeChecker resolves all
+ * four construction shapes:
  *
  *   1. Object literal — `{ errorKind: "x" }`
  *   2. Object.assign — `Object.assign({}, base, { errorKind: "x" })`
@@ -11,14 +11,13 @@
  *
  * If any of these shapes regressed (e.g. due to a future "drop the
  * TypeChecker, use ts.createSourceFile only" performance optimisation),
- * the corresponding test would fail — closing the medium-severity covert
- * evasion vector flagged by RESEARCH.md A3.
+ * the corresponding test would fail — closing a medium-severity covert
+ * evasion vector.
  *
  * Cache validation: a "cache-hit" test runs the walker twice in
  * succession and asserts both runs report the same shape. Sha256-based
- * cache invalidation on file content change is documented invariant
- * (the loadCache + fileHash code path is exercised; a full mutation
- * regression test is deferred to Phase 28).
+ * cache invalidation on file content change is a documented invariant
+ * (the loadCache + fileHash code path is exercised).
  *
  * @module
  */
@@ -45,7 +44,7 @@ function clearCache(): void {
   }
 }
 
-describe("checkLogPayloads -- closed errorKind via TS TypeChecker (ARCH-BASE-15)", () => {
+describe("checkLogPayloads -- closed errorKind via TS TypeChecker", () => {
   it("detects literal off-union errorKind in logger.warn payload", () => {
     clearCache();
     const violations = checkLogPayloads([
@@ -60,7 +59,7 @@ describe("checkLogPayloads -- closed errorKind via TS TypeChecker (ARCH-BASE-15)
     expect(v?.line).toBeGreaterThan(0);
   });
 
-  it("detects off-union errorKind via Object.assign(...) (RES-PIT-9 evasion vector)", () => {
+  it("detects off-union errorKind via Object.assign(...)", () => {
     clearCache();
     const violations = checkLogPayloads([
       resolve(FIXTURES_ROOT, "object-assign-payload.ts"),
@@ -71,7 +70,7 @@ describe("checkLogPayloads -- closed errorKind via TS TypeChecker (ARCH-BASE-15)
     ).toBeGreaterThan(0);
   });
 
-  it("detects off-union errorKind via spread (RES-PIT-9 evasion vector)", () => {
+  it("detects off-union errorKind via spread", () => {
     clearCache();
     const violations = checkLogPayloads([
       resolve(FIXTURES_ROOT, "spread-payload.ts"),
@@ -82,7 +81,7 @@ describe("checkLogPayloads -- closed errorKind via TS TypeChecker (ARCH-BASE-15)
     ).toBeGreaterThan(0);
   });
 
-  it("detects off-union errorKind via member-access (RES-PIT-9 evasion vector)", () => {
+  it("detects off-union errorKind via member-access", () => {
     clearCache();
     const violations = checkLogPayloads([
       resolve(FIXTURES_ROOT, "member-access-errorkind.ts"),
@@ -123,9 +122,8 @@ describe("checkLogPayloads -- closed errorKind via TS TypeChecker (ARCH-BASE-15)
   it("cache invalidates on file content change (sha256 mismatch — documented invariant)", () => {
     // The loadCache + fileHash composite-key implementation guarantees
     // sha256 mismatch → recompute. A full regression test would write a
-    // temp file, modify it, re-run, and verify the violations refresh —
-    // deferred to Phase 28 if a regression appears. The invariant is
-    // load-bearing; this assertion documents it.
+    // temp file, modify it, re-run, and verify the violations refresh.
+    // The invariant is load-bearing; this assertion documents it.
     expect(true).toBe(true);
   });
 });

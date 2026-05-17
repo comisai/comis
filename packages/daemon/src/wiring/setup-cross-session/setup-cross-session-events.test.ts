@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 43 wave 8 split (FILE-SPLIT-08): setup-cross-session.ts →
- * setup-cross-session/ subdirectory. Events leaf neighbor test:
- * `registerProxyTypingListeners` registers handlers on the AppContainer's
- * event bus + schedules a TTL sweep timer. The integration behavior
- * (typing controller start/stop, TTL eviction, shutdown cleanup) is
- * covered by setup-cross-session-runtime.test.ts through the
- * setupCrossSession invocation; this neighbor test pins the symbol-export
- * shape and the deps interface key set for compile-time regression coverage.
+ * Events leaf neighbor test: `registerProxyTypingListeners` registers
+ * handlers on the AppContainer's event bus + schedules a TTL sweep timer.
+ * The integration behavior (typing controller start/stop, TTL eviction,
+ * shutdown cleanup) is covered by setup-cross-session-runtime.test.ts
+ * through the setupCrossSession invocation; this neighbor test pins the
+ * symbol-export shape and the deps interface key set for compile-time
+ * regression coverage.
  *
  * @module
  */

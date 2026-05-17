@@ -6,9 +6,7 @@
  * downstream packages (@comis/agent, @comis/channels, @comis/skills,
  * @comis/scheduler, @comis/cli, @comis/gateway, @comis/daemon,
  * @comis/orchestrator). memory provides ContextStore / SessionStore
- * implementations consumed by daemon-side wiring; the agent + cli
- * -> memory edges are scheduled to die in Phase 31 (MEM-CTX-PORTS-01/02)
- * once the ContextStorePort / SessionStorePort surface lives in core.
+ * implementations consumed by daemon-side wiring.
  *
  * @module
  */
@@ -53,8 +51,7 @@ describe("@comis/memory -- architecture invariants", () => {
             snippet: v.snippet,
           })),
           suggestedFix:
-            "memory is a leaf in the §2.2 package graph (depends only on @comis/shared and @comis/core). If a type is needed, move it to @comis/core/ports.",
-          designRef: "design §2.2 / §8.2.1 (ContextStorePort lives in core)",
+            "memory is a leaf in the package graph (depends only on @comis/shared and @comis/core). If a type is needed, move it to @comis/core/ports.",
         }),
       ).toEqual([]);
       // Pattern E sanity check: helper actually walked production source files.
@@ -63,8 +60,8 @@ describe("@comis/memory -- architecture invariants", () => {
   }
 });
 
-describe("@comis/memory -- single-source SessionData (TS-HYG-09)", () => {
-  it("SessionData is declared exactly once in production source (TS-HYG-09)", () => {
+describe("@comis/memory -- single-source SessionData", () => {
+  it("SessionData is declared exactly once in production source", () => {
     const result = findInSourceFiles({
       rootDir: resolve(REPO_ROOT, "packages"),
       needle: /^export interface SessionData\b/m,
@@ -75,11 +72,10 @@ describe("@comis/memory -- single-source SessionData (TS-HYG-09)", () => {
       result.matches.length,
       formatViolations({
         description:
-          "SessionData must be declared exactly once in production source at packages/core/src/ports/session-store-types.ts (Phase 41 TS-HYG-09).",
+          "SessionData must be declared exactly once in production source at packages/core/src/ports/session-store-types.ts.",
         violations: result.matches.map((path) => ({ file: path, line: 0 })),
         suggestedFix:
           "Delete the duplicate declaration; import SessionData from @comis/core.",
-        designRef: "code-quality-plan §7.2.4",
       }),
     ).toBe(1);
     expect(result.matches[0]).toMatch(

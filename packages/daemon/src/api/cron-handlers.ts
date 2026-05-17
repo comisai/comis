@@ -1,28 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Cron RPC handler module.
  * Handles all cron-related and scheduler RPC methods:
  *   cron.add, cron.list, cron.update, cron.remove,
  *   cron.status, cron.runs, cron.run, scheduler.wake
- * Extracted from daemon.ts rpcCallInner for independent testability.
  *
- * Phase 35 Wave C plan 35-18: refactored to computed-property keys
- * `[<Contract>.method]:` so the bidirectional 1:1 architecture test
- * resolves them to the registry. Per-method pipeline: bespoke pre-Zod
- * guards FIRST (using rawParams reads — preserves user-friendly error
- * messages matching the 14+ existing handler-test assertions) →
- * stripInternalFields → request.parse → existing business logic
- * UNCHANGED → dev-mode response.parse (D-10).
+ * Handlers use computed-property keys (`[<Contract>.method]:`) so the
+ * bidirectional 1:1 architecture test resolves them to the registry.
+ * Per-method pipeline: bespoke pre-Zod guards FIRST (using rawParams reads —
+ * preserves user-friendly error messages matching existing handler-test
+ * assertions) → stripInternalFields → request.parse → business logic →
+ * dev-mode response.parse.
  *
- * PATTERNS OQ-4 transformer relocation: pre-Plan-35-18, setup-gateway-api.ts
- * carried an inline transformer that converted the web `CronJobInput`
- * payload (nested `schedule` + `message`) into flat fields. Per OQ-4 option
- * (c), the transformer moves into this handler body. `cron.add` accepts BOTH
- * the WEB shape (nested `schedule.{kind,expr,tz,everyMs,at}` + `message`)
- * AND the legacy flat shape (`schedule_kind`/`schedule_every_ms`/etc.) —
- * normalizing the web shape into the flat fields before calling
- * `buildCronSchedule`. The flat path is exercised by 14+ existing tests.
+ * The `cron.add` body normalizes the WEB shape (nested
+ * `schedule.{kind,expr,tz,everyMs,at}` + `message`) into the legacy flat
+ * shape (`schedule_kind`/`schedule_every_ms`/etc.) before calling
+ * `buildCronSchedule`. The flat path is exercised by existing tests.
  *
  * @module
  */
@@ -48,7 +42,7 @@ import { randomUUID } from "node:crypto";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**
@@ -62,10 +56,8 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
 // Single source of truth: OrchestratorApiDeps (shared with graph, heartbeat,
-// subagent handlers). DAEMON-API-03 Option A retarget — handler bodies and
-// call sites unchanged.
+// subagent handlers).
 import type { OrchestratorApiDeps as CronHandlerDeps } from "./types.js";
 export type { CronHandlerDeps };
 
@@ -111,12 +103,9 @@ function resolveJob(
  * Normalize cron.add params: convert WEB shape (nested `schedule` + `message`
  * + top-level `agentId`) into the flat shape used by buildCronSchedule.
  * Returns the params unchanged if already in flat shape (legacy chat-tool
- * path — exercised by 14+ existing handler-test assertions).
+ * path — exercised by existing handler-test assertions).
  *
- * PATTERNS OQ-4 relocation: pre-Plan-35-18 this lived in setup-gateway-api.ts
- * as an inline dispatcher special-case. Moved to the handler body per option
- * (c) — server-side normalization belongs in the handler, not the
- * dispatcher.
+ * Server-side normalization belongs in the handler, not the dispatcher.
  */
 function normalizeCronAddParams(params: Record<string, unknown>): Record<string, unknown> {
   // Already in flat shape (schedule_kind present) — pass through unchanged.
@@ -148,10 +137,9 @@ function normalizeCronAddParams(params: Record<string, unknown>): Record<string,
 export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHandler> {
   return {
     [CronAddContract.method]: async (rawParams) => {
-      // PATTERNS OQ-4 transformer relocation: normalize WEB shape (nested
-      // schedule + message) into flat shape BEFORE the bespoke duplicate-name
-      // guard so the name reads consistently. The legacy flat shape passes
-      // through unchanged.
+      // Normalize WEB shape (nested schedule + message) into flat shape
+      // BEFORE the bespoke duplicate-name guard so the name reads
+      // consistently. The legacy flat shape passes through unchanged.
       const normalized = normalizeCronAddParams(rawParams);
 
       const name = normalized.name as string;
@@ -276,7 +264,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       if (rawParams.sessionTarget !== undefined) job.sessionTarget = rawParams.sessionTarget as "main" | "isolated";
       // Schedule: accept raw schedule object (web UI) or build from schedule_kind (chat tool)
       if (rawParams.schedule !== undefined) {
-        // Closed-union retype per Phase 41 TS-HYG-11: Zod-validated upstream, structurally compatible with CronSchedule.
+        // Closed-union retype: Zod-validated upstream, structurally compatible with CronSchedule.
         // We narrow via discriminator + presence checks rather than `as CronSchedule` to preserve the existing partial-shape tolerance for legacy payloads.
         const sched = rawParams.schedule as { kind: CronSchedule["kind"]; everyMs?: number; expr?: string; tz?: string; at?: string };
         if (sched.kind === "every" && sched.everyMs) {

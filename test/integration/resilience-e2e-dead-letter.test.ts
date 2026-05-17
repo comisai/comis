@@ -11,10 +11,6 @@
  * with mock boundary dependencies (no daemon, no LLM, no network).
  * Follows the established pattern from test/integration/subagent-pipeline.test.ts.
  *
- * Covers:
- * - TEST-03 (partial): Dead-letter retry to delivery E2E
- * - OBSV-03 (partial): INFO for successful DLQ delivery verified
- *
  * @module
  */
 
@@ -34,7 +30,7 @@ import { TypedEventBus } from "@comis/core";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight port wrappers that delegate to globals.
+// Lightweight port wrappers that delegate to globals.
 // ---------------------------------------------------------------------------
 
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
@@ -354,7 +350,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
   });
 
   // -------------------------------------------------------------------------
-  // OBSV-03: Log level verification for DLQ delivery
+  // Log level verification for DLQ delivery
   // -------------------------------------------------------------------------
 
   it("successful DLQ delivery logs at DEBUG level (not ERROR)", async () => {
@@ -390,8 +386,8 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
 
     expect(dlq.size()).toBe(0);
 
-    // OBSV-03: Verify DEBUG log for successful delivery (not ERROR)
-    // The DLQ uses logger.debug for successful delivery
+    // Verify DEBUG log for successful delivery (not ERROR).
+    // The DLQ uses logger.debug for successful delivery.
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "run-4" }),
       expect.stringContaining("delivered successfully"),

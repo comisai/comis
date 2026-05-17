@@ -5,8 +5,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-// Phase 43 plan 02b (FILE-SPLIT-11): web-search-tool.ts split into web-search-tool/ subdirectory
-// barrel preserves canonical exports; test imports retargeted to ./web-search-tool/index.js.
+// web-search-tool.ts is split into the web-search-tool/ subdirectory; the
+// barrel preserves canonical exports, so test imports target
+// ./web-search-tool/index.js.
 import {
   createWebSearchTool,
   __clearSearchCache,

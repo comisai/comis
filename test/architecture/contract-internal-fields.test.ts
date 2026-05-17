@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 35 CONTEXT D-04: no contract request schema declares any
+ * Architecture test: no contract request schema declares any
  * `INTERNAL_FIELD_NAMES` key.
  *
  * Internal `_X` fields are dispatcher-injected; the dispatcher strips them
@@ -8,12 +8,7 @@
  * contract request schema would either (a) leak them through
  * `z.toJSONSchema`, surfacing server-only fields in the generated web
  * artifact, or (b) cause `additionalProperties: false` calls to FAIL when
- * the dispatcher injects them after the CLI sent its request (35-RESEARCH.md
- * Pitfall 6, lines 1271–1287).
- *
- * Wave A state: `API_CONTRACTS_ORDERED` is empty, so the loop body
- * executes zero times → trivial pass. Wave C contracts get checked by
- * construction.
+ * the dispatcher injects them after the CLI sent its request.
  *
  * @module
  */
@@ -38,7 +33,7 @@ function collectObjectKeys(schema: ZodTypeAny): string[] {
   return [];
 }
 
-describe("Contract registry — no INTERNAL_FIELD_NAMES in request schemas (D-04)", () => {
+describe("Contract registry — no INTERNAL_FIELD_NAMES in request schemas", () => {
   it("no contract request schema declares any _X internal key", () => {
     const violations: string[] = [];
     for (const c of API_CONTRACTS_ORDERED) {

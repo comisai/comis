@@ -7,8 +7,6 @@
  * mirror re-export is identity-equal (`===`) to the direct import. Catches
  * `prepack.js` bundling regressions and silent re-export shadowing.
  *
- * Phase 40 / Phase C §6.3.5 / COV-09.
- *
  * @module
  */
 

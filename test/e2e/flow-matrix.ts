@@ -6,8 +6,7 @@
  * gate test (test/architecture/e2e-matrix.test.ts) and `pnpm test:orchestrate
  * --check-matrix` (test/orchestrate.ts) consume this file.
  *
- * Shape (per design code-quality-plan-2026-05-10.md §6.5):
- *   9 channels × 7 flows = 63 cells. Each cell is either:
+ * Shape: 9 channels x 7 flows = 63 cells. Each cell is either:
  *   - status="covered" with `reference` = repo-relative path to a passing
  *     test file that exists on disk; OR
  *   - status="skipped" with `reference` = non-empty, non-blocklisted reason.
@@ -16,30 +15,28 @@
  * by the matrix gate. Use case-specific reasons that name WHY the cell is
  * unrepresentable today (e.g., "email has no native slash-command protocol").
  *
- * Classification (Plan 40-09 close):
+ * Classification:
  *   - 60 covered cells:
- *       - 36 from Plan 40-08 close: every (channel × {approval, scheduled,
- *         followup, error}) pair maps to an existing channel-agnostic
- *         integration E2E (delivery-queue-recurring, background-completion-
- *         runner, approval-gate-e2e, channel-resilience).
- *       - 24 flipped from skipped-to-covered by Plan 40-09 Wave E: every
- *         (channel × {dm, mention, slash}) pair that has a corresponding
- *         test/e2e/<channel>-dm.test.ts file exercising the production
- *         channel adapter against a 127.0.0.1 mock platform server. Each
- *         per-channel dm.test.ts also covers mention + slash because the
- *         underlying wire endpoint is the same; content-level mention/slash
- *         parsing is exercised at the unit tier (message-mapper.test.ts).
- *   - 3 structural-skipped cells: per RESEARCH.md §5, three (channel × flow)
- *     combinations are unrepresentable at the wire-protocol level — they will
- *     never be promoted to `covered` because the channel has no such concept:
+ *       - 36 of them: every (channel × {approval, scheduled, followup, error})
+ *         pair maps to an existing channel-agnostic integration E2E
+ *         (delivery-queue-recurring, background-completion-runner,
+ *         approval-gate-e2e, channel-resilience).
+ *       - 24 of them: every (channel × {dm, mention, slash}) pair has a
+ *         corresponding test/e2e/<channel>-dm.test.ts file exercising the
+ *         production channel adapter against a 127.0.0.1 mock platform
+ *         server. Each per-channel dm.test.ts also covers mention + slash
+ *         because the underlying wire endpoint is the same; content-level
+ *         mention/slash parsing is exercised at the unit tier
+ *         (message-mapper.test.ts).
+ *   - 3 structural-skipped cells: three (channel × flow) combinations are
+ *     unrepresentable at the wire-protocol level — they will never be
+ *     promoted to `covered` because the channel has no such concept:
  *       email × slash    — no native slash-command protocol over SMTP/IMAP
  *       email × mention  — no multi-user channel concept; no @-mention in
  *                          SMTP/IMAP semantics
  *       irc × slash      — IRC bots receive plain PRIVMSG text; slash is a
  *                          client-side convention, not part of the IRC wire
  *                          protocol
- *
- * Phase 40 / Phase C §6.5 / COV-12 + COV-15.
  *
  * @module
  */
@@ -56,7 +53,7 @@ export type ChannelName =
   | "line"
   | "email";
 
-/** The 7 use-case flows per design §6.5 / Phase C Cohort 3. */
+/** The 7 use-case flows. */
 export type FlowName =
   | "dm"
   | "mention"
@@ -75,8 +72,7 @@ export interface FlowCell {
    * on disk and exercises this (channel × flow) combination. The matrix gate
    * (test/architecture/e2e-matrix.test.ts) verifies existence via
    * `statSync(...).isFile()`. It does NOT verify the test's content — that
-   * structural-vs-behavioral distinction is the matrix's deliberate design
-   * (per threat-model T-40-08-02 disposition: accept-with-followon).
+   * structural-vs-behavioral distinction is the matrix's deliberate design.
    *
    * For `status: "skipped"` — human-readable, case-specific reason explaining
    * why this (channel × flow) is not applicable or is deferred. MUST be
@@ -390,7 +386,7 @@ export const flowMatrix: readonly FlowCell[] = [
   },
 
   // ===========================================================================
-  // IRC (7 cells — slash is structurally unrepresentable per RESEARCH.md §5)
+  // IRC (7 cells — slash is structurally unrepresentable)
   // ===========================================================================
   {
     channel: "irc",
@@ -483,8 +479,7 @@ export const flowMatrix: readonly FlowCell[] = [
   },
 
   // ===========================================================================
-  // Email (7 cells — slash and mention are structurally unrepresentable
-  //   per RESEARCH.md §5)
+  // Email (7 cells — slash and mention are structurally unrepresentable)
   // ===========================================================================
   {
     channel: "email",

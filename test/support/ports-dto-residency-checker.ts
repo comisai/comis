@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Ports-DTO residency walker for MEM-CTX-PORTS-04 (primary check).
+ * Ports-DTO residency walker (primary check).
  *
  * Walks the ContextStorePort interface declaration's method signatures via
  * the TypeScript Compiler API + TypeChecker, enumerates every Ctx*Row type
  * referenced transitively from method parameters / return types, and
  * asserts each one is exported from context-store-types.ts.
  *
- * This is the PRIMARY check for MEM-CTX-PORTS-04. The complementary
- * text-level regex check lives in packages/core/src/__tests__/architecture.test.ts
- * (Task 3) and additionally covers Ctx*Row mentions in comments / non-method
- * positions in context-store.ts.
+ * This is the PRIMARY check. A complementary text-level regex check lives
+ * in packages/core/src/__tests__/architecture.test.ts and additionally
+ * covers Ctx*Row mentions in comments / non-method positions in
+ * context-store.ts.
  *
- * Pattern mirrors test/support/log-payload-checker.ts (Phase 27 commit 7).
- * Cache: persistent JSON at node_modules/.cache/architecture-walker/
+ * Pattern mirrors test/support/log-payload-checker.ts. Cache: persistent
+ * JSON at node_modules/.cache/architecture-walker/
  * ports-dto-residency-checker.json keyed by per-file mtime + sha256.
  *
  * @module

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Secret-residency AST walker for MEM-CTX-PORTS-14 part 1.
+ * Secret-residency AST walker.
  *
  * Two rules enforced under `packages/daemon/src/api/secrets-handlers.ts`
- * (and any future secret-RPC handler — e.g., `auth-handlers.ts` after
- * plan 31-11 lands; the per-I-03 fix scope extension):
+ * (and any future secret-RPC handler — e.g., `auth-handlers.ts`):
  *
  *   1. NO module-level or class-level `let`/`const` binding whose name
  *      matches `/secret|decrypted|plaintext/i` AND whose initializer
@@ -12,7 +11,7 @@
  *      `SecretManager.resolve` / `SecretsCrypto.{decrypt,decryptAll}`.
  *
  *   2. NO closure inside `Promise.all([…])` captures a `/secret|decrypted|
- *      plaintext/i` binding from an outer scope (RES-PIT-31-1).
+ *      plaintext/i` binding from an outer scope.
  *
  * Uses `ts.createProgram` + TypeChecker for accurate resolution. Cache:
  * persistent JSON at
@@ -21,11 +20,10 @@
  * log-payload-checker.ts).
  *
  * Rule 2 closure-capture detection uses PROPER TypeChecker symbol
- * resolution (NOT a text-matching shortcut) per I-11 fix in Phase 31
- * revision iter 2: `checker.getSymbolAtLocation` resolves the captured
- * identifier; the captured symbol's `valueDeclaration` is checked to
- * verify it lives OUTSIDE the closure scope; and the declaration's
- * initializer is matched against the secret-source pattern.
+ * resolution (NOT a text-matching shortcut): `checker.getSymbolAtLocation`
+ * resolves the captured identifier; the captured symbol's `valueDeclaration`
+ * is checked to verify it lives OUTSIDE the closure scope; and the
+ * declaration's initializer is matched against the secret-source pattern.
  *
  * Per-violation allowlist is empty at this commit; the architecture
  * invariant is "violations - allowlisted = []".
@@ -364,7 +362,7 @@ export function checkSecretResidency(
         }
       }
 
-      // Rule 2: Promise.all([...]) closure capture (RES-PIT-31-1).
+      // Rule 2: Promise.all([...]) closure capture.
       if (ts.isCallExpression(node) && isPromiseAllCall(node)) {
         for (const arg of node.arguments) {
           checkClosureCaptures(arg);

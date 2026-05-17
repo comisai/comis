@@ -11,10 +11,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CronStore } from "./cron-store.js";
 import type { CronJob } from "./cron-types.js";
 import { createCronScheduler } from "./cron-scheduler.js";
-// Phase 35 Plan 35-04 (D-01 #1): execution-lock.ts deleted; use FileLockPort
-// from @comis/core. The test helper below shims the old withExecutionLock
-// signature (Result<T, "locked" | "error">) to keep the test bodies stable
-// across the relocation — the underlying lockfile-based behavior is unchanged
+// Use FileLockPort from @comis/core. The test helper below shims the old
+// withExecutionLock signature (Result<T, "locked" | "error">) to keep test
+// bodies stable — the underlying lockfile-based behavior is unchanged
 // because both withExecutionLock and FileLockPort.withLock() use the same
 // proper-lockfile primitives at the bottom.
 import { createFileLock } from "@comis/core";

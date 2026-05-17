@@ -22,9 +22,7 @@ import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } f
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import type { AgentExecutor } from "@comis/agent";
-// Phase 32 commit 6: CommandDirectives moved into orchestrator (ORCH-EXT-08).
 import type { CommandDirectives } from "../commands/index.js";
-// Phase 32 commit 8: queue types moved to orchestrator (ORCH-EXT-08, Wave A close).
 // Relative path used because orchestrator cannot import its own published name.
 import type { CommandQueue } from "../queue/command-queue.js";
 import type { FollowupTrigger } from "../queue/followup-trigger.js";
@@ -38,7 +36,7 @@ import type {
 } from "@comis/channels";
 import type { RetryEngine } from "@comis/core";
 
-// Phase module imports
+// Pipeline-stage imports
 import { evaluateExecutionPolicy } from "./execution-policy.js";
 import { executeLlm } from "./execution-execute.js";
 import { filterExecutionResponse } from "./execution-filter.js";
@@ -115,9 +113,9 @@ export interface ExecutionPipelineDeps {
   deliveryQueue?: DeliveryQueuePort;
   /**
    * DeliveryService constructed once at the daemon composition root
-   * (setup-channels.ts). Phase 30 plan 04 (CONFIG-DELIV-05): every callsite
-   * in execution-deliver.ts uses `deps.deliveryService.deliverToChannel(...)`
-   * instead of the free-standing standalone export.
+   * (setup-channels.ts). Every callsite in execution-deliver.ts uses
+   * `deps.deliveryService.deliverToChannel(...)` instead of a
+   * free-standing standalone export.
    */
   deliveryService: DeliveryService;
   /**
@@ -241,7 +239,7 @@ export async function executeAndDeliver(
     );
   }
 
-  // Phase 1: Send policy gate, trust level, elevated reply routing
+  // Stage 1: Send policy gate, trust level, elevated reply routing
   const policy = evaluateExecutionPolicy(
     deps, adapter, effectiveMsg, originalMsg, sessionKey, agentId, sendOverrides,
   );
@@ -268,7 +266,7 @@ export async function executeAndDeliver(
     return;
   }
 
-  // Phase 2: LLM execution with timeout, thinking filter, abort signal
+  // Stage 2: LLM execution with timeout, thinking filter, abort signal
   const execResult = await executeLlm(
     deps, adapter, policy.effectiveMsg, sessionKey, agentId, executor,
     policy.trustLevel, blockStreamCfg, policy.replyTo, typingLifecycle,
@@ -290,7 +288,7 @@ export async function executeAndDeliver(
       typingLifecycle.markRunComplete();
     }
 
-    // Phase 3: Response sanitization, filtering, media, voice, prefix
+    // Stage 3: Response sanitization, filtering, media, voice, prefix
     const filterResult = await filterExecutionResponse(
       deps, adapter, policy.effectiveMsg, originalMsg, sessionKey, agentId,
       execResult.result, execResult.accumulated, policy.replyTo,
@@ -308,7 +306,7 @@ export async function executeAndDeliver(
       return;
     }
 
-    // Phase 4: Chunking, coalescing, block pacing, delivery
+    // Stage 4: Chunking, coalescing, block pacing, delivery
     await deliverExecutionResponse(
       deps, adapter, policy.effectiveMsg, filterResult.text,
       blockStreamCfg, activePacers, policy.replyTo,

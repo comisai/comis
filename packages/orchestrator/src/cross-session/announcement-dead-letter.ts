@@ -17,10 +17,10 @@ import { systemNowMs } from "@comis/core";
 
 /** Minimal pino-compatible logger for dead-letter queue diagnostics.
  *  Structurally identical to packages/daemon/src/sub-agent-runner.ts
- *  `SubAgentRunnerLogger`; inlined at Phase 32 commit 11 (ORCH-EXT-11) to remove
- *  the orchestrator->daemon back-edge that a relative import would have
- *  introduced after the cross-session move. Daemon consumers continue to pass
- *  their `SubAgentRunnerLogger`-shaped loggers unchanged; the structural
+ *  `SubAgentRunnerLogger`; inlined to avoid an orchestrator->daemon
+ *  back-edge that a relative import would have introduced after the
+ *  cross-session move. Daemon consumers continue to pass their
+ *  `SubAgentRunnerLogger`-shaped loggers unchanged; the structural
  *  compatibility guarantees no call-site change. */
 export interface AnnouncementLogger {
   info(obj: Record<string, unknown>, msg: string): void;
@@ -36,10 +36,10 @@ export interface AnnouncementLogger {
 /**
  * Canonical 9-channel set covering production platform adapters. Used as the
  * closed-union discriminator for sendToChannel(type, ...) instead of an open
- * `string` per Phase 41 TS-HYG-11. Local definition (no @comis/core export
- * currently aggregates the platform-adapter channel types — the rest of the
- * codebase carries this set implicitly as adapter-specific channelType strings).
- * "echo" is included for development/testing parity with channels/echo-adapter.
+ * `string`. Local definition (no @comis/core export currently aggregates the
+ * platform-adapter channel types — the rest of the codebase carries this
+ * set implicitly as adapter-specific channelType strings). "echo" is
+ * included for development/testing parity with channels/echo-adapter.
  */
 export type ChannelType =
   | "discord"
@@ -126,7 +126,7 @@ async function atomicWrite(filePath: string, content: string): Promise<void> {
     } catch {
       // Ignore cleanup failure
     }
-    // @allow-throw: boundary adapter wrapping node:fs/promises (writeFile + rename); callers wrap via try/catch (see drain() catch at line 325). Renaming would not change behavior. Phase 41 TS-HYG-07.
+    // @allow-throw: boundary adapter wrapping node:fs/promises (writeFile + rename); callers wrap via try/catch (see drain() catch at line 325). Renaming would not change behavior.
     throw err;
   }
 }
@@ -335,7 +335,7 @@ export function createAnnouncementDeadLetterQueue(
                 !(err instanceof Error && "code" in err &&
                   (err as NodeJS.ErrnoException).code === "ENOENT")
               ) {
-                // @allow-throw: re-raise non-ENOENT unlink failure to the outer drain() catch (line 325) which logs + degrades; boundary adapter pattern. Phase 41 TS-HYG-07.
+                // @allow-throw: re-raise non-ENOENT unlink failure to the outer drain() catch (line 325) which logs + degrades; boundary adapter pattern.
                 throw err;
               }
             }

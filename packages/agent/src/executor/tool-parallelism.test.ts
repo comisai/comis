@@ -52,7 +52,7 @@ function makeTool(
 // `@comis/skills/bridge/tool-metadata-registry.ts` at daemon boot. For this
 // co-located unit test the metadata is registered explicitly so the
 // descriptor-driven classifier path (Priority 1) returns the expected verdict
-// without the Priority-3 legacy fallback that BC-REM-11 deleted.
+// without any legacy fallback.
 // ---------------------------------------------------------------------------
 
 const READ_ONLY_TOOL_NAMES = [
@@ -410,10 +410,10 @@ describe("isReadOnlyTool fallback chain", () => {
 // ---------------------------------------------------------------------------
 // isReadOnlyTool optional logger
 //
-// Post BC-REM-11 the classifier has no warn-on-legacy-fallback path; the
-// `logger` parameter remains for forward-compatibility with future
-// descriptor-level diagnostics. These tests pin the no-op behavior so a
-// future addition does not silently change call semantics.
+// The classifier has no warn-on-legacy-fallback path; the `logger` parameter
+// remains for forward-compatibility with future descriptor-level diagnostics.
+// These tests pin the no-op behavior so a future addition does not silently
+// change call semantics.
 // ---------------------------------------------------------------------------
 
 describe("isReadOnlyTool optional logger", () => {

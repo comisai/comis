@@ -20,13 +20,11 @@ import { createRowMapper } from "./row-mapper.js";
 import { DeliveryMirrorDbRowSchema } from "./row-schemas.js";
 
 // ---------------------------------------------------------------------------
-// Internal DB row type — z.infer drops the file-internal duplicate now that
-// row-schemas.ts is the SSOT (Plan 41-01 / Phase 41 TS-HYG-03).
+// Internal DB row type — z.infer keeps row-schemas.ts as the SSOT.
 // ---------------------------------------------------------------------------
 
 type DeliveryMirrorDbRow = z.infer<typeof DeliveryMirrorDbRowSchema>;
 
-// Row mapper (Phase 41 TS-HYG-03)
 const deliveryMirrorMapper = createRowMapper(DeliveryMirrorDbRowSchema);
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,6 @@
-# Comis Test Configuration (Phase 26 — tooling-fill CLI integration test)
+# Comis Test Configuration — tooling-fill CLI integration test
 #
-# Port 8526 — unique to test/integration/cli-tooling-fill.test.ts. Verified
-# next-free against the existing 60+ fixtures (range 4766 + 8447–8740).
+# Port 8526 — unique to test/integration/cli-tooling-fill.test.ts.
 #
 # Contains DELIBERATELY STUB-VALUED hints under both `tooling.mcp.capabilityHints`
 # and `tooling.skills.capabilityHints` so `comis config tooling-fill` (with or
@@ -19,20 +18,14 @@
 # Path portability: the test's `beforeEach` substitutes `${COMIS_REPO_ROOT}` at
 # copy-time so both the CLI's `loadConfigFile` (which does NOT expand `${VAR}`
 # without a getSecret callback) and the daemon's bootstrap (which does) see an
-# identical absolute path. Mirrors Phase 25-04's fixture pattern.
+# identical absolute path.
 #
 # Skill discovery target: `packages/cli/src/sync-tooling/__tests__/fixtures/skills`
 # — uses the canonical `<name>/SKILL.md` subdirectory layout the CLI's
-# `discoverSkills` expects (Phase 25 D-04). Single skill `stub-skill` so the
-# round-trip diff between tooling-fill output and sync-tooling discovery is
-# trivially empty (no extra discovered skills means no add entries; no extra
-# hints means no remove entries — append-only invariant verified end-to-end).
-#
-# The Phase 8 `phase-8-skill-variants` fixture (used by Phase 25-04's daemon
-# preamble assembly test) is NOT used here because its SKILL files live at
-# the directory root rather than in subdirectories — the daemon loads them
-# fine but the CLI's `discoverSkills` (designed for `<dir>/<name>/SKILL.md`)
-# would silently report zero skills, breaking the AC-11 round-trip diff.
+# `discoverSkills` expects. Single skill `stub-skill` so the round-trip diff
+# between tooling-fill output and sync-tooling discovery is trivially empty
+# (no extra discovered skills means no add entries; no extra hints means
+# no remove entries — append-only invariant verified end-to-end).
 
 tenantId: "test"
 logLevel: "debug"
@@ -111,7 +104,7 @@ integrations:
       # Disabled stub MCP — provides one entry under integrations.mcp.servers
       # so tooling-fill has a real MCP name to fill a hint for. The daemon
       # will not attempt to spawn it because `enabled: false` (schema field
-      # is `enabled`, NOT `disabled` — Plan 25-04 deviation #2).
+      # is `enabled`, NOT `disabled`).
       - name: yfinance
         transport: stdio
         command: echo

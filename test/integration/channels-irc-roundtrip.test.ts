@@ -2,8 +2,7 @@
 /**
  * INTEGRATION: IRC channel — wire-level adapter roundtrip against the 127.0.0.1 mock.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts coverage on the
- * `@comis/channels` IRC subpackage.
+ * Lifts coverage on the `@comis/channels` IRC subpackage.
  *
  * @module
  */

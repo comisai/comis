@@ -2,11 +2,9 @@
 /**
  * User token budget directive parser — agent-local copy.
  *
- * History: `parseUserTokenBudget` previously lived at
- * `packages/agent/src/commands/budget-command.ts`. Phase 32 commit 6
- * (ORCH-EXT-08) moved the canonical implementation to
- * `@comis/orchestrator/src/commands/budget-command.ts` (where slash-command
- * parsing lives — inbound dispatch, not executor logic).
+ * The canonical implementation lives at
+ * `@comis/orchestrator/src/commands/budget-command.ts` (slash-command
+ * parsing path — inbound dispatch, not executor logic).
  *
  * Agent's executor (`executor-prompt-runner.ts`) needs to parse inline
  * `+Nk` / `+Nm` budget directives from message text BEFORE forwarding to

@@ -2,13 +2,12 @@
 /**
  * Unit tests for the orchestrator-umbrella contract registry.
  *
- * Mirrors the per-domain test pattern established in Plans 35-06..35-17:
+ * Per-domain test pattern:
  *   - Aggregator sanity: count + method-name presence + scope assignments.
  *   - INTERNAL_FIELD_NAMES paired sanity (no contract request schema declares
  *     a dispatcher-injected `_X` key).
- *   - BLOCKER 8 single-scope invariant — every contract has
- *     `scopes.length === 1`. Plan 35-20's `c.scopes[0]` collapse loop depends
- *     on this invariant.
+ *   - Single-scope invariant — every contract has `scopes.length === 1`. The
+ *     `c.scopes[0]` collapse loop in handler wiring depends on this.
  *   - Per-contract spot-checks: request acceptance + rejection, response
  *     acceptance + rejection on representative shapes (cron.add gets extra
  *     emphasis since the dispatcher transformer relocated into the handler).
@@ -101,12 +100,12 @@ describe("orchestrator-umbrella domain contracts", () => {
   });
 
   // -------------------------------------------------------------------------
-  // BLOCKER 8 single-scope invariant
+  // Single-scope invariant
   // -------------------------------------------------------------------------
 
-  it("BLOCKER 8: every contract has scopes.length === 1 (Plan 35-20 collapse loop dependency)", () => {
+  it("every contract has scopes.length === 1 (handler-wiring collapse loop dependency)", () => {
     for (const c of ORCHESTRATOR_CONTRACTS) {
-      expect(c.scopes.length, `${c.method} must have exactly one scope (multi-scope breaks Plan 35-20)`).toBe(1);
+      expect(c.scopes.length, `${c.method} must have exactly one scope (multi-scope breaks handler wiring)`).toBe(1);
     }
   });
 
@@ -114,7 +113,7 @@ describe("orchestrator-umbrella domain contracts", () => {
   // Scope assignment per handler-file cluster
   // -------------------------------------------------------------------------
 
-  it("cron-handlers + graph-handlers: all rpc-scoped per setup-gateway-api.ts:130-157 + 317-321", () => {
+  it("cron-handlers and graph-handlers are scoped to rpc per setup-gateway-api.ts:130-157 + 317-321", () => {
     const cronAndGraph = [
       CronAddContract,
       CronListContract,
@@ -181,9 +180,9 @@ describe("orchestrator-umbrella domain contracts", () => {
     for (const c of ORCHESTRATOR_CONTRACTS) {
       // Skip loose-record contracts: they're pass-through by design
       // (accepting any input including internals — same pattern as
-      // channels.test.ts platform-action exclusion in Plan 35-17).
+      // channels.test.ts platform-action exclusion).
       // graph.execute + graph.load + graph.status are root-level
-      // z.record(z.string(), z.unknown()) loose-records (D-05).
+      // z.record(z.string(), z.unknown()) loose-records.
       const isLooseRecord = c.request._def.type === "record";
       if (isLooseRecord) continue;
 
@@ -220,11 +219,11 @@ describe("orchestrator-umbrella domain contracts", () => {
 });
 
 // ===========================================================================
-// cron.add (extra emphasis — transformer relocation per PATTERNS OQ-4)
+// cron.add (extra emphasis — transformer relocated into the handler)
 // ===========================================================================
 
-describe("CronAddContract (transformer relocation per PATTERNS OQ-4)", () => {
-  it("method name", () => {
+describe("CronAddContract (transformer relocation)", () => {
+  it("exposes the canonical method name", () => {
     expect(CronAddContract.method).toBe("cron.add");
   });
 
@@ -466,7 +465,7 @@ describe("SchedulerWakeContract (registration-plane-agnostic)", () => {
 });
 
 // ===========================================================================
-// GraphDefineContract / GraphExecuteContract (D-05 loose-record)
+// GraphDefineContract / GraphExecuteContract (loose-record)
 // ===========================================================================
 
 describe("GraphDefineContract", () => {
@@ -503,7 +502,7 @@ describe("GraphDefineContract", () => {
   });
 });
 
-describe("GraphExecuteContract (D-05 loose-record)", () => {
+describe("GraphExecuteContract (loose-record)", () => {
   it("method name + rpc scope", () => {
     expect(GraphExecuteContract.method).toBe("graph.execute");
     expect(GraphExecuteContract.scopes).toEqual(["rpc"]);
@@ -562,7 +561,7 @@ describe("GraphCancelContract", () => {
     ).not.toThrow();
   });
 
-  it("response", () => {
+  it("accepts the canonical response shape", () => {
     expect(() =>
       GraphCancelContract.response.parse({ cancelled: true, graphId: "g1" }),
     ).not.toThrow();
@@ -595,7 +594,7 @@ describe("GraphSaveContract", () => {
 });
 
 describe("GraphLoadContract", () => {
-  it("request requires id", () => {
+  it("rejects requests missing the required id field", () => {
     expect(() => GraphLoadContract.request.parse({ id: "g1" })).not.toThrow();
     expect(() => GraphLoadContract.request.parse({})).toThrow();
   });
@@ -725,7 +724,7 @@ describe("GraphRunDetailContract", () => {
 });
 
 describe("GraphDeleteRunContract", () => {
-  it("response", () => {
+  it("accepts the canonical response shape", () => {
     expect(() =>
       GraphDeleteRunContract.response.parse({ graphId: "g1", deleted: true }),
     ).not.toThrow();
@@ -842,7 +841,7 @@ describe("HeartbeatTriggerContract", () => {
     ).not.toThrow();
   });
 
-  it("response", () => {
+  it("accepts the canonical response shape", () => {
     expect(() =>
       HeartbeatTriggerContract.response.parse({
         agentId: "default",
@@ -888,7 +887,7 @@ describe("SubagentKillContract", () => {
     expect(() => SubagentKillContract.request.parse({})).toThrow();
   });
 
-  it("response", () => {
+  it("accepts the canonical response shape", () => {
     expect(() =>
       SubagentKillContract.response.parse({ killed: true, runId: "r1" }),
     ).not.toThrow();

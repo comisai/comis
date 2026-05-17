@@ -10,8 +10,8 @@
  * single-tick inflight gate so concurrent drains for the same key collapse
  * to one execution while drains for DIFFERENT keys run independently.
  *
- * Use-case design (Phase 40 / Phase C §3.3 / COV-10): every `it("...")`
- * description names a use case ≥20 chars ending in a recognizable shape.
+ * Use-case design: every `it("...")` description names a use case ≥20 chars
+ * ending in a recognizable shape.
  *
  * @module
  */

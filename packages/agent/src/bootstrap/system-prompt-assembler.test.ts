@@ -69,7 +69,7 @@ describe("assembleRichSystemPrompt", () => {
     });
 
     expect(result).toContain("## Safety");
-    // Post-BC-REM-11: tooling section emits the residual one-liner (no heading)
+    // Tooling section emits the residual one-liner (no heading).
     expect(result).toContain("When this turn includes a `Capabilities` context");
     expect(result).toContain("## Skills");
     expect(result).toContain("## Workspace");
@@ -112,7 +112,7 @@ describe("assembleRichSystemPrompt", () => {
     expect(result).not.toContain("## Reactions");
     expect(result).not.toContain("## Reasoning Format");
 
-    // Included in minimal — post-BC-REM-11 tooling block is the residual one-liner (no heading)
+    // Included in minimal — tooling block is the residual one-liner (no heading).
     expect(result).toContain("When this turn includes a `Capabilities` context");
     expect(result).toContain("## Workspace");
     expect(result).toContain("## Runtime");
@@ -423,9 +423,9 @@ describe("buildSafetySection", () => {
 });
 
 describe("buildToolingSection", () => {
-  // Post-BC-REM-11 (phase 38): buildToolingSection unconditionally emits
-  // the residual one-liner. The legacy `## Available Tools` flat block + the
-  // static-prompt capability-index gate parameter have been removed.
+  // buildToolingSection unconditionally emits the residual one-liner. The
+  // legacy `## Available Tools` flat block + the static-prompt
+  // capability-index gate parameter have been removed.
 
   it("emits the residual one-liner pointing at the per-turn ## Capabilities block", () => {
     const lines = buildToolingSection(["read", "edit", "web_search"], "large");
@@ -655,9 +655,9 @@ describe("assembleRichSystemPrompt -- coding tools integration", () => {
       toolNames: ["read", "edit", "write", "grep", "find", "ls", "web_search"],
     });
 
-    // Post-BC-REM-11: the tooling block is the residual one-liner pointing at
-    // the per-turn `## Capabilities` block. The legacy `- name: summary`
-    // flat-block format was removed.
+    // The tooling block is the residual one-liner pointing at the per-turn
+    // `## Capabilities` block. The legacy `- name: summary` flat-block
+    // format was removed.
     expect(result).toContain("When this turn includes a `Capabilities` context");
     expect(result).not.toContain("- read: Read files, images, and PDFs with pagination");
     // No separate coding tools section
@@ -670,7 +670,7 @@ describe("assembleRichSystemPrompt -- coding tools integration", () => {
       toolNames: ["read", "edit", "write"],
     });
 
-    // Post-BC-REM-11: residual one-liner in minimal too
+    // Residual one-liner in minimal too.
     expect(result).toContain("When this turn includes a `Capabilities` context");
     expect(result).not.toContain("## Coding Tools");
   });
@@ -1154,7 +1154,7 @@ describe("assembleRichSystemPrompt — channelContext integration", () => {
 // ---------------------------------------------------------------------------
 
 describe("assembleRichSystemPrompt -- toolSummaries integration", () => {
-  it("post-BC-REM-11: toolSummaries no longer flow into the tooling section (legacy flat block deleted)", () => {
+  it("toolSummaries no longer flow into the tooling section (legacy flat block deleted)", () => {
     const result = assembleRichSystemPrompt({
       promptMode: "full",
       toolNames: ["read", "my_mcp_tool"],
@@ -1916,10 +1916,10 @@ describe("buildPrivilegedToolsSection", () => {
 // ---------------------------------------------------------------------------
 // buildToolingSection — privileged tool descriptions
 //
-// Post-BC-REM-11: per-tool summaries (e.g. "Manage full agent fleet") are no
-// longer rendered in the static tooling section. Tool-level descriptions live
-// in the per-turn `## Capabilities` block via the dynamic preamble, and in
-// the `## Privileged Tools & Approval Gate` section when admin tools are
+// Per-tool summaries (e.g. "Manage full agent fleet") are no longer rendered
+// in the static tooling section. Tool-level descriptions live in the
+// per-turn `## Capabilities` block via the dynamic preamble, and in the
+// `## Privileged Tools & Approval Gate` section when admin tools are
 // present (see the `buildPrivilegedToolsSection` test block above).
 // ---------------------------------------------------------------------------
 
@@ -2179,7 +2179,7 @@ describe("assembleRichSystemPromptBlocks", () => {
       agentName: "TestBot",
       toolNames: ["tool1"],
     });
-    // Post-BC-REM-11: residual one-liner (no `## Available Tools` heading).
+    // Residual one-liner (no `## Available Tools` heading).
     expect(blocks.semiStableBody).toContain("When this turn includes a `Capabilities` context");
     expect(blocks.semiStableBody).not.toContain("You are TestBot");
     expect(blocks.semiStableBody).not.toContain("## Safety");
@@ -2361,8 +2361,8 @@ describe("staticPrefix/attribution byte-identity full vs operational", () => {
     expect(full).toContain("## Silent Replies");
     expect(op).not.toContain("## Silent Replies");
 
-    // Present in both (MODES_FULL_OP sections). Post-BC-REM-11: tooling
-    // section is the residual one-liner (no `## Available Tools` heading).
+    // Present in both (MODES_FULL_OP sections). Tooling section is the
+    // residual one-liner (no `## Available Tools` heading).
     expect(op).toContain("When this turn includes a `Capabilities` context");
     expect(op).toContain("## Workspace");
     expect(op).toContain("## Project Context");

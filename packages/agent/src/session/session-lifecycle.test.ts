@@ -353,7 +353,7 @@ describe("ComisSessionManager.destroySession", () => {
     const baseDir = await mkdtemp(join(tmpdir(), "csm-destroy-"));
     const lockDir = await mkdtemp(join(tmpdir(), "csm-lock-"));
 
-    // FileLockPort injection — Phase 32 commit 12 (ORCH-EXT-15).
+    // FileLockPort injection.
     const { createFileLock } = await import("@comis/core");
     const mgr = createComisSessionManager({
       sessionBaseDir: baseDir,
@@ -391,7 +391,7 @@ describe("ComisSessionManager.destroySession", () => {
     const baseDir = await mkdtemp(join(tmpdir(), "csm-destroy-idem-"));
     const lockDir = await mkdtemp(join(tmpdir(), "csm-lock-idem-"));
 
-    // FileLockPort injection — Phase 32 commit 12 (ORCH-EXT-15).
+    // FileLockPort injection.
     const { createFileLock } = await import("@comis/core");
     const mgr = createComisSessionManager({
       sessionBaseDir: baseDir,

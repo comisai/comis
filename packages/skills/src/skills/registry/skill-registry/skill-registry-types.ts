@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Skill registry types (Phase 43 split per FILE-SPLIT-11).
+ * Skill registry types.
  *
- * Extracted from the pre-split skill-registry.ts monolith. Owns:
+ * Owns:
  *   - Public type surface: PromptSkillContent, SkillSnapshot, SdkSkill, SkillRegistry
  *   - Module-private types: OperatorSkillHint, SkillsLogger
  *   - Re-exports of SkillMetadata + SkillWatcherHandle (kept on the registry
@@ -10,7 +10,7 @@
  *     via the package barrel and the registry module is the canonical
  *     declaration site).
  *
- * Type-only file (per RESEARCH §"No-cycles invariant"). No runtime code.
+ * Type-only file (no-cycles invariant). No runtime code.
  *
  * @module
  */

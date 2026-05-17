@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for SseController (Phase 40 Plan 40-15 gap-closure for COV-03).
+ * Tests for SseController.
  *
  * Covers the Lit ReactiveController lifecycle bridging SSE events from an
  * EventDispatcher to a host element. hostConnected subscribes for every

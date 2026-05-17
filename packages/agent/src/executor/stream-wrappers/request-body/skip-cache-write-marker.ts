@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * skipCacheWrite shared-prefix marker placement
- * (Phase 42 split per EXEC-SPLIT-02).
+ * skipCacheWrite shared-prefix marker placement.
  *
  * When the parent's cache_write is being skipped (sub-agent spawn), the
  * standard cache_control markers must be stripped from the shared prefix
@@ -12,8 +11,6 @@
  * Bypasses for single-turn sub-agents (userCount < 2) because the
  * shared-prefix anchor (second-to-last user) does not exist -- stripping
  * would result in 100% cache miss.
- *
- * Lifted verbatim from request-body-injector.ts:1940-2011.
  *
  * @module
  */

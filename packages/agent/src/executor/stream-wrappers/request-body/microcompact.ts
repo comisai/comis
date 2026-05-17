@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Microcompaction orchestration (Phase 42 split per EXEC-SPLIT-02).
+ * Microcompaction orchestration.
  *
  * Two trigger paths consolidated here:
  *  - `runTimeBasedMicrocompact`: TTL-expiry trigger. Runs when more than
@@ -12,8 +12,6 @@
  *
  * Both delegate to `clearStaleToolResults` + `clearStaleThinkingBlocks`
  * (tool-result-clearing.ts) and protect messages at/below the cache fence.
- *
- * Lifted verbatim from request-body-injector.ts:1326-1386.
  *
  * @module
  */

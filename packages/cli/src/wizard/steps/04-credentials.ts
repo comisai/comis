@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception (Phase 41 TS-HYG-07).
+// @allow-throw: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.
 /**
  * Credentials entry step -- step 04 of the init wizard.
  *
@@ -41,18 +41,17 @@ import { getModels, type KnownProvider } from "@mariozechner/pi-ai";
 // supply-chain invariants).
 import { homedir } from "node:os";
 import open from "open";
-import { // Phase 35 Plan 35-04 (D-01 #1/#2/#3): all four D-01 symbol groups now
-  // live in @comis/core; the CLI no longer routes through @comis/agent for
-  // these symbols. createFileLock relocated from @comis/scheduler via core.
+import { // All symbol groups below live in @comis/core; the CLI does not
+  // route through @comis/agent for these. createFileLock is sourced from
+  // @comis/core (originally exported via @comis/scheduler).
   createFileLock, isRemoteEnvironment, loginOpenAICodexOAuth, selectOAuthCredentialStore, systemClearTimeout, systemEnvSnapshot, systemGetEnv, systemSetTimeout } from "@comis/core";
 import {
   loadConfigFile,
   validateConfig,
   safePath,
   redactEmailForLog,
-  // Phase 35 Plan 35-05 (WEB-CONTRACTS-03 / L12 closure): createConsoleLogger
-  // is the Pino-free replacement for @comis/infra's createLogger (Plan 35-02
-  // shipped the relocation). CLI no longer imports from @comis/infra.
+  // createConsoleLogger is the Pino-free replacement for @comis/infra's
+  // createLogger. CLI does not import from @comis/infra.
   createConsoleLogger,
   type OAuthCredentialStorePort,
   type OAuthProfile,

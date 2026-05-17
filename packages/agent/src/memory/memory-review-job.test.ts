@@ -341,14 +341,13 @@ describe("runMemoryReview", () => {
     }));
   });
 
-  // Deleted (Phase 38 CR-01 follow-up to BC-REM-15): "filters sessions by
-  // agentId prefix in session key" — the agent-prefix filter was dropped
-  // when the session-key formatter stopped emitting `agent:<agentId>:`
-  // (no live session keys carry the prefix anymore). Memory review now
-  // iterates every session in the agent's tenant; per-agent isolation
-  // happens out-of-band via the per-agent workspace-scoped watermark file.
+  // The "filters sessions by agentId prefix in session key" test was removed
+  // when the session-key formatter stopped emitting `agent:<agentId>:` (no
+  // live session keys carry the prefix anymore). Memory review now iterates
+  // every session in the agent's tenant; per-agent isolation happens
+  // out-of-band via the per-agent workspace-scoped watermark file.
 
-  it("reviews all sessions in the tenant (no agent-prefix filter post-CR-01)", async () => {
+  it("reviews all sessions in the tenant (no agent-prefix filter)", async () => {
     const deps = makeDeps({ agentId: "my-agent" });
     (deps.sessionStore.listDetailed as Mock).mockReturnValue([
       // Both sessions are in the same tenant; no agent prefix in either key.

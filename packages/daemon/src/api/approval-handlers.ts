@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Approval RPC handler module.
  * Handles approval gate admin RPC methods:
  *   admin.approval.pending, admin.approval.resolve,
  *   admin.approval.resolveAll, admin.approval.clearDenialCache
- * Extracted into a dedicated handler module following the same factory
- * pattern as session-handlers.ts, cron-handlers.ts, etc.
+ * Follows the same factory pattern as session-handlers.ts,
+ * cron-handlers.ts, etc.
  *
- * Phase 35 Wave C (Plan 35-13 Task 2): refactored to use the
- * `@comis/core` contract registry. Method keys are computed-property
- * names (`[AdminApprovalPendingContract.method]:`) so the
- * bidirectional 1:1 architecture test resolves them through
+ * Uses the `@comis/core` contract registry. Method keys are
+ * computed-property names (`[AdminApprovalPendingContract.method]:`) so
+ * the bidirectional 1:1 architecture test resolves them through
  * `defineContract({ method, ... })` declarations in
  * `packages/core/src/api-contracts/workspace.ts` (the workspace
  * umbrella file groups all 5 handlers that share the
  * `WorkspaceApiDeps` slice). The dispatcher-injected `_X` internal
  * fields are stripped via `stripInternalFields` BEFORE
- * `contract.request.parse(...)` (D-04 pitfall 6).
+ * `contract.request.parse(...)`.
  *
  * Two of the 4 methods (`resolveAll` + the test-only branch of
  * `clearDenialCache`) are NOT registered in setup-gateway-api.ts —
@@ -49,20 +48,19 @@ import type { RpcHandler } from "./types.js";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
 // mcp, skill, notification handlers). The dispatcher constructs this handler
 // only inside the `deps.approvalGate ? ...` truthy branch, so the alias
 // narrows `approvalGate` to required (matching the handler body's direct
-// `deps.approvalGate.method()` access). DAEMON-API-03 Option A retarget +
-// 34-08b narrowing — handler bodies unchanged.
+// `deps.approvalGate.method()` access).
 import type { WorkspaceApiDeps } from "./types.js";
 export type ApprovalHandlerDeps = WorkspaceApiDeps & {
   approvalGate: import("@comis/core").ApprovalGate;
 };
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**

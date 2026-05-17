@@ -98,7 +98,7 @@ vi.mock("../tooling-fill/index.js", async (importOriginal) => {
 // contract.request.parse + contract.response.parse exercise the real
 // validation pipeline. Only `withClient` is mocked so tests can inject a
 // fake `client.call` returning canned RPC responses. Pattern mirrors
-// `daemon-guard.test.ts` (Plan 35-06's vi.importActual hybrid mock).
+// `daemon-guard.test.ts`'s vi.importActual hybrid mock.
 vi.mock("../client/rpc-client.js", async () => {
   const actual = await vi.importActual<typeof import("../client/rpc-client.js")>(
     "../client/rpc-client.js",

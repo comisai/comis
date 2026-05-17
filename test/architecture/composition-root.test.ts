@@ -8,7 +8,7 @@
  * MUST live inside the umbrella facade re-export allowlist
  * (`packages/comis/src/{core,index}.ts` — per RES-ARCH-10).
  *
- * Type-only imports are allowed anywhere; the test uses the Plan-36-02-added
+ * Type-only imports are allowed anywhere; the test uses the
  * `valueImportsOnly: true` flag on `findForbiddenImports` to filter out
  * `import type { bootstrap }` shapes (which produce no JS at runtime).
  *
@@ -77,12 +77,12 @@ describe("composition-root — single production bootstrap value-import (GUARDRA
       }),
     ).toEqual([]);
 
-    // Coverage floor (Plan 36 IN-05): assert findForbiddenImports descended
-    // into the whole packages/*/src tree rather than bailing after one
-    // package. With the L-allowlist closed to zero in Phase 36, there is
-    // no "must find violations" backstop to catch a walker regression that
-    // silently visits only a single directory. Empirical baseline at HEAD
-    // is ~1,290 .ts source files across all packages; the largest single
+    // Coverage floor: assert findForbiddenImports descended into the whole
+    // packages/*/src tree rather than bailing after one package. With the
+    // architecture allowlist closed to zero, there is no "must find
+    // violations" backstop to catch a walker regression that silently
+    // visits only a single directory. Empirical baseline at HEAD is
+    // ~1,290 .ts source files across all packages; the largest single
     // package is ~225 files, so a floor of 500 catches "walker stuck in
     // one package" while leaving generous headroom for normal refactors.
     expect(

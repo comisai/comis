@@ -7,8 +7,6 @@
  * note attachment path, apiRoot E2E seam, action callback handler,
  * stop() with no app.
  *
- * Phase 40 / Plan 40-12 / COV-03 — channels branches gap closure.
- *
  * @module
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";

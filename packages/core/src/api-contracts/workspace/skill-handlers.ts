@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Skill-handlers contract slice (Phase 43 split per FILE-SPLIT-14).
+ * Skill-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/skill-handlers.ts` (6 methods).
- * Block-moved verbatim from the pre-split `api-contracts/workspace.ts`
- * (lines 852-1043). Spread order in `SKILL_HANDLERS_CONTRACTS` matches
- * the pre-split `WORKSPACE_CONTRACTS` array (workspace.ts:1144-1149) byte
- * for byte to keep `contracts.generated.*` artifacts byte-identical.
+ * Spread order in `SKILL_HANDLERS_CONTRACTS` is determinism-critical for
+ * codegen output stability — keep `contracts.generated.*` artifacts
+ * byte-identical when reordering.
  *
  * @module
  */
@@ -58,8 +57,8 @@ const SkillScopeSchema = z.enum(["local", "shared"]);
  *
  * Request: `{ agentId? }`. The handler also reads `_agentId` from
  * internals as a fallback (skill-handlers.ts:96-98) — the contract
- * models only the user-facing `agentId` per D-04 (internals are
- * stripped before parse).
+ * models only the user-facing `agentId` (internals are stripped before
+ * parse).
  *
  * Response: `{ skills: PromptSkillDescription[] }`.
  */
@@ -157,14 +156,11 @@ export const SkillsDeleteContract = defineContract({
  * (skill-handlers.ts:399-419) enforce name format + content scan
  * (rejects CRITICAL `scanSkillContent` findings).
  *
- * **Plan-vs-reality (Rule 1).** Plan 35-13 inventoried 4 skills.*
- * methods (list, upload, import, delete); reality is 6 — the handler
- * factory adds `create` and `update` (skill-handlers.ts:387 + 462).
- * These two are NOT registered in setup-gateway-api.ts (gateway-tool /
- * agent-tool dispatch path only), but the bidirectional 1:1
- * architecture test walks handler-factory PropertyAssignment keys
- * (registration-plane-agnostic), so contracts are MANDATORY for the
- * 1:1 mapping to pass.
+ * Note: `skills.create` and `skills.update` are NOT registered in
+ * setup-gateway-api.ts (gateway-tool / agent-tool dispatch path only),
+ * but the bidirectional 1:1 architecture test walks handler-factory
+ * PropertyAssignment keys (registration-plane-agnostic), so contracts
+ * are MANDATORY for the 1:1 mapping to pass.
  *
  * Request: `{ name, content, scope?, agentId? }`.
  *
@@ -211,9 +207,8 @@ export const SkillsUpdateContract = defineContract({
 });
 
 /**
- * skill-handlers slice (6 contracts). Spread order matches the
- * pre-split `WORKSPACE_CONTRACTS` array (workspace.ts:1144-1149) byte
- * for byte — determinism-critical for codegen output stability.
+ * skill-handlers slice (6 contracts). Spread order is
+ * determinism-critical for codegen output stability.
  */
 export const SKILL_HANDLERS_CONTRACTS = [
   SkillsListContract,

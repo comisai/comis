@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MCP Client Manager (Phase 43 split per FILE-SPLIT-11).
+ * MCP Client Manager.
  *
  * Connects to external Model Context Protocol servers and discovers
  * their tools for use by the Comis agent. Manages connection lifecycle
@@ -9,9 +9,7 @@
  * on involuntary disconnects. Each tool is qualified with its server
  * name ("mcp:{server}/{tool}") to avoid collisions.
  *
- * Barrel + thin factory composing state + handle. Closure-extraction
- * with state-first protocol; matches Phase 42 pi-executor and Phase 43
- * telegram-adapter (FILE-SPLIT-12) conventions. The factory body
+ * Barrel + thin factory composing state + handle. The factory body
  * constructs the McpClientManagerState and wires the handle methods to
  * the per-concern leaves (connect/call/discover/reconnect).
  *
@@ -58,7 +56,7 @@ export type {
 export { qualifyToolName, parseQualifiedName } from "./mcp-client-types.js";
 
 // ---------------------------------------------------------------------------
-// Factory (state-first composition; mirrors createPiExecutor barrel)
+// Factory (state-first composition)
 // ---------------------------------------------------------------------------
 
 /**
@@ -67,7 +65,7 @@ export { qualifyToolName, parseQualifiedName } from "./mcp-client-types.js";
  * external MCP servers.
  */
 export function createMcpClientManager(deps: McpClientManagerDeps): McpClientManager {
-  // Resolve defaults at construction (matches pre-split behavior byte-identical)
+  // Resolve defaults at construction
   const options: McpClientManagerOptions = {
     connectTimeoutMs: deps.connectTimeoutMs ?? 30_000,
     callToolTimeoutMs: deps.callToolTimeoutMs ?? 60_000,

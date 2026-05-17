@@ -2,8 +2,6 @@
 /**
  * Mock Slack Web API server for E2E flow-matrix coverage.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09).
- *
  * Wire surface: an HTTP server speaking just enough of Slack's Web API
  * (https://api.slack.com/methods) to satisfy a @slack/bolt App running
  * in `mode='http'` (the E2E path; Socket Mode connects to
@@ -21,8 +19,8 @@
  *   the test to dispatch to the gateway directly. This matches Slack's
  *   HTTP/Events mode pattern (events arrive via webhook, not poll).
  *
- * Security posture (T-MOCK-EXPOSED-PORT): binds to loopback (127.0.0.1)
- * only; listen(0) for kernel-allocated ephemeral port.
+ * Security posture: binds to loopback (127.0.0.1) only; listen(0) for
+ * kernel-allocated ephemeral port.
  *
  * @module
  */

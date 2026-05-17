@@ -61,8 +61,6 @@ export function registerChannelCommand(program: Command): void {
       try {
         const config = await withSpinner("Fetching channel status...", () =>
           withClient(async (client) => {
-            // Phase 35 Wave C closure (Plan 35-19): retargeted from stale
-            // `config.get` method name to ConfigReadContract.
             return await callTyped(client, ConfigReadContract, {
               section: "channels",
             }) as Record<string, unknown>;

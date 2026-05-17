@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tool-result clearing + thinking-block clearing + content reordering
- * (Phase 42 split per EXEC-SPLIT-02).
+ * Tool-result clearing, thinking-block clearing, and content reordering.
  *
- * Lifted verbatim from request-body-injector.ts:696-927. Exposes:
+ * Exposes:
  *  - `MICROCOMPACT_MIN_CONTENT_LENGTH` (internal threshold)
  *  - `COMPACTABLE_TOOL_NAMES` (read-only tool-name set)
  *  - `CLEARABLE_USES_TOOL_NAMES` (edit/write tool-name set)

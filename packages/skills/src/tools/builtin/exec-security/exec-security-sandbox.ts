@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Exec command security — sandbox / env-var / path-protection primitives
- * (Phase 43 split per FILE-SPLIT-11).
+ * Exec command security — sandbox / env-var / path-protection primitives.
  *
- * Extracted from `exec-security.ts` (1,153L monolith) on 2026-05-16. Owns
- * the low-level building blocks consumed by pre-check + allowlist:
+ * Low-level building blocks consumed by pre-check + allowlist:
  *   - ShellQuoteTracker (character-by-character quote-state machine)
  *   - SAFE_ENV_VARS, SAFE_ENV_PREFIXES + validateEnvVars
  *   - splitCommandSegments (compound-operator split)

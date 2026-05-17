@@ -33,7 +33,7 @@ export interface ApiPayloadTraceConfig {
   maxSize?: string;
   /** Number of rotated files to keep. Undefined = no rotation. */
   maxFiles?: number;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
 }
 

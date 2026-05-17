@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Verify phase of `comis config tooling-fill` (Phase 43 split per
- * FILE-SPLIT-10).
+ * Verify stage of `comis config tooling-fill`.
  *
  * Composes the diff-rendered fill output into the final result: dry-run
  * short-circuit, values-confirmation prompt, restart-authorization prompt,

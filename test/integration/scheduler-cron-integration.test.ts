@@ -2,9 +2,8 @@
 /**
  * INTEGRATION: scheduler cron — computeNextRunAtMs + quiet-hours integration.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts integration-tier coverage
- * for `@comis/scheduler` (currently 23.38%). Tests the production cron-
- * expression evaluator and quiet-hours integration in-process.
+ * Exercises the production cron-expression evaluator and quiet-hours
+ * integration in-process for `@comis/scheduler`.
  *
  * @module
  */

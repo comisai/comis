@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Daemon gateway-subsystem wiring (Phase 43 wave 8 split per FILE-SPLIT-08).
+ * Daemon gateway-subsystem wiring.
  *
  * Barrel re-export of the canonical public API of the former setup-gateway.ts
- * monolith. No aliases — every export keeps its canonical name. The
- * pre-split parity snapshot (captured in 43-08a) reproduces verbatim against
- * this barrel.
+ * monolith. No aliases — every export keeps its canonical name.
  *
  * Decomposition:
  *   - setup-gateway-admin.ts   ≤200L — deriveTrustLevel, handleConfigChatCommand, buildExecutionRequestedLogFields, buildGreetingGenerator
@@ -13,8 +11,8 @@
  *   - setup-gateway-routes.ts  ≤300L — setupGateway orchestrator + GatewayDeps/GatewayResult + gateway server creation + mountGatewayRoutes call + start
  *
  * NOTE: The sibling top-level `packages/daemon/src/wiring/setup-gateway-routes.ts`
- * (one directory up) is the older `mountGatewayRoutes` helper that predates
- * Phase 43; the leaf in this subdirectory imports from it.
+ * (one directory up) is the older `mountGatewayRoutes` helper; the leaf in
+ * this subdirectory imports from it.
  *
  * @module
  */

@@ -10,9 +10,6 @@
  * runtime feature; the structural contract does not enforce it). CLI use
  * cases avoid logging credentials by construction.
  *
- * Phase 35 Plan 35-02 (WEB-CONTRACTS-04). Wave A primitive — Wave B retargets
- * CLI consumers from @comis/infra → @comis/core for the cli → infra cut.
- *
  * @module
  */
 import type { ComisLogger, LogMethod } from "./log-fields.js";

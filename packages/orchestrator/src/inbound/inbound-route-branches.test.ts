@@ -7,8 +7,6 @@
  * injection, steer+followup routing, queue-mediated path, direct execution
  * fallback, and lane assignment.
  *
- * Phase 40 / Plan 40-12 / COV-03 — orchestrator branches gap closure.
- *
  * @module
  */
 import { describe, it, expect, vi } from "vitest";

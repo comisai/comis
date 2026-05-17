@@ -15,8 +15,7 @@ export type ModelTier = "small" | "medium" | "large";
 
 /**
  * Build the residual one-liner pointing the model at the per-turn
- * `## Capabilities` block. The capability-index is now the only path; the
- * legacy flat `## Available Tools` block was removed in phase 38 BC-REM-11.
+ * `## Capabilities` block. The capability-index is now the only path.
  *
  * The wording below is normative — the per-turn `## Capabilities` block is
  * rendered into the dynamic preamble by `executor-prompt-runner.ts`.
@@ -42,9 +41,8 @@ export function buildToolingSection(
 /**
  * Build the static "## Tool Call Style" section with conditional coding guidelines.
  *
- * Post-BC-REM-11: the dual-gated "Tool-first principle" bullet now emits
- * unconditionally when `exec` is in `toolNames`. The capability-index is
- * always on; the gate-off branch has been removed.
+ * The "Tool-first principle" bullet emits unconditionally when `exec` is in
+ * `toolNames` — the capability-index is always on.
  */
 export function buildToolCallStyleSection(
   isMinimal: boolean,
@@ -97,7 +95,7 @@ export function buildToolCallStyleSection(
   if (has("exec")) {
     // Counterweight to the venv rule below. The bullet precedes the venv rule
     // because the first read sets the default; the second is the install
-    // fallback. Capability-index is always on after phase 38 BC-REM-11.
+    // fallback. Capability-index is always on.
     guidelines.push(
       "- **Tool-first principle.** When this turn includes a `Capabilities` context and the task can be satisfied by a connected tool or available skill, prefer that capability over installing a Python or Node package. Use installs only for capabilities not covered by active tools, deferred tools, or visible prompt skills.",
     );

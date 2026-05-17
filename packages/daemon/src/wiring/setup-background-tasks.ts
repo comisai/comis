@@ -21,9 +21,9 @@ export interface SetupBackgroundTasksDeps {
   dataDir: string;
   eventBus: TypedEventBus;
   logger: ComisLogger;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
-  /** Timer scheduling (Phase 39 PORTS-13). */
+  /** Timer scheduling. */
   timers: TimerPort;
 }
 

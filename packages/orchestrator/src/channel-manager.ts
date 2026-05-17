@@ -17,12 +17,12 @@
  */
 
 import type { AgentExecutor } from "@comis/agent";
-// Phase 32 commit 7: MessageRouter moved to orchestrator (ORCH-EXT-08).
-// Relative path used because orchestrator cannot import its own published name.
+// MessageRouter lives in orchestrator. Relative path used because the
+// orchestrator package cannot import its own published name.
 import type { MessageRouter } from "./routing/message-router.js";
 import type { SessionLifecycle } from "@comis/agent";
-// Phase 32 commit 8: queue types moved to orchestrator (ORCH-EXT-08, Wave A close).
-// Relative path used because orchestrator cannot import its own published name.
+// Queue types live in orchestrator. Relative path used because the
+// orchestrator package cannot import its own published name.
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { DebounceBuffer } from "./queue/debounce-buffer.js";
 import type { FollowupTrigger } from "./queue/followup-trigger.js";
@@ -36,11 +36,10 @@ import { formatSessionKey, systemNowMs, systemSetTimeout } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 
-// Phase 32 commit 4: channel-manager.ts moved from packages/channels/src/shared/
-// to packages/orchestrator/src/. The six former relative imports below are
-// retargeted to the @comis/channels public surface — these files (block-pacer,
+// channel-manager.ts lives in @comis/orchestrator, so the six imports below
+// reach into the @comis/channels public surface — block-pacer,
 // channel-registry, send-policy, audio-preflight, group-history-buffer,
-// voice-response-pipeline) remain in channels and are exported from
+// voice-response-pipeline live in channels and are exported from
 // packages/channels/src/index.ts for cross-package consumers like this one.
 import type { BlockPacer } from "@comis/channels";
 import type { ChannelRegistry } from "@comis/channels";
@@ -51,14 +50,11 @@ import type { RetryEngine } from "@comis/core";
 import type { GroupHistoryBuffer } from "@comis/channels";
 import type { VoiceResponsePipelineDeps } from "@comis/channels";
 
-// Phase 32 commit 3: inbound-pipeline.ts moved to @comis/orchestrator. Channels
-// cannot import from orchestrator (forbidden direction — channels is downstream
-// of orchestrator only via the daemon composition root). Until channel-manager
-// itself moves to @comis/orchestrator at commit 4, channel-manager calls
-// processInboundMessage via an injected callback on ChannelManagerDeps and
-// inlines the three InboundPipelineDeps[...] indexed-property types it used.
-// At commit 4 channel-manager moves and the callback indirection is reverted
-// to a static import inside orchestrator.
+// inbound-pipeline.ts lives in @comis/orchestrator. Channels cannot import
+// from orchestrator (forbidden direction — channels is downstream of
+// orchestrator only via the daemon composition root). channel-manager
+// receives `processInboundMessage` via an injected callback on
+// ChannelManagerDeps to preserve that direction.
 
 /**
  * Callback shape matching @comis/orchestrator.processInboundMessage.
@@ -111,8 +107,8 @@ export interface ChannelManagerDeps {
   /** Delivery queue for crash-safe message persistence. Optional -- when absent, agent responses skip queue. */
   deliveryQueue?: DeliveryQueuePort;
   /** DeliveryService constructed once at the daemon composition root
-   *  (setup-channels.ts). Phase 30 plan 04 (CONFIG-DELIV-05) — threaded
-   *  into the inbound pipeline via pipelineDeps spread. */
+   *  (setup-channels.ts). Threaded into the inbound pipeline via
+   *  pipelineDeps spread. */
   deliveryService: DeliveryService;
   /** Optional ingress debounce buffer for coalescing rapid messages before queue entry. When absent, messages go directly to CommandQueue. */
   debounceBuffer?: DebounceBuffer;
@@ -207,11 +203,9 @@ export interface ChannelManagerDeps {
   getEnforceFinalTag?: (agentId: string) => boolean | undefined;
   /**
    * REQUIRED. Inbound message processor — injected at composition root from
-   * `@comis/orchestrator.processInboundMessage`. Phase 32 commit 3: channel-manager
-   * stays in @comis/channels while inbound-pipeline.ts moved to orchestrator,
-   * so the value flows in via deps instead of a static import (channels cannot
-   * import from orchestrator). At commit 4 channel-manager moves and this
-   * field is removed in favor of a direct same-package import.
+   * `@comis/orchestrator.processInboundMessage`. Lives on deps so the
+   * channels package can call it without importing from orchestrator
+   * (channels cannot import from orchestrator).
    */
   processInboundMessage: ProcessInboundMessageFn;
   /**

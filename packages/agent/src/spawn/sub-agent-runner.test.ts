@@ -33,8 +33,8 @@ import {
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight port wrappers that delegate to globals so
-// vi.useFakeTimers() continues to intercept Date.now / setTimeout / setInterval below.
+// Lightweight port wrappers that delegate to globals so vi.useFakeTimers()
+// continues to intercept Date.now / setTimeout / setInterval below.
 // ---------------------------------------------------------------------------
 
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {

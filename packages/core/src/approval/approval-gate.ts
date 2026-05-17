@@ -18,9 +18,9 @@ export interface ApprovalGateDeps {
   readonly getDenialCacheTtlMs?: () => number;
   /** Returns the batch approval cache TTL in ms (reads from config.approvals.batchApprovalTtlMs). Defaults to 30000 if not provided. Returns 0 to disable. */
   readonly getBatchApprovalTtlMs?: () => number;
-  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  /** Wall-clock + monotonic time reads. */
   readonly clock: ClockPort;
-  /** setTimeout/setInterval scheduling (Phase 39 PORTS-13). */
+  /** setTimeout/setInterval scheduling. */
   readonly timers: TimerPort;
   /** Optional logger for cache hit/miss debug logging. Structural type -- no Pino import needed. */
   readonly logger?: {
@@ -273,7 +273,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       }, timeoutMs);
 
       // Prevent the timer from keeping the process alive during shutdown.
-      // .unref() preserved per PORTS-04 cancel-safety contract.
+      // .unref() preserved per the TimerHandle cancel-safety contract.
       timer.unref();
 
       pendingMap.set(requestId, { request, resolve, timer });
@@ -414,7 +414,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
         resolveApproval(record.requestId, false, "system:timeout", "Approval request timed out");
       }, remainingMs);
 
-      // .unref() preserved per PORTS-04 cancel-safety contract.
+      // .unref() preserved per the TimerHandle cancel-safety contract.
       timer.unref();
 
       // Use a no-op resolve for the restored entry; the original caller's promise

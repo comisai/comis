@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Render-branch tests for IcSubAgentsView (Phase 40 Plan 40-15 gap-closure).
+ * Render-branch tests for IcSubAgentsView.
  *
- * subagents.ts at baseline reports 33.72% / 16.94% / 23.8% / 30.13%
- * (lines/branches/functions/statements). This file targets the render()
- * decision tree (loading/error/empty/populated) + the per-run card
- * branches (completedAt/result/error/canKill) + the pure helpers
- * (_truncate, _statusColor, _formatDuration).
+ * Targets the render() decision tree (loading/error/empty/populated) +
+ * the per-run card branches (completedAt/result/error/canKill) + the
+ * pure helpers (_truncate, _statusColor, _formatDuration).
  *
  * @module
  */

@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Browser automation RPC handler methods.
  * Covers 13 methods:
  *   browser.status, browser.start, browser.stop, browser.navigate,
  *   browser.snapshot, browser.screenshot, browser.pdf, browser.act,
  *   browser.tabs, browser.open, browser.focus, browser.close, browser.console
- * Extracted from daemon.ts rpcCallInner switch block
  *
- * Phase 35 Wave C (Plan 35-13 Task 1): refactored to use the
- * `@comis/core` contract registry. Method keys are computed-property
- * names (`[BrowserStatusContract.method]:`) so the bidirectional 1:1
- * architecture test resolves them through `defineContract({ method, ... })`
- * declarations in `packages/core/src/api-contracts/workspace.ts` (the
- * workspace umbrella file groups all 5 handlers that share the
- * `WorkspaceApiDeps` slice). The dispatcher-injected `_X` internal
- * fields are stripped via `stripInternalFields` BEFORE
- * `contract.request.parse(...)` (D-04 pitfall 6). The handler resolves
- * `_agentId` from the RAW params BEFORE stripping (the agent identity
- * lives on the internals object, never on the user-facing request).
+ * Uses the `@comis/core` contract registry. Method keys are
+ * computed-property names (`[BrowserStatusContract.method]:`) so the
+ * bidirectional 1:1 architecture test resolves them through
+ * `defineContract({ method, ... })` declarations in
+ * `packages/core/src/api-contracts/workspace.ts` (the workspace umbrella
+ * file groups all 5 handlers that share the `WorkspaceApiDeps` slice).
+ * The dispatcher-injected `_X` internal fields are stripped via
+ * `stripInternalFields` BEFORE `contract.request.parse(...)` (pitfall 6).
+ * The handler resolves `_agentId` from the RAW params BEFORE stripping
+ * (the agent identity lives on the internals object, never on the
+ * user-facing request).
  *
  * @module
  */
@@ -43,15 +42,15 @@ import {
 
 import type { RpcHandler } from "./types.js";
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: WorkspaceApiDeps (shared with workspace, approval,
-// mcp, skill, notification handlers). DAEMON-API-03 Option A retarget —
-// handler bodies and call sites unchanged.
+// mcp, skill, notification handlers). Handler bodies and call sites
+// remain unchanged across the re-alias.
 import type { WorkspaceApiDeps as BrowserHandlerDeps } from "./types.js";
 export type { BrowserHandlerDeps };
 
 // ---------------------------------------------------------------------------
-// Dev-mode response parse helper (D-10)
+// Dev-mode response parse helper
 // ---------------------------------------------------------------------------
 
 /**

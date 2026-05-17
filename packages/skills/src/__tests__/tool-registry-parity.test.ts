@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 33 parity protection — SKILLS-SPLIT-06 + SKILLS-SPLIT-07.
+ * Parity protection for the platform-tool descriptor registry.
  *
- * These assertions lock the descriptor registry's tool set + normalized
- * schema output. Captured BEFORE the registry exists (TDD red); turns
- * GREEN when Plan 03 lands `packages/skills/src/platform-tools/registry.ts`.
+ * Locks the descriptor registry's tool set and normalized schema output.
  *
- * Snapshot file name is keyed by TypeBox version (per RES-PIT-10 amendment
- * in 33-RESEARCH.md): cross-version snapshots are never compared. A
- * `typebox` bump regenerates the snapshot as a separate PR.
+ * Snapshot file name is keyed by TypeBox version: cross-version snapshots
+ * are never compared. A `typebox` bump regenerates the snapshot as a
+ * separate PR.
  *
  * The dual gate (explicit name set assertion + file-backed snapshot)
- * matches RES-ARCH-5 decision in 33-RESEARCH.md Open Question Q5.
+ * catches tool removals immediately rather than relying on a
+ * snapshot-diff alone.
  *
  * @module
  */
@@ -36,13 +35,13 @@ const STUB_CTX = {
   rpcCall: async () => ({}) as never,
 } as never;
 
-describe("platform-tool registry parity (SKILLS-SPLIT-06)", () => {
+describe("platform-tool registry parity", () => {
   const REGISTRY = createPlatformToolRegistry();
 
   it("yields a stable tool name set", () => {
     const names = REGISTRY.map((d) => d.name).sort();
     // Explicit list — a tool removal fails this assertion immediately,
-    // not just the snapshot-diff (per RES-ARCH-5 dual-gate decision).
+    // not just the snapshot-diff.
     expect(names).toEqual([
       "agents_manage",
       "background_tasks",

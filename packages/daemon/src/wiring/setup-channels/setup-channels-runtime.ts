@@ -2,9 +2,8 @@
 /**
  * Channel adapter lifecycle wiring. Hosts the ChannelManager construction
  * (with voice response pipeline, command queue, slash-command handler,
- * lifecycle reactors, approval notifier) extracted from setup-channels.ts.
+ * lifecycle reactors, approval notifier).
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-channels.ts.
  * The registry orchestrator invokes `buildAndStartChannelManager` after the
  * adapters and media pipeline have been bootstrapped; this helper returns
  * the manager handle + lifecycle reactors + approval notifier + command
@@ -48,7 +47,7 @@ import type { ExecutionLogEntry } from "@comis/scheduler";
 /**
  * Closure-captured deps for building and starting the ChannelManager.
  */
-// @optional-field-count: Inherits the optional-field surface of ChannelsDeps (allowlisted at optionalFieldAllowlist for setup-channels-registry.ts/ChannelsDeps, optionalCount: 26). The runtime leaf passes through the ChannelsDeps optionals (ttsAdapter, audioConverter, queueConfig, etc.) unchanged; tightening these to required would force the registry caller (and every downstream consumer of ChannelsDeps) to fabricate stub values at every call site. The Phase 43 split intentionally mirrors the ChannelsDeps optional surface so the rebuild matches the pre-split call shape byte-for-byte (FILE-SPLIT-08 / FILE-SPLIT-17 parity gate). (TS-HYG-13 — Phase D follow-up.)
+// @optional-field-count: Inherits the optional-field surface of ChannelsDeps (allowlisted at optionalFieldAllowlist for setup-channels-registry.ts/ChannelsDeps, optionalCount: 26). The runtime leaf passes through the ChannelsDeps optionals (ttsAdapter, audioConverter, queueConfig, etc.) unchanged; tightening these to required would force the registry caller (and every downstream consumer of ChannelsDeps) to fabricate stub values at every call site. The split mirrors the ChannelsDeps optional surface so the rebuild matches the pre-split call shape byte-for-byte.
 export interface ChannelManagerBuildDeps {
   container: AppContainer;
   executors: Map<string, AgentExecutor>;
@@ -200,9 +199,9 @@ export async function buildAndStartChannelManager(
       retryEngine,
       deliveryQueue: deps.deliveryQueue,
       deliveryService,
-      // Phase 32 commit 3: required dep — orchestrator-side inbound pipeline
-      // entrypoint. Routed through ChannelManagerDeps so channels does not
-      // create a back-edge import of @comis/orchestrator.
+      // Required dep — orchestrator-side inbound pipeline entrypoint.
+      // Routed through ChannelManagerDeps so channels does not create a
+      // back-edge import of @comis/orchestrator.
       processInboundMessage,
       createExecutor: (agentId: string) => executors.get(agentId) ?? executors.get(defaultAgentId),
       adapters: Array.from(adaptersByType.values()),

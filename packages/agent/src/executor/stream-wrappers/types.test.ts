@@ -12,8 +12,6 @@
  * (project-wide convention for files that cannot be exercised through a
  * runtime import).
  *
- * Phase 40 / Phase C §6.3.1 / COV-06.
- *
  * @module
  */
 

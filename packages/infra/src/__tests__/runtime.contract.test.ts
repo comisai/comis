@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Contract tests for @comis/infra runtime adapters (PORTS-07).
+ * Contract tests for @comis/infra runtime adapters.
  *
  * Each adapter asserts it satisfies the port contract from @comis/core.
- * Tolerances per design §5.3: clock 50ms; timer 30ms safety margin.
+ * Tolerances: clock 50ms; timer 30ms safety margin.
  *
- * PORTS-04 cancel-safety + idempotency contract tests live in the
+ * Cancel-safety + idempotency contract tests live in the
  * createSystemTimers describe block.
  *
- * Placement note: this test sits at `packages/infra/src/__tests__/` (not the
- * plan-authored `packages/infra/__tests__/`). The infra vitest config only
- * includes `src/**\/*.test.ts` and the globals-classifier exemption regex at
- * test/support/globals-classifier.ts:95 matches `packages/[pkg]/src/__tests__/`
- * — a sibling `__tests__/` outside `src/` would be silently uncovered and
- * unexempt. Phase 39 Plan 02 Rule-3 fix.
+ * Placement note: this test sits at `packages/infra/src/__tests__/` (not
+ * a sibling `packages/infra/__tests__/`). The infra vitest config only
+ * includes `src/**\/*.test.ts` and the globals-classifier exemption regex
+ * at test/support/globals-classifier.ts:95 matches
+ * `packages/[pkg]/src/__tests__/` — a sibling `__tests__/` outside `src/`
+ * would be silently uncovered and unexempt.
  *
  * @module
  */
@@ -24,7 +24,7 @@ import {
   createSystemTimers,
 } from "../index.js";
 
-describe("createSystemClock contract (PORTS-06, PORTS-07)", () => {
+describe("createSystemClock contract", () => {
   it("now() returns a value within 50ms of Date.now()", () => {
     const c = createSystemClock();
     const before = Date.now();
@@ -52,7 +52,7 @@ describe("createSystemClock contract (PORTS-06, PORTS-07)", () => {
   });
 });
 
-describe("createSystemEnv contract (PORTS-06, PORTS-07)", () => {
+describe("createSystemEnv contract", () => {
   it("get(key) returns the supplied source[key]", () => {
     const e = createSystemEnv({ FOO: "bar", BAZ: undefined });
     expect(e.get("FOO")).toBe("bar");
@@ -78,7 +78,7 @@ describe("createSystemEnv contract (PORTS-06, PORTS-07)", () => {
   });
 });
 
-describe("createSystemTimers contract (PORTS-04, PORTS-06, PORTS-07)", () => {
+describe("createSystemTimers contract", () => {
   it("setTimeout fires the callback after the requested delay", async () => {
     const t = createSystemTimers();
     let fired = false;
@@ -115,7 +115,7 @@ describe("createSystemTimers contract (PORTS-04, PORTS-06, PORTS-07)", () => {
     expect(count).toBe(seen); // no more fires after cancel
   });
 
-  it("PORTS-04: unref() after cancel() is a no-op", () => {
+  it("unref() after cancel() is a no-op", () => {
     const t = createSystemTimers();
     const h = t.setInterval(() => {}, 60_000);
     h.cancel();
@@ -123,7 +123,7 @@ describe("createSystemTimers contract (PORTS-04, PORTS-06, PORTS-07)", () => {
     expect(h.cancelled).toBe(true);
   });
 
-  it("PORTS-04: unref() twice is a no-op (idempotent)", () => {
+  it("unref() twice is a no-op (idempotent)", () => {
     const t = createSystemTimers();
     const h = t.setInterval(() => {}, 60_000);
     h.unref();
@@ -131,7 +131,7 @@ describe("createSystemTimers contract (PORTS-04, PORTS-06, PORTS-07)", () => {
     h.cancel(); // cleanup
   });
 
-  it("PORTS-04: cancel() twice is a no-op (idempotent)", () => {
+  it("cancel() twice is a no-op (idempotent)", () => {
     const t = createSystemTimers();
     const h = t.setInterval(() => {}, 60_000);
     h.cancel();

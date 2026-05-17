@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-break detection — LRU-bounded Map (Phase 42 split per
- * EXEC-SPLIT-09).
+ * Cache-break detection — LRU-bounded Map.
  *
  * Simple LRU-bounded Map using JS Map's insertion-order guarantee.
  * Used by cache-state.ts to bound per-session detector state.
- *
- * Split out from cache-state.ts to satisfy the EXEC-SPLIT-10 ≤350L cap.
  *
  * @module
  */

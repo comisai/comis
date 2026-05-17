@@ -2,7 +2,6 @@
 /**
  * Gateway admin-scope + auth-gate helpers.
  *
- * Phase 43 wave 8 split (FILE-SPLIT-08): extracted from setup-gateway.ts.
  * Hosts the pure trust-level derivation, the redacted execution-requested
  * log-field builder, and the `/config` chat command handler (with its
  * admin-only trust gate). Plus the optional GreetingGenerator construction
@@ -242,10 +241,9 @@ export interface SlashCommandDepsInput {
 }
 
 /**
- * Build CommandHandlerDeps for the gateway slash command path. The shape is
- * identical to the pre-Phase-43 adapter at the old setup-gateway.ts call site;
- * extracted here to keep the rpc leaf under its size cap while preserving the
- * full per-command behavior contract (parity gate FILE-SPLIT-08 / FILE-SPLIT-17).
+ * Build CommandHandlerDeps for the gateway slash command path. Extracted
+ * to keep the rpc leaf under its size cap while preserving the full
+ * per-command behavior contract.
  */
 export function buildSlashCommandDeps(input: SlashCommandDepsInput): CommandHandlerDeps {
   const { execAgentId, defaultAgentId, execAgentConfig, container, costTrackers, workspaceDirs, piSessionAdapters } = input;

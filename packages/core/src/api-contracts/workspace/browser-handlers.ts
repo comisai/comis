@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Browser-handlers contract slice (Phase 43 split per FILE-SPLIT-14).
+ * Browser-handlers contract slice.
  *
  * Mirrors `packages/daemon/src/api/browser-handlers.ts` (13 methods).
- * Block-moved verbatim from the pre-split `api-contracts/workspace.ts`
- * (lines 468-725). Spread order in `BROWSER_HANDLERS_CONTRACTS` matches
- * the pre-split `WORKSPACE_CONTRACTS` array (workspace.ts:1125-1137) byte
- * for byte to keep `contracts.generated.*` artifacts byte-identical.
+ * Spread order in `BROWSER_HANDLERS_CONTRACTS` matches the
+ * `WORKSPACE_CONTRACTS` array byte for byte to keep
+ * `contracts.generated.*` artifacts byte-identical.
  *
  * @module
  */
@@ -18,9 +17,8 @@ import { defineContract } from "../types.js";
 // ===========================================================================
 
 /**
- * D-05 loose-record value type. Same definition as in
- * `workspace-handlers.ts` — module-private (not exported) so the
- * cross-file duplication is safe.
+ * Loose-record value type. Same definition as in `workspace-handlers.ts`
+ * — module-private (not exported) so the cross-file duplication is safe.
  */
 const LooseRecord = z.record(z.string(), z.unknown());
 
@@ -107,10 +105,9 @@ export const BrowserStopContract = defineContract({
  * BrowserService; the service-layer enforces ALLOWED_NAV_PROTOCOLS
  * (http: / https: / about:).
  *
- * Plan-vs-reality (Rule 1): the handler reads `params.targetUrl` (NOT
- * `params.url`) — the dispatcher accepts the agent-tool param name
- * `targetUrl` and forwards it through. Contract models the
- * handler-read name verbatim per D-08.
+ * Note: the handler reads `params.targetUrl` (NOT `params.url`) — the
+ * dispatcher accepts the agent-tool param name `targetUrl` and forwards
+ * it through. The contract models the handler-read name verbatim.
  *
  * Response: `NavigateResult = { url, title, targetId: string | null }`.
  * `targetId` is nullable (the underlying playwright session may not
@@ -136,7 +133,7 @@ export const BrowserNavigateContract = defineContract({
  * shape (interactive-only, max-depth, compact filter, CSS selector
  * scope, max-chars cap).
  *
- * Response: D-05 loose record. The underlying `SnapshotResult`
+ * Response: loose record. The underlying `SnapshotResult`
  * (`packages/skills/src/tools/browser/playwright-snapshots.ts:49-56`)
  * carries `refs: RoleRefMap` (a `Record<string, unknown>` of role→ref
  * mappings) plus `stats: { lines, chars, refs, interactive }`. Tight
@@ -205,11 +202,11 @@ export const BrowserPdfContract = defineContract({
  * drag, select, fill, close) on the current page. RPC scope. The
  * `request` field is a `BrowserAction` (`ActParams`) — a discriminated
  * union over the 8 action shapes whose discriminator is `action`. The
- * contract models it as a loose record per D-05 (the union is large
- * and the handler's bespoke pre-Zod guard at browser-handlers.ts:95-98
+ * contract models it as a loose record (the union is large and the
+ * handler's bespoke pre-Zod guard at browser-handlers.ts:95-98
  * produces the user-facing error for missing `request`).
  *
- * Response: D-05 loose record (`ActionResult = { ok, action, error? }`
+ * Response: loose record (`ActionResult = { ok, action, error? }`
  * but the handler returns the result directly; modeling as a loose
  * record matches the snapshot-result precedent for browser handlers).
  */
@@ -291,7 +288,7 @@ export const BrowserCloseContract = defineContract({
  * `browser.console` — read console messages from the current or
  * specified tab. RPC scope. Optional `level` filter.
  *
- * Response: `{ messages: ConsoleEntry[] }`. D-05 loose-record for the
+ * Response: `{ messages: ConsoleEntry[] }`. Loose-record for the
  * entry shape — `BrowserConsoleMessage` carries a `location` block
  * with file/line/column nested fields that we don't pin in the wire
  * contract.
@@ -310,8 +307,8 @@ export const BrowserConsoleContract = defineContract({
 
 /**
  * browser-handlers slice (13 contracts). Spread order matches the
- * pre-split `WORKSPACE_CONTRACTS` array (workspace.ts:1125-1137) byte
- * for byte — determinism-critical for codegen output stability.
+ * `WORKSPACE_CONTRACTS` array byte for byte — determinism-critical
+ * for codegen output stability.
  */
 export const BROWSER_HANDLERS_CONTRACTS = [
   BrowserStatusContract,

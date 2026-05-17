@@ -140,11 +140,11 @@ describe("DmScopeConfigSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  // CR-01 follow-up to BC-REM-15 (Phase 38): the `agentPrefix` field was
-  // removed because session-key emission no longer includes the prefix.
-  // strictObject ensures operators with `agentPrefix: true` in their YAML
-  // get a loud validation error at config load.
-  it("rejects the removed agentPrefix field (CR-01 follow-up to BC-REM-15)", () => {
+  // The `agentPrefix` field was removed because session-key emission no
+  // longer includes the prefix. strictObject ensures operators with
+  // `agentPrefix: true` in their YAML get a loud validation error at
+  // config load.
+  it("rejects the removed agentPrefix field", () => {
     const result = DmScopeConfigSchema.safeParse({
       mode: "per-peer",
       agentPrefix: true,

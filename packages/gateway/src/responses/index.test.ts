@@ -3,15 +3,13 @@
  * Smoke test for `gateway/src/responses/index.ts` public barrel.
  *
  * Asserts the public export surface matches the source-of-truth — catches
- * silent export deletion / shadowing. Phase 40 / Phase C §6.3.4 / COV-08.
+ * silent export deletion / shadowing.
  *
- * NOTE: Cohort 1 plan PATTERNS.md inventory listed 1 export
- * (`createResponsesRoute`), but the live source-of-truth exports 4 values:
- * 3 Zod schemas / utilities from `responses-types.ts`
- * (`ResponseRequestSchema`, `ResponseMessageSchema`, `createSequenceCounter`)
- * plus `createResponsesRoute` from `responses-endpoint.ts`. Smoke test
- * reflects production reality — schemas are `typeof === "object"`,
- * the counter factory + route factory are `typeof === "function"`.
+ * The barrel exports 4 values: 3 Zod schemas / utilities from
+ * `responses-types.ts` (`ResponseRequestSchema`, `ResponseMessageSchema`,
+ * `createSequenceCounter`) plus `createResponsesRoute` from
+ * `responses-endpoint.ts`. Schemas are `typeof === "object"`; the counter
+ * factory + route factory are `typeof === "function"`.
  *
  * @module
  */

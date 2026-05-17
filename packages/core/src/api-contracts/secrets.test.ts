@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the secrets-domain Wave C contracts.
+ * Per-contract tests for the secrets-domain RPC contracts.
  *
- * Plan 35-08 (Wave C domain #3). Mirrors the structure of
- * `packages/core/src/api-contracts/auth.test.ts` (Plan 35-07's
- * template).
+ * Mirrors the structure of `packages/core/src/api-contracts/auth.test.ts`.
  *
  * @module
  */
@@ -38,7 +36,7 @@ describe("secrets-domain contracts", () => {
     expect(SecretsDeleteContract.method).toBe("secrets.delete");
   });
 
-  it("all 4 contracts are admin-scoped (RES-PIT-31-3 invariant)", () => {
+  it("all 4 contracts are admin-scoped", () => {
     expect(SecretsSetContract.scopes).toEqual(["admin"]);
     expect(SecretsGetContract.scopes).toEqual(["admin"]);
     expect(SecretsListContract.scopes).toEqual(["admin"]);
@@ -218,7 +216,7 @@ describe("secrets-domain contracts", () => {
     // future bug accidentally adds a `value` field to a SecretMetadata
     // row in the handler, the parse output that crosses the daemon →
     // CLI boundary does not carry the leaked value. Production skips
-    // the parse for cold-start budget (D-10), but the structural canary
+    // the parse for cold-start budget, but the structural canary
     // defense applies in dev + test, where leaks would surface first.
     const parsed = SecretsListContract.response.parse({
       secrets: [

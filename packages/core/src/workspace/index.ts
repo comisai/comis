@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Workspace helpers — relocated from @comis/agent in Phase 35 (D-01 #5).
+ * Workspace helpers.
  *
  * Provides the canonical `ensureWorkspace` + `resolveWorkspaceDir` adapters
  * for CLI + daemon consumers. Internal helpers (WORKSPACE_FILE_NAMES,
- * DEFAULT_TEMPLATES, workspace-state, status/registration helpers) are
- * relocated alongside because their consumers (daemon api/workspace-handlers,
+ * DEFAULT_TEMPLATES, workspace-state, status/registration helpers) live
+ * here alongside because their consumers (daemon api/workspace-handlers,
  * agent bootstrap-loader) need them too.
  *
  * @module

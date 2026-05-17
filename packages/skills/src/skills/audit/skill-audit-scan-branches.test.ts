@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Branch-gap coverage for skill-audit.ts — skill.scan and skill.scan.reject
- * action branches (Plan 40-11 / COV-03).
+ * action branches.
  *
- * The existing skill-audit.test.ts covers only `skill.prompt.load` and
+ * The companion skill-audit.test.ts covers only `skill.prompt.load` and
  * `skill.prompt.invoke` action branches. This file adds coverage for the
- * remaining two action branches plus the metadata?.findings nullish-coalescing
- * branches inside each case.
+ * remaining two action branches plus the metadata?.findings
+ * nullish-coalescing branches inside each case.
  *
  * @module
  */

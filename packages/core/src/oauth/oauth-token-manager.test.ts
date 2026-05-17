@@ -3,11 +3,11 @@
  * Type-shape smoke tests for the relocated oauth-token-manager types.
  *
  * This file replaces the runtime test for `createOAuthTokenManager` (which
- * stays on the agent-side source — only the TYPES were relocated to core
- * per Phase 35 Plan 35-03; see oauth-token-manager.ts module JSDoc). The
- * agent's 2115-line runtime test continues to drive the production behavior;
- * here we pin the structural shape so a future drift (e.g., dropping
- * `errorKind` from `OAuthError`) surfaces as a TypeScript compile error.
+ * stays on the agent-side source — only the TYPES were relocated to core;
+ * see oauth-token-manager.ts module JSDoc). The agent's 2115-line runtime
+ * test continues to drive the production behavior; here we pin the
+ * structural shape so a future drift (e.g., dropping `errorKind` from
+ * `OAuthError`) surfaces as a TypeScript compile error.
  */
 
 import { describe, it, expect, expectTypeOf } from "vitest";

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).
+// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * Observability metrics RPC handlers (Phase 43 split per FILE-SPLIT-09).
+ * Observability metrics RPC handlers.
  *
  * Handlers covering token-usage, billing, and cache metrics:
  *   - obs.billing.byProvider: per-provider billing breakdown (dual-source)
@@ -134,8 +134,8 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
       if (trustLevel !== "admin") throw new Error("Admin trust level required");
 
       // Bespoke pre-Zod guard preserves the legacy error message
-      // ("Invalid request: agentId parameter is required") — see
-      // packages/daemon/src/api/obs-handlers.test.ts for assertions.
+      // ("Invalid request: agentId parameter is required") — covered by
+      // obs-handlers.test.ts assertions.
       const agentIdRaw = rawParams.agentId as string | undefined;
       if (!agentIdRaw) throw new Error("Invalid request: agentId parameter is required");
 

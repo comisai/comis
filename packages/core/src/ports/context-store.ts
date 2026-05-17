@@ -2,19 +2,15 @@
 /**
  * ContextStorePort: hexagonal architecture boundary for context persistence.
  *
- * Type-only full mirror of @comis/memory's ContextStore. Per Claude's
- * Discretion in 28-CONTEXT.md ("Recommended: full mirror -- bigger surface
- * upfront, smaller Phase 31 churn"), this declaration covers EVERY public
- * method memory exposes (38 methods), not the agent-consumed subset.
+ * Type-only full mirror of @comis/memory's ContextStore. This declaration
+ * covers EVERY public method memory exposes (38 methods), not the
+ * agent-consumed subset.
  *
- * Phase 31 commit 1 (MEM-CTX-PORTS-03 / RES-PIT-5) moved the row DTOs
- * (`Ctx*Row`) into the sibling type-only carrier `context-store-types.ts`.
- * The interface body below is unchanged — every row-DTO reference now
- * resolves through the `import type` block below.
+ * The row DTOs (`Ctx*Row`) live in the sibling type-only carrier
+ * `context-store-types.ts`; every row-DTO reference resolves through the
+ * `import type` block below.
  *
- * The implementation lives at @comis/memory's createContextStore(). Phase 31
- * makes that factory's return type compatible with this port (return-type-only
- * change -- implementation unchanged).
+ * The implementation lives at @comis/memory's createContextStore().
  *
  * @module
  */
@@ -52,7 +48,7 @@ import type {
  *   - Bulk Operations    (1 method)
  *
  * Total: 38 methods. The structural shape MUST match memory's interface
- * exactly so Phase 31 retarget is a pure name swap.
+ * exactly so retarget is a pure name swap.
  */
 export interface ContextStorePort {
   // --- Conversations ---

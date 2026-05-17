@@ -3,15 +3,9 @@
  * FileLockPort adapter tests — proper-lockfile-backed `createFileLock()`.
  *
  * Validates the contract surface declared at
- * packages/core/src/ports/file-lock.ts. Relocated from
- * packages/scheduler/src/execution/__tests__/file-lock.contract.test.ts in
- * Phase 35 Plan 35-02 per Decision D-01 #1 (the createFileLock adapter moves
- * from @comis/scheduler → @comis/core/runtime/). The scheduler-side copy
- * remains in this plan; Plan 35-04 deletes it once consumers are retargeted.
+ * packages/core/src/ports/file-lock.ts.
  *
- * Test names from design [section 5.3] are binding contracts (per
- * [section 3.4]) — copied verbatim from the scheduler-side test file. The
- * import path is the only change.
+ * Test names are binding contracts for the FileLockPort surface.
  *
  * @module
  */
@@ -38,7 +32,6 @@ describe("FileLockPort contract — proper-lockfile factory (core/runtime)", () 
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
-  // Binding test names from design [section 5.3] — copy verbatim.
   it("acquire then release returns the lock to the unlocked state", async () => {
     const acq = await lock.acquire(lockPath);
     expect(acq.ok, "acquire should succeed").toBe(true);

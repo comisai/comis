@@ -2,8 +2,6 @@
 /**
  * Mock signal-cli REST/SSE server for E2E flow-matrix coverage.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09).
- *
  * Wire surface: an HTTP server speaking the subset of signal-cli's
  * JSON-RPC + SSE interface that the signal adapter consumes:
  *
@@ -19,8 +17,8 @@
  * verbatim (no apiRoot redirection needed — baseUrl IS the redirection
  * seam for signal-cli channels).
  *
- * Security posture (T-MOCK-EXPOSED-PORT): binds loopback only;
- * listen(0) for kernel-allocated port.
+ * Security posture: binds loopback only; listen(0) for kernel-allocated
+ * port.
  *
  * @module
  */

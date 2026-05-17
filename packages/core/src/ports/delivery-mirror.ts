@@ -8,8 +8,8 @@
  *
  * Session Mirroring.
  *
- * The createNoOpDeliveryMirror() factory lives at ../delivery/no-op-delivery-mirror.ts
- * as of Phase 28 commit 1 (closes L15 per CORE-PORTS-01); this file is now type-only.
+ * The createNoOpDeliveryMirror() factory lives at
+ * ../delivery/no-op-delivery-mirror.ts; this file is now type-only.
  *
  * @module
  */

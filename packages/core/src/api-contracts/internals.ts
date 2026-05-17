@@ -7,13 +7,10 @@
  * handler. They are NEVER part of a public contract — strip via
  * `stripInternalFields()` BEFORE calling `contract.request.parse(params)`.
  *
- * Phase 35 CONTEXT D-04 + .planning/phases/35-gateway-cli-web-contracts/35-RESEARCH.md
- * §5 (15-field enumeration verified 2026-05-12).
- *
- * Pitfall 6 (35-RESEARCH.md lines 1271–1287): if a contract author models any
- * of these names in `request`, `z.toJSONSchema(schema, additionalProperties:
- * false)` would cause the dispatcher's downstream call to FAIL because the
- * dispatcher adds `_trustLevel` AFTER the CLI sent the request. The paired
+ * Pitfall: if a contract author models any of these names in `request`,
+ * `z.toJSONSchema(schema, additionalProperties: false)` would cause the
+ * dispatcher's downstream call to FAIL because the dispatcher adds
+ * `_trustLevel` AFTER the CLI sent the request. The paired
  * `test/architecture/contract-internal-fields.test.ts` fails-closed the
  * moment any contract request schema declares one of these keys.
  *

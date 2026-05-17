@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-model cache-retention kill switch (Phase 42 split per EXEC-SPLIT-02).
+ * Per-model cache-retention kill switch.
  *
  * When `resolvedRetention === "none"`, strips ALL cache_control markers
  * from system + tools + messages. Must run AFTER all breakpoint/marker
@@ -9,8 +9,6 @@
  * Implements the per-model kill switch path of `getCacheRetentionOverrides`:
  * passing `{ "claude-haiku": "none" }` disables caching entirely for any
  * model whose ID starts with `claude-haiku`.
- *
- * Lifted verbatim from request-body-injector.ts:2013-2040.
  *
  * @module
  */

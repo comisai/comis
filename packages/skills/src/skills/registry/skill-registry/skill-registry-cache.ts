@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Skill registry factory + closure-state (Phase 43 split per FILE-SPLIT-11).
+ * Skill registry factory + closure-state.
  *
- * Extracted from the pre-split skill-registry.ts monolith. Owns:
+ * Owns:
  *   - createSkillRegistry factory body
  *   - Closure state: metadataMap, promptCache, cachedSnapshot, snapshotVersion
  *   - Closure helpers: checkRuntimeEligibility, doInit
@@ -13,7 +13,7 @@
  *
  * The level-2 loader (loadPromptSkillImpl) is delegated to
  * skill-registry-discovery.ts to keep this file under the per-leaf 500-line
- * cap; behavior is byte-identical to the pre-Phase-43 inline method.
+ * cap.
  *
  * @module
  */

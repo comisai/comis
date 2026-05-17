@@ -136,10 +136,10 @@ describe("public surface re-exports", () => {
     expect(_refs.length).toBe(3);
   });
 
-  // Phase 40 Plan 07: 30s timeout (default 5s) — dynamic import of
-  // @comis/core (~2k LoC after transform) plus v8 coverage instrumentation
-  // can exceed the default budget on cold-cache runs. Without coverage the
-  // test runs in <200ms.
+  // 30s timeout (default 5s) — dynamic import of @comis/core (~2k LoC
+  // after transform) plus v8 coverage instrumentation can exceed the
+  // default budget on cold-cache runs. Without coverage the test runs
+  // in <200ms.
   it(
     "re-exports createNoOpCapabilityPort as a runtime value",
     async () => {

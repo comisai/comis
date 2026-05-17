@@ -1,30 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Agents + models + providers-domain RPC contracts. Mirrors the three daemon
- * handler factory files that share the `AgentsApiDeps` cluster slice (Phase 34
- * plan 34-08a):
+ * handler factory files that share the `AgentsApiDeps` cluster slice:
  *
  *   - `packages/daemon/src/api/agent-handlers.ts`     ( 8 methods — agents.*
  *                                                       + agent.getOperationModels)
  *   - `packages/daemon/src/api/model-handlers.ts`     ( 3 methods — models.*)
  *   - `packages/daemon/src/api/provider-handlers.ts`  ( 7 methods — providers.*)
  *
- * Phase 35 Wave C plan 35-16 (Wave C domain #11; largest by contract count to
- * date — supersedes Plan 35-13's 36-method workspace umbrella's mantle as the
- * largest single-handler-cluster authoring with a fresh sub-domain count
- * because it ALSO retargets 3 CLI command files in the same plan, vs. Plan
- * 35-13's BLOCKER-1-EXEMPT workspace umbrella which had zero CLI retarget).
- * Per D-08 (one contract file per logical domain mirroring Phase 34's 11
- * `*ApiDeps` slices), all three handler files map to the SAME ApiDeps slice
- * (`AgentsApiDeps`) and so share one contract file. The aggregator below
- * preserves per-handler grouping via `// --- xxx-handlers.ts ---` comment
- * blocks; the order within the array is documentation-only (the bidirectional
- * 1:1 test treats it as an unordered set).
+ * One contract file per logical domain mirroring the `*ApiDeps` slices: all
+ * three handler files map to the SAME ApiDeps slice (`AgentsApiDeps`) and so
+ * share one contract file. The aggregator below preserves per-handler
+ * grouping via `// --- xxx-handlers.ts ---` comment blocks; the order within
+ * the array is documentation-only (the bidirectional 1:1 test treats it as
+ * an unordered set).
  *
  * **Scope assignments** (mirror `setup-gateway-api.ts` registrations + the
- * registration-plane-agnostic principle from Plan 35-13 — all `providers.*`
- * methods are admin-scoped via the in-handler `_trustLevel === "admin"`
- * check, NOT via an explicit gateway router registration):
+ * registration-plane-agnostic principle — all `providers.*` methods are
+ * admin-scoped via the in-handler `_trustLevel === "admin"` check, NOT via
+ * an explicit gateway router registration):
  *
  *   agent-handlers.ts (all admin per setup-gateway-api.ts:215-219):
  *   - `agents.create`             (admin)
@@ -52,13 +46,12 @@
  *
  * Note: `agents.list` is NOT in this contract file. The `agents.list` method
  * exists at `packages/daemon/src/api/session-handlers.ts:272`, NOT in
- * agent-handlers.ts — it belongs to a future Wave C plan covering the session
- * handler factory.
+ * agent-handlers.ts — it belongs to the session handler factory.
  *
- * **D-05 loose-record use** (Pitfall 6 escape hatch). The `config` patch
- * fields on `agents.update` and `providers.update` carry user-supplied
+ * **Loose-record use** (escape hatch). The `config` patch fields on
+ * `agents.update` and `providers.update` carry user-supplied
  * Partial<PerAgentConfig> / Partial<ProviderEntry> patches — the same
- * loose-tree precedent as `config.patch.value` (Plan 35-11):
+ * loose-tree precedent as `config.patch.value`:
  *
  *   - `agents.update.request.config` — Partial<PerAgentConfig>. The handler
  *     calls `PerAgentConfigSchema.parse(merged)` AFTER merging with the
@@ -84,23 +77,7 @@
  * **Allowlist compliance.** All schemas use the 12-shape allowlist:
  * z.object, z.string (no `.url()` / `.regex()` refinements — bare `z.string()`
  * everywhere), z.number, z.boolean, z.literal, z.enum, z.array, z.nullable,
- * z.optional, z.record (D-05 loose-record value-type), z.union (where used).
- *
- * **BLOCKER 1 status.** Three CLI command files retargeted in this plan:
- *   - packages/cli/src/commands/agent.ts     — 5 sites (agents.create, agents.update [2],
- *                                              agents.delete, agent.getOperationModels)
- *   - packages/cli/src/commands/models.ts    — 1 site (models.list)
- *   - packages/cli/src/commands/providers.ts — 1 site (models.list, via getModelCount)
- * Out-of-scope (deferred to Plan 35-19):
- *   - packages/cli/src/client/provider-list.ts — 1 site (models.list_providers).
- *     NOT in this plan's <files_modified> list; cli-uses-typed-rpc.test.ts
- *     violation-detection block stays `.skip` until Plan 35-19 closes the
- *     CLI sweep.
- *
- * **BLOCKER 6 (Wave C precedent).** Per orchestrator directive ("Additive
- * edits to api-contracts/index.ts are accepted; Plan 35-19 owns final
- * atomic edit"), `index.ts` is updated to register `AGENTS_CONTRACTS`
- * (1 import line + 1 spread + 1 re-export).
+ * z.optional, z.record (loose-record value-type), z.union (where used).
  *
  * @module
  */
@@ -131,7 +108,7 @@ import { defineContract } from "./types.js";
  * workspace writes.
  *
  * Request: `{ agentId, config?, inlineContent? }`. `config` is the loose
- * Partial<PerAgentConfig> patch (D-05); `inlineContent` carries optional
+ * Partial<PerAgentConfig> patch; `inlineContent` carries optional
  * `{ role?, identity? }` for ROLE.md / IDENTITY.md side-effects (NEVER
  * persisted to config).
  *
@@ -212,7 +189,7 @@ export const AgentsGetContract = defineContract({
  * changes), then commits to `deps.agents`, then runs best-effort persistence.
  *
  * Request: `{ agentId, config? }`. `config` is the loose Partial<PerAgentConfig>
- * patch (D-05).
+ * patch.
  *
  * Response: `{ agentId, config, updated: true }`. `config` is the FULL parsed
  * PerAgentConfig (loose-record).
@@ -387,8 +364,8 @@ export const AgentGetOperationModelsContract = defineContract({
  *
  * Admin-scoped per setup-gateway-api.ts:242. Handler path: model-handlers.ts:41-83.
  *
- * D-05 LOOSE-RECORD: response is modeled loose because the two variants
- * carry disjoint top-level keys (`models + total` vs `providers + totalModels`).
+ * LOOSE-RECORD: response is modeled loose because the two variants carry
+ * disjoint top-level keys (`models + total` vs `providers + totalModels`).
  * Tight discriminated-union modeling would require pinning per-variant field
  * sets across daemon restarts on every CatalogEntry shape addition.
  *
@@ -441,9 +418,9 @@ export const ModelsListProvidersContract = defineContract({
  *
  * Response has 4 variants discriminated by `status`: `not_configured`,
  * `available` (catalog), `available` (custom_provider), `no_models`. Each
- * variant carries a disjoint set of optional fields. D-05 LOOSE-RECORD for
- * the response — tight modeling would require a 4-arm discriminated union
- * that pins the per-variant field-sets.
+ * variant carries a disjoint set of optional fields. LOOSE-RECORD for the
+ * response — tight modeling would require a 4-arm discriminated union that
+ * pins the per-variant field-sets.
  *
  * Request: `{ provider }`.
  * Response: LooseRecord (4 status variants).
@@ -517,9 +494,9 @@ export const ProvidersListContract = defineContract({
  * `agentsUsing` is computed via `findAgentReferences` across 3 slots: primary
  * provider, fallbackModels, authProfiles.
  *
- * D-05 LOOSE-RECORD: `config` is the FULL parsed ProviderEntry — same
- * rationale as `agents.get.response.config` (avoids re-encoding the full
- * ProviderEntry surface in the contract).
+ * LOOSE-RECORD: `config` is the FULL parsed ProviderEntry — same rationale
+ * as `agents.get.response.config` (avoids re-encoding the full ProviderEntry
+ * surface in the contract).
  *
  * Request: `{ providerId }`.
  * Response: `{ providerId, config: LooseRecord (full ProviderEntry),
@@ -561,7 +538,7 @@ export const ProvidersGetContract = defineContract({
  * against the wire if `secretManager` has it.
  *
  * Request: `{ providerId, config? }`. `config` is the loose
- * Partial<ProviderEntry> patch (D-05).
+ * Partial<ProviderEntry> patch.
  *
  * Response: `{ providerId, config, created: true }`. `config` is the FULL
  * parsed ProviderEntry (loose-record).
@@ -597,7 +574,7 @@ export const ProvidersCreateContract = defineContract({
  * `type` field, shallow-merges `headers` (per-key preserve+overlay), then
  * spread-merges with existing, then `ProviderEntrySchema.parse(merged)`.
  *
- * D-05 LOOSE-RECORD: `config` request is Partial<ProviderEntry> — same
+ * LOOSE-RECORD: `config` request is Partial<ProviderEntry> — same
  * rationale as `agents.update.request.config`.
  *
  * Request: `{ providerId, config? }`.

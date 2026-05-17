@@ -8,14 +8,6 @@
  * for the rate_limited short-circuit branch and the pre-existing
  * client_request branch. Behavioral tests should be added alongside any
  * future refactor that introduces the required mocking infrastructure.
- *
- * Phase 42 EXEC-SPLIT-07: split from executor-prompt-runner.test.ts. The
- * rate_limited / client_request branches moved into
- * silent-failure-handlers.ts (handleRateLimited + handleClientRequest);
- * this file retargets the source path accordingly.
- *
- * Precedent: packages/skills/src/builtin/platform/agents-manage-tool.test.ts
- * — same readFileSync + import.meta.url pattern.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";

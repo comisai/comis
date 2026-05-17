@@ -61,9 +61,8 @@ export function hashHeartbeatPrompt(promptText: string, eventDigest: string): st
  * @param opts.maxEntries - Maximum cache entries (default: 50)
  * @param opts.nowMs - Injectable clock for deterministic testing (default:
  *   `systemNowMs` from `@comis/core/runtime` — the sanctioned-root indirection
- *   over `Date.now`. Phase 39 PORTS-15: shared's `createTTLCache` no longer
- *   has a `Date.now` fallback, so a non-null callback must always be supplied
- *   here).
+ *   over `Date.now`. Shared's `createTTLCache` has no `Date.now` fallback, so
+ *   a non-null callback must always be supplied here).
  */
 export function createHeartbeatResponseCache(opts?: {
   ttlMs?: number;

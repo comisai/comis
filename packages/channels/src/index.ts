@@ -29,12 +29,10 @@ export type { ChunkDiscordTextOpts } from "./discord/format-discord.js";
 export { createDiscordResolver } from "./discord/discord-resolver.js";
 export type { DiscordResolverDeps } from "./discord/discord-resolver.js";
 
-// Phase 41 TS-HYG-05: Discord channel narrowing types + helpers.
-// Consumed by Plan 41-05 (TS-HYG-06) to eliminate the 18 `as any` casts in
-// discord-actions.ts. Structural subset of discord.js runtime shape; no
-// module augmentation (RESEARCH §"Pattern 2"). Narrowing helpers return
-// null (not a Result) because narrowing is a typed-cast, not fallible
-// computation (RESEARCH §"Anti-Patterns" line 425).
+// Discord channel narrowing types + helpers. Structural subset of
+// discord.js runtime shape; no module augmentation. Narrowing helpers
+// return null (not a Result) because narrowing is a typed-cast, not
+// fallible computation.
 //   * asTextLike + DiscordTextLikeChannel — text-like channels (pin/send/
 //     edit/delete/setTopic/setRateLimitPerUser/sendTyping/threads).
 //   * asThreadInfo + DiscordThreadInfo — per-thread iteration objects
@@ -200,9 +198,6 @@ export { createApprovalNotifier } from "./shared/approval-notifier.js";
 export type { ApprovalNotifier, ApprovalNotifierDeps } from "./shared/approval-notifier.js";
 
 // Shared infrastructure
-// Phase 32 commit 4: channel-manager.ts (factory + types) moved to
-// @comis/orchestrator. Daemon composition root (setup-channels.ts) imports
-// them from @comis/orchestrator now. Removed from channels public surface.
 export { createTypingController } from "./shared/typing-controller.js";
 export type {
   TypingController,
@@ -212,22 +207,13 @@ export type {
 export { createTypingLifecycleController } from "./shared/typing-lifecycle-controller.js";
 export type { TypingLifecycleController, TypingLifecycleOptions } from "./shared/typing-lifecycle-controller.js";
 
-// Phase 30 plan 02 (CONFIG-DELIV-04, -05): the channel-platform-agnostic
-// delivery helpers — formatForChannel, chunkForDelivery (+ ChunkForDeliveryOptions),
-// createRetryEngine (+ RetryEngine), isPermanentError (+ PERMANENT_ERROR_PATTERNS),
-// and the underlying Markdown IR pipeline (markdown-ir, ir-renderer, ir-chunker,
-// markdown-tables, sanitize-for-plain-text, table-converter, telegram-file-ref-guard)
-// moved to `@comis/core` (export point: core/src/exports/delivery.ts). Imports
-// must retarget; per AGENTS.md §2.3 (KISS/YAGNI + no back-compat shims), no
-// re-exports stay here.
-//
-// Phase 30 plan 06: the standalone `deliverToChannel` function +
-// `DeliverToChannelDeps` interface + queue-backoff helpers
-// (QUEUE_BACKOFF_SCHEDULE_MS, computeQueueBackoff, resolveChunkLimit) +
-// delivery-type re-exports (DeliverToChannelOptions, DeliveryResult,
-// ChunkDeliveryResult, DeliveryAdapter) were deleted from `@comis/channels`.
-// Consumers retarget to `@comis/core` (which now owns the types and the
-// `createDeliveryService(deps)` factory replacing the standalone function).
+// The channel-platform-agnostic delivery helpers (formatForChannel,
+// chunkForDelivery, createRetryEngine, isPermanentError, and the
+// Markdown IR pipeline) live in `@comis/core` (export point:
+// core/src/exports/delivery.ts). The standalone `deliverToChannel`
+// function + `DeliverToChannelDeps` interface + queue-backoff helpers
+// and delivery-type re-exports also live in `@comis/core` (which owns
+// the types and the `createDeliveryService(deps)` factory).
 
 // Voice response pipeline
 export { executeVoiceResponse } from "./shared/voice-response-pipeline.js";
@@ -268,11 +254,8 @@ export { reactWithFallback, TELEGRAM_SAFE_EMOJI } from "./telegram/emoji-fallbac
 export { tokenizeTemplate, resolveTokens, applyPrefix, FORMATTERS } from "./shared/prefix-template.js";
 export type { TemplateToken } from "./shared/prefix-template.js";
 
-// Telegram file-ref guard — moved to `@comis/core` (Phase 30 plan 02
-// scope expansion: ir-renderer.ts depends on the guard, and ir-renderer
-// moved to core alongside the format/chunk helpers; the guard followed).
-// Imports must retarget to `@comis/core`; no re-export here per
-// AGENTS.md §2.3 (no back-compat shims).
+// Telegram file-ref guard lives in `@comis/core` alongside ir-renderer
+// (which depends on it). Imports must retarget to `@comis/core`.
 
 // Channel health monitor
 export { createChannelHealthMonitor } from "./shared/channel-health-monitor.js";
@@ -284,24 +267,20 @@ export type {
 } from "./shared/channel-health-monitor.js";
 
 // ---------------------------------------------------------------------------
-// Phase 32 commit 3 — channels-side surface required by moved A-files
+// Channels-side surface required by orchestrator A-files
 //
-// These symbols stay in channels/src/shared/ at commit 3 because either:
-//   (a) they are commit-4 movers (block-pacer, block-coalescer, abort-summary,
-//       send-policy, group-history-buffer — bucket-A internals consumed by
-//       channel-manager.ts which moves at commit 4), or
-//   (b) they are channels-internal helpers (regex-guard, media-compressor —
-//       bucket-B/C per Wave 2 inventory) consumed by orchestrator-side
-//       moved A-files via @comis/channels public surface.
+// These symbols stay in channels/src/shared/ as either:
+//   (a) bucket-A internals (block-pacer, block-coalescer, abort-summary,
+//       send-policy, group-history-buffer) consumed by orchestrator-side
+//       channel-manager.ts, or
+//   (b) channels-internal helpers (regex-guard, media-compressor) consumed
+//       by orchestrator-side moved A-files via the @comis/channels public
+//       surface.
 //
-// Once channel-manager.ts moves to orchestrator (commit 4), the bucket-A
-// internals in group (a) also move and these re-exports are removed.
-// See packages/orchestrator/HELPER-OWNERSHIP-INVENTORY.md.
-//
-// SCOPE GUARD: only the symbols actually consumed by the moved orchestrator
+// SCOPE GUARD: only the symbols actually consumed by the orchestrator
 // A-files (inbound-* + execution-*) are exported here. Speculative full-
 // surface re-exports are rejected by test/architecture/public-export-
-// consumers.test.ts (L9/L10/L11 — dead exports forbidden).
+// consumers.test.ts (dead exports forbidden).
 // ---------------------------------------------------------------------------
 
 // Regex safety guard (consumed by orchestrator inbound-pipeline.ts)

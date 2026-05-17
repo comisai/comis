@@ -25,20 +25,17 @@ import type {
 } from "@comis/core";
 import { QueueConfigSchema } from "@comis/core";
 import type { SessionStore, SessionData } from "@comis/memory";
-// Phase 32 commit 8: queue/ moved to @comis/orchestrator; this test moved
-// alongside the queue (it exercises CommandQueue serialization in tandem with
-// agent's session lifecycle + write-lock helpers, which remain at @comis/agent).
-// ORCH-EXT-08, Wave A close.
+// queue/ lives under @comis/orchestrator; this test exercises CommandQueue
+// serialization in tandem with agent's session lifecycle + write-lock
+// helpers, which remain at @comis/agent.
 import { createCommandQueue } from "./command-queue.js";
 import { withSessionLock, createSessionLifecycle } from "@comis/agent";
 import { createFileLock } from "@comis/core";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 
-// Phase 32 commit 12 (ORCH-EXT-15): withSessionLock now takes a FileLockPort
-// as its first argument. Test wires the canonical createFileLock() adapter
-// from @comis/core/src/runtime/file-lock.ts (Phase 35 Plan 35-02 relocated
-// it from @comis/scheduler; Phase 35 Plan 35-04 deleted the @comis/agent
-// re-export. The factory is backed by proper-lockfile.).
+// withSessionLock takes a FileLockPort as its first argument. Test wires
+// the canonical createFileLock() adapter from
+// @comis/core/src/runtime/file-lock.ts (backed by proper-lockfile).
 const fileLock = createFileLock();
 
 // ---------------------------------------------------------------------------

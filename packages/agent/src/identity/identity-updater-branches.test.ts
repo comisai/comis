@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap coverage for identity-updater.ts (Plan 40-11 / COV-03).
+ * Branch-gap coverage for identity-updater.ts.
  *
  * The existing identity-updater.test.ts covers happy-path approve()/propose()
  * paths but misses the error-classification branches in approve():

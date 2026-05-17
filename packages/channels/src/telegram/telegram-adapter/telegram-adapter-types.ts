@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram-adapter shared types (Phase 43 split per FILE-SPLIT-12).
+ * Telegram-adapter shared types.
  *
  * Type-only file: holds the three TelegramAdapter contract types
  * (deps, handle) and the closure-captured state interface, plus the
@@ -20,7 +20,7 @@ import type { Bot } from "grammy";
 import type { TelegramBotIdentity } from "../message-mapper.js";
 
 // ---------------------------------------------------------------------------
-// Public types (unchanged from the pre-split telegram-adapter.ts)
+// Public types
 // ---------------------------------------------------------------------------
 
 export interface TelegramAdapterDeps {
@@ -38,8 +38,7 @@ export interface TelegramAdapterDeps {
    * deployments leave this unset and rely on grammy's default. Must be a
    * fully-qualified URL (e.g. `http://127.0.0.1:54321`); no trailing slash.
    *
-   * Phase 40 / Plan 40-09 / COV-15: production seam for the wire-level E2E
-   * mock chat-platform fixture.
+   * Production seam for the wire-level E2E mock chat-platform fixture.
    */
   apiRoot?: string;
 }
@@ -50,26 +49,22 @@ export interface TelegramAdapterHandle extends ChannelPort {
 }
 
 // ---------------------------------------------------------------------------
-// Closure-extracted state (NEW; Phase 43 FILE-SPLIT-12)
+// Closure-extracted state
 // ---------------------------------------------------------------------------
 
 /**
  * Mutable state shared across the state-first helpers extracted from the
- * pre-split createTelegramAdapter factory body. The pre-split factory
- * closure captured exactly these 9 variables; this interface enumerates
- * them explicitly so each leaf can read/write them via a single `state`
- * parameter instead of relying on lexical capture.
+ * createTelegramAdapter factory body. The factory closure captured exactly
+ * these 9 variables; this interface enumerates them explicitly so each leaf
+ * can read/write them via a single `state` parameter instead of relying on
+ * lexical capture.
  *
- * Convention (matches Phase 42 pi-executor and the Phase 43 mcp-client
- * split): every state-first helper takes `state: TelegramAdapterState`
+ * Convention: every state-first helper takes `state: TelegramAdapterState`
  * as its FIRST positional parameter, followed by `deps` and any per-call
  * arguments. `deps` is frozen at construction and is NOT part of state.
  *
- * Field naming: pre-split source used underscore-prefixed locals
- * (_channelId, _connected, _startedAt, _lastMessageAt, _lastError) for
- * the getStatus()-readable fields. The underscores carried no semantic
- * meaning (they distinguished the local from the public getter); the
- * post-split state interface drops them because the local-vs-getter
+ * Field naming: the getStatus()-readable fields drop the underscore prefix
+ * that distinguished the local from the public getter — the local-vs-getter
  * naming collision no longer exists once the locals live on `state`.
  */
 export interface TelegramAdapterState {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: @allow-throw boundary: OAuth HTTP callback route; throws caught by Hono error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception (Phase 41 TS-HYG-07).
+// @allow-throw: OAuth HTTP callback route; throws caught by Hono error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception.
 /**
  * OAuth callback route for the Comis gateway.
  *

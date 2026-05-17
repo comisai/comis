@@ -85,7 +85,7 @@ const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
 // Module mocks
 // ---------------------------------------------------------------------------
 
-// Phase 33: daemon now imports from THREE @comis/skills subpaths.
+// Daemon imports from THREE @comis/skills subpaths.
 // - "." subpath: policy, pipeline, MCP bridge, credential injector (no longer
 //   includes the 38+ platform-tool factories -- those live in the registry).
 // - "./tools" subpath: exec/process/apply-patch + helpers (media-persistence,
@@ -191,9 +191,8 @@ vi.mock("@comis/core", () => ({
   // in @comis/core/session-key; this test only needs a deterministic string.
   formatSessionKey: (k: { tenantId: string; channelId: string; userId: string }) =>
     `${k.tenantId}:${k.channelId}:${k.userId}`,
-  // Phase 35 Plan 35-04 (D-01 #5): workspace helpers relocated from
-  // @comis/agent to @comis/core. setup-tools.ts now imports them via
-  // @comis/core; tests must mock them on the @comis/core surface.
+  // Workspace helpers live in @comis/core; setup-tools.ts imports them
+  // via @comis/core, so tests must mock them on the @comis/core surface.
   // Consumed by setup-tools at assembleToolsForAgent time to pre-register
   // the agent's own workspace files in the per-turn tracker. Tests don't
   // exercise real workspace files, so a no-op stub is sufficient.

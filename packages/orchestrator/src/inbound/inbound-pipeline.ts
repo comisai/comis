@@ -13,11 +13,9 @@
  */
 
 import type { AgentExecutor } from "@comis/agent";
-// Phase 32 commit 7: MessageRouter moved to orchestrator (ORCH-EXT-08).
 // Relative path used because orchestrator cannot import its own published name.
 import type { MessageRouter } from "../routing/message-router.js";
 import type { SessionLifecycle } from "@comis/agent";
-// Phase 32 commit 8: queue types moved to orchestrator (ORCH-EXT-08, Wave A close).
 // Relative path used because orchestrator cannot import its own published name.
 import type { CommandQueue } from "../queue/command-queue.js";
 import type { DebounceBuffer } from "../queue/debounce-buffer.js";
@@ -92,9 +90,9 @@ export interface InboundPipelineDeps {
   /** Delivery queue for crash-safe message persistence. When present, agent responses are enqueued before send. */
   deliveryQueue?: DeliveryQueuePort;
   /** DeliveryService constructed once at the daemon composition root
-   *  (setup-channels.ts). Phase 30 plan 04 (CONFIG-DELIV-05) — threaded
-   *  through the inbound pipeline so inbound-gate.ts and execution-deliver.ts
-   *  use the method form instead of the free-standing standalone export. */
+   *  (setup-channels.ts). Threaded through the inbound pipeline so
+   *  inbound-gate.ts and execution-deliver.ts use the method form instead
+   *  of the free-standing standalone export. */
   deliveryService: DeliveryService;
   /**
    * Per-instance set of in-flight outbound sendMessage promises. Threaded

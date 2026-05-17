@@ -3,10 +3,8 @@
  * ObservabilityStore public types + internal snake_case row types + row-mapper
  * instances + camelCase row-shape converters.
  *
- * Phase 43 split (FILE-SPLIT-13): block-moved from the former
- * `packages/memory/src/observability-store.ts` lines 56-405 with no
- * behavioral change. Pure declarations (no DB binding) so that the leaf
- * modules can import without creating a cycle through the barrel.
+ * Pure declarations (no DB binding) so that the leaf modules can import
+ * without creating a cycle through the barrel.
  *
  * @module
  */
@@ -25,15 +23,13 @@ import {
 import { createRowMapper } from "../row-mapper.js";
 
 // ---------------------------------------------------------------------------
-// Row mappers (Phase 41 TS-HYG-03: typed row parsing via createRowMapper)
+// Row mappers (typed row parsing via createRowMapper)
 //
 // Module-level mappers, prepared once. Each mapper wraps a Zod schema and
 // returns Result<TRow[]|TRow|undefined, MapperError> from raw better-sqlite3
 // .all()/.get() output. On validation failure the store DEGRADES SILENTLY
 // (empty array / undefined / zero-stats), preserving the existing return-shape
-// contract: observability metrics are non-fatal (plan 41-04 §"Use either
-// pattern... 2. Unwrap-with-default"). The plan explicitly sanctions this for
-// metrics emission where MapperError means "broken DB".
+// contract: observability metrics are non-fatal — MapperError means "broken DB".
 // ---------------------------------------------------------------------------
 
 export const tokenUsageMapper = createRowMapper(TokenUsageDbRowSchema);
@@ -308,8 +304,8 @@ export interface ChannelSnapshotDbRow {
 
 // Aggregate row shapes (ProviderAggDbRow, AgentAggDbRow, SessionAggDbRow,
 // HourlyBucketDbRow, DeliveryStatsDbRow) are defined as z.infer<> via the
-// schemas in row-schemas.ts (Phase 41 TS-HYG-03). The four DbRow interfaces
-// above remain required as `xxxFromRow` parameter types.
+// schemas in row-schemas.ts. The four DbRow interfaces above remain required
+// as `xxxFromRow` parameter types.
 
 // ---------------------------------------------------------------------------
 // Row mapping helpers (snake_case DB rows -> camelCase domain rows)

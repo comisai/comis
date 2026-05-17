@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Render-branch tests for IcContextDagBrowser (Phase 40 Plan 40-15 gap-closure).
+ * Render-branch tests for IcContextDagBrowser.
  *
- * context-dag-browser.ts at baseline reports 25.71% / 4.3% / 7.14% / 19.13%
- * (lines/branches/functions/statements) — the second-lowest-coverage view file.
- * The existing test file only has 3 tests, all instantiation smoke. This file
- * covers:
+ * Covers:
  *   - render() top-level loadState branches (loading/error/loaded with-vs-without
  *     selection)
  *   - _renderConversationList empty + populated branches + truncated session_key

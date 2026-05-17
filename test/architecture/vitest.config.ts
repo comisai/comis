@@ -7,14 +7,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const packagesRoot = resolve(here, "../../packages");
 
 export default defineConfig({
-  // Scoped alias: ONLY `@comis/core`. Phase 35 contract-registry architecture
+  // Scoped alias: ONLY `@comis/core`. The contract-registry architecture
   // tests (api-contracts-bidirectional, api-contracts-allowlist, contract-
   // internal-fields) need the COMPILED runtime values — the actual
   // API_CONTRACTS Map, the frozen INTERNAL_FIELD_NAMES tuple — not source
   // AST. Routing only `@comis/core` to dist/ leaves every other architecture
-  // test reading packages/*/src/ via source-grep + ts.createSourceFile (the
-  // long-standing RES-PIT-3 invariant: don't mask source-only changes
-  // through alias-routed dist/ reads).
+  // test reading packages/*/src/ via source-grep + ts.createSourceFile
+  // (invariant: don't mask source-only changes through alias-routed dist/
+  // reads).
   resolve: {
     alias: {
       "@comis/core": resolve(packagesRoot, "core/dist/index.js"),

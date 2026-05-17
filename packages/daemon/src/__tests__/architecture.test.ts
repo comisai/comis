@@ -34,11 +34,11 @@ const SRC_ROOT = resolve(here, "..");
 const DAEMON_TS_PATH = resolve(SRC_ROOT, "daemon.ts");
 const STAGE_LINE_CAP = 200;
 
-// Phase 34 Plan 10 (DAEMON-API-04): per-domain audit docs at
-// packages/daemon/AUDIT-<domain>.md, one per cluster slice in api/types.ts.
-// The for-loop below generates 11 it() blocks (one per domain) that each
-// parse the audit Markdown table and assert bidirectional set equality
-// against the corresponding *ApiDeps interface.
+// Per-domain audit docs at packages/daemon/AUDIT-<domain>.md, one per
+// cluster slice in api/types.ts. The for-loop below generates 11 it()
+// blocks (one per domain) that each parse the audit Markdown table and
+// assert bidirectional set equality against the corresponding *ApiDeps
+// interface.
 const AUDIT_DOMAINS = [
   "sessions",
   "memory",
@@ -146,11 +146,10 @@ describe("@comis/daemon -- architecture invariants", () => {
     expect(result.checkedFiles, "sanity: helper walked at least one production source file in @comis/daemon").toBeGreaterThan(0);
   });
 
-  it("rpc/ directory does not exist; api/ is canonical (DAEMON-API-02)", () => {
-    // DAEMON-API-02: daemon API handlers live under api/, not rpc/. The
-    // rename surfaces the conceptual shift -- internal API seam, not
-    // transport-bound. Phase 35 (WEB-CONTRACTS) will leverage the api/
-    // location to align with core/src/api-contracts/<domain>.ts.
+  it("rpc/ directory does not exist; api/ is canonical", () => {
+    // Daemon API handlers live under api/, not rpc/. The rename surfaces
+    // the conceptual shift -- internal API seam, not transport-bound. The
+    // api/ location aligns with core/src/api-contracts/<domain>.ts.
     //
     // Failure-message phrasing note: the recovery hints below MUST NOT
     // contain the pre-rename literal directory-path bytes -- if they did,
@@ -161,27 +160,26 @@ describe("@comis/daemon -- architecture invariants", () => {
     const apiPath = resolve(SRC_ROOT, "api");
     expect(
       existsSync(rpcPath),
-      `<daemon-src>/rpc must not exist after Phase 34 commit 2 rename (DAEMON-API-02). ` +
+      `<daemon-src>/rpc must not exist. ` +
         `Found at ${rpcPath}. Run \`git mv <daemon-src>/rpc <daemon-src>/api\` ` +
-        `and retarget every internal import (10 production sites per RESEARCH Section "rpc -> api Rename").`,
+        `and retarget every internal import.`,
     ).toBe(false);
     expect(
       existsSync(apiPath),
-      `<daemon-src>/api must exist as the canonical handler directory after Phase 34 commit 2 rename (DAEMON-API-02). ` +
+      `<daemon-src>/api must exist as the canonical handler directory. ` +
         `Expected at ${apiPath}.`,
     ).toBe(true);
   });
 
-  it("stageFoundation is ≤ 200 lines (AST-measured) (DAEMON-API-06)", () => {
-    // DAEMON-API-06: each runtime stage function must fit ≤ 200 lines hard
-    // (AST-measured via ts.createSourceFile + getLineAndCharacterOfPosition).
-    // Pattern lifted from test/architecture/allowlist-shrink.test.ts:57-106.
+  it("stageFoundation is ≤ 200 lines (AST-measured)", () => {
+    // Each runtime stage function must fit ≤ 200 lines hard (AST-measured
+    // via ts.createSourceFile + getLineAndCharacterOfPosition).
     //
     // stageFoundation owns the daemon-process foundation (data dir + secrets +
     // bootstrap + logging + observability + memory + obs-persistence + context
     // store + session mirroring + Gemini cache + background tasks + deferred
-    // refs). Plan 34-03 extracted it from main(). Helpers ≤50L can live in
-    // daemon.ts; larger helpers move to wiring/main-helpers.ts in Plan 11.
+    // refs). Helpers ≤50L can live in daemon.ts; larger helpers move to
+    // wiring/main-helpers.ts.
     const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
     const sf = ts.createSourceFile(
       "daemon.ts",
@@ -210,17 +208,16 @@ describe("@comis/daemon -- architecture invariants", () => {
       `stageFoundation is ${lineCount} lines (cap ${STAGE_LINE_CAP}). ` +
         `Split a helper to fit -- candidates: seedBundledSkillCreator, ` +
         `bootstrapSecretsAndEnv, wireConfigGitManager, env-merge logic, ` +
-        `obs-persistence init. Helpers ≤50L can stay in daemon.ts ` +
-        `(DAEMON-API-07); larger helpers move to wiring/main-helpers.ts in Plan 11.`,
+        `obs-persistence init. Helpers ≤50L can stay in daemon.ts; ` +
+        `larger helpers move to wiring/main-helpers.ts.`,
     ).toBeLessThanOrEqual(STAGE_LINE_CAP);
   });
 
-  it("stageAgents is ≤ 200 lines (AST-measured) (DAEMON-API-06)", () => {
-    // DAEMON-API-06 (part 2 of 5): stageAgents owns the agent-runtime
-    // startup block (agents map, executors, mcpClientManager, schedulers,
-    // media, RPC bridge, approval gate with restore, delivery queue).
-    // Plan 34-04 extracted it from main(). Helpers ≤50L can live in
-    // daemon.ts; larger helpers move to wiring/main-helpers.ts in Plan 11.
+  it("stageAgents is ≤ 200 lines (AST-measured)", () => {
+    // stageAgents owns the agent-runtime startup block (agents map,
+    // executors, mcpClientManager, schedulers, media, RPC bridge, approval
+    // gate with restore, delivery queue). Helpers ≤50L can live in
+    // daemon.ts; larger helpers move to wiring/main-helpers.ts.
     const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
     const sf = ts.createSourceFile(
       "daemon.ts",
@@ -251,18 +248,17 @@ describe("@comis/daemon -- architecture invariants", () => {
         `setupMcpManager, wirePostAgentsCleanup, buildAuditBundle. ` +
         `Next candidates: the setupAgents argument block (~30L), the ` +
         `setupSchedulers argument block, or the delivery-queue construction ` +
-        `block. Helpers ≤50L can stay in daemon.ts (DAEMON-API-07); larger ` +
-        `helpers move to wiring/main-helpers.ts in Plan 11.`,
+        `block. Helpers ≤50L can stay in daemon.ts; larger helpers move to ` +
+        `wiring/main-helpers.ts.`,
     ).toBeLessThanOrEqual(STAGE_LINE_CAP);
   });
 
-  it("stageChannels is ≤ 200 lines (AST-measured) (DAEMON-API-06)", () => {
-    // DAEMON-API-06 (part 3 of 5): stageChannels owns the channel-runtime
-    // startup block (channel adapters, notifications, bg completion runner,
-    // sandbox/image-gen, tools, cross-session, graph coordinator, monitoring,
-    // heartbeat, wake coalescer, agent management runtime state). Plan 34-05
-    // extracted it from main(). Helpers ≤50L can live in daemon.ts; larger
-    // helpers move to wiring/main-helpers.ts in Plan 11.
+  it("stageChannels is ≤ 200 lines (AST-measured)", () => {
+    // stageChannels owns the channel-runtime startup block (channel
+    // adapters, notifications, bg completion runner, sandbox/image-gen,
+    // tools, cross-session, graph coordinator, monitoring, heartbeat, wake
+    // coalescer, agent management runtime state). Helpers ≤50L can live in
+    // daemon.ts; larger helpers move to wiring/main-helpers.ts.
     const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
     const sf = ts.createSourceFile(
       "daemon.ts",
@@ -295,20 +291,18 @@ describe("@comis/daemon -- architecture invariants", () => {
         `buildImageGenBundle. Next candidates: the setupTools argument block, ` +
         `the setupCrossSession argument block, the setupHeartbeat argument ` +
         `block, or the channelConfig Object.fromEntries closure. Helpers ≤50L ` +
-        `can stay in daemon.ts (DAEMON-API-07); larger helpers move to ` +
-        `wiring/main-helpers.ts in Plan 11.`,
+        `can stay in daemon.ts; larger helpers move to wiring/main-helpers.ts.`,
     ).toBeLessThanOrEqual(STAGE_LINE_CAP);
   });
 
-  it("stageGateway is ≤ 200 lines (AST-measured) (DAEMON-API-06)", () => {
-    // DAEMON-API-06 (part 4 of 5): stageGateway owns the gateway-runtime
-    // startup block (token registry, session store bridge, shutdown ref,
-    // hot-add/hot-remove closures, RPC dispatch deps assembly, gateway server,
-    // restart continuation replay). Plan 34-06 extracted it from main().
+  it("stageGateway is ≤ 200 lines (AST-measured)", () => {
+    // stageGateway owns the gateway-runtime startup block (token registry,
+    // session store bridge, shutdown ref, hot-add/hot-remove closures, RPC
+    // dispatch deps assembly, gateway server, restart continuation replay).
     // shutdownRef is declared inside stageGateway and exposed via
-    // GatewayHandle.shutdownRef so stageShutdown (Plan 07) can populate .value
-    // with the live shutdown handle. Helpers ≤50L can live in daemon.ts;
-    // larger helpers move to wiring/main-helpers.ts in Plan 11.
+    // GatewayHandle.shutdownRef so stageShutdown can populate .value with
+    // the live shutdown handle. Helpers ≤50L can live in daemon.ts; larger
+    // helpers move to wiring/main-helpers.ts.
     const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
     const sf = ts.createSourceFile(
       "daemon.ts",
@@ -342,19 +336,16 @@ describe("@comis/daemon -- architecture invariants", () => {
         `buildSyntheticRestartMessage. Next candidates: the setupGateway ` +
         `argument block (~12L), the session store bridge literal (~14L), or ` +
         `the deferred-attachment block (~32L). Helpers ≤50L can stay in ` +
-        `daemon.ts (DAEMON-API-07); larger helpers move to ` +
-        `wiring/main-helpers.ts in Plan 11.`,
+        `daemon.ts; larger helpers move to wiring/main-helpers.ts.`,
     ).toBeLessThanOrEqual(STAGE_LINE_CAP);
   });
 
-  it("stageShutdown is ≤ 200 lines (AST-measured) (DAEMON-API-06)", () => {
-    // DAEMON-API-06 (part 5 of 5 -- final stage). stageShutdown constructs
-    // the shutdown handle, populates gateway.shutdownRef.value (cross-stage
-    // deferred-ref completion), wires the health-metrics event-bus
-    // subscription via wireHealthLogging, emits the startup banner via
-    // emitStartupBanner (canonical "Comis daemon started" log line 5), and
-    // returns the DaemonInstance. Plan 34-07 extracted it from main(); this
-    // is the final stage extraction completing the 5-stage refactor.
+  it("stageShutdown is ≤ 200 lines (AST-measured)", () => {
+    // stageShutdown constructs the shutdown handle, populates
+    // gateway.shutdownRef.value (cross-stage deferred-ref completion), wires
+    // the health-metrics event-bus subscription via wireHealthLogging, emits
+    // the startup banner via emitStartupBanner (canonical "Comis daemon
+    // started" log line 5), and returns the DaemonInstance.
     const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
     const sf = ts.createSourceFile(
       "daemon.ts",
@@ -385,17 +376,17 @@ describe("@comis/daemon -- architecture invariants", () => {
         `Sub-helpers: readDbSizeMetrics, computeAndKillStuckSubAgents, ` +
         `buildStartupBannerManifest. Next candidates if stageShutdown grows: ` +
         `the setupShutdown deps literal (~25L), or the last-known-good ` +
-        `snapshot block (~6L). Helpers ≤50L can stay in daemon.ts ` +
-        `(DAEMON-API-07); larger helpers move to wiring/main-helpers.ts in Plan 11.`,
+        `snapshot block (~6L). Helpers ≤50L can stay in daemon.ts; ` +
+        `larger helpers move to wiring/main-helpers.ts.`,
     ).toBeLessThanOrEqual(STAGE_LINE_CAP);
   });
 
-  it("each non-stage top-level function in daemon.ts is ≤ 50 lines unless explicitly exempt (DAEMON-API-07)", () => {
-    // DAEMON-API-07: every top-level function in daemon.ts other than the
-    // five stages (stageFoundation/stageAgents/stageChannels/stageGateway/
-    // stageShutdown) must be ≤ 50 lines unless preceded by a
-    // `// daemon-line-cap: exempt -- <reason>` comment. At most 3 such
-    // comments may exist; beyond that, refactor instead of exempting.
+  it("each non-stage top-level function in daemon.ts is ≤ 50 lines unless explicitly exempt", () => {
+    // Every top-level function in daemon.ts other than the five stages
+    // (stageFoundation/stageAgents/stageChannels/stageGateway/stageShutdown)
+    // must be ≤ 50 lines unless preceded by a `// daemon-line-cap: exempt --
+    // <reason>` comment. At most 3 such comments may exist; beyond that,
+    // refactor instead of exempting.
     //
     // The node.parent === sf filter excludes nested helpers inside stage
     // functions (which are bounded by the per-stage ≤200L cap). The
@@ -461,36 +452,35 @@ describe("@comis/daemon -- architecture invariants", () => {
     ).toBeLessThanOrEqual(MAX_EXEMPTIONS);
   });
 
-  it("daemon.ts total line count is reported (DAEMON-API-08 soft cap ≤ 1200)", () => {
-    // DAEMON-API-08 informational measurement. Soft cap per RESEARCH
-    // §"daemon.ts Line Budget":
-    //   - ~1430 if helpers stay in daemon.ts (Plan 07 baseline)
-    //   - ~1040 if helpers move to wiring/main-helpers.ts (Plan 11 optional)
-    // The hard caps DAEMON-API-06 (per-stage ≤200) and DAEMON-API-07
-    // (non-stage ≤50) are the binding constraints; this test only records
-    // the line count so the orchestrator + reviewers can track progress
-    // toward the soft cap. No assertion fails the gate on line count alone.
+  it("daemon.ts total line count is reported (soft cap ≤ 1200)", () => {
+    // Informational measurement. Soft cap target:
+    //   - ~1430 if helpers stay in daemon.ts
+    //   - ~1040 if helpers move to wiring/main-helpers.ts
+    // The hard caps (per-stage ≤200 and non-stage ≤50) are the binding
+    // constraints; this test only records the line count so the orchestrator
+    // and reviewers can track progress toward the soft cap. No assertion
+    // fails the gate on line count alone.
     const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
     const lineCount = sourceText.split("\n").length;
-    // eslint-disable-next-line no-console -- informational measurement per DAEMON-API-08
-    console.log(`[DAEMON-API-08 report] daemon.ts total lines: ${lineCount} (soft cap 1200)`);
+    // eslint-disable-next-line no-console -- informational measurement
+    console.log(`[daemon.ts report] total lines: ${lineCount} (soft cap 1200)`);
     expect(lineCount, "daemon.ts must contain code").toBeGreaterThan(100);
   });
 
-  // Phase 40 Plan 07: 30s timeout (default 5s) — under v8 coverage
-  // instrumentation, the 27-handler AST walk slows enough to exceed the
-  // default budget. Without coverage the test runs in ~1.5s.
+  // 30s timeout (default 5s) — under v8 coverage instrumentation, the
+  // 27-handler AST walk slows enough to exceed the default budget. Without
+  // coverage the test runs in ~1.5s.
   it(
-    "api/*-handlers.ts never imports another api/*-handlers.ts file (DAEMON-API-05)",
+    "api/*-handlers.ts never imports another api/*-handlers.ts file",
     () => {
-    // DAEMON-API-05: handler files are siblings -- they MUST NOT import
-    // each other. Any cross-handler shared logic lives in api/shared/
-    // (4 helpers landed there in Phase 34 Plan 09: persist-to-config,
-    // credential-resolver, probe-provider-auth, builtin-provider-guard).
+    // Handler files are siblings -- they MUST NOT import each other. Any
+    // cross-handler shared logic lives in api/shared/ (4 helpers:
+    // persist-to-config, credential-resolver, probe-provider-auth,
+    // builtin-provider-guard).
     //
-    // This invariant is mechanically enforceable now (after Plan 09): every
-    // *-handlers.ts file imports either from external packages, from
-    // ./types.js, or from ./shared/*.js -- never from a sibling handler.
+    // This invariant is mechanically enforceable: every *-handlers.ts file
+    // imports either from external packages, from ./types.js, or from
+    // ./shared/*.js -- never from a sibling handler.
     //
     // Implementation: enumerate every *-handlers.ts file under api/, then
     // for each (handler, otherHandler) pair, run findForbiddenImports
@@ -498,10 +488,9 @@ describe("@comis/daemon -- architecture invariants", () => {
     // default 5s per-test budget on a 27-handler workspace we do a SINGLE
     // walk per other-handler (27 walks total) and post-filter the
     // violations by importing-file basename in memory -- a strict
-    // optimization of the documented N × (N-1) walk shape per the
-    // PATTERNS "Test runtime note" guidance. The AST-based scanner from
-    // test/support/import-checker.ts (per ARCH-BASE-13, not regex)
-    // produces verbose failure messages via formatViolations.
+    // optimization of the documented N × (N-1) walk shape. The AST-based
+    // scanner from test/support/import-checker.ts (not regex) produces
+    // verbose failure messages via formatViolations.
     const apiDir = resolve(SRC_ROOT, "api");
     const handlerFiles = readdirSync(apiDir)
       .filter((f) => f.endsWith("-handlers.ts") && !f.endsWith(".test.ts"))
@@ -537,8 +526,8 @@ describe("@comis/daemon -- architecture invariants", () => {
             column: v.column,
             snippet: v.snippet,
           })),
-          suggestedFix: `Move the shared symbol from ${other}.ts to packages/daemon/src/api/shared/ and import it from there. See packages/daemon/src/api/shared/ for the established pattern (4 cross-handler helpers landed in Phase 34 Plan 09).`,
-          designRef: "design §11 / DAEMON-API-05",
+          suggestedFix: `Move the shared symbol from ${other}.ts to packages/daemon/src/api/shared/ and import it from there. See packages/daemon/src/api/shared/ for the established pattern (4 cross-handler helpers).`,
+          designRef: "packages/daemon/src/api/shared/",
         }),
       ).toEqual([]);
     }
@@ -546,23 +535,23 @@ describe("@comis/daemon -- architecture invariants", () => {
     30_000,
   );
 
-  // Phase 34 Plan 10 (DAEMON-API-04): per-domain audit-coverage invariants.
-  // For each cluster slice in api/types.ts the matching AUDIT-<domain>.md
-  // doc at packages/daemon/AUDIT-<domain>.md must:
+  // Per-domain audit-coverage invariants. For each cluster slice in
+  // api/types.ts the matching AUDIT-<domain>.md doc at
+  // packages/daemon/AUDIT-<domain>.md must:
   //   1. List every interface field as a row (set equality, both directions)
   //   2. Classify each row as "required" or "optional" -- never the third
-  //      "stale-fallback" value (architecture-test invariant from Phase 32)
+  //      "stale-fallback" value (architecture-test invariant)
   //   3. Match the interface's optional/required marker (`?:` vs `:`)
   //   4. Provide a non-empty evidence-link cell on every row
   //
-  // Pattern lifted from packages/orchestrator/src/__tests__/architecture.test.ts:166-263
-  // (Phase 32 final ChannelManagerDeps audit-coverage test); generalized via
-  // the AUDIT_DOMAINS loop to produce 11 it() blocks at module load time.
+  // Pattern lifted from packages/orchestrator/src/__tests__/architecture.test.ts;
+  // generalized via the AUDIT_DOMAINS loop to produce 11 it() blocks at
+  // module load time.
   for (const domain of AUDIT_DOMAINS) {
     const interfaceName = `${domain.charAt(0).toUpperCase()}${domain.slice(1)}ApiDeps`;
     const auditPath = resolve(PKG_ROOT, `AUDIT-${domain}.md`);
 
-    it(`every ${interfaceName} field appears in audit document at AUDIT-${domain}.md (DAEMON-API-04)`, () => {
+    it(`every ${interfaceName} field appears in audit document at AUDIT-${domain}.md`, () => {
       // 1. Parse the audit Markdown table.
       const auditContent = readFileSync(auditPath, "utf8");
       const tableLines = auditContent
@@ -586,12 +575,12 @@ describe("@comis/daemon -- architecture invariants", () => {
         .filter((r) => r.field.length > 0 && !r.field.startsWith("**"));
 
       // 2. Parse the interface body via the TypeScript Compiler API.
-      //    Replaces the previous regex-based extractor (WR-03), which was
-      //    fragile against indentation changes, inline object-literal types,
-      //    and continuation-line field declarations. The AST walker is
-      //    robust against all three. Note: heritage clauses (`extends X`)
-      //    are intentionally NOT followed -- AUDIT_DOMAINS slices MUST
-      //    not extend each other (see WR-04 / the guard test below).
+      //    Replaces the previous regex-based extractor, which was fragile
+      //    against indentation changes, inline object-literal types, and
+      //    continuation-line field declarations. The AST walker is robust
+      //    against all three. Note: heritage clauses (`extends X`) are
+      //    intentionally NOT followed -- AUDIT_DOMAINS slices MUST not
+      //    extend each other (see the guard test below).
       const apiTypesContent = readFileSync(API_TYPES_PATH, "utf8");
       const sf = ts.createSourceFile(
         "types.ts",
@@ -622,11 +611,11 @@ describe("@comis/daemon -- architecture invariants", () => {
         interfaceFound,
         `${interfaceName} interface not found in ${API_TYPES_PATH}`,
       ).toBe(true);
-      // WR-04 guard: leaf *ApiDeps slices in AUDIT_DOMAINS MUST NOT extend
-      // other interfaces. The audit-coverage check does not walk heritage
-      // clauses, so an inherited member set would silently miss fields.
-      // The aggregator `ApiDispatchDeps extends ...` is not in AUDIT_DOMAINS
-      // and is intentionally excluded.
+      // Guard: leaf *ApiDeps slices in AUDIT_DOMAINS MUST NOT extend other
+      // interfaces. The audit-coverage check does not walk heritage clauses,
+      // so an inherited member set would silently miss fields. The
+      // aggregator `ApiDispatchDeps extends ...` is not in AUDIT_DOMAINS and
+      // is intentionally excluded.
       expect(
         extendsAnotherInterface,
         `${interfaceName} extends another interface. AUDIT_DOMAINS slices ` +
@@ -658,8 +647,8 @@ describe("@comis/daemon -- architecture invariants", () => {
           `Remove the stale audit row or add the field to the interface.`,
       ).toEqual([]);
 
-      // 4. No stale-fallback classifications (terminal value forbidden by
-      //    Phase 32 precedent; every field must be required or optional).
+      // 4. No stale-fallback classifications (terminal value forbidden;
+      //    every field must be required or optional).
       const staleFallbackRows = rows.filter(
         (r) => r.classification === "stale-fallback",
       );
@@ -668,7 +657,7 @@ describe("@comis/daemon -- architecture invariants", () => {
         `Stale-fallback classification rows in AUDIT-${domain}.md: ${staleFallbackRows
           .map((r) => r.field)
           .join(", ")}. ` +
-          `Delete the field from the interface and remove the row from the audit (RESEARCH "Audit Doc Template").`,
+          `Delete the field from the interface and remove the row from the audit.`,
       ).toEqual([]);
 
       // 5. Classification matches interface optional marker

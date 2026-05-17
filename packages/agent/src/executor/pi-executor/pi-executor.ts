@@ -3,12 +3,11 @@
  * PiExecutor: Wraps pi-coding-agent's createAgentSession() behind the
  * AgentExecutor interface with all Comis safety controls.
  *
- * Phase 42 split per EXEC-SPLIT-05/06: the pre-split 1,645L
- * `executor/pi-executor.ts` is replaced by this subdirectory of 9
- * focused modules. The closure-extracted helpers
- * (`session-bootstrap.ts`, `compaction-trigger.ts`, `safety-gate.ts`,
- * `message-envelope.ts`, `executor-error-mapping.ts`) take their state
- * via an explicit `state` first parameter — EXEC-SPLIT-06.
+ * Composed from 9 focused modules under this subdirectory. The
+ * closure-extracted helpers (`session-bootstrap.ts`, `compaction-trigger.ts`,
+ * `safety-gate.ts`, `message-envelope.ts`, `executor-error-mapping.ts`)
+ * take their state via an explicit `state` first parameter rather than
+ * capturing it via closure.
  *
  * Integrates:
  * - Circuit breaker: blocks calls when provider is failing
@@ -21,16 +20,15 @@
  * - Model fallback: retries with fallback models on prompt error
  * - Execution bookend log: INFO-level summary stats on every execution
  *
- * §13.3 fallback note (per 42-05-PLAN.md): the `withSession` callback body
- * (~900L) was NOT closure-extracted — its hundreds of inter-references
- * between session manager, bridge, stream wrappers, context engine, tool
- * pipeline, and runPrompt invocation would require either a state shape
- * with 50+ fields or further sub-decomposition that breaks the natural
- * orchestrator-edge boundary. The closure-extracted helpers handle the
- * pre/post-lock concerns (bootstrap, safety, compaction setup, message
- * envelope outcome, lock-failure mapping); the inside-lock callback is
- * the thinned factory's own composition root. See SUMMARY.md for the
- * `removedIn: "deferred"` allowlist entry rationale.
+ * Fallback note: the `withSession` callback body (~900L) was NOT
+ * closure-extracted — its hundreds of inter-references between session
+ * manager, bridge, stream wrappers, context engine, tool pipeline, and
+ * runPrompt invocation would require either a state shape with 50+ fields
+ * or further sub-decomposition that breaks the natural orchestrator-edge
+ * boundary. The closure-extracted helpers handle the pre/post-lock concerns
+ * (bootstrap, safety, compaction setup, message envelope outcome,
+ * lock-failure mapping); the inside-lock callback is the thinned factory's
+ * own composition root.
  *
  * @module
  */
@@ -106,7 +104,7 @@ import { OPERATION_TIMEOUT_DEFAULTS } from "../../model/operation-model-defaults
 import type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "../types.js";
 import { randomUUID } from "node:crypto";
 
-// Closure-extracted helpers (state-first per EXEC-SPLIT-06)
+// Closure-extracted helpers (state-first)
 import { installCompactionTrigger } from "./compaction-trigger.js";
 import { bootstrapSession, decodeExecutionOverrides, type MutableRef } from "./session-bootstrap.js";
 import { runSafetyGates } from "./safety-gate.js";
@@ -134,12 +132,12 @@ export function createPiExecutor(
   config: PerAgentConfig,
   deps: PiExecutorDeps,
 ): AgentExecutor {
-  // Phase 39 PORTS-11: initialize module-level clock provider for session-state Maps.
-  // The Maps in executor-session-state.ts cannot accept per-call clock since they're
-  // module-level shared state — set once at executor construction time.
+  // Initialize module-level clock provider for session-state Maps.
+  // The Maps in executor-session-state.ts cannot accept per-call clock since
+  // they're module-level shared state — set once at executor construction time.
   setSessionStateClock(deps.clock);
 
-  // Compaction-flush event handler installation (state-first per EXEC-SPLIT-06).
+  // Compaction-flush event handler installation (state-first).
   installCompactionTrigger({}, deps);
 
   // Mutable refs for per-execution overrides. The factory IS allowed closure
@@ -180,7 +178,7 @@ export function createPiExecutor(
       overrides?: ExecutionOverrides,
     ): Promise<ExecutionResult> {
       // 1. Bootstrap: OAuth pre-resolve + ExecutionResult init + SEP plan ref
-      //    (closure-extracted per EXEC-SPLIT-06)
+      //    (closure-extracted)
       const { executionStartMs, result, sepEnabled, executionPlanRef } = await bootstrapSession(
         {},
         deps,
@@ -188,7 +186,7 @@ export function createPiExecutor(
       );
 
       // 2. Pre-lock safety gates: input validation, provider health, circuit
-      //    breaker, fault injector (closure-extracted per EXEC-SPLIT-06)
+      //    breaker, fault injector (closure-extracted)
       const safetyOutcome = runSafetyGates(
         { result },
         deps,
@@ -198,7 +196,7 @@ export function createPiExecutor(
       const safetyReinforcement = safetyOutcome.safetyReinforcement;
 
       // 3. Decode per-execute overrides into the factory's mutable refs
-      //    (closure-extracted per EXEC-SPLIT-06)
+      //    (closure-extracted)
       const executionOverrides = overrides;
       const { effectiveTimeout } = decodeExecutionOverrides(
         {},
@@ -325,7 +323,7 @@ export function createPiExecutor(
       );
 
       // 6. Post-lock outcome: destroy session if session_reset; map lock failure
-      //    (closure-extracted per EXEC-SPLIT-06)
+      //    (closure-extracted)
       return finalizeLockResult(
         { result },
         deps,
@@ -336,13 +334,12 @@ export function createPiExecutor(
 }
 
 // ---------------------------------------------------------------------------
-// Inside-lock session callback (§13.3 fallback — kept as a top-level helper
-// rather than further closure-extracted because the body's hundreds of
-// inter-references between session manager, bridge, stream wrappers, context
-// engine, tool pipeline, and runPrompt invocation make a clean state-by-
-// parameter decomposition impractical without sub-decomposing the bridge
-// construction and stream-wrapper wiring separately; see SUMMARY.md for the
-// deferred-allowlist rationale).
+// Inside-lock session callback — kept as a top-level helper rather than
+// further closure-extracted because the body's hundreds of inter-references
+// between session manager, bridge, stream wrappers, context engine, tool
+// pipeline, and runPrompt invocation make a clean state-by-parameter
+// decomposition impractical without sub-decomposing the bridge construction
+// and stream-wrapper wiring separately.
 // ---------------------------------------------------------------------------
 
 interface RunSessionLockedContext {
@@ -1175,7 +1172,7 @@ async function runSessionLocked(
       bridge.addGhostCost(promptRunResult.ghostCost);
     }
 
-    // Apply stuck-session outcome (closure-extracted per EXEC-SPLIT-06).
+    // Apply stuck-session outcome (closure-extracted).
     applyPromptRunOutcome(
       { result },
       {
@@ -1188,7 +1185,7 @@ async function runSessionLocked(
       { promptRunResult, agentId, formattedKey },
     );
   } catch (error) {
-    // Translate exception into ExecutionResult (closure-extracted per EXEC-SPLIT-06).
+    // Translate exception into ExecutionResult (closure-extracted).
     handleEnvelopeException(
       { result },
       {

@@ -4,7 +4,6 @@
  *
  * Covers: runTavilySearch() with mocked fetch — happy path, error payload,
  * non-OK status, days parameter optional inclusion, missing-field branches.
- * Plan 40-11 branch-gap closure.
  *
  * @module
  */

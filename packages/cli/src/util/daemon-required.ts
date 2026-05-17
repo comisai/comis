@@ -2,8 +2,8 @@
 /**
  * Daemon-required precondition for store-backed CLI commands.
  *
- * Per MEM-CTX-PORTS-12, every store-backed `comis secrets *` subcommand and
- * the encrypted-mode branch of `comis auth {list,logout,status}` must:
+ * Every store-backed `comis secrets *` subcommand and the encrypted-mode
+ * branch of `comis auth {list,logout,status}` must:
  *   1. Probe the daemon with a ≤200ms ping deadline.
  *   2. Exit with code 4 ("daemon required") if unreachable.
  *   3. Print a fixed-format remediation message on stderr — NO auto-start.
@@ -21,17 +21,16 @@ import { ExitCode } from "./exit-codes.js";
 
 /**
  * Probe timeout for the daemon-required precondition. 200ms is the
- * MEM-CTX-PORTS-12 contract cap (the daemon's `system.ping` handler returns
- * synchronously with no I/O — the only cost is mTLS handshake + JSON-RPC
- * roundtrip on localhost).
+ * contract cap (the daemon's `system.ping` handler returns synchronously
+ * with no I/O — the only cost is mTLS handshake + JSON-RPC roundtrip on
+ * localhost).
  */
 export const DAEMON_PROBE_TIMEOUT_MS = 200;
 
 /**
  * Fixed-format remediation message printed to stderr when the daemon is
- * unreachable. Exact text is part of the MEM-CTX-PORTS-10 contract.
- * Downstream tests grep for the "ERROR: This command requires the comis daemon"
- * prefix as a stable contract.
+ * unreachable. The exact text is a stable contract. Downstream tests grep
+ * for the "ERROR: This command requires the comis daemon" prefix.
  */
 export const REMEDIATION_MESSAGE = `\
 ERROR: This command requires the comis daemon, which is not running.
@@ -49,9 +48,8 @@ To run secrets management without the daemon, see:
  * message to stderr and `process.exit(ExitCode.DaemonRequired)`. Otherwise
  * return normally.
  *
- * Per MEM-CTX-PORTS-16, the regression budget on this probe is 75ms median.
- * Default 200ms cap is the ceiling; actual roundtrip on localhost mTLS is
- * typically 30-80ms.
+ * The regression budget on this probe is 75ms median. Default 200ms cap is
+ * the ceiling; actual roundtrip on localhost mTLS is typically 30-80ms.
  */
 export async function requireDaemonOrExit(
   timeoutMs: number = DAEMON_PROBE_TIMEOUT_MS,

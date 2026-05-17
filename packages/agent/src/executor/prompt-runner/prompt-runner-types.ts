@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Public type surface for the prompt runner (Phase 42 split per EXEC-SPLIT-07).
+ * Public type surface for the prompt runner.
  *
- * Moved VERBATIM from the pre-split `executor-prompt-runner.ts`:
- *   - PromptRunnerBridge interface (was source lines 73-84)
- *   - RunPromptParams interface (was source lines 87-145)
- *   - PromptRunResult interface (was source lines 148-164)
- *
- * Per EXEC-SPLIT-08 the leaf modules (`envelope-wrapper.ts`,
- * `budget-precheck.ts`, `retry-loop.ts`, `output-escalation.ts`) import their
- * types from THIS file, never from `prompt-runner.ts`. The orchestrator
- * itself is allowed to depend back on this file (types-only) without
- * violating the dependency-direction invariant.
+ * Leaf modules (`envelope-wrapper.ts`, `budget-precheck.ts`, `retry-loop.ts`,
+ * `output-escalation.ts`) import their types from THIS file, never from
+ * `prompt-runner.ts`. The orchestrator itself is allowed to depend back on
+ * this file (types-only) without violating the dependency-direction invariant.
  *
  * @module
  */
@@ -104,9 +98,9 @@ export interface RunPromptParams {
     envelopeConfig?: EnvelopeConfig;
     outputGuard?: OutputGuardPort;
     canaryToken?: string;
-    /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+    /** Wall-clock + monotonic time reads. */
     clock: ClockPort;
-    /** Timer scheduling (Phase 39 PORTS-13). */
+    /** Timer scheduling. */
     timers: TimerPort;
   };
   // Callbacks

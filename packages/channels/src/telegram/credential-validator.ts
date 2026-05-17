@@ -38,7 +38,7 @@ export async function validateBotToken(
   try {
     // E2E seam: passing the grammy `client.apiRoot` option only when the
     // caller redirected — production callers leave `apiRoot` undefined and
-    // grammy uses its default (https://api.telegram.org). Phase 40 / Plan 40-09.
+    // grammy uses its default (https://api.telegram.org).
     const bot = apiRoot ? new Bot(token, { client: { apiRoot } }) : new Bot(token);
     const me = await bot.api.getMe();
     return ok({

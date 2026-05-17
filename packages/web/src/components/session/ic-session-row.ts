@@ -129,9 +129,9 @@ export class IcSessionRow extends LitElement {
     const status = computeSessionStatus(s.lastActiveAt);
     const statusColor = STATUS_COLORS[status] ?? STATUS_COLORS.expired;
     const channelLabel = parsed?.channelId ?? s.channelType;
-    // CR-01 follow-up to BC-REM-15 (Phase 38): session keys no longer carry
-    // an `agent:<agentId>:` prefix, so we read the agent label only from the
-    // session row's own `agentId` field (carried in the API response).
+    // Session keys do not carry an `agent:<agentId>:` prefix, so we read
+    // the agent label only from the session row's own `agentId` field
+    // (carried in the API response).
     const agentLabel = s.agentId;
 
     return html`

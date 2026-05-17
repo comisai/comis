@@ -4,7 +4,7 @@
  *
  * Every production caller of Date.now() / new Date() goes through this port; the
  * canonical Node-backed adapter is `createSystemClock()` in
- * @comis/infra/src/runtime/clock.ts (Phase 39, PORTS-06).
+ * @comis/infra/src/runtime/clock.ts.
  *
  * Type-only file — no runtime values. Adapter lives in @comis/infra.
  *

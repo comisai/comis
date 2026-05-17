@@ -143,8 +143,8 @@ describe("createDiscordAdapter", () => {
       const result = await adapter.start();
 
       expect(result.ok).toBe(true);
-      // Phase 40 / Plan 40-09: validateDiscordToken now takes (token, apiRoot?);
-      // production path (no deps.apiRoot) passes undefined for the 2nd arg.
+      // validateDiscordToken takes (token, apiRoot?); production path
+      // (no deps.apiRoot) passes undefined for the 2nd arg.
       expect(validateDiscordToken).toHaveBeenCalledWith("discord-bot-token", undefined);
     });
 
@@ -494,8 +494,8 @@ describe("createDiscordAdapter", () => {
       const mockPin = vi.fn().mockResolvedValue(undefined);
       const mockMessagesFetch = vi.fn().mockResolvedValue({ pin: mockPin });
       mockChannelsFetch.mockResolvedValue({
-        // Phase 41 TS-HYG-06: asTextLike() narrowing in discord-actions.ts
-        // requires a runtime isTextBased() check on the fetched channel.
+        // asTextLike() narrowing in discord-actions.ts requires a runtime
+        // isTextBased() check on the fetched channel.
         isTextBased: () => true,
         messages: { fetch: mockMessagesFetch },
       });
@@ -646,8 +646,8 @@ describe("createDiscordAdapter", () => {
       const mockSend = vi.fn().mockResolvedValue({ id: "reply-msg-1" });
       mockChannelsFetch.mockResolvedValue({
         isThread: () => true,
-        // Phase 41 TS-HYG-06: asTextLike() narrowing requires isTextBased()
-        // — discord.js@14.x thread channels satisfy both isThread + isTextBased.
+        // asTextLike() narrowing requires isTextBased() — discord.js@14.x
+        // thread channels satisfy both isThread + isTextBased.
         isTextBased: () => true,
         send: mockSend,
       });
@@ -752,7 +752,7 @@ describe("createDiscordAdapter", () => {
     it("channelEdit edits a channel and returns edited: true", async () => {
       const mockEdit = vi.fn().mockResolvedValue({});
       mockChannelsFetch.mockResolvedValue({
-        // Phase 41 TS-HYG-06: asTextLike() narrowing requires isTextBased().
+        // asTextLike() narrowing requires isTextBased().
         isTextBased: () => true,
         edit: mockEdit,
       });
@@ -774,7 +774,7 @@ describe("createDiscordAdapter", () => {
     it("channelDelete deletes a channel and returns deleted: true", async () => {
       const mockDelete = vi.fn().mockResolvedValue({});
       mockChannelsFetch.mockResolvedValue({
-        // Phase 41 TS-HYG-06: asTextLike() narrowing requires isTextBased().
+        // asTextLike() narrowing requires isTextBased().
         isTextBased: () => true,
         delete: mockDelete,
       });
@@ -792,7 +792,7 @@ describe("createDiscordAdapter", () => {
     it("channelDelete logs at INFO level (destructive operation)", async () => {
       const mockDelete = vi.fn().mockResolvedValue({});
       mockChannelsFetch.mockResolvedValue({
-        // Phase 41 TS-HYG-06: asTextLike() narrowing requires isTextBased().
+        // asTextLike() narrowing requires isTextBased().
         isTextBased: () => true,
         delete: mockDelete,
       });

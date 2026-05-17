@@ -10,8 +10,8 @@ import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Phase 39: lightweight port wrappers that delegate to globals so
-// vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
+// Lightweight port wrappers that delegate to globals so vi.useFakeTimers()
+// continues to intercept Date.now / setTimeout below.
 // ---------------------------------------------------------------------------
 
 function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {

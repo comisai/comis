@@ -44,8 +44,8 @@ export function parseSessionKey(raw: unknown): Result<SessionKey, z.ZodError> {
  *
  * The `SessionKey.agentId` field is intentionally NOT serialized — agent
  * isolation is handled out-of-band (per-agent workspace dirs, per-agent
- * watermark files, etc.), and BC-REM-15 (Phase 38) deleted the matching
- * parser branch. Setting `key.agentId` has no effect on the formatted output.
+ * watermark files, etc.) and there is no matching parser branch. Setting
+ * `key.agentId` has no effect on the formatted output.
  */
 export function formatSessionKey(key: SessionKey): string {
   let formatted = `${key.tenantId}:${key.userId}:${key.channelId}`;

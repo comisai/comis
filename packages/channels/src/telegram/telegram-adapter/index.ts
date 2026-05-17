@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram Channel Adapter: ChannelPort implementation using Grammy
- * (Phase 43 split per FILE-SPLIT-12).
+ * Telegram Channel Adapter: ChannelPort implementation using Grammy.
  *
  * Provides the bridge between Telegram's Bot API and Comis's
  * channel-agnostic ChannelPort interface. Uses:
@@ -14,10 +13,8 @@
  * mode). Messages translate through mapGrammyToNormalized in inbound
  * and dispatch to handlers registered via onMessage.
  *
- * The factory closure pre-split captured 9 variables; post-split they
- * live on TelegramAdapterState and every helper takes the state object
- * via its first positional parameter (Phase 42 pi-executor + Phase 43
- * mcp-client state-first protocol).
+ * State-first protocol: shared state lives on TelegramAdapterState and
+ * every helper takes the state object via its first positional parameter.
  *
  * @module
  */

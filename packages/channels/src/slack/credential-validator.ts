@@ -41,7 +41,7 @@ interface SlackValidateOpts {
    * Optional Web API root URL override (e.g. `http://127.0.0.1:54321`).
    * When set, the WebClient is constructed with `slackApiUrl=apiRoot` so
    * `auth.test()` hits the mock instead of `slack.com/api`. Production
-   * leaves undefined. Phase 40 / Plan 40-09 / COV-15.
+   * leaves undefined.
    */
   apiRoot?: string;
 }

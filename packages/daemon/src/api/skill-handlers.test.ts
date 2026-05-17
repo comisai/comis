@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-coverage tests for skill-handlers (Plan 40-14, Task 1).
+ * Branch-coverage tests for skill-handlers.
  *
  * Covers all 6 handlers (skills.list, skills.upload, skills.import,
  * skills.delete, skills.create, skills.update) at the rejection-branch

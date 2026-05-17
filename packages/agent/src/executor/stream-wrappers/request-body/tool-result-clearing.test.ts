@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure-function tests for tool-result-clearing.ts
- * (Phase 42 EXEC-SPLIT-02 / EXEC-SPLIT-03 — module-aligned test neighbor).
+ * Pure-function tests for tool-result-clearing.ts.
  *
  * Hosts the pure-function describes that test `clearStaleThinkingBlocks`
  * directly. Integration tests that wire through createRequestBodyInjector
  * remain in factory.test.ts because they exercise the full pipeline
  * (clearStaleToolResults + the microcompact trigger).
- *
- * Lifted verbatim from request-body-injector.test.ts (the pre-split test
- * file at HEAD~1 prior to the rename to factory.test.ts).
  *
  * @module
  */

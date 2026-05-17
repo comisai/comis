@@ -2,20 +2,17 @@
 /**
  * E2E: WhatsApp × DM — WebSocket capture-shim against the 127.0.0.1 mock.
  *
- * Phase 40 / Phase C §6.5 / COV-15 (Plan 40-09 Wave D).
- *
  * Scope: this is a CAPTURE-ONLY E2E test. Baileys' real WhatsApp Web
  * protocol (noise-protocol handshake + Signal-protocol pairing) is out
- * of scope for the mock per Wave B4 — the mock accepts a WebSocket
- * connection, records inbound frames, and never replies (which is what
- * Baileys would experience when it can't complete the encrypted
- * handshake; the connection eventually times out).
+ * of scope for the mock — the mock accepts a WebSocket connection,
+ * records inbound frames, and never replies (which is what Baileys would
+ * experience when it can't complete the encrypted handshake; the
+ * connection eventually times out).
  *
  * What this test PROVES:
- *   1. The apiRoot config from Wave A4 (whatsapp.apiRoot →
- *      waWebSocketUrl) flows through Baileys' SocketConfig — verified
- *      by the mock's openConnections + framesCaptured counters going
- *      non-zero.
+ *   1. The apiRoot config (whatsapp.apiRoot → waWebSocketUrl) flows
+ *      through Baileys' SocketConfig — verified by the mock's
+ *      openConnections + framesCaptured counters going non-zero.
  *   2. The mock's pending-inbound capture surface accepts
  *      injectInboundMessage and records the payload for downstream
  *      adapter-registry tests.
@@ -32,7 +29,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createMockWhatsAppServer, type MockWhatsAppServer } from "./mocks/whatsapp/mock-whatsapp-server.js";
 import WebSocket from "ws";
 
-describe("E2E: whatsapp × dm — WebSocket capture shim against the 127.0.0.1 mock (COV-15)", () => {
+describe("E2E: whatsapp × dm — WebSocket capture shim against the 127.0.0.1 mock", () => {
   let mock: MockWhatsAppServer;
   let wsUrl: string;
 

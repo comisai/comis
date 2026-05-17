@@ -5,13 +5,11 @@
  * (signed-replay self-heal, rate-limit short-circuit, client-request
  * short-circuit, default strip-and-retry, LKW auth-failure fallback).
  *
- * Phase 42 split per EXEC-SPLIT-07 — was lines 354-874 of the pre-split
- * `executor-prompt-runner.ts`. The four silent-failure branches live in
- * `./silent-failure-handlers.js`; this module owns the entry control flow
- * and the stuck-session guard.
+ * The four silent-failure branches live in `./silent-failure-handlers.js`;
+ * this module owns the entry control flow and the stuck-session guard.
  *
- * Per EXEC-SPLIT-08 this module imports types only from
- * `./prompt-runner-types.js` — never from `./prompt-runner.js`.
+ * Imports types only from `./prompt-runner-types.js` — never from
+ * `./prompt-runner.js` (one-directional dependency graph).
  *
  * @module
  */

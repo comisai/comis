@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent config — Auxiliary agent runtime schemas (Phase 43 split per
- * FILE-SPLIT-14).
+ * Agent config — Auxiliary agent runtime schemas.
  *
- * Block-moved verbatim from the pre-split `config/schema-agent.ts` (lines
- * 498-681). Owns Routing, RAG, Bootstrap, Concurrency, Broadcast,
- * ElevatedReply, Tracing, SdkRetry, ContextGuard, ToolLifecycle,
- * DeferredTools, and Sep schemas — the auxiliary agent-configuration helpers
- * that feed into the top-level `AgentConfigSchema` (composed in
- * `schema-agent-runtime.ts`).
+ * Owns Routing, RAG, Bootstrap, Concurrency, Broadcast, ElevatedReply,
+ * Tracing, SdkRetry, ContextGuard, ToolLifecycle, DeferredTools, and Sep
+ * schemas — the auxiliary agent-configuration helpers that feed into the
+ * top-level `AgentConfigSchema` (composed in `schema-agent-runtime.ts`).
  *
  * Imports only from external siblings (TrustLevelSchema from
  * `../../domain/memory-entry.js`) — no sibling-leaf imports inside the

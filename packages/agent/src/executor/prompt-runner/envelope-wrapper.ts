@@ -4,14 +4,13 @@
  * deferred-tools + image passthrough + RAG inline injection + skip-prompt
  * detection + user-budget parsing.
  *
- * Phase 42 split per EXEC-SPLIT-07 — was lines 181-322 of the pre-split
- * `executor-prompt-runner.ts`. Pure function: returns the wrapped envelope
- * state for the downstream stages (budget pre-check, retry loop, output
- * escalation). Mutates only the caller-supplied `budgetWarningRef` callback
- * surface; no shared mutable state escapes this module.
+ * Pure function: returns the wrapped envelope state for the downstream
+ * stages (budget pre-check, retry loop, output escalation). Mutates only
+ * the caller-supplied `budgetWarningRef` callback surface; no shared
+ * mutable state escapes this module.
  *
- * Per EXEC-SPLIT-08 this module imports types only from
- * `./prompt-runner-types.js` — never from `./prompt-runner.js`.
+ * Imports types only from `./prompt-runner-types.js` — never from
+ * `./prompt-runner.js` (cycle avoidance).
  *
  * @module
  */

@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 30 — Core-owned delivery types.
+ * Core-owned delivery types.
  *
- * Lifted from packages/channels/src/shared/deliver-to-channel.ts (lines
- * 100-168 at plan-authoring time) to enable createDeliveryService to live
- * in core/src/delivery/ without a core → channels back-edge.
- *
- * The actual `deliverToChannel` function + value-level helpers
+ * These types live in core/src/delivery/ so createDeliveryService can be
+ * defined in core without a core → channels back-edge. The actual
+ * `deliverToChannel` function and value-level helpers
  * (QUEUE_BACKOFF_SCHEDULE_MS, computeQueueBackoff, resolveChunkLimit)
- * stay in channels/src/shared/deliver-to-channel.ts until plan 05/06
- * (RESEARCH.md §H.3 commit ordering). Plan 03 only moves the TYPES.
+ * live in channels/src/shared/deliver-to-channel.ts.
  */
 
 import type { SendMessageOptions } from "../ports/channel.js";
@@ -63,12 +60,10 @@ export interface DeliverToChannelOptions {
   onChunkError?: (error: Error, chunkIndex: number, totalChunks: number) => void;
   /**
    * Reply-mode override for this single call. When provided, supersedes the
-   * service-wide `DeliveryServiceDeps.replyMode` closure default. Phase 30
-   * plan 04: this knob was previously threaded via the optional 5th-arg
-   * `deps?.replyMode` on the standalone `deliverToChannel`; now that deps is
-   * captured in closure, callers that need per-channel/per-chat-type variance
-   * (e.g. execution-deliver.ts resolving replyMode from streamingConfig) pass
-   * it through here instead.
+   * service-wide `DeliveryServiceDeps.replyMode` closure default. Callers
+   * that need per-channel/per-chat-type variance (e.g. execution-deliver.ts
+   * resolving replyMode from streamingConfig) pass it through here instead
+   * of relying on the closure default.
    */
   replyMode?: "off" | "first" | "all";
 }

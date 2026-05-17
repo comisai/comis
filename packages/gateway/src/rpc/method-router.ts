@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: @allow-throw boundary: JSON-RPC method-router; JSONRPCErrorException + scope-check throws caught by json-rpc-2.0 library and converted to JSON-RPC error response (mirror of rpc-dispatch.ts:306-321 path) (Phase 41 TS-HYG-07).
+// @allow-throw: JSON-RPC method-router; JSONRPCErrorException + scope-check throws caught by json-rpc-2.0 library and converted to JSON-RPC error response (mirror of rpc-dispatch.ts:306-321 path).
 import type { SimpleJSONRPCMethod } from "json-rpc-2.0";
 import { JSONRPCServer, JSONRPCErrorException } from "json-rpc-2.0";
 import { checkScope } from "../auth/token-auth.js";

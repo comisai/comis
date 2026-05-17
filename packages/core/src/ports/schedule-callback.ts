@@ -6,10 +6,9 @@
  * Today the only consumer is `session-reset-policy.ts` (`isDailyResetDue`), which
  * needs to know "what is the next 0 H * * * (in tz) at or after updatedAt?". The
  * canonical implementation lives in `@comis/scheduler` (`computeNextRunAtMs`,
- * croner-backed). Phase 32 commit 12 (ORCH-EXT-15) injects the callback through
- * agent's session-reset-policy entry point and removes agent's direct
- * `@comis/scheduler` import, closing the last cron-shape dependency edge from
- * agent into scheduler.
+ * croner-backed). Injecting the callback through agent's session-reset-policy
+ * entry point removes agent's direct `@comis/scheduler` import, closing the
+ * last cron-shape dependency edge from agent into scheduler.
  *
  * The port is declared as a callback TYPE (not a `*Port` interface) because the
  * surface is a single pure function — wrapping it in an object with one method

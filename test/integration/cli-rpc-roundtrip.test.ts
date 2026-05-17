@@ -2,9 +2,8 @@
 /**
  * INTEGRATION: CLI ↔ Daemon RPC roundtrip via withClient.
  *
- * Phase 40 Plan 40-16 (COV-04 gap closure): lifts integration-tier coverage
- * for `@comis/cli` (currently 4.03% — needs ~76pp lift). Drives the
- * production `withClient` + `createRpcClient` against a real test daemon.
+ * Drives the production `withClient` + `createRpcClient` against a real
+ * test daemon.
  *
  * Pattern: spawn daemon → set COMIS_GATEWAY_URL/TOKEN env → call withClient
  * → invoke handlers → assert response shape. This exercises the same

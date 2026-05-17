@@ -19,10 +19,9 @@ export type { CronScheduler } from "./cron/index.js";
 export { createExecutionTracker } from "./execution/index.js";
 export type { ExecutionTracker, ExecutionLogEntry } from "./execution/index.js";
 
-// Phase 35 Plan 35-04 (D-01 #1): createFileLock relocated to @comis/core.
-// Consumers (CLI, agent OAuth call sites, daemon composition root, scheduler
-// internals) import directly from @comis/core; scheduler no longer mediates
-// the FileLockPort factory.
+// createFileLock lives in @comis/core. Consumers (CLI, agent OAuth call
+// sites, daemon composition root, scheduler internals) import directly from
+// @comis/core; scheduler no longer mediates the FileLockPort factory.
 
 // Heartbeat monitoring
 export { HEARTBEAT_OK_TOKEN, createHeartbeatRunner } from "./heartbeat/index.js";

@@ -27,7 +27,7 @@ import { openSqliteDatabase, chmodDbFiles } from "./sqlite-adapter-base.js";
 import { systemNowMs } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
 
-// Anonymous-projection mappers (Phase 41 TS-HYG-03).
+// Anonymous-projection mappers.
 // decryptAll: returns all encrypted-secret rows (name + 4 BLOB columns).
 const decryptAllRowMapper = createRowMapper(
   z.strictObject({

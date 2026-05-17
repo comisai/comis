@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Shared session-handler helpers (Phase 43 split per FILE-SPLIT-04).
+ * Shared session-handler helpers.
  *
  * Pure JSONL scanning helpers + dependency-type re-export shared across the
  * session handler bundles. No closures, no factory: every export is a pure
@@ -21,10 +21,10 @@
 import { readdirSync, statSync, readFileSync } from "node:fs";
 import { safePath, systemGetEnv, systemDateFrom } from "@comis/core";
 
-// Re-aliased from the cluster slice in api/types.ts (Plan 34-08a).
+// Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: SessionsApiDeps. The session-handlers factory
 // consumes SessionHandlerDeps as before; the alias keeps call sites and
-// handler bodies unchanged (DAEMON-API-03 Option A retarget).
+// handler bodies unchanged.
 import type { SessionsApiDeps as SessionHandlerDeps } from "../types.js";
 export type { SessionHandlerDeps };
 

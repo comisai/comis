@@ -47,7 +47,7 @@ vi.mock("@comis/skills", () => ({
 
 // Mock @comis/core safePath + validateUrl while preserving the contract
 // registry exports + stripInternalFields helper that the refactored handler
-// imports from @comis/core (Plan 35-15).
+// imports from @comis/core.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {

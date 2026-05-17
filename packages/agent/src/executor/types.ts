@@ -7,9 +7,9 @@
 
 import type { SessionKey, NormalizedMessage, SpawnPacket, ModelOperationType } from "@comis/core";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-// Phase 32 commit 6 (ORCH-EXT-08): CommandDirectives canonical home moved to
-// @comis/orchestrator/src/commands/types.ts. Agent uses a local mirror to
-// avoid the orchestrator → agent circular dep (see file docstring there).
+// CommandDirectives canonical home is @comis/orchestrator/src/commands/types.ts.
+// Agent uses a local mirror to avoid the orchestrator → agent circular dep
+// (see file docstring there).
 import type { CommandDirectives } from "./command-directive-types.js";
 import type { StepCounter } from "./step-counter.js";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
