@@ -16,6 +16,8 @@ pnpm build                      # all packages (tsc + project references)
 pnpm test                       # unit tests (Vitest workspace)
 pnpm test --coverage            # @vitest/coverage-v8; floor = lines 90 / branches 85 / functions 90 on packages/*/src/**/*.ts
 pnpm lint:security              # security ESLint rules
+pnpm cycles                     # madge dist-mode .d.ts circular-dep check
+pnpm validate                   # build && test && lint:security && cycles (one-shot pre-commit chain)
 ```
 
 Single package or file:
@@ -33,7 +35,7 @@ pnpm test:cleanup               # clean test artifacts
 
 Vitest aliases `@comis/*` → `packages/*/dist/index.js` for integration tests — use bare-package imports, never `../packages/*/src/*`. **Stale `dist/` silently masks `src/` changes**: if a test passes after editing only `src/`, you forgot `pnpm build`.
 
-Primary validation: `pnpm build && pnpm test && pnpm lint:security`.
+Primary validation: `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`).
 
 ## Daemon
 
@@ -112,7 +114,7 @@ Steps to ship `vX.Y.Z`:
 
    `docs/operations/docker.mdx` mentions a version illustratively (`pushing vX.Y.Z produces …`) and is **not** bumped per release.
 
-3. **Validate:** `pnpm build && pnpm test && pnpm lint:security` — all three must pass before the bump commit.
+3. **Validate:** `pnpm validate` — build, test, lint:security, and cycles must all pass before the bump commit. (Skipping the cycles step is what let v1.0.38 ship with a missing `@comis/core` dep in `packages/web/package.json` and the latent 17-cycle backlog go unnoticed for days.)
 
 4. **Commit, push, tag:**
    ```bash

@@ -20,8 +20,10 @@
   "scripts": {
     "build": "pnpm -r run build",
     "contracts:generate": "npx tsx scripts/contracts/generate-web-artifact.ts",
+    "cycles": "madge --circular --extensions ts packages/*/dist",
     "lint:security": "eslint --config eslint.config.js",
     "test": "vitest",
+    "validate": "pnpm build && pnpm test && pnpm lint:security && pnpm cycles",
     "test:architecture": "vitest run --project architecture",
     "test:e2e": "vitest run --config test/e2e/vitest.config.ts",
     "smoke:tarball": "node scripts/smoke/tarball-smoke.mjs",

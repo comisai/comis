@@ -161,7 +161,7 @@ When uncertain, classify higher.
 2. **Define scope** — one concern per change; no mixed feature+refactor+infra patches.
 3. **Test-first** — write the failing test before the code (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. Red → green → refactor.
 4. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
-5. **Validate** — `pnpm build && pnpm test && pnpm lint:security` must all pass.
+5. **Validate** — `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`) must all pass.
 6. **Document impact** — update comments/docs for behavior changes, risk, side effects.
 
 ## 6) Change Playbooks
@@ -213,7 +213,7 @@ Register metadata via `registerToolMetadata(name, meta)` in `packages/skills/src
 
 Required before any commit:
 ```bash
-pnpm build && pnpm test && pnpm lint:security
+pnpm validate  # = pnpm build && pnpm test && pnpm lint:security && pnpm cycles
 ```
 
 By change type:
