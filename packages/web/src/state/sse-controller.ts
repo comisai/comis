@@ -21,8 +21,10 @@ import type { EventDispatcher } from "./event-dispatcher.js";
  * ReactiveController that bridges SSE events to a Lit host component's
  * lifecycle by listening on `document` (the EventDispatcher's second
  * delivery channel). The `eventDispatcher` parameter is retained for API
- * compatibility; it is unused inside this controller because the
- * dispatcher already re-fires every event on `document`.
+ * compatibility with the ~14 call sites that still pass it; it is unused
+ * inside this controller because the dispatcher already re-fires every
+ * event on `document`. The parameter is not stored as a field so it does
+ * not pin the dispatcher reference for the controller's lifetime.
  *
  * Usage:
  * ```ts
@@ -34,19 +36,16 @@ import type { EventDispatcher } from "./event-dispatcher.js";
  */
 export class SseController implements ReactiveController {
   private readonly _host: ReactiveControllerHost;
-  // Kept for API stability with existing call sites; not used internally.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private readonly _eventDispatcher: EventDispatcher;
   private readonly _events: Record<string, (data: unknown) => void>;
   private readonly _docHandlers: Array<{ type: string; handler: (e: Event) => void }> = [];
 
   constructor(
     host: ReactiveControllerHost,
-    eventDispatcher: EventDispatcher,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- API-stability shim; dispatcher already re-fires on `document`
+    _eventDispatcher: EventDispatcher,
     events: Record<string, (data: unknown) => void>,
   ) {
     this._host = host;
-    this._eventDispatcher = eventDispatcher;
     this._events = events;
     this._host.addController(this);
   }
