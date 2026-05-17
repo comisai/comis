@@ -760,6 +760,23 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // CustomEvent handlers — all tightly DOM-coupled. Auto-acceptable
     // per WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/views/pipelines/pipeline-monitor.ts",
+    // security.ts (Wave 7 / Task 2): RPC extraction completed via
+    // security-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates all daemon I/O to the controller (config.read,
+    // config.patch, agent.cacheStats moved out — 3 unique RPC methods
+    // spanning 3 call sites). Controller fits the tightest 500L cap
+    // (138L). Wave-7 caps tightened the view from 800L to 500L; the
+    // residual ≤795L is dominated by ~160L of CSS, the 7-tab routing
+    // layout, the SseController consumer wiring 14 SSE event handlers
+    // with per-event SecurityEvent classification + bounded retention,
+    // the secrets-tab toggle + db-path renderer with optimistic-update
+    // patchConfig flow, the provider-health tab renderer with cards +
+    // failover log + auth cooldowns, the debounce timer for provider-
+    // health reload, and the 3 sub-component shadow-DOM accessors —
+    // all tightly DOM-coupled with the existing 19 view tests' priv()
+    // access to _securityConfig + _activeTab + _loadState. Auto-
+    // acceptable per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/security.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

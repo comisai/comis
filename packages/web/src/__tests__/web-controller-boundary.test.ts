@@ -173,7 +173,7 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     //   direct call sites — app.ts is therefore not a Wave-1 baseline violator and
     //   needs no entry here. Wave 7's app-controller extraction does NOT require a
     //   Set drain step for app.ts (was never in the Set).
-    "packages/web/src/views/security.ts",                           //  3 rpcClient.call (verified HEAD)
+    //   security.ts: drained — RPC extracted via security-controller.ts (Task 2).
 
     // ===== OUT-OF-SCOPE INCLUDED — STAY permanently (not Phase 44 scope) =====
     // Each verified to have grep >0 at Wave-1 HEAD. Counts not annotated since
