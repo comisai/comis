@@ -104,86 +104,83 @@ test.describe("Skills view", () => {
     const view = page.locator("ic-skills-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Enabled tools should have their checkboxes checked
-    const enabledTools = ["read", "write", "edit", "grep", "find", "ls", "exec"];
-    for (const tool of enabledTools) {
-      const checkbox = view.locator(`input[type="checkbox"][aria-label="Enable ${tool}"]`);
-      await expect(checkbox).toBeChecked();
+    // Built-in tool enable/disable has moved out of the global Skills view.
+    // The Skills view now renders informational tool cards (name + description);
+    // per-tool toggling lives in the agent editor's tool policy section.
+    // Verify the relevant tool cards still render with the canonical tool names.
+    const expectedTools = ["read", "write", "edit", "grep", "find", "ls", "exec"];
+    for (const tool of expectedTools) {
+      await expect(
+        view.locator(".tool-name").getByText(tool, { exact: true }),
+      ).toBeVisible();
     }
 
-    // Disabled tools should have unchecked checkboxes
-    const disabledTools = ["webSearch", "webFetch", "browser"];
-    for (const tool of disabledTools) {
-      const checkbox = view.locator(`input[type="checkbox"][aria-label="Enable ${tool}"]`);
-      await expect(checkbox).not.toBeChecked();
-    }
+    // The view explicitly directs users to the agent editor for per-tool config.
+    await expect(
+      view.getByText("Enable or disable tools per agent in the agent editor."),
+    ).toBeVisible();
   });
 
   test("prompt skills tab shows configuration", async ({ page }) => {
     const view = page.locator("ic-skills-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Click "Prompt Skills" tab
-    await view.getByText("Prompt Skills").click();
+    // Click the "Prompt Skills" tab via role=tab to avoid ambiguity with the
+    // matching description span on the Built-in Tools tab.
+    await view.getByRole("tab", { name: "Prompt Skills" }).click();
 
-    // Verify allowed skills are listed
-    await expect(view.getByText("web-search")).toBeVisible();
-    await expect(view.getByText("code-review")).toBeVisible();
+    // With no discovered skills returned by the mock, the tab renders an
+    // empty state directing users to upload or import a skill folder.
+    await expect(
+      view.getByText("No prompt skills discovered"),
+    ).toBeVisible();
 
-    // Verify dynamic context toggle is shown and checked
-    await expect(view.getByText("Enable Dynamic Context")).toBeVisible();
-    const dynamicContextCheckbox = view.locator("#dynamic-context");
-    await expect(dynamicContextCheckbox).toBeChecked();
-
-    // Verify Allowed Skills section title
-    await expect(view.getByText("Allowed Skills")).toBeVisible();
+    // The tab footer links per-agent configuration to the agent editor.
+    await expect(
+      view.getByText(
+        /Configure prompt skill settings.*per agent in the agent editor\./,
+      ),
+    ).toBeVisible();
   });
 
-  test("MCP servers tab shows server entries", async ({ page }) => {
+  test("MCP servers are managed in the dedicated MCP view", async ({ page }) => {
+    // MCP servers were extracted out of the Skills view into the dedicated
+    // ic-mcp-management view (reachable from the sidebar). The Skills view
+    // no longer has an "MCP Servers" tab.
     const view = page.locator("ic-skills-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Click "MCP Servers" tab
-    await view.getByText("MCP Servers").click();
+    // Verify the Skills view has exactly the current set of tabs --
+    // no "MCP Servers" tab is present.
+    const tabs = view.getByRole("tab");
+    await expect(tabs).toHaveCount(2);
+    await expect(view.getByRole("tab", { name: "Built-in Tools" })).toBeVisible();
+    await expect(view.getByRole("tab", { name: "Prompt Skills" })).toBeVisible();
 
-    // Verify local-tools server is visible with stdio transport
-    await expect(view.getByText("local-tools")).toBeVisible();
-    await expect(view.locator("ic-tag").filter({ hasText: "stdio" })).toBeVisible();
-
-    // Verify remote-api server is visible with sse transport
-    await expect(view.getByText("remote-api")).toBeVisible();
-    await expect(view.locator("ic-tag").filter({ hasText: "sse" })).toBeVisible();
-
-    // Verify local-tools is enabled (checkbox checked)
-    const localToolsCheckbox = view.locator(`input[aria-label="Enable local-tools"]`);
-    await expect(localToolsCheckbox).toBeChecked();
-
-    // Verify remote-api is disabled (checkbox unchecked)
-    const remoteApiCheckbox = view.locator(`input[aria-label="Enable remote-api"]`);
-    await expect(remoteApiCheckbox).not.toBeChecked();
+    // Navigate to the dedicated MCP view via the sidebar.
+    await navigateTo(page, "MCP Servers");
+    await expect(page.locator("ic-mcp-management")).toBeVisible({ timeout: 10_000 });
   });
 
-  test("tool policy tab shows profile and allow/deny lists", async ({ page }) => {
+  test("tool policy guidance is shown in the Built-in Tools tab", async ({ page }) => {
     const view = page.locator("ic-skills-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Click "Tool Policy" tab
-    await view.getByText("Tool Policy").click();
+    // Tool Policy is no longer a dedicated tab -- its content is folded into
+    // the Built-in Tools tab as a labelled section beneath the tool cards.
+    // Scope the "Tool Policy" assertion to the section-header to avoid the
+    // strict-mode collision with the inline help copy.
+    await expect(
+      view.locator(".section-header").getByText("Tool Policy"),
+    ).toBeVisible();
 
-    // Verify "coding" profile is shown
-    await expect(view.getByText("Profile")).toBeVisible();
-    const profileSelect = view.locator(".policy-select");
-    await expect(profileSelect).toHaveValue("coding");
-
-    // Verify allow list shows allowed tools -- each tool has a remove button with aria-label
-    await expect(view.getByText("Allow List")).toBeVisible();
-    for (const tool of ["read", "write", "edit", "grep", "find", "ls", "exec", "process"]) {
-      await expect(view.getByLabel(`Remove ${tool}`)).toBeVisible();
-    }
-
-    // Verify deny list is empty
-    await expect(view.getByText("Deny List")).toBeVisible();
-    // Deny list shows "No items" since it's empty
-    await expect(view.getByText("No items")).toBeVisible();
+    // The section explains profile semantics and points per-agent config to
+    // the agent editor.
+    await expect(
+      view.getByText(/Profiles \(minimal, coding, messaging, supervisor, full\)/),
+    ).toBeVisible();
+    await expect(
+      view.getByText("Configure tool policy per agent in the agent editor."),
+    ).toBeVisible();
   });
 });
