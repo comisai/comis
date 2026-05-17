@@ -69,58 +69,53 @@ export function createMessageCenterController(
     hostConnected(): void { /* no-op */ },
     hostDisconnected(): void { /* no-op */ },
 
-    async listChannels(): Promise<ChannelListEntry[]> {
-      const result = await rpcClient.call<{ channels: ChannelListEntry[]; total: number }>(
-        "channels.list",
-      );
-      return result?.channels ?? [];
+    // Read-path passthroughs use .then(...) rather than async/await so the
+    // unpacked-field transformation does not introduce an extra microtask
+    // boundary (matches scheduler-controller's non-async listJobs/getStatus
+    // pattern — Wave 3 timing fix).
+    listChannels(): Promise<ChannelListEntry[]> {
+      return rpcClient
+        .call<{ channels: ChannelListEntry[]; total: number }>("channels.list")
+        .then((result) => result?.channels ?? []);
     },
 
-    async getChannelCapabilities(channelType: string): Promise<PlatformCapabilities | null> {
-      const result = await rpcClient.call<{ channelType: string; features: PlatformCapabilities }>(
-        "channels.capabilities",
-        { channel_type: channelType },
-      );
-      return result?.features ?? null;
+    getChannelCapabilities(channelType: string): Promise<PlatformCapabilities | null> {
+      return rpcClient
+        .call<{ channelType: string; features: PlatformCapabilities }>(
+          "channels.capabilities",
+          { channel_type: channelType },
+        )
+        .then((result) => result?.features ?? null);
     },
 
-    async getChannelConfig(channelType: string): Promise<Record<string, unknown> | null> {
-      const result = await rpcClient.call<Record<string, unknown>>(
-        "channels.get",
-        { channel_type: channelType },
-      );
-      return result ?? null;
+    getChannelConfig(channelType: string): Promise<Record<string, unknown> | null> {
+      return rpcClient
+        .call<Record<string, unknown>>("channels.get", { channel_type: channelType })
+        .then((result) => result ?? null);
     },
 
-    async listObsChannels(): Promise<ObsChannelEntry[]> {
-      const result = await rpcClient.call<{ channels: ObsChannelEntry[] }>(
-        "obs.channels.all",
-      );
-      return result?.channels ?? [];
+    listObsChannels(): Promise<ObsChannelEntry[]> {
+      return rpcClient
+        .call<{ channels: ObsChannelEntry[] }>("obs.channels.all")
+        .then((result) => result?.channels ?? []);
     },
 
-    async fetchMessages(params): Promise<FetchedMessage[]> {
-      const result = await rpcClient.call<{ messages: FetchedMessage[]; channelId: string }>(
-        "message.fetch",
-        params,
-      );
-      return result?.messages ?? [];
+    fetchMessages(params): Promise<FetchedMessage[]> {
+      return rpcClient
+        .call<{ messages: FetchedMessage[]; channelId: string }>("message.fetch", params)
+        .then((result) => result?.messages ?? []);
     },
 
-    async listSessions(params): Promise<SessionListEntry[]> {
-      const result = await rpcClient.call<{ sessions: SessionListEntry[] }>(
-        "session.list",
-        params,
-      );
-      return result?.sessions ?? [];
+    listSessions(params): Promise<SessionListEntry[]> {
+      return rpcClient
+        .call<{ sessions: SessionListEntry[] }>("session.list", params)
+        .then((result) => result?.sessions ?? []);
     },
 
-    async loadSessionHistory(params): Promise<SessionHistoryMessage[]> {
-      const result = await rpcClient.call<{ messages: SessionHistoryMessage[]; total: number }>(
-        "session.history",
-        params,
-      );
-      return result?.messages ?? [];
+    loadSessionHistory(params): Promise<SessionHistoryMessage[]> {
+      return rpcClient
+        .call<{ messages: SessionHistoryMessage[]; total: number }>("session.history", params)
+        .then((result) => result?.messages ?? []);
     },
 
     async sendMessage(params): Promise<void> {
