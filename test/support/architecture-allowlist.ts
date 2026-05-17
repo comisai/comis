@@ -170,12 +170,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // Web view + component decomposition (26 files)
   // ============================================================================
   {
-    file: "packages/web/src/views/setup-wizard.ts",
-    lines: 1887,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
-  },
-  {
     file: "packages/web/src/views/skills.ts",
     lines: 1854,
     reason: "Lit web view; decomposed via <view>-controller.ts extraction",
