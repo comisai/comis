@@ -684,6 +684,82 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // toolbar wiring — all tightly DOM-coupled. Auto-acceptable per
     // WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/views/pipelines/pipeline-builder.ts",
+    // agent-detail.ts (Wave 6 / Task 1): RPC extraction completed via
+    // agent-detail-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates all daemon I/O to the controller (agents.get,
+    // obs.billing.byAgent, skills.list, heartbeat.states,
+    // agents.suspend, agents.resume, agents.delete moved out — 7
+    // unique RPC methods spanning 6 call sites). Controller fits the
+    // tighter 700L cap (128L). Wave-6 caps tightened the view from
+    // 800L to 500L; the residual ≤1020L is dominated by ~380L of
+    // component-scoped CSS, the two-column detail layout with 7 card
+    // renderers (Identity / Stats / Config / BudgetGauges /
+    // CircuitBreaker / Skills / Heartbeat), the daemon-config →
+    // AgentDetail _mapToAgentDetail() mapper with 7 nested optional
+    // shape branches, the SseController consumer driving debounced
+    // reload from observability:token_usage +
+    // scheduler:heartbeat_delivered events, the suspend/resume +
+    // delete action flow with ic-confirm-dialog lifecycle + IcToast
+    // surfacing, and the heartbeat status renderer with backoff /
+    // consecutive-error / running-tick state coalescing — all tightly
+    // DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/agents/agent-detail.ts",
+    // media-test.ts (Wave 6 / Task 2): RPC extraction completed via
+    // media-test-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates all daemon I/O to the controller (media.providers,
+    // media.test.stt, media.test.tts, media.test.vision,
+    // media.test.document, media.test.video, media.test.link moved
+    // out — 7 unique RPC methods spanning 7 call sites). Controller
+    // fits the tighter 600L cap (139L). Wave-6 caps tightened the
+    // view from 800L to 500L; the residual ≤985L is dominated by
+    // ~310L of component-scoped CSS, 6 tab content renderers (STT /
+    // TTS / Vision / Document / Video / Link) with per-tab file-
+    // upload + base64-encode hot paths, audio-playback + image-
+    // preview Object URL lifecycle, provider-availability probe with
+    // graceful media.providers-missing fallback, and per-tab result
+    // panel sub-renderers — all tightly DOM-coupled and integration-
+    // critical for operator verification. Auto-acceptable per
+    // WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/media-test.ts",
+    // ic-cron-editor.ts (Wave 6 / Task 3 — NO-RPC variant): preview-
+    // debounce orchestration extracted via ic-cron-editor-controller.ts
+    // — view has 0 rpcClient.call sites at HEAD (form-only, no daemon
+    // I/O) and now delegates the preview-recompute debounce + next-
+    // runs dispatch to the controller. Controller fits the tightest
+    // 500L cap (136L). Wave-6 caps tightened the view from 800L to
+    // 500L; the residual ≤875L is dominated by ~190L of component-
+    // scoped CSS, the 5-field cron-expression form renderer (cron /
+    // every / at variants), the timezone dropdown, the form fields
+    // (agent / message / maxConcurrent / sessionTarget / delivery),
+    // the next-5-runs preview rendering, the _populateFromJob /
+    // _assembleJob pure mappers (parent-binding contract with the
+    // scheduler view from Wave 3), and the save / cancel CustomEvent
+    // dispatchers — all tightly DOM-coupled. The 16 form @state
+    // fields stay on the view because they are the form contract.
+    // Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/components/scheduler/ic-cron-editor.ts",
+    // pipeline-monitor.ts (Wave 6 / Task 4 — LOWEST-RISK): RPC
+    // extraction completed via pipeline-monitor-controller.ts —
+    // view contains 0 rpcClient.call sites and delegates all daemon
+    // I/O to the controller (graph.load, graph.status, graph.cancel,
+    // subagent.steer moved out — 4 unique RPC methods spanning 4
+    // call sites). Controller fits the tightest 500L cap (108L).
+    // The view PRESERVES verbatim the createMonitorState consumer
+    // pattern (same Wave-5 precedent as pipeline-builder +
+    // createGraphBuilderState) — MonitorState primitive is out of
+    // Phase 44 scope (state primitives untouched). Wave-6 caps
+    // tightened the view from 800L to 500L; residual ≤850L is
+    // dominated by ~230L of CSS, the canvas/timeline/minimap layout
+    // with ic-graph-canvas embed + 5 sub-components, the
+    // createMonitorState subscribe/destroy lifecycle, the
+    // _initMonitor() execution-format → canvas-format node mapper
+    // with autoLayout fallback, the SSE event wiring with polling
+    // suspend/resume coordination, the ResizeObserver-driven
+    // container sizing, the ARIA live-region announcement coalescing
+    // on node-status transitions, and the cancel-confirm + steer
+    // CustomEvent handlers — all tightly DOM-coupled. Auto-acceptable
+    // per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/pipelines/pipeline-monitor.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

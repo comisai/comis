@@ -29,6 +29,10 @@ import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/nav/ic-breadcrumb.js";
 import type { BreadcrumbItem } from "../../components/nav/ic-breadcrumb.js";
 import { systemClearInterval, systemSetInterval, systemSetTimeout } from "@comis/core";
+import {
+  createPipelineMonitorController,
+  type PipelineMonitorController,
+} from "./pipeline-monitor-controller.js";
 import "../../components/graph/ic-graph-canvas.js";
 import "../../components/monitor/ic-monitor-status-bar.js";
 import "../../components/monitor/ic-node-detail-panel.js";
@@ -36,39 +40,6 @@ import "../../components/monitor/ic-execution-timeline.js";
 import "../../components/graph/ic-graph-minimap.js";
 import "../../components/feedback/ic-toast.js";
 import "../../components/feedback/ic-confirm-dialog.js";
-
-// ---------------------------------------------------------------------------
-// GraphStatusResponse shape (from graph.status RPC)
-// ---------------------------------------------------------------------------
-
-interface GraphStatusResponse {
-  readonly graphId: string;
-  readonly status: "running" | "completed" | "failed" | "cancelled";
-  readonly isTerminal: boolean;
-  readonly executionOrder: string[];
-  readonly nodes: Record<
-    string,
-    {
-      readonly status: string;
-      readonly runId?: string;
-      readonly output?: string;
-      readonly error?: string;
-      readonly startedAt?: number;
-      readonly completedAt?: number;
-      readonly durationMs?: number;
-      readonly retryAttempt?: number;
-      readonly retriesRemaining?: number;
-    }
-  >;
-  readonly stats: {
-    readonly total: number;
-    readonly completed: number;
-    readonly failed: number;
-    readonly skipped: number;
-    readonly running: number;
-    readonly pending: number;
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -307,12 +278,27 @@ export class IcPipelineMonitor extends LitElement {
   private _containerHeight = 600;
   private _resizeObserver: ResizeObserver | null = null;
 
+  /** Controller owns RPC orchestration (thin façade — view keeps @state +
+   *  render + createMonitorState consumer pattern verbatim from Wave 5's
+   *  pipeline-builder precedent). */
+  private _controller: PipelineMonitorController | null = null;
+
+  /** Lazily instantiate controller; matches the dashboard.ts Wave-4 pattern. */
+  private _ensureController(): PipelineMonitorController | null {
+    if (!this._controller && this.rpcClient) {
+      this._controller = createPipelineMonitorController(this, this.rpcClient);
+    }
+    return this._controller;
+  }
+
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
 
   override connectedCallback(): void {
     super.connectedCallback();
+
+    this._ensureController();
 
     // Create monitor state
     this._monitorState = createMonitorState();
@@ -328,6 +314,12 @@ export class IcPipelineMonitor extends LitElement {
 
     // Resolve positions and start polling
     this._initMonitor();
+  }
+
+  override updated(changed: Map<string, unknown>): void {
+    if (changed.has("rpcClient")) {
+      this._ensureController();
+    }
   }
 
   override firstUpdated(): void {
@@ -363,18 +355,15 @@ export class IcPipelineMonitor extends LitElement {
   // ---------------------------------------------------------------------------
 
   private async _initMonitor(): Promise<void> {
-    if (!this.rpcClient || !this.graphId || !this._monitorState) return;
+    const controller = this._ensureController();
+    if (!controller || !this.rpcClient || !this.graphId || !this._monitorState) return;
 
     let nodeDefinitions: PipelineNode[] = [];
     let edges: PipelineEdge[] = [];
 
     // Try loading saved graph from server to get nodes with positions
     try {
-      const saved = (await this.rpcClient.call("graph.load", { id: this.graphId })) as {
-        nodes: Array<Record<string, unknown>>;
-        edges?: PipelineEdge[];
-        settings?: Record<string, unknown>;
-      };
+      const saved = await controller.loadGraph(this.graphId);
 
       if (saved?.nodes?.length) {
         // Transform server nodes to canvas format (handle nodeId->id, agent->agentId)
@@ -428,10 +417,7 @@ export class IcPipelineMonitor extends LitElement {
     // This handles graphs executed via CLI/API without ever being saved through the GUI.
     if (nodeDefinitions.length === 0) {
       try {
-        const response = await this.rpcClient.call<GraphStatusResponse>(
-          "graph.status",
-          { graphId: this.graphId },
-        );
+        const response = await controller.getGraphStatus(this.graphId);
 
         // Build minimal PipelineNode stubs
         const stubNodes: PipelineNode[] = response.executionOrder.map((nodeId) => ({
@@ -666,10 +652,11 @@ export class IcPipelineMonitor extends LitElement {
 
   private async _onCancelConfirm(): Promise<void> {
     this._showCancelConfirm = false;
-    if (!this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!controller) return;
 
     try {
-      await this.rpcClient.call("graph.cancel", { graphId: this.graphId });
+      await controller.cancelGraph(this.graphId);
       IcToast.show("Pipeline cancelled", "warning");
     } catch (err: unknown) {
       IcToast.show(
@@ -680,10 +667,11 @@ export class IcPipelineMonitor extends LitElement {
   }
 
   private async _onSteer(e: CustomEvent<{ runId: string; message: string }>): Promise<void> {
-    if (!this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!controller) return;
 
     try {
-      await this.rpcClient.call("subagent.steer", {
+      await controller.steerSubagent({
         target: e.detail.runId,
         message: e.detail.message,
       });
