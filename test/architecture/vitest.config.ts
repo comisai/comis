@@ -24,7 +24,11 @@ export default defineConfig({
     name: "architecture",
     include: ["**/*.test.ts"],
     pool: "threads",
-    testTimeout: 30_000,
+    // Architecture tests scan the whole packages/*/src tree, parse ASTs, and
+    // invoke madge across 1200+ files. 30s was borderline on warm runners and
+    // tipped over on slow ones (globals/no-cycles/log-payload-checker all
+    // exceeded it in CI run 26003385575). Raise to 120s — generous but bounded.
+    testTimeout: 120_000,
     passWithNoTests: true,
   },
 });
