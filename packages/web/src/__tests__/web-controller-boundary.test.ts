@@ -150,7 +150,7 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     //   observe-view.ts:    drained — RPC extracted via observe-view-controller.ts (Task 4).
     //   models.ts:          drained — RPC extracted via models-controller.ts (Task 5).
     // Wave 4
-    "packages/web/src/components/graph/ic-node-editor.ts",          //  4 rpcClient.call (verified HEAD)
+    //   ic-node-editor.ts: drained — RPC extracted via ic-node-editor-controller.ts (Task 1).
     "packages/web/src/views/agents/workspace-manager.ts",           // 12 rpcClient.call (verified HEAD)
     "packages/web/src/views/channel-detail.ts",                     // 10 rpcClient.call (verified HEAD)
     // ic-graph-canvas.ts: 0 rpcClient.call (verified HEAD) — EXCLUDED (regex never matches).

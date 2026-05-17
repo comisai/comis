@@ -219,9 +219,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/components/graph/ic-node-editor.ts",
-    lines: 1392,
-    reason: "Graph component; decomposed via <component>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1394,
+    reason: "Graph component; RPC orchestration extracted via ic-node-editor-controller.ts (agents.list, agents.get, models.list, config.read[security] moved out). Residual ≤1400L is dominated by ~335L of component-scoped CSS, 10 section render helpers (_renderHeader/_renderTask/_renderAgent/_renderDependencies/_renderConstraints/_renderRetries/_renderContextMode/_renderNodeType/_renderModelOverride/_renderActions), and 7 per-node-type config form renderers (_renderAgentTypeConfig/_renderDebateTypeConfig/_renderVoteTypeConfig/_renderRefineTypeConfig/_renderCollaborateTypeConfig/_renderApprovalGateTypeConfig/_renderMapReduceTypeConfig) plus _handleDependencyChange cycle-detection flow with timed error clearing — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/agents/workspace-manager.ts",

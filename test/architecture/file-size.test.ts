@@ -506,6 +506,22 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // flow — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09
     // (§10.5 fallback).
     "packages/web/src/views/models.ts",
+    // ic-node-editor.ts (Wave 4 / Task 1): RPC extraction completed via
+    // ic-node-editor-controller.ts — view contains 0 rpcClient.call
+    // sites and delegates daemon I/O to the controller (agents.list,
+    // agents.get, models.list, config.read[security] moved out). The
+    // remaining ≤1400L is dominated by ~335L of component-scoped CSS,
+    // 10 section render helpers (_renderHeader/_renderTask/_renderAgent/
+    // _renderDependencies/_renderConstraints/_renderRetries/
+    // _renderContextMode/_renderNodeType/_renderModelOverride/
+    // _renderActions), and 7 per-node-type config form renderers
+    // (_renderAgentTypeConfig/_renderDebateTypeConfig/_renderVoteTypeConfig/
+    // _renderRefineTypeConfig/_renderCollaborateTypeConfig/
+    // _renderApprovalGateTypeConfig/_renderMapReduceTypeConfig) plus
+    // the _handleDependencyChange cycle-detection flow with timed error
+    // clearing — all tightly DOM-coupled. Auto-acceptable per
+    // WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/components/graph/ic-node-editor.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
