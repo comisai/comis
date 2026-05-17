@@ -462,10 +462,20 @@ export class IcAgentList extends LitElement {
   /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
   private _controller: AgentListController | null = null;
 
-  /** Lazily instantiate controller; matches the dashboard.ts Wave-4 pattern so
-   *  test code that bypasses Lit's reactive cycle still constructs the controller. */
+  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
+   *  Wave-4 pattern so test code that bypasses Lit's reactive cycle still
+   *  constructs the controller. Detects rpcClient swaps and recreates. */
   private _ensureController(): AgentListController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
     if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
       this._controller = createAgentListController(this, this.rpcClient);
     }
     return this._controller;

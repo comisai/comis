@@ -254,10 +254,20 @@ export class IcSecurityView extends LitElement {
    *  zero direct daemon RPC sites. */
   private _controller: SecurityController | null = null;
 
-  /** Lazily instantiate controller; matches the Wave-6 _ensureController
-   *  pattern (pipeline-monitor / agent-detail / media-test / ic-cron-editor). */
+  /** Captured rpcClient reference -- recreate the controller if rpcClient
+   *  changes (logout→login while mounted, test-time reassignment). */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) controller; matches the Wave-6
+   *  _ensureController pattern, with rpcClient-swap detection. */
   private _ensureController(): SecurityController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
     if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
       this._controller = createSecurityController(this, this.rpcClient);
     }
     return this._controller;

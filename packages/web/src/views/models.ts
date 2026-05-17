@@ -518,11 +518,21 @@ export class IcModelsView extends LitElement {
   /** Controller owns RPC orchestration (thin façade pattern — view keeps @state + SSE). */
   private _controller: ModelsController | null = null;
 
-  /** Lazily instantiate controller; mirrors `dashboard.ts:_ensureController()` so call
-   *  sites can use `const ctrl = this._ensureController(); if (!ctrl) return;` instead
-   *  of unsafe `this._controller!` non-null assertions. */
+  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) controller; mirrors `dashboard.ts:_ensureController()`
+   *  so call sites can use `const ctrl = this._ensureController(); if (!ctrl) return;`
+   *  instead of unsafe `this._controller!` non-null assertions. Detects rpcClient
+   *  swaps and recreates so the controller never holds a stale client. */
   private _ensureController(): ModelsController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
     if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
       this._controller = createModelsController(this, this.rpcClient);
     }
     return this._controller;

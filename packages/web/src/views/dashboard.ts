@@ -473,10 +473,24 @@ export class IcDashboard extends LitElement {
   /** Controller owns RPC orchestration (thin façade — view keeps @state + render + SSE). */
   private _controller: DashboardController | null = null;
 
-  /** Lazily instantiate controller; allows test-time `priv(el).rpcClient = mock` direct
-   *  assignment (bypassing Lit's reactive update cycle) to still construct the controller. */
+  /** Captured rpcClient reference -- if `this.rpcClient` is reassigned to a
+   *  different instance (logout→login while mounted, hot-reload, test-time
+   *  reassignment), the helper recreates the controller so it never calls
+   *  the stale captured client. */
+  private _capturedRpcClient: RpcClient | null = null;
+
+  /** Lazily instantiate (and rebind) the controller. Allows test-time
+   *  `priv(el).rpcClient = mock` direct assignment (bypassing Lit's reactive
+   *  update cycle) to still construct the controller, AND rebinds when the
+   *  rpcClient reference changes. */
   private _ensureController(): DashboardController | null {
+    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
+      this.removeController(this._controller);
+      this._controller = null;
+      this._capturedRpcClient = null;
+    }
     if (!this._controller && this.rpcClient) {
+      this._capturedRpcClient = this.rpcClient;
       this._controller = createDashboardController(this, this.rpcClient);
     }
     return this._controller;
