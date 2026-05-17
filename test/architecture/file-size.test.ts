@@ -506,6 +506,87 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // flow — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09
     // (§10.5 fallback).
     "packages/web/src/views/models.ts",
+    // ic-node-editor.ts (Wave 4 / Task 1): RPC extraction completed via
+    // ic-node-editor-controller.ts — view contains 0 rpcClient.call
+    // sites and delegates daemon I/O to the controller (agents.list,
+    // agents.get, models.list, config.read[security] moved out). The
+    // remaining ≤1400L is dominated by ~335L of component-scoped CSS,
+    // 10 section render helpers (_renderHeader/_renderTask/_renderAgent/
+    // _renderDependencies/_renderConstraints/_renderRetries/
+    // _renderContextMode/_renderNodeType/_renderModelOverride/
+    // _renderActions), and 7 per-node-type config form renderers
+    // (_renderAgentTypeConfig/_renderDebateTypeConfig/_renderVoteTypeConfig/
+    // _renderRefineTypeConfig/_renderCollaborateTypeConfig/
+    // _renderApprovalGateTypeConfig/_renderMapReduceTypeConfig) plus
+    // the _handleDependencyChange cycle-detection flow with timed error
+    // clearing — all tightly DOM-coupled. Auto-acceptable per
+    // WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/components/graph/ic-node-editor.ts",
+    // workspace-manager.ts (Wave 4 / Task 2): RPC extraction completed
+    // via workspace-manager-controller.ts — view contains 0
+    // rpcClient.call sites and delegates daemon I/O to the controller
+    // (workspace.status/readFile/listDir/writeFile/resetFile/deleteFile/
+    // init + workspace.git.status/log/diff/restore/commit moved out).
+    // The remaining ≤1340L is dominated by ~440L of CSS, the two-panel
+    // layout (file tree sidebar + editor/dir panel + git tab), 6
+    // confirm-dialog flows (delete/reset/restore + commit-on-empty),
+    // tab-switching state, dirty-tracking on the textarea, the diff
+    // viewer with status badge rendering, and the WORKSPACE_SUBDIRS-
+    // driven tree section rendering — all tightly DOM-coupled. Auto-
+    // acceptable per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/agents/workspace-manager.ts",
+    // channel-detail.ts (Wave 4 / Task 3): RPC extraction completed via
+    // channel-detail-controller.ts — view contains 0 rpcClient.call
+    // sites and delegates daemon I/O to the controller (channels.get/
+    // restart/disable/enable/capabilities, obs.delivery.recent,
+    // obs.channels.get, delivery.queue.status, config.read[channels],
+    // config.patch moved out). The remaining ≤1245L is dominated by
+    // ~450L of CSS, the PLATFORM_FIELDS map for 8 platforms (telegram/
+    // discord/slack/whatsapp/imessage/signal/irc/line/email) with per-
+    // platform field defs, 5-tab dashboard renderers (overview/
+    // connection/media-processing/delivery/capabilities), activity
+    // sparkline derivation from delivery traces, MEDIA_PROCESSING_FIELDS
+    // toggle list with optimistic-update rollback, SSE-driven debounced
+    // reload, and platform-specific config form renderers — all
+    // tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
+    // fallback).
+    "packages/web/src/views/channel-detail.ts",
+    // ic-graph-canvas.ts (Wave 4 / Task 4 SPECIAL CASE — OQ-4 Tier 3):
+    // 0 rpcClient.call sites (boundary regex never matched). The 11
+    // @property decorators (viewport/interactionMode/nodes/edges/
+    // selectedNodeIds/selectedEdgeId/snapToGrid/highlightNodeIds/
+    // readOnly/nodeStatuses/edgeStatuses) are the parent-binding
+    // contract with pipeline-builder.ts:67-78 and MUST stay on view.
+    // The interaction state (_mode + 12 _drag*/_pan*/_connect* fields)
+    // is tightly coupled to ~280L of pointer-event handlers that
+    // perform DOM-direct mutations via _svgTransformGroup.setAttribute
+    // / _container.setAttribute / renderRoot.querySelector at 60fps
+    // during the drag/pan/zoom hot path. Tier 1 controller extraction
+    // can only save ~30L of field declarations while keeping the 280L
+    // of pointer handler code in place (DOM refs cannot move). Tier 2
+    // helper-module extraction faces the same DOM coupling — pure-
+    // function candidates (zoomAtPoint, screenToGraph) already live in
+    // utils/viewport-transform.ts; cycle detection in utils/cycle-
+    // detection.ts. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback)
+    // — web view; internal velocity only.
+    "packages/web/src/components/graph/ic-graph-canvas.ts",
+    // dashboard.ts (Wave 4 / Task 5): RPC extraction completed via
+    // dashboard-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates daemon I/O to the controller (obs.billing.total,
+    // obs.billing.usage24h, obs.billing.byAgent moved out). Higher-
+    // level data flows via apiClient (getAgents/getChannels/
+    // getActivity) — orthogonal to the rpcClient.call boundary regex.
+    // SseController + EventDispatcher imports preserved verbatim (out
+    // of Phase 44 scope). The remaining ≤1170L is dominated by ~480L
+    // of CSS, the KPI grid + sparkline + per-agent billing card
+    // renderers, parallel REST fan-out via apiClient, auto-refresh
+    // interval lifecycle, SSE-driven billing_snapshot/token_usage
+    // event handlers, RPC connection-status tracking with
+    // onStatusChange unsub, system-health pipeline summary card, and
+    // the NAV_TARGETS-driven navigation keyboard handlers — all
+    // tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
+    // fallback).
+    "packages/web/src/views/dashboard.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
