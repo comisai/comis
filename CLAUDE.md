@@ -14,6 +14,7 @@ Comis is a security-first AI agent platform connecting agents to chat channels (
 pnpm install                    # native deps: better-sqlite3, sharp
 pnpm build                      # all packages (tsc + project references)
 pnpm test                       # unit tests (Vitest workspace)
+pnpm test --coverage            # @vitest/coverage-v8; floor = lines 90 / branches 85 / functions 90 on packages/*/src/**/*.ts
 pnpm lint:security              # security ESLint rules
 ```
 
