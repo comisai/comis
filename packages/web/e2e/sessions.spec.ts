@@ -54,6 +54,37 @@ const MOCK_SESSION_DETAIL = {
 };
 
 /**
+ * The api-client routes session methods through RPC when an rpcCall is wired
+ * (which the live app does after WebSocket connects). Mirror MOCK_SESSIONS
+ * into the session.list/history shape the RPC handlers expect.
+ */
+const SESSION_RPC_HANDLERS: Record<string, unknown> = {
+  ...DEFAULT_RPC_HANDLERS,
+  "session.list": {
+    sessions: MOCK_SESSIONS.map((s) => ({
+      sessionKey: s.key,
+      agentId: s.agentId,
+      kind: s.channelType,
+      messageCount: s.messageCount,
+      totalTokens: s.totalTokens,
+      inputTokens: s.inputTokens,
+      outputTokens: s.outputTokens,
+      toolCalls: s.toolCalls,
+      compactions: s.compactions,
+      resetCount: s.resetCount,
+      createdAt: s.createdAt,
+      updatedAt: s.lastActiveAt,
+    })),
+    total: MOCK_SESSIONS.length,
+  },
+  "session.history": MOCK_SESSION_DETAIL,
+  "session.reset": { reset: 1 },
+  "session.compact": { success: true },
+  "session.delete": { success: true },
+  "session.export": '{"role":"user","content":"Hello"}',
+};
+
+/**
  * Set up REST route mocks for session endpoints.
  * The session views use apiClient (REST) since app.ts does not pass rpcCall.
  */
@@ -157,7 +188,7 @@ async function loginForDetail(page: Page): Promise<void> {
 test.describe("Session list view", () => {
   test.beforeEach(async ({ page }) => {
     await mockApiRoutes(page);
-    await mockRpcRoutes(page, DEFAULT_RPC_HANDLERS);
+    await mockRpcRoutes(page, SESSION_RPC_HANDLERS);
     await mockSessionRoutes(page);
     await page.goto("/");
     await login(page);
@@ -172,14 +203,15 @@ test.describe("Session list view", () => {
     // Verify page title (scoped to the h1 heading to avoid sidebar collision)
     await expect(sessionView.locator(".page-title")).toHaveText("Sessions");
 
-    // Verify first session data -- scope to the ic-session-list table area
+    // Verify first session data -- scope to the ic-session-list table area.
     const sessionList = sessionView.locator("ic-session-list");
     await expect(sessionList.getByText("agent-default")).toBeVisible();
-    await expect(sessionList.getByText("telegram")).toBeVisible();
+    // Channel name renders inside an ic-tag chip; scope to that.
+    await expect(sessionList.locator("ic-tag").filter({ hasText: "telegram" }).first()).toBeVisible();
 
     // Verify second session data (use exact cell match to avoid key truncation collision)
     await expect(sessionList.getByRole("cell", { name: "agent-coding", exact: true })).toBeVisible();
-    await expect(sessionList.getByText("discord")).toBeVisible();
+    await expect(sessionList.locator("ic-tag").filter({ hasText: "discord" }).first()).toBeVisible();
   });
 
   test("session list shows message count", async ({ page }) => {
@@ -204,12 +236,12 @@ test.describe("Session list view", () => {
     // Wait for debounce (300ms default) + re-render
     await page.waitForTimeout(500);
 
-    // Verify telegram session is still visible
+    // Verify telegram session is still visible (channel tag in row).
     const sessionList = sessionView.locator("ic-session-list");
-    await expect(sessionList.getByText("telegram")).toBeVisible();
+    await expect(sessionList.locator("ic-tag").filter({ hasText: "telegram" }).first()).toBeVisible();
 
-    // Verify discord session is no longer visible
-    await expect(sessionList.getByText("discord")).not.toBeVisible();
+    // Verify discord session is no longer visible.
+    await expect(sessionList.locator("ic-tag").filter({ hasText: "discord" })).toHaveCount(0);
   });
 
   test("clicking session navigates to detail", async ({ page }) => {
@@ -228,7 +260,7 @@ test.describe("Session list view", () => {
 test.describe("Session detail view", () => {
   test.beforeEach(async ({ page }) => {
     await mockApiRoutes(page);
-    await mockRpcRoutes(page, DEFAULT_RPC_HANDLERS);
+    await mockRpcRoutes(page, SESSION_RPC_HANDLERS);
     await mockSessionRoutes(page);
     await page.goto("/#/sessions/agent-default:telegram:12345");
     await loginForDetail(page);
@@ -244,9 +276,10 @@ test.describe("Session detail view", () => {
     // Verify assistant message is visible
     await expect(detail.getByText("Hi there! How can I help?")).toBeVisible();
 
-    // Verify messages have role indicators via data-role attributes
-    await expect(detail.locator("[data-role='user']")).toBeVisible();
-    await expect(detail.locator("[data-role='assistant']")).toBeVisible();
+    // Messages render via ic-chat-message; the role is reflected as
+    // role="article" + aria-label="${role} message".
+    await expect(detail.getByRole("article", { name: "user message" })).toBeVisible();
+    await expect(detail.getByRole("article", { name: "assistant message" })).toBeVisible();
   });
 
   test("session detail shows session metadata", async ({ page }) => {
