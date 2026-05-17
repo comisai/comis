@@ -302,12 +302,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "deferred",
   },
   {
-    file: "packages/web/src/app.ts",
-    lines: 813,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
-  },
-  {
     file: "packages/web/src/views/security.ts",
     lines: 808,
     reason: "Lit web view; decomposed via <view>-controller.ts extraction",
