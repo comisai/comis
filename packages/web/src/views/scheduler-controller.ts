@@ -128,10 +128,13 @@ export function createSchedulerController(
       agentId: string,
       jobInput: Record<string, unknown>,
     ): Promise<void> {
+      // Spread jobInput FIRST so the positional jobId / _agentId arguments
+      // win over any same-named keys an upstream caller may have included
+      // in jobInput (defensive sanitization -- matches addJob's order).
       await rpcClient.call("cron.update", {
+        ...jobInput,
         jobId,
         _agentId: agentId || undefined,
-        ...jobInput,
       });
     },
 
