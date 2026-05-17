@@ -8,6 +8,11 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import type { SecurityEvent, InputSecurityGuardSummary, ProviderHealthCard, FailoverEvent, AuthCooldownEntry } from "../api/types/security-types.js";
+import {
+  createSecurityController,
+  type SecurityController,
+  type SecurityConfig,
+} from "./security-controller.js";
 
 // Side-effect imports for sub-components
 import "../components/nav/ic-tabs.js";
@@ -48,40 +53,6 @@ const TABS = [
   { id: "pending", label: "Pending Approvals" },
   { id: "health", label: "Provider Health" },
 ];
-
-/** Security config section shape (matches SecurityConfigSchema). */
-interface SecurityConfig {
-  logRedaction?: boolean;
-  auditLog?: boolean;
-  permission?: {
-    enableNodePermissions?: boolean;
-    allowedFsPaths?: string[];
-    allowedNetHosts?: string[];
-  };
-  actionConfirmation?: {
-    requireForDestructive?: boolean;
-    requireForSensitive?: boolean;
-    autoApprove?: string[];
-  };
-  agentToAgent?: {
-    enabled?: boolean;
-    maxPingPongTurns?: number;
-    allowAgents?: string[];
-    subAgentRetentionMs?: number;
-    waitTimeoutMs?: number;
-    subAgentMaxSteps?: number;
-    subAgentToolGroups?: string[];
-    subAgentMcpTools?: string;
-  };
-  secrets?: {
-    enabled?: boolean;
-    dbPath?: string;
-  };
-  approvalRules?: {
-    defaultMode: string;
-    timeoutMs: number;
-  };
-}
 
 /**
  * Security management coordinator view with 7 tabs.
@@ -278,6 +249,20 @@ export class IcSecurityView extends LitElement {
 
   private _healthReloadDebounce: ReturnType<typeof setTimeout> | null = null;
 
+  /** RPC façade controller (Phase 44 / WEB-DECOMP-01 / Wave 7). Wraps
+   *  config.read, config.patch, agent.cacheStats so the view contains
+   *  zero direct daemon RPC sites. */
+  private _controller: SecurityController | null = null;
+
+  /** Lazily instantiate controller; matches the Wave-6 _ensureController
+   *  pattern (pipeline-monitor / agent-detail / media-test / ic-cron-editor). */
+  private _ensureController(): SecurityController | null {
+    if (!this._controller && this.rpcClient) {
+      this._controller = createSecurityController(this, this.rpcClient);
+    }
+    return this._controller;
+  }
+
   private _scheduleHealthReload(delayMs = 300): void {
     if (this._healthReloadDebounce !== null) systemClearTimeout(this._healthReloadDebounce);
     this._healthReloadDebounce = systemSetTimeout(() => {
@@ -288,6 +273,7 @@ export class IcSecurityView extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this._ensureController();
     this._initSse();
   }
 
@@ -301,6 +287,7 @@ export class IcSecurityView extends LitElement {
 
   override updated(changed: Map<string, unknown>): void {
     if (changed.has("rpcClient") && this.rpcClient) {
+      this._ensureController();
       this._loadData();
     }
     if (changed.has("eventDispatcher") && this.eventDispatcher && !this._sse) {
@@ -512,12 +499,10 @@ export class IcSecurityView extends LitElement {
   // --- Data loading ---
 
   private async _loadProviderHealth(): Promise<void> {
-    if (!this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!controller) return;
     try {
-      const result = await this.rpcClient.call<{
-        providers: Array<{ provider: string; model: string; callCount: number; totalCost: number; totalCacheSaved: number; cacheHitRate: number }>;
-        totalCacheSaved: number;
-      }>("agent.cacheStats");
+      const result = await controller.getProviderCacheStats();
 
       const now = systemNowMs();
       const fiveMinAgo = now - 5 * 60 * 1000;
@@ -561,16 +546,14 @@ export class IcSecurityView extends LitElement {
   }
 
   private async _loadData(): Promise<void> {
-    if (!this.rpcClient) return;
+    const controller = this._ensureController();
+    if (!controller) return;
 
     this._loadState = "loading";
     this._error = "";
 
     try {
-      const configResult = await this.rpcClient.call<{
-        config: { security?: SecurityConfig };
-        sections: string[];
-      }>("config.read");
+      const configResult = await controller.readConfig();
 
       this._securityConfig = configResult.config.security ?? {};
       this._loadState = "loaded";
@@ -583,12 +566,13 @@ export class IcSecurityView extends LitElement {
   }
 
   private async _patchConfig(path: string, value: unknown): Promise<boolean> {
-    if (!this.rpcClient) return false;
+    const controller = this._ensureController();
+    if (!controller) return false;
     try {
       const dotIdx = path.indexOf(".");
       const section = dotIdx > 0 ? path.slice(0, dotIdx) : path;
       const key = dotIdx > 0 ? path.slice(dotIdx + 1) : undefined;
-      await this.rpcClient.call("config.patch", { section, key, value });
+      await controller.patchConfig(section, key, value);
       IcToast.show("Configuration updated", "success");
       return true;
     } catch (err) {

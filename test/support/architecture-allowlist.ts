@@ -302,16 +302,10 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "deferred",
   },
   {
-    file: "packages/web/src/app.ts",
-    lines: 813,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
-  },
-  {
     file: "packages/web/src/views/security.ts",
-    lines: 808,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 793,
+    reason: "Lit web view; RPC extraction completed via security-controller.ts — view contains 0 rpcClient.call sites and delegates all daemon I/O to the controller (config.read, config.patch, agent.cacheStats moved out — 3 unique RPC methods spanning 3 call sites). Controller fits the tightest 500L cap (138L). Wave-7 caps tightened the view from 800L to 500L; the residual ≤795L is dominated by ~160L of component-scoped CSS, the 7-tab routing layout, the SseController consumer wiring 14 SSE event handlers (audit:event / approval:requested+resolved / security:injection_detected / security:injection_rate_exceeded / security:memory_tainted / security:warn / secret:accessed+modified / provider:degraded+recovered / model:auth_cooldown / model:fallback_attempt+exhausted / observability:token_usage) with per-event SecurityEvent classification + bounded retention, the secrets-tab toggle + db-path renderer with optimistic-update patchConfig flow, the provider-health tab renderer with cards + failover log + auth cooldowns timer math, the debounce timer for provider-health reload (systemSetTimeout / systemClearTimeout) tracking ResizeObserver-style coalescing, and the 3 sub-component shadow-DOM accessors (_eventFeed / _approvalQueue) — all tightly DOM-coupled and intersecting with 14 SSE event listeners' @state side effects. The existing security.test.ts uses priv() to access _securityConfig + _activeTab + _loadState directly; preserving these as @state on the view (vs. moving to controller snapshot) keeps the existing 19 view tests intact. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
 
   // ============================================================================

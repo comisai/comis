@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { createApiClient, type ApiClient } from "./api/api-client.js";
-import { createRouter, type Router, type RouteMatch } from "./router.js";
-import { createRpcClient, type RpcClient } from "./api/rpc-client.js";
-import { createGlobalState, requireGlobalState, type GlobalState } from "./state/global-state.js";
-import { createEventDispatcher, type EventDispatcher } from "./state/event-dispatcher.js";
-import { PollingController } from "./state/polling-controller.js";
+import type { ApiClient } from "./api/api-client.js";
+import type { Router, RouteMatch } from "./router.js";
+import type { RpcClient } from "./api/rpc-client.js";
+import type { GlobalState } from "./state/global-state.js";
+import type { EventDispatcher } from "./state/event-dispatcher.js";
+import type { PollingController } from "./state/polling-controller.js";
 import type { ConnectionStatus } from "./api/types/index.js";
-import { systemClearTimeout, systemSetTimeout } from "@comis/core";
+import { createAppController, type AppController, type AppHost } from "./app-controller.js";
 // Import shell components (always needed) and dashboard (default landing view)
 import "./components/shell/ic-sidebar.js";
 import "./components/shell/ic-topbar.js";
@@ -55,24 +55,23 @@ const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
 };
 
 /**
- * Session storage key for the auth token.
- * Stored in sessionStorage so it clears on tab close.
- */
-const TOKEN_KEY = "comis_token";
-
-/**
  * Root application component for the Comis operator console.
  *
  * Handles authentication, routing, and provides the API client
  * to child views via property passing. Uses sidebar + topbar shell
  * layout with 14 navigation items and 27 parameterized routes.
  *
- * Wires RPC client, global state, and SSE event dispatcher on auth.
- * SSE events for approval:requested, approval:resolved, and system:error
- * drive sidebar badge counts via globalState updates.
+ * Phase 44 Wave 7: auth + polling + global-state + keyboard +
+ * command-palette orchestration is owned by `app-controller.ts`
+ * (createAppController). The shell retains the Lit @customElement
+ * tag registration, static styles, router host fields, the
+ * VIEW_LOADERS map, _renderAuth / _renderApp / _renderShortcutsHelp
+ * template helpers, and the render() method. The controller's
+ * `_completeInit` preserves the documented PollingController-after-
+ * rpcClient construction order (T-W7-01) verbatim.
  */
 @customElement("ic-app")
-export class IcApp extends LitElement {
+export class IcApp extends LitElement implements AppHost {
   static override styles = css`
     :host {
       display: block;
@@ -249,312 +248,125 @@ export class IcApp extends LitElement {
     }
   `;
 
-  @state() private _authenticated = false;
-  @state() private _authError = "";
-  @state() private _currentView = "ic-dashboard";
-  @state() private _currentRoute = "dashboard";
-  @state() private _routeParams: Record<string, string> = {};
-  @state() private _connectionStatus: ConnectionStatus = "disconnected";
-  @state() private _pendingApprovals = 0;
-  @state() private _errorCount = 0;
-  @state() private _agentCount = 0;
-  @state() private _channelCount = 0;
-  @state() private _sessionCount = 0;
-  @state() private _sidebarOpen = false;
-  @state() private _viewLoading = false;
-  @state() private _commandPaletteOpen = false;
-  @state() private _shortcutsHelpOpen = false;
-  @state() private _agentList: Array<{ id: string; name?: string }> = [];
-  @state() private _sessionList: Array<{ key: string; agentId: string }> = [];
+  // Auth + connection
+  @state() _authenticated = false;
+  @state() _authError = "";
+  @state() _token = "";
+  // Router host (driven by createAppController's initRouter callback)
+  @state() _currentView = "ic-dashboard";
+  @state() _currentRoute = "dashboard";
+  @state() _routeParams: Record<string, string> = {};
+  // Mirrored from globalState snapshot
+  @state() _connectionStatus: ConnectionStatus = "disconnected";
+  @state() _pendingApprovals = 0;
+  @state() _errorCount = 0;
+  @state() _agentCount = 0;
+  @state() _channelCount = 0;
+  @state() _sessionCount = 0;
+  // Shell UI flags
+  @state() _sidebarOpen = false;
+  @state() _viewLoading = false;
+  @state() _commandPaletteOpen = false;
+  @state() _shortcutsHelpOpen = false;
+  // G+letter sequence waiting flag (kept on view for app-keyboard.test.ts
+  // priv() test access; controller mutates it via host._gotoWaiting).
+  _gotoWaiting = false;
+  // Command-palette search data (controller updates from PollingController)
+  @state() _agentList: Array<{ id: string; name?: string }> = [];
+  @state() _sessionList: Array<{ key: string; agentId: string }> = [];
 
-  private _loadedViews = new Set<string>();
-  private _pendingGotoKey: ReturnType<typeof setTimeout> | null = null;
+  _loadedViews = new Set<string>();
 
-  private _apiClient: ApiClient | null = null;
-  private _router: Router | null = null;
-  private _rpcClient: RpcClient | null = null;
-  private _globalState: GlobalState | null = null;
-  private _eventDispatcher: EventDispatcher | null = null;
-  private _stateUnsubscribe: (() => void) | null = null;
-  private _approvalUnsub: (() => void) | null = null;
-  private _approvalResolvedUnsub: (() => void) | null = null;
-  private _errorUnsub: (() => void) | null = null;
-  private _pollingController: PollingController | null = null;
-  @state() private _token = "";
+  // Controller-owned resources (controller mutates these on host).
+  _apiClient: ApiClient | null = null;
+  _router: Router | null = null;
+  _rpcClient: RpcClient | null = null;
+  _globalState: GlobalState | null = null;
+  _eventDispatcher: EventDispatcher | null = null;
+  _stateUnsubscribe: (() => void) | null = null;
+  _approvalUnsub: (() => void) | null = null;
+  _approvalResolvedUnsub: (() => void) | null = null;
+  _errorUnsub: (() => void) | null = null;
+  _pollingController: PollingController | null = null;
 
-  private _boundKeyHandler = this._handleGlobalKeydown.bind(this);
-  private _gotoWaiting = false;
+  private _appController: AppController | null = null;
 
   override connectedCallback(): void {
     super.connectedCallback();
-
-    // Check for existing token
-    const savedToken = sessionStorage.getItem(TOKEN_KEY);
-    if (savedToken) {
-      this._initWithToken(savedToken);
-    }
-
-    // Global keyboard shortcut handler
-    document.addEventListener("keydown", this._boundKeyHandler);
+    // Phase 44 Wave 7: instantiate (or reuse if a test pre-instantiated
+    // via _ensureController) the app-controller. The shell retains
+    // router-host @state, render() + template helpers, VIEW_LOADERS.
+    // Manually fire hostConnected — the element is already connected and
+    // the controller needs to restore the session token + wire the global
+    // keyboard handler synchronously to match pre-extraction lifecycle.
+    this._ensureController().hostConnected();
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
-    this._cleanup();
-    document.removeEventListener("keydown", this._boundKeyHandler);
-    if (this._pendingGotoKey) {
-      systemClearTimeout(this._pendingGotoKey);
-      this._pendingGotoKey = null;
-    }
+    this._appController?.hostDisconnected();
+    this._appController = null;
   }
 
-  /** Check if a keyboard event target is an input-like element. */
-  private _isInputTarget(e: KeyboardEvent): boolean {
-    const tag = (e.target as HTMLElement)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-    if ((e.target as HTMLElement)?.isContentEditable) return true;
-    return false;
-  }
+  // ---------------------------------------------------------------------
+  // Test-facing delegate methods (existing app.test.ts uses priv() to
+  // call these directly; the bodies live in the controller).
+  //
+  // Lazy controller instantiation (`_ensureController`) lets the tests
+  // call these methods before document.body.appendChild — preserves the
+  // pre-extraction API where `priv(el)._initWithToken("…")` works
+  // synchronously on a disconnected element.
+  // ---------------------------------------------------------------------
 
-  private _handleGlobalKeydown(e: KeyboardEvent): void {
-    // Ctrl+K / Cmd+K: Toggle command palette (works even in inputs)
-    if ((e.ctrlKey || e.metaKey) && e.key === "k") {
-      e.preventDefault();
-      this._commandPaletteOpen = !this._commandPaletteOpen;
-      return;
-    }
-
-    // Escape: Close overlays
-    if (e.key === "Escape") {
-      if (this._commandPaletteOpen) {
-        this._commandPaletteOpen = false;
-        return;
-      }
-      if (this._shortcutsHelpOpen) {
-        this._shortcutsHelpOpen = false;
-        return;
-      }
-      this.dispatchEvent(new CustomEvent("close-overlay", { bubbles: true, composed: true }));
-      if (this._sidebarOpen) {
-        this._sidebarOpen = false;
-      }
-      return;
-    }
-
-    // Skip remaining shortcuts if in an input-like element
-    if (this._isInputTarget(e)) return;
-    // Skip if command palette is open (it handles its own keys)
-    if (this._commandPaletteOpen) return;
-
-    // ?: Show shortcuts help
-    if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      this._shortcutsHelpOpen = !this._shortcutsHelpOpen;
-      return;
-    }
-
-    // G+letter two-key sequences: Go to...
-    if (this._gotoWaiting) {
-      this._gotoWaiting = false;
-      if (this._pendingGotoKey) {
-        systemClearTimeout(this._pendingGotoKey);
-        this._pendingGotoKey = null;
-      }
-      switch (e.key.toLowerCase()) {
-        case "d": this._router?.navigate("dashboard"); return;
-        case "a": this._router?.navigate("agents"); return;
-        case "c": this._router?.navigate("chat"); return;
-        case "s": this._router?.navigate("sessions"); return;
-        case "o": this._router?.navigate("observe/overview"); return;
-      }
-      return;
-    }
-
-    // Start G+letter sequence
-    if (e.key === "g" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      this._gotoWaiting = true;
-      this._pendingGotoKey = systemSetTimeout(() => {
-        this._gotoWaiting = false;
-        this._pendingGotoKey = null;
-      }, 500);
-    }
-  }
-
-  /** Handle command dispatched from command palette. */
-  private _handleCommand(commandId: string): void {
-    switch (commandId) {
-      case "refresh":
-        window.location.reload();
-        break;
-      case "toggle-sidebar":
-        this._sidebarOpen = !this._sidebarOpen;
-        break;
-      case "logout":
-        this._handleLogout();
-        break;
-      case "show-shortcuts":
-        this._shortcutsHelpOpen = true;
-        break;
-    }
-  }
-
-  private _initWithToken(token: string): void {
-    this._token = token;
-
-    // Determine base URL from current location
-    const baseUrl = `${window.location.protocol}//${window.location.host}`;
-    this._apiClient = createApiClient(baseUrl, token);
-
-    // Verify token by calling an authenticated endpoint (not health, which is unauthenticated)
-    this._apiClient
-      .getAgents()
-      .then(() => {
-        sessionStorage.setItem(TOKEN_KEY, token);
-        this._authenticated = true;
-        this._authError = "";
-
-        // Create RPC client and connect via WebSocket
-        this._rpcClient = createRpcClient();
-        const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
-        this._rpcClient.connect(wsUrl, token);
-
-        // Upgrade apiClient with RPC support so memory/session management
-        // methods use WebSocket JSON-RPC instead of REST fallback
-        const rpc = this._rpcClient;
-        this._apiClient = createApiClient(baseUrl, token, (method, params) => rpc.call(method, params));
-
-        // Create global state store
-        this._globalState = createGlobalState();
-
-        // Wire RPC status changes to global state
-        this._rpcClient.onStatusChange((status) => {
-          this._globalState?.update({ connectionStatus: status });
-        });
-
-        // Create event dispatcher (SSE) and start listening
-        this._eventDispatcher = createEventDispatcher();
-        this._eventDispatcher.start(baseUrl, token);
-
-        // Wire SSE events to globalState for badge counts.
-        // Use requireGlobalState to surface null misuse as a typed throw
-        // instead of silent non-null assertions.
-        this._approvalUnsub = this._eventDispatcher.addEventListener(
-          "approval:requested",
-          () => {
-            const state = requireGlobalState(this);
-            const snap = state.getSnapshot();
-            state.update({
-              pendingApprovals: snap.pendingApprovals + 1,
-            });
-          },
-        );
-
-        this._approvalResolvedUnsub = this._eventDispatcher.addEventListener(
-          "approval:resolved",
-          () => {
-            const state = requireGlobalState(this);
-            const snap = state.getSnapshot();
-            state.update({
-              pendingApprovals: Math.max(0, snap.pendingApprovals - 1),
-            });
-          },
-        );
-
-        this._errorUnsub = this._eventDispatcher.addEventListener(
-          "system:error",
-          () => {
-            const state = requireGlobalState(this);
-            const snap = state.getSnapshot();
-            state.update({
-              errorCount: (snap.errorCount ?? 0) + 1,
-            });
-          },
-        );
-
-        // Subscribe to global state for reactive UI updates
-        this._stateUnsubscribe = this._globalState.subscribe(() => {
-          const state = requireGlobalState(this);
-          const snap = state.getSnapshot();
-          this._connectionStatus = snap.connectionStatus;
-          this._pendingApprovals = snap.pendingApprovals;
-          this._errorCount = snap.errorCount;
-          this._agentCount = snap.agentCount;
-          this._channelCount = snap.channelCount;
-          this._sessionCount = snap.sessionCount;
-        });
-
-        // Start polling for badge counts (agent/channel/session) + command palette data
-        this._pollingController = new PollingController(
-          this,
-          this._rpcClient,
-          (data) => {
-            this._agentCount = data.agents;
-            this._channelCount = data.channels;
-            this._sessionCount = data.sessions;
-            this._agentList = data.agentIds.map((id) => ({ id }));
-            this._sessionList = data.sessionEntries.map((s) => ({ key: s.sessionKey, agentId: s.agentId }));
-          },
-          30_000,
-        );
-        // Host is already connected, so manually kick off the first poll
-        this._pollingController.hostConnected();
-
-        // Initialize parameterized router
-        this._router = createRouter((match: RouteMatch) => {
+  /** Lazily instantiate the app-controller. The Lit `connectedCallback`
+   *  also calls `createAppController` — this is the test-friendly path
+   *  for `priv(el)._initWithToken(…)` etc. on a disconnected element. */
+  private _ensureController(): AppController {
+    if (!this._appController) {
+      this._appController = createAppController(this, {
+        onRouteMatch: (match: RouteMatch) => {
           this._currentView = match.view;
           this._currentRoute = match.route;
           this._routeParams = match.params;
-        });
-        this._router.start();
-      })
-      .catch(() => {
-        this._authError = "Invalid token or server unreachable";
-        sessionStorage.removeItem(TOKEN_KEY);
+        },
       });
+    }
+    return this._appController;
   }
 
+  /** Test-facing: delegates to controller.isInputTarget. */
+  private _isInputTarget(e: KeyboardEvent): boolean {
+    return this._ensureController().isInputTarget(e);
+  }
+
+  /** Test-facing: delegates to controller.handleGlobalKeydown. */
+  private _handleGlobalKeydown(e: KeyboardEvent): void {
+    this._ensureController().handleGlobalKeydown(e);
+  }
+
+  /** Test-facing: delegates to controller.handleCommand. */
+  private _handleCommand(commandId: string): void {
+    this._ensureController().handleCommand(commandId);
+  }
+
+  /** Test-facing: delegates to controller.initWithToken. */
+  private _initWithToken(token: string): void {
+    this._ensureController().initWithToken(token);
+  }
+
+  /** Test-facing: delegates to controller.handleLogin. */
   private _handleLogin(e: Event): void {
-    e.preventDefault();
-    const form = e.target as HTMLFormElement;
-    const input = form.querySelector("input") as HTMLInputElement;
-    const token = input.value.trim();
-
-    if (!token) {
-      this._authError = "Please enter a token";
-      return;
-    }
-
-    this._initWithToken(token);
+    this._ensureController().handleLogin(e);
   }
 
+  /** Test-facing: delegates to controller.handleLogout. */
   private _handleLogout(): void {
-    sessionStorage.removeItem(TOKEN_KEY);
-    this._authenticated = false;
-    this._cleanup();
-    this._apiClient = null;
-    this._token = "";
+    this._ensureController().handleLogout();
   }
 
+  /** Test-facing: delegates to controller.cleanup (used by app.test.ts). */
   private _cleanup(): void {
-    if (this._pollingController) {
-      this._pollingController.hostDisconnected();
-      this._pollingController = null;
-    }
-    this._rpcClient?.disconnect();
-    this._rpcClient = null;
-    this._eventDispatcher?.stop();
-    this._eventDispatcher = null;
-    this._stateUnsubscribe?.();
-    this._stateUnsubscribe = null;
-    this._approvalUnsub?.();
-    this._approvalUnsub = null;
-    this._approvalResolvedUnsub?.();
-    this._approvalResolvedUnsub = null;
-    this._errorUnsub?.();
-    this._errorUnsub = null;
-    this._globalState = null;
-    this._router?.stop();
-    this._router = null;
+    this._ensureController().cleanup();
   }
 
   private _renderAuth() {
