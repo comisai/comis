@@ -4,13 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
-import type {
-  ConfigHistoryEntry,
-  ConfigHistoryResponse,
-  ConfigDiffResponse,
-  ConfigRollbackResponse,
-  ConfigGcResponse,
-} from "../api/types/config-types.js";
+import type { ConfigHistoryEntry } from "../api/types/config-types.js";
 
 // Side-effect imports for sub-components
 import "../components/feedback/ic-loading.js";
@@ -35,6 +29,7 @@ export { serializeYaml as serializeToYaml, parseYaml };
 import type { TabDef } from "../components/nav/ic-tabs.js";
 import type { SchemaProperty } from "./config-editor/schema-form.js";
 import { systemClearTimeout, systemDateFrom, systemSetTimeout } from "@comis/core";
+import { createConfigEditorController, type ConfigEditorController } from "./config-editor-controller.js";
 
 type LoadState = "loading" | "loaded" | "error";
 
@@ -98,605 +93,111 @@ export class IcConfigEditor extends LitElement {
     sharedStyles,
     focusStyles,
     css`
-      :host {
-        display: block;
-      }
-
-      .view-header {
-        margin-bottom: var(--ic-space-lg);
-      }
-
-      .view-title {
-        font-size: 1.125rem;
-        font-weight: 600;
-      }
-
+      :host { display: block; }
+      .view-header { margin-bottom: var(--ic-space-lg); }
+      .view-title { font-size: 1.125rem; font-weight: 600; }
       /* Loading & error states */
-      .state-container {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 3rem;
-      }
-
-      .error-container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 0.75rem;
-        padding: 3rem;
-      }
-
-      .error-message {
-        color: var(--ic-error);
-        font-size: var(--ic-text-sm);
-      }
-
-      .retry-btn {
-        padding: 0.5rem 1rem;
-        background: var(--ic-surface-2);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        color: var(--ic-text-muted);
-        font-size: var(--ic-text-sm);
-        cursor: pointer;
-        font-family: inherit;
-      }
-
-      .retry-btn:hover {
-        background: var(--ic-border);
-      }
-
+      .state-container { display: flex; align-items: center; justify-content: center; padding: 3rem; }
+      .error-container { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; padding: 3rem; }
+      .error-message { color: var(--ic-error); font-size: var(--ic-text-sm); }
+      .retry-btn { padding: 0.5rem 1rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text-muted); font-size: var(--ic-text-sm); cursor: pointer; font-family: inherit; }
+      .retry-btn:hover { background: var(--ic-border); }
       /* Main layout: sidebar + content */
-      .editor-layout {
-        display: grid;
-        grid-template-columns: 220px 1fr;
-        gap: var(--ic-space-lg);
-        min-height: 500px;
-      }
-
+      .editor-layout { display: grid; grid-template-columns: 220px 1fr; gap: var(--ic-space-lg); min-height: 500px; }
       /* Section sidebar */
-      .section-sidebar {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        background: var(--ic-surface);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        padding: var(--ic-space-xs);
-        overflow-y: auto;
-        max-height: 80vh;
-      }
-
-      .section-item {
-        padding: 0.5rem 1rem;
-        cursor: pointer;
-        border-left: 3px solid transparent;
-        border-radius: var(--ic-radius-sm);
-        font-size: var(--ic-text-sm);
-        color: var(--ic-text-muted);
-        transition: background var(--ic-transition, 0.15s), color var(--ic-transition, 0.15s);
-      }
-
-      .section-item:hover {
-        background: var(--ic-surface-2);
-        color: var(--ic-text);
-      }
-
-      .section-item[data-selected] {
-        border-left-color: var(--ic-accent);
-        background: var(--ic-surface-2);
-        color: var(--ic-text);
-        font-weight: 500;
-      }
-
+      .section-sidebar { display: flex; flex-direction: column; gap: 2px; background: var(--ic-surface); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); padding: var(--ic-space-xs); overflow-y: auto; max-height: 80vh; }
+      .section-item { padding: 0.5rem 1rem; cursor: pointer; border-left: 3px solid transparent; border-radius: var(--ic-radius-sm); font-size: var(--ic-text-sm); color: var(--ic-text-muted); transition: background var(--ic-transition, 0.15s), color var(--ic-transition, 0.15s); }
+      .section-item:hover { background: var(--ic-surface-2); color: var(--ic-text); }
+      .section-item[data-selected] { border-left-color: var(--ic-accent); background: var(--ic-surface-2); color: var(--ic-text); font-weight: 500; }
       /* Content area */
-      .content-area {
-        display: flex;
-        flex-direction: column;
-        gap: var(--ic-space-md);
-        min-width: 0;
-      }
-
+      .content-area { display: flex; flex-direction: column; gap: var(--ic-space-md); min-width: 0; }
       /* Toolbar: mode tabs + action buttons */
-      .toolbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: var(--ic-space-md);
-        flex-wrap: wrap;
-      }
-
-      .mode-tabs {
-        display: inline-flex;
-        gap: 2px;
-        background: var(--ic-surface);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        padding: 2px;
-      }
-
-      .mode-btn {
-        padding: 0.375rem 0.75rem;
-        border: none;
-        border-radius: var(--ic-radius-sm);
-        background: transparent;
-        color: var(--ic-text-muted);
-        font-size: var(--ic-text-sm);
-        font-family: inherit;
-        cursor: pointer;
-        transition: background var(--ic-transition, 0.15s), color var(--ic-transition, 0.15s);
-      }
-
-      .mode-btn:hover {
-        color: var(--ic-text);
-      }
-
-      .mode-btn[data-active] {
-        background: var(--ic-accent);
-        color: white;
-      }
-
-      .action-buttons {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm);
-      }
-
-      .apply-btn {
-        padding: 0.5rem 1rem;
-        background: var(--ic-accent);
-        color: white;
-        border: none;
-        border-radius: var(--ic-radius-md);
-        font-size: var(--ic-text-sm);
-        font-family: inherit;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: var(--ic-space-xs);
-      }
-
-      .apply-btn:hover {
-        opacity: 0.9;
-      }
-
-      .apply-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      .secondary-btn {
-        padding: 0.5rem 1rem;
-        background: var(--ic-surface-2);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        color: var(--ic-text-muted);
-        font-size: var(--ic-text-sm);
-        font-family: inherit;
-        cursor: pointer;
-      }
-
-      .secondary-btn:hover {
-        background: var(--ic-border);
-      }
-
+      .toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--ic-space-md); flex-wrap: wrap; }
+      .mode-tabs { display: inline-flex; gap: 2px; background: var(--ic-surface); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); padding: 2px; }
+      .mode-btn { padding: 0.375rem 0.75rem; border: none; border-radius: var(--ic-radius-sm); background: transparent; color: var(--ic-text-muted); font-size: var(--ic-text-sm); font-family: inherit; cursor: pointer; transition: background var(--ic-transition, 0.15s), color var(--ic-transition, 0.15s); }
+      .mode-btn:hover { color: var(--ic-text); }
+      .mode-btn[data-active] { background: var(--ic-accent); color: white; }
+      .action-buttons { display: flex; align-items: center; gap: var(--ic-space-sm); }
+      .apply-btn { padding: 0.5rem 1rem; background: var(--ic-accent); color: white; border: none; border-radius: var(--ic-radius-md); font-size: var(--ic-text-sm); font-family: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: var(--ic-space-xs); }
+      .apply-btn:hover { opacity: 0.9; }
+      .apply-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .secondary-btn { padding: 0.5rem 1rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text-muted); font-size: var(--ic-text-sm); font-family: inherit; cursor: pointer; }
+      .secondary-btn:hover { background: var(--ic-border); }
       /* Form mode CSS extracted to ic-schema-form sub-component */
-
       /* YAML mode */
-      .yaml-editor {
-        display: flex;
-        flex-direction: column;
-        gap: var(--ic-space-sm);
-      }
-
-      .yaml-textarea {
-        width: 100%;
-        min-height: 400px;
-        padding: 1rem;
-        background: var(--ic-surface-2);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        color: var(--ic-text);
-        font-family: var(--ic-font-mono, ui-monospace, monospace);
-        font-size: var(--ic-text-sm);
-        line-height: 1.5;
-        tab-size: 2;
-        white-space: pre;
-        resize: vertical;
-      }
-
-      .yaml-textarea:focus {
-        outline: none;
-        border-color: var(--ic-accent);
-      }
-
-      .yaml-validation {
-        padding: var(--ic-space-sm) var(--ic-space-md);
-        border-radius: var(--ic-radius-md);
-        font-size: var(--ic-text-sm);
-      }
-
-      .yaml-validation--valid {
-        background: color-mix(in srgb, var(--ic-success) 10%, transparent);
-        color: var(--ic-success);
-        border: 1px solid color-mix(in srgb, var(--ic-success) 30%, transparent);
-      }
-
-      .yaml-validation--error {
-        background: color-mix(in srgb, var(--ic-error) 10%, transparent);
-        color: var(--ic-error);
-        border: 1px solid color-mix(in srgb, var(--ic-error) 30%, transparent);
-      }
-
+      .yaml-editor { display: flex; flex-direction: column; gap: var(--ic-space-sm); }
+      .yaml-textarea { width: 100%; min-height: 400px; padding: 1rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text); font-family: var(--ic-font-mono, ui-monospace, monospace); font-size: var(--ic-text-sm); line-height: 1.5; tab-size: 2; white-space: pre; resize: vertical; }
+      .yaml-textarea:focus { outline: none; border-color: var(--ic-accent); }
+      .yaml-validation { padding: var(--ic-space-sm) var(--ic-space-md); border-radius: var(--ic-radius-md); font-size: var(--ic-text-sm); }
+      .yaml-validation--valid { background: color-mix(in srgb, var(--ic-success) 10%, transparent); color: var(--ic-success); border: 1px solid color-mix(in srgb, var(--ic-success) 30%, transparent); }
+      .yaml-validation--error { background: color-mix(in srgb, var(--ic-error) 10%, transparent); color: var(--ic-error); border: 1px solid color-mix(in srgb, var(--ic-error) 30%, transparent); }
       /* Schema mode */
-      .schema-tree {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-
-      .schema-row {
-        display: flex;
-        align-items: baseline;
-        gap: var(--ic-space-sm);
-        padding: var(--ic-space-xs) 0;
-      }
-
-      .schema-key {
-        font-weight: 600;
-        font-size: var(--ic-text-sm);
-        color: var(--ic-text);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-xs);
-        user-select: none;
-      }
-
-      .schema-key .arrow {
-        font-size: var(--ic-text-xs);
-        transition: transform var(--ic-transition, 0.15s);
-        display: inline-block;
-      }
-
-      .schema-key .arrow[data-expanded] {
-        transform: rotate(90deg);
-      }
-
-      .schema-desc {
-        font-size: var(--ic-text-xs);
-        color: var(--ic-text-dim);
-      }
-
-      .schema-constraints {
-        font-size: var(--ic-text-xs);
-        color: var(--ic-text-muted);
-        font-style: italic;
-      }
-
-      .schema-children {
-        padding-left: 1.5rem;
-      }
-
-      .required-marker {
-        color: var(--ic-error);
-        font-weight: 600;
-      }
-
+      .schema-tree { display: flex; flex-direction: column; gap: 2px; }
+      .schema-row { display: flex; align-items: baseline; gap: var(--ic-space-sm); padding: var(--ic-space-xs) 0; }
+      .schema-key { font-weight: 600; font-size: var(--ic-text-sm); color: var(--ic-text); cursor: pointer; display: flex; align-items: center; gap: var(--ic-space-xs); user-select: none; }
+      .schema-key .arrow { font-size: var(--ic-text-xs); transition: transform var(--ic-transition, 0.15s); display: inline-block; }
+      .schema-key .arrow[data-expanded] { transform: rotate(90deg); }
+      .schema-desc { font-size: var(--ic-text-xs); color: var(--ic-text-dim); }
+      .schema-constraints { font-size: var(--ic-text-xs); color: var(--ic-text-muted); font-style: italic; }
+      .schema-children { padding-left: 1.5rem; }
+      .required-marker { color: var(--ic-error); font-weight: 600; }
       /* Hidden file input for import */
-      .hidden-input {
-        display: none;
-      }
-
+      .hidden-input { display: none; }
       /* Spinner */
-      .spinner {
-        display: inline-block;
-        width: 14px;
-        height: 14px;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-        border-top-color: white;
-        border-radius: 50%;
-        animation: spin 0.6s linear infinite;
-      }
-
+      .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, 0.3); border-top-color: white; border-radius: 50%; animation: spin 0.6s linear infinite; }
       @keyframes spin {
-        to { transform: rotate(360deg); }
+      to { transform: rotate(360deg); }
       }
-
       /* Diff preview toggle */
-      .diff-btn {
-        padding: 0.5rem 1rem;
-        background: var(--ic-surface-2);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        color: var(--ic-text-muted);
-        font-size: var(--ic-text-sm);
-        font-family: inherit;
-        cursor: pointer;
-      }
-
-      .diff-btn:hover {
-        background: var(--ic-border);
-      }
-
-      .diff-btn[data-active] {
-        background: var(--ic-accent);
-        color: #fff;
-        border-color: var(--ic-accent);
-      }
-
+      .diff-btn { padding: 0.5rem 1rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text-muted); font-size: var(--ic-text-sm); font-family: inherit; cursor: pointer; }
+      .diff-btn:hover { background: var(--ic-border); }
+      .diff-btn[data-active] { background: var(--ic-accent); color: #fff; border-color: var(--ic-accent); }
       /* Rollback button */
-      .rollback-btn {
-        padding: 0.5rem 1rem;
-        background: var(--ic-surface-2);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        color: var(--ic-text-muted);
-        font-size: var(--ic-text-sm);
-        font-family: inherit;
-        cursor: pointer;
-      }
-
-      .rollback-btn:hover {
-        border-color: var(--ic-error);
-        color: var(--ic-error);
-      }
-
+      .rollback-btn { padding: 0.5rem 1rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text-muted); font-size: var(--ic-text-sm); font-family: inherit; cursor: pointer; }
+      .rollback-btn:hover { border-color: var(--ic-error); color: var(--ic-error); }
       /* Diff viewer container */
-      .diff-preview {
-        margin-top: var(--ic-space-md);
-      }
-
+      .diff-preview { margin-top: var(--ic-space-md); }
       /* Gateway tab */
-      .gateway-form {
-        display: flex;
-        flex-direction: column;
-        gap: var(--ic-space-lg);
-        max-width: 36rem;
-        padding: var(--ic-space-md) 0;
-      }
-
-      .gateway-field {
-        display: flex;
-        flex-direction: column;
-        gap: var(--ic-space-xs);
-      }
-
-      .gateway-label {
-        font-size: var(--ic-text-sm);
-        font-weight: 500;
-        color: var(--ic-text-muted);
-      }
-
-      .gateway-input {
-        padding: 0.5rem 0.75rem;
-        background: var(--ic-surface-2);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        color: var(--ic-text);
-        font-family: inherit;
-        font-size: var(--ic-text-sm);
-      }
-
-      .gateway-input:focus {
-        outline: none;
-        border-color: var(--ic-accent);
-      }
-
-      .gateway-tokens {
-        padding: var(--ic-space-md);
-        background: var(--ic-surface-2);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-      }
-
-      .gateway-tokens-label {
-        font-size: var(--ic-text-sm);
-        font-weight: 600;
-        color: var(--ic-text);
-        margin-bottom: var(--ic-space-sm);
-      }
-
-      .gateway-tokens-list {
-        display: flex;
-        flex-direction: column;
-        gap: var(--ic-space-xs);
-        font-size: var(--ic-text-sm);
-        color: var(--ic-text-muted);
-      }
-
-      .gateway-token-entry {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm);
-      }
-
-      .gateway-token-id {
-        font-family: var(--ic-font-mono, ui-monospace, monospace);
-        font-size: var(--ic-text-xs);
-      }
-
-      .gateway-tokens-link {
-        color: var(--ic-accent);
-        font-size: var(--ic-text-sm);
-        text-decoration: none;
-        margin-top: var(--ic-space-sm);
-        display: inline-block;
-        cursor: pointer;
-      }
-
-      .gateway-tokens-link:hover {
-        text-decoration: underline;
-      }
-
+      .gateway-form { display: flex; flex-direction: column; gap: var(--ic-space-lg); max-width: 36rem; padding: var(--ic-space-md) 0; }
+      .gateway-field { display: flex; flex-direction: column; gap: var(--ic-space-xs); }
+      .gateway-label { font-size: var(--ic-text-sm); font-weight: 500; color: var(--ic-text-muted); }
+      .gateway-input { padding: 0.5rem 0.75rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text); font-family: inherit; font-size: var(--ic-text-sm); }
+      .gateway-input:focus { outline: none; border-color: var(--ic-accent); }
+      .gateway-tokens { padding: var(--ic-space-md); background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); }
+      .gateway-tokens-label { font-size: var(--ic-text-sm); font-weight: 600; color: var(--ic-text); margin-bottom: var(--ic-space-sm); }
+      .gateway-tokens-list { display: flex; flex-direction: column; gap: var(--ic-space-xs); font-size: var(--ic-text-sm); color: var(--ic-text-muted); }
+      .gateway-token-entry { display: flex; align-items: center; gap: var(--ic-space-sm); }
+      .gateway-token-id { font-family: var(--ic-font-mono, ui-monospace, monospace); font-size: var(--ic-text-xs); }
+      .gateway-tokens-link { color: var(--ic-accent); font-size: var(--ic-text-sm); text-decoration: none; margin-top: var(--ic-space-sm); display: inline-block; cursor: pointer; }
+      .gateway-tokens-link:hover { text-decoration: underline; }
       /* Setup wizard tab */
-      .wizard-content {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: var(--ic-space-lg);
-        padding: 3rem var(--ic-space-lg);
-        text-align: center;
-      }
-
-      .wizard-description {
-        font-size: var(--ic-text-sm);
-        color: var(--ic-text-muted);
-        max-width: 32rem;
-        line-height: 1.6;
-      }
-
-      .wizard-btn {
-        padding: 0.75rem 2rem;
-        background: var(--ic-accent);
-        color: #fff;
-        border: none;
-        border-radius: var(--ic-radius-md);
-        font-size: var(--ic-text-sm);
-        font-family: inherit;
-        font-weight: 500;
-        cursor: pointer;
-      }
-
-      .wizard-btn:hover {
-        filter: brightness(1.1);
-      }
-
+      .wizard-content { display: flex; flex-direction: column; align-items: center; gap: var(--ic-space-lg); padding: 3rem var(--ic-space-lg); text-align: center; }
+      .wizard-description { font-size: var(--ic-text-sm); color: var(--ic-text-muted); max-width: 32rem; line-height: 1.6; }
+      .wizard-btn { padding: 0.75rem 2rem; background: var(--ic-accent); color: #fff; border: none; border-radius: var(--ic-radius-md); font-size: var(--ic-text-sm); font-family: inherit; font-weight: 500; cursor: pointer; }
+      .wizard-btn:hover { filter: brightness(1.1); }
       /* History tab */
-      .history-layout {
-        display: grid;
-        grid-template-columns: 350px 1fr;
-        gap: var(--ic-space-md);
-        min-height: 400px;
-      }
-
+      .history-layout { display: grid; grid-template-columns: 350px 1fr; gap: var(--ic-space-md); min-height: 400px; }
       @media (max-width: 768px) {
-        .history-layout {
-          grid-template-columns: 1fr;
-        }
+      .history-layout { grid-template-columns: 1fr; }
       }
-
-      .history-timeline {
-        overflow-y: auto;
-        max-height: 70vh;
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        background: var(--ic-surface);
-      }
-
-      .history-entry {
-        padding: var(--ic-space-sm) var(--ic-space-md);
-        border-bottom: 1px solid var(--ic-border);
-        cursor: pointer;
-        transition: background var(--ic-transition, 0.15s);
-        border-left: 3px solid transparent;
-        position: relative;
-      }
-
-      .history-entry:hover {
-        background: var(--ic-surface-2);
-      }
-
-      .history-entry--selected {
-        border-left: 3px solid var(--ic-accent);
-        background: var(--ic-surface-2);
-      }
-
-      .history-entry-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 2px;
-      }
-
-      .history-sha {
-        font-family: var(--ic-font-mono, ui-monospace, monospace);
-        font-size: var(--ic-text-xs);
-        color: var(--ic-text-dim);
-      }
-
-      .history-entry-summary {
-        font-size: var(--ic-text-sm);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        color: var(--ic-text);
-        margin-bottom: 4px;
-      }
-
-      .history-entry-meta {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: var(--ic-text-xs);
-        color: var(--ic-text-dim);
-      }
-
-      .history-author {
-        font-size: var(--ic-text-xs);
-        color: var(--ic-text-dim);
-      }
-
-      .history-diff-panel {
-        display: flex;
-        flex-direction: column;
-        overflow: auto;
-      }
-
-      .diff-unified {
-        font-family: var(--ic-font-mono, ui-monospace, monospace);
-        font-size: var(--ic-text-sm);
-        overflow-x: auto;
-        white-space: pre;
-        padding: var(--ic-space-md);
-        background: var(--ic-surface);
-        border-radius: var(--ic-radius-md);
-        border: 1px solid var(--ic-border);
-        margin: 0;
-        line-height: 1.5;
-      }
-
-      .diff-line--add {
-        background: rgba(34, 197, 94, 0.15);
-        display: block;
-      }
-
-      .diff-line--remove {
-        background: rgba(239, 68, 68, 0.15);
-        display: block;
-      }
-
-      .diff-line--hunk {
-        color: var(--ic-text-dim);
-        font-style: italic;
-        display: block;
-      }
-
-      .diff-line--context {
-        display: block;
-      }
-
-      .history-actions {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm);
-        padding-top: var(--ic-space-md);
-      }
-
-      .history-rollback-link {
-        font-size: var(--ic-text-xs);
-        color: var(--ic-accent);
-        cursor: pointer;
-        background: none;
-        border: none;
-        font-family: inherit;
-        padding: 0;
-      }
-
-      .history-rollback-link:hover {
-        text-decoration: underline;
-      }
+      .history-timeline { overflow-y: auto; max-height: 70vh; border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); background: var(--ic-surface); }
+      .history-entry { padding: var(--ic-space-sm) var(--ic-space-md); border-bottom: 1px solid var(--ic-border); cursor: pointer; transition: background var(--ic-transition, 0.15s); border-left: 3px solid transparent; position: relative; }
+      .history-entry:hover { background: var(--ic-surface-2); }
+      .history-entry--selected { border-left: 3px solid var(--ic-accent); background: var(--ic-surface-2); }
+      .history-entry-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+      .history-sha { font-family: var(--ic-font-mono, ui-monospace, monospace); font-size: var(--ic-text-xs); color: var(--ic-text-dim); }
+      .history-entry-summary { font-size: var(--ic-text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ic-text); margin-bottom: 4px; }
+      .history-entry-meta { display: flex; align-items: center; gap: 8px; font-size: var(--ic-text-xs); color: var(--ic-text-dim); }
+      .history-author { font-size: var(--ic-text-xs); color: var(--ic-text-dim); }
+      .history-diff-panel { display: flex; flex-direction: column; overflow: auto; }
+      .diff-unified { font-family: var(--ic-font-mono, ui-monospace, monospace); font-size: var(--ic-text-sm); overflow-x: auto; white-space: pre; padding: var(--ic-space-md); background: var(--ic-surface); border-radius: var(--ic-radius-md); border: 1px solid var(--ic-border); margin: 0; line-height: 1.5; }
+      .diff-line--add { background: rgba(34, 197, 94, 0.15); display: block; }
+      .diff-line--remove { background: rgba(239, 68, 68, 0.15); display: block; }
+      .diff-line--hunk { color: var(--ic-text-dim); font-style: italic; display: block; }
+      .diff-line--context { display: block; }
+      .history-actions { display: flex; align-items: center; gap: var(--ic-space-sm); padding-top: var(--ic-space-md); }
+      .history-rollback-link { font-size: var(--ic-text-xs); color: var(--ic-accent); cursor: pointer; background: none; border: none; font-family: inherit; padding: 0; }
+      .history-rollback-link:hover { text-decoration: underline; }
     `,
   ];
 
@@ -751,8 +252,14 @@ export class IcConfigEditor extends LitElement {
   private _dataLoaded = false;
   private _configPatchedHandler: ((e: Event) => void) | null = null;
 
+  /** RPC-orchestration controller — created when rpcClient becomes available. */
+  @state() private _controller: ConfigEditorController | null = null;
+
   override connectedCallback(): void {
     super.connectedCallback();
+    if (this.rpcClient && !this._controller) {
+      this._controller = createConfigEditorController(this, this.rpcClient);
+    }
     // Listen for external config changes via SSE
     this._configPatchedHandler = () => {
       if (this._dataLoaded && !this._dirty) this._tryLoad();
@@ -788,6 +295,9 @@ export class IcConfigEditor extends LitElement {
 
   override updated(changed: Map<string, unknown>): void {
     if (changed.has("rpcClient") && this.rpcClient) {
+      if (!this._controller) {
+        this._controller = createConfigEditorController(this, this.rpcClient);
+      }
       this._tryLoad();
     }
   }
@@ -819,7 +329,8 @@ export class IcConfigEditor extends LitElement {
 
     try {
       // Load config first (primary data for the editor)
-      const configResult = await this.rpcClient.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
+      const ctrl = this._controller!;
+      const configResult = await ctrl.readConfig();
 
       this._sections = configResult.sections;
       this._configData = configResult.config;
@@ -833,7 +344,7 @@ export class IcConfigEditor extends LitElement {
       this._dataLoaded = true;
 
       // Load schema in the background (enables validation/hints)
-      this.rpcClient.call<{ schema: Record<string, SchemaProperty>; sections: string[] }>("config.schema")
+      ctrl.loadSchema()
         .then((schemaResult) => {
           const rootSchema = schemaResult.schema as Record<string, unknown>;
           this._schemaData = (rootSchema.properties ?? rootSchema) as Record<string, SchemaProperty>;
@@ -1094,7 +605,7 @@ export class IcConfigEditor extends LitElement {
     this._rollbackSnapshot = structuredClone(this._configData) as Record<string, unknown>;
 
     try {
-      await this.rpcClient.call("config.apply", {
+      await this._controller!.applyConfig({
         section: this._selectedSection,
         value,
       });
@@ -1102,7 +613,7 @@ export class IcConfigEditor extends LitElement {
       this._dirty = false;
 
       // Reload config data
-      const configResult = await this.rpcClient.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
+      const configResult = await this._controller!.readConfig();
       this._configData = configResult.config;
       this._loadSectionState();
     } catch (err) {
@@ -1120,16 +631,16 @@ export class IcConfigEditor extends LitElement {
   /* ---------------------------------------------------------------- */
 
   private async _onRollback(): Promise<void> {
-    if (!this.rpcClient || !this._rollbackSnapshot) return;
+    if (!this._controller || !this._rollbackSnapshot) return;
 
     try {
-      await this.rpcClient.call("config.apply", {
+      await this._controller.applyConfig({
         config: this._rollbackSnapshot,
       });
       IcToast.show("Configuration rolled back", "success");
 
       // Reload config data from server
-      const configResult = await this.rpcClient.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
+      const configResult = await this._controller.readConfig();
       this._configData = configResult.config;
       this._rollbackSnapshot = null;
       this._confirmRollback = false;
@@ -1146,12 +657,12 @@ export class IcConfigEditor extends LitElement {
   /* ---------------------------------------------------------------- */
 
   private async _loadGatewayConfig(): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
     this._gatewayLoading = true;
     this._gatewayError = "";
 
     try {
-      const result = await this.rpcClient.call<Record<string, unknown>>("config.read", { section: "gateway" });
+      const result = await this._controller.readSection<Record<string, unknown>>("gateway");
       this._gatewayConfig = (result ?? {}) as GatewayConfig;
     } catch (err) {
       this._gatewayError = err instanceof Error ? err.message : "Failed to load gateway config";
@@ -1161,10 +672,10 @@ export class IcConfigEditor extends LitElement {
   }
 
   private async _patchGateway(key: string, value: unknown): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     try {
-      await this.rpcClient.call("config.patch", { section: "gateway", key, value });
+      await this._controller.patchConfig({ section: "gateway", key, value });
       // Optimistically update local state
       if (this._gatewayConfig) {
         this._gatewayConfig = { ...this._gatewayConfig, [key]: value } as GatewayConfig;
@@ -1193,12 +704,12 @@ export class IcConfigEditor extends LitElement {
   /* ---------------------------------------------------------------- */
 
   private async _loadHistory(): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
     this._historyLoading = true;
     this._historyError = "";
 
     try {
-      const result = await this.rpcClient.call<ConfigHistoryResponse>("config.history", { limit: 50 });
+      const result = await this._controller.loadHistory(50);
       if (result.error) {
         // Git unavailable -- informational, not an error toast
         this._historyEntries = [];
@@ -1214,12 +725,11 @@ export class IcConfigEditor extends LitElement {
   }
 
   private async _loadDiff(sha: string): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
     this._diffLoading = true;
 
     try {
-      const result = await this.rpcClient.call<ConfigDiffResponse>("config.diff", { sha });
-      this._diffText = result.diff;
+      this._diffText = await this._controller.loadDiff(sha);
     } catch (err) {
       this._diffText = "";
       const msg = err instanceof Error ? err.message : "Failed to load diff";
@@ -1241,10 +751,10 @@ export class IcConfigEditor extends LitElement {
   }
 
   private async _onHistoryRollback(): Promise<void> {
-    if (!this.rpcClient || !this._confirmRollbackSha) return;
+    if (!this._controller || !this._confirmRollbackSha) return;
 
     try {
-      await this.rpcClient.call<ConfigRollbackResponse>("config.rollback", { sha: this._confirmRollbackSha });
+      await this._controller.rollbackToSha(this._confirmRollbackSha);
       IcToast.show("Config rolled back. Daemon restarting...", "success");
       this._confirmRollbackSha = null;
     } catch (err) {
@@ -1255,11 +765,11 @@ export class IcConfigEditor extends LitElement {
   }
 
   private async _onGc(): Promise<void> {
-    if (!this.rpcClient || this._gcRunning) return;
+    if (!this._controller || this._gcRunning) return;
     this._gcRunning = true;
 
     try {
-      const result = await this.rpcClient.call<ConfigGcResponse>("config.gc");
+      const result = await this._controller.runGc();
       const squashed = result.squashed;
       IcToast.show(
         squashed != null ? `GC complete: ${squashed} versions squashed` : "GC complete",

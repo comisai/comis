@@ -142,7 +142,7 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     //   skills.ts:         drained — extracted via skills-controller.ts         (Task 2).
     //   chat-console.ts:   drained — RPC extracted via chat-console-controller.ts (Task 3).
     //   message-center.ts: drained — RPC extracted via message-center-controller.ts (Task 4).
-    "packages/web/src/views/config-editor.ts",                      // 12 rpcClient.call (verified HEAD)
+    //   config-editor.ts:  drained — RPC extracted via config-editor-controller.ts (Task 5).
     // Wave 3
     "packages/web/src/views/agents/agent-editor.ts",                //  8 rpcClient.call (verified HEAD)
     "packages/web/src/views/scheduler.ts",                          // 11 rpcClient.call (verified HEAD)

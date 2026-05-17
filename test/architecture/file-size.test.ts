@@ -434,6 +434,14 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // that does not split cleanly into a controller. Auto-acceptable per
     // WEB-DECOMP-09.
     "packages/web/src/views/message-center.ts",
+    // config-editor.ts (Wave 2 / Task 5): RPC extraction completed via
+    // config-editor-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates all daemon I/O to the controller (config.read/schema/
+    // apply/patch/history/diff/rollback/gc). The remaining ≤1300L is the
+    // schema-driven form renderer, YAML mode + diff viewer, tree expansion
+    // state, multi-tab gateway/history sub-views, and rollback confirm
+    // dialogs — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09.
+    "packages/web/src/views/config-editor.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

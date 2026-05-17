@@ -183,9 +183,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/config-editor.ts",
-    lines: 1697,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1214,
+    reason: "Lit web view; RPC orchestration extracted via config-editor-controller.ts (config.read/schema/apply/patch/history/diff/rollback/gc moved out). Residual schema-driven form renderer + YAML diff + tree state + multi-tab sub-views are DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/agents/agent-editor.ts",
