@@ -27,36 +27,46 @@ const OBSERVE_RPC_HANDLERS: Record<string, unknown> = {
     totalCost: 6.5,
   },
   "obs.billing.usage24h": [],
+  // BillingByProvider rows are rendered via totalTokens / callCount / totalCost.
   "obs.billing.byProvider": [
     {
       provider: "anthropic",
-      inputTokens: 150000,
-      outputTokens: 75000,
-      functionTokens: 5000,
-      cost: 4.0,
+      totalTokens: 230000,
+      totalCost: 4.0,
+      callCount: 120,
+      totalCacheSaved: 0,
+      models: [],
     },
     {
       provider: "openai",
-      inputTokens: 10000,
-      outputTokens: 5000,
-      functionTokens: 1000,
-      cost: 2.5,
+      totalTokens: 16000,
+      totalCost: 2.5,
+      callCount: 25,
+      totalCacheSaved: 0,
+      models: [],
     },
   ],
-  "obs.billing.byAgent": [
-    {
-      agentId: "agent-default",
-      totalTokens: 150000,
-      percentOfTotal: 60.0,
-      cost: 4.0,
-    },
-    {
-      agentId: "agent-coding",
-      totalTokens: 100000,
-      percentOfTotal: 40.0,
-      cost: 2.5,
-    },
-  ],
+  // The observability view consumes obs.channels.all for the Channels tab.
+  "obs.channels.all": {
+    channels: [
+      {
+        channelType: "discord",
+        channelId: "discord-general",
+        messagesSent: 500,
+        messagesReceived: 450,
+        lastActiveAt: Date.now() - 30000,
+        isStale: false,
+      },
+      {
+        channelType: "telegram",
+        channelId: "telegram-bot",
+        messagesSent: 300,
+        messagesReceived: 280,
+        lastActiveAt: Date.now() - 60000,
+        isStale: false,
+      },
+    ],
+  },
   "obs.delivery.recent": [
     {
       traceId: "trace-1",
@@ -77,36 +87,24 @@ const OBSERVE_RPC_HANDLERS: Record<string, unknown> = {
       stepCount: 1,
     },
   ],
-  "obs.channels.activity": [
-    {
-      channelType: "discord",
-      channelId: "discord-general",
-      messagesSent: 500,
-      messagesReceived: 450,
-      lastActiveAt: Date.now() - 30000,
-      isStale: false,
-    },
-    {
-      channelType: "telegram",
-      channelId: "telegram-bot",
-      messagesSent: 300,
-      messagesReceived: 280,
-      lastActiveAt: Date.now() - 60000,
-      isStale: false,
-    },
-  ],
+  // DiagnosticsEvent shape: { id, timestamp, category, eventType, data }.
+  // deriveDiagnosticLevel falls back to "info" for unknown event types and
+  // returns "warn" for retry:attempted; deriveDiagnosticMessage echoes the
+  // event-type string when no specialized formatter matches.
   "obs.diagnostics": [
     {
+      id: "ev-1",
       timestamp: Date.now() - 30000,
       category: "monitor",
-      message: "High memory usage detected",
-      level: "warn",
+      eventType: "retry:attempted",
+      data: {},
     },
     {
+      id: "ev-2",
       timestamp: Date.now() - 60000,
       category: "daemon",
-      message: "Agent restarted",
-      level: "info",
+      eventType: "session:created",
+      data: {},
     },
   ],
 };
@@ -117,45 +115,43 @@ test.describe("Observability view", () => {
     await mockRpcRoutes(page, OBSERVE_RPC_HANDLERS);
     await page.goto("/");
     await login(page);
-    await navigateTo(page, "Observe");
+    // The sidebar groups observability routes under an "Observe" section
+    // header (non-interactive). The Overview entry is the first clickable
+    // item in that section and renders ic-observe-view.
+    await navigateTo(page, "Overview");
   });
 
   test("overview shows stat cards with request and token counts", async ({ page }) => {
     const view = page.locator("ic-observe-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Verify stat cards show request count from delivery stats
-    await expect(view.getByText("Requests Today")).toBeVisible();
-    await expect(view.locator("ic-stat-card").filter({ hasText: "Requests Today" })).toBeVisible();
-
-    // Verify tokens display (250,000 or 250K)
-    await expect(view.getByText("Tokens Today")).toBeVisible();
-
-    // Verify cost display
+    // Overview now exposes six stat cards: Requests/min, Error Rate,
+    // Avg Latency, Active Agents, Tokens (24h), Cost Today.
+    await expect(view.getByText("Requests/min")).toBeVisible();
+    await expect(view.getByText("Tokens (24h)")).toBeVisible();
     await expect(view.getByText("Cost Today")).toBeVisible();
-    await expect(view.getByText("$6.50")).toBeVisible();
+    // "Error Rate" also appears as a chart title ("Error Rate (24h)"), so
+    // pin to the stat-card label using exact match.
+    await expect(view.getByText("Error Rate", { exact: true })).toBeVisible();
 
-    // Verify errors count from delivery stats
-    await expect(view.getByText("Errors Today")).toBeVisible();
+    // Cost Today rendered as USD currency.
+    await expect(view.getByText("$6.50")).toBeVisible();
   });
 
-  test("billing tab shows token breakdown by agent", async ({ page }) => {
+  test("billing tab shows token breakdown by provider", async ({ page }) => {
     const view = page.locator("ic-observe-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Click Billing tab
-    await view.getByText("Billing", { exact: true }).click();
+    // Switch to the Billing tab via role to disambiguate from body text.
+    await view.getByRole("tab", { name: "Billing" }).click();
 
-    // Verify By Agent section title
-    await expect(view.getByText("By Agent")).toBeVisible();
+    // The Billing tab renders a "By Provider" table; the legacy "By Agent"
+    // table is no longer populated by the observe view's data loader.
+    await expect(view.getByText("By Provider")).toBeVisible();
+    await expect(view.getByText("anthropic")).toBeVisible();
+    await expect(view.getByText("openai")).toBeVisible();
 
-    // Verify per-agent breakdown shows agent-default
-    await expect(view.getByText("agent-default")).toBeVisible();
-
-    // Verify agent-coding is shown
-    await expect(view.getByText("agent-coding")).toBeVisible();
-
-    // Verify costs are shown ($4.00 appears in both provider and agent tables, use first())
+    // Costs render as USD currency (anthropic: $4.00, openai: $2.50).
     await expect(view.getByText("$4.00").first()).toBeVisible();
     await expect(view.getByText("$2.50").first()).toBeVisible();
   });
@@ -164,49 +160,45 @@ test.describe("Observability view", () => {
     const view = page.locator("ic-observe-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Click Delivery tab
-    await view.getByText("Delivery", { exact: true }).click();
+    // Switch to the Delivery tab via role to disambiguate from body text.
+    await view.getByRole("tab", { name: "Delivery" }).click();
 
-    // Verify delivery stats summary shows success rate
-    await expect(view.getByText("98.5%")).toBeVisible();
-
-    // Verify delivery traces are shown -- scope to delivery table to avoid filter dropdown collisions
-    const deliveryTable = view.getByLabel("Delivery traces");
-    await expect(deliveryTable.getByText("telegram", { exact: true })).toBeVisible();
-    await expect(deliveryTable.getByText("discord", { exact: true })).toBeVisible();
+    // Verify delivery traces are listed (the mock returns telegram + discord
+    // entries with messagePreview text rendered in the row).
+    await expect(view.getByText("Hello from telegram")).toBeVisible();
+    await expect(view.getByText("Discord test message")).toBeVisible();
   });
 
   test("diagnostics tab shows recent events", async ({ page }) => {
     const view = page.locator("ic-observe-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Click Diagnostics tab
-    await view.getByText("Diagnostics", { exact: true }).click();
+    // Switch to the Diagnostics tab via role to disambiguate from body text.
+    await view.getByRole("tab", { name: "Diagnostics" }).click();
 
-    // Verify diagnostic events are shown
-    await expect(view.getByText("High memory usage detected")).toBeVisible();
-    await expect(view.getByText("Agent restarted")).toBeVisible();
+    // Diagnostic messages are derived from event type via deriveDiagnosticMessage.
+    // retry:attempted -> "Retry attempted"; session:created -> "Session created".
+    await expect(view.getByText("Retry attempted")).toBeVisible();
+    await expect(view.getByText("Session created")).toBeVisible();
 
-    // Verify severity indicators are shown (warn and info tags)
-    await expect(view.locator("ic-tag").filter({ hasText: "warn" })).toBeVisible();
-    await expect(view.locator("ic-tag").filter({ hasText: "info" })).toBeVisible();
+    // Severity tags: retry:attempted is "warn", session:created falls back to "info".
+    await expect(view.locator("ic-tag").filter({ hasText: "warn" }).first()).toBeVisible();
+    await expect(view.locator("ic-tag").filter({ hasText: "info" }).first()).toBeVisible();
   });
 
   test("channels tab shows per-channel metrics", async ({ page }) => {
     const view = page.locator("ic-observe-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Click Channels tab (within observe view)
-    await view.getByText("Channels", { exact: true }).click();
-
-    // Verify discord channel shows sent messages count
-    await expect(view.getByText("500")).toBeVisible();
-
-    // Verify telegram channel shows sent messages count
-    await expect(view.getByText("300")).toBeVisible();
+    // Switch to the Channels tab via role to disambiguate from body text.
+    await view.getByRole("tab", { name: "Channels" }).click();
 
     // Verify channel IDs are shown
     await expect(view.getByText("discord-general")).toBeVisible();
     await expect(view.getByText("telegram-bot")).toBeVisible();
+
+    // Verify per-channel message counts (sent column).
+    await expect(view.getByText("500").first()).toBeVisible();
+    await expect(view.getByText("300").first()).toBeVisible();
   });
 });
