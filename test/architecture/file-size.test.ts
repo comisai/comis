@@ -721,6 +721,23 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // critical for operator verification. Auto-acceptable per
     // WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/views/media-test.ts",
+    // ic-cron-editor.ts (Wave 6 / Task 3 — NO-RPC variant): preview-
+    // debounce orchestration extracted via ic-cron-editor-controller.ts
+    // — view has 0 rpcClient.call sites at HEAD (form-only, no daemon
+    // I/O) and now delegates the preview-recompute debounce + next-
+    // runs dispatch to the controller. Controller fits the tightest
+    // 500L cap (136L). Wave-6 caps tightened the view from 800L to
+    // 500L; the residual ≤875L is dominated by ~190L of component-
+    // scoped CSS, the 5-field cron-expression form renderer (cron /
+    // every / at variants), the timezone dropdown, the form fields
+    // (agent / message / maxConcurrent / sessionTarget / delivery),
+    // the next-5-runs preview rendering, the _populateFromJob /
+    // _assembleJob pure mappers (parent-binding contract with the
+    // scheduler view from Wave 3), and the save / cancel CustomEvent
+    // dispatchers — all tightly DOM-coupled. The 16 form @state
+    // fields stay on the view because they are the form contract.
+    // Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/components/scheduler/ic-cron-editor.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
