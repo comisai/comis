@@ -414,11 +414,17 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
    * cannot be met without violating design intent. Each entry carries a paired
    * `removedIn: "deferred"` allowlist entry in test/support/architecture-allowlist.ts
    * with reason "web view; internal velocity only". Auto-acceptable per WEB-DECOMP-09.
-   *
-   * Empty at Wave 1 (this commit). Populated as needed by Waves 2-7 + Wave 8.
    */
   const FALLBACK_EXCEPTIONS: ReadonlySet<string> = new Set<string>([
-    // Reserved for §10.5 fallbacks (auto-acceptable per WEB-DECOMP-09).
+    // chat-console.ts (Wave 2 / Task 3): RPC extraction completed via
+    // chat-console-controller.ts — view contains 0 rpcClient.call sites and
+    // delegates all daemon I/O to the controller. The remaining ≤1200L is
+    // DOM-coupled interaction logic (recording, drag-drop, scroll, focus,
+    // slash menu, streaming buffer with raf-batched updates) that does not
+    // split cleanly into a controller without breaking 67 existing
+    // behavioural tests that rely on direct `@state` assignment. Auto-
+    // acceptable per WEB-DECOMP-09.
+    "packages/web/src/views/chat-console.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

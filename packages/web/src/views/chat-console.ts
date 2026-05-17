@@ -9,6 +9,7 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { parseSessionKeyString, formatSessionDisplayName } from "../utils/session-key-parser.js";
 import { stripSilentTokens, stripUserSystemContext } from "../utils/message-content.js";
 import { systemClearInterval, systemNowMs, systemSetInterval, systemSetTimeout } from "@comis/core";
+import { createChatConsoleController, type ChatConsoleController } from "./chat-console-controller.js";
 
 // Side-effect imports to register child components
 import "../components/domain/ic-chat-message.js";
@@ -86,559 +87,117 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 /** Maximum voice recording duration in seconds. */
 const MAX_RECORDING_DURATION = 120;
 
-/**
- * Full chat console view with session sidebar, conversation area,
- * message input bar, voice recording, attachments, slash commands,
- * and streaming indicator.
- *
- * Layout: 2-column with 280px sidebar (left) and flex-1 conversation area (right).
- * On mobile (max-width: 767px), sidebar is hidden and toggled via button.
- *
- * Integrates with the daemon via RPC for session management and
- * SSE events for real-time message updates.
- *
- * @example
- * ```html
- * <ic-chat-console
- *   .rpcClient=${rpcClient}
- *   .eventDispatcher=${eventDispatcher}
- *   .sessionKey=${"agent:default:telegram:12345"}
- * ></ic-chat-console>
- * ```
- */
+/** Full chat console view (sidebar + conversation + input + voice + attachments + streaming). */
 @customElement("ic-chat-console")
 export class IcChatConsole extends LitElement {
   static override styles = [
     sharedStyles,
     focusStyles,
     css`
-      :host {
-        display: flex;
-        height: calc(100vh - 6.5rem);
-        max-height: calc(100vh - 6.5rem);
-        overflow: hidden;
-      }
-
+      :host { display: flex; height: calc(100vh - 6.5rem); max-height: calc(100vh - 6.5rem); overflow: hidden; }
       /* --- Sidebar --- */
-      .sidebar {
-        width: 280px;
-        min-width: 280px;
-        background: var(--ic-surface);
-        border-right: 1px solid var(--ic-border);
-        display: flex;
-        flex-direction: column;
-        height: 100%;
-        overflow: hidden;
-      }
-
-      .sidebar-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: var(--ic-space-md);
-        border-bottom: 1px solid var(--ic-border);
-        flex-shrink: 0;
-      }
-
-      .sidebar-title {
-        font-size: var(--ic-text-base);
-        font-weight: 600;
-      }
-
-      .new-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        background: var(--ic-accent);
-        color: white;
-        border: none;
-        border-radius: var(--ic-radius-md);
-        padding: var(--ic-space-xs) var(--ic-space-sm);
-        font-size: var(--ic-text-xs);
-        font-family: inherit;
-        cursor: pointer;
-        font-weight: 500;
-        transition: background var(--ic-transition);
-      }
-
-      .new-btn:hover {
-        background: var(--ic-accent-hover);
-      }
-
-      .sidebar-search {
-        padding: var(--ic-space-sm) var(--ic-space-md);
-        flex-shrink: 0;
-      }
-
-      .session-list {
-        flex: 1;
-        overflow-y: auto;
-      }
-
-      .session-item {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        padding: var(--ic-space-sm) var(--ic-space-md);
-        cursor: pointer;
-        border-left: 3px solid transparent;
-        transition: background var(--ic-transition);
-      }
-
-      .session-item:hover {
-        background: var(--ic-surface-2);
-      }
-
-      .session-item--active {
-        background: var(--ic-surface-2);
-        border-left-color: var(--ic-accent);
-      }
-
-      .session-key {
-        font-family: var(--ic-font-mono);
-        font-size: var(--ic-text-xs);
-        color: var(--ic-text);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .session-meta {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm);
-      }
-
-      .msg-count {
-        font-size: var(--ic-text-xs);
-        color: var(--ic-text-dim);
-        background: var(--ic-surface-2);
-        padding: 1px 6px;
-        border-radius: 9999px;
-      }
-
+      .sidebar { width: 280px; min-width: 280px; background: var(--ic-surface); border-right: 1px solid var(--ic-border); display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+      .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: var(--ic-space-md); border-bottom: 1px solid var(--ic-border); flex-shrink: 0; }
+      .sidebar-title { font-size: var(--ic-text-base); font-weight: 600; }
+      .new-btn { display: inline-flex; align-items: center; gap: 4px; background: var(--ic-accent); color: white; border: none; border-radius: var(--ic-radius-md); padding: var(--ic-space-xs) var(--ic-space-sm); font-size: var(--ic-text-xs); font-family: inherit; cursor: pointer; font-weight: 500; transition: background var(--ic-transition); }
+      .new-btn:hover { background: var(--ic-accent-hover); }
+      .sidebar-search { padding: var(--ic-space-sm) var(--ic-space-md); flex-shrink: 0; }
+      .session-list { flex: 1; overflow-y: auto; }
+      .session-item { display: flex; flex-direction: column; gap: 4px; padding: var(--ic-space-sm) var(--ic-space-md); cursor: pointer; border-left: 3px solid transparent; transition: background var(--ic-transition); }
+      .session-item:hover { background: var(--ic-surface-2); }
+      .session-item--active { background: var(--ic-surface-2); border-left-color: var(--ic-accent); }
+      .session-key { font-family: var(--ic-font-mono); font-size: var(--ic-text-xs); color: var(--ic-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .session-meta { display: flex; align-items: center; gap: var(--ic-space-sm); }
+      .msg-count { font-size: var(--ic-text-xs); color: var(--ic-text-dim); background: var(--ic-surface-2); padding: 1px 6px; border-radius: 9999px; }
       /* --- Conversation Area --- */
-      .conversation {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-        height: 100%;
-        overflow: hidden;
-      }
-
-      .conv-header {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-md);
-        padding: var(--ic-space-md);
-        border-bottom: 1px solid var(--ic-border);
-        flex-shrink: 0;
-      }
-
-      .agent-select {
-        background: var(--ic-surface-2);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        color: var(--ic-text);
-        font-size: var(--ic-text-sm);
-        padding: var(--ic-space-xs) var(--ic-space-sm);
-        font-family: inherit;
-      }
-
-      .session-info {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm);
-        margin-left: auto;
-        font-size: var(--ic-text-xs);
-        color: var(--ic-text-dim);
-      }
-
-      .session-info-key {
-        font-family: var(--ic-font-mono);
-      }
-
-      .message-area {
-        flex: 1;
-        overflow-y: auto;
-        padding: var(--ic-space-lg) var(--ic-space-xl);
-        display: flex;
-        flex-direction: column;
-        gap: var(--ic-space-sm);
-        position: relative;
-        max-width: 900px;
-        margin: 0 auto;
-        width: 100%;
-      }
-
-      .new-messages-btn {
-        position: sticky;
-        bottom: var(--ic-space-sm);
-        align-self: center;
-        background: var(--ic-accent);
-        color: white;
-        border: none;
-        border-radius: 9999px;
-        padding: var(--ic-space-xs) var(--ic-space-md);
-        font-size: var(--ic-text-xs);
-        font-family: inherit;
-        cursor: pointer;
-        box-shadow: var(--ic-shadow-md);
-        z-index: 1;
-      }
-
-      .new-messages-btn:hover {
-        background: var(--ic-accent-hover);
-      }
-
+      .conversation { flex: 1; display: flex; flex-direction: column; min-width: 0; height: 100%; overflow: hidden; }
+      .conv-header { display: flex; align-items: center; gap: var(--ic-space-md); padding: var(--ic-space-md); border-bottom: 1px solid var(--ic-border); flex-shrink: 0; }
+      .agent-select { background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text); font-size: var(--ic-text-sm); padding: var(--ic-space-xs) var(--ic-space-sm); font-family: inherit; }
+      .session-info { display: flex; align-items: center; gap: var(--ic-space-sm); margin-left: auto; font-size: var(--ic-text-xs); color: var(--ic-text-dim); }
+      .session-info-key { font-family: var(--ic-font-mono); }
+      .message-area { flex: 1; overflow-y: auto; padding: var(--ic-space-lg) var(--ic-space-xl); display: flex; flex-direction: column; gap: var(--ic-space-sm); position: relative; max-width: 900px; margin: 0 auto; width: 100%; }
+      .new-messages-btn { position: sticky; bottom: var(--ic-space-sm); align-self: center; background: var(--ic-accent); color: white; border: none; border-radius: 9999px; padding: var(--ic-space-xs) var(--ic-space-md); font-size: var(--ic-text-xs); font-family: inherit; cursor: pointer; box-shadow: var(--ic-shadow-md); z-index: 1; }
+      .new-messages-btn:hover { background: var(--ic-accent-hover); }
       /* --- Input Bar --- */
-      .input-bar {
-        display: flex;
-        flex-direction: column;
-        padding: var(--ic-space-md);
-        border-top: 1px solid var(--ic-border);
-        gap: var(--ic-space-sm);
-        flex-shrink: 0;
-        position: relative;
-      }
-
-      .attachment-strip {
-        display: flex;
-        gap: var(--ic-space-sm);
-        flex-wrap: wrap;
-      }
-
-      .attachment-preview {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 8px;
-        background: var(--ic-surface-2);
-        border-radius: var(--ic-radius-sm);
-        font-size: var(--ic-text-xs);
-        color: var(--ic-text);
-      }
-
-      .attachment-preview img {
-        width: 48px;
-        height: 48px;
-        object-fit: cover;
-        border-radius: var(--ic-radius-sm);
-      }
-
-      .attachment-remove {
-        background: none;
-        border: none;
-        color: var(--ic-text-dim);
-        cursor: pointer;
-        padding: 2px;
-        font-size: var(--ic-text-xs);
-        line-height: 1;
-        border-radius: var(--ic-radius-sm);
-      }
-
-      .attachment-remove:hover {
-        color: var(--ic-error);
-      }
-
-      .input-row {
-        display: flex;
-        align-items: flex-end;
-        gap: var(--ic-space-sm);
-      }
-
-      .input-textarea {
-        flex: 1;
-        min-height: 2.5rem;
-        max-height: 8rem;
-        background: var(--ic-surface-2);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        color: var(--ic-text);
-        font-size: var(--ic-text-sm);
-        padding: var(--ic-space-sm) var(--ic-space-md);
-        resize: none;
-        font-family: inherit;
-        line-height: 1.5;
-        outline: none;
-        transition: border-color var(--ic-transition);
-      }
-
-      .input-textarea:focus {
-        border-color: var(--ic-accent);
-      }
-
-      .input-textarea:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      .voice-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        background: none;
-        border: none;
-        color: var(--ic-text-muted);
-        cursor: pointer;
-        padding: var(--ic-space-sm);
-        border-radius: 50%;
-        transition: color var(--ic-transition), background var(--ic-transition);
-      }
-
-      .voice-btn:hover {
-        color: var(--ic-text);
-      }
-
-      .voice-btn--recording {
-        background: var(--ic-error);
-        color: white;
-      }
-
-      .voice-btn--recording:hover {
-        background: var(--ic-error);
-        color: white;
-      }
-
-      .voice-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      .recording-indicator {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-xs);
-      }
-
-      .recording-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: var(--ic-error);
-        animation: pulse 1.5s ease-in-out infinite;
-      }
-
+      .input-bar { display: flex; flex-direction: column; padding: var(--ic-space-md); border-top: 1px solid var(--ic-border); gap: var(--ic-space-sm); flex-shrink: 0; position: relative; }
+      .attachment-strip { display: flex; gap: var(--ic-space-sm); flex-wrap: wrap; }
+      .attachment-preview { display: flex; align-items: center; gap: 4px; padding: 4px 8px; background: var(--ic-surface-2); border-radius: var(--ic-radius-sm); font-size: var(--ic-text-xs); color: var(--ic-text); }
+      .attachment-preview img { width: 48px; height: 48px; object-fit: cover; border-radius: var(--ic-radius-sm); }
+      .attachment-remove { background: none; border: none; color: var(--ic-text-dim); cursor: pointer; padding: 2px; font-size: var(--ic-text-xs); line-height: 1; border-radius: var(--ic-radius-sm); }
+      .attachment-remove:hover { color: var(--ic-error); }
+      .input-row { display: flex; align-items: flex-end; gap: var(--ic-space-sm); }
+      .input-textarea { flex: 1; min-height: 2.5rem; max-height: 8rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text); font-size: var(--ic-text-sm); padding: var(--ic-space-sm) var(--ic-space-md); resize: none; font-family: inherit; line-height: 1.5; outline: none; transition: border-color var(--ic-transition); }
+      .input-textarea:focus { border-color: var(--ic-accent); }
+      .input-textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+      .voice-btn { display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: var(--ic-text-muted); cursor: pointer; padding: var(--ic-space-sm); border-radius: 50%; transition: color var(--ic-transition), background var(--ic-transition); }
+      .voice-btn:hover { color: var(--ic-text); }
+      .voice-btn--recording { background: var(--ic-error); color: white; }
+      .voice-btn--recording:hover { background: var(--ic-error); color: white; }
+      .voice-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .recording-indicator { display: flex; align-items: center; gap: var(--ic-space-xs); }
+      .recording-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ic-error); animation: pulse 1.5s ease-in-out infinite; }
       @media (prefers-reduced-motion: reduce) {
-        .recording-dot {
-          animation: none;
-          opacity: 0.7;
-        }
+      .recording-dot { animation: none; opacity: 0.7; }
       }
-
       @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.3; }
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
       }
-
-      .recording-time {
-        color: var(--ic-error);
-        font-family: var(--ic-font-mono);
-        font-size: var(--ic-text-xs);
-      }
-
-      .send-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--ic-accent);
-        color: white;
-        border: none;
-        border-radius: var(--ic-radius-md);
-        padding: var(--ic-space-sm) var(--ic-space-md);
-        cursor: pointer;
-        transition: opacity var(--ic-transition);
-      }
-
-      .send-btn:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-      }
-
-      .send-btn:hover:not(:disabled) {
-        opacity: 0.9;
-      }
-
+      .recording-time { color: var(--ic-error); font-family: var(--ic-font-mono); font-size: var(--ic-text-xs); }
+      .send-btn { display: inline-flex; align-items: center; justify-content: center; background: var(--ic-accent); color: white; border: none; border-radius: var(--ic-radius-md); padding: var(--ic-space-sm) var(--ic-space-md); cursor: pointer; transition: opacity var(--ic-transition); }
+      .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+      .send-btn:hover:not(:disabled) { opacity: 0.9; }
       /* --- Drag overlay --- */
-      .drag-overlay {
-        position: absolute;
-        inset: 0;
-        border: 2px dashed var(--ic-accent);
-        background: color-mix(in srgb, var(--ic-accent) 10%, transparent);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: var(--ic-space-sm);
-        z-index: 5;
-        font-size: var(--ic-text-sm);
-        color: var(--ic-accent);
-        pointer-events: none;
-      }
-
+      .drag-overlay { position: absolute; inset: 0; border: 2px dashed var(--ic-accent); background: color-mix(in srgb, var(--ic-accent) 10%, transparent); display: flex; align-items: center; justify-content: center; gap: var(--ic-space-sm); z-index: 5; font-size: var(--ic-text-sm); color: var(--ic-accent); pointer-events: none; }
       /* --- Slash command menu --- */
-      .slash-menu {
-        position: absolute;
-        bottom: 100%;
-        left: var(--ic-space-md);
-        right: var(--ic-space-md);
-        background: var(--ic-surface);
-        border: 1px solid var(--ic-border);
-        border-radius: var(--ic-radius-md);
-        box-shadow: var(--ic-shadow-lg);
-        max-height: 12rem;
-        overflow-y: auto;
-        z-index: 100;
-      }
-
-      .slash-item {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm);
-        padding: var(--ic-space-sm) var(--ic-space-md);
-        cursor: pointer;
-        transition: background var(--ic-transition);
-      }
-
+      .slash-menu { position: absolute; bottom: 100%; left: var(--ic-space-md); right: var(--ic-space-md); background: var(--ic-surface); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); box-shadow: var(--ic-shadow-lg); max-height: 12rem; overflow-y: auto; z-index: 100; }
+      .slash-item { display: flex; align-items: center; gap: var(--ic-space-sm); padding: var(--ic-space-sm) var(--ic-space-md); cursor: pointer; transition: background var(--ic-transition); }
       .slash-item:hover,
-      .slash-item--active {
-        background: var(--ic-surface-2);
-      }
-
-      .slash-cmd {
-        font-family: var(--ic-font-mono);
-        color: var(--ic-text);
-        font-size: var(--ic-text-sm);
-      }
-
-      .slash-desc {
-        color: var(--ic-text-dim);
-        font-size: var(--ic-text-xs);
-      }
-
+      .slash-item--active { background: var(--ic-surface-2); }
+      .slash-cmd { font-family: var(--ic-font-mono); color: var(--ic-text); font-size: var(--ic-text-sm); }
+      .slash-desc { color: var(--ic-text-dim); font-size: var(--ic-text-xs); }
       /* --- Budget bar --- */
-      .budget-bar-area {
-        padding: 0 var(--ic-space-md);
-        flex-shrink: 0;
-        border-top: 1px solid var(--ic-border);
-      }
-
+      .budget-bar-area { padding: 0 var(--ic-space-md); flex-shrink: 0; border-top: 1px solid var(--ic-border); }
       /* --- Streaming indicator --- */
-      .streaming-indicator {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm);
-        padding: var(--ic-space-sm) var(--ic-space-md);
-      }
-
-      .typing-dots {
-        display: flex;
-        gap: 4px;
-      }
-
-      .typing-dot {
-        width: 6px;
-        height: 6px;
-        background: var(--ic-text-muted);
-        border-radius: 50%;
-        animation: bounce 1.2s infinite;
-      }
-
-      .typing-dot:nth-child(2) {
-        animation-delay: 0.15s;
-      }
-
-      .typing-dot:nth-child(3) {
-        animation-delay: 0.3s;
-      }
-
+      .streaming-indicator { display: flex; align-items: center; gap: var(--ic-space-sm); padding: var(--ic-space-sm) var(--ic-space-md); }
+      .typing-dots { display: flex; gap: 4px; }
+      .typing-dot { width: 6px; height: 6px; background: var(--ic-text-muted); border-radius: 50%; animation: bounce 1.2s infinite; }
+      .typing-dot:nth-child(2) { animation-delay: 0.15s; }
+      .typing-dot:nth-child(3) { animation-delay: 0.3s; }
       @keyframes bounce {
-        0%, 60%, 100% { transform: scale(1); }
-        30% { transform: scale(1.4); }
+      0%, 60%, 100% { transform: scale(1); }
+      30% { transform: scale(1.4); }
       }
-
       @media (prefers-reduced-motion: reduce) {
-        .typing-dot {
-          animation: none;
-        }
-        .typing-dot:nth-child(1) { opacity: 0.4; }
-        .typing-dot:nth-child(2) { opacity: 0.7; }
-        .typing-dot:nth-child(3) { opacity: 1; }
+      .typing-dot { animation: none; }
+      .typing-dot:nth-child(1) { opacity: 0.4; }
+      .typing-dot:nth-child(2) { opacity: 0.7; }
+      .typing-dot:nth-child(3) { opacity: 1; }
       }
-
-      .thinking-indicator {
-        display: flex;
-        align-items: center;
-        gap: var(--ic-space-sm);
-        padding: var(--ic-space-sm) var(--ic-space-md);
-        color: var(--ic-text-muted);
-        font-size: 0.85rem;
-      }
-
-      .thinking-label {
-        color: var(--ic-text-muted);
-        font-size: 0.85rem;
-      }
-
-      .token-counter {
-        font-family: var(--ic-font-mono);
-        font-size: var(--ic-text-xs);
-        color: var(--ic-text-dim);
-      }
-
+      .thinking-indicator { display: flex; align-items: center; gap: var(--ic-space-sm); padding: var(--ic-space-sm) var(--ic-space-md); color: var(--ic-text-muted); font-size: 0.85rem; }
+      .thinking-label { color: var(--ic-text-muted); font-size: 0.85rem; }
+      .token-counter { font-family: var(--ic-font-mono); font-size: var(--ic-text-xs); color: var(--ic-text-dim); }
       /* Mobile toggle */
-      .mobile-toggle {
-        display: none;
-        background: none;
-        border: none;
-        color: var(--ic-text);
-        cursor: pointer;
-        padding: var(--ic-space-xs);
-      }
-
+      .mobile-toggle { display: none; background: none; border: none; color: var(--ic-text); cursor: pointer; padding: var(--ic-space-xs); }
       /* Loading center */
-      .loading-center {
-        display: flex;
-        justify-content: center;
-        padding: var(--ic-space-2xl);
-      }
-
+      .loading-center { display: flex; justify-content: center; padding: var(--ic-space-2xl); }
       /* Responsive: mobile */
       @media (max-width: 767px) {
-        .sidebar {
-          display: none;
-        }
-
-        .sidebar--open {
-          display: flex;
-          position: absolute;
-          top: 0;
-          left: 0;
-          z-index: 10;
-          height: 100%;
-          box-shadow: var(--ic-shadow-lg);
-        }
-
-        .mobile-toggle {
-          display: inline-flex;
-        }
+      .sidebar { display: none; }
+      .sidebar--open { display: flex; position: absolute; top: 0; left: 0; z-index: 10; height: 100%; box-shadow: var(--ic-shadow-lg); }
+      .mobile-toggle { display: inline-flex; }
       }
     `,
   ];
 
-  /** REST API client for chat and session operations. */
   @property({ attribute: false }) apiClient: ApiClient | null = null;
 
-  /** JSON-RPC client for session.* calls. */
   @property({ attribute: false }) rpcClient: RpcClient | null = null;
 
-  /** SSE event dispatcher for real-time message events. */
   @property({ attribute: false }) eventDispatcher: EventDispatcher | null = null;
 
-  /** Route param: pre-selected session key. */
   @property() sessionKey = "";
 
-  /** Auth token passed down to ic-chat-message for authenticated media URLs. */
   @property() authToken = "";
 
   // --- Session / conversation state ---
@@ -694,8 +253,13 @@ export class IcChatConsole extends LitElement {
   private _audioChunks: Blob[] = [];
   private _recordingTimer: ReturnType<typeof setInterval> | null = null;
 
+  @state() private _controller: ChatConsoleController | null = null;
+
   override connectedCallback(): void {
     super.connectedCallback();
+    if (this.rpcClient && !this._controller) {
+      this._controller = createChatConsoleController(this, this.rpcClient);
+    }
     this._setupEventListeners();
   }
 
@@ -707,7 +271,6 @@ export class IcChatConsole extends LitElement {
     this._eventUnsubs = [];
     this._rpcStatusUnsub?.();
     this._rpcStatusUnsub = null;
-
     // Clean up recording
     if (this._recordingTimer !== null) {
       systemClearInterval(this._recordingTimer);
@@ -715,7 +278,6 @@ export class IcChatConsole extends LitElement {
     if (this._mediaRecorder?.state === "recording") {
       this._mediaRecorder.stop();
     }
-
     // Revoke attachment object URLs
     for (const att of this._attachments) {
       if (att.previewUrl) {
@@ -728,9 +290,11 @@ export class IcChatConsole extends LitElement {
     if (changed.has("_messages") && !this._userScrolledUp) {
       this._scrollToBottom();
     }
-
     // Load data when rpcClient becomes available (handles late property binding)
     if (changed.has("rpcClient") && this.rpcClient) {
+      if (!this._controller) {
+        this._controller = createChatConsoleController(this, this.rpcClient);
+      }
       this._rpcStatusUnsub?.();
       if (this.rpcClient.status === "connected") {
         this._initialLoad();
@@ -742,45 +306,32 @@ export class IcChatConsole extends LitElement {
         });
       }
     }
-
     // Load agents when apiClient becomes available
     if (changed.has("apiClient") && this.apiClient && this._agents.length <= 1) {
       this._loadAgents();
     }
   }
 
-  /** One-time initial data load once RPC is connected. */
   private _initialLoad(): void {
     if (this._dataLoaded) return;
     this._dataLoaded = true;
     this._loadSessions();
   }
 
-  /* ==================== Event Listeners ==================== */
+  /** Register a `document` CustomEvent listener with auto-unsubscribe tracking. */
+  private _onDocEvent(type: string, handler: (data: Record<string, unknown>) => void): void {
+    const fn = (e: Event) => handler((e as CustomEvent).detail as Record<string, unknown>);
+    document.addEventListener(type, fn);
+    this._eventUnsubs.push(() => document.removeEventListener(type, fn));
+  }
 
-  /** Set up SSE event listeners for real-time updates. */
   private _setupEventListeners(): void {
-    // Listen for message:received via document CustomEvents
-    const onReceived = (e: Event) => {
-      const data = (e as CustomEvent).detail as Record<string, unknown>;
-      if (data.sessionKey === this._activeSession) {
-        this._appendMessage(data);
-      }
+    const appendIfActive = (data: Record<string, unknown>) => {
+      if (data.sessionKey === this._activeSession) this._appendMessage(data);
     };
-    document.addEventListener("message:received", onReceived);
-    this._eventUnsubs.push(() => document.removeEventListener("message:received", onReceived));
-
-    const onSent = (e: Event) => {
-      const data = (e as CustomEvent).detail as Record<string, unknown>;
-      if (data.sessionKey === this._activeSession) {
-        this._appendMessage(data);
-      }
-    };
-    document.addEventListener("message:sent", onSent);
-    this._eventUnsubs.push(() => document.removeEventListener("message:sent", onSent));
-
-    const onSessionCreated = (e: Event) => {
-      const data = (e as CustomEvent).detail as Record<string, unknown>;
+    this._onDocEvent("message:received", appendIfActive);
+    this._onDocEvent("message:sent", appendIfActive);
+    this._onDocEvent("session:created", (data) => {
       const session: SessionInfo = {
         key: String(data.sessionKey ?? ""),
         agentId: String(data.agentId ?? "unknown"),
@@ -789,111 +340,90 @@ export class IcChatConsole extends LitElement {
         lastActivity: systemNowMs(),
       };
       this._sessions = [session, ...this._sessions];
-    };
-    document.addEventListener("session:created", onSessionCreated);
-    this._eventUnsubs.push(() => document.removeEventListener("session:created", onSessionCreated));
-
-    // Listen for streaming events
-    const onStreaming = (e: Event) => {
-      const data = (e as CustomEvent).detail as Record<string, unknown>;
-      if (data.sessionKey !== this._activeSession) return;
-
-      if (!this._streaming) {
-        this._streaming = true;
-        this._streamingTokens = 0;
-        this._streamingContent = "";
-        this._streamBuffer = "";
-      }
-
-      if (typeof data.content === "string") {
-        this._streamBuffer += data.content;
-        if (!this._rafPending) {
-          this._rafPending = true;
-          requestAnimationFrame(() => {
-            this._streamingContent = this._streamBuffer;
-            this._rafPending = false;
-          });
-        }
-      }
-      if (typeof data.tokens === "number") {
-        this._streamingTokens = data.tokens;
-      }
-
-      if (data.done === true) {
-        // Streaming complete - finalize content from buffer
-        this._streamingContent = this._streamBuffer;
-        // Add the final message
-        if (this._streamBuffer.trim()) {
-          const msg: ChatMessageData = {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: this._streamBuffer,
-            timestamp: systemNowMs(),
-          };
-          this._messages = [...this._messages, msg];
-        }
-        this._streaming = false;
-        this._streamingTokens = 0;
-        this._streamingContent = "";
-        this._streamBuffer = "";
-        this._rafPending = false;
-        this._focusInput();
-      }
-    };
-    document.addEventListener("message:streaming", onStreaming);
-    this._eventUnsubs.push(() => document.removeEventListener("message:streaming", onStreaming));
-
-    // Listen for WebSocket notification.message (server-pushed, e.g. sub-agent completions)
+    });
+    this._onDocEvent("message:streaming", (data) => this._handleStreamingEvent(data));
     if (this.rpcClient) {
-      const unsubNotification = this.rpcClient.onNotification((method, params) => {
-        if (method !== "notification.message") return;
-        const p = params as Record<string, unknown> | undefined;
-        const text = typeof p?.text === "string" ? p.text : "";
-        if (!text) return;
-        console.debug("[chat] notification.message received, length:", text.length);
-        const msg: ChatMessageData = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: text,
-          timestamp: typeof p?.timestamp === "number" ? p.timestamp : systemNowMs(),
-        };
-        this._messages = [...this._messages, msg];
-        this._syncSessionMessageCount();
-        this._scrollToBottom();
-      });
-      this._eventUnsubs.push(unsubNotification);
-
-      // Listen for WebSocket notification.attachment (agent file/media sharing via gateway)
-      const unsubAttachment = this.rpcClient.onNotification((method, params) => {
-        if (method !== "notification.attachment") return;
-        const p = params as Record<string, unknown> | undefined;
-        const url = typeof p?.url === "string" ? p.url : "";
-        if (!url) return;
-        console.debug("[chat] notification.attachment received:", p?.type, p?.fileName);
-
-        const type = (p?.type as string) ?? "file";
-        const fileName = (p?.fileName as string) ?? "attachment";
-        const caption = typeof p?.caption === "string" ? p.caption : "";
-        const mimeType = (p?.mimeType as string) ?? "";
-
-        // Encode attachment as a marker the chat message component will parse and render
-        const attachmentJson = JSON.stringify({ url, type, mimeType, fileName });
-        const content = caption
-          ? `${caption}\n\n<!-- attachment:${attachmentJson} -->`
-          : `<!-- attachment:${attachmentJson} -->`;
-
-        const msg: ChatMessageData = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content,
-          timestamp: typeof p?.timestamp === "number" ? p.timestamp : systemNowMs(),
-        };
-        this._messages = [...this._messages, msg];
-        this._syncSessionMessageCount();
-        this._scrollToBottom();
-      });
-      this._eventUnsubs.push(unsubAttachment);
+      this._eventUnsubs.push(this.rpcClient.onNotification((method, params) => {
+        if (method === "notification.message") this._handleNotificationMessage(params);
+        else if (method === "notification.attachment") this._handleNotificationAttachment(params);
+      }));
     }
+  }
+
+  private _handleStreamingEvent(data: Record<string, unknown>): void {
+    if (data.sessionKey !== this._activeSession) return;
+    if (!this._streaming) {
+      this._streaming = true;
+      this._streamingTokens = 0;
+      this._streamingContent = "";
+      this._streamBuffer = "";
+    }
+    if (typeof data.content === "string") {
+      this._streamBuffer += data.content;
+      if (!this._rafPending) {
+        this._rafPending = true;
+        requestAnimationFrame(() => {
+          this._streamingContent = this._streamBuffer;
+          this._rafPending = false;
+        });
+      }
+    }
+    if (typeof data.tokens === "number") this._streamingTokens = data.tokens;
+    if (data.done === true) {
+      this._streamingContent = this._streamBuffer;
+      if (this._streamBuffer.trim()) {
+        this._messages = [...this._messages, {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: this._streamBuffer,
+          timestamp: systemNowMs(),
+        }];
+      }
+      this._streaming = false;
+      this._streamingTokens = 0;
+      this._streamingContent = "";
+      this._streamBuffer = "";
+      this._rafPending = false;
+      this._focusInput();
+    }
+  }
+
+  private _handleNotificationMessage(params: unknown): void {
+    const p = params as Record<string, unknown> | undefined;
+    const text = typeof p?.text === "string" ? p.text : "";
+    if (!text) return;
+    console.debug("[chat] notification.message received, length:", text.length);
+    this._messages = [...this._messages, {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content: text,
+      timestamp: typeof p?.timestamp === "number" ? p.timestamp : systemNowMs(),
+    }];
+    this._syncSessionMessageCount();
+    this._scrollToBottom();
+  }
+
+  private _handleNotificationAttachment(params: unknown): void {
+    const p = params as Record<string, unknown> | undefined;
+    const url = typeof p?.url === "string" ? p.url : "";
+    if (!url) return;
+    console.debug("[chat] notification.attachment received:", p?.type, p?.fileName);
+    const type = (p?.type as string) ?? "file";
+    const fileName = (p?.fileName as string) ?? "attachment";
+    const caption = typeof p?.caption === "string" ? p.caption : "";
+    const mimeType = (p?.mimeType as string) ?? "";
+    const attachmentJson = JSON.stringify({ url, type, mimeType, fileName });
+    const content = caption
+      ? `${caption}\n\n<!-- attachment:${attachmentJson} -->`
+      : `<!-- attachment:${attachmentJson} -->`;
+    this._messages = [...this._messages, {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content,
+      timestamp: typeof p?.timestamp === "number" ? p.timestamp : systemNowMs(),
+    }];
+    this._syncSessionMessageCount();
+    this._scrollToBottom();
   }
 
   private _appendMessage(data: Record<string, unknown>): void {
@@ -904,36 +434,21 @@ export class IcChatConsole extends LitElement {
       timestamp: (data.timestamp as number) ?? systemNowMs(),
     };
     this._messages = [...this._messages, msg];
-
     if (this._userScrolledUp) {
       this._hasNewMessages = true;
     }
   }
 
-  /* ==================== Data Loading ==================== */
-
-  /** Load session list from daemon. */
   private async _loadSessions(): Promise<void> {
     if (!this.rpcClient) {
       this._loading = false;
       return;
     }
-
     try {
       // Closed-union retype: session.list returns kind ∈
       // {"dm", "group", "sub-agent"} per session-handlers.ts:413-417 derivation
       // (parentSessionKey -> "sub-agent" | guildId -> "group" | else "dm").
-      const result = await this.rpcClient.call<{
-        sessions: Array<{
-          sessionKey: string;
-          agentId: string;
-          channelId: string;
-          kind: "dm" | "group" | "sub-agent";
-          messageCount?: number;
-          updatedAt: number;
-        }>;
-      }>("session.list", { kind: "dm" });
-      const sessions = result?.sessions ?? [];
+      const sessions = await this._controller!.listSessions();
       this._sessions = sessions.map((s) => ({
         key: s.sessionKey,
         agentId: s.agentId,
@@ -941,10 +456,8 @@ export class IcChatConsole extends LitElement {
         messageCount: s.messageCount ?? 0,
         lastActivity: s.updatedAt,
       }));
-
       // Show the chat UI immediately with session list
       this._loading = false;
-
       // Pre-select session from route param and load history in background
       if (this.sessionKey) {
         const match = this._sessions.find((s) => s.key === this.sessionKey);
@@ -959,19 +472,13 @@ export class IcChatConsole extends LitElement {
     }
   }
 
-  /** Load chat history for the active session. */
   private async _loadSessionHistory(): Promise<void> {
-    if (!this.rpcClient || !this._activeSession) return;
-
+    if (!this._controller || !this._activeSession) return;
     this._loading = true;
     try {
-      const result = await this.rpcClient.call<{ messages: ChatMessageData[] }>(
-        "session.history",
-        { session_key: this._activeSession },
-      );
-      const rawMessages = result?.messages ?? [];
+      const rawMessages = await this._controller.loadSessionHistory(this._activeSession);
       this._messages = rawMessages
-        .map((m) => ({
+        .map((m): ChatMessageData => ({
           id: m.id ?? crypto.randomUUID(),
           role: m.role,
           content: m.role === "assistant"
@@ -980,7 +487,9 @@ export class IcChatConsole extends LitElement {
               ? stripUserSystemContext(m.content)
               : m.content,
           timestamp: m.timestamp ?? 0,
-          toolCalls: m.toolCalls,
+          // Tool calls flow through opaquely — view's ToolCallData shape is
+          // an internal display detail that matches the daemon's response.
+          toolCalls: m.toolCalls as ToolCallData[] | undefined,
         }))
         .filter((m) => m.content !== "" || m.role !== "assistant");
     } catch {
@@ -989,49 +498,37 @@ export class IcChatConsole extends LitElement {
       this._loading = false;
       this._scrollToBottom();
     }
-
     // Load budget data for the active session (fire-and-forget, non-blocking)
     this._loadBudgetData();
   }
 
-  /** Load token budget data from the latest pipeline snapshot for the active session. */
   private async _loadBudgetData(): Promise<void> {
-    if (!this.rpcClient || !this._activeSession) {
+    if (!this._controller || !this._activeSession) {
       this._budgetSegments = [];
       this._budgetTotal = 0;
       return;
     }
-
     // Find the agent for this session
     const sessionInfo = this._sessions.find((s) => s.key === this._activeSession);
     const agentId = sessionInfo?.agentId ?? "default";
-
     try {
-      const result = await this.rpcClient.call<{ snapshots: Array<Record<string, unknown>> }>(
-        "obs.context.pipeline",
-        { agentId, limit: 1 },
-      );
-      const snapshots = result?.snapshots ?? [];
-      if (snapshots.length === 0) {
+      const snap = await this._controller.loadLatestPipelineSnapshot(agentId);
+      if (!snap) {
         this._budgetSegments = [];
         this._budgetTotal = 0;
         return;
       }
-
-      const snap = snapshots[0];
-      const tokensLoaded = (snap.tokensLoaded as number) ?? 0;
-      const tokensEvicted = (snap.tokensEvicted as number) ?? 0;
-      const tokensMasked = (snap.tokensMasked as number) ?? 0;
-      const budgetUtilization = (snap.budgetUtilization as number) ?? 0;
+      const tokensLoaded = snap.tokensLoaded ?? 0;
+      const tokensEvicted = snap.tokensEvicted ?? 0;
+      const tokensMasked = snap.tokensMasked ?? 0;
+      const budgetUtilization = snap.budgetUtilization ?? 0;
       const totalBudget = budgetUtilization > 0 ? Math.round(tokensLoaded / budgetUtilization) : 0;
       const available = Math.max(0, totalBudget - tokensLoaded);
-
       const segments: Array<{ label: string; tokens: number; color: string }> = [];
       if (tokensLoaded > 0) segments.push({ label: "Loaded", tokens: tokensLoaded, color: "var(--ic-accent)" });
       if (tokensEvicted > 0) segments.push({ label: "Evicted", tokens: tokensEvicted, color: "var(--ic-warning)" });
       if (tokensMasked > 0) segments.push({ label: "Masked", tokens: tokensMasked, color: "var(--ic-text-dim)" });
       if (available > 0) segments.push({ label: "Available", tokens: available, color: "var(--ic-surface-2)" });
-
       this._budgetSegments = segments;
       this._budgetTotal = totalBudget;
     } catch {
@@ -1040,10 +537,8 @@ export class IcChatConsole extends LitElement {
     }
   }
 
-  /** Load available agents for the selector. */
   private async _loadAgents(): Promise<void> {
     if (!this.apiClient) return;
-
     try {
       const agents = await this.apiClient.getAgents();
       this._agents = agents.length > 0
@@ -1054,9 +549,6 @@ export class IcChatConsole extends LitElement {
     }
   }
 
-  /* ==================== Session Management ==================== */
-
-  /** Create a new session with a client-side key. The REST chat endpoint handles session management. */
   private _createNewSession(): void {
     const sessionKey = `web:${this._selectedAgent}:${crypto.randomUUID()}`;
     const newSession: SessionInfo = {
@@ -1071,16 +563,12 @@ export class IcChatConsole extends LitElement {
     this._messages = [];
   }
 
-  /** Handle session selection. */
   private _selectSession(key: string): void {
     this._activeSession = key;
     this._sidebarOpen = false;
     this._loadSessionHistory();
   }
 
-  /* ==================== Scroll Management ==================== */
-
-  /** Handle scroll tracking in message area. */
   private _handleScroll(): void {
     if (!this._messageArea) return;
     const { scrollTop, scrollHeight, clientHeight } = this._messageArea;
@@ -1091,7 +579,6 @@ export class IcChatConsole extends LitElement {
     }
   }
 
-  /** Scroll to bottom of message area. */
   private _scrollToBottom(): void {
     requestAnimationFrame(() => {
       if (this._messageArea) {
@@ -1102,7 +589,6 @@ export class IcChatConsole extends LitElement {
     });
   }
 
-  /** Re-focus the message input after Lit finishes rendering. */
   private _focusInput(): void {
     this.updateComplete.then(() => {
       // Push to macrotask queue so cascading Lit updates (e.g. _messages -> updated -> scrollToBottom)
@@ -1115,17 +601,12 @@ export class IcChatConsole extends LitElement {
     });
   }
 
-  /* ==================== Input Handling ==================== */
-
-  /** Handle textarea input changes. */
   private _handleInput(e: Event): void {
     const textarea = e.target as HTMLTextAreaElement;
     this._inputValue = textarea.value;
-
     // Auto-grow textarea
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`;
-
     // Slash command detection
     if (this._inputValue.startsWith("/")) {
       this._slashFilter = this._inputValue.slice(1);
@@ -1136,7 +617,6 @@ export class IcChatConsole extends LitElement {
     }
   }
 
-  /** Handle keyboard events on the textarea. */
   private _handleKeydown(e: KeyboardEvent): void {
     // If slash menu is open, intercept navigation keys
     if (this._showSlashMenu) {
@@ -1164,7 +644,6 @@ export class IcChatConsole extends LitElement {
         return;
       }
     }
-
     // Normal input handling
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -1172,75 +651,53 @@ export class IcChatConsole extends LitElement {
     }
   }
 
-  /** Send a message via REST API. */
+  /** Append a chat message to the conversation. */
+  private _pushMsg(role: ChatMessageData["role"], content: string): void {
+    this._messages = [...this._messages, {
+      id: crypto.randomUUID(),
+      role,
+      content,
+      timestamp: systemNowMs(),
+    }];
+  }
+
+  /** Round-trip text through the chat REST API; append assistant or error. */
+  private async _chatRoundTrip(text: string, errorPrefix: string): Promise<void> {
+    if (!this.apiClient) return;
+    try {
+      const result = await this.apiClient.chat(text, this._selectedAgent, this._activeSession ?? undefined);
+      const cleaned = result.response ? stripSilentTokens(result.response) : "";
+      if (cleaned) this._pushMsg("assistant", cleaned);
+    } catch (err) {
+      this._pushMsg("error", err instanceof Error ? err.message : errorPrefix);
+    }
+  }
+
   private async _sendMessage(): Promise<void> {
     const text = this._inputValue.trim();
     if ((text === "" && this._attachments.length === 0) || this._sending) return;
     if (!this.apiClient) return;
-
-    // Create session if none active
     if (!this._activeSession) {
       this._createNewSession();
       if (!this._activeSession) return;
     }
-
     this._sending = true;
-
-    // Optimistic user message
-    if (text) {
-      const userMsg: ChatMessageData = {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: text,
-        timestamp: systemNowMs(),
-      };
-      this._messages = [...this._messages, userMsg];
-    }
-
-    // Reset input
+    if (text) this._pushMsg("user", text);
     this._inputValue = "";
-    if (this._textarea) {
-      this._textarea.style.height = "auto";
-    }
+    if (this._textarea) this._textarea.style.height = "auto";
     this._scrollToBottom();
-
-    try {
-      // Revoke attachment previews and clear (attachments not yet supported via REST)
-      for (const att of this._attachments) {
-        if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
-      }
-      this._attachments = [];
-
-      const result = await this.apiClient.chat(text, this._selectedAgent, this._activeSession ?? undefined);
-
-      // Map REST response to assistant message (strip silent tokens like NO_REPLY)
-      const cleaned = result.response ? stripSilentTokens(result.response) : "";
-      if (cleaned) {
-        const assistantMsg: ChatMessageData = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: cleaned,
-          timestamp: systemNowMs(),
-        };
-        this._messages = [...this._messages, assistantMsg];
-      }
-    } catch (err) {
-      const errorMsg: ChatMessageData = {
-        id: crypto.randomUUID(),
-        role: "error",
-        content: err instanceof Error ? err.message : "Failed to send message",
-        timestamp: systemNowMs(),
-      };
-      this._messages = [...this._messages, errorMsg];
-    } finally {
-      this._sending = false;
-      this._syncSessionMessageCount();
-      this._scrollToBottom();
-      this._focusInput();
+    // Revoke attachment previews and clear (attachments not yet supported via REST)
+    for (const att of this._attachments) {
+      if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
     }
+    this._attachments = [];
+    await this._chatRoundTrip(text, "Failed to send message");
+    this._sending = false;
+    this._syncSessionMessageCount();
+    this._scrollToBottom();
+    this._focusInput();
   }
 
-  /** Sync the active session's messageCount in the sidebar with actual _messages length. */
   private _syncSessionMessageCount(): void {
     if (!this._activeSession) return;
     const count = this._messages.filter((m) => m.role !== "error").length;
@@ -1251,22 +708,32 @@ export class IcChatConsole extends LitElement {
     );
   }
 
-  /* ==================== Voice Recording ==================== */
+  private async _transcribeBlob(blob: Blob): Promise<void> {
+    this._transcribing = true;
+    try {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const text = await this._controller!.transcribeAudio(btoa(binary), "webm");
+      if (text) this._inputValue += (this._inputValue ? " " : "") + text;
+    } catch {
+      IcToast.show("Transcription failed", "error");
+    } finally {
+      this._transcribing = false;
+    }
+  }
 
-  /** Start recording audio from the microphone. */
   private async _startRecording(): Promise<void> {
     if (!navigator.mediaDevices) {
       IcToast.show("Microphone access not available", "error");
       return;
     }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       this._mediaRecorder = new MediaRecorder(stream);
       this._audioChunks = [];
       this._recording = true;
       this._recordingDuration = 0;
-
       this._recordingTimer = systemSetInterval(() => {
         this._recordingDuration++;
         if (this._recordingDuration >= MAX_RECORDING_DURATION) {
@@ -1274,55 +741,23 @@ export class IcChatConsole extends LitElement {
           this._stopRecording();
         }
       }, 1000);
-
       this._mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          this._audioChunks.push(e.data);
-        }
+        if (e.data.size > 0) this._audioChunks.push(e.data);
       };
-
       this._mediaRecorder.onerror = () => {
         IcToast.show("Recording error occurred", "error");
         this._resetRecordingState();
       };
-
       this._mediaRecorder.onstop = async () => {
-        const blob = new Blob(this._audioChunks, { type: "audio/webm" });
-
-        this._transcribing = true;
-        try {
-          const buffer = await blob.arrayBuffer();
-          const bytes = new Uint8Array(buffer);
-          let binary = "";
-          for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          const base64 = btoa(binary);
-
-          const result = await this.rpcClient!.call<{ text: string }>(
-            "audio.transcribe",
-            { audio: base64, format: "webm" },
-          );
-          if (result?.text) {
-            this._inputValue += (this._inputValue ? " " : "") + result.text;
-          }
-        } catch {
-          IcToast.show("Transcription failed", "error");
-        } finally {
-          this._transcribing = false;
-        }
-
-        // Stop all tracks
+        await this._transcribeBlob(new Blob(this._audioChunks, { type: "audio/webm" }));
         stream.getTracks().forEach((t) => t.stop());
       };
-
       this._mediaRecorder.start();
     } catch {
       IcToast.show("Microphone access denied", "error");
     }
   }
 
-  /** Stop the current recording. */
   private _stopRecording(): void {
     if (this._mediaRecorder && this._mediaRecorder.state === "recording") {
       this._mediaRecorder.stop();
@@ -1338,8 +773,6 @@ export class IcChatConsole extends LitElement {
     }
   }
 
-  /* ==================== Drag-and-Drop Attachments ==================== */
-
   private _handleDragOver(e: DragEvent): void {
     e.preventDefault();
     this._dragOver = true;
@@ -1352,33 +785,26 @@ export class IcChatConsole extends LitElement {
   private _handleDrop(e: DragEvent): void {
     e.preventDefault();
     this._dragOver = false;
-
     const files = e.dataTransfer?.files;
     if (!files) return;
-
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-
       if (this._attachments.length >= MAX_ATTACHMENTS) {
         IcToast.show("Maximum 5 attachments per message", "warning");
         break;
       }
-
       if (file.size > MAX_FILE_SIZE) {
         IcToast.show(`File too large (max 10MB): ${file.name}`, "error");
         continue;
       }
-
       let type: AttachmentData["type"] = "file";
       let previewUrl: string | undefined;
-
       if (file.type.startsWith("image/")) {
         type = "image";
         previewUrl = URL.createObjectURL(file);
       } else if (file.type.startsWith("audio/")) {
         type = "audio";
       }
-
       const attachment: AttachmentData = {
         id: crypto.randomUUID(),
         file,
@@ -1397,8 +823,6 @@ export class IcChatConsole extends LitElement {
     this._attachments = this._attachments.filter((a) => a.id !== id);
   }
 
-  /* ==================== Slash Commands ==================== */
-
   private _getFilteredSlashCommands() {
     if (!this._slashFilter) return [...SLASH_COMMANDS];
     const filter = this._slashFilter.toLowerCase();
@@ -1411,15 +835,14 @@ export class IcChatConsole extends LitElement {
   private async _executeSlashCommand(command: string): Promise<void> {
     this._showSlashMenu = false;
     this._inputValue = "";
-
     switch (command) {
       case "/new":
         await this._createNewSession();
         break;
       case "/reset":
-        if (this._activeSession && this.rpcClient) {
+        if (this._activeSession && this._controller) {
           try {
-            await this.rpcClient.call("session.reset", { session_key: this._activeSession });
+            await this._controller.resetSession(this._activeSession);
             IcToast.show("Session reset", "success");
             await this._loadSessionHistory();
           } catch {
@@ -1428,14 +851,11 @@ export class IcChatConsole extends LitElement {
         }
         break;
       case "/export":
-        if (this._activeSession && this.rpcClient) {
+        if (this._activeSession && this._controller) {
           try {
-            const result = await this.rpcClient.call<{ data: string }>(
-              "session.export",
-              { session_key: this._activeSession },
-            );
-            if (result?.data) {
-              const blob = new Blob([result.data], { type: "application/jsonl" });
+            const data = await this._controller.exportSession(this._activeSession);
+            if (data) {
+              const blob = new Blob([data], { type: "application/jsonl" });
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
               a.href = url;
@@ -1449,9 +869,9 @@ export class IcChatConsole extends LitElement {
         }
         break;
       case "/compact":
-        if (this._activeSession && this.rpcClient) {
+        if (this._activeSession && this._controller) {
           try {
-            await this.rpcClient.call("session.compact", { session_key: this._activeSession });
+            await this._controller.compactSession(this._activeSession);
             IcToast.show("Session compacted", "success");
           } catch {
             IcToast.show("Failed to compact session", "error");
@@ -1477,60 +897,23 @@ export class IcChatConsole extends LitElement {
     }
   }
 
-  /* ==================== Message Actions ==================== */
-
   private async _handleRetry(e: CustomEvent<{ messageId: string }>): Promise<void> {
     const { messageId } = e.detail;
-    // Find the assistant message and the preceding user message
     const idx = this._messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return;
-
-    // Look backwards for the preceding user message
+    // Find the preceding user message
     let userMsg: ChatMessageData | undefined;
     for (let i = idx - 1; i >= 0; i--) {
-      if (this._messages[i].role === "user") {
-        userMsg = this._messages[i];
-        break;
-      }
+      if (this._messages[i].role === "user") { userMsg = this._messages[i]; break; }
     }
-
-    // Remove the old assistant response
     this._messages = this._messages.filter((m) => m.id !== messageId);
-
-    // Re-send the user message via REST API (same path as _sendMessage)
     if (userMsg && this.apiClient) {
       this._sending = true;
       this._scrollToBottom();
-      try {
-        const result = await this.apiClient.chat(
-          userMsg.content,
-          this._selectedAgent,
-          this._activeSession ?? undefined,
-        );
-
-        const retryClean = result.response ? stripSilentTokens(result.response) : "";
-        if (retryClean) {
-          const assistantMsg: ChatMessageData = {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: retryClean,
-            timestamp: systemNowMs(),
-          };
-          this._messages = [...this._messages, assistantMsg];
-        }
-      } catch (err) {
-        const errorMsg: ChatMessageData = {
-          id: crypto.randomUUID(),
-          role: "error",
-          content: err instanceof Error ? err.message : "Retry failed",
-          timestamp: systemNowMs(),
-        };
-        this._messages = [...this._messages, errorMsg];
-      } finally {
-        this._sending = false;
-        this._scrollToBottom();
-        this._focusInput();
-      }
+      await this._chatRoundTrip(userMsg.content, "Retry failed");
+      this._sending = false;
+      this._scrollToBottom();
+      this._focusInput();
     }
   }
 
@@ -1541,9 +924,6 @@ export class IcChatConsole extends LitElement {
     // -- not available in session context. Local removal only.
   }
 
-  /* ==================== Utility ==================== */
-
-  /** Get filtered sessions based on search query. */
   private get _filteredSessions(): SessionInfo[] {
     if (!this._searchQuery) return this._sessions;
     const q = this._searchQuery.toLowerCase();
@@ -1554,15 +934,12 @@ export class IcChatConsole extends LitElement {
     );
   }
 
-  /** Format a token count for display. */
   private _formatTokens(count: number): string {
     if (count >= 1000) {
       return `${(count / 1000).toFixed(1)}K tokens`;
     }
     return `${count} tokens`;
   }
-
-  /* ==================== Render Helpers ==================== */
 
   private _renderSidebar() {
     return html`
@@ -1655,7 +1032,6 @@ export class IcChatConsole extends LitElement {
     const filteredCmds = this._getFilteredSlashCommands();
     const sendDisabled =
       (this._inputValue.trim() === "" && this._attachments.length === 0) || this._sending;
-
     return html`
       <div class="input-bar">
         ${this._showSlashMenu && filteredCmds.length > 0
@@ -1725,12 +1101,10 @@ export class IcChatConsole extends LitElement {
         </button>
       `;
     }
-
     if (this._recording) {
       const mins = Math.floor(this._recordingDuration / 60);
       const secs = this._recordingDuration % 60;
       const timeStr = `${mins}:${secs.toString().padStart(2, "0")}`;
-
       return html`
         <div class="recording-indicator">
           <span class="recording-dot"></span>
@@ -1745,7 +1119,6 @@ export class IcChatConsole extends LitElement {
         </div>
       `;
     }
-
     return html`
       <button
         class="voice-btn"

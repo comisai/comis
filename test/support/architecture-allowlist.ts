@@ -171,9 +171,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // ============================================================================
   {
     file: "packages/web/src/views/chat-console.ts",
-    lines: 1786,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1163,
+    reason: "Lit web view; RPC orchestration extracted via chat-console-controller.ts. Residual DOM-coupled interaction logic (recording, drag-drop, scroll/focus, slash menu, raf-batched streaming) does not split into a controller without breaking 67 existing @state-driven tests. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/message-center.ts",
