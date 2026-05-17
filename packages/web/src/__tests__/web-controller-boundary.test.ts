@@ -152,7 +152,7 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     // Wave 4
     //   ic-node-editor.ts:     drained — RPC extracted via ic-node-editor-controller.ts (Task 1).
     //   workspace-manager.ts:  drained — RPC extracted via workspace-manager-controller.ts (Task 2).
-    "packages/web/src/views/channel-detail.ts",                     // 10 rpcClient.call (verified HEAD)
+    //   channel-detail.ts:     drained — RPC extracted via channel-detail-controller.ts (Task 3).
     // ic-graph-canvas.ts: 0 rpcClient.call (verified HEAD) — EXCLUDED (regex never matches).
     "packages/web/src/views/dashboard.ts",                          //  3 rpcClient.call (verified HEAD)
     // Wave 5

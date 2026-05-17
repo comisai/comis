@@ -535,6 +535,22 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // driven tree section rendering — all tightly DOM-coupled. Auto-
     // acceptable per WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/views/agents/workspace-manager.ts",
+    // channel-detail.ts (Wave 4 / Task 3): RPC extraction completed via
+    // channel-detail-controller.ts — view contains 0 rpcClient.call
+    // sites and delegates daemon I/O to the controller (channels.get/
+    // restart/disable/enable/capabilities, obs.delivery.recent,
+    // obs.channels.get, delivery.queue.status, config.read[channels],
+    // config.patch moved out). The remaining ≤1245L is dominated by
+    // ~450L of CSS, the PLATFORM_FIELDS map for 8 platforms (telegram/
+    // discord/slack/whatsapp/imessage/signal/irc/line/email) with per-
+    // platform field defs, 5-tab dashboard renderers (overview/
+    // connection/media-processing/delivery/capabilities), activity
+    // sparkline derivation from delivery traces, MEDIA_PROCESSING_FIELDS
+    // toggle list with optimistic-update rollback, SSE-driven debounced
+    // reload, and platform-specific config form renderers — all
+    // tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
+    // fallback).
+    "packages/web/src/views/channel-detail.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

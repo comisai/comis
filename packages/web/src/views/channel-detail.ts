@@ -9,6 +9,10 @@ import { SseController } from "../state/sse-controller.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import { systemClearTimeout, systemDateFrom, systemNowMs, systemSetTimeout } from "@comis/core";
+import {
+  createChannelDetailController,
+  type ChannelDetailController,
+} from "./channel-detail-controller.js";
 
 // Side-effect registrations for sub-components
 import "../components/nav/ic-breadcrumb.js";
@@ -588,11 +592,17 @@ export class IcChannelDetail extends LitElement {
   private _hasLoaded = false;
   private _previousChannelType = "";
 
+  /** Controller owns RPC orchestration (thin façade — view keeps @state + render + SSE). */
+  private _controller: ChannelDetailController | null = null;
+
   override connectedCallback(): void {
     super.connectedCallback();
     // Note: _loadData() is NOT called here -- rpcClient is typically
     // null at this point. The updated() callback handles loading once
     // the client property is set.
+    if (this.rpcClient) {
+      this._controller = createChannelDetailController(this, this.rpcClient);
+    }
     this._initSse();
   }
 
@@ -605,6 +615,9 @@ export class IcChannelDetail extends LitElement {
   }
 
   override updated(changedProperties: Map<string, unknown>): void {
+    if (changedProperties.has("rpcClient") && this.rpcClient && !this._controller) {
+      this._controller = createChannelDetailController(this, this.rpcClient);
+    }
     // Reload data when channelType changes or clients become available
     if (changedProperties.has("channelType") && this.channelType && this.channelType !== this._previousChannelType) {
       this._previousChannelType = this.channelType;
@@ -639,17 +652,14 @@ export class IcChannelDetail extends LitElement {
   }
 
   async _loadData(): Promise<void> {
-    if (!this.rpcClient || !this.channelType) return;
+    if (!this._controller || !this.channelType) return;
 
     this._loadState = "loading";
     this._error = "";
 
     try {
       // Config is required
-      const config = await this.rpcClient.call<Record<string, unknown>>(
-        "channels.get",
-        { channel_type: this.channelType },
-      );
+      const config = await this._controller.getChannel(this.channelType);
 
       this._config = config ?? {};
       // Determine enabled: explicit `enabled` field, or infer from status (running/connected = enabled)
@@ -661,26 +671,11 @@ export class IcChannelDetail extends LitElement {
 
       // Fire all optional data loads in parallel
       const [mediaResult, deliveryResult, activityResult, queueResult, capabilitiesResult] = await Promise.allSettled([
-        this.rpcClient.call<Record<string, Record<string, unknown>>>(
-          "config.read",
-          { section: "channels" },
-        ),
-        this.rpcClient.call<{ entries: DeliveryTraceEntry[] }>(
-          "obs.delivery.recent",
-          { type: this.channelType, limit: 10 },
-        ),
-        this.rpcClient.call<{ channel: { channelId: string; channelType: string; lastActiveAt: number; messagesSent: number; messagesReceived: number } | null }>(
-          "obs.channels.get",
-          { channelId: this.channelType },
-        ),
-        this.rpcClient.call<DeliveryQueueStatus>(
-          "delivery.queue.status",
-          { channel_type: this.channelType },
-        ),
-        this.rpcClient.call<{ channelType: string; features: PlatformCapabilities }>(
-          "channels.capabilities",
-          { channel_type: this.channelType },
-        ),
+        this._controller.readChannelsConfig(),
+        this._controller.getRecentDelivery(this.channelType, 10),
+        this._controller.getChannelObs(this.channelType),
+        this._controller.getDeliveryQueueStatus(this.channelType),
+        this._controller.getChannelCapabilities(this.channelType),
       ]);
 
       // Media processing config
@@ -740,11 +735,11 @@ export class IcChannelDetail extends LitElement {
   }
 
   private async _handleRestart(): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call("channels.restart", { channel_type: this.channelType });
+      await this._controller.restartChannel(this.channelType);
       IcToast.show(`${capitalize(this.channelType)} restarted`, "success");
       await this._loadData();
     } catch {
@@ -755,16 +750,16 @@ export class IcChannelDetail extends LitElement {
   }
 
   private async _handleToggleEnabled(): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     this._actionPending = true;
     try {
       if (this._enabled) {
-        await this.rpcClient.call("channels.disable", { channel_type: this.channelType });
+        await this._controller.disableChannel(this.channelType);
         this._enabled = false;
         IcToast.show(`${capitalize(this.channelType)} disabled`, "success");
       } else {
-        await this.rpcClient.call("channels.enable", { channel_type: this.channelType });
+        await this._controller.enableChannel(this.channelType);
         this._enabled = true;
         IcToast.show(`${capitalize(this.channelType)} enabled`, "success");
       }
@@ -777,17 +772,17 @@ export class IcChannelDetail extends LitElement {
   }
 
   private async _handleMediaToggle(field: string, enabled: boolean): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     // Optimistic update
     this._mediaProcessing = { ...this._mediaProcessing, [field]: enabled };
 
     try {
-      await this.rpcClient.call("config.patch", {
-        section: "channels",
-        key: `${this.channelType}.mediaProcessing.${field}`,
-        value: enabled,
-      });
+      await this._controller.patchConfig(
+        "channels",
+        `${this.channelType}.mediaProcessing.${field}`,
+        enabled,
+      );
       const label = MEDIA_PROCESSING_FIELDS.find((f) => f.key === field)?.label ?? field;
       IcToast.show(`${label} ${enabled ? "enabled" : "disabled"}`, "success");
     } catch {
