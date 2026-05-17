@@ -602,6 +602,16 @@ export function createSetupWizardController(
     async testConnection(): Promise<void> {
       _mutate({ testResult: { status: "testing" } });
       try {
+        // models.test takes the provider-client type ("anthropic" /
+        // "openai" / "google" / etc.) so the daemon knows which SDK to
+        // instantiate when probing the credentials. For native providers
+        // providerType === providerName; for the Custom path
+        // (providerName === CUSTOM_PROVIDER_KEY === "__custom__"),
+        // providerType resolves to "openai" because Custom is an
+        // OpenAI-compatible endpoint. applyConfig (below) uses
+        // providerName instead because models.defaultProvider config
+        // wants the user-facing provider key, which IS "__custom__"
+        // for the Custom path.
         await rpcClient.call("models.test", { provider: state.wizardData.providerType });
         _mutate({ testResult: { status: "success", message: "Connected" } });
       } catch (err) {
