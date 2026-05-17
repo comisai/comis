@@ -442,6 +442,70 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // state, multi-tab gateway/history sub-views, and rollback confirm
     // dialogs — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09.
     "packages/web/src/views/config-editor.ts",
+    // agent-editor.ts (Wave 3 / Task 1): RPC extraction completed via
+    // agent-editor-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates all daemon I/O to the controller (models.list,
+    // config.read, config.patch, daemon.setLogLevel, agents.get/create/update
+    // moved out). The remaining ≤1700L is dominated by createDefaultForm()
+    // (~125L), _mapConfigToDetail() (~135L), _populateForm() (~180L),
+    // _buildPayload() (~290L), and _buildYamlPreview() (~65L) — config
+    // mapping helpers tightly coupled to the @state form shape and the
+    // 13 property-bound sub-editors in agents/editors/. Existing test
+    // suite (96 priv() calls across 41 tests) relies on direct
+    // `priv()._form = …` mutation. Full state extraction would require
+    // a full test rewrite. Auto-acceptable per WEB-DECOMP-09 (§10.5
+    // fallback).
+    "packages/web/src/views/agents/agent-editor.ts",
+    // scheduler.ts (Wave 3 / Task 2): RPC extraction completed via
+    // scheduler-controller.ts — view contains 0 rpcClient.call sites and
+    // delegates all daemon I/O to the controller (cron.list/status/add/
+    // update/remove/run, config.read/set, heartbeat.states/trigger moved
+    // out). The remaining ≤1620L is dominated by 3 tab renderers (cron
+    // jobs, heartbeat, extracted tasks), the embedded ic-cron-editor
+    // overlay wiring (Wave 6 scope — preserved verbatim here), SSE event
+    // handling for scheduler:job_started/job_completed/
+    // heartbeat_delivered/heartbeat_alert/scheduler:task_extracted,
+    // optimistic-update edit/delete flows, and detailed per-job/per-
+    // heartbeat row templates with relative-time formatting. Auto-
+    // acceptable per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/scheduler.ts",
+    // memory-inspector.ts (Wave 3 / Task 3): RPC extraction completed via
+    // memory-inspector-controller.ts — view contains 0 rpcClient.call
+    // sites and delegates daemon I/O to the controller (memory.
+    // embeddingCache/store/flush moved out). Higher-level data access
+    // flows through apiClient (boundary regex matches only rpcClient.
+    // call). Residual ≤1600L is dominated by 33 @state fields across
+    // search/browse/filter/selection/dialogs/embedding-stats, an inline
+    // _normalizeEntry mapper, paginated browse with multi-axis filters
+    // (type/trust/agent/date), bulk-delete + export flows, a memory-
+    // create dialog with provenance tags, and a flush-confirm dialog —
+    // all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
+    // fallback).
+    "packages/web/src/views/memory-inspector.ts",
+    // observe-view.ts (Wave 3 / Task 4): RPC extraction completed via
+    // observe-view-controller.ts — view contains 0 rpcClient.call sites
+    // and delegates daemon I/O to the controller (obs.reset moved out).
+    // Higher-level data and tab-section refreshes flow via SSE events
+    // (observability:metrics/token_usage/reset) + apiClient wrappers,
+    // which the boundary regex doesn't match. Residual ≤1570L is
+    // dominated by 6 tab renderers (overview/billing/diagnostics/
+    // delivery/channels/health) + sparkline + per-tab stat-card grids +
+    // filterable delivery-trace table + agent/channel health row grids
+    // + reset-confirm dialog — all tightly DOM-coupled. Auto-acceptable
+    // per WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/observe-view.ts",
+    // models.ts (Wave 3 / Task 5): RPC extraction completed via
+    // models-controller.ts — view contains 0 rpcClient.call sites and
+    // delegates daemon I/O to the controller (config.read, models.list,
+    // agents.list, agents.get, config.patch, models.test, agents.update
+    // moved out). Residual ≤1440L is dominated by 3 tab renderers
+    // (providers/models/defaults), provider-card grid with inline edit
+    // + connectivity test, model-catalog table with search + provider
+    // filter + sort, model-alias CRUD form, per-agent override grid
+    // with provider/model dropdowns, and a SSE-driven reload-debounce
+    // flow — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09
+    // (§10.5 fallback).
+    "packages/web/src/views/models.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

@@ -18,6 +18,10 @@ import "../components/display/ic-icon.js";
 import "../components/display/ic-connection-dot.js";
 import "../components/data/ic-provider-card.js";
 import "../components/form/ic-search-input.js";
+import {
+  createModelsController,
+  type ModelsController,
+} from "./models-controller.js";
 
 type LoadState = "loading" | "loaded" | "error";
 
@@ -511,11 +515,17 @@ export class IcModelsView extends LitElement {
   // Per-agent model overrides (Defaults tab)
   @state() private _agents: AgentOverride[] = [];
 
+  /** Controller owns RPC orchestration (thin façade pattern — view keeps @state + SSE). */
+  private _controller: ModelsController | null = null;
+
   override connectedCallback(): void {
     super.connectedCallback();
     // Note: _loadData() is NOT called here -- rpcClient is typically
     // null at this point. The updated() callback handles loading once
     // the client property is set.
+    if (this.rpcClient) {
+      this._controller = createModelsController(this, this.rpcClient);
+    }
     this._initSse();
   }
 
@@ -536,6 +546,9 @@ export class IcModelsView extends LitElement {
       this._initSse();
     }
     if (changed.has("rpcClient") && this.rpcClient) {
+      if (!this._controller) {
+        this._controller = createModelsController(this, this.rpcClient);
+      }
       this._rpcStatusUnsub?.();
       this._rpcStatusUnsub = null;
 
@@ -569,14 +582,14 @@ export class IcModelsView extends LitElement {
   }
 
   async _loadData(): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     this._loadState = "loading";
     this._error = "";
 
     try {
       // Load config first (required for provider/alias display)
-      const configResult = await this.rpcClient.call<{
+      const configResult = (await this._controller.readConfig()) as {
         config: {
           providers: { entries: Record<string, ProviderEntry> };
           models: {
@@ -586,7 +599,7 @@ export class IcModelsView extends LitElement {
           };
         };
         sections: string[];
-      }>("config.read");
+      };
 
       this._providers = configResult.config.providers?.entries ?? {};
       this._aliases = configResult.config.models?.aliases ?? [];
@@ -595,15 +608,16 @@ export class IcModelsView extends LitElement {
       this._loadState = "loaded";
 
       // Load model catalog in the background
-      this.rpcClient.call<{
-        providers?: Array<{ name: string; models?: Array<string | { modelId: string; contextWindow: number; maxTokens: number }>; modelCount?: number }>;
-        models?: ModelInfo[];
-        totalModels?: number;
-      }>("models.list").then((modelsList) => {
-        if (modelsList.models && modelsList.models.length > 0) {
-          this._models = modelsList.models;
-        } else if (modelsList.providers && modelsList.providers.length > 0) {
-          this._models = modelsList.providers.flatMap((p) =>
+      this._controller.listModels().then((modelsList) => {
+        const typed = modelsList as {
+          providers?: Array<{ name: string; models?: Array<string | { modelId: string; contextWindow: number; maxTokens: number }>; modelCount?: number }>;
+          models?: ModelInfo[];
+          totalModels?: number;
+        };
+        if (typed.models && typed.models.length > 0) {
+          this._models = typed.models;
+        } else if (typed.providers && typed.providers.length > 0) {
+          this._models = typed.providers.flatMap((p) =>
             (p.models ?? []).map((m) => {
               const isObj = typeof m === "object" && m !== null;
               const modelId = isObj ? m.modelId : m;
@@ -626,17 +640,10 @@ export class IcModelsView extends LitElement {
       // Load per-agent model overrides in the background (supplementary)
       (async () => {
         try {
-          const agentsList = await this.rpcClient!.call<{
-            agents?: string[];
-          }>("agents.list");
+          const agentsList = await this._controller!.listAgents();
           const agentIds = (agentsList.agents ?? []).slice(0, 20);
           const agentDetails = await Promise.allSettled(
-            agentIds.map((id) =>
-              this.rpcClient!.call<{
-                agentId: string;
-                config: { provider?: string; model?: string };
-              }>("agents.get", { agentId: id }),
-            ),
+            agentIds.map((id) => this._controller!.getAgent(id)),
           );
           this._agents = agentDetails
             .filter((r): r is PromiseFulfilledResult<{ agentId: string; config: { provider?: string; model?: string } }> =>
@@ -658,14 +665,14 @@ export class IcModelsView extends LitElement {
   }
 
   private async _patchConfig(path: string, value: unknown): Promise<boolean> {
-    if (!this.rpcClient) return false;
+    if (!this._controller) return false;
 
     try {
       // Backend expects { section, key?, value }. Split dot-notation path into section + key.
       const dotIdx = path.indexOf(".");
       const section = dotIdx > 0 ? path.slice(0, dotIdx) : path;
       const key = dotIdx > 0 ? path.slice(dotIdx + 1) : undefined;
-      await this.rpcClient.call("config.patch", { section, key, value });
+      await this._controller.patchConfig(section, key, value);
       IcToast.show("Configuration updated", "success");
       return true;
     } catch (err) {
@@ -678,14 +685,14 @@ export class IcModelsView extends LitElement {
   // --- Providers tab ---
 
   private async _testProvider(name: string): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
 
     const newTesting = new Set(this._testingProviders);
     newTesting.add(name);
     this._testingProviders = newTesting;
 
     try {
-      const result = await this.rpcClient.call<TestResult>("models.test", { provider: name });
+      const result = (await this._controller.testProvider(name)) as TestResult;
       const newResults = new Map(this._providerTestResults);
       newResults.set(name, result);
       this._providerTestResults = newResults;
@@ -1222,11 +1229,11 @@ export class IcModelsView extends LitElement {
   }
 
   private async _updateAgentOverride(agentId: string, provider: string, model: string): Promise<void> {
-    if (!this.rpcClient) return;
+    if (!this._controller) return;
     try {
-      await this.rpcClient.call("agents.update", {
-        agentId,
-        config: { provider: provider || undefined, model: model || undefined },
+      await this._controller.updateAgent(agentId, {
+        provider: provider || undefined,
+        model: model || undefined,
       });
       this._agents = this._agents.map((a) =>
         a.id === agentId ? { ...a, provider, model } : a,

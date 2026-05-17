@@ -13,6 +13,10 @@ import "../components/data/ic-tag.js";
 import "../components/form/ic-search-input.js";
 import "../components/layout/ic-detail-panel.js";
 import "../components/feedback/ic-confirm-dialog.js";
+import {
+  createMemoryInspectorController,
+  type MemoryInspectorController,
+} from "./memory-inspector-controller.js";
 
 /** Memory type filter options. */
 const MEMORY_TYPES = ["working", "episodic", "semantic", "procedural"] as const;
@@ -638,11 +642,17 @@ export class IcMemoryInspector extends LitElement {
   @state() private _flushAgentId = "";
   @state() private _flushSubmitting = false;
 
+  /** Controller owns RPC orchestration (thin façade pattern — view keeps @state). */
+  private _controller: MemoryInspectorController | null = null;
+
   override connectedCallback(): void {
     super.connectedCallback();
     // Note: _loadStats() and _loadAgents() are NOT called here --
     // apiClient is typically null at this point. The updated() callback
     // handles loading once the client property is set.
+    if (this.rpcClient) {
+      this._controller = createMemoryInspectorController(this, this.rpcClient);
+    }
   }
 
   override updated(changed: Map<string, unknown>): void {
@@ -651,6 +661,9 @@ export class IcMemoryInspector extends LitElement {
       this._loadAgents();
     }
     if (changed.has("rpcClient") && this.rpcClient) {
+      if (!this._controller) {
+        this._controller = createMemoryInspectorController(this, this.rpcClient);
+      }
       this._loadEmbeddingStats();
     }
   }
@@ -717,10 +730,10 @@ export class IcMemoryInspector extends LitElement {
   }
 
   private async _loadEmbeddingStats(): Promise<void> {
-    if (!this.rpcClient || this._embeddingLoading) return;
+    if (!this._controller || this._embeddingLoading) return;
     this._embeddingLoading = true;
     try {
-      const result = await this.rpcClient.call("memory.embeddingCache");
+      const result = await this._controller.getEmbeddingCache();
       this._embeddingStats = result as unknown as EmbeddingCacheStats;
     } catch {
       // Non-critical -- embedding may be disabled
@@ -924,7 +937,7 @@ export class IcMemoryInspector extends LitElement {
 
   private async _submitCreate(): Promise<void> {
     const content = this._createContent.trim();
-    if (!content || !this.rpcClient || this._createSubmitting) return;
+    if (!content || !this._controller || this._createSubmitting) return;
 
     this._createSubmitting = true;
     this._createMessage = "";
@@ -938,9 +951,9 @@ export class IcMemoryInspector extends LitElement {
         tags.push(`provenance:${this._createProvenance.trim()}`);
       }
 
-      await this.rpcClient.call("memory.store", {
+      await this._controller.storeEntry({
         content,
-        tags: tags.length > 0 ? tags : undefined,
+        tags,
         trustLevel: this._createTrustLevel,
       });
 
@@ -973,14 +986,12 @@ export class IcMemoryInspector extends LitElement {
 
   private async _confirmFlush(): Promise<void> {
     this._flushDialogOpen = false;
-    if (!this.rpcClient || this._flushSubmitting) return;
+    if (!this._controller || this._flushSubmitting) return;
 
     this._flushSubmitting = true;
 
     try {
-      await this.rpcClient.call("memory.flush", {
-        agent_id: this._flushAgentId || undefined,
-      });
+      await this._controller.flushMemory(this._flushAgentId);
 
       // Reload data
       this._loadStats();

@@ -144,11 +144,11 @@ describe("web controller-view boundary (WEB-DECOMP-03 + WEB-DECOMP-04 + WEB-DECO
     //   message-center.ts: drained — RPC extracted via message-center-controller.ts (Task 4).
     //   config-editor.ts:  drained — RPC extracted via config-editor-controller.ts (Task 5).
     // Wave 3
-    "packages/web/src/views/agents/agent-editor.ts",                //  8 rpcClient.call (verified HEAD)
-    "packages/web/src/views/scheduler.ts",                          // 11 rpcClient.call (verified HEAD)
-    "packages/web/src/views/memory-inspector.ts",                   //  3 rpcClient.call (verified HEAD)
-    "packages/web/src/views/observe-view.ts",                       //  1 rpcClient.call (verified HEAD)
-    "packages/web/src/views/models.ts",                             //  7 rpcClient.call (verified HEAD)
+    //   agent-editor.ts:    drained — RPC extracted via agent-editor-controller.ts (Task 1).
+    //   scheduler.ts:       drained — RPC extracted via scheduler-controller.ts (Task 2).
+    //   memory-inspector.ts: drained — RPC extracted via memory-inspector-controller.ts (Task 3).
+    //   observe-view.ts:    drained — RPC extracted via observe-view-controller.ts (Task 4).
+    //   models.ts:          drained — RPC extracted via models-controller.ts (Task 5).
     // Wave 4
     "packages/web/src/components/graph/ic-node-editor.ts",          //  4 rpcClient.call (verified HEAD)
     "packages/web/src/views/agents/workspace-manager.ts",           // 12 rpcClient.call (verified HEAD)
