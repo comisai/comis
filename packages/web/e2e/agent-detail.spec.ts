@@ -74,8 +74,11 @@ test.describe("Agent detail view", () => {
     const detail = page.locator("ic-agent-detail");
     await expect(detail).toBeVisible({ timeout: 10_000 });
 
-    // Breadcrumb shows agent name
-    await expect(detail.getByText("DefaultAgent")).toBeVisible();
+    // Agent name appears in breadcrumb, header h1, and identity card. Pin to
+    // the header heading to avoid strict-mode ambiguity.
+    await expect(
+      detail.getByRole("heading", { name: "DefaultAgent" }),
+    ).toBeVisible();
 
     // Status is "active" so the Suspend button should be visible
     await expect(detail.getByRole("button", { name: "Suspend" })).toBeVisible();
@@ -110,48 +113,52 @@ test.describe("Agent detail view", () => {
     const detail = page.locator("ic-agent-detail");
     await expect(detail).toBeVisible({ timeout: 10_000 });
 
-    // Budgets section should be visible with budget bar components
-    await expect(detail.getByText("Budgets")).toBeVisible();
+    // The Budget card replaced the standalone Budgets section. It uses
+    // ic-metric-gauge controls (not ic-budget-bar) labelled Per Exec /
+    // Per Hour / Per Day, scoped under a card titled "Budget".
+    const budgetCard = detail.locator(".card", { hasText: "Budget" });
+    await expect(budgetCard.first()).toBeVisible();
 
-    // Budget bars for Per Execution, Per Hour, Per Day
-    const budgetBars = detail.locator("ic-budget-bar");
-    await expect(budgetBars).toHaveCount(3);
+    const gauges = budgetCard.locator("ic-metric-gauge");
+    await expect(gauges).toHaveCount(3);
 
-    // Verify labels
-    await expect(detail.getByText("Per Execution")).toBeVisible();
-    await expect(detail.getByText("Per Hour")).toBeVisible();
-    await expect(detail.getByText("Per Day")).toBeVisible();
+    // Verify gauge labels (the value is rendered inside ic-metric-gauge).
+    await expect(budgetCard.getByText("Per Exec", { exact: true })).toBeVisible();
+    await expect(budgetCard.getByText("Per Hour", { exact: true })).toBeVisible();
+    await expect(budgetCard.getByText("Per Day", { exact: true })).toBeVisible();
   });
 
   test("agent detail shows configuration summary", async ({ page }) => {
     const detail = page.locator("ic-agent-detail");
     await expect(detail).toBeVisible({ timeout: 10_000 });
 
-    // Configuration section
-    await expect(detail.getByText("Configuration")).toBeVisible();
+    // The Identity card carries provider, model, temperature, max-steps,
+    // thinking-level. (The old config-grid was replaced by identity-row
+    // entries within the Identity card.)
+    const identityCard = detail.locator(".card", { hasText: "Identity" });
+    await expect(identityCard.first()).toBeVisible();
+    await expect(identityCard.getByText("anthropic")).toBeVisible();
+    await expect(identityCard.getByText("claude-sonnet-4-20250514")).toBeVisible();
+    // Max Steps row: value rendered as "25".
+    await expect(identityCard.getByText("25", { exact: true })).toBeVisible();
+    await expect(identityCard.getByText("0.7")).toBeVisible();
+    await expect(identityCard.getByText("medium")).toBeVisible();
 
-    // Scope to the config-grid to avoid matching values in other sections
-    const configGrid = detail.locator(".config-grid");
-    await expect(configGrid).toBeVisible();
-
-    // Config grid items: Model, Provider, Max Steps, Temperature, Thinking
-    await expect(configGrid.getByText("anthropic")).toBeVisible();
-    await expect(configGrid.getByText("claude-sonnet-4-20250514")).toBeVisible();
-    // Use exact match for "25" to avoid matching "25K" or "25%"
-    await expect(configGrid.getByText("25", { exact: true })).toBeVisible();
-    await expect(configGrid.getByText("0.7")).toBeVisible();
-    await expect(configGrid.getByText("medium")).toBeVisible();
+    // The Configuration card surfaces session policy / concurrency / safety
+    // subsections derived from the agent config.
+    const configCard = detail.locator(".card", { hasText: "Configuration" });
+    await expect(configCard.first()).toBeVisible();
   });
 
-  test("agent detail shows routing bindings section", async ({ page }) => {
+  test("agent detail shows skills section", async ({ page }) => {
     const detail = page.locator("ic-agent-detail");
     await expect(detail).toBeVisible({ timeout: 10_000 });
 
-    // Routing Bindings section heading
-    await expect(detail.getByRole("heading", { name: "Routing Bindings" })).toBeVisible();
-
-    // No routing bindings in PerAgentConfig, so shows empty state
-    await expect(detail.getByText("No routing bindings")).toBeVisible();
+    // Routing Bindings was removed; the detail view now exposes a Skills
+    // card on the right column. Verify its title is rendered.
+    await expect(
+      detail.locator(".card-title", { hasText: "Skills" }).first(),
+    ).toBeVisible();
   });
 
   test("agent detail has edit button that navigates to editor", async ({ page }) => {
