@@ -662,6 +662,28 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // 3-action toolbar (run / duplicate / delete) — all tightly DOM-
     // coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).
     "packages/web/src/views/pipelines/pipeline-list.ts",
+    // pipeline-builder.ts (Wave 5 / Task 5 — LOWEST RISK): RPC
+    // extraction completed via pipeline-builder-controller.ts — view
+    // contains 0 rpcClient.call sites and delegates daemon I/O to the
+    // controller (graph.define, graph.load, graph.save, graph.execute
+    // moved out — 4 unique RPC methods spanning 4 call sites).
+    // Controller fits the tighter 700L cap (121L). The view PRESERVES
+    // verbatim the createGraphBuilderState consumer pattern + all 7
+    // ic-graph-canvas @property bindings (.viewport / .nodes / .edges /
+    // .selectedNodeIds / .selectedEdgeId / .snapToGrid /
+    // .highlightNodeIds) — Wave 4's ic-graph-canvas integration is the
+    // critical gate, re-validated by Playwright pipeline-builder.spec.
+    // Residual view ≤1050L is dominated by the createGraphBuilderState
+    // factory + 8 view-mirror @state fields that subscribe to graph
+    // state, the 200ms validation debounce timer, the keyboard handler
+    // (Delete/Backspace/Cmd+Z/Cmd+Shift+Z/arrow nudges/Cmd+S/Cmd+R/
+    // Cmd+A/Esc), the document-level beforeunload + hashchange guards
+    // for dirty drafts, the template-picker overlay + variable-prompt
+    // overlay flows, the server-load execution-format → canvas-format
+    // node mapper with auto-layout fallback, and the validate/save/run
+    // toolbar wiring — all tightly DOM-coupled. Auto-acceptable per
+    // WEB-DECOMP-09 (§10.5 fallback).
+    "packages/web/src/views/pipelines/pipeline-builder.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {

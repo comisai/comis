@@ -273,9 +273,9 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/views/pipelines/pipeline-builder.ts",
-    lines: 1028,
-    reason: "Lit web view; decomposed via <view>-controller.ts extraction",
-    removedIn: "phase-G",
+    lines: 1051,
+    reason: "Lit web view; RPC orchestration extracted via pipeline-builder-controller.ts (graph.define, graph.load, graph.save, graph.execute moved out — 4 unique RPC methods spanning 4 call sites). Controller fits the tighter 700L cap (121L). The view PRESERVES verbatim the createGraphBuilderState consumer pattern + all 7 ic-graph-canvas @property bindings (.viewport/.nodes/.edges/.selectedNodeIds/.selectedEdgeId/.snapToGrid/.highlightNodeIds) — Wave 4's ic-graph-canvas integration is the critical gate, re-validated by Playwright pipeline-builder.spec. Residual ≤1050L is dominated by the createGraphBuilderState factory + 8 view-mirror @state fields subscribing to graph state, the 200ms validation debounce timer, the keyboard handler (Delete/Backspace/Cmd+Z/Cmd+Shift+Z/arrow nudges/Cmd+S/Cmd+R/Cmd+A/Esc), document-level beforeunload + hashchange guards for dirty drafts, template-picker + variable-prompt overlay flows, the server-load execution-format → canvas-format node mapper with auto-layout fallback, and the validate/save/run toolbar wiring — all tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback).",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/agents/agent-detail.ts",
