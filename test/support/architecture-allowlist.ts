@@ -238,8 +238,8 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/web/src/components/graph/ic-graph-canvas.ts",
     lines: 1197,
-    reason: "Graph component; decomposed via <component>-controller.ts extraction",
-    removedIn: "phase-G",
+    reason: "Graph component (SPECIAL CASE per OQ-4); controller pattern incompatible with this file. The 11 @property decorators (viewport/interactionMode/nodes/edges/selectedNodeIds/selectedEdgeId/snapToGrid/highlightNodeIds/readOnly/nodeStatuses/edgeStatuses) are the parent-binding contract with pipeline-builder.ts:67-78 and MUST stay on the view class. The interaction state (_mode + 12 _drag*/_pan*/_connect* fields) is tightly coupled to ~280L of pointer-event handlers that perform DOM-direct mutations via _svgTransformGroup.setAttribute / _container.setAttribute / renderRoot.querySelector at 60fps during the drag/pan/zoom hot path — moving these to a controller would require the controller to hold the host (view) ref and access view-private DOM refs through that, saving ~30L of field declarations while keeping all 280L of handler code (Tier 1 cannot reach the ≤800L view cap). Tier 2 helper-module extraction faces the same DOM coupling (zoomAtPoint and screenToGraph already live in utils/viewport-transform.ts; cycle detection in utils/cycle-detection.ts; the remaining DOM-direct code cannot become pure functions). 0 rpcClient.call sites so the WEB-DECOMP-03 boundary check is trivially green (file was never in PRE_EXTRACTION_ALLOWLIST). Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback) — web view; internal velocity only. Wave 8 may revisit if priorities shift.",
+    removedIn: "deferred",
   },
   {
     file: "packages/web/src/views/dashboard.ts",

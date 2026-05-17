@@ -551,6 +551,25 @@ describe("file-size — Phase 44 Phase G view caps (WEB-DECOMP-NN)", () => {
     // tightly DOM-coupled. Auto-acceptable per WEB-DECOMP-09 (§10.5
     // fallback).
     "packages/web/src/views/channel-detail.ts",
+    // ic-graph-canvas.ts (Wave 4 / Task 4 SPECIAL CASE — OQ-4 Tier 3):
+    // 0 rpcClient.call sites (boundary regex never matched). The 11
+    // @property decorators (viewport/interactionMode/nodes/edges/
+    // selectedNodeIds/selectedEdgeId/snapToGrid/highlightNodeIds/
+    // readOnly/nodeStatuses/edgeStatuses) are the parent-binding
+    // contract with pipeline-builder.ts:67-78 and MUST stay on view.
+    // The interaction state (_mode + 12 _drag*/_pan*/_connect* fields)
+    // is tightly coupled to ~280L of pointer-event handlers that
+    // perform DOM-direct mutations via _svgTransformGroup.setAttribute
+    // / _container.setAttribute / renderRoot.querySelector at 60fps
+    // during the drag/pan/zoom hot path. Tier 1 controller extraction
+    // can only save ~30L of field declarations while keeping the 280L
+    // of pointer handler code in place (DOM refs cannot move). Tier 2
+    // helper-module extraction faces the same DOM coupling — pure-
+    // function candidates (zoomAtPoint, screenToGraph) already live in
+    // utils/viewport-transform.ts; cycle detection in utils/cycle-
+    // detection.ts. Auto-acceptable per WEB-DECOMP-09 (§10.5 fallback)
+    // — web view; internal velocity only.
+    "packages/web/src/components/graph/ic-graph-canvas.ts",
   ]);
 
   for (const { file, viewCap, controllerCap, req } of FILE_CAPS) {
