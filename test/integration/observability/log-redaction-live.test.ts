@@ -5,17 +5,17 @@
  * Boots a real `createLogger` from `@comis/infra` and intercepts the
  * underlying stdout writes (which is where Pino sends JSON when no
  * worker-thread transport is configured). Asserts that every
- * documented credential field is replaced with "[REDACTED]" in the
- * captured bytes -- never the original value:
+ * documented credential field is MASKED in the captured bytes — never
+ * the original value:
  *
  *   1. Top-level credential paths (apiKey, token, password, secret,
  *      authorization, accessToken, refreshToken, botToken, privateKey,
  *      cookie, webhookSecret, accessKey, passphrase, connectionString,
- *      key) are redacted.
+ *      key) are masked.
  *   2. Nested one-level paths (e.g. `headers.authorization`) are
- *      redacted.
+ *      masked.
  *   3. A custom field name NOT on the redaction list reaches the
- *      captured stream verbatim -- the redaction list is the source of
+ *      captured stream verbatim — the redaction list is the source of
  *      truth, not a "redact-everything-suspicious" fallback.
  *   4. The redacted line still parses as valid NDJSON (so downstream
  *      log shippers don't choke).
@@ -24,11 +24,57 @@
  * Drives `createLogger` exclusively (no direct pino import) so the
  * test pins the public Comis logger contract, not Pino's surface.
  *
+ * **Plan 45-02 — Mask shape evolution.** The censor was originally the
+ * literal "[REDACTED]" sentinel; Plan 45-02 swaps it for a callback
+ * that emits the edge-keeping mask shape ("sk-123…cdef" with a U+2026
+ * ellipsis) for string values ≥ 18 chars, "***" for shorter strings,
+ * and "[REDACTED]" for non-string values. The residency invariant
+ * TIGHTENS (the mask never re-leaks the body), so the load-bearing
+ * assertion is "plaintext is absent" — positive shape assertions
+ * accept any of the three mask forms via the {@link isCensored} helper.
+ *
+ * **Transport gating.** Plan 45-02 wires a default Pino transport that
+ * runs the free-form regex pass in a worker thread; that intercepts
+ * stdout output. These tests need synchronous stdout capture, so they
+ * pass `regexRedactInTransport: false` to skip the transport while
+ * keeping the structured censor active.
+ *
  * @module
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createLogger } from "@comis/infra";
+import { createLogger, type LoggerOptions } from "@comis/infra";
+
+// ---------------------------------------------------------------------------
+// Plan 45-02 helpers: the redact transport runs in a worker thread and
+// would intercept stdout output. These integration tests need
+// synchronous stdout capture, so we disable the transport while keeping
+// the structured censor active. The censor produces three possible
+// mask shapes per Plan 45-02:
+//   - edge-keeping mask with U+2026 ellipsis ("sk-123…cdef") for strings ≥ 18 chars
+//   - "***" sentinel for strings below MIN_LENGTH
+//   - "[REDACTED]" sentinel for non-string credential values
+// `isCensored` accepts any of the three; tests use it for the
+// positive-shape assertion. The negative "plaintext is absent" check
+// is the load-bearing residency invariant.
+// ---------------------------------------------------------------------------
+
+function createTestLogger(opts: LoggerOptions) {
+  return createLogger({
+    regexRedactInTransport: false,
+    ...opts,
+  });
+}
+
+const ELLIPSIS = "…"; // U+2026 HORIZONTAL ELLIPSIS
+
+function hasMaskShape(text: string): boolean {
+  return (
+    text.includes("[REDACTED]") ||
+    text.includes("***") ||
+    text.includes(ELLIPSIS)
+  );
+}
 
 // ---------------------------------------------------------------------------
 // stdout capture helper -- swaps process.stdout.write for the duration of a
@@ -77,15 +123,15 @@ describe("Log redaction -- top-level credential fields via createLogger", () => 
   });
 
   it("redacts apiKey field value in serialized log line per Pino redaction config", () => {
-    const log = createLogger({ name: "test", level: "debug" });
+    const log = createTestLogger({ name: "test", level: "debug" });
     log.info({ apiKey: "sk-test-secret-1234" }, "outgoing call");
     const text = cap.getText();
-    expect(text).toContain("[REDACTED]");
+    expect(hasMaskShape(text)).toBe(true);
     expect(text).not.toContain("sk-test-secret-1234");
   });
 
   it("redacts a wide set of documented credential fields", () => {
-    const log = createLogger({ name: "test", level: "debug" });
+    const log = createTestLogger({ name: "test", level: "debug" });
     log.info(
       {
         token: "tk_abc",
@@ -112,14 +158,18 @@ describe("Log redaction -- top-level credential fields via createLogger", () => 
     expect(text).not.toContain("-----BEGIN PRIVATE KEY-----");
     expect(text).not.toContain("session=abc");
     expect(text).not.toContain("wh_abc");
-    // 10 redacted fields -> at least 10 [REDACTED] occurrences.
-    expect((text.match(/\[REDACTED\]/g) ?? []).length).toBeGreaterThanOrEqual(
-      10,
-    );
+    // 10 redacted fields → at least 10 mask occurrences. Plan 45-02
+    // mask shapes: edge-keeping ("…" U+2026), "***", or "[REDACTED]".
+    // Count every occurrence of any of the three shapes.
+    const maskCount =
+      (text.match(/\[REDACTED\]/g) ?? []).length +
+      (text.match(/\*\*\*/g) ?? []).length +
+      (text.match(/…/g) ?? []).length;
+    expect(maskCount).toBeGreaterThanOrEqual(10);
   });
 
   it("emits valid NDJSON with redacted fields intact", () => {
-    const log = createLogger({ name: "test", level: "debug" });
+    const log = createTestLogger({ name: "test", level: "debug" });
     log.info({ apiKey: "must-be-hidden" }, "json shape");
     const text = cap.getText().trim();
     // Some output may include multiple lines (build banner etc.); split
@@ -138,7 +188,9 @@ describe("Log redaction -- top-level credential fields via createLogger", () => 
           entry !== null && entry["msg"] === "json shape",
       );
     expect(matched).toBeDefined();
-    expect(matched!["apiKey"]).toBe("[REDACTED]");
+    // Plan 45-02: the 14-char "must-be-hidden" input is below the
+    // 18-char MIN_LENGTH boundary, so maskToken collapses it to "***".
+    expect(matched!["apiKey"]).toBe("***");
   });
 });
 
@@ -154,23 +206,23 @@ describe("Log redaction -- nested credential paths via createLogger", () => {
   });
 
   it("redacts headers.authorization (one level deep)", () => {
-    const log = createLogger({ name: "test", level: "debug" });
+    const log = createTestLogger({ name: "test", level: "debug" });
     log.info(
       { headers: { authorization: "Bearer must-not-leak" }, method: "POST" },
       "outgoing http",
     );
     const text = cap.getText();
     expect(text).not.toContain("Bearer must-not-leak");
-    expect(text).toContain("[REDACTED]");
+    expect(hasMaskShape(text)).toBe(true);
     expect(text).toContain("POST"); // method survives
   });
 
   it("redacts config.apiKey (one level deep)", () => {
-    const log = createLogger({ name: "test", level: "debug" });
+    const log = createTestLogger({ name: "test", level: "debug" });
     log.info({ config: { apiKey: "leak-1" } }, "config dump");
     const text = cap.getText();
     expect(text).not.toContain("leak-1");
-    expect(text).toContain("[REDACTED]");
+    expect(hasMaskShape(text)).toBe(true);
   });
 });
 
@@ -186,7 +238,7 @@ describe("Log redaction -- custom field NOT on the list reaches the stream", () 
   });
 
   it("a non-listed field name 'mySensitiveField' is NOT auto-redacted", () => {
-    const log = createLogger({ name: "test", level: "debug" });
+    const log = createTestLogger({ name: "test", level: "debug" });
     log.info(
       { mySensitiveField: "this-must-be-visible-or-the-list-is-stale" },
       "negative test",
@@ -211,24 +263,24 @@ describe("Log redaction -- API surface and child loggers", () => {
   });
 
   it("createLogger exposes info/audit/child", () => {
-    const logger = createLogger({ name: "test", level: "debug" });
+    const logger = createTestLogger({ name: "test", level: "debug" });
     expect(typeof logger.info).toBe("function");
     expect(typeof logger.audit).toBe("function");
     expect(typeof logger.child).toBe("function");
   });
 
   it("a child logger inherits redaction from the parent", () => {
-    const parent = createLogger({ name: "parent", level: "debug" });
+    const parent = createTestLogger({ name: "parent", level: "debug" });
     const child = parent.child({ subcomponent: "x" });
     child.info({ apiKey: "child-secret-1" }, "child log");
     const text = cap.getText();
     expect(text).not.toContain("child-secret-1");
-    expect(text).toContain("[REDACTED]");
+    expect(hasMaskShape(text)).toBe(true);
     expect(text).toContain("subcomponent");
   });
 
   it("operator-supplied redactPaths option redacts custom fields too", () => {
-    const log = createLogger({
+    const log = createTestLogger({
       name: "test",
       level: "debug",
       redactPaths: ["customCredential"],
@@ -239,7 +291,7 @@ describe("Log redaction -- API surface and child loggers", () => {
     );
     const text = cap.getText();
     expect(text).not.toContain("must-not-leak");
-    expect(text).toContain("[REDACTED]");
+    expect(hasMaskShape(text)).toBe(true);
     expect(text).toContain("ok");
   });
 });
