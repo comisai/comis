@@ -57,7 +57,8 @@
     "overrides": {
       "tar": ">=7.5.7",
       "typebox": "1.1.37",
-      "protobufjs": ">=7.5.5",
+      "protobufjs": ">=8.0.2",
+      "@protobufjs/utf8": ">=1.1.1",
       "undici": ">=7.24.0",
       "flatted": ">=3.4.2",
       "picomatch": ">=4.0.4",
