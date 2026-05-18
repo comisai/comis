@@ -68,7 +68,11 @@ function readConfigYaml(path: string): Record<string, unknown> {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("PERSIST-RESTART-E2E: Management actions survive daemon restart", () => {
+// Suite drives the daemon's real `agents.update` flow which sets
+// `provider: openai` and requires an OPENAI_API_KEY (or pre-registered
+// providers.entries.openai) to validate. Skip on bare CI runners that
+// don't expose the secret.
+describe.skipIf(!process.env.OPENAI_API_KEY)("PERSIST-RESTART-E2E: Management actions survive daemon restart", () => {
   let tmpDir: string;
   let tmpConfigPath: string;
   let killSpy: ReturnType<typeof vi.spyOn>;

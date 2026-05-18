@@ -63,7 +63,12 @@ function readConfigYaml(tmpConfigPath: string): Record<string, unknown> {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("Management Action YAML Persistence", () => {
+// Suite calls the daemon's real `agents.create` with `provider: openai`,
+// which fails validation without an OPENAI_API_KEY (or pre-registered
+// providers.entries.openai). Skip on bare CI runners that don't expose
+// the secret — subsequent agents.update/delete tests cascade-fail with
+// "Agent not found" once the create step is rejected.
+describe.skipIf(!process.env.OPENAI_API_KEY)("Management Action YAML Persistence", () => {
   let handle: TestDaemonHandle;
   let rpcCall: RpcCall;
   let tmpDir: string;

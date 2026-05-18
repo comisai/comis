@@ -24,6 +24,24 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Install system dependencies (ffmpeg, bubblewrap)
+        # ffmpeg/ffprobe drive the media-conversion skill; bubblewrap is the
+        # OS-level exec sandbox. The daemon emits a startup warn for each
+        # missing tool, which the log-validator (used by v13-prompt-structural,
+        # daemon-lifecycle, and log-orchestration integration tests) flags as
+        # an "unexpected warning". Installing them keeps the runner aligned
+        # with the production Linux target.
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg bubblewrap
+
+      - name: Configure git identity for daemon config-versioning tests
+        # config-apply-e2e and config-git-lifecycle-e2e drive the daemon's
+        # built-in git versioning of config.yaml; the daemon shells out to
+        # `git commit` which fails on the bare CI runner with no global
+        # user.email/user.name configured, leaving config.history empty.
+        run: |
+          git config --global user.email "ci@comis.local"
+          git config --global user.name "Comis CI"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
