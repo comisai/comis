@@ -13,6 +13,7 @@ export function sanitizeApiError(status: number, body: string, provider: string)
   const truncated = body.length > 200 ? body.slice(0, 200) + "..." : body;
   const cleaned = truncated
     .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
+    // eslint-disable-next-line no-restricted-syntax -- media adapter API-error sanitization (predates Plan 45-02; not the Pino censor literal)
     .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]");
   return `${provider} error (${status}): ${cleaned}`;
 }
