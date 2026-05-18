@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "description": "Task scheduling and cron management for Comis",
   "keywords": ["comis", "ai", "agent", "scheduler", "cron"],
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.19.0" },
   "files": ["dist"],
   "type": "module",
   "main": "./dist/index.js",

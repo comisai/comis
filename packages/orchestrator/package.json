@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "description": "Inbound orchestration: channel-manager lifecycle, inbound pipeline, execute-and-deliver coordination, command queue, message routing",
   "keywords": ["comis", "ai", "agent", "orchestrator", "inbound", "channel-manager"],
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.19.0" },
   "files": ["dist"],
   "type": "module",
   "main": "./dist/index.js",

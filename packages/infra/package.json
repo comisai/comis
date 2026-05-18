@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "description": "Structured logging infrastructure for Comis",
   "keywords": ["comis", "ai", "agent", "logging", "pino"],
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.19.0" },
   "files": ["dist"],
   "type": "module",
   "main": "./dist/index.js",

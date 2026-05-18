@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "description": "SQLite memory, embeddings, and RAG storage for Comis agents",
   "keywords": ["comis", "ai", "agent", "memory", "sqlite", "rag", "embeddings"],
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.19.0" },
   "files": ["dist"],
   "type": "module",
   "main": "./dist/index.js",
