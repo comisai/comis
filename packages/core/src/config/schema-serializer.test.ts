@@ -63,9 +63,9 @@ describe("getConfigSections", () => {
     expect(sections).toContain("gateway");
   });
 
-  it("contains all 16 sections", () => {
+  it("contains all 17 sections", () => {
     const sections = getConfigSections();
-    expect(sections).toHaveLength(16);
+    expect(sections).toHaveLength(17);
     expect(sections).toContain("agents");
     expect(sections).toContain("channels");
     expect(sections).toContain("memory");
@@ -82,5 +82,7 @@ describe("getConfigSections", () => {
     expect(sections).toContain("approvals");
     // v1.1 capability layer
     expect(sections).toContain("tooling");
+    // v2.1 Phase 45 diagnostics scaffold (Plan 45-01 Task 12)
+    expect(sections).toContain("diagnostics");
   });
 });
