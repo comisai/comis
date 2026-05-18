@@ -176,14 +176,14 @@ describe("sanitizeDiagnosticPayload — cycle guard returns [Circular]", () => {
 });
 
 describe("sanitizeDiagnosticPayload — passthrough for non-credential / non-image inputs", () => {
-  it("primitives passthrough", () => {
+  it("passes through null, number, boolean, and plain-string primitives unchanged", () => {
     expect(sanitizeDiagnosticPayload(null)).toBeNull();
     expect(sanitizeDiagnosticPayload(42)).toBe(42);
     expect(sanitizeDiagnosticPayload(true)).toBe(true);
     expect(sanitizeDiagnosticPayload("plain")).toBe("plain");
   });
 
-  it("array of plain objects passthrough", () => {
+  it("passes through an array of plain objects unchanged when no element matches a credential or image rule", () => {
     expect(
       sanitizeDiagnosticPayload([{ a: 1 }, { b: 2 }]),
     ).toEqual([{ a: 1 }, { b: 2 }]);
