@@ -17,6 +17,7 @@
     { "path": "../agent" },
     { "path": "../channels" },
     { "path": "../orchestrator" },
+    { "path": "../observability" },
     { "path": "../cli" },
     { "path": "../daemon" }
   ]

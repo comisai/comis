@@ -27,8 +27,15 @@ const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
 
 // Directories where value-imports of @comis/infra are allowed at runtime.
 const ALLOWED_INFRA_RUNTIME_DIRS: readonly string[] = [
-  "packages/daemon/src/",    // composition root (runtime wiring)
-  "packages/infra/src/",     // self-imports during build
+  "packages/daemon/src/",         // composition root (runtime wiring)
+  "packages/infra/src/",          // self-imports during build
+  "packages/observability/src/",  // substrate package — consumes `appendRegularFile`
+                                  // and `SymlinkParentRejected` / `FileSizeLimitExceeded`
+                                  // from `@comis/infra/fs-safe` (Plan 45-01 Tasks 8 + 9).
+                                  // Observability is a substrate sibling that ships
+                                  // infra-tier primitives upward through the
+                                  // queued-file-writer chassis — runtime import is
+                                  // architecturally part of the substrate contract.
 ] as const;
 
 // Umbrella facade allowed value-imports.

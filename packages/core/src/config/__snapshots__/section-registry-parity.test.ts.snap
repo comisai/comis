@@ -3988,6 +3988,35 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("daemo
 ]"
 `;
 
+exports[`section-registry parity > field-metadata view > getFieldMetadata("diagnostics") 1`] = `
+"[
+  {
+    "default": {},
+    "immutable": false,
+    "path": "diagnostics.cacheTrace",
+    "type": "object"
+  },
+  {
+    "default": {},
+    "immutable": false,
+    "path": "diagnostics.configAudit",
+    "type": "object"
+  },
+  {
+    "default": {},
+    "immutable": false,
+    "path": "diagnostics.redact",
+    "type": "object"
+  },
+  {
+    "default": {},
+    "immutable": false,
+    "path": "diagnostics.trajectory",
+    "type": "object"
+  }
+]"
+`;
+
 exports[`section-registry parity > field-metadata view > getFieldMetadata("embedding") 1`] = `
 "[
   {
@@ -17872,6 +17901,52 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dae
 }"
 `;
 
+exports[`section-registry parity > schema-serializer view > getConfigSchema("diagnostics") 1`] = `
+"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "default": {
+    "cacheTrace": {},
+    "configAudit": {},
+    "redact": {},
+    "trajectory": {}
+  },
+  "properties": {
+    "cacheTrace": {
+      "additionalProperties": false,
+      "default": {},
+      "properties": {},
+      "type": "object"
+    },
+    "configAudit": {
+      "additionalProperties": false,
+      "default": {},
+      "properties": {},
+      "type": "object"
+    },
+    "redact": {
+      "additionalProperties": false,
+      "default": {},
+      "properties": {},
+      "type": "object"
+    },
+    "trajectory": {
+      "additionalProperties": false,
+      "default": {},
+      "properties": {},
+      "type": "object"
+    }
+  },
+  "required": [
+    "trajectory",
+    "cacheTrace",
+    "configAudit",
+    "redact"
+  ],
+  "type": "object"
+}"
+`;
+
 exports[`section-registry parity > schema-serializer view > getConfigSchema("gateway") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -31328,6 +31403,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSections() 
   "gateway",
   "integrations",
   "monitoring",
+  "diagnostics",
   "browser",
   "models",
   "providers",

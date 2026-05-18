@@ -35,6 +35,7 @@ const WORKSPACE_PACKAGES = [
   "cli",
   "daemon",
   "orchestrator",
+  "observability",
   "web",
 ];
 

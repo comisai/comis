@@ -19,3 +19,16 @@ export { isDocker } from "./runtime/is-docker.js";
 export { createSystemClock } from "./runtime/clock.js";
 export { createSystemEnv } from "./runtime/env.js";
 export { createSystemTimers } from "./runtime/timers.js";
+
+// Symlink-safe file-append primitive for diagnostic artifact writers.
+// First O_NOFOLLOW + lstat-parent + fchmod 0o600 user in the repo (research §7).
+export {
+  appendRegularFile,
+  SymlinkParentRejected,
+  FileSizeLimitExceeded,
+} from "./fs-safe.js";
+export type {
+  AppendRegularFileOptions,
+  AppendRegularFileSuccess,
+  AppendRegularFileError,
+} from "./fs-safe.js";

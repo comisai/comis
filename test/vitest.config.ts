@@ -27,6 +27,7 @@ export default defineConfig({
       "@comis/skills/tools": resolve(packages, "skills/dist/tools/index.js"),
       "@comis/skills": resolve(packages, "skills/dist/skills/index.js"),
       "@comis/orchestrator": resolve(packages, "orchestrator/dist/index.js"),
+      "@comis/observability": resolve(packages, "observability/dist/index.js"),
       "@comis/cli": resolve(packages, "cli/dist/index.js"),
     },
   },

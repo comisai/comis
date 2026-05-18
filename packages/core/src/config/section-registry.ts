@@ -27,6 +27,7 @@ import { AutoReplyEngineConfigSchema } from "./schema-auto-reply-engine.js";
 import { BrowserConfigSchema } from "./schema-browser.js";
 import { ChannelConfigSchema } from "./schema-channel.js";
 import { DaemonConfigSchema } from "./schema-daemon.js";
+import { DiagnosticsConfigSchema } from "./schema-diagnostics.js";
 import { EmbeddingConfigSchema } from "./schema-embedding.js";
 import { EnvelopeConfigSchema } from "./schema-envelope.js";
 import { GatewayConfigSchema } from "./schema-gateway.js";
@@ -105,9 +106,9 @@ export interface ManagedSectionRedirect {
 export interface SectionRegistryEntry {
   /** Canonical Zod schema for the section. Same object shared across views. */
   readonly schema: z.ZodType;
-  /** True if section appears in the schema-serializer view (16 sections). */
+  /** True if section appears in the schema-serializer view (17 sections). */
   readonly schemaSerializable: boolean;
-  /** True if section appears in the field-metadata view (18 sections). */
+  /** True if section appears in the field-metadata view (19 sections). */
   readonly fieldMetadataVisible: boolean;
   /**
    * Set on the 3 top-level fully-managed sections (providers, channels,
@@ -119,32 +120,35 @@ export interface SectionRegistryEntry {
 }
 
 /**
- * The 23 unique config sections. Bool flags select per-view membership.
+ * The 24 unique config sections. Bool flags select per-view membership.
  *
- * - 16 sections have schemaSerializable=true
- * - 18 sections have fieldMetadataVisible=true
- * - 11 sections appear in both views (intersection)
+ * - 17 sections have schemaSerializable=true
+ * - 19 sections have fieldMetadataVisible=true
+ * - 12 sections appear in both views (intersection)
  * - 3 sections (providers, channels, agents) have managedRedirect (top-level managed)
  *
  * Insertion order is significant: schema-serializer.ts and field-metadata.ts
  * derive their SECTION_SCHEMAS maps via Object.fromEntries(Object.entries(...)),
  * which preserves this order, which in turn drives getConfigSections() output
- * order. The 16 schemaSerializable=true entries appear in the same order as
- * the original schema-serializer.ts SECTION_SCHEMAS literal:
+ * order. The 17 schemaSerializable=true entries appear in this order:
  *   agents, channels, memory, security, routing, daemon, scheduler, gateway,
- *   integrations, monitoring, browser, models, providers, messages, approvals,
- *   tooling.
- * The 18 fieldMetadataVisible=true entries appear in the same order as the
- * original field-metadata.ts SECTION_SCHEMAS literal:
+ *   integrations, monitoring, diagnostics, browser, models, providers,
+ *   messages, approvals, tooling.
+ * The 19 fieldMetadataVisible=true entries appear in this order:
  *   agents, channels, memory, security, routing, daemon, scheduler, gateway,
- *   integrations, monitoring, plugins, queue, streaming, autoReplyEngine,
- *   sendPolicy, embedding, envelope, tooling.
+ *   integrations, monitoring, diagnostics, plugins, queue, streaming,
+ *   autoReplyEngine, sendPolicy, embedding, envelope, tooling.
  * The 7 fieldMetadata-only entries (plugins → envelope) are inserted between
- * `monitoring` and `tooling` so both filtered subsequences match the legacy
- * order byte-for-byte.
+ * `diagnostics` and `tooling` so both filtered subsequences are stable.
+ *
+ * Phase 45 Plan 45-01 inserted `diagnostics` immediately after `monitoring`.
+ * Per the plan's milestone-wide invariant this is the ONE registry
+ * insertion + parity snapshot regeneration for Phase 45 — later plans
+ * (45-03/04/05, Phase 46) add fields *within* existing subschemas, which
+ * does not trip the snapshot.
  */
 export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = Object.freeze({
-  // The 10 common (both views) at the head — matches both legacy orders up to index 9.
+  // The 11 common (both views) at the head — matches both legacy orders up to index 9, then diagnostics at index 10.
   agents: {
     schema: PerAgentConfigSchema,
     schemaSerializable: true,
@@ -218,17 +222,29 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
     schemaSerializable: true,
     fieldMetadataVisible: true,
   },
+  // Phase 45 diagnostics scaffold (Plan 45-01 Task 12). Both views visible —
+  // placed immediately after monitoring so it groups with the
+  // observability-adjacent sections. Subsections (trajectory, cacheTrace,
+  // configAudit, redact) are placeholder empty z.object({}).default({}) and
+  // are filled in 45-03 / Phase 46 / 45-05 respectively. This is the
+  // one-and-only registry insertion + parity snapshot regeneration for
+  // the whole milestone.
+  diagnostics: {
+    schema: DiagnosticsConfigSchema,
+    schemaSerializable: true,
+    fieldMetadataVisible: true,
+  },
 
   // The 5 schema-serializer-only sections come BEFORE the 7
   // field-metadata-only sections so that:
   //   (a) the schemaSerializable-filtered subsequence (skipping the 7
-  //       field-metadata-only entries) preserves the legacy order
-  //       [..., monitoring, browser, models, providers, messages, approvals,
-  //       tooling], and
+  //       field-metadata-only entries) is
+  //       [..., monitoring, diagnostics, browser, models, providers, messages,
+  //       approvals, tooling], and
   //   (b) the fieldMetadataVisible-filtered subsequence (skipping the 5
-  //       schema-serializer-only entries) preserves the legacy order
-  //       [..., monitoring, plugins, queue, streaming, autoReplyEngine,
-  //       sendPolicy, embedding, envelope, tooling].
+  //       schema-serializer-only entries) is
+  //       [..., monitoring, diagnostics, plugins, queue, streaming,
+  //       autoReplyEngine, sendPolicy, embedding, envelope, tooling].
   browser: { schema: BrowserConfigSchema, schemaSerializable: true, fieldMetadataVisible: false },
   models: { schema: ModelsConfigSchema, schemaSerializable: true, fieldMetadataVisible: false },
   providers: {

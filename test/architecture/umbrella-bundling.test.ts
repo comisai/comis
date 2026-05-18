@@ -46,6 +46,7 @@ const NAMESPACED_PACKAGES = [
   "agent",
   "channels",
   "orchestrator",
+  "observability",
   "cli",
   "daemon",
 ] as const;

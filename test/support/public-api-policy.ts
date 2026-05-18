@@ -1407,6 +1407,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createSystemClock",
       "createSystemEnv",
       "createSystemTimers",
+      // Plan 45-01 Task 8: appendRegularFile is consumed by
+      // @comis/observability/src/shared/queued-file-writer.ts (a real
+      // consumer — not listed here). The five symbols below are the
+      // error classes + option/result type aliases that form the public
+      // contract — Plan 45-03 (trajectory writer), 45-04 (system-prompt-
+      // report), and 45-05 (config-audit) consume them for their own
+      // try-catch boundaries. Tracked here as baseline orphans until
+      // those plans land.
+      "SymlinkParentRejected",
+      "FileSizeLimitExceeded",
+      "AppendRegularFileOptions",
+      "AppendRegularFileSuccess",
+      "AppendRegularFileError",
     ])],
     // @comis/memory: baseline orphans tracked here + 5 transient orphans
     // (SessionStore alias + SessionDetailedEntry + 3 Ctx*Row types).
