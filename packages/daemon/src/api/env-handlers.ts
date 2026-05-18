@@ -179,6 +179,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       // bypassed, regressed, or mis-wired, persisting a literal "[REDACTED]"
       // to ~/.comis/.env corrupts the user's secret store (observed in
       // production for CLOUDFLARE_ACCOUNT_ID).
+      // eslint-disable-next-line no-restricted-syntax -- env-handler placeholder-rejection guard (predates Plan 45-02; not the Pino censor literal)
       if (value === "[REDACTED]" || /^\[REDACTED[^\]]*\]$/.test(value)) {
         throw new Error(
           `Refusing to persist secret "${key}": value is a session-redaction ` +

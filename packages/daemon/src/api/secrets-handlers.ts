@@ -327,6 +327,7 @@ export function createSecretsHandlers(
       // Refuse to store a literal "[REDACTED]" -- this indicates a
       // replay-poisoning bug upstream and would corrupt the secret store.
       if (
+        // eslint-disable-next-line no-restricted-syntax -- secrets-handler placeholder-rejection guard (predates Plan 45-02; not the Pino censor literal)
         valueRaw === "[REDACTED]" ||
         REDACTION_PLACEHOLDER_PATTERN.test(valueRaw)
       ) {

@@ -3905,6 +3905,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("daemo
       "filePath": "~/.comis/logs/daemon.log",
       "maxFiles": 5,
       "maxSize": "10m",
+      "redactKeepEnd": 4,
+      "redactKeepStart": 6,
+      "redactMinLength": 18,
+      "redactSensitive": "tools",
       "tracing": {
         "maxFiles": 3,
         "maxSize": "5m",
@@ -3937,6 +3941,35 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("daemo
     "default": "10m",
     "immutable": true,
     "path": "daemon.logging.maxSize",
+    "type": "string"
+  },
+  {
+    "default": 4,
+    "immutable": true,
+    "path": "daemon.logging.redactKeepEnd",
+    "type": "integer"
+  },
+  {
+    "default": 6,
+    "immutable": true,
+    "path": "daemon.logging.redactKeepStart",
+    "type": "integer"
+  },
+  {
+    "default": 18,
+    "immutable": true,
+    "path": "daemon.logging.redactMinLength",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "daemon.logging.redactPatterns",
+    "type": "array"
+  },
+  {
+    "default": "tools",
+    "immutable": true,
+    "path": "daemon.logging.redactSensitive",
     "type": "string"
   },
   {
@@ -8760,6 +8793,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "filePath": "~/.comis/logs/daemon.log",
         "maxFiles": 5,
         "maxSize": "10m",
+        "redactKeepEnd": 4,
+        "redactKeepStart": 6,
+        "redactMinLength": 18,
+        "redactSensitive": "tools",
         "tracing": {
           "maxFiles": 3,
           "maxSize": "5m",
@@ -8831,6 +8868,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "filePath": "~/.comis/logs/daemon.log",
       "maxFiles": 5,
       "maxSize": "10m",
+      "redactKeepEnd": 4,
+      "redactKeepStart": 6,
+      "redactMinLength": 18,
+      "redactSensitive": "tools",
       "tracing": {
         "maxFiles": 3,
         "maxSize": "5m",
@@ -8863,6 +8904,35 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": "10m",
     "immutable": true,
     "path": "daemon.logging.maxSize",
+    "type": "string"
+  },
+  {
+    "default": 4,
+    "immutable": true,
+    "path": "daemon.logging.redactKeepEnd",
+    "type": "integer"
+  },
+  {
+    "default": 6,
+    "immutable": true,
+    "path": "daemon.logging.redactKeepStart",
+    "type": "integer"
+  },
+  {
+    "default": 18,
+    "immutable": true,
+    "path": "daemon.logging.redactMinLength",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "daemon.logging.redactPatterns",
+    "type": "array"
+  },
+  {
+    "default": "tools",
+    "immutable": true,
+    "path": "daemon.logging.redactSensitive",
     "type": "string"
   },
   {
@@ -17802,6 +17872,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dae
         "filePath": "~/.comis/logs/daemon.log",
         "maxFiles": 5,
         "maxSize": "10m",
+        "redactKeepEnd": 4,
+        "redactKeepStart": 6,
+        "redactMinLength": 18,
+        "redactSensitive": "tools",
         "tracing": {
           "maxFiles": 3,
           "maxSize": "5m",
@@ -17826,6 +17900,38 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dae
         "maxSize": {
           "default": "10m",
           "pattern": "^\\\\d+[kmg]?$",
+          "type": "string"
+        },
+        "redactKeepEnd": {
+          "default": 4,
+          "maximum": 12,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "redactKeepStart": {
+          "default": 6,
+          "maximum": 12,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "redactMinLength": {
+          "default": 18,
+          "maximum": 9007199254740991,
+          "minimum": 8,
+          "type": "integer"
+        },
+        "redactPatterns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "redactSensitive": {
+          "default": "tools",
+          "enum": [
+            "off",
+            "tools"
+          ],
           "type": "string"
         },
         "tracing": {
@@ -17865,7 +17971,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dae
         "maxSize",
         "maxFiles",
         "compress",
-        "tracing"
+        "tracing",
+        "redactSensitive",
+        "redactMinLength",
+        "redactKeepStart",
+        "redactKeepEnd"
       ],
       "type": "object"
     },
@@ -26144,6 +26254,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "filePath": "~/.comis/logs/daemon.log",
           "maxFiles": 5,
           "maxSize": "10m",
+          "redactKeepEnd": 4,
+          "redactKeepStart": 6,
+          "redactMinLength": 18,
+          "redactSensitive": "tools",
           "tracing": {
             "maxFiles": 3,
             "maxSize": "5m",
@@ -26242,6 +26356,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "filePath": "~/.comis/logs/daemon.log",
             "maxFiles": 5,
             "maxSize": "10m",
+            "redactKeepEnd": 4,
+            "redactKeepStart": 6,
+            "redactMinLength": 18,
+            "redactSensitive": "tools",
             "tracing": {
               "maxFiles": 3,
               "maxSize": "5m",
@@ -26266,6 +26384,38 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxSize": {
               "default": "10m",
               "pattern": "^\\\\d+[kmg]?$",
+              "type": "string"
+            },
+            "redactKeepEnd": {
+              "default": 4,
+              "maximum": 12,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "redactKeepStart": {
+              "default": 6,
+              "maximum": 12,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "redactMinLength": {
+              "default": 18,
+              "maximum": 9007199254740991,
+              "minimum": 8,
+              "type": "integer"
+            },
+            "redactPatterns": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "redactSensitive": {
+              "default": "tools",
+              "enum": [
+                "off",
+                "tools"
+              ],
               "type": "string"
             },
             "tracing": {
@@ -26305,7 +26455,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxSize",
             "maxFiles",
             "compress",
-            "tracing"
+            "tracing",
+            "redactSensitive",
+            "redactMinLength",
+            "redactKeepStart",
+            "redactKeepEnd"
           ],
           "type": "object"
         },
