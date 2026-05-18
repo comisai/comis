@@ -305,6 +305,9 @@ importers:
       '@comis/memory':
         specifier: workspace:*
         version: link:../memory
+      '@comis/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@comis/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator

@@ -100,6 +100,10 @@
     "./orchestrator": {
       "types": "./dist/orchestrator.d.ts",
       "import": "./dist/orchestrator.js"
+    },
+    "./observability": {
+      "types": "./dist/observability.d.ts",
+      "import": "./dist/observability.js"
     }
   },
   "scripts": {
@@ -120,6 +124,7 @@
     "@comis/cli",
     "@comis/daemon",
     "@comis/orchestrator",
+    "@comis/observability",
     "@comis/web",
     "bindings",
     "file-uri-to-path"
@@ -137,6 +142,7 @@
     "@comis/cli": "workspace:*",
     "@comis/daemon": "workspace:*",
     "@comis/orchestrator": "workspace:*",
+    "@comis/observability": "workspace:*",
     "@comis/web": "workspace:*",
     "@agentclientprotocol/sdk": "0.21.0",
     "@clack/core": "1.2.0",
