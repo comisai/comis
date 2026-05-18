@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@comis/core": "workspace:*",
+    "@comis/observability": "workspace:*",
     "@comis/shared": "workspace:*",
     "pino": "10.3.1"
   },

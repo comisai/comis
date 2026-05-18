@@ -24,6 +24,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./dist/redact/pino-redact-transport.js": {
+      "types": "./dist/redact/pino-redact-transport.d.ts",
+      "import": "./dist/redact/pino-redact-transport.js"
     }
   },
   "scripts": {
