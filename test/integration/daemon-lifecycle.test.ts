@@ -119,6 +119,10 @@ describe("Daemon Lifecycle", () => {
         // Exclude capability-override drift warning (PROVIDER_OVERRIDES contains
         // entries for providers not in pi-ai's live catalog — informational signal)
         if (msg.includes("Capability override has no matching pi-ai provider")) return false;
+        // Exclude bwrap smoke-test-failed warning (CI runners install bubblewrap
+        // but cannot run it because unprivileged user-namespace cloning is
+        // restricted at the kernel level — informational on test runners)
+        if (msg.includes("bwrap installed but smoke test failed")) return false;
         return true;
       });
 
