@@ -103,6 +103,13 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
   // google-antigravity). The warning is informational — capability overrides
   // are documented as drift signals, not failures.
   { level: "warn", msg: /Capability override has no matching pi-ai provider/ },
+
+  // CI runners (and some bare-metal hosts) install bubblewrap but cannot
+  // actually run it because unprivileged user-namespace cloning is restricted
+  // by the kernel (Ubuntu 23.10+ AppArmor, container hosts, etc.). The daemon
+  // warns and falls back to a non-sandboxed exec mode — informational on the
+  // test runner, not a regression.
+  { level: "warn", msg: /bwrap installed but smoke test failed/ },
 ];
 
 // ---------------------------------------------------------------------------
