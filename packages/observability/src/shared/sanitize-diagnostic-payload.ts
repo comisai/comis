@@ -106,12 +106,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** True when `name` is a known credential key (case-insensitive). */
-function isCredentialName(name: string): boolean {
+/**
+ * True when `name` is a known credential key (case-insensitive).
+ *
+ * Exported as `isCredentialFieldName` from the package barrel for
+ * use by `redactSecrets` (the structured walker) which needs the same
+ * credential-key set + allowlist semantics for value-mode masking.
+ */
+export function isCredentialFieldName(name: string): boolean {
   const lower = name.toLowerCase();
   if (CREDENTIAL_ALLOWLIST.has(lower)) return false;
   return CREDENTIAL_KEYS.has(lower);
 }
+
+/** Internal alias for the existing call sites in this file. */
+const isCredentialName = isCredentialFieldName;
 
 /** Mime-type alias keys for image-shape detection. */
 const IMAGE_FORMAT_KEYS = ["mimeType", "media_type", "mime_type"] as const;
