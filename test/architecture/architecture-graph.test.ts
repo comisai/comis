@@ -147,13 +147,29 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
  * Format: `"${packageShortName}:${depShortName}"` — both strings have the
  * `@comis/` prefix STRIPPED.
  *
- * The allowlist is currently empty.
+ * Entries:
+ *   - `infra:observability` — Plan 45-02 (edge-keeping mask censor in
+ *     `packages/infra/src/logging/logger.ts`). `@comis/observability`
+ *     ALREADY depends on `@comis/infra` (for `appendRegularFile`
+ *     landed in 45-01); a static `import { maskToken } from
+ *     "@comis/observability"` in logger.ts would create a `tsc --build`
+ *     project-reference cycle. The workaround: `package.json` declares
+ *     `@comis/observability` as a runtime dep (so pnpm resolves the
+ *     symlink), but `tsconfig.json` does NOT add the project reference
+ *     (so tsc doesn't try to order them). `logger.ts` uses
+ *     `createRequire(import.meta.url)("@comis/observability/dist/redact/edge-keeping.js")`
+ *     — a subpath load against the edge-keeping leaf module which has
+ *     no static imports of @comis/infra, so Node 22's require()-of-ESM
+ *     cycle detection passes. `pnpm cycles` (madge dist-mode .d.ts) is
+ *     clean because the createRequire call is opaque to the type system.
  *
  * The allowlist mechanism mirrors test/support/architecture-allowlist.ts
  * shrink-only semantics: entries can be REMOVED but should NOT be ADDED
  * without a refactor PR + design-doc citation. PR review catches additions.
  */
-const DRIFT_ALLOWLIST: ReadonlySet<string> = new Set();
+const DRIFT_ALLOWLIST: ReadonlySet<string> = new Set([
+  "infra:observability",
+]);
 
 function readPackageJsonDeps(pkg: string): Set<string> {
   const path = resolve(REPO_ROOT, `packages/${pkg}/package.json`);

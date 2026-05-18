@@ -24,6 +24,11 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./dist/logging/redact-transport.js": {
+      "types": "./dist/logging/redact-transport.d.ts",
+      "import": "./dist/logging/redact-transport.js",
+      "default": "./dist/logging/redact-transport.js"
     }
   },
   "scripts": {

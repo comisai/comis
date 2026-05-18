@@ -23,11 +23,18 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./dist/redact/edge-keeping.js": {
+      "types": "./dist/redact/edge-keeping.d.ts",
+      "import": "./dist/redact/edge-keeping.js",
+      "default": "./dist/redact/edge-keeping.js"
     },
     "./dist/redact/pino-redact-transport.js": {
       "types": "./dist/redact/pino-redact-transport.d.ts",
-      "import": "./dist/redact/pino-redact-transport.js"
+      "import": "./dist/redact/pino-redact-transport.js",
+      "default": "./dist/redact/pino-redact-transport.js"
     }
   },
   "scripts": {
