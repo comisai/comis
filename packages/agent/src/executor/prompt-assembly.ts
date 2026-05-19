@@ -968,10 +968,20 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         bootstrapFiles: reportBootstrapFiles,
         tools: reportTools,
         policyFilteredToolNames: deps.policyFilteredToolNames,
-        memoryInjection: inlineMemory
+        // Plan 45.1-05 (TRAJ-FIX-08): the memoryInjection block must
+        // reflect every memory component of the assembled prompt
+        // (inline + system-prompt sections) per design §8.1. The
+        // previous predicate dropped the block entirely when only
+        // RAG sections were injected (inlineMemory === undefined).
+        // The `?? 0` on inlineMemory.length is load-bearing for the
+        // sections-only branch now that the outer predicate can be
+        // true with inlineMemory undefined.
+        memoryInjection: (inlineMemory !== undefined || memorySections.length > 0)
           ? {
               ragHits: memorySections.length + (inlineMemory ? 1 : 0),
-              charsInjected: inlineMemory.length + memorySections.reduce((s, m) => s + m.length, 0),
+              charsInjected:
+                (inlineMemory?.length ?? 0) +
+                memorySections.reduce((s, m) => s + m.length, 0),
               trustTags: [],
             }
           : undefined,
