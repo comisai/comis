@@ -67,6 +67,36 @@ export class SymlinkParentRejected extends Error {
   }
 }
 
+/**
+ * Returned when the resolved real path of the target (or its parent
+ * when the target doesn't yet exist) escapes the configured
+ * `confinedBaseDir`.
+ *
+ * Plan 45.1-03 (TRAJ-FIX-01): the existing `SymlinkParentRejected`
+ * check only `lstat`s the IMMEDIATE parent — an attacker controlling
+ * a grandparent (or any higher ancestor) can pre-stage a symlink there
+ * which the kernel follows during normal path-walk (O_NOFOLLOW inspects
+ * only the final component). When the caller supplies `confinedBaseDir`,
+ * the helpers run `fs.realpathSync(target_or_parent)` and assert the
+ * resolved path is inside `fs.realpathSync(confinedBaseDir)`, closing
+ * the ancestor gap. The option is opt-in so non-observability callers
+ * that write outside `~/.comis/` continue to work.
+ */
+export class PathEscapesConfinementError extends Error {
+  public readonly name = "PathEscapesConfinementError" as const;
+  public readonly code = "PATH_ESCAPES_CONFINEMENT" as const;
+  public readonly resolvedPath: string;
+  public readonly baseDir: string;
+
+  constructor(resolvedPath: string, baseDir: string) {
+    super(
+      `Refusing to write at "${resolvedPath}": resolved path escapes confinement base "${baseDir}"`,
+    );
+    this.resolvedPath = resolvedPath;
+    this.baseDir = baseDir;
+  }
+}
+
 /** Returned when the size cap would be exceeded by the proposed append. */
 export class FileSizeLimitExceeded extends Error {
   public readonly name = "FileSizeLimitExceeded" as const;
@@ -91,6 +121,21 @@ export interface AppendRegularFileOptions {
   readonly content: string | Buffer;
   /** Maximum cumulative file size (bytes); omit for no cap. */
   readonly maxFileBytes?: number;
+  /**
+   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base.
+   *
+   * When supplied, after the existing parent-`lstat` check passes the
+   * helper runs `fs.realpathSync` on `target` (or its parent when the
+   * target doesn't yet exist) and on `confinedBaseDir`, then asserts
+   * the resolved target stays inside the resolved base. Returns
+   * `PathEscapesConfinementError` on mismatch.
+   *
+   * The option closes the ancestor-symlink gap that O_NOFOLLOW +
+   * parent-`lstat` together do NOT cover. Observability callers pass
+   * `~/.comis/` here; non-observability callers (daemon scratchpads,
+   * etc.) may legitimately omit it.
+   */
+  readonly confinedBaseDir?: string;
 }
 
 /** Result payload on success — total size of the file post-append. */
@@ -100,8 +145,56 @@ export interface AppendRegularFileSuccess {
 
 export type AppendRegularFileError =
   | SymlinkParentRejected
+  | PathEscapesConfinementError
   | FileSizeLimitExceeded
   | Error;
+
+/**
+ * Plan 45.1-03 (TRAJ-FIX-01): assert `target`'s resolved real path stays
+ * inside `confinedBaseDir`'s resolved real path.
+ *
+ * Behaviour:
+ *   - `fs.realpathSync(confinedBaseDir)` — must exist (callers pass
+ *     `~/.comis/` which is always pre-created by the daemon bootstrap).
+ *   - `fs.realpathSync(target)` — when `target` doesn't yet exist
+ *     (the typical first-write case for append), the ENOENT path
+ *     resolves the parent and joins the basename. Other errors
+ *     propagate.
+ *   - Boundary safety: matches `resolvedBase === resolvedTarget` OR
+ *     `resolvedTarget.startsWith(resolvedBase + path.sep)`. The
+ *     `+ path.sep` guard prevents a sibling-prefix path like
+ *     `/tmp/base-evil/x` from sneaking past a naive `startsWith(base)`.
+ *
+ * Returns the rejection error when the check fails, `undefined` on
+ * pass. Caller wraps in a `Result.err(...)` at the call site.
+ */
+function assertConfinedPath(
+  target: string,
+  confinedBaseDir: string,
+): PathEscapesConfinementError | undefined {
+  const baseResolved = fs.realpathSync(confinedBaseDir);
+  let targetResolved: string;
+  try {
+    targetResolved = fs.realpathSync(target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      // Target doesn't exist yet (first-write case). Resolve the parent
+      // and join the basename — the ENOENT path can still surface an
+      // escaping ancestor symlink via the parent's realpath.
+      const parentResolved = fs.realpathSync(path.dirname(target));
+      targetResolved = path.join(parentResolved, path.basename(target));
+    } else {
+      throw err;
+    }
+  }
+  if (
+    targetResolved !== baseResolved &&
+    !targetResolved.startsWith(baseResolved + path.sep)
+  ) {
+    return new PathEscapesConfinementError(targetResolved, baseResolved);
+  }
+  return undefined;
+}
 
 /** O_NOFOLLOW probe — POSIX-only constant, undefined on Windows. */
 function resolveOpenFlags(): number {
@@ -151,6 +244,19 @@ export function appendRegularFile(
     }
   } catch (e) {
     return err(e instanceof Error ? e : new Error(String(e)));
+  }
+
+  // Step 1b (Plan 45.1-03 TRAJ-FIX-01): opt-in confinement-base check.
+  // Closes the ancestor-symlink gap that step 1 misses (lstat only
+  // inspects the immediate parent). When `confinedBaseDir` is undefined
+  // the check is skipped — back-compat for non-observability callers.
+  if (options.confinedBaseDir !== undefined) {
+    try {
+      const rejection = assertConfinedPath(target, options.confinedBaseDir);
+      if (rejection !== undefined) return err(rejection);
+    } catch (e) {
+      return err(e instanceof Error ? e : new Error(String(e)));
+    }
   }
 
   // Step 2: open under symlink-safe flags.
