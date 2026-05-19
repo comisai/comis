@@ -39,7 +39,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { appendRegularFile } from "@comis/infra";
+import { appendRegularFile } from "./fs-safe.js";
 
 /** Status returned from `write()`. */
 export type QueuedFileWriteResult = "queued" | "dropped";

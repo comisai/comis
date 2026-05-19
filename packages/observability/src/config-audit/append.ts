@@ -39,7 +39,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { ok, err, type Result } from "@comis/shared";
-import { appendRegularFile } from "@comis/infra";
+import { appendRegularFile } from "../shared/fs-safe.js";
 import { safePath, systemDateFrom, systemNowMs } from "@comis/core";
 
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";

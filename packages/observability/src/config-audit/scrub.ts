@@ -36,7 +36,7 @@
 import * as fs from "node:fs";
 
 import { ok, err, type Result } from "@comis/shared";
-import { writeRegularFile } from "@comis/infra";
+import { writeRegularFile } from "../shared/fs-safe.js";
 import { systemNowMs } from "@comis/core";
 
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
