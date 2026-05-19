@@ -36,6 +36,8 @@
 import * as fs from "node:fs";
 
 import { ok, err, type Result } from "@comis/shared";
+import { writeRegularFile } from "@comis/infra";
+import { systemNowMs } from "@comis/core";
 
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
@@ -76,11 +78,36 @@ export interface ScrubParams {
   readonly injectedAfterRead?: () => void;
 }
 
-/** Re-encode a single parsed record through the redactor + sanitizer. */
-function reEncodeRecord(parsed: unknown): string {
+/**
+ * Plan 45-gap-01 (BL-01): Sentinel emitted when re-encoding a parsed
+ * line fails. See identical helper in append.ts:
+ * emitSerializationErrorSentinel for rationale.
+ *
+ * Uses `systemNowMs` from @comis/core (Pattern B per
+ * test/support/architecture-allowlist.ts) — sanctioned helper that
+ * preserves the no-direct-globals invariant. @comis/core is already
+ * a dependency of @comis/observability for the existing
+ * append.ts:42 import.
+ */
+function emitSerializationErrorSentinel(): string {
+  const sentinel = {
+    traceSchema: "comis-config-audit" as const,
+    schemaVersion: 1 as const,
+    __serializationError: "record-not-serializable" as const,
+    tsMs: systemNowMs(),
+  };
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  return JSON.stringify(sentinel)! + "\n";
+}
+
+/** Re-encode a single parsed record through the redactor + sanitizer.
+ *  Exported for test-driven BL-01 verification (plan 45-gap-01). */
+export function reEncodeRecord(parsed: unknown): string {
   if (parsed === null || typeof parsed !== "object") {
     // Not an object — leave alone (encode as-is).
-    return safeJsonStringify(parsed) + "\n";
+    const json = safeJsonStringify(parsed);
+    if (json === undefined) return emitSerializationErrorSentinel();
+    return json + "\n";
   }
   const obj = parsed as Record<string, unknown>;
   const withoutArgv: Record<string, unknown> = { ...obj };
@@ -100,7 +127,9 @@ function reEncodeRecord(parsed: unknown): string {
   } else if (rawArgv !== undefined) {
     sanitized.argv = rawArgv;
   }
-  return safeJsonStringify(sanitized) + "\n";
+  const json = safeJsonStringify(sanitized);
+  if (json === undefined) return emitSerializationErrorSentinel();
+  return json + "\n";
 }
 
 /**
@@ -152,12 +181,24 @@ export async function scrubConfigAuditLog(
   }
   const rewritten = out.join("\n") + "\n";
 
-  try {
-    fs.writeFileSync(tmpPath, rewritten, { mode: 0o600, encoding: "utf-8" });
-  } catch (e) {
+  // BL-02 fix (Plan 45-gap-01): replace fs.writeFileSync with the
+  // symlink-safe writeRegularFile from @comis/infra. Default
+  // unlinkExisting:true closes the symlink-pre-stage window — an
+  // attacker who stages a symlink at tmpPath pointing to an arbitrary
+  // file the daemon can write would have the symlink unlinked before
+  // open. The subsequent O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW
+  // open creates a fresh regular file with mode 0o600 (defensive
+  // fchmod), with O_EXCL preventing TOCTOU re-creation between unlink
+  // and open.
+  const writeResult = writeRegularFile({
+    path: tmpPath,
+    content: rewritten,
+    // unlinkExisting defaults to true — leaves the symlink window closed.
+  });
+  if (!writeResult.ok) {
     return err(
       new ScrubConfigAuditError(
-        `Failed to write scrub tmp: ${(e as Error).message}`,
+        `Failed to write scrub tmp: ${writeResult.error.message}`,
         "WRITE_TMP_FAILED",
       ),
     );

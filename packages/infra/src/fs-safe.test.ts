@@ -6,6 +6,7 @@ import { afterEach, describe, it, expect } from "vitest";
 
 import {
   appendRegularFile,
+  writeRegularFile,
   SymlinkParentRejected,
   FileSizeLimitExceeded,
 } from "./fs-safe.js";
@@ -154,5 +155,95 @@ describe("appendRegularFile — defensive chmod 0o600 even when file already exi
     const result = appendRegularFile({ path: target, content: "more\n" });
     expect(result.ok).toBe(true);
     expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 45-gap-01 Task 1: writeRegularFile (symlink-safe write-truncate)
+// ---------------------------------------------------------------------------
+describe("writeRegularFile — happy path", () => {
+  it("creates a new file with mode 0o600 and the given content", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-happy-"));
+    const target = path.join(tmpDir, "out.tmp");
+
+    const result = writeRegularFile({ path: target, content: "data" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.totalBytes).toBe(4);
+    expect(fs.readFileSync(target, "utf8")).toBe("data");
+    expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+  });
+
+  it("truncates on rewrite (does NOT append)", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-truncate-"));
+    const target = path.join(tmpDir, "out.tmp");
+
+    const r1 = writeRegularFile({ path: target, content: "first" });
+    expect(r1.ok).toBe(true);
+    const r2 = writeRegularFile({ path: target, content: "second" });
+    expect(r2.ok).toBe(true);
+
+    expect(fs.readFileSync(target, "utf8")).toBe("second");
+    if (r2.ok) expect(r2.value.totalBytes).toBe(6);
+  });
+
+  it("with default unlinkExisting=true, a pre-staged symlink at the target is replaced; the symlink target is NOT followed", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-symlink-"));
+    const target = path.join(tmpDir, "out.tmp");
+    const sentinel = path.join(tmpDir, "sentinel");
+
+    // Pre-stage attacker symlink: <target> -> <sentinel>.
+    fs.writeFileSync(sentinel, ""); // create empty sentinel
+    fs.symlinkSync(sentinel, target);
+
+    const result = writeRegularFile({ path: target, content: "safe" });
+    expect(result.ok).toBe(true);
+
+    // The sentinel file MUST remain untouched (proving we did NOT follow the symlink).
+    expect(fs.readFileSync(sentinel, "utf8")).toBe("");
+
+    // The target is now a regular file (lstat shows non-symlink) with our content.
+    expect(fs.lstatSync(target).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(target, "utf8")).toBe("safe");
+    expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+  });
+
+  it("with unlinkExisting=false and an existing regular file, truncates and rewrites with mode 0o600", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-existing-"));
+    const target = path.join(tmpDir, "out.tmp");
+    fs.writeFileSync(target, "original", { mode: 0o644 });
+
+    const result = writeRegularFile({ path: target, content: "new", unlinkExisting: false });
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("new");
+    // Defensive chmod forces 0o600 even when prior file was 0o644.
+    expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+  });
+
+  it("with unlinkExisting=true and no existing file, succeeds (ENOENT on unlink is ignored)", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-noent-"));
+    const target = path.join(tmpDir, "out.tmp");
+    // target does not exist
+    const result = writeRegularFile({ path: target, content: "x" });
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("x");
+  });
+});
+
+describe("writeRegularFile — symlink parent rejection", () => {
+  it("returns SymlinkParentRejected when the immediate parent is a symlink", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-symparent-"));
+    const realDir = path.join(tmpDir, "real");
+    const linkDir = path.join(tmpDir, "evil-link");
+    fs.mkdirSync(realDir);
+    fs.symlinkSync(realDir, linkDir);
+
+    const target = path.join(linkDir, "out.tmp");
+    const result = writeRegularFile({ path: target, content: "x" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(SymlinkParentRejected);
+    }
   });
 });

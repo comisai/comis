@@ -517,7 +517,7 @@ async function stageAgents(input: {
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
-    secretsCrypto, secretsDb,
+    secretsCrypto, secretsDb, obsStore, // Plan 45-gap-01: thread into setupAgents
   } = foundation;
   const _setupMedia = overrides.setupMedia ?? setupMedia;
 
@@ -570,7 +570,7 @@ async function stageAgents(input: {
     deliveryMirrorConfig: container.config.deliveryMirror
       ? { maxEntriesPerInjection: container.config.deliveryMirror.maxEntriesPerInjection, maxCharsPerInjection: container.config.deliveryMirror.maxCharsPerInjection }
       : undefined,
-    geminiCacheManager,  // Gemini cache lifecycle manager
+    geminiCacheManager, obsStore,  // Plan 45-gap-01: SystemPromptReport persistence
     // Resolve platform char limit via deferred channelPlugins ref
     getChannelMaxChars: (channelType: string) => {
       const plugin = channelPluginsRef.ref?.get(channelType);
