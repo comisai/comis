@@ -60,6 +60,29 @@ export { stableStringify } from "./shared/stable-stringify.js";
 
 export { safeJsonStringify } from "./shared/safe-json-stringify.js";
 
+// Plan 45.1-06 (TRAJ-FIX-10): the symlink-safe file primitives moved from
+// @comis/infra into this package. The three error sentinels and the option /
+// success / error type aliases form the public contract that downstream
+// writers (queued-file-writer, config-audit/append, config-audit/scrub) all
+// rely on at their try-catch boundaries. The barrel re-export keeps the
+// surface symmetric with what @comis/infra previously exposed — any future
+// out-of-package consumer should `import { appendRegularFile } from "@comis/observability"`.
+export {
+  appendRegularFile,
+  writeRegularFile,
+  SymlinkParentRejected,
+  PathEscapesConfinementError,
+  FileSizeLimitExceeded,
+} from "./shared/fs-safe.js";
+export type {
+  AppendRegularFileOptions,
+  AppendRegularFileSuccess,
+  AppendRegularFileError,
+  WriteRegularFileOptions,
+  WriteRegularFileSuccess,
+  WriteRegularFileError,
+} from "./shared/fs-safe.js";
+
 // ---------------------------------------------------------------------------
 // Redactor surface (Plan 45-02).
 // ---------------------------------------------------------------------------
