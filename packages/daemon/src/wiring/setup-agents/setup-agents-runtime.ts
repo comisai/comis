@@ -521,6 +521,16 @@ export async function setupSingleAgent(
     clock: deps.clock,
     env: deps.env,
     timers: deps.timers,
+    // Plan 45-gap-01: thread ObservabilityStore through to prompt-assembly
+    // for production SystemPromptReport persistence. Without this thread,
+    // the build+persist block at prompt-assembly.ts:920 is a permanent
+    // no-op in production (the library + isolated tests pass, but the
+    // operator cannot answer "why didn't the model use IDENTITY.md?"
+    // against a real daemon run).
+    // The memory.sessionStore (createSessionStore) does NOT implement
+    // SessionStoreReportSink — the per-session ledger sink is omitted
+    // here; observabilityStore is the load-bearing sink (45-04 design).
+    observabilityStore: deps.obsStore,
   });
 
   agentLogger.debug(

@@ -189,4 +189,12 @@ export interface PiExecutorDeps {
     readonly maxFileBytes?: number;
     readonly eventTypes?: ReadonlyArray<string>;
   };
+  /**
+   * Plan 45-gap-01: ObservabilityStore for SystemPromptReport SQLite
+   * persistence. Forwarded from daemon composition root through
+   * SingleAgentDeps.obsStore. When undefined (persistence disabled),
+   * the build+persist block in prompt-assembly.ts:920 is a no-op —
+   * production traffic produces no reports without this dep.
+   */
+  observabilityStore?: import("@comis/observability").ObservabilityStoreLike;
 }
