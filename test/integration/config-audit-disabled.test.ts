@@ -137,15 +137,25 @@ describe("diagnostics.configAudit.enabled — honored at all three caller sites 
 
   it("cli/commands/config.ts gates the buildCliSyncToolingAuditBase + appendCliSyncToolingAudit calls on the loaded configJs.diagnostics.configAudit.enabled", () => {
     // Wiring-chain regression guard #5: the CLI sync-tooling write
-    // path consults configJs?.diagnostics?.configAudit?.enabled and
-    // skips both the audit base build AND the append when false.
+    // path consults the loaded config's diagnostics.configAudit.enabled
+    // (either via direct `configJs?.diagnostics?.…` or a typed alias
+    // built from configJs) and skips both the audit base build AND
+    // the append when false.
     const repoRoot = process.cwd();
     const cliConfigSrc = fs.readFileSync(
       path.join(repoRoot, "packages/cli/src/commands/config.ts"),
       "utf-8",
     );
+    // The chain `?.diagnostics?.configAudit?.enabled` must appear in
+    // the CLI source (regardless of whether it lands on `configJs`
+    // directly or on a typed alias).
     expect(cliConfigSrc).toMatch(
-      /configJs\?\.diagnostics\?\.configAudit\?\.enabled/,
+      /\?\.diagnostics\?\.configAudit\?\.enabled/,
+    );
+    // And the `!== false` gate semantics must be present (preserving
+    // the schema's default-true contract).
+    expect(cliConfigSrc).toMatch(
+      /\?\.diagnostics\?\.configAudit\?\.enabled\s*!==\s*false/,
     );
   });
 
