@@ -43,6 +43,11 @@ import {
   type InspectPayload,
 } from "../sync-tooling/index.js";
 import {
+  registerConfigAuditCommand,
+  buildCliSyncToolingAuditBase,
+  appendCliSyncToolingAudit,
+} from "./config/audit.js";
+import {
   runToolingFill,
   type PromptIO,
 } from "../tooling-fill/index.js";
@@ -78,6 +83,9 @@ const SYNC_TOOLING_DEFAULT_CONFIG = os.homedir() + "/.comis/config.yaml";
  */
 export function registerConfigCommand(program: Command): void {
   const config = program.command("config").description("Configuration management");
+
+  // Plan 45-05 task 12: `comis config audit show|scrub` subcommand group.
+  registerConfigAuditCommand(config);
 
   // --- config validate -------------------------------------------------------
 
@@ -569,7 +577,13 @@ export function registerConfigCommand(program: Command): void {
         }
 
         const counts = applyToDocument(doc, artifacts, { overwrite: isOverwrite });
+
+        // Plan 45-05 task 9: two-phase audit around the single atomicWriteFile call site
+        // (per checker Finding #5 -- only write site in this file). Best-effort.
+        const auditBase = buildCliSyncToolingAuditBase(configPath);
         const written = atomicWriteFile(configPath, doc.toString());
+        appendCliSyncToolingAudit(auditBase, written);
+
         if (!written.ok) {
           error(`Atomic write failed (${written.error.code}): ${written.error.cause}`);
           process.exit(2);

@@ -144,3 +144,55 @@ export type {
   PersistError,
   PersistDeps,
 } from "./system-prompt-report/persist.js";
+
+// ---------------------------------------------------------------------------
+// Config-audit surface (Plan 45-05).
+// ---------------------------------------------------------------------------
+
+export {
+  ConfigWriteAuditRecordSchema,
+  ConfigObserveAuditRecordSchema,
+} from "./config-audit/types.js";
+export type {
+  ConfigWriteAuditRecord,
+  ConfigObserveAuditRecord,
+  ConfigWriteResult,
+  ConfigWriteSource,
+  FileStatSnapshot,
+  SuspiciousFlag,
+} from "./config-audit/types.js";
+
+export {
+  redactConfigAuditArgv,
+  SECRET_FLAG_NAMES,
+  SECRET_FLAG_SUFFIX_PATTERN,
+  CONFIG_AUDIT_ARGV_CAP,
+} from "./config-audit/argv-redactor.js";
+
+export {
+  resolveConfigAuditLogPath,
+  CONFIG_AUDIT_LOG_ENV,
+} from "./config-audit/log-path.js";
+export type { ResolveLogPathDeps } from "./config-audit/log-path.js";
+
+export { detectSuspicious } from "./config-audit/suspicious.js";
+export type { SuspiciousInput } from "./config-audit/suspicious.js";
+
+export {
+  appendConfigAuditRecord,
+  appendConfigAuditRecordSync,
+  createConfigWriteAuditRecordBase,
+  finalizeConfigWriteAuditRecord,
+  DEFAULT_ROTATE_AT_BYTES,
+  DEFAULT_KEEP_ROTATED,
+  ConfigAuditAppendError,
+} from "./config-audit/append.js";
+export type {
+  ConfigWriteAuditRecordBase,
+  CreateBaseParams,
+  FinalizeParams,
+  AppendConfigAuditParams,
+} from "./config-audit/append.js";
+
+export { scrubConfigAuditLog, ScrubConfigAuditError } from "./config-audit/scrub.js";
+export type { ScrubResult, ScrubParams } from "./config-audit/scrub.js";

@@ -127,16 +127,17 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // gateway: no agent OAuth-helpers back-edge — OAuth helpers live in
   // @comis/core.
   gateway: new Set(["shared", "core"]),
-  // cli: no longer depends on @comis/infra, @comis/agent, or @comis/memory.
-  // Every CLI @comis/agent import was retargeted to @comis/core; the
-  // secrets + auth subcommands migrated to daemon RPC. cli's workspace
-  // dep graph collapses to {shared, core}.
-  cli: new Set(["shared", "core"]),
+  // cli: depends on shared, core, and observability (Plan 45-05 task 9 —
+  // CLI's config-write hook in sync-tooling needs the config-audit JSONL
+  // append helpers). Other historical deps (@comis/infra, @comis/agent,
+  // @comis/memory) remain absent — those flows moved to daemon RPC.
+  cli: new Set(["shared", "core", "observability"]),
   daemon: new Set([
     "shared",
     "core",
     "infra",
     "memory",
+    "observability",
     "scheduler",
     "skills",
     "agent",

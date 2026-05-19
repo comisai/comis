@@ -1642,6 +1642,97 @@
       "admin"
     ]
   },
+  "config.audit.list": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "string"
+        },
+        "until": {
+          "type": "string"
+        },
+        "suspiciousOnly": {
+          "type": "boolean"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "tail": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        }
+      },
+      "required": [
+        "records"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "config.audit.scrub": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "dryRun": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rewrittenRecords": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "skippedMalformed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "aborted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rewrittenRecords",
+        "skippedMalformed",
+        "aborted"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "config.diff": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

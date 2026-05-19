@@ -14,7 +14,10 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
       expect(result.data.trajectory.enabled).toBe(true);
       expect(result.data.trajectory.maxFileBytes).toBe(50 * 1024 * 1024);
       expect(result.data.cacheTrace).toEqual({});
-      expect(result.data.configAudit).toEqual({});
+      // Plan 45-05: configAudit now has populated defaults.
+      expect(result.data.configAudit.enabled).toBe(true);
+      expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
+      expect(result.data.configAudit.keepRotated).toBe(5);
       expect(result.data.redact).toEqual({});
     }
   });
@@ -26,7 +29,10 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
       expect(result.data.trajectory.enabled).toBe(true);
       expect(result.data.trajectory.maxFileBytes).toBe(50 * 1024 * 1024);
       expect(result.data.cacheTrace).toEqual({});
-      expect(result.data.configAudit).toEqual({});
+      // Plan 45-05: configAudit now has populated defaults.
+      expect(result.data.configAudit.enabled).toBe(true);
+      expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
+      expect(result.data.configAudit.keepRotated).toBe(5);
       expect(result.data.redact).toEqual({});
     }
   });
@@ -139,5 +145,73 @@ describe("DiagnosticsConfigSchema.trajectory — fields and defaults", () => {
     if (result.success) {
       expect(result.data.trajectory.eventTypes).toBeUndefined();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 45-05: configAudit subsection
+// ---------------------------------------------------------------------------
+
+describe("DiagnosticsConfigSchema.configAudit — fields and defaults", () => {
+  it("defaults configAudit.enabled to true (audit log is on by default)", () => {
+    const result = DiagnosticsConfigSchema.safeParse({ configAudit: {} });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.configAudit.enabled).toBe(true);
+    }
+  });
+
+  it("defaults configAudit.rotateAtBytes to 10 MB", () => {
+    const result = DiagnosticsConfigSchema.safeParse({ configAudit: {} });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
+    }
+  });
+
+  it("defaults configAudit.keepRotated to 5", () => {
+    const result = DiagnosticsConfigSchema.safeParse({ configAudit: {} });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.configAudit.keepRotated).toBe(5);
+    }
+  });
+
+  it("allows operator override of all three configAudit fields", () => {
+    const result = DiagnosticsConfigSchema.safeParse({
+      configAudit: {
+        enabled: false,
+        rotateAtBytes: 5 * 1024 * 1024,
+        keepRotated: 3,
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.configAudit.enabled).toBe(false);
+      expect(result.data.configAudit.rotateAtBytes).toBe(5 * 1024 * 1024);
+      expect(result.data.configAudit.keepRotated).toBe(3);
+    }
+  });
+
+  it("rejects non-positive configAudit.rotateAtBytes", () => {
+    const r1 = DiagnosticsConfigSchema.safeParse({
+      configAudit: { rotateAtBytes: 0 },
+    });
+    const r2 = DiagnosticsConfigSchema.safeParse({
+      configAudit: { rotateAtBytes: -1 },
+    });
+    expect(r1.success).toBe(false);
+    expect(r2.success).toBe(false);
+  });
+
+  it("rejects negative configAudit.keepRotated (0 is permitted — disable rotation retention)", () => {
+    const okRes = DiagnosticsConfigSchema.safeParse({
+      configAudit: { keepRotated: 0 },
+    });
+    expect(okRes.success).toBe(true);
+    const failRes = DiagnosticsConfigSchema.safeParse({
+      configAudit: { keepRotated: -1 },
+    });
+    expect(failRes.success).toBe(false);
   });
 });
