@@ -1,6 +1,6 @@
 {
-  "totalMinified": 104097,
-  "totalGzipped": 9524,
+  "totalMinified": 105209,
+  "totalGzipped": 9704,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -44,6 +44,8 @@
     "channels.list": 547,
     "channels.restart": 448,
     "config.apply": 712,
+    "config.audit.list": 602,
+    "config.audit.scrub": 508,
     "config.diff": 331,
     "config.gc": 381,
     "config.history": 835,
