@@ -6303,4 +6303,31 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(src).toMatch(/deps\.trajectoryConfig\?\.dir/);
     expect(src).toMatch(/deps\.trajectoryConfig\?\.maxFileBytes/);
   });
+
+  it("trajectory_init_includes_sessionFile_from_sessionAdapter (260519-tlx Gap D2 — pointer sidecar)", async () => {
+    // Per design §6.1, the pointer file <sessionFile>.trajectory-path.json
+    // is written by createTrajectoryRecorder ONLY when init.sessionFile
+    // is provided. The recorder writer is already wired up via 260519-rrm
+    // Task 2 — this site is the missing production caller. Threading
+    // sessionAdapter.getSessionPath(sessionKey) into trajectoryInit makes
+    // the pointer sidecar land on disk for every live session.
+    const src = await readPiExecutorSrc();
+    expect(src).toMatch(/sessionFile:\s*sessionAdapter\.getSessionPath\(sessionKey\)/);
+  });
+
+  it("sessionFile lands inside the trajectoryInit literal (not on the bridge or registry call)", async () => {
+    // Anchor the assertion: the sessionFile field must appear inside the
+    // `const trajectoryInit = { ... };` literal, between agentId and
+    // model. This is the single site that flows into both the registry
+    // path and the legacy fallback (registry.getOrCreate or
+    // createTrajectoryRecorder respectively).
+    const src = await readPiExecutorSrc();
+    const trajectoryInitStart = src.indexOf("const trajectoryInit = {");
+    expect(trajectoryInitStart).toBeGreaterThan(0);
+    // Walk forward to the closing `};` for the literal.
+    const closeIdx = src.indexOf("};", trajectoryInitStart);
+    expect(closeIdx).toBeGreaterThan(trajectoryInitStart);
+    const initLiteral = src.slice(trajectoryInitStart, closeIdx);
+    expect(initLiteral).toMatch(/sessionFile:\s*sessionAdapter\.getSessionPath\(sessionKey\)/);
+  });
 });

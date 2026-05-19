@@ -599,6 +599,17 @@ async function runSessionLocked(
       sessionId: formattedKey,
       sessionKey: formattedKey,
       workspaceDir: deps.workspaceDir,
+      // Pointer-file sidecar (design §6.1 + §6.2). createTrajectoryRecorder
+      // calls writeTrajectoryPointerFileBestEffort when sessionFile is
+      // set, producing <sessionFile>.trajectory-path.json next to the
+      // per-session JSONL transcript. The pointer is best-effort
+      // (symlinked parents / unwritable dirs no-op silently). 260519-tlx
+      // Gap D2: the registry's first-init-wins contract means the
+      // pointer is written exactly once at recorder creation, which is
+      // the correct moment per design §6.1.
+      // sessionAdapter.getSessionPath is sync + pure (safePath under
+      // the hood) — zero overhead at trajectoryInit construction.
+      sessionFile: sessionAdapter.getSessionPath(sessionKey),
       // provider + modelId + modelApi live inside the `model` cluster
       // on TrajectoryRecorderInit (architecture invariant: ≤12 optional
       // fields per interface). The runtime lifts each cluster field
