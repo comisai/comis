@@ -58,10 +58,19 @@ export function releaseAndDrainQueue(
 
 /**
  * Global completion handler for the session:sub_agent_completed event.
- * Releases a concurrency slot, then routes the completion to the correct
- * graph (driver turn, synthetic reply, or regular node).
- * Returns the { gs, nodeId } for a regular node completion, or undefined
- * if the event was handled by a driver or synthetic path.
+ *
+ * The event subscription fires for ALL sub-agent completions (graph nodes AND
+ * `sessions_spawn` calls). This handler filters to graph-owned runIds only:
+ * non-graph completions bail immediately, preserving the global concurrency
+ * counters (which only track gatedSpawn-claimed slots).
+ *
+ * Routes graph-owned completions to:
+ *   - handleDriverTurnCompleted (driver-managed turn)
+ *   - handleSubAgentCompleted (regular node)
+ *   - (silent return for synthetic wait_for_input replies — never consumed a slot)
+ *
+ * releaseAndDrainQueue runs ONLY when a graph claimed the runId via gatedSpawn,
+ * matching the invariant that release is paired one-to-one with claim.
  */
 export function globalCompletionHandler(
   state: CoordinatorSharedState,
@@ -71,36 +80,34 @@ export function globalCompletionHandler(
     handleDriverTurnCompleted: (gs: GraphRunState, nodeId: string, event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }) => void;
     handleSubAgentCompleted: (gs: GraphRunState, event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }) => void;
   },
-  deps?: { logger?: { warn(obj: Record<string, unknown>, msg: string): void } },
 ): void {
-  // Release global slot and drain queue FIRST
-  releaseAndDrainQueue(state, config);
-
+  // Ownership-first filter: scan all graphs for the runId.
+  // Non-graph completions (e.g. `sessions_spawn` runs) MUST NOT touch the global
+  // concurrency counters — those slots belong to graph spawns gated through gatedSpawn.
   for (const gs of state.graphs.values()) {
-    // Check driver-managed turns first
+    // Driver-managed turn
     const driverRunInfo = gs.driverRunIdMap.get(event.runId);
     if (driverRunInfo !== undefined) {
+      releaseAndDrainQueue(state, config);
       callbacks.handleDriverTurnCompleted(gs, driverRunInfo.nodeId, event);
       return;
     }
-    // Check synthetic runIds (wait_for_input replies)
+    // Synthetic wait_for_input reply — never claimed a gatedSpawn slot, do NOT release one.
     if (gs.syntheticRunResults.has(event.runId)) {
       return;
     }
     // Regular node completion
     if (gs.runIdToNode.has(event.runId)) {
+      releaseAndDrainQueue(state, config);
       callbacks.handleSubAgentCompleted(gs, event);
       return;
     }
   }
-
-  // Log when completion event not routed to any graph
-  if (deps?.logger) {
-    deps.logger.warn({
-      runId: event.runId,
-      success: event.success,
-      hint: "Sub-agent completion event not routed to any graph — possible event ordering issue or non-graph completion",
-      errorKind: "internal" as const,
-    }, "Orphaned graph sub-agent completion");
-  }
+  // Non-graph runId (e.g. sessions_spawn) — silently ignore. No log, no release.
+  // The "Orphaned graph sub-agent completion" warn that previously lived here was
+  // speculative defensive code guarding against an event-ordering race that cannot
+  // occur: graph-node-lifecycle.ts and graph-driver-handler.ts both populate the
+  // routing maps SYNCHRONOUSLY inside the gatedSpawn callback, immediately after
+  // subAgentRunner.spawn() returns the runId, so the event can never fire before
+  // the map entry is set.
 }

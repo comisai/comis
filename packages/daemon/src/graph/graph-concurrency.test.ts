@@ -47,11 +47,6 @@ function makeCallbacks() {
   };
 }
 
-function makeLoggerDeps() {
-  const warn = vi.fn();
-  return { deps: { logger: { warn } }, warn };
-}
-
 function makeEvent(runId: string, success = true): { runId: string; success: boolean } {
   return { runId, success };
 }
@@ -63,20 +58,21 @@ function makeEvent(runId: string, success = true): { runId: string; success: boo
 describe("graph-concurrency", () => {
   describe("globalCompletionHandler", () => {
     it("bails immediately on non-graph runId without warn log or slot release", () => {
+      // Pre-fix: the handler ran releaseAndDrainQueue unconditionally and emitted
+      // an "Orphaned graph sub-agent completion" warn. Post-fix: non-graph runIds
+      // return silently without touching counters, queue, or the log stream.
       const state = makeState({ globalActiveSubAgents: 5 });
       const config = makeConfig();
       const gs = makeGraph({ graphId: "g-1" });
       state.graphs.set("g-1", gs);
       const callbacks = makeCallbacks();
-      const { deps, warn } = makeLoggerDeps();
 
-      globalCompletionHandler(state, config, makeEvent("non-graph-runid"), callbacks, deps);
+      globalCompletionHandler(state, config, makeEvent("non-graph-runid"), callbacks);
 
       expect(state.globalActiveSubAgents).toBe(5);
       expect(state.spawnQueue.length).toBe(0);
       expect(callbacks.handleDriverTurnCompleted).toHaveBeenCalledTimes(0);
       expect(callbacks.handleSubAgentCompleted).toHaveBeenCalledTimes(0);
-      expect(warn).toHaveBeenCalledTimes(0);
     });
 
     it("routes regular-node runId to handleSubAgentCompleted and releases exactly one slot", () => {
@@ -86,9 +82,8 @@ describe("graph-concurrency", () => {
       gs.runIdToNode.set("run-A", "node-A");
       state.graphs.set("g-1", gs);
       const callbacks = makeCallbacks();
-      const { deps, warn } = makeLoggerDeps();
 
-      globalCompletionHandler(state, config, makeEvent("run-A"), callbacks, deps);
+      globalCompletionHandler(state, config, makeEvent("run-A"), callbacks);
 
       expect(state.globalActiveSubAgents).toBe(2);
       expect(callbacks.handleSubAgentCompleted).toHaveBeenCalledTimes(1);
@@ -97,7 +92,6 @@ describe("graph-concurrency", () => {
         expect.objectContaining({ runId: "run-A" }),
       );
       expect(callbacks.handleDriverTurnCompleted).toHaveBeenCalledTimes(0);
-      expect(warn).toHaveBeenCalledTimes(0);
     });
 
     it("routes driver-managed runId to handleDriverTurnCompleted with mapped nodeId", () => {
@@ -107,9 +101,8 @@ describe("graph-concurrency", () => {
       gs.driverRunIdMap.set("run-D", { nodeId: "driver-node", agentId: "bull" });
       state.graphs.set("g-1", gs);
       const callbacks = makeCallbacks();
-      const { deps, warn } = makeLoggerDeps();
 
-      globalCompletionHandler(state, config, makeEvent("run-D"), callbacks, deps);
+      globalCompletionHandler(state, config, makeEvent("run-D"), callbacks);
 
       expect(state.globalActiveSubAgents).toBe(3);
       expect(callbacks.handleDriverTurnCompleted).toHaveBeenCalledTimes(1);
@@ -119,7 +112,6 @@ describe("graph-concurrency", () => {
         expect.objectContaining({ runId: "run-D" }),
       );
       expect(callbacks.handleSubAgentCompleted).toHaveBeenCalledTimes(0);
-      expect(warn).toHaveBeenCalledTimes(0);
     });
 
     it("synthetic runId returns without callbacks and without slot release", () => {
@@ -129,15 +121,13 @@ describe("graph-concurrency", () => {
       gs.syntheticRunResults.set("synth-1", "user reply text");
       state.graphs.set("g-1", gs);
       const callbacks = makeCallbacks();
-      const { deps, warn } = makeLoggerDeps();
 
-      globalCompletionHandler(state, config, makeEvent("synth-1"), callbacks, deps);
+      globalCompletionHandler(state, config, makeEvent("synth-1"), callbacks);
 
       // Synthetic replies never took a gatedSpawn slot — must NOT release one.
       expect(state.globalActiveSubAgents).toBe(2);
       expect(callbacks.handleDriverTurnCompleted).toHaveBeenCalledTimes(0);
       expect(callbacks.handleSubAgentCompleted).toHaveBeenCalledTimes(0);
-      expect(warn).toHaveBeenCalledTimes(0);
     });
 
     it("does not drain spawnQueue when non-graph runId completes at saturation", () => {
@@ -150,9 +140,8 @@ describe("graph-concurrency", () => {
       const queuedExecute = vi.fn();
       state.spawnQueue.push({ graphId: "g-1", nodeId: "queued-node", execute: queuedExecute });
       const callbacks = makeCallbacks();
-      const { deps } = makeLoggerDeps();
 
-      globalCompletionHandler(state, config, makeEvent("outside-runid"), callbacks, deps);
+      globalCompletionHandler(state, config, makeEvent("outside-runid"), callbacks);
 
       expect(state.globalActiveSubAgents).toBe(20);
       expect(state.spawnQueue.length).toBe(1);
@@ -170,9 +159,8 @@ describe("graph-concurrency", () => {
       state.graphs.set("g-2", g2);
       state.graphs.set("g-3", g3);
       const callbacks = makeCallbacks();
-      const { deps } = makeLoggerDeps();
 
-      globalCompletionHandler(state, config, makeEvent("run-X"), callbacks, deps);
+      globalCompletionHandler(state, config, makeEvent("run-X"), callbacks);
 
       expect(callbacks.handleSubAgentCompleted).toHaveBeenCalledTimes(1);
       const calledWithGraph = callbacks.handleSubAgentCompleted.mock.calls[0]?.[0] as GraphRunState;
@@ -191,9 +179,8 @@ describe("graph-concurrency", () => {
       const queuedExecute = vi.fn();
       state.spawnQueue.push({ graphId: "g-1", nodeId: "queued-node", execute: queuedExecute });
       const callbacks = makeCallbacks();
-      const { deps } = makeLoggerDeps();
 
-      globalCompletionHandler(state, config, makeEvent("run-Y"), callbacks, deps);
+      globalCompletionHandler(state, config, makeEvent("run-Y"), callbacks);
 
       expect(callbacks.handleSubAgentCompleted).toHaveBeenCalledTimes(1);
       expect(queuedExecute).toHaveBeenCalledTimes(1);
