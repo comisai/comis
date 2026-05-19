@@ -70,6 +70,10 @@ export const TRAJECTORY_EVENT_TYPES = [
 
   // Control-plane sentinel: writer ran out of room mid-stream.
   "trace.truncated",
+  // Control-plane sentinel: queued writer rejected one or more lines
+  // (e.g., symlinked parent, ENOSPC). Emitted at flushAndClose when
+  // QueuedFileWriter.failureCount() > 0.
+  "trace.write_failures",
 ] as const;
 
 /** Closed union of trajectory event type strings. */
