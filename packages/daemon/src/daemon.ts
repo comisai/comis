@@ -1136,10 +1136,16 @@ async function stageShutdown(input: {
     startupStartMs, instanceId,
   });
 
-  // Snapshot current config as last-known-good after successful startup
+  // Snapshot current config as last-known-good after successful startup.
+  // Plan 45.1-04 (TRAJ-FIX-06): honor diagnostics.configAudit.enabled.
+  // `!== false` semantics preserve the schema's default-true contract;
+  // operators who omit the knob or explicitly set true see the audit
+  // line; only `enabled: false` skips the JSONL append.
   if (configPaths.length > 0) {
     const activeConfigPath = configPaths[configPaths.length - 1]!;
-    const lkg = saveLastKnownGood(activeConfigPath);
+    const auditEnabled =
+      container.config.diagnostics?.configAudit?.enabled !== false;
+    const lkg = saveLastKnownGood(activeConfigPath, auditEnabled);
     if (lkg.saved) {
       daemonLogger.debug({ lkgPath: lkg.path }, "Last-known-good config snapshot saved");
     }

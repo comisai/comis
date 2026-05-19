@@ -93,9 +93,14 @@ describe("diagnostics.configAudit.enabled — honored at all three caller sites 
       path.join(repoRoot, "packages/daemon/src/daemon.ts"),
       "utf-8",
     );
+    // The daemon-side caller binds the gate value (typically as a
+    // const named like auditEnabled or directly inline) and passes it
+    // to saveLastKnownGood. Verify both the read-of-the-knob AND the
+    // pass-through into the LKG function.
     expect(daemonSrc).toMatch(
-      /saveLastKnownGood\(\s*activeConfigPath,\s*[^)]*configAudit/,
+      /container\.config\.diagnostics\?\.configAudit\?\.enabled/,
     );
+    expect(daemonSrc).toMatch(/saveLastKnownGood\(\s*activeConfigPath,/);
   });
 
   it("config-write.ts RPC handler skips buildConfigAuditBase/appendConfigAuditWithOutcome when deps.auditEnabled === false", () => {

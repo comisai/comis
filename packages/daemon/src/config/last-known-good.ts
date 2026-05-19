@@ -273,8 +273,18 @@ function buildSimpleDiff(oldText: string, newText: string): string {
 /**
  * Handle `--restore-last-good` CLI flag.
  * Writes to stderr (logger not yet initialized) and exits.
+ *
+ * Plan 45.1-04 (TRAJ-FIX-06): `auditEnabled` defaults to `true`. The
+ * `--restore-last-good` flag runs BEFORE the daemon loads its config
+ * (it's an emergency-recovery path), so the daemon.ts caller has no
+ * cfg in scope and uses the default. Programmatic callers that DO
+ * have cfg can pass the gate explicitly.
  */
-export function handleRestoreFlag(configPaths: string[], exitFn: (code: number) => void): void {
+export function handleRestoreFlag(
+  configPaths: string[],
+  exitFn: (code: number) => void,
+  auditEnabled: boolean = true,
+): void {
   if (configPaths.length === 0) {
     process.stderr.write("ERROR: No config paths configured. Cannot restore.\n");
     exitFn(1);
@@ -282,7 +292,7 @@ export function handleRestoreFlag(configPaths: string[], exitFn: (code: number) 
   }
 
   const configPath = configPaths[configPaths.length - 1]!;
-  const { restored, lkgPath } = restoreLastKnownGood(configPath);
+  const { restored, lkgPath } = restoreLastKnownGood(configPath, auditEnabled);
 
   if (restored) {
     process.stderr.write(`Restored last-known-good config from ${lkgPath}\n`);
