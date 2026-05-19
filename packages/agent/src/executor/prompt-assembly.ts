@@ -27,7 +27,14 @@ import type {
   ModelOperationType,
   ToolCapabilityPort,
 } from "@comis/core";
-import { wrapExternalContent, safePath, formatSessionKey, generateCanaryToken } from "@comis/core";
+import {
+  wrapExternalContent,
+  safePath,
+  formatSessionKey,
+  generateCanaryToken,
+  tryGetContext,
+  systemNowMs,
+} from "@comis/core";
 import { suppressError } from "@comis/shared";
 import type { ComisLogger } from "@comis/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -623,6 +630,41 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
           inlineMemory = injection.inlineMemory;
           memorySections = injection.systemPromptSections;
+
+          // Plan 45-03: emit memory:injected observability event so the
+          // trajectory bridge can record one line per RAG injection.
+          // Fires only on turns where the injector actually produced
+          // content (inline OR sections) — no-injection turns produce
+          // no event. Best-effort: any failure in the emit is
+          // swallowed via try/catch so it never aborts assembly.
+          if (deps.eventBus) {
+            try {
+              const charsInjected =
+                (injection.inlineMemory?.length ?? 0) +
+                injection.systemPromptSections.reduce((sum, s) => sum + s.length, 0);
+              const trustTags = Array.from(
+                new Set(deduped.map((r) => r.entry.trustLevel)),
+              );
+              deps.eventBus.emit("memory:injected", {
+                agentId: agentId ?? config.name,
+                sessionKey: formatSessionKey(sessionKey),
+                traceId: tryGetContext()?.traceId ?? formatSessionKey(sessionKey),
+                hitCount: deduped.length,
+                charsInjected,
+                trustTags,
+                timestamp: systemNowMs(),
+              });
+            } catch (emitErr) {
+              logger.debug(
+                {
+                  err: emitErr,
+                  hint: "memory:injected emit failed; trajectory will miss this turn's RAG record",
+                  errorKind: "internal" as const,
+                },
+                "Failed to emit memory:injected",
+              );
+            }
+          }
         }
         logger.debug({ agentId, resultCount: deduped.length, durationMs: deps.clock.now() - ragStart }, "RAG search complete");
       } else {
