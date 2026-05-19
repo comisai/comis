@@ -6920,6 +6920,101 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   },
+  "obs.systemPromptReport.latest": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "agentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agentId",
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "report": {
+          "anyOf": [
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "report"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "obs.systemPromptReport.list": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "reports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        }
+      },
+      "required": [
+        "reports"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "providers.create": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

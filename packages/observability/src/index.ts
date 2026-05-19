@@ -134,6 +134,7 @@ export {
 export type {
   BootstrapFileForReport,
   ResolvedToolForReport,
+  BuildParamsContext,
 } from "./system-prompt-report/build.js";
 
 export { persistSystemPromptReport } from "./system-prompt-report/persist.js";

@@ -67,18 +67,32 @@ interface ToolReportEntry {
   readonly schemaChars: number;
 }
 
-interface BuildParams {
-  readonly source: "run" | "boot" | "session-create";
-  readonly generatedAt: number;
+/**
+ * Cluster of optional metadata fields (per the optional-field-bloat
+ * architecture invariant: ≤12 optional fields per interface).
+ *
+ * Wraps cross-correlation IDs + provider/model/workspace identifiers
+ * that flow through the report unchanged. Callers may pass `{}` if
+ * none of these are available; the builder writes them as `undefined`
+ * into the SystemPromptReport's optional fields.
+ */
+export interface BuildParamsContext {
   readonly traceId?: string;
-  readonly agentId: string;
   readonly tenantId?: string;
-  readonly sessionId: string;
   readonly sessionKey?: string;
   readonly runId?: string;
   readonly provider?: string;
   readonly model?: string;
   readonly workspaceDir?: string;
+}
+
+interface BuildParams {
+  readonly source: "run" | "boot" | "session-create";
+  readonly generatedAt: number;
+  readonly agentId: string;
+  readonly sessionId: string;
+  /** Optional metadata cluster — cross-correlation IDs + identifiers. */
+  readonly context?: BuildParamsContext;
   /** The literal assembled system prompt string. */
   readonly systemPrompt: string;
   /** Operator's bootstrap budget for per-file truncation detection. */
@@ -247,20 +261,21 @@ export function buildSystemPromptReport(params: BuildParams): SystemPromptReport
     params.bootstrapTruncation ?? summarizeBootstrapTruncation(params.bootstrapFiles);
 
   // --- assembled report ----------------------------------------------------
+  const ctx = params.context ?? {};
   const report: SystemPromptReport = {
     traceSchema: "comis-system-prompt-report",
     schemaVersion: 1,
     source: params.source,
     generatedAt: params.generatedAt,
-    traceId: params.traceId,
+    traceId: ctx.traceId,
     agentId: params.agentId,
-    tenantId: params.tenantId,
+    tenantId: ctx.tenantId,
     sessionId: params.sessionId,
-    sessionKey: params.sessionKey,
-    runId: params.runId,
-    provider: params.provider,
-    model: params.model,
-    workspaceDir: params.workspaceDir,
+    sessionKey: ctx.sessionKey,
+    runId: ctx.runId,
+    provider: ctx.provider,
+    model: ctx.model,
+    workspaceDir: ctx.workspaceDir,
     systemPrompt: {
       sha256: promptSha256,
       chars,

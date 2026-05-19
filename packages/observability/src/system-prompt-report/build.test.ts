@@ -181,16 +181,18 @@ describe("buildSystemPromptReport — metadata pass-through", () => {
     // No-op; placeholder for any future stateful cache shared across cases.
   });
 
-  it("passes_traceId_provider_model_runId_through_unchanged", () => {
+  it("passes_traceId_provider_model_runId_through_unchanged via context cluster", () => {
     const report = buildSystemPromptReport(
       makeBaseParams({
-        traceId: "trace-abc",
-        provider: "anthropic",
-        model: "claude-3-opus",
-        runId: "run-42",
-        sessionKey: "agent-1:telegram:chat-1",
-        workspaceDir: "/tmp/ws",
-        tenantId: "tenant-x",
+        context: {
+          traceId: "trace-abc",
+          provider: "anthropic",
+          model: "claude-3-opus",
+          runId: "run-42",
+          sessionKey: "agent-1:telegram:chat-1",
+          workspaceDir: "/tmp/ws",
+          tenantId: "tenant-x",
+        },
       }),
     );
     expect(report.traceId).toBe("trace-abc");
