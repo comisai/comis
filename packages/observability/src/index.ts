@@ -119,3 +119,28 @@ export {
   TRAJECTORY_BRIDGE_MAPPING,
 } from "./trajectory/event-bus-bridge.js";
 export type { TrajectoryBridgedEventName } from "./trajectory/event-bus-bridge.js";
+
+// ---------------------------------------------------------------------------
+// SystemPromptReport surface (Plan 45-04).
+// ---------------------------------------------------------------------------
+
+export { SystemPromptReportSchema } from "./system-prompt-report/types.js";
+export type { SystemPromptReport } from "./system-prompt-report/types.js";
+
+export {
+  buildSystemPromptReport,
+  measureRenderedProjectContextChars,
+} from "./system-prompt-report/build.js";
+export type {
+  BootstrapFileForReport,
+  ResolvedToolForReport,
+  BuildParamsContext,
+} from "./system-prompt-report/build.js";
+
+export { persistSystemPromptReport } from "./system-prompt-report/persist.js";
+export type {
+  ObservabilityStoreLike,
+  SessionStoreReportSink,
+  PersistError,
+  PersistDeps,
+} from "./system-prompt-report/persist.js";

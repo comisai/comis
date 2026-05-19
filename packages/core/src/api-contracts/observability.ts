@@ -677,6 +677,78 @@ export const ObsResetTableContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
+// obs.systemPromptReport.latest (Plan 45-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * `obs.systemPromptReport.latest` — Latest SystemPromptReport for a
+ * given (agentId, sessionId) tuple. Admin-only (in-handler gate per
+ * the existing house pattern).
+ *
+ * Request: `{ agentId, sessionId, runId? }`. The optional `runId`
+ * narrows further to the most-recent report for that turn.
+ *
+ * Response: `{ report: SystemPromptReport | null }`. Null when no
+ * report is persisted for the tuple. SystemPromptReport is modeled
+ * loose (`z.record(z.string(), z.unknown())`) — same approach as the
+ * 18 other obs.* contracts here. The authoritative shape lives at
+ * `@comis/observability#SystemPromptReportSchema` (Zod) and
+ * `@comis/observability#SystemPromptReport` (Type); the CLI/web
+ * consumers narrow against those at the surface layer.
+ *
+ * Loose-modeling rationale (matches the file-header policy at line
+ * 55-67): SystemPromptReport carries 8+ top-level fields, several
+ * optional nested objects, and `injectedWorkspaceFiles[]` /
+ * `tools.entries[]` / `skills.entries[]` arrays of nested records.
+ * Modeling tightly here would duplicate the SSOT in
+ * @comis/observability and break on every minor field addition; the
+ * record schema preserves dev-mode runtime safety + handler
+ * type-narrowing without creating a @comis/core → @comis/observability
+ * dependency.
+ */
+export const ObsSystemPromptReportLatestContract = defineContract({
+  method: "obs.systemPromptReport.latest",
+  request: z.object({
+    agentId: z.string().min(1),
+    sessionId: z.string().min(1),
+    runId: z.string().optional(),
+  }),
+  response: z.object({
+    report: z.nullable(ObsRecord),
+  }),
+  scopes: ["admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
+// obs.systemPromptReport.list (Plan 45-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * `obs.systemPromptReport.list` — N most-recent SystemPromptReports
+ * for a session. Admin-only.
+ *
+ * Request: `{ sessionId, limit? }`. `limit` defaults to 10 and is
+ * capped at 100 to keep response size bounded.
+ *
+ * Response: `{ reports: SystemPromptReport[] }` (loose-modeled per
+ * the same rationale as `latest`).
+ */
+export const ObsSystemPromptReportListContract = defineContract({
+  method: "obs.systemPromptReport.list",
+  request: z.object({
+    sessionId: z.string().min(1),
+    /** Default 10, max 100 (enforced at the handler). Contracts use the
+     *  12-shape allowlist; `.default()` is not in it, so the default
+     *  lives in the handler body. */
+    limit: z.number().int().positive().max(100).optional(),
+  }),
+  response: z.object({
+    reports: ObsRecordArray,
+  }),
+  scopes: ["admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
 // Domain array — registered into API_CONTRACTS_ORDERED in index.ts.
 // ---------------------------------------------------------------------------
 
@@ -708,4 +780,6 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsGetCacheStatsContract,
   ObsResetContract,
   ObsResetTableContract,
+  ObsSystemPromptReportLatestContract,
+  ObsSystemPromptReportListContract,
 ] as const;
