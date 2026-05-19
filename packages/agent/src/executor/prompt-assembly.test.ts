@@ -494,6 +494,52 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
+  // 12b. Plan 45-04: SystemPromptReport build + persist
+  // -----------------------------------------------------------------
+  it("assembles_and_persists_system_prompt_report when observabilityStore wired", async () => {
+    const insertSystemPromptReport = vi.fn();
+    const observabilityStore = { insertSystemPromptReport };
+    const params = makeParams({
+      mergedCustomTools: [
+        { name: "read_file", parameters: { type: "object", properties: { path: { type: "string" } } } } as any,
+      ],
+      deps: { workspaceDir: "/workspace", observabilityStore: observabilityStore as any },
+    });
+    await assembleExecutionPrompt(params);
+
+    expect(insertSystemPromptReport).toHaveBeenCalledTimes(1);
+    const row = insertSystemPromptReport.mock.calls[0]![0];
+    expect(row.agentId).toBe("agent-1");
+    // sessionId is the formatSessionKey result; sanity check it's a string.
+    expect(typeof row.sessionId).toBe("string");
+    expect(row.sessionId.length).toBeGreaterThan(0);
+    // The assembled prompt is the mock "assembled-prompt" — chars=16.
+    expect(row.systemChars).toBe("assembled-prompt".length);
+    // sha256 over "assembled-prompt"
+    expect(typeof row.systemSha256).toBe("string");
+    expect(row.systemSha256.length).toBe(64);
+    // report_json is parsable and carries the schema marker
+    const parsed = JSON.parse(row.reportJson);
+    expect(parsed.traceSchema).toBe("comis-system-prompt-report");
+    expect(parsed.schemaVersion).toBe(1);
+    // The tool we registered surfaces in the tools.entries (with callable=true)
+    const tool = parsed.tools.entries.find((t: any) => t.name === "read_file");
+    expect(tool).toBeDefined();
+    expect(tool.callable).toBe(true);
+  });
+
+  it("does_not_persist_when_no_observability_store_or_session_store_provided", async () => {
+    const params = makeParams({
+      mergedCustomTools: [],
+      deps: { workspaceDir: "/workspace" },
+    });
+    // Should not throw — guarded by the `deps.observabilityStore !== undefined ||
+    // deps.sessionStore !== undefined` check.
+    const result = await assembleExecutionPrompt(params);
+    expect(result.systemPrompt).toBe("assembled-prompt");
+  });
+
+  // -----------------------------------------------------------------
   // 13. Chat type resolution via metadata (tests resolveChatType)
   // -----------------------------------------------------------------
   describe("chat type resolution", () => {

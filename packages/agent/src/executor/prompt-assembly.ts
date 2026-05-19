@@ -37,6 +37,12 @@ import {
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import type { ComisLogger } from "@comis/core";
+import {
+  buildSystemPromptReport,
+  persistSystemPromptReport,
+  type BootstrapFileForReport,
+  type ResolvedToolForReport,
+} from "@comis/observability";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { PromptMode, RuntimeInfo, InboundMetadata, BootstrapContextFile } from "../bootstrap/types.js";
 import {
@@ -256,6 +262,26 @@ export interface PromptAssemblyParams {
     toolCapabilityPort: ToolCapabilityPort;
     /** Wall-clock + monotonic time reads. */
     clock: import("@comis/core").ClockPort;
+    /** Plan 45-04: optional ObservabilityStore sink for SystemPromptReport
+     *  persistence. Type-only narrow Pick (see
+     *  @comis/observability#ObservabilityStoreLike). When omitted, the
+     *  report is built but not persisted to SQLite. Forwarded by the
+     *  daemon composition root. */
+    observabilityStore?: import("@comis/observability").ObservabilityStoreLike;
+    /** Plan 45-04: optional SessionStoreReportSink for per-session
+     *  SystemPromptReport persistence. When omitted, the report is
+     *  built but not written to a session ledger. */
+    sessionStore?: import("@comis/observability").SessionStoreReportSink;
+    /** Plan 45-04: optional set of tool names registered in the prompt
+     *  but filtered out by policy (toolPolicy.deny / capability gate).
+     *  The SystemPromptReport's tools.entries[].callable reflects this. */
+    policyFilteredToolNames?: ReadonlySet<string>;
+    /** Plan 45-04: optional run-scoped identifier (per pi-mono turn).
+     *  Becomes the report's `runId` field for cross-correlation with
+     *  trajectory events from 45-03. */
+    runId?: string;
+    /** Plan 45-04: optional tenant ID for multi-tenant deployments. */
+    tenantId?: string;
   };
   msg: NormalizedMessage;
   sessionKey: SessionKey;
@@ -564,9 +590,14 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
   // 2. Load workspace bootstrap files (skip for "none" mode)
   let bootstrapContextFiles: BootstrapContextFile[] = [];
+  // Plan 45-04: track the raw bootstrap-file shape (post-filter) so the
+  // SystemPromptReport can populate injectedWorkspaceFiles[] with
+  // missing/truncated/rawChars/injectedChars accounting.
+  let bootstrapFilesForReport: BootstrapFile[] = [];
+  // Plan 45-04: capture the bootstrap budget for the report (and any
+  // truncation summary the system prompt assembler applies).
+  const bootstrapMaxChars = config.bootstrap?.maxChars ?? 20_000;
   if (promptMode !== "none") {
-    const bootstrapMaxChars = config.bootstrap?.maxChars ?? 20_000;
-
     // Snapshot raw bootstrap files on first turn to keep system prompt stable.
     // When the agent writes workspace files mid-session (e.g., IDENTITY.md during onboarding),
     // the next disk read returns different content, changing the system prompt digest and
@@ -596,6 +627,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
 
     bootstrapContextFiles = buildBootstrapContextFiles(bootstrapFiles, { maxChars: bootstrapMaxChars });
+    bootstrapFilesForReport = bootstrapFiles;
   }
 
   // 3. RAG retrieval via hybrid memory injector (non-fatal)
@@ -873,6 +905,107 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // This is acceptable: hooks are session-stable, so blocks only
   // matter for the cache prefix split which is unaffected by hook prepends.
   // The frozenSystemPrompt (string) remains the source of truth for content.
+
+  // Plan 45-04: build + persist SystemPromptReport.
+  // Hook site: after assembleRichSystemPrompt + assembleRichSystemPromptBlocks
+  // and after the before_agent_start hook applies any prompt modification —
+  // the report captures the FINAL system prompt that flows to the model
+  // (cache-stable portion). Dynamic preamble is built downstream and is
+  // intentionally not part of the report (it's per-turn diagnostic, not
+  // a system-prompt artifact).
+  //
+  // Best-effort: any failure in build/persist is swallowed via try/catch
+  // so it never aborts assembly. Persistence is already best-effort
+  // internally (Result.err is logged), but the caller is non-throwing.
+  if (deps.observabilityStore !== undefined || deps.sessionStore !== undefined) {
+    try {
+      const reportBootstrapFiles: BootstrapFileForReport[] = bootstrapFilesForReport.map((f) => {
+        const rawContent = f.content;
+        const rawChars = rawContent !== undefined ? rawContent.length : 0;
+        // The bootstrap context file built from this raw file has a
+        // matching path; truncation may have shortened it.
+        const ctxFile = bootstrapContextFiles.find((c) => c.path === f.name);
+        // `content` for missing files is the "[MISSING] Expected at: ..." marker
+        // — that's a synthetic content, not what was on disk. For the
+        // report's `injectedChars` we want the actual character count
+        // injected into the prompt, including any [MISSING] marker.
+        const injectedChars = ctxFile ? ctxFile.content.length : 0;
+        return {
+          name: f.name,
+          missing: f.missing,
+          rawChars,
+          injectedChars,
+          // Only include rawContent for sha256 when the file actually
+          // existed; missing files have no content to hash.
+          rawContent: f.missing ? undefined : rawContent,
+        };
+      });
+
+      const reportTools: ResolvedToolForReport[] = mergedCustomTools.map((t) => ({
+        name: t.name,
+        // pi-coding-agent ToolDefinition uses `parameters` for the JSON
+        // schema (see buildBootstrapContextFiles caller / executor-tool-
+        // assembly.ts:367-369).
+        schema: t.parameters as object | undefined,
+      }));
+
+      const report = buildSystemPromptReport({
+        source: deps.isFirstMessageInSession ? "session-create" : "run",
+        generatedAt: deps.clock.now(),
+        traceId: tryGetContext()?.traceId,
+        agentId: agentId ?? config.name,
+        tenantId: deps.tenantId,
+        sessionId: formatSessionKey(sessionKey),
+        sessionKey: formatSessionKey(sessionKey),
+        runId: deps.runId,
+        provider: params.resolvedModelProvider ?? config.provider,
+        model: params.resolvedModelId ?? config.model,
+        workspaceDir: deps.workspaceDir,
+        systemPrompt,
+        bootstrapMaxChars,
+        bootstrapFiles: reportBootstrapFiles,
+        tools: reportTools,
+        policyFilteredToolNames: deps.policyFilteredToolNames,
+        memoryInjection: inlineMemory
+          ? {
+              ragHits: memorySections.length + (inlineMemory ? 1 : 0),
+              charsInjected: inlineMemory.length + memorySections.reduce((s, m) => s + m.length, 0),
+              trustTags: [],
+            }
+          : undefined,
+      });
+
+      const persistResult = await persistSystemPromptReport(report, {
+        observabilityStore: deps.observabilityStore,
+        sessionStore: deps.sessionStore,
+        logger,
+      });
+      if (!persistResult.ok) {
+        // The persist function already logged via the injected logger;
+        // we only log a DEBUG-level summary here for cross-correlation.
+        logger.debug(
+          {
+            agentId: agentId ?? config.name,
+            sessionKey: formatSessionKey(sessionKey),
+            errorKind: "dependency" as const,
+            hint: "SystemPromptReport persistence had partial failure; see prior warn lines",
+          },
+          "SystemPromptReport persist returned err",
+        );
+      }
+    } catch (err) {
+      // Never abort assembly because of the report. Plan 45-03
+      // memory:injected emit pattern; same risk profile.
+      logger.debug(
+        {
+          err,
+          hint: "SystemPromptReport build/persist threw; assembly continues",
+          errorKind: "internal" as const,
+        },
+        "SystemPromptReport build/persist failed (non-fatal)",
+      );
+    }
+  }
 
   // prependContext relocated to dynamic preamble to preserve cache prefix stability.
   // Hooks may return turn-varying content (timestamps, user state) which would invalidate
