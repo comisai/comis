@@ -20,6 +20,7 @@ import {
 import { bindQueries } from "./observability-queries.js";
 import { bindMutations } from "./observability-mutations.js";
 import { bindReset } from "./observability-reset.js";
+import { buildCacheStatsQueries } from "./cache-stats-queries.js";
 
 export type {
   ObservabilityStore,
@@ -56,6 +57,8 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
     ...bindQueries(db),
     ...bindMutations(db),
     ...bindReset(db),
+    // Plan 46-02: durable cache-stats queries over `obs_token_usage`.
+    ...buildCacheStatsQueries(db),
   };
   return Object.freeze(store);
 }

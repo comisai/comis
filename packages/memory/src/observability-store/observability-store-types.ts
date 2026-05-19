@@ -257,6 +257,67 @@ export interface ObservabilityStore {
   latestSystemPromptReport(agentId: string, sessionId: string, runId?: string): SystemPromptReportRow | undefined;
   listSystemPromptReports(sessionId: string, limit: number): SystemPromptReportRow[];
 
+  // Plan 46-02: cache-stats queries over `obs_token_usage`
+  /**
+   * Single-row window aggregate for the durable cache-stats RPC. All
+   * snake_case to match the SQLite column shape; the `@comis/observability`
+   * aggregator maps these to the camelCase `CacheStatsWindow` surface.
+   * `non_cached_input_tokens` is derived as `prompt - cache_read -
+   * cache_write` (clamped ≥ 0 — see cache-stats-queries.ts).
+   */
+  queryCacheStatsWindow(params: {
+    since: number;
+    until?: number;
+    agent?: string;
+    provider?: string;
+  }): {
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    non_cached_input_tokens: number;
+    output_tokens: number;
+    turns: number;
+  };
+  /** GROUP BY provider breakdown for the same window. */
+  queryCacheStatsByProvider(params: {
+    since: number;
+    until?: number;
+    agent?: string;
+  }): Array<{
+    provider: string;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    non_cached_input_tokens: number;
+    output_tokens: number;
+    turns: number;
+  }>;
+  /** GROUP BY provider, model breakdown for the same window. */
+  queryCacheStatsByModel(params: {
+    since: number;
+    until?: number;
+    agent?: string;
+  }): Array<{
+    provider: string;
+    model: string;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    non_cached_input_tokens: number;
+    output_tokens: number;
+    turns: number;
+  }>;
+  /** GROUP BY agent_id breakdown for the same window. */
+  queryCacheStatsByAgent(params: {
+    since: number;
+    until?: number;
+    provider?: string;
+  }): Array<{
+    agent_id: string;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    non_cached_input_tokens: number;
+    output_tokens: number;
+    turns: number;
+  }>;
+
   // Maintenance
   prune(retentionDays: number): PruneResult;
   resetAll(): ResetResult;
