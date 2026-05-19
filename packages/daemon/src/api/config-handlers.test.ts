@@ -78,6 +78,12 @@ describe("config.patch", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -314,6 +320,12 @@ describe("config.patch rate limiting", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -405,6 +417,12 @@ describe("config.patch audit events", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -494,6 +512,12 @@ describe("config.patch structured logging", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -556,6 +580,12 @@ describe("rate limit WARN logging", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -609,6 +639,12 @@ describe("config.apply", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -764,6 +800,12 @@ describe("env var reference preservation", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -854,6 +896,12 @@ describe("config.patch env var reference validation", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -1075,6 +1123,12 @@ describe("config webhook delivery", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -1213,6 +1267,12 @@ describe("config.gc", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -1447,6 +1507,12 @@ describe("config.patch type coercion", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -1870,6 +1936,12 @@ describe("config.patch credential guard", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
