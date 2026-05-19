@@ -8,7 +8,6 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     { "path": "../shared" },
-    { "path": "../core" },
-    { "path": "../infra" }
+    { "path": "../core" }
   ]
 }

@@ -100,7 +100,15 @@ type WorkspacePackage = (typeof WORKSPACE_PACKAGES)[number];
 const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   shared: new Set(),
   core: new Set(["shared"]),
-  infra: new Set(["shared", "core"]),
+  // Plan 45.1-06 (TRAJ-FIX-10): infra → observability is now a static
+  // first-class arrow. `packages/infra/src/logging/redact-transport.ts`
+  // is a static re-export of `@comis/observability/dist/redact/pino-redact-transport.js`
+  // (previously a `createRequire(import.meta.url)` runtime shim that hid
+  // the dep from `tsc`). The fs-safe primitives that anchored the
+  // bidirectional cycle moved from @comis/infra to @comis/observability
+  // in plan 45.1-06 task 2, so the graph is now one-arrow:
+  //   @comis/core ← @comis/observability ← @comis/infra
+  infra: new Set(["shared", "core", "observability"]),
   memory: new Set(["shared", "core"]),
   scheduler: new Set(["shared", "core"]),
   // skills: no infra edge. Logger type imports from @comis/core; isDocker
@@ -154,29 +162,24 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
  * Format: `"${packageShortName}:${depShortName}"` — both strings have the
  * `@comis/` prefix STRIPPED.
  *
- * Entries:
- *   - `infra:observability` — Plan 45-02 (edge-keeping mask censor in
- *     `packages/infra/src/logging/logger.ts`). `@comis/observability`
- *     ALREADY depends on `@comis/infra` (for `appendRegularFile`
- *     landed in 45-01); a static `import { maskToken } from
- *     "@comis/observability"` in logger.ts would create a `tsc --build`
- *     project-reference cycle. The workaround: `package.json` declares
- *     `@comis/observability` as a runtime dep (so pnpm resolves the
- *     symlink), but `tsconfig.json` does NOT add the project reference
- *     (so tsc doesn't try to order them). `logger.ts` uses
- *     `createRequire(import.meta.url)("@comis/observability/dist/redact/edge-keeping.js")`
- *     — a subpath load against the edge-keeping leaf module which has
- *     no static imports of @comis/infra, so Node 22's require()-of-ESM
- *     cycle detection passes. `pnpm cycles` (madge dist-mode .d.ts) is
- *     clean because the createRequire call is opaque to the type system.
+ * Currently empty: plan 45.1-06 (TRAJ-FIX-10) closed the last divergence
+ * (`infra:observability`) by:
+ *   1. Moving fs-safe.ts from @comis/infra to @comis/observability (task 2),
+ *      which removed the `observability → infra` arrow that made the static
+ *      back-edge cyclic.
+ *   2. Rewriting `packages/infra/src/logging/redact-transport.ts` from a
+ *      `createRequire(import.meta.url)` runtime shim to a static re-export
+ *      (task 3), making `infra → observability` a first-class TypeScript
+ *      type-graph arrow visible to both `tsc --build` and `madge`.
+ *   3. Adding `{ "path": "../observability" }` to
+ *      `packages/infra/tsconfig.json` references (task 3), so the
+ *      tsconfig and package.json now agree (no drift).
  *
  * The allowlist mechanism mirrors test/support/architecture-allowlist.ts
  * shrink-only semantics: entries can be REMOVED but should NOT be ADDED
  * without a refactor PR + design-doc citation. PR review catches additions.
  */
-const DRIFT_ALLOWLIST: ReadonlySet<string> = new Set([
-  "infra:observability",
-]);
+const DRIFT_ALLOWLIST: ReadonlySet<string> = new Set([]);
 
 function readPackageJsonDeps(pkg: string): Set<string> {
   const path = resolve(REPO_ROOT, `packages/${pkg}/package.json`);

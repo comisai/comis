@@ -43,7 +43,6 @@
   },
   "dependencies": {
     "@comis/core": "workspace:*",
-    "@comis/infra": "workspace:*",
     "@comis/shared": "workspace:*"
   },
   "devDependencies": {
