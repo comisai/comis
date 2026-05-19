@@ -98,6 +98,9 @@ importers:
       '@comis/core':
         specifier: workspace:*
         version: link:../core
+      '@comis/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@comis/scheduler':
         specifier: workspace:*
         version: link:../scheduler

@@ -6232,3 +6232,63 @@ describe("skip guard for lookback_window_exceeded cache breaks", () => {
     expect(clearWarm).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 45-03: per-session trajectory recorder lifecycle wiring
+// ---------------------------------------------------------------------------
+
+describe("creates_and_closes_trajectory_recorder_for_session (Plan 45-03 task 10)", () => {
+  async function readPiExecutorSrc(): Promise<string> {
+    const fs = await import("node:fs/promises");
+    const url = await import("node:url");
+    const path = await import("node:path");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.resolve(here, "pi-executor.ts"), "utf-8");
+    return src;
+  }
+
+  it("imports createTrajectoryRecorder and attachTrajectoryToEventBus from @comis/observability", async () => {
+    const src = await readPiExecutorSrc();
+    // The import line lives in the top imports.
+    expect(src).toMatch(
+      /import\s+\{[\s\S]*?createTrajectoryRecorder[\s\S]*?\}\s+from\s+"@comis\/observability"/m,
+    );
+    expect(src).toMatch(
+      /import\s+\{[\s\S]*?attachTrajectoryToEventBus[\s\S]*?\}\s+from\s+"@comis\/observability"/m,
+    );
+  });
+
+  it("constructs the recorder after the formattedKey materialization (line 544 region)", async () => {
+    const src = await readPiExecutorSrc();
+    const formattedKeyIdx = src.indexOf(
+      "const formattedKey = formatSessionKey(sessionKey)",
+    );
+    const recorderConstructIdx = src.indexOf("createTrajectoryRecorder({");
+    expect(formattedKeyIdx).toBeGreaterThan(0);
+    expect(recorderConstructIdx).toBeGreaterThan(formattedKeyIdx);
+  });
+
+  it("attaches the bridge subscription only when the recorder is non-null (disabled state guard)", async () => {
+    const src = await readPiExecutorSrc();
+    // The guard pattern: `if (trajectoryRecorder !== null) { trajectoryUnsubscribe = attachTrajectoryToEventBus(...) }`.
+    expect(src).toMatch(
+      /if\s*\(\s*trajectoryRecorder\s*!==\s*null\s*\)[\s\S]*?attachTrajectoryToEventBus/m,
+    );
+  });
+
+  it("cleans up the recorder and bridge subscription in the runner-block finally", async () => {
+    const src = await readPiExecutorSrc();
+    // The cleanup follows postExecution in the existing finally block:
+    //   try { trajectoryUnsubscribe?.(); }
+    //   if (trajectoryRecorder !== null) await trajectoryRecorder.flushAndClose();
+    expect(src).toMatch(/trajectoryUnsubscribe\?\.\(\)/);
+    expect(src).toMatch(/await\s+trajectoryRecorder\.flushAndClose\(\)/);
+  });
+
+  it("forwards deps.trajectoryConfig fields into the recorder init", async () => {
+    const src = await readPiExecutorSrc();
+    expect(src).toMatch(/deps\.trajectoryConfig\?\.enabled/);
+    expect(src).toMatch(/deps\.trajectoryConfig\?\.dir/);
+    expect(src).toMatch(/deps\.trajectoryConfig\?\.maxFileBytes/);
+  });
+});

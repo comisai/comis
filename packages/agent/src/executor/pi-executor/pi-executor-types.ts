@@ -175,4 +175,18 @@ export interface PiExecutorDeps {
   env: EnvPort;
   /** Timer scheduling. Required by executor-prompt-runner (race timers) and prompt-timeout. */
   timers: TimerPort;
+  /**
+   * Optional trajectory writer configuration (Plan 45-03). When omitted
+   * or `enabled: false`, the per-session trajectory recorder is a
+   * no-op. Forwarded from AppConfig.diagnostics.trajectory by daemon
+   * wiring; the `dir` override threads through to
+   * `resolveTrajectoryFilePath` (else COMIS_TRAJECTORY_DIR env or
+   * workspaceDir/cwd fallbacks apply).
+   */
+  trajectoryConfig?: {
+    readonly enabled?: boolean;
+    readonly dir?: string;
+    readonly maxFileBytes?: number;
+    readonly eventTypes?: ReadonlyArray<string>;
+  };
 }

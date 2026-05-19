@@ -90,3 +90,31 @@ export {
 // export is reserved for the file used as a Pino `target` resolution
 // path. Barrel consumers should import via the named symbol.
 export { default as pinoRedactTransport } from "./redact/pino-redact-transport.js";
+
+// ---------------------------------------------------------------------------
+// Trajectory surface (Plan 45-03).
+// ---------------------------------------------------------------------------
+
+export {
+  TRAJECTORY_EVENT_TYPES,
+} from "./trajectory/types.js";
+export type {
+  TrajectoryEvent,
+  TrajectoryEventType,
+  TrajectoryRecorder,
+  TrajectoryRecorderInit,
+} from "./trajectory/types.js";
+
+export {
+  resolveTrajectoryFilePath,
+  resolveTrajectoryPointerFilePath,
+  resolveTrajectoryPointerOpenFlags,
+} from "./trajectory/paths.js";
+
+export { createTrajectoryRecorder } from "./trajectory/runtime.js";
+
+export {
+  attachTrajectoryToEventBus,
+  TRAJECTORY_BRIDGE_MAPPING,
+} from "./trajectory/event-bus-bridge.js";
+export type { TrajectoryBridgedEventName } from "./trajectory/event-bus-bridge.js";
