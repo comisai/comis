@@ -35,12 +35,11 @@ function makeValidReport(
   overrides?: Partial<SystemPromptReport>,
 ): SystemPromptReport {
   // Minimum-valid SystemPromptReport shape that SystemPromptReportSchema
-  // accepts. `bootstrapMaxChars: 20_000` is included for forward
-  // compatibility with 45.1-05 (which promotes the field from
-  // builder-only to required in the schema). Today the field is not in
-  // the schema yet, so it's a harmless extra field; once 45.1-05 lands
-  // the schema requires it and this fixture still parses. Either
-  // landing order works.
+  // accepts. `bootstrapMaxChars: 20_000` IS required after Plan 45.1-05
+  // (TRAJ-FIX-09). The fixture below includes the field as a literal
+  // value so the schema parse succeeds regardless of the credential-
+  // filter outcome (the 45.1-01 H4 invariant is about sessionId being
+  // preserved, not about the bootstrap budget knobs).
   return {
     traceSchema: "comis-system-prompt-report",
     schemaVersion: 1,
@@ -57,13 +56,12 @@ function makeValidReport(
       projectContextChars: 10,
       nonProjectContextChars: 90,
     },
+    bootstrapMaxChars: 20_000,
     injectedWorkspaceFiles: [],
     skills: { entries: [], promptChars: 0 },
     tools: { entries: [], totalSchemaChars: 0 },
     ...overrides,
-    // Force-extend with the forward-compat field via an intersection
-    // cast — the type doesn't yet know about it pre-45.1-05.
-  } as SystemPromptReport & { readonly bootstrapMaxChars: number };
+  };
 }
 
 describe("sanitizeForPersistence — SystemPromptReport invariant", () => {
