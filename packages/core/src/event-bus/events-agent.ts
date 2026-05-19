@@ -453,4 +453,115 @@ export interface AgentEvents {
     cacheWriteTokens: number;
     timestamp: number;
   };
+
+  // ---------------------------------------------------------------------
+  // Trajectory observability events (Plan 45-03).
+  //
+  // Subscribed via @comis/observability/trajectory/event-bus-bridge.ts.
+  // Each is emitted at a single canonical site and consumed via the
+  // EventBus rather than call-site instrumentation (research §11).
+  // ---------------------------------------------------------------------
+
+  /**
+   * Prompt assembly completed; the next pi-mono `agent_start` call will
+   * submit this exact `(systemPrompt, messages)` pair to the model.
+   * `systemDigest` and `messagesDigest` are sha256 over the canonical
+   * `stableStringify` of the respective inputs — they line up with the
+   * SystemPromptReport digest (Plan 45-04) and the cache-trace artifact
+   * (Phase 46) for cross-correlation.
+   *
+   * Emit site: `packages/agent/src/executor/prompt-runner/prompt-runner.ts`
+   * after `wrapEnvelope()` returns and before `runRetryLoop`.
+   */
+  "prompt:submitted": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    promptChars: number;
+    provider: string;
+    modelId: string;
+    messageCount: number;
+    systemDigest: string;
+    messagesDigest: string;
+    timestamp: number;
+  };
+
+  /**
+   * Agent run started — emitted on pi-mono `agent_start` (first turn of
+   * an execution). Distinct from `session:created` which fires on
+   * sessionStore creation; this fires per execute() lifecycle (every
+   * inbound message starts a new agent run).
+   *
+   * Emit site: `packages/agent/src/bridge/pi-event-bridge.ts`
+   */
+  "session:started": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    channelType: string;
+    channelId: string;
+    accountId?: string;
+    timestamp: number;
+  };
+
+  /**
+   * Agent run ended — emitted on pi-mono `agent_end`. Carries aggregated
+   * turn / token totals for the run plus an `exitReason` discriminator.
+   *
+   * Emit site: `packages/agent/src/bridge/pi-event-bridge.ts`
+   */
+  "session:ended": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    totalTurns: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    durationMs: number;
+    exitReason: string;
+    timestamp: number;
+  };
+
+  /**
+   * RAG memory was injected into the prompt for this turn. Fires only on
+   * turns where the hybrid memory injector actually emitted at least one
+   * section / inline string — no-injection turns produce no event.
+   *
+   * Emit site: `packages/agent/src/executor/prompt-assembly.ts`
+   * (immediately after `inlineMemory = injection.inlineMemory`).
+   */
+  "memory:injected": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    hitCount: number;
+    charsInjected: number;
+    trustTags: string[];
+    timestamp: number;
+  };
+
+  /**
+   * Explicit tool-timeout signal. Fires alongside `tool:executed` with
+   * `errorKind: "timeout"` for the SAME physical timeout — both events
+   * share `toolCallId` so the trajectory consumer can dedupe (the
+   * `tool:executed` emit carries the full result; this event makes the
+   * timeout case enumerable for the architecture test).
+   *
+   * Dedup contract: downstream trajectory consumers see both
+   * `tool.result` (from `tool:executed`) AND `tool.timeout` (from this
+   * event) for any physical tool timeout. Both carry `toolCallId`; join
+   * on that key to avoid double-counting.
+   *
+   * Emit site: `packages/agent/src/bridge/pi-event-bridge.ts` in the
+   * `tool_execution_end` branch when `toolErrorKind === "timeout"`.
+   */
+  "tool:timeout": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    toolName: string;
+    toolCallId?: string;
+    timeoutMs: number;
+    timestamp: number;
+  };
 }
