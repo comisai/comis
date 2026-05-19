@@ -577,9 +577,20 @@ async function runSessionLocked(
         : {}),
     });
     if (trajectoryRecorder !== null) {
+      // Plan 45.1-04 (TRAJ-FIX-05): honor diagnostics.trajectory.eventTypes
+      // as a subscription-time allowlist. When set and non-empty, only the
+      // listed EventBus event names are subscribed-to by the bridge — every
+      // other event is silently dropped. The bridge accepts a
+      // `filter: (eventName) => boolean` predicate that runs ONCE per name
+      // at attach time (not per emit). Default (eventTypes unset or empty)
+      // preserves the prior behavior of subscribing to every mapped event.
+      const eventTypes = deps.trajectoryConfig?.eventTypes;
       trajectoryUnsubscribe = attachTrajectoryToEventBus({
         eventBus: deps.eventBus,
         recorder: trajectoryRecorder,
+        ...(eventTypes && eventTypes.length > 0
+          ? { filter: (n) => eventTypes.includes(n) }
+          : {}),
       });
     }
   } catch (err) {
