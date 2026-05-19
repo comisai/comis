@@ -30,8 +30,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import Database from "better-sqlite3";
+import { createRequire } from "node:module";
 import { initSchema, createObservabilityStore } from "@comis/memory";
+
+const memoryPkgDir = path.resolve(__dirname, "../../packages/memory");
+const require = createRequire(path.resolve(memoryPkgDir, "package.json"));
+const Database = require("better-sqlite3") as typeof import("better-sqlite3").default;
 
 let tmpDir: string;
 let db: Database.Database;

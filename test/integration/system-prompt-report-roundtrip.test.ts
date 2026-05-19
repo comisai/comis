@@ -19,8 +19,13 @@
  * @module
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import Database from "better-sqlite3";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
 import { initSchema, createObservabilityStore } from "@comis/memory";
+
+const memoryPkgDir = resolve(__dirname, "../../packages/memory");
+const require = createRequire(resolve(memoryPkgDir, "package.json"));
+const Database = require("better-sqlite3") as typeof import("better-sqlite3").default;
 import {
   buildSystemPromptReport,
   persistSystemPromptReport,
