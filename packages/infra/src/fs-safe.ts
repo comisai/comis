@@ -327,6 +327,14 @@ export interface WriteRegularFileOptions {
    * final component (O_NOFOLLOW rejects that).
    */
   readonly unlinkExisting?: boolean;
+  /**
+   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base.
+   * Symmetric to AppendRegularFileOptions.confinedBaseDir — see that
+   * field's docs for the threat model and behaviour. Observability
+   * callers (config-audit scrub) pass `~/.comis/`; non-observability
+   * callers may legitimately omit it.
+   */
+  readonly confinedBaseDir?: string;
 }
 
 /** Result payload on success — total size of the file post-write. */
@@ -334,7 +342,10 @@ export interface WriteRegularFileSuccess {
   readonly totalBytes: number;
 }
 
-export type WriteRegularFileError = SymlinkParentRejected | Error;
+export type WriteRegularFileError =
+  | SymlinkParentRejected
+  | PathEscapesConfinementError
+  | Error;
 
 /** Resolve write-truncate flags with conditional O_NOFOLLOW + EXCL/TRUNC selector. */
 function resolveWriteOpenFlags(useExcl: boolean): number {
@@ -391,6 +402,20 @@ export function writeRegularFile(
     }
   } catch (e) {
     return err(e instanceof Error ? e : new Error(String(e)));
+  }
+
+  // Step 1b (Plan 45.1-03 TRAJ-FIX-01): opt-in confinement-base check.
+  // Mirrors the same gate added to `appendRegularFile`. Closes the
+  // ancestor-symlink gap that step 1 misses (lstat only inspects the
+  // immediate parent). Back-compat: when `confinedBaseDir` is undefined
+  // the check is skipped.
+  if (options.confinedBaseDir !== undefined) {
+    try {
+      const rejection = assertConfinedPath(target, options.confinedBaseDir);
+      if (rejection !== undefined) return err(rejection);
+    } catch (e) {
+      return err(e instanceof Error ? e : new Error(String(e)));
+    }
   }
 
   // Step 2: unlink any existing entry (closes the symlink-pre-stage window).
