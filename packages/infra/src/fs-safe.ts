@@ -193,3 +193,140 @@ export function appendRegularFile(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Plan 45-gap-01 Task 1: writeRegularFile — symlink-safe write-truncate.
+// ---------------------------------------------------------------------------
+
+/** Options for `writeRegularFile`. */
+export interface WriteRegularFileOptions {
+  /** Absolute path to the target file. */
+  readonly path: string;
+  /** Bytes to write (encoded UTF-8 when string). Truncates existing content. */
+  readonly content: string | Buffer;
+  /**
+   * When `true` (default), unlink any existing file/symlink at `path`
+   * before opening. The unlink-before-open closes the window where an
+   * attacker could pre-stage a symlink at `path` between caller's
+   * existence check and the open.
+   *
+   * The subsequent open uses `O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW`,
+   * so any concurrent re-creation (race) fails with EEXIST rather than
+   * silently following the new symlink.
+   *
+   * Set to `false` only when the caller has a stronger atomicity guarantee
+   * (e.g., the path was just renamed-in via fs.renameSync); the open then
+   * uses `O_CREAT | O_TRUNC | O_WRONLY | O_NOFOLLOW` which truncates an
+   * existing regular file safely but would still follow a symlink at the
+   * final component (O_NOFOLLOW rejects that).
+   */
+  readonly unlinkExisting?: boolean;
+}
+
+/** Result payload on success — total size of the file post-write. */
+export interface WriteRegularFileSuccess {
+  readonly totalBytes: number;
+}
+
+export type WriteRegularFileError = SymlinkParentRejected | Error;
+
+/** Resolve write-truncate flags with conditional O_NOFOLLOW + EXCL/TRUNC selector. */
+function resolveWriteOpenFlags(useExcl: boolean): number {
+  let flags =
+    fs.constants.O_CREAT |
+    fs.constants.O_WRONLY |
+    (useExcl ? fs.constants.O_EXCL : fs.constants.O_TRUNC);
+  const nofollow = (fs.constants as Record<string, number | undefined>)[
+    "O_NOFOLLOW"
+  ];
+  if (typeof nofollow === "number") flags |= nofollow;
+  return flags;
+}
+
+/**
+ * Write-truncate `content` to `path` under symlink-safe semantics.
+ *
+ * Steps (all-or-nothing — fd is closed in every exit path):
+ *   1. `lstat` the immediate parent; reject `SymlinkParentRejected`
+ *      when it's a symlink.
+ *   2. If `unlinkExisting !== false` (default true): `unlinkSync(path)`;
+ *      swallow ENOENT.
+ *   3. `openSync` with `O_CREAT | (O_EXCL when unlinked, else O_TRUNC) |
+ *      O_WRONLY | O_NOFOLLOW`, mode `0o600`. The O_NOFOLLOW refuses to
+ *      open a symlinked final component; O_EXCL after unlink prevents
+ *      TOCTOU race re-creation; O_TRUNC handles the explicit non-unlink
+ *      truncate case.
+ *   4. `fchmodSync(fd, 0o600)` — defensive owner-only enforcement.
+ *   5. `writeSync(fd, contentBuffer)`.
+ *   6. `fstatSync(fd)` — read final size.
+ *   7. `closeSync(fd)`.
+ *   8. Return `ok({ totalBytes })`.
+ *
+ * @param options - target path, content, optional unlinkExisting flag
+ * @returns Result with `{ totalBytes }` on success, or one of the
+ *   sentinel errors on failure.
+ */
+export function writeRegularFile(
+  options: WriteRegularFileOptions,
+): Result<WriteRegularFileSuccess, WriteRegularFileError> {
+  const target = options.path;
+  const buf =
+    typeof options.content === "string"
+      ? Buffer.from(options.content, "utf8")
+      : options.content;
+  const parentDir = path.dirname(target);
+  const unlinkExisting = options.unlinkExisting !== false; // default true
+
+  // Step 1: lstat parent — refuse symlinked parent (same contract as appendRegularFile).
+  try {
+    const parentStat = fs.lstatSync(parentDir);
+    if (parentStat.isSymbolicLink()) {
+      return err(new SymlinkParentRejected(parentDir));
+    }
+  } catch (e) {
+    return err(e instanceof Error ? e : new Error(String(e)));
+  }
+
+  // Step 2: unlink any existing entry (closes the symlink-pre-stage window).
+  if (unlinkExisting) {
+    try {
+      fs.unlinkSync(target);
+    } catch (e) {
+      // ENOENT is expected (no prior file); any other error propagates.
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        return err(e instanceof Error ? e : new Error(String(e)));
+      }
+    }
+  }
+
+  // Step 3: open under symlink-safe + EXCL (post-unlink) or TRUNC (explicit) flags.
+  let fd: number;
+  try {
+    fd = fs.openSync(target, resolveWriteOpenFlags(unlinkExisting), 0o600);
+  } catch (e) {
+    return err(e instanceof Error ? e : new Error(String(e)));
+  }
+
+  try {
+    // Step 4: defensive chmod.
+    fs.fchmodSync(fd, 0o600);
+
+    // Step 5: write.
+    fs.writeSync(fd, buf);
+
+    // Step 6: re-stat for the final total.
+    const finalSize = fs.fstatSync(fd).size;
+
+    return ok({ totalBytes: finalSize });
+  } catch (e) {
+    return err(e instanceof Error ? e : new Error(String(e)));
+  } finally {
+    // Step 7: always close the fd.
+    try {
+      fs.closeSync(fd);
+    } catch {
+      // Already closed or invalid — ignore.
+    }
+  }
+}

@@ -22,8 +22,11 @@ export { createSystemTimers } from "./runtime/timers.js";
 
 // Symlink-safe file-append primitive for diagnostic artifact writers.
 // First O_NOFOLLOW + lstat-parent + fchmod 0o600 user in the repo (research §7).
+// Plan 45-gap-01 Task 1: writeRegularFile (write-truncate analogue) for the
+// config-audit scrubber tmp-write site (closes BL-02).
 export {
   appendRegularFile,
+  writeRegularFile,
   SymlinkParentRejected,
   FileSizeLimitExceeded,
 } from "./fs-safe.js";
@@ -31,4 +34,7 @@ export type {
   AppendRegularFileOptions,
   AppendRegularFileSuccess,
   AppendRegularFileError,
+  WriteRegularFileOptions,
+  WriteRegularFileSuccess,
+  WriteRegularFileError,
 } from "./fs-safe.js";
