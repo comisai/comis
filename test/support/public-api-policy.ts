@@ -1546,6 +1546,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "HourlyBucketDbRowFromSchema",
       "DeliveryStatsDbRowSchema",
       "DeliveryStatsDbRowFromSchema",
+      // Plan 45-04: system_prompt_reports table row schema.
+      "SystemPromptReportDbRowSchema",
+      "SystemPromptReportDbRowFromSchema",
       "OAuthProfileRowSchema",
       "OAuthProfileRowFromSchema",
       "CredentialMappingRowSchema",
