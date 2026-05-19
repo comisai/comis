@@ -754,6 +754,9 @@ importers:
       '@comis/shared':
         specifier: workspace:*
         version: link:../shared
+      '@earendil-works/pi-agent-core':
+        specifier: 0.75.3
+        version: 0.75.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
     devDependencies:
       typescript:
         specifier: 5.9.3
