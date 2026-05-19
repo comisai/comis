@@ -207,4 +207,55 @@ describe("SystemPromptReport — build → persist → query roundtrip", () => {
       "sk-ant-api03-AABBCCDDEEFFGGHHIIJJKKLL-very-long-tail-suffix-here",
     );
   });
+
+  it("RAG-sections-only run persists memoryInjection AND bootstrap budgets (TRAJ-FIX-08, TRAJ-FIX-09)", async () => {
+    // Plan 45.1-05 (M4 + M5 integration): a turn where the hybrid
+    // memory injector emits RAG sections but no inline-memory chunk.
+    // The persisted report must:
+    //   - carry a non-undefined memoryInjection block (M4 / TRAJ-FIX-08)
+    //   - carry bootstrapMaxChars + bootstrapTotalMaxChars knobs
+    //     (M5 / TRAJ-FIX-09)
+    //
+    // Driven via buildSystemPromptReport directly (not the agent-
+    // package call site) — the unit-level prompt-assembly test from
+    // task 4 covers the predicate; this integration case verifies the
+    // round-trip through sanitize → SQLite INSERT → JSON.parse.
+    const sectionA = "RAG section body A: useful context here";
+    const sectionB = "RAG section body B: more useful context";
+    const bootstrapFiles = makeBootstrapFiles({});
+    const report = buildSystemPromptReport({
+      source: "run",
+      generatedAt: 1_700_000_000_001,
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+      context: { runId: "run-memory-only" },
+      systemPrompt: "system prompt body for RAG-sections-only run",
+      bootstrapMaxChars: 25_000,
+      bootstrapTotalMaxChars: 60_000,
+      bootstrapFiles,
+      tools: [],
+      memoryInjection: {
+        ragHits: 2,
+        charsInjected: sectionA.length + sectionB.length,
+        trustTags: [],
+      },
+    });
+
+    const result = await persistSystemPromptReport(report, { observabilityStore: store });
+    expect(result.ok).toBe(true);
+
+    const persisted = store.latestSystemPromptReport(AGENT_ID, SESSION_ID);
+    expect(persisted).toBeDefined();
+
+    const parsed = JSON.parse(persisted!.reportJson);
+
+    // M4 / TRAJ-FIX-08: memoryInjection block populated for sections-only.
+    expect(parsed.memoryInjection).toBeDefined();
+    expect(parsed.memoryInjection.ragHits).toBeGreaterThan(0);
+    expect(parsed.memoryInjection.charsInjected).toBeGreaterThan(0);
+
+    // M5 / TRAJ-FIX-09: bootstrap-budget knobs persisted through the JSON.
+    expect(parsed.bootstrapMaxChars).toBe(25_000);
+    expect(parsed.bootstrapTotalMaxChars).toBe(60_000);
+  });
 });
