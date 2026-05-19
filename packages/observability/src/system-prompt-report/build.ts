@@ -282,6 +282,16 @@ export function buildSystemPromptReport(params: BuildParams): SystemPromptReport
       projectContextChars,
       nonProjectContextChars,
     },
+    // Plan 45.1-05 (TRAJ-FIX-09): persist the bootstrap budgets that
+    // produced the truncation outcome. `bootstrapMaxChars` is
+    // required; `bootstrapTotalMaxChars` is conditionally spread so
+    // the field is genuinely absent (rather than serialized as
+    // `undefined`) when the caller didn't supply it — matches the
+    // optional-field convention used by `traceId`, `runId`, etc.
+    bootstrapMaxChars: params.bootstrapMaxChars,
+    ...(params.bootstrapTotalMaxChars !== undefined
+      ? { bootstrapTotalMaxChars: params.bootstrapTotalMaxChars }
+      : {}),
     bootstrapTruncation,
     injectedWorkspaceFiles,
     skills,

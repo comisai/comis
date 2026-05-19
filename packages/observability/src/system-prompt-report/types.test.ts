@@ -45,7 +45,12 @@ describe("SystemPromptReport v1 — type and schema sync", () => {
   });
 
   it("accepts a minimal valid SystemPromptReport via safeParse", () => {
-    const minimal: SystemPromptReport = {
+    // Plan 45.1-05 (TRAJ-FIX-09): bootstrapMaxChars is required.
+    // The fixture below uses an unknown-cast for the field because the
+    // exported `SystemPromptReport` Type ships in the same commit as
+    // this assertion (single GREEN landing). Once the Type adds the
+    // field, this cast becomes a no-op.
+    const minimal = {
       traceSchema: "comis-system-prompt-report",
       schemaVersion: 1,
       source: "run",
@@ -67,8 +72,57 @@ describe("SystemPromptReport v1 — type and schema sync", () => {
         entries: [],
         totalSchemaChars: 0,
       },
-    };
+      bootstrapMaxChars: 20_000,
+    } as unknown as SystemPromptReport;
     const result = SystemPromptReportSchema.safeParse(minimal);
     expect(result.success).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Plan 45.1-05 (TRAJ-FIX-09): bootstrapMaxChars + bootstrapTotalMaxChars
+  // must persist through the schema and the Type so operators can read
+  // the bootstrap-budget knobs that produced the truncation outcome.
+  // -------------------------------------------------------------------------
+  function makeMinimalBody(): Record<string, unknown> {
+    return {
+      traceSchema: "comis-system-prompt-report",
+      schemaVersion: 1,
+      source: "run",
+      generatedAt: 1_700_000_000_000,
+      agentId: "agent-1",
+      sessionId: "session-1",
+      systemPrompt: {
+        sha256: "deadbeef",
+        chars: 100,
+        projectContextChars: 40,
+        nonProjectContextChars: 60,
+      },
+      injectedWorkspaceFiles: [],
+      skills: { entries: [], promptChars: 0 },
+      tools: { entries: [], totalSchemaChars: 0 },
+    };
+  }
+
+  it("rejects a minimal report missing bootstrapMaxChars (TRAJ-FIX-09)", () => {
+    const minus = makeMinimalBody();
+    const result = SystemPromptReportSchema.safeParse(minus);
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a minimal report including bootstrapMaxChars (TRAJ-FIX-09)", () => {
+    const r = SystemPromptReportSchema.parse({
+      ...makeMinimalBody(),
+      bootstrapMaxChars: 20_000,
+    });
+    expect(r.bootstrapMaxChars).toBe(20_000);
+  });
+
+  it("accepts a report with bootstrapTotalMaxChars optionally set (TRAJ-FIX-09)", () => {
+    const r = SystemPromptReportSchema.parse({
+      ...makeMinimalBody(),
+      bootstrapMaxChars: 20_000,
+      bootstrapTotalMaxChars: 50_000,
+    });
+    expect(r.bootstrapTotalMaxChars).toBe(50_000);
   });
 });

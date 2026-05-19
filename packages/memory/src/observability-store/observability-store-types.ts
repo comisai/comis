@@ -246,7 +246,15 @@ export interface ObservabilityStore {
 
   // Plan 45-04: SystemPromptReport
   insertSystemPromptReport(row: SystemPromptReportRow): void;
-  latestSystemPromptReport(agentId: string, sessionId: string): SystemPromptReportRow | undefined;
+  /**
+   * Latest report for `(agentId, sessionId)`, optionally narrowed to a
+   * specific `runId`. Plan 45.1-05 (TRAJ-FIX-07): the optional
+   * `runId` filter is pushed into the SQL WHERE clause so an older
+   * row with the matching runId is returned even when a newer row
+   * (different runId) exists. Caller must not pass `null` — the
+   * contract is `runId?: string`.
+   */
+  latestSystemPromptReport(agentId: string, sessionId: string, runId?: string): SystemPromptReportRow | undefined;
   listSystemPromptReports(sessionId: string, limit: number): SystemPromptReportRow[];
 
   // Maintenance

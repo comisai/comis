@@ -540,6 +540,65 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
+  // Plan 45.1-05 (TRAJ-FIX-08): memoryInjection block must populate
+  // for RAG-section-only sessions, not just inlineMemory.
+  // -----------------------------------------------------------------
+  it("memoryInjection populated when memorySections is non-empty even without inlineMemory (TRAJ-FIX-08)", async () => {
+    // Wire a RAG-enabled memoryPort + hybrid injector returning
+    // sections-only (inlineMemory undefined, systemPromptSections populated).
+    const sectionBody = "RAG section body here";
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({
+        ok: true,
+        value: [
+          {
+            entry: { id: "m1", tenantId: "t", content: "memory entry", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
+            score: 0.9,
+          },
+        ],
+      }),
+      store: vi.fn(),
+    } as any;
+    mockHybridSplit.mockReturnValueOnce({
+      inlineMemory: undefined,
+      systemPromptSections: [sectionBody],
+    });
+
+    const insertSystemPromptReport = vi.fn();
+    const observabilityStore = { insertSystemPromptReport };
+    const params = makeParams({
+      config: makeConfig({
+        rag: {
+          enabled: true,
+          maxResults: 5,
+          minScore: 0.3,
+          includeTrustLevels: ["learned"],
+          maxContextChars: 5000,
+        },
+      }),
+      deps: {
+        workspaceDir: "/workspace",
+        observabilityStore: observabilityStore as any,
+        memoryPort,
+      },
+    });
+    await assembleExecutionPrompt(params);
+
+    expect(insertSystemPromptReport).toHaveBeenCalledTimes(1);
+    const row = insertSystemPromptReport.mock.calls[0]![0];
+    const parsed = JSON.parse(row.reportJson);
+    // The persisted report MUST carry a memoryInjection block (not
+    // undefined) reflecting the RAG-sections-only injection. Today
+    // this fails because prompt-assembly's predicate is `inlineMemory
+    // ? { … } : undefined` — undefined inlineMemory drops the block
+    // entirely even when memorySections.length > 0.
+    expect(parsed.memoryInjection).toBeDefined();
+    expect(parsed.memoryInjection.ragHits).toBe(1);
+    expect(parsed.memoryInjection.charsInjected).toBe(sectionBody.length);
+    expect(parsed.memoryInjection.trustTags).toEqual([]);
+  });
+
+  // -----------------------------------------------------------------
   // 13. Chat type resolution via metadata (tests resolveChatType)
   // -----------------------------------------------------------------
   describe("chat type resolution", () => {
