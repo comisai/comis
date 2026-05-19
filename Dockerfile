@@ -26,6 +26,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/shared/package.json      packages/shared/
 COPY packages/core/package.json        packages/core/
 COPY packages/infra/package.json       packages/infra/
+COPY packages/observability/package.json packages/observability/
 COPY packages/memory/package.json      packages/memory/
 COPY packages/gateway/package.json     packages/gateway/
 COPY packages/scheduler/package.json   packages/scheduler/
