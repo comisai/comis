@@ -18,17 +18,5 @@ export default defineConfig({
     // files in one forked worker.
     setupFiles: ["../../test/support/vitest-process-listeners.ts"],
     teardownTimeout: 60000,
-    // `isolate: false` shares the module cache across test files within
-    // one forked worker. Modules that register `process.on(...)`
-    // listeners at module-load time then register ONCE per fork (not
-    // once per file). The combined effect with the
-    // `vi.clearAllTimers()` discipline (config-handlers.test.ts
-    // afterEach) is that no test file's residual state can keep its
-    // worker fork alive past the teardown window.
-    poolOptions: {
-      forks: {
-        isolate: false,
-      },
-    },
   },
 });

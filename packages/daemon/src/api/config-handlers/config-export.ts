@@ -217,10 +217,12 @@ export function bindConfigExportHandlers(
           );
         }
 
-        // Schedule restart
+        // Schedule restart. `.unref()` so the timer doesn't keep the event
+        // loop alive on its own (production gateway/ws server keeps it alive
+        // so the timer still fires; tests can exit cleanly).
         systemSetTimeout(() => {
           process.kill(process.pid, "SIGUSR2");
-        }, 200);
+        }, 200).unref();
 
         const result = { applied: true as const, section, restarting: true as const };
         if (systemGetEnv("NODE_ENV") !== "production") {
@@ -276,10 +278,13 @@ export function bindConfigExportHandlers(
         throw new Error(`Config rollback failed: ${rollbackResult.error}`);
       }
 
-      // Trigger daemon restart (same pattern as gateway.restart) per user decision
+      // Trigger daemon restart (same pattern as gateway.restart) per user decision.
+      // `.unref()` so the timer doesn't keep the event loop alive on its own
+      // (production gateway/ws server keeps it alive so the timer still fires;
+      // tests can exit cleanly).
       systemSetTimeout(() => {
         process.kill(process.pid, "SIGUSR2");
-      }, 200);
+      }, 200).unref();
 
       deps.logger.info({ method: "config.rollback", durationMs: systemNowMs() - startMs, outcome: "success", sha: params.sha, section: "all" }, "Config rollback applied");
 
@@ -353,9 +358,12 @@ export function bindConfigExportHandlers(
 
       // Use setTimeout to allow the rpcCall response to flush over WebSocket before shutdown begins.
       // setImmediate fires too early and can race with the RPC response write.
+      // `.unref()` so the timer doesn't keep the event loop alive on its own
+      // (production gateway/ws server keeps it alive so the timer still fires;
+      // tests can exit cleanly).
       systemSetTimeout(() => {
         process.kill(process.pid, "SIGUSR2");
-      }, 200);
+      }, 200).unref();
 
       deps.logger.info({ method: "gateway.restart", durationMs: systemNowMs() - startMs, outcome: "success", systemd: isSystemd }, "Gateway restart initiated");
 

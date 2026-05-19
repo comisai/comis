@@ -353,9 +353,13 @@ export function bindConfigWriteHandlers(
 
         // Schedule daemon restart so all subsystems pick up new config atomically.
         // 200ms delay allows the RPC response to flush over WebSocket before shutdown begins.
+        // `.unref()` so the timer doesn't keep the event loop alive on its own — in
+        // production the gateway/websocket server keeps the loop alive so the timer
+        // still fires; in tests using `vi.useRealTimers()` the worker can exit
+        // cleanly without waiting for or firing the SIGUSR2.
         systemSetTimeout(() => {
           process.kill(process.pid, "SIGUSR2");
-        }, 200);
+        }, 200).unref();
 
         const result = { patched: true as const, section, ...(key ? { key } : {}), value, restarting: true as const };
         if (IS_DEV) {
