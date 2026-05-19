@@ -290,6 +290,194 @@ describe("mcp_manage tool", () => {
   });
 
   // -----------------------------------------------------------------------
+  // connect action -- UX coercion + smart defaults
+  // -----------------------------------------------------------------------
+
+  describe("connect action -- UX coercion + smart defaults", () => {
+    it("coerces JSON-string args into string[] before rpcCall", async () => {
+      mockRpcCall.mockResolvedValue({ connected: true });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-coerce-1", {
+          action: "connect",
+          server_name: "x",
+          transport: "stdio",
+          command: "npx",
+          args: '["-y","@upstash/context7-mcp"]',
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.connect", {
+        server_name: "x",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "@upstash/context7-mcp"],
+        url: undefined,
+        headers: undefined,
+        _trustLevel: "admin",
+      });
+      expect(result.details).toEqual(expect.objectContaining({ connected: true }));
+    });
+
+    it("rejects non-JSON string args without silent acceptance", async () => {
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-coerce-2", {
+            action: "connect",
+            server_name: "x",
+            transport: "stdio",
+            command: "npx",
+            args: "not json at all",
+          } as never),
+        ),
+      ).rejects.toThrow(/args/i);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("rejects JSON string that parses to non-string array elements", async () => {
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-coerce-3", {
+            action: "connect",
+            server_name: "x",
+            transport: "stdio",
+            command: "npx",
+            args: "[1, 2, 3]",
+          } as never),
+        ),
+      ).rejects.toThrow(/args/i);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("defaults transport to 'stdio' when command is set and transport is omitted", async () => {
+      mockRpcCall.mockResolvedValue({ connected: true });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-default-stdio", {
+          action: "connect",
+          server_name: "x",
+          command: "npx",
+          args: ["-y", "@test/mcp"],
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.connect", {
+        server_name: "x",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "@test/mcp"],
+        url: undefined,
+        headers: undefined,
+        _trustLevel: "admin",
+      });
+    });
+
+    it("defaults transport to 'http' when url is set and transport is omitted", async () => {
+      mockRpcCall.mockResolvedValue({ connected: true });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-default-http", {
+          action: "connect",
+          server_name: "x",
+          url: "https://example.com/mcp",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.connect", {
+        server_name: "x",
+        transport: "http",
+        command: undefined,
+        args: undefined,
+        url: "https://example.com/mcp",
+        headers: undefined,
+        _trustLevel: "admin",
+      });
+    });
+
+    it("preserves explicit transport when both command and transport are provided", async () => {
+      mockRpcCall.mockResolvedValue({ connected: true });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-explicit-transport", {
+          action: "connect",
+          server_name: "x",
+          transport: "sse",
+          command: "ignored",
+          url: "https://example.com",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.connect", {
+        server_name: "x",
+        transport: "sse",
+        command: "ignored",
+        args: undefined,
+        url: "https://example.com",
+        headers: undefined,
+        _trustLevel: "admin",
+      });
+    });
+
+    it("emits one [missing_param] error listing all missing connect fields together", async () => {
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-missing-all", { action: "connect" } as never),
+        ),
+      ).rejects.toThrow(/\[missing_param\][\s\S]*server_name[\s\S]*transport[\s\S]*(command|url)/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("emits one [missing_param] error when transport is undeducible (no command, no url)", async () => {
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-missing-transport-source", {
+            action: "connect",
+            server_name: "x",
+          } as never),
+        ),
+      ).rejects.toThrow(/\[missing_param\][\s\S]*transport[\s\S]*(command|url)/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("applies coerceArgs in reconnect action when args is a JSON string", async () => {
+      mockRpcCall.mockResolvedValue({ reconnected: true });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-reconnect-coerce", {
+          action: "reconnect",
+          server_name: "x",
+          transport: "stdio",
+          command: "npx",
+          args: '["-y","pkg"]',
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.reconnect", {
+        server_name: "x",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "pkg"],
+        url: undefined,
+        headers: undefined,
+        _trustLevel: "admin",
+      });
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // error handling
   // -----------------------------------------------------------------------
 
