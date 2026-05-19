@@ -234,4 +234,27 @@ describe("buildSystemPromptReport — metadata pass-through", () => {
     expect(report.memoryInjection?.charsInjected).toBe(512);
     expect(report.memoryInjection?.trustTags).toEqual(["learned", "system"]);
   });
+
+  // -------------------------------------------------------------------------
+  // Plan 45.1-05 (TRAJ-FIX-09): buildSystemPromptReport must persist
+  // bootstrapMaxChars (required) and bootstrapTotalMaxChars (optional)
+  // through to the returned report so operators can read the budget
+  // knobs that produced the truncation outcome (design §8.1).
+  // -------------------------------------------------------------------------
+  it("buildSystemPromptReport persists bootstrapMaxChars from BuildParams (TRAJ-FIX-09)", () => {
+    const report = buildSystemPromptReport(makeBaseParams({ bootstrapMaxChars: 20_000 }));
+    expect(report.bootstrapMaxChars).toBe(20_000);
+  });
+
+  it("buildSystemPromptReport persists bootstrapTotalMaxChars when supplied (TRAJ-FIX-09)", () => {
+    const report = buildSystemPromptReport(
+      makeBaseParams({ bootstrapMaxChars: 20_000, bootstrapTotalMaxChars: 50_000 }),
+    );
+    expect(report.bootstrapTotalMaxChars).toBe(50_000);
+  });
+
+  it("buildSystemPromptReport omits bootstrapTotalMaxChars when not supplied (TRAJ-FIX-09)", () => {
+    const report = buildSystemPromptReport(makeBaseParams({ bootstrapMaxChars: 20_000 }));
+    expect(report.bootstrapTotalMaxChars).toBeUndefined();
+  });
 });
