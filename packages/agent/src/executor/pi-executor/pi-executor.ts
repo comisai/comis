@@ -33,6 +33,8 @@
  * @module
  */
 
+import * as os from "node:os";
+
 import {
   attachTrajectoryToEventBus,
   createTrajectoryRecorder,
@@ -51,6 +53,7 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
+  safePath,
   tryGetContext,
   ContextEngineConfigSchema,
   type SessionKey,
@@ -559,6 +562,18 @@ async function runSessionLocked(
   let trajectoryRecorder: TrajectoryRecorder | null = null;
   let trajectoryUnsubscribe: (() => void) | undefined;
   try {
+    // TRAJ-FIX-01: when the operator has NOT overridden the trajectory
+    // dir (the default ~/.comis/ path applies), confine writes to
+    // ~/.comis/ so an ancestor-symlink escape is rejected at open().
+    // When the operator explicitly sets `diagnostics.trajectory.dir` to
+    // a non-~/.comis path (e.g., /var/log/comis/traj/), they own the
+    // legitimacy of that location — the confinement is skipped so we
+    // don't reject the operator's own write path. The option is opt-in
+    // by design (RESEARCH.md §2 H1).
+    const trajectoryConfinedBase =
+      deps.trajectoryConfig?.dir === undefined
+        ? safePath(os.homedir(), ".comis")
+        : undefined;
     trajectoryRecorder = createTrajectoryRecorder({
       agentId: agentId ?? config.name,
       sessionId: formattedKey,
@@ -566,6 +581,9 @@ async function runSessionLocked(
       workspaceDir: deps.workspaceDir,
       provider: resolvedModel?.provider ?? config.provider,
       modelId: resolvedModel?.id ?? config.model,
+      ...(trajectoryConfinedBase !== undefined
+        ? { confinedBaseDir: trajectoryConfinedBase }
+        : {}),
       ...(deps.trajectoryConfig?.enabled !== undefined
         ? { enabled: deps.trajectoryConfig.enabled }
         : {}),

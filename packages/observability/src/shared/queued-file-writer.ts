@@ -66,6 +66,22 @@ export interface QueuedFileWriterOptions {
    * the next microtask. Set `false` only for shutdown / synchronous flush.
    */
   readonly yieldBeforeWrite?: boolean;
+  /**
+   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base
+   * forwarded to `appendRegularFile`. When supplied, every write through
+   * this writer asserts the resolved target stays inside this base
+   * directory; rejects with `PathEscapesConfinementError` on escape.
+   *
+   * The rejection prevents the symlink-traversal attack from succeeding
+   * at the open() boundary — even though the Result error today is
+   * silently swallowed by the catch block at line ~158 (45.1-02 owns
+   * the per-writer error sink), the failure path stops the write before
+   * the kernel hands out the fd.
+   *
+   * Observability callers pass `~/.comis/`; non-observability callers
+   * may omit the option (back-compat).
+   */
+  readonly confinedBaseDir?: string;
 }
 
 /** Public interface for a queued single-promise-chain file writer. */
@@ -153,6 +169,9 @@ function createWriter(
             content: line,
             ...(typeof state.options.maxFileBytes === "number"
               ? { maxFileBytes: state.options.maxFileBytes }
+              : {}),
+            ...(state.options.confinedBaseDir !== undefined
+              ? { confinedBaseDir: state.options.confinedBaseDir }
               : {}),
           });
         } catch {

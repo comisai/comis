@@ -123,6 +123,13 @@ export function createTrajectoryRecorder(
   const writer = getQueuedFileWriter(writerRegistry, filePath, {
     maxQueuedBytes,
     maxFileBytes: maxRuntimeFileBytes,
+    // TRAJ-FIX-01: forward the caller's confinement base (typically
+    // `~/.comis/`) so every trajectory-line write asserts the resolved
+    // target stays inside the base. Daemon wiring passes this; tests
+    // omit it (the option is opt-in for back-compat).
+    ...(init.confinedBaseDir !== undefined
+      ? { confinedBaseDir: init.confinedBaseDir }
+      : {}),
   });
 
   // Mutable per-recorder state. Each recorder owns its own seq counter

@@ -45,6 +45,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { safePath } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 
 /**
@@ -159,7 +160,8 @@ export type AppendRegularFileError =
  *   - `fs.realpathSync(target)` — when `target` doesn't yet exist
  *     (the typical first-write case for append), the ENOENT path
  *     resolves the parent and joins the basename. Other errors
- *     propagate.
+ *     propagate to the caller's outer try/catch which converts to
+ *     `Result.err`.
  *   - Boundary safety: matches `resolvedBase === resolvedTarget` OR
  *     `resolvedTarget.startsWith(resolvedBase + path.sep)`. The
  *     `+ path.sep` guard prevents a sibling-prefix path like
@@ -167,6 +169,13 @@ export type AppendRegularFileError =
  *
  * Returns the rejection error when the check fails, `undefined` on
  * pass. Caller wraps in a `Result.err(...)` at the call site.
+ *
+ * @allow-throw: helper throws unexpected fs errors (non-ENOENT realpath)
+ *   for the caller's outer try/catch to convert to `Result.err`. The
+ *   surrounding callers (`appendRegularFile` step 1b, `writeRegularFile`
+ *   step 1b) already wrap this in a try/catch that returns
+ *   `Result.err`, preserving the package-wide Result invariant at the
+ *   public boundary.
  */
 function assertConfinedPath(
   target: string,
@@ -180,10 +189,17 @@ function assertConfinedPath(
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       // Target doesn't exist yet (first-write case). Resolve the parent
       // and join the basename — the ENOENT path can still surface an
-      // escaping ancestor symlink via the parent's realpath.
+      // escaping ancestor symlink via the parent's realpath. We use
+      // `safePath(parentResolved, basename)` to satisfy the workspace
+      // safePath rule; the basename is a single non-traversal segment
+      // so the safePath check trivially passes (and ENOENT inside its
+      // symlink-walk is swallowed — the target doesn't exist yet).
       const parentResolved = fs.realpathSync(path.dirname(target));
-      targetResolved = path.join(parentResolved, path.basename(target));
+      targetResolved = safePath(parentResolved, path.basename(target));
     } else {
+      // @allow-throw: unexpected fs error (EACCES, ENOTDIR on a
+      // mid-path file, EIO, etc.) — propagate to the caller's outer
+      // try/catch which converts to Result.err.
       throw err;
     }
   }

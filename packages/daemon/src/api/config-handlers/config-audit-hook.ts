@@ -20,6 +20,7 @@ import {
   finalizeConfigWriteAuditRecord,
   appendConfigAuditRecord,
   resolveConfigAuditLogPath,
+  getDefaultConfigAuditConfinedBase,
   type ConfigWriteAuditRecordBase,
 } from "@comis/observability";
 import type { ComisLogger } from "@comis/core";
@@ -85,10 +86,18 @@ export function appendConfigAuditWithOutcome(
             }
           : ({ result: "rejected" as const });
     const record = finalizeConfigWriteAuditRecord(base, finalizeParams);
+    const auditLogPath = resolveConfigAuditLogPath();
+    const auditConfinedBase = getDefaultConfigAuditConfinedBase(auditLogPath);
     suppressError(
       appendConfigAuditRecord({
-        filePath: resolveConfigAuditLogPath(),
+        filePath: auditLogPath,
         record,
+        // TRAJ-FIX-01: confine the audit-log write to ~/.comis/ when
+        // the default log path applies; skip confinement when the
+        // operator set COMIS_CONFIG_AUDIT_LOG to a custom location.
+        ...(auditConfinedBase !== undefined && {
+          confinedBaseDir: auditConfinedBase,
+        }),
       }),
       "best-effort config-audit append (config.patch)",
       (msg) => logger.debug({ method: "config.patch" }, msg),
