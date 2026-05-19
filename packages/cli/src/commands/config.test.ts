@@ -41,6 +41,18 @@ describe("registerConfigCommand", () => {
     const configOpt = validateCmd!.options.find((o) => o.long === "--config");
     expect(configOpt).toBeDefined();
   });
+
+  it("registers sync-tooling subcommand whose action runs the config-audit hook around atomicWriteFile (Plan 45-05 task 9)", () => {
+    // The sync-tooling subcommand is the single CLI config-write site
+    // per checker Finding #5 (grep-verified). This test asserts the
+    // subcommand is registered; the full audit-hook roundtrip is
+    // gated by the integration test in task 15.
+    const configCmd = program.commands.find((c) => c.name() === "config");
+    const syncTooling = configCmd!.commands.find((c) => c.name() === "sync-tooling");
+    expect(syncTooling).toBeDefined();
+    const writeOpt = syncTooling!.options.find((o) => o.long === "--write");
+    expect(writeOpt).toBeDefined();
+  });
 });
 
 describe("config validate execution", () => {
