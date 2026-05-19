@@ -156,3 +156,79 @@ describe("QueuedFileWriter — yieldBeforeWrite default behavior", () => {
     expect(fs.existsSync(target)).toBe(true);
   });
 });
+
+describe("QueuedFileWriter — failure introspection (TRAJ-FIX-03)", () => {
+  // H3 reviewer finding: the writer used to silently swallow the Result
+  // returned by appendRegularFile. These cases lock in the new
+  // observability surface: failureCount() + lastError() + rejectedBytes().
+
+  it("starts with failureCount === 0 and lastError === undefined and rejectedBytes === 0 before any writes", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "qfw-baseline-"));
+    const writers = new Map<string, QueuedFileWriter>();
+    const target = path.join(tmpDir, "baseline.jsonl");
+    const w = getQueuedFileWriter(writers, target);
+
+    expect(w.failureCount()).toBe(0);
+    expect(w.lastError()).toBeUndefined();
+    expect(w.rejectedBytes()).toBe(0);
+  });
+
+  it("increments failureCount and captures lastError as SymlinkParentRejected when appendRegularFile rejects a symlinked parent", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "qfw-symlink-fail-"));
+    const realDir = path.join(tmpDir, "real");
+    const linkDir = path.join(tmpDir, "evil-link");
+    fs.mkdirSync(realDir);
+    fs.symlinkSync(realDir, linkDir);
+
+    const writers = new Map<string, QueuedFileWriter>();
+    const target = path.join(linkDir, "writes.jsonl");
+    const w = getQueuedFileWriter(writers, target);
+
+    w.write("line one\n");
+    await w.flushAndClose();
+
+    expect(w.failureCount()).toBeGreaterThanOrEqual(1);
+    const err = w.lastError();
+    expect(err).toBeInstanceOf(Error);
+    // SymlinkParentRejected carries name "SymlinkParentRejected" and the
+    // message includes "symlinked parent".
+    expect(String(err)).toMatch(/symlink|SymlinkParentRejected/i);
+  });
+
+  it("keeps failureCount at 0 and lastError undefined under normal conditions across many writes", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "qfw-happy-"));
+    const writers = new Map<string, QueuedFileWriter>();
+    const target = path.join(tmpDir, "happy.jsonl");
+    const w = getQueuedFileWriter(writers, target);
+
+    for (let i = 0; i < 10; i++) {
+      w.write(`line ${i}\n`);
+    }
+    await w.flushAndClose();
+
+    expect(w.failureCount()).toBe(0);
+    expect(w.lastError()).toBeUndefined();
+    expect(w.rejectedBytes()).toBe(0);
+  });
+
+  it("accumulates rejectedBytes equal to the total byte length of rejected lines", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "qfw-bytes-"));
+    const realDir = path.join(tmpDir, "real");
+    const linkDir = path.join(tmpDir, "evil-link");
+    fs.mkdirSync(realDir);
+    fs.symlinkSync(realDir, linkDir);
+
+    const writers = new Map<string, QueuedFileWriter>();
+    const target = path.join(linkDir, "rejected.jsonl");
+    const w = getQueuedFileWriter(writers, target);
+
+    // Three writes with known UTF-8 byte lengths (ASCII = byte-per-char).
+    w.write("a\n"); // 2 bytes
+    w.write("bb\n"); // 3 bytes
+    w.write("ccc\n"); // 4 bytes
+    await w.flushAndClose();
+
+    expect(w.failureCount()).toBe(3);
+    expect(w.rejectedBytes()).toBe(2 + 3 + 4);
+  });
+});
