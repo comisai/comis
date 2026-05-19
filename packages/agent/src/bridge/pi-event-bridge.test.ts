@@ -4200,7 +4200,10 @@ describe("session and tool-timeout lifecycle events", () => {
   }
 
 
-  it("emits session:started on pi-mono agent_start with channelType from ALS context", () => {
+  it("emits session:started on pi-mono agent_start with channelType from ALS context (legacy path: no trajectoryRegistry)", () => {
+    // Legacy callers (tests, embedded harnesses) omit trajectoryRegistry
+    // from PiEventBridgeDeps. The bridge falls through to the legacy
+    // unconditional emit so behavior matches the pre-tlx baseline.
     const deps = createMockDeps();
     const { listener } = createPiEventBridge(deps);
 
@@ -4218,11 +4221,14 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(typeof payload.timestamp).toBe("number");
   });
 
-  it("emits session:ended on pi-mono agent_end with totalTurns, token totals, durationMs, exitReason", () => {
+  it("agent_end_does_not_emit_session_ended (Gap F — moved to ComisSessionManager.destroySession per design §6.4)", () => {
+    // Per design §6.4 the mapping table makes session.ended fire on
+    // "(session) ended" — a session-destroy semantic, NOT a per-turn
+    // agent_end. The bridge case is now a trajectory no-op; per-turn
+    // duration metrics live on observability:token_usage (→ model.completed).
     const deps = createMockDeps();
     const { listener } = createPiEventBridge(deps);
 
-    // Run a minimal session: agent_start -> turn_end -> agent_end.
     listener({ type: "agent_start" } as any);
     listener({
       type: "turn_end",
@@ -4242,15 +4248,47 @@ describe("session and tool-timeout lifecycle events", () => {
 
     const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
     const endCalls = emit.mock.calls.filter((c) => c[0] === "session:ended");
-    expect(endCalls).toHaveLength(1);
-    const payload = endCalls[0][1];
-    expect(payload.agentId).toBe("test-agent");
-    expect(payload.totalTurns).toBe(1);
-    expect(payload.totalInputTokens).toBe(100);
-    expect(payload.totalOutputTokens).toBe(50);
-    expect(typeof payload.durationMs).toBe("number");
-    expect(payload.durationMs).toBeGreaterThanOrEqual(0);
-    expect(payload.exitReason).toBe("end_turn");
+    expect(endCalls).toHaveLength(0);
+  });
+
+  it("agent_start_emits_session_started_only_once_per_bridge_when_trajectoryRegistry_present (Gap F)", () => {
+    // With the registry-backed latch, the bridge suppresses per-turn
+    // session:started re-emits. The first agent_start fires; subsequent
+    // ones consult the latch and short-circuit.
+    let marked = false;
+    const fakeRegistry = {
+      hasSessionStartedBeenEmitted: (_: string): boolean => marked,
+      markSessionStarted: (_: string): void => { marked = true; },
+      getOrCreate: vi.fn(),
+      close: vi.fn(),
+      closeAll: vi.fn(),
+    } as any;
+    const deps = createMockDeps({ trajectoryRegistry: fakeRegistry });
+    const { listener } = createPiEventBridge(deps);
+
+    listener({ type: "agent_start" } as any);
+    listener({ type: "agent_start" } as any);
+    listener({ type: "agent_start" } as any);
+
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    const startCalls = emit.mock.calls.filter((c) => c[0] === "session:started");
+    expect(startCalls).toHaveLength(1);
+  });
+
+  it("agent_start_falls_back_to_unconditional_emit_when_trajectoryRegistry_absent (legacy path)", () => {
+    // Legacy callers (tests, embedded use) get the pre-tlx behavior so
+    // existing harnesses keep working. The registry-backed latch is the
+    // production path; without it, every agent_start emits.
+    const deps = createMockDeps(); // no trajectoryRegistry
+    const { listener } = createPiEventBridge(deps);
+
+    listener({ type: "agent_start" } as any);
+    listener({ type: "agent_start" } as any);
+
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    const startCalls = emit.mock.calls.filter((c) => c[0] === "session:started");
+    // 2 emits — legacy unconditional behavior preserved.
+    expect(startCalls).toHaveLength(2);
   });
 
   it("emits tool:timeout alongside tool:executed when toolErrorKind is 'timeout' (shares toolCallId)", () => {
@@ -4284,8 +4322,16 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(stripped).toMatch(/case\s+"agent_start"\s*:\s*\{[\s\S]*?eventBus\.emit\("session:started"/m);
   });
 
-  it("structural: session:ended emit appears in the agent_end switch case", async () => {
+  it("structural: session:ended emit no longer appears in the agent_end switch case (Gap F — design §6.4)", async () => {
+    // Negative structural check: agent_end is now a trajectory no-op.
+    // session.ended fires from ComisSessionManager.destroySession (the
+    // semantic "session is over" boundary).
     const stripped = await readBridgeSource();
-    expect(stripped).toMatch(/case\s+"agent_end"\s*:\s*\{[\s\S]*?eventBus\.emit\("session:ended"/m);
+    // Find the agent_end case body up to the next case/default/}.
+    const m = stripped.match(/case\s+"agent_end"\s*:\s*\{([\s\S]*?)break;\s*\}/);
+    expect(m, "agent_end case must exist").not.toBeNull();
+    const body = m![1];
+    // The body MUST NOT emit session:ended.
+    expect(body).not.toMatch(/eventBus\.emit\("session:ended"/);
   });
 });

@@ -1149,6 +1149,11 @@ async function runSessionLocked(
       return live;
     },
     getSessionJsonlPath: () => sessionAdapter.getSessionPath(sessionKey),
+    // Forward the session-scoped registry so the bridge's `agent_start`
+    // case can suppress per-turn `session:started` re-emits (260519-tlx
+    // Gap F, design §6.4). When undefined (non-daemon callers), the
+    // bridge falls back to the legacy unconditional emit.
+    ...(deps.trajectoryRegistry !== undefined ? { trajectoryRegistry: deps.trajectoryRegistry } : {}),
     perExecutionBudgetCap: config.budgets?.perExecution,
     budgetWarningRef,
     toolRetryBreaker,

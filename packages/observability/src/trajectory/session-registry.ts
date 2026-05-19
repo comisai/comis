@@ -46,6 +46,17 @@ interface SessionEntry {
   readonly recorder: TrajectoryRecorder | null;
   /** Unsubscribe is `undefined` when `recorder === null` (env disable). */
   readonly unsubscribe: (() => void) | undefined;
+  /**
+   * Latch consulted by the pi-event-bridge `agent_start` case to suppress
+   * per-turn `session:started` re-emits (design §6.4 mapping table —
+   * `session.started` fires once per session, NOT once per pi-mono turn).
+   * The bridge is created per turn, but the registry survives every turn,
+   * so the latch lives here. Defaults to `false`; flipped to `true` by
+   * `markSessionStarted(formattedKey)`. Reset implicitly by `close()`
+   * dropping the entry — a fresh `getOrCreate` on the same key starts
+   * with `false` again.
+   */
+  sessionStartedEmitted: boolean;
 }
 
 /**
@@ -101,6 +112,33 @@ export interface SessionTrajectoryHandleRegistry {
    * `flushAndClose` throws.
    */
   closeAll(): Promise<void>;
+
+  /**
+   * Returns `true` once `markSessionStarted(formattedKey)` has been
+   * called for this session's registry lifetime, `false` otherwise.
+   *
+   * Used by the pi-event-bridge `agent_start` case to suppress per-turn
+   * `session:started` re-emits — design §6.4 mapping table makes
+   * `session.started` a once-per-session event (not once-per-turn).
+   * Per-turn bridges consult this latch so the second + subsequent
+   * turns short-circuit the emit.
+   *
+   * Defaults to `false` for unknown keys (the bridge may consult this
+   * for a session whose entry hasn't been materialized yet via
+   * `getOrCreate`; the safe behavior is "no emit recorded → let the
+   * caller emit"). When the entry is later created and the emit fires,
+   * `markSessionStarted` flips the latch on the entry.
+   */
+  hasSessionStartedBeenEmitted(formattedKey: string): boolean;
+
+  /**
+   * Mark that `session:started` has been emitted for this session.
+   * Idempotent. Safe to call on unknown keys (no-op — the bridge
+   * always calls this immediately after `eventBus.emit("session:started", …)`
+   * and the entry materializes on the same turn via `getOrCreate`,
+   * but the API tolerates ordering surprises).
+   */
+  markSessionStarted(formattedKey: string): void;
 }
 
 /**
@@ -125,7 +163,14 @@ export function createSessionTrajectoryHandleRegistry(): SessionTrajectoryHandle
           ...(filter !== undefined ? { filter } : {}),
         });
       }
-      const entry: SessionEntry = { recorder, unsubscribe };
+      // sessionStartedEmitted intentionally starts as `false`. Bridge
+      // flips it via markSessionStarted on the first emit; close()
+      // drops the entry so a future getOrCreate re-starts at `false`.
+      const entry: SessionEntry = {
+        recorder,
+        unsubscribe,
+        sessionStartedEmitted: false,
+      };
       entries.set(formattedKey, entry);
       return { recorder };
     },
@@ -160,6 +205,20 @@ export function createSessionTrajectoryHandleRegistry(): SessionTrajectoryHandle
         // completes.
         await this.close(k);
       }
+    },
+
+    hasSessionStartedBeenEmitted(formattedKey: string): boolean {
+      // Unknown key → false (lets the bridge emit on the very first
+      // turn before the recorder is materialized; getOrCreate fires
+      // on the same call path so by the time markSessionStarted runs
+      // the entry exists).
+      return entries.get(formattedKey)?.sessionStartedEmitted ?? false;
+    },
+
+    markSessionStarted(formattedKey: string): void {
+      const entry = entries.get(formattedKey);
+      if (entry === undefined) return; // silent no-op for unknown keys
+      entry.sessionStartedEmitted = true;
     },
   };
 }
