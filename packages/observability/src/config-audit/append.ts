@@ -375,17 +375,32 @@ function encodeRecord(record: ConfigWriteAuditRecord): string {
   return json + "\n";
 }
 
-/** Ensure the parent dir exists with mode 0o700. */
+/**
+ * Ensure the parent dir exists with mode 0o700 (fresh-create only).
+ *
+ * Plan 45.1-03 Task 2 (TRAJ-FIX-02): the prior implementation also
+ * `chmodSync(dir, 0o700)`'d a pre-existing parent before the symlink
+ * check inside `appendRegularFile` ran. The chmod-target is only
+ * `0o700` (no privilege escalation), but the side-effect on a
+ * possibly-symlinked target is a confused-deputy violation
+ * (TOCTOU window). The fix deletes that else-branch outright:
+ *
+ *   - Fresh-create case: `mkdirSync({recursive: true, mode: 0o700})`
+ *     keeps creating the dir with the correct mode.
+ *   - Existing-parent case: leave the operator's mode untouched. The
+ *     **file** itself is still locked to `0o600` by the defensive
+ *     `fchmodSync(fd, 0o600)` inside `appendRegularFile` (fs-safe.ts
+ *     step 3). Per-record file-mode invariant is preserved.
+ */
 function ensureParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
+  try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  } else {
-    try {
-      fs.chmodSync(dir, 0o700);
-    } catch {
-      // Best-effort — operator may have intentionally set wider perms.
-    }
+  } catch (err) {
+    // EEXIST is the existing-dir case — we no longer chmod it (see
+    // TRAJ-FIX-02). Any other error propagates so callers can report
+    // (e.g., EACCES, ENOSPC).
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
   }
 }
 
