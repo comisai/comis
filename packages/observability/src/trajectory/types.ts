@@ -129,6 +129,25 @@ export interface TrajectoryEvent {
  * (no-op contract; consumers null-check). The env override
  * `COMIS_TRAJECTORY=0` short-circuits the same way.
  */
+/**
+ * Optional byte-budget overrides clustered into a single `budgets` field.
+ * Cluster (rule of three) keeps `TrajectoryRecorderInit`'s optional
+ * field count ≤12 (architecture invariant — see
+ * test/architecture/optional-field-bloat.test.ts). Operators usually
+ * only override `maxFileBytes` via `diagnostics.trajectory.maxFileBytes`;
+ * the remaining fields are tuning knobs for tests and edge cases.
+ */
+export interface TrajectoryRecorderBudgets {
+  /** Per-event byte cap. Default 256 KB. */
+  readonly maxRuntimeEventBytes?: number;
+  /** Per-file byte cap. Default 50 MB. */
+  readonly maxRuntimeFileBytes?: number;
+  /** Per-writer queued byte cap. Default 4 MB. */
+  readonly maxQueuedBytes?: number;
+  /** Head-room reserved inside file cap for trace.truncated emit. Default 2 KB. */
+  readonly sentinelReserveBytes?: number;
+}
+
 export interface TrajectoryRecorderInit {
   /** Multi-tenant agent identifier. Required. */
   readonly agentId: string;
@@ -151,14 +170,13 @@ export interface TrajectoryRecorderInit {
 
   /** Override for the trajectory base directory (precedes COMIS_TRAJECTORY_DIR). */
   readonly trajectoryDir?: string;
-  /** Per-event byte cap. Default 256 KB. */
-  readonly maxRuntimeEventBytes?: number;
-  /** Per-file byte cap. Default 50 MB. */
+
+  // Convenience top-level overrides (forwarded to budgets when set):
+  /** Per-file byte cap shortcut. Forwarded to budgets.maxRuntimeFileBytes. */
   readonly maxRuntimeFileBytes?: number;
-  /** Per-writer queued byte cap. Default 4 MB. */
-  readonly maxQueuedBytes?: number;
-  /** Head-room reserved inside file cap for trace.truncated emit. Default 2 KB. */
-  readonly sentinelReserveBytes?: number;
+
+  /** Cluster of optional byte budgets — see TrajectoryRecorderBudgets. */
+  readonly budgets?: TrajectoryRecorderBudgets;
 
   /**
    * Enable/disable. Default true. When false `createTrajectoryRecorder`

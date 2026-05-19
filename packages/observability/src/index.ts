@@ -102,6 +102,7 @@ export type {
   TrajectoryEvent,
   TrajectoryEventType,
   TrajectoryRecorder,
+  TrajectoryRecorderBudgets,
   TrajectoryRecorderInit,
 } from "./trajectory/types.js";
 

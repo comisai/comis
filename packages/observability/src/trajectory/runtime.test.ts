@@ -197,7 +197,7 @@ describe("createTrajectoryRecorder -- bounded payload sentinels", () => {
       agentId: "agent-1",
       sessionId: "sid-evt-too-big",
       trajectoryDir: tmpDir,
-      maxRuntimeEventBytes: 1024,
+      budgets: { maxRuntimeEventBytes: 1024 },
     });
     expect(recorder).not.toBeNull();
     // Build a JSON-friendly small structure under bounded limits but
@@ -233,7 +233,7 @@ describe("createTrajectoryRecorder -- file-cap + trace.truncated sentinel", () =
       sessionId: "sid-cap",
       trajectoryDir: tmpDir,
       maxRuntimeFileBytes: 1500,
-      sentinelReserveBytes: 600,
+      budgets: { sentinelReserveBytes: 600 },
     });
     expect(recorder).not.toBeNull();
 

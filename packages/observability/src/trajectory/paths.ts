@@ -31,6 +31,8 @@
  * @module
  */
 
+import { systemGetEnv } from "@comis/core";
+
 import {
   resolveContainedPath,
   resolveSafeOpenFlags,
@@ -127,11 +129,10 @@ export function resolveTrajectoryPointerOpenFlags(): number {
 // ---------------------------------------------------------------------------
 
 function readEnvDir(): string | undefined {
-  // Direct env-read inside the sanctioned observability substrate is
-  // allowed for this top-level boundary helper (the writer is invoked
-  // from non-DI paths like the per-session lifecycle hook). The
-  // architecture allow-list lives in test/architecture/globals.test.ts.
-  const raw = process.env.COMIS_TRAJECTORY_DIR;
+  // systemGetEnv goes through the sanctioned-root helper in
+  // @comis/core/runtime — direct process.env reads inside a leaf
+  // module are forbidden by the globals architecture test.
+  const raw = systemGetEnv("COMIS_TRAJECTORY_DIR");
   if (typeof raw !== "string") return undefined;
   const trimmed = raw.trim();
   if (trimmed.length === 0) return undefined;

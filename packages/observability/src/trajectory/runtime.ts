@@ -49,7 +49,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { tryGetContext } from "@comis/core";
+import { systemDateFrom, systemGetEnv, systemNowMs, tryGetContext } from "@comis/core";
 
 import { getQueuedFileWriter, type QueuedFileWriter } from "../shared/queued-file-writer.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
@@ -104,11 +104,20 @@ export function createTrajectoryRecorder(
     ...(init.workspaceDir !== undefined ? { workspaceDir: init.workspaceDir } : {}),
   });
 
-  const maxRuntimeEventBytes = init.maxRuntimeEventBytes ?? DEFAULT_MAX_EVENT_BYTES;
-  const maxRuntimeFileBytes = init.maxRuntimeFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+  // Budget resolution: top-level convenience shortcuts override the
+  // budgets cluster which override defaults. The cluster exists so
+  // TrajectoryRecorderInit stays under the 12-optional-field cap
+  // enforced by the architecture invariant.
+  const maxRuntimeEventBytes =
+    init.budgets?.maxRuntimeEventBytes ?? DEFAULT_MAX_EVENT_BYTES;
+  const maxRuntimeFileBytes =
+    init.maxRuntimeFileBytes ??
+    init.budgets?.maxRuntimeFileBytes ??
+    DEFAULT_MAX_FILE_BYTES;
   const sentinelReserveBytes =
-    init.sentinelReserveBytes ?? DEFAULT_SENTINEL_RESERVE_BYTES;
-  const maxQueuedBytes = init.maxQueuedBytes ?? DEFAULT_MAX_QUEUED_BYTES;
+    init.budgets?.sentinelReserveBytes ?? DEFAULT_SENTINEL_RESERVE_BYTES;
+  const maxQueuedBytes =
+    init.budgets?.maxQueuedBytes ?? DEFAULT_MAX_QUEUED_BYTES;
   const usableFileBytes = Math.max(0, maxRuntimeFileBytes - sentinelReserveBytes);
 
   const writer = getQueuedFileWriter(writerRegistry, filePath, {
@@ -222,7 +231,10 @@ export function createTrajectoryRecorder(
 // ---------------------------------------------------------------------------
 
 function isDisabledByEnv(): boolean {
-  const raw = process.env.COMIS_TRAJECTORY;
+  // systemGetEnv goes through the sanctioned-root helper in
+  // @comis/core/runtime — direct process.env reads inside a leaf
+  // module are forbidden by the globals architecture test.
+  const raw = systemGetEnv("COMIS_TRAJECTORY");
   if (typeof raw !== "string") return false;
   const norm = raw.trim().toLowerCase();
   return norm === "0" || norm === "false" || norm === "off";
@@ -242,7 +254,10 @@ function buildEvent(input: BuildEventInput): TrajectoryEvent {
     traceSchema: "comis-trajectory",
     schemaVersion: 1,
     type: input.type,
-    ts: new Date().toISOString(),
+    // systemDateFrom + systemNowMs goes through the sanctioned-root
+    // helpers in @comis/core/runtime — direct `new Date(...)` is
+    // forbidden by the globals architecture test.
+    ts: systemDateFrom(systemNowMs()).toISOString(),
     seq: input.seq,
     agentId: input.init.agentId,
     sessionId: input.init.sessionId,

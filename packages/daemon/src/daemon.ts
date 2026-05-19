@@ -404,14 +404,8 @@ async function stageFoundation(input: {
         return { obsStore: store, obsPersistence: persistence };
       })()
     : undefined;
-  const obsStore = obsBundle?.obsStore;
+  const obsStore = obsBundle?.obsStore; // Plan 45-03: trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
-
-  // Plan 45-03: The per-session trajectory recorder lifecycle lives in
-  // packages/agent/src/executor/pi-executor/pi-executor.ts (after the
-  // line where formattedKey materializes). attachTrajectoryToEventBus
-  // is NOT wired here — daemon-wide attach would record cross-session
-  // events into the wrong sidecar. See plan 45-03 task 9 for rationale.
 
   // Create context store + daemon-level runtime registries
   const contextStore = createContextStore(db);
