@@ -90,6 +90,30 @@ export interface QueuedFileWriter {
 
   /** Number of in-flight (queued, not yet written) bytes. */
   queuedBytes(): number;
+
+  /**
+   * Count of per-line append failures observed since construction —
+   * either `appendRegularFile` returned `!result.ok` or the call threw.
+   * Mirrors `queuedBytes()` as an honest disk-side accounting surface
+   * (closes reviewer Finding H3 — TRAJ-FIX-03).
+   */
+  failureCount(): number;
+
+  /**
+   * The last `Error` captured from `appendRegularFile` (the `.error`
+   * branch of its `Result`) or the catch-branch fallback. Undefined
+   * until the first failure. Survives the full writer lifetime so
+   * post-mortem readers can correlate sentinel records with the
+   * underlying cause.
+   */
+  lastError(): Error | undefined;
+
+  /**
+   * Cumulative byte length of lines whose underlying append failed.
+   * Paired with `queuedBytes()` (in-flight) — together they expose
+   * honest 3-way bookkeeping (queued / accepted-and-flushed / rejected).
+   */
+  rejectedBytes(): number;
 }
 
 interface InternalState {
@@ -99,6 +123,10 @@ interface InternalState {
   tail: Promise<void>;
   queuedBytes: number;
   mkdirPromise: Promise<void> | undefined;
+  // TRAJ-FIX-03: per-line append-failure introspection.
+  failureCount: number;
+  lastError: Error | undefined;
+  rejectedBytes: number;
 }
 
 function ensureParentDir(state: InternalState): Promise<void> {
@@ -129,6 +157,9 @@ function createWriter(
     tail: Promise.resolve(),
     queuedBytes: 0,
     mkdirPromise: undefined,
+    failureCount: 0,
+    lastError: undefined,
+    rejectedBytes: 0,
   };
 
   const yieldFirst = options.yieldBeforeWrite !== false;
@@ -148,17 +179,27 @@ function createWriter(
         if (yieldFirst) await Promise.resolve();
         await ensureParentDir(state);
         try {
-          appendRegularFile({
+          const result = appendRegularFile({
             path: state.path,
             content: line,
             ...(typeof state.options.maxFileBytes === "number"
               ? { maxFileBytes: state.options.maxFileBytes }
               : {}),
           });
-        } catch {
+          if (!result.ok) {
+            // TRAJ-FIX-03 (Finding H3): capture per-line append failure.
+            state.failureCount += 1;
+            state.lastError = result.error;
+            state.rejectedBytes += lineBytes;
+          }
+        } catch (e) {
           // Defensive — appendRegularFile already returns a Result, so a
-          // host-throw here is unexpected. Swallow so the queue continues
-          // draining; a future plan adds per-writer error sink.
+          // host-throw here is unexpected. Treat it as the same failure
+          // mode as a !result.ok return so the queue keeps draining and
+          // the failure surfaces on failureCount() / lastError().
+          state.failureCount += 1;
+          state.lastError = e instanceof Error ? e : new Error(String(e));
+          state.rejectedBytes += lineBytes;
         }
         state.queuedBytes -= lineBytes;
         if (state.queuedBytes < 0) state.queuedBytes = 0;
@@ -182,6 +223,19 @@ function createWriter(
 
     queuedBytes(): number {
       return state.queuedBytes;
+    },
+
+    // TRAJ-FIX-03 (Finding H3): per-line append-failure introspection.
+    failureCount(): number {
+      return state.failureCount;
+    },
+
+    lastError(): Error | undefined {
+      return state.lastError;
+    },
+
+    rejectedBytes(): number {
+      return state.rejectedBytes;
     },
   };
 

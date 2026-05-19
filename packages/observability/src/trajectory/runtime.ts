@@ -202,11 +202,16 @@ export function createTrajectoryRecorder(
       state.closed = true;
       await writer.flush();
 
+      // Local seq bump shared across the two sentinel branches so we
+      // never reuse a seq number when both fire in the same close.
+      let sentinelSeq = state.seq;
+
       if (state.droppedEvents > 0) {
+        sentinelSeq += 1;
         const sentinel = buildEvent({
           type: "trace.truncated",
           init,
-          seq: state.seq + 1,
+          seq: sentinelSeq,
           sanitized: {
             droppedEvents: state.droppedEvents,
             reason: "file-or-queue-cap-exceeded",
@@ -215,6 +220,35 @@ export function createTrajectoryRecorder(
         // Sentinel emit is unconditional — bypasses the file-cap
         // accounting so the operator's bookkeeping is preserved even
         // when the cap is exhausted. The 2 KB reserve makes this safe.
+        const line = encodeLine(sentinel);
+        writer.write(line);
+      }
+
+      // TRAJ-FIX-03 (Finding H3): emit trace.write_failures when the
+      // underlying queued writer reports per-line append failures.
+      // Mirrors trace.truncated above (same buildEvent + encodeLine +
+      // writer.write envelope shape). Per design §6.5 the sentinel
+      // write itself may fail when the underlying failure source is
+      // unrecoverable (e.g., symlinked parent for the lifetime of the
+      // session); that recursive-failure case is acceptable — the
+      // writer's failureCount stays > 0 and the user-visible signal
+      // is preserved through the introspection surface even when no
+      // sentinel record lands on disk.
+      const failureCount = writer.failureCount();
+      if (failureCount > 0) {
+        sentinelSeq += 1;
+        const lastError = writer.lastError();
+        const sentinel = buildEvent({
+          type: "trace.write_failures",
+          init,
+          seq: sentinelSeq,
+          sanitized: {
+            reason: "queued_writer_rejected",
+            count: failureCount,
+            rejectedBytes: writer.rejectedBytes(),
+            lastError: lastError?.message ?? null,
+          },
+        });
         const line = encodeLine(sentinel);
         writer.write(line);
       }
