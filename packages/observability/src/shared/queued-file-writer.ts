@@ -15,7 +15,8 @@
  * cached after first success — re-runs are no-ops on existing dir).
  *
  * The file write itself goes through `appendRegularFile` from
- * `@comis/infra`, which guarantees `O_NOFOLLOW`, parent-symlink rejection,
+ * `./fs-safe.js` (moved out of `@comis/infra` into this package in
+ * Plan 45.1-06), which guarantees `O_NOFOLLOW`, parent-symlink rejection,
  * and `fchmod 0o600` per Plan 45-01 Task 8.
  *
  * `yieldBeforeWrite: true` (default) inserts a `await Promise.resolve()`
