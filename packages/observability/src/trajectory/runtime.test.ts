@@ -22,7 +22,7 @@
  * @module
  */
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWithContext } from "@comis/core";
@@ -276,6 +276,107 @@ describe("createTrajectoryRecorder -- env disable", () => {
       enabled: false,
     });
     expect(recorder).toBeNull();
+  });
+});
+
+describe("createTrajectoryRecorder -- trace.write_failures sentinel (TRAJ-FIX-03)", () => {
+  // H3: when the underlying queued writer reports per-line append
+  // failures at flushAndClose() time, the recorder MUST emit a
+  // trace.write_failures sentinel symmetric to trace.truncated — via
+  // the same buildEvent + encodeLine + writer.write envelope shape, so
+  // downstream consumers parsing lines.find(l => l.type ===
+  // "trace.write_failures") work.
+  //
+  // To exercise the failure → sentinel path with the sentinel landing
+  // on disk (separable from the recursive-failure case design §6.5
+  // punts on), we drive writer-level failure through a tight
+  // maxFileBytes cap that the first event overflows but the post-flush
+  // sentinel emit lands inside. The recorder forwards maxRuntimeFileBytes
+  // to the writer as maxFileBytes; we pre-stage the file with enough
+  // bytes that the first JSONL event line exceeds the cap, then truncate
+  // the file mid-test so the sentinel write has head-room.
+
+  it("emits trace.write_failures via the same writer.write envelope when failureCount > 0 (sentinel lands after truncate window)", async () => {
+    const targetDir = join(tmpDir, "wf-recover");
+    mkdirSync(targetDir, { recursive: true });
+
+    // Use a moderate cap (1500 bytes) so a single event (~240 bytes)
+    // fits, but writer-level failure is induced by pre-staging the
+    // file past the cap before the event write lands. The mkdir+pre-
+    // stage timing is brittle, so instead we use the symlink-fail
+    // approach for the event leg, then unlink+real-mkdir between
+    // flush and flushAndClose so the sentinel emit lands.
+    //
+    // Note: the recorder shares the queued writer's promise chain;
+    // flush() awaits the tail (resolving the failed event append),
+    // mutating writer.failureCount → 1. The subsequent sentinel emit
+    // runs through writer.write → adds a new task to the chain →
+    // when we await flushAndClose, that new task runs and lands on
+    // the now-real directory.
+    const realDir = join(targetDir, "real");
+    const linkDir = join(targetDir, "evil-link");
+    mkdirSync(realDir, { recursive: true });
+    symlinkSync(realDir, linkDir);
+
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-wf-recover",
+      trajectoryDir: linkDir,
+    });
+    expect(recorder).not.toBeNull();
+
+    recorder!.recordEvent("model.completed", { ok: true });
+
+    // Await the event's underlying append to fail. flush() drains the
+    // queued tail and surfaces the failure on writer.failureCount.
+    await recorder!.flush();
+
+    // Swap the symlinked parent for a real directory at the same path
+    // so the sentinel emit in flushAndClose has a real fs slot. The
+    // recorder's resolved filePath includes the now-real parent.
+    const fsMod = await import("node:fs");
+    fsMod.unlinkSync(linkDir);
+    fsMod.mkdirSync(linkDir, { recursive: true });
+
+    await recorder!.flushAndClose();
+
+    // Now read the file. The sentinel write happened against the real
+    // directory; it should be the only line in the file.
+    const lines = readLines(recorder!.filePath) as Array<{
+      type: string;
+      traceSchema: string;
+      schemaVersion: number;
+      ts: string;
+      seq: number;
+      data: Record<string, unknown>;
+    }>;
+    const sentinel = lines.find((l) => l.type === "trace.write_failures");
+    expect(sentinel).toBeDefined();
+    // Canonical envelope shape (proves buildEvent was used, not raw write).
+    expect(sentinel!.traceSchema).toBe("comis-trajectory");
+    expect(sentinel!.schemaVersion).toBe(1);
+    expect(typeof sentinel!.ts).toBe("string");
+    expect(typeof sentinel!.seq).toBe("number");
+    // Sentinel data block shape (TRAJ-FIX-03 contract).
+    expect(sentinel!.data.reason).toBe("queued_writer_rejected");
+    expect(sentinel!.data.count as number).toBeGreaterThanOrEqual(1);
+    expect(typeof sentinel!.data.rejectedBytes).toBe("number");
+  });
+
+  it("does NOT emit trace.write_failures on the happy path (writer reports failureCount=0)", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-wf-happy",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("model.completed", { ok: true });
+    await recorder!.flushAndClose();
+
+    const lines = readLines(recorder!.filePath) as Array<{ type: string }>;
+    expect(lines.find((l) => l.type === "trace.write_failures")).toBeUndefined();
+    // Sanity: the normal event landed.
+    expect(lines.find((l) => l.type === "model.completed")).toBeDefined();
   });
 });
 
