@@ -158,10 +158,19 @@ export function attachTrajectoryToEventBus(
 // Payload translators (event-specific shape massaging)
 // ---------------------------------------------------------------------------
 
+/**
+ * Translate one EventBus payload into the `data` payload of a trajectory event.
+ *
+ * Correlation keys (`traceId`, `agentId`, `sessionKey`, `sessionId`) are
+ * envelope-only per design §6.2. Bridge payload translators MUST NOT
+ * echo them into `data` — the recorder's envelope already carries them
+ * via `TrajectoryRecorderInit` + AsyncLocalStorage. Duplicating them
+ * into `data` was deviation C in the 260519-rrm audit.
+ */
 function translatePayload(
   eventName: TrajectoryBridgedEventName,
   rawPayload: unknown,
-): unknown {
+): Record<string, unknown> {
   const payload = rawPayload as Record<string, unknown>;
 
   switch (eventName) {
@@ -169,9 +178,6 @@ function translatePayload(
       return {
         toolName: payload.toolName,
         toolCallId: payload.toolCallId,
-        agentId: payload.agentId,
-        sessionKey: payload.sessionKey,
-        traceId: payload.traceId,
         ...(payload.description !== undefined ? { description: payload.description } : {}),
       };
 
@@ -181,9 +187,6 @@ function translatePayload(
         toolCallId: payload.toolCallId,
         durationMs: payload.durationMs,
         success: payload.success,
-        agentId: payload.agentId,
-        sessionKey: payload.sessionKey,
-        traceId: payload.traceId,
         ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
         ...(payload.errorMessage !== undefined ? { errorMessage: payload.errorMessage } : {}),
         ...(payload.truncated !== undefined ? { truncated: payload.truncated } : {}),
@@ -194,15 +197,11 @@ function translatePayload(
         toolName: payload.toolName,
         toolCallId: payload.toolCallId,
         timeoutMs: payload.timeoutMs,
-        agentId: payload.agentId,
-        sessionKey: payload.sessionKey,
-        traceId: payload.traceId,
       };
 
     case "tool:policy_filtered":
       return {
         profile: payload.profile,
-        agentId: payload.agentId,
         filtered: payload.filtered,
       };
 
@@ -212,9 +211,6 @@ function translatePayload(
       // cacheCreationTokens/durationMs.
       const tokens = payload.tokens as { prompt: number; completion: number; total: number };
       return {
-        agentId: payload.agentId,
-        sessionKey: payload.sessionKey,
-        traceId: payload.traceId,
         provider: payload.provider,
         modelId: payload.model,
         inputTokens: tokens.prompt,
@@ -275,9 +271,6 @@ function translatePayload(
 
     case "prompt:submitted":
       return {
-        agentId: payload.agentId,
-        sessionKey: payload.sessionKey,
-        traceId: payload.traceId,
         promptChars: payload.promptChars,
         provider: payload.provider,
         modelId: payload.modelId,
@@ -288,9 +281,6 @@ function translatePayload(
 
     case "session:started":
       return {
-        agentId: payload.agentId,
-        sessionKey: payload.sessionKey,
-        traceId: payload.traceId,
         channelType: payload.channelType,
         channelId: payload.channelId,
         ...(payload.accountId !== undefined ? { accountId: payload.accountId } : {}),
@@ -298,9 +288,6 @@ function translatePayload(
 
     case "session:ended":
       return {
-        agentId: payload.agentId,
-        sessionKey: payload.sessionKey,
-        traceId: payload.traceId,
         totalTurns: payload.totalTurns,
         totalInputTokens: payload.totalInputTokens,
         totalOutputTokens: payload.totalOutputTokens,
@@ -310,9 +297,6 @@ function translatePayload(
 
     case "memory:injected":
       return {
-        agentId: payload.agentId,
-        sessionKey: payload.sessionKey,
-        traceId: payload.traceId,
         hitCount: payload.hitCount,
         charsInjected: payload.charsInjected,
         trustTags: payload.trustTags,

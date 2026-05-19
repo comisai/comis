@@ -143,16 +143,25 @@ export function createTrajectoryRecorder(
 
   const recorder: TrajectoryRecorder = {
     filePath,
-    recordEvent(type: TrajectoryEventType, data: unknown, parentEntryId?: string): "queued" | "dropped" {
+    recordEvent(
+      type: TrajectoryEventType,
+      data?: Record<string, unknown>,
+      parentEntryId?: string,
+    ): "queued" | "dropped" {
       if (state.closed) return "dropped";
 
-      // 1. Sanitize payload through the canonical pipeline.
-      const sanitized = sanitizeForPersistence(data);
+      // 1. Sanitize payload through the canonical pipeline. The
+      //    sanitizer preserves top-level object shape (returns either
+      //    the bounded object graph or a sentinel-shaped object); the
+      //    cast is the type-boundary point.
+      const sanitized = sanitizeForPersistence(data) as
+        | Record<string, unknown>
+        | undefined;
 
       // 2. Build the envelope.
       const evt = buildEvent({
         type,
-        sanitized,
+        ...(sanitized !== undefined ? { sanitized } : {}),
         init,
         seq: state.seq + 1,
         ...(parentEntryId !== undefined ? { parentEntryId } : {}),
@@ -283,7 +292,13 @@ interface BuildEventInput {
   readonly type: TrajectoryEventType;
   readonly init: TrajectoryRecorderInit;
   readonly seq: number;
-  readonly sanitized: unknown;
+  /**
+   * Sanitized payload. The recorder always hands `sanitizeForPersistence`
+   * output through here; `sanitizeForPersistence` returns object-shaped
+   * values (or undefined when input was undefined), matching the envelope
+   * `data?: Record<string, unknown>` contract from design §6.2.
+   */
+  readonly sanitized?: Record<string, unknown>;
   readonly parentEntryId?: string;
 }
 
@@ -292,6 +307,11 @@ function buildEvent(input: BuildEventInput): TrajectoryEvent {
   const envelope: Mutable<TrajectoryEvent> = {
     traceSchema: "comis-trajectory",
     schemaVersion: 1,
+    // All recorder-driven emits are runtime-sourced. The other two
+    // values ("transcript", "export") are reserved for future
+    // post-processors and are NOT used by the live recorder
+    // (design §6.2 + §1.4).
+    source: "runtime",
     type: input.type,
     // systemDateFrom + systemNowMs goes through the sanctioned-root
     // helpers in @comis/core/runtime — direct `new Date(...)` is
@@ -302,12 +322,19 @@ function buildEvent(input: BuildEventInput): TrajectoryEvent {
     sessionId: input.init.sessionId,
     traceId,
     entryId: randomUUID(),
-    data: input.sanitized,
   };
+  // Conditional spread for genuinely-optional envelope fields so they
+  // don't serialize as `undefined` when omitted. Matches the convention
+  // already used for tenantId/sessionKey/runId.
   if (input.init.tenantId !== undefined) envelope.tenantId = input.init.tenantId;
   if (input.init.sessionKey !== undefined) envelope.sessionKey = input.init.sessionKey;
   if (input.init.runId !== undefined) envelope.runId = input.init.runId;
+  if (input.init.workspaceDir !== undefined) envelope.workspaceDir = input.init.workspaceDir;
+  if (input.init.provider !== undefined) envelope.provider = input.init.provider;
+  if (input.init.modelId !== undefined) envelope.modelId = input.init.modelId;
+  if (input.init.modelApi !== undefined) envelope.modelApi = input.init.modelApi;
   if (input.parentEntryId !== undefined) envelope.parentEntryId = input.parentEntryId;
+  if (input.sanitized !== undefined) envelope.data = input.sanitized;
   return envelope as TrajectoryEvent;
 }
 

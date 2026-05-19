@@ -80,25 +80,47 @@ export const TRAJECTORY_EVENT_TYPES = [
 export type TrajectoryEventType = (typeof TRAJECTORY_EVENT_TYPES)[number];
 
 /**
+ * Closed union of trajectory event sources (design §6.2).
+ *
+ * - `"runtime"` — emitted live by `createTrajectoryRecorder` during agent execution.
+ * - `"transcript"` — reserved for future post-processors that reconstruct trajectory
+ *   events from session transcripts.
+ * - `"export"` — reserved for future bulk-export tooling.
+ *
+ * Only `"runtime"` is in use today; the recorder unconditionally writes that value.
+ */
+export type TrajectoryEventSource = "runtime" | "transcript" | "export";
+
+/**
  * Trajectory event — one record per JSONL line.
  *
  * - `traceSchema` + `schemaVersion`: parser fence (v1 is the only
  *   currently-shipped schema).
+ * - `source`: who produced this event (`"runtime"` for live recorder emits).
  * - `traceId`: AsyncLocalStorage trace ID; falls back to `sessionId`
  *   when no trace is in flight (e.g., startup-time emit).
  * - `entryId` / `parentEntryId`: per-event UUIDs for graph correlation
  *   across artifacts. `parentEntryId` is set when an event derives
  *   from a parent (e.g., `tool.result.parentEntryId === tool.call.entryId`).
- * - `seq`: monotonic per-file counter (1-indexed). Consumers can
- *   detect dropped lines by gap detection.
+ * - `seq`: monotonic per-file counter (1-indexed) — per-session monotonic
+ *   across all turns in the session (does NOT reset between turns).
+ * - `sourceSeq`: optional upstream sequence number when the event was
+ *   forwarded from another recorder (e.g., transcript replay).
+ * - `provider` / `modelId` / `modelApi` / `workspaceDir`: optional envelope-level
+ *   metadata copied from `TrajectoryRecorderInit` when defined.
  * - `data`: typed payload (after `sanitizeForPersistence`).
+ *
+ * Envelope-vs-data discipline (design §6.2): `traceId`, `agentId`, `sessionId`,
+ * `sessionKey` are envelope-only — they MUST NOT be duplicated into `data`.
  */
 export interface TrajectoryEvent {
   readonly traceSchema: "comis-trajectory";
   readonly schemaVersion: 1;
+  readonly source: TrajectoryEventSource;
   readonly type: TrajectoryEventType;
   readonly ts: string;
   readonly seq: number;
+  readonly sourceSeq?: number;
 
   // Correlation IDs.
   readonly agentId: string;
@@ -107,11 +129,20 @@ export interface TrajectoryEvent {
   readonly sessionKey?: string;
   readonly traceId: string;
   readonly runId?: string;
+  readonly workspaceDir?: string;
+
+  // Model metadata (lifted from TrajectoryRecorderInit when defined).
+  readonly provider?: string;
+  readonly modelId?: string;
+  readonly modelApi?: string | null;
+
   readonly entryId: string;
   readonly parentEntryId?: string;
 
   // Payload — passed through `sanitizeForPersistence` before write.
-  readonly data: unknown;
+  // Shape is intentionally `Record<string, unknown>` (matches design §6.2);
+  // `sanitizeForPersistence` always returns an object-shaped value.
+  readonly data?: Record<string, unknown>;
 }
 
 /**
@@ -171,6 +202,8 @@ export interface TrajectoryRecorderInit {
   readonly provider?: string;
   /** Model id (e.g., "claude-sonnet-4-20250514"). Optional metadata for trajectory consumers. */
   readonly modelId?: string;
+  /** Model API (e.g., "messages", "responses"). `null` permitted per design §6.2. */
+  readonly modelApi?: string | null;
 
   /** Override for the trajectory base directory (precedes COMIS_TRAJECTORY_DIR). */
   readonly trajectoryDir?: string;
@@ -223,10 +256,20 @@ export interface TrajectoryRecorder {
    * When `data` exceeds `maxRuntimeEventBytes` after sanitization the
    * entire event is replaced with a single-key sentinel record.
    *
+   * `data` is typed `Record<string, unknown> | undefined` to match the
+   * design §6.2 contract. Pass `undefined` (or omit) when there is no
+   * payload — bridge translators that intentionally produce no
+   * correlation data still hand back an object so consumers can grep
+   * by key.
+   *
    * Returns "queued" on accept, "dropped" when the per-writer queue cap
    * would be exceeded (operator-tunable backpressure).
    */
-  recordEvent(type: TrajectoryEventType, data: unknown, parentEntryId?: string): "queued" | "dropped";
+  recordEvent(
+    type: TrajectoryEventType,
+    data?: Record<string, unknown>,
+    parentEntryId?: string,
+  ): "queued" | "dropped";
 
   /** Await the queue tail. */
   flush(): Promise<void>;
