@@ -104,17 +104,20 @@ describe("@comis/observability isolation — no @comis/agent + @comis/daemon + @
     }
   });
 
-  // TRAJ-FIX-10 — Plan 45.1-06 cleans up the @comis/infra ↔ @comis/observability
-  // package-deps cycle. The fix moves fs-safe.ts from @comis/infra into
-  // @comis/observability and drops the @comis/infra dep from observability,
-  // leaving a one-direction arrow: @comis/infra → @comis/observability.
-  //
-  // The first invariant below is SKIPPED until task 6 of plan 45.1-06 activates
-  // it — at that point the cycle has been broken and observability/package.json
-  // no longer lists @comis/infra. Keeping per-commit `pnpm validate` green
-  // requires the test to be inert while the work is in progress; the un-skip
-  // commit (task 6) is the architectural-lock moment.
-  it.skip("@comis/observability does NOT depend on @comis/infra (TRAJ-FIX-10)", () => {
+  // TRAJ-FIX-10 — Plan 45.1-06 closed the bidirectional package-deps cycle
+  // between @comis/infra and @comis/observability:
+  //   - fs-safe.ts moved from @comis/infra to @comis/observability (task 2).
+  //   - @comis/infra dep was dropped from @comis/observability/package.json
+  //     and the corresponding tsconfig project reference (task 3).
+  //   - redact-transport.ts was rewritten as a static re-export of
+  //     @comis/observability/dist/redact/pino-redact-transport.js (task 3),
+  //     and packages/infra/tsconfig.json gained `{ "path": "../observability" }`.
+  // The resulting graph is one-direction: @comis/infra → @comis/observability.
+  // This assertion locks the architectural invariant at the package-deps
+  // layer. The companion forward-direction check
+  // (`@comis/infra DOES depend on @comis/observability`) is the other
+  // active case in this describe block.
+  it("@comis/observability does NOT depend on @comis/infra (TRAJ-FIX-10)", () => {
     const pkg = JSON.parse(
       readFileSync(
         resolve(REPO_ROOT, "packages/observability/package.json"),
