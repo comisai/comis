@@ -35,6 +35,13 @@ import {
   systemSetTimeout,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
+import {
+  createConfigWriteAuditRecordBase,
+  finalizeConfigWriteAuditRecord,
+  appendConfigAuditRecord,
+  resolveConfigAuditLogPath,
+  type ConfigWriteAuditRecordBase,
+} from "@comis/observability";
 import { stringify as yamlStringify } from "yaml";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
@@ -112,6 +119,39 @@ export function bindConfigWriteHandlers(
       const subSchema = resolveSchemaForPath(AppConfigSchema, section, key);
       const coercedValue = coerceConfigValue(value, subSchema);
       const ctx = rawParams._context as { agentId?: string; userId?: string; traceId?: string } | undefined;
+
+      // Plan 45-05 task 8: build the config-audit base BEFORE the
+      // validate / write so a rejected patch still surfaces in the
+      // JSONL log. The base captures caller provenance + pre-write
+      // state (hash/bytes/stat); the post-write half is filled by
+      // the finally-block helper below.
+      const localPathForAudit = deps.configPaths.length > 0
+        ? deps.configPaths[deps.configPaths.length - 1]!
+        : deps.defaultConfigPaths[deps.defaultConfigPaths.length - 1]!;
+      let auditBase: ConfigWriteAuditRecordBase | undefined;
+      try {
+        auditBase = createConfigWriteAuditRecordBase({
+          source: "config-patch-rpc",
+          configPath: localPathForAudit,
+          // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
+          pid: process.pid,
+          // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
+          ppid: process.ppid,
+          // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
+          argv: process.argv,
+          // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
+          cwd: process.cwd(),
+          // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
+          execArgv: process.execArgv,
+          watchMode: false,
+        });
+      } catch {
+        // Base-construction failure (e.g. unreadable fs metadata) — audit
+        // is best-effort, fall through with undefined base.
+        auditBase = undefined;
+      }
+      let wroteFile = false;
+      let writeError: { code?: string; message?: string } | undefined;
 
       try {
         // Check immutable paths.
@@ -267,8 +307,17 @@ export function bindConfigWriteHandlers(
           mkdirSync(localDir, { recursive: true });
         }
         const tmpPath = localPath + ".tmp";
-        writeFileSync(tmpPath, yamlStringify(updatedLocal), { encoding: "utf-8", mode: 0o600 });
-        renameSync(tmpPath, localPath);
+        try {
+          writeFileSync(tmpPath, yamlStringify(updatedLocal), { encoding: "utf-8", mode: 0o600 });
+          renameSync(tmpPath, localPath);
+          wroteFile = true;
+        } catch (writeErr) {
+          writeError = {
+            code: (writeErr as NodeJS.ErrnoException).code,
+            message: (writeErr as Error).message,
+          };
+          throw writeErr;
+        }
 
         // Best-effort git versioning
         if (deps.configGitManager) {
@@ -359,6 +408,41 @@ export function bindConfigWriteHandlers(
         );
 
         throw e;
+      } finally {
+        // Plan 45-05 task 8: append a config-audit JSONL record. The
+        // emitted EventBus `audit:event` above stays — the JSONL log
+        // is additive (research §1.12).
+        //   - wroteFile=true  → result: "rename"
+        //   - writeError defined → result: "failed" (OS-level fs error)
+        //   - otherwise → result: "rejected" (validation, immutable,
+        //     credential-guard, env-resolve, etc).
+        if (auditBase !== undefined) {
+          try {
+            const finalizeParams = wroteFile
+              ? ({ result: "rename" as const })
+              : writeError !== undefined
+                ? {
+                    result: "failed" as const,
+                    ...(writeError.code !== undefined && { errorCode: writeError.code }),
+                    ...(writeError.message !== undefined && {
+                      errorMessage: writeError.message,
+                    }),
+                  }
+                : ({ result: "rejected" as const });
+            const record = finalizeConfigWriteAuditRecord(auditBase, finalizeParams);
+            // Best-effort — audit failures swallowed via suppressError.
+            suppressError(
+              appendConfigAuditRecord({
+                filePath: resolveConfigAuditLogPath(),
+                record,
+              }),
+              "best-effort config-audit append (config.patch)",
+              (msg) => deps.logger.debug({ method: "config.patch" }, msg),
+            );
+          } catch {
+            // Audit-finalize failed — swallow.
+          }
+        }
       }
     },
   };

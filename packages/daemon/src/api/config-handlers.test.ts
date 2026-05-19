@@ -158,6 +158,95 @@ describe("config.patch", () => {
     vi.advanceTimersByTime(200);
     expect(killSpy).not.toHaveBeenCalled();
   });
+
+  // Plan 45-05 task 8: config-audit JSONL hook around the atomic write.
+  describe("config-audit hook", () => {
+    let auditPath: string;
+    let prevAuditEnv: string | undefined;
+
+    beforeEach(() => {
+      auditPath = join(tempConfig.dir, "config-audit.jsonl");
+      // eslint-disable-next-line no-restricted-syntax -- test fixture env override
+      prevAuditEnv = process.env["COMIS_CONFIG_AUDIT_LOG"];
+      // eslint-disable-next-line no-restricted-syntax -- test fixture env override
+      process.env["COMIS_CONFIG_AUDIT_LOG"] = auditPath;
+    });
+
+    afterEach(() => {
+      // eslint-disable-next-line no-restricted-syntax -- test fixture env restore
+      if (prevAuditEnv === undefined) delete process.env["COMIS_CONFIG_AUDIT_LOG"];
+      // eslint-disable-next-line no-restricted-syntax -- test fixture env restore
+      else process.env["COMIS_CONFIG_AUDIT_LOG"] = prevAuditEnv;
+    });
+
+    it("writes a rename audit record on successful patch alongside the EventBus emit", async () => {
+      const deps = makeDeps(tempConfig.configPath);
+      const handlers = createConfigHandlers(deps);
+
+      const auditEvents: unknown[] = [];
+      deps.container.eventBus.on("audit:event", (e) => auditEvents.push(e));
+
+      await handlers["config.patch"]!({
+        section: "logLevel",
+        value: "debug",
+        _trustLevel: "admin",
+      });
+      // The append is launched async — flush microtasks before asserting.
+      // setImmediate is patched by fake timers, so drive it explicitly.
+      await vi.runAllTimersAsync();
+
+      // EventBus emit still happens (additive — JSONL is not a replacement).
+      expect(auditEvents.length).toBeGreaterThan(0);
+
+      // JSONL record present.
+      const fs = await import("node:fs");
+      expect(fs.existsSync(auditPath)).toBe(true);
+      const lines = fs
+        .readFileSync(auditPath, "utf-8")
+        .trim()
+        .split("\n")
+        .filter((l) => l.length > 0);
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+      const record = JSON.parse(lines[lines.length - 1]!) as {
+        source: string;
+        result: string;
+        phase: string;
+      };
+      expect(record.source).toBe("config-patch-rpc");
+      expect(record.result).toBe("rename");
+      expect(record.phase).toBe("write");
+    });
+
+    it("writes a rejected audit record on schema-validation failure", async () => {
+      // Use real timers for this test — fakeTimers patches setImmediate
+      // which blocks the suppressError microtask chain in the audit
+      // hook's finally block.
+      vi.useRealTimers();
+
+      const deps = makeDeps(tempConfig.configPath);
+      const handlers = createConfigHandlers(deps);
+
+      await expect(
+        handlers["config.patch"]!({
+          section: "logLevel",
+          value: "invalid_level",
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow("Config validation failed");
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const fs = await import("node:fs");
+      expect(fs.existsSync(auditPath)).toBe(true);
+      const lines = fs
+        .readFileSync(auditPath, "utf-8")
+        .trim()
+        .split("\n")
+        .filter((l) => l.length > 0);
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+      const record = JSON.parse(lines[lines.length - 1]!) as { result: string };
+      expect(record.result).toBe("rejected");
+    });
+  });
 });
 
 describe("config.patch rate limiting", () => {
