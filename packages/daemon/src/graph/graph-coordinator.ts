@@ -158,7 +158,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         handleDriverTurnCompletedFn(state, deps, config, gs, nodeId, evt, driverCallbacks),
       handleSubAgentCompleted: (gs, evt) =>
         callbacks.handleSubAgentCompleted(gs, evt),
-    }, { logger: deps.logger });
+    });
   }
 
   deps.eventBus.on("session:sub_agent_completed", onSubAgentCompleted);
