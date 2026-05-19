@@ -18,6 +18,8 @@ import {
   SessionListContract,
   SessionStatusContract,
   SessionDeleteContract,
+  ObsSystemPromptReportLatestContract,
+  ObsSystemPromptReportListContract,
 } from "@comis/core";
 import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, json } from "../output/format.js";
@@ -227,4 +229,180 @@ export function registerSessionsCommand(program: Command): void {
         process.exit(1);
       }
     });
+
+  // sessions report (Plan 45-04 — SystemPromptReport surfacing)
+  const report = sessions
+    .command("report")
+    .description("Inspect SystemPromptReport (Plan 45-04)");
+
+  // sessions report show <sessionId>
+  report
+    .command("show <sessionId>")
+    .description("Display the latest SystemPromptReport for a session")
+    .requiredOption("--agent <agentId>", "Agent ID owning the session")
+    .option("--runId <runId>", "Optional runId narrow")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .action(
+      async (
+        sessionId: string,
+        options: { agent: string; runId?: string; format: string },
+      ) => {
+        try {
+          const result = await withSpinner(
+            "Fetching SystemPromptReport...",
+            () =>
+              withClient(async (client) => {
+                return await callTyped(client, ObsSystemPromptReportLatestContract, {
+                  agentId: options.agent,
+                  sessionId,
+                  runId: options.runId,
+                });
+              }),
+          );
+
+          if (result.report === null) {
+            info(`No SystemPromptReport found for session ${sessionId}`);
+            return;
+          }
+
+          if (options.format === "json") {
+            json(result.report);
+            return;
+          }
+
+          renderSystemPromptReport(sessionId, result.report);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          error(`Failed to fetch SystemPromptReport: ${msg}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // sessions report list <sessionId>
+  report
+    .command("list <sessionId>")
+    .description("List recent SystemPromptReports for a session")
+    .option("--limit <n>", "Max reports to return (default 10, max 100)", "10")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .action(
+      async (sessionId: string, options: { limit: string; format: string }) => {
+        try {
+          const limit = Math.min(100, Math.max(1, parseInt(options.limit, 10) || 10));
+          const result = await withSpinner(
+            "Fetching SystemPromptReports...",
+            () =>
+              withClient(async (client) => {
+                return await callTyped(client, ObsSystemPromptReportListContract, {
+                  sessionId,
+                  limit,
+                });
+              }),
+          );
+
+          if (result.reports.length === 0) {
+            info(`No SystemPromptReports found for session ${sessionId}`);
+            return;
+          }
+
+          if (options.format === "json") {
+            json(result.reports);
+            return;
+          }
+
+          // Render as a compact table: generatedAt | runId | provider/model | chars
+          renderTable(
+            ["Generated", "RunId", "Provider/Model", "Chars"],
+            result.reports.map((r) => {
+              const generated = typeof r.generatedAt === "number"
+                ? formatRelativeTime(r.generatedAt)
+                : "-";
+              const runId = (r.runId as string | undefined) ?? "-";
+              const provider = (r.provider as string | undefined) ?? "-";
+              const model = (r.model as string | undefined) ?? "-";
+              const sp = r.systemPrompt as { chars?: number } | undefined;
+              const chars = sp?.chars != null ? String(sp.chars) : "-";
+              return [generated, runId, `${provider}/${model}`, chars];
+            }),
+          );
+
+          info(`${result.reports.length} report${result.reports.length !== 1 ? "s" : ""}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          error(`Failed to list SystemPromptReports: ${msg}`);
+          process.exit(1);
+        }
+      },
+    );
+}
+
+/**
+ * Pretty-print a SystemPromptReport (design §8.4) for the
+ * `sessions report show` table view.
+ *
+ * Renders a header + per-file table for `injectedWorkspaceFiles[]`,
+ * plus an overall summary. Each loose-modeled record carries the
+ * report shape from @comis/observability#SystemPromptReportSchema.
+ *
+ * @param sessionId - Session identifier (for the header).
+ * @param report    - Loose-shaped SystemPromptReport record.
+ */
+function renderSystemPromptReport(sessionId: string, report: Record<string, unknown>): void {
+  // Header
+  console.log(chalk.bold(`System prompt — session ${sessionId}`));
+  console.log("");
+
+  const sp = report.systemPrompt as
+    | { sha256?: string; chars?: number; projectContextChars?: number }
+    | undefined;
+  const tools = report.tools as
+    | { entries?: Array<{ name?: string; callable?: boolean; schemaChars?: number }>; totalSchemaChars?: number }
+    | undefined;
+  const skills = report.skills as { promptChars?: number; entries?: unknown[] } | undefined;
+  const files = (report.injectedWorkspaceFiles as Array<{
+    name?: string;
+    missing?: boolean;
+    truncated?: boolean;
+    rawChars?: number;
+    injectedChars?: number;
+  }> | undefined) ?? [];
+
+  // Summary panel
+  const summaryPairs: [string, string][] = [
+    [chalk.bold("Agent"), String(report.agentId ?? "-")],
+    [chalk.bold("Model"), `${String(report.provider ?? "-")}/${String(report.model ?? "-")}`],
+    [chalk.bold("Source"), String(report.source ?? "-")],
+    [chalk.bold("Generated"), typeof report.generatedAt === "number"
+      ? `${formatRelativeTime(report.generatedAt)} (epoch ${report.generatedAt})`
+      : "-"],
+    [chalk.bold("System chars"), String(sp?.chars ?? "-")],
+    [chalk.bold("Project context chars"), String(sp?.projectContextChars ?? "-")],
+    [chalk.bold("SHA-256"), sp?.sha256 ? String(sp.sha256).slice(0, 16) + "..." : "-"],
+    [chalk.bold("Tools"),
+      tools?.entries
+        ? `${tools.entries.length} entries / ${tools.totalSchemaChars ?? "-"} schema chars`
+        : "-"],
+    [chalk.bold("Skills"),
+      skills?.entries
+        ? `${skills.entries.length} entries / ${skills.promptChars ?? "-"} chars`
+        : "-"],
+  ];
+  renderKeyValue(summaryPairs);
+
+  console.log("");
+  console.log(chalk.bold("Injected workspace files:"));
+  if (files.length === 0) {
+    console.log("  (none)");
+    return;
+  }
+  renderTable(
+    ["File", "Missing", "Truncated", "Raw chars", "Injected chars"],
+    files.map((f) => [
+      f.name ?? "-",
+      f.missing ? "yes" : "no",
+      f.truncated ? "yes" : "no",
+      String(f.rawChars ?? "-"),
+      String(f.injectedChars ?? "-"),
+    ]),
+  );
 }
