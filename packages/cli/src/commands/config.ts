@@ -48,6 +48,7 @@ import {
   appendConfigAuditRecordSync,
   resolveConfigAuditLogPath,
 } from "@comis/observability";
+import { registerConfigAuditCommand } from "./config/audit.js";
 import {
   runToolingFill,
   type PromptIO,
@@ -84,6 +85,9 @@ const SYNC_TOOLING_DEFAULT_CONFIG = os.homedir() + "/.comis/config.yaml";
  */
 export function registerConfigCommand(program: Command): void {
   const config = program.command("config").description("Configuration management");
+
+  // Plan 45-05 task 12: `comis config audit show|scrub` subcommand group.
+  registerConfigAuditCommand(config);
 
   // --- config validate -------------------------------------------------------
 
