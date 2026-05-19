@@ -24,6 +24,8 @@ import {
   ConfigDiffContract,
   ConfigRollbackContract,
   ConfigGcContract,
+  ConfigAuditListContract,
+  ConfigAuditScrubContract,
   GatewayStatusContract,
   GatewayRestartContract,
   EnvSetContract,
@@ -32,8 +34,18 @@ import {
 } from "./config.js";
 
 describe("config + env + gateway-infrastructure contracts", () => {
-  it("CONFIG_CONTRACTS has exactly 12 entries (8 config.* + 2 gateway.* + 2 env.*)", () => {
-    expect(CONFIG_CONTRACTS.length).toBe(12);
+  it("CONFIG_CONTRACTS has exactly 14 entries (8 config.* + 2 config.audit.* (Plan 45-05) + 2 gateway.* + 2 env.*)", () => {
+    expect(CONFIG_CONTRACTS.length).toBe(14);
+  });
+
+  it("config.audit.list: method name is correct (Plan 45-05)", () => {
+    expect(ConfigAuditListContract.method).toBe("config.audit.list");
+    expect(ConfigAuditListContract.scopes).toEqual(["admin"]);
+  });
+
+  it("config.audit.scrub: method name is correct (Plan 45-05)", () => {
+    expect(ConfigAuditScrubContract.method).toBe("config.audit.scrub");
+    expect(ConfigAuditScrubContract.scopes).toEqual(["admin"]);
   });
 
   // ------------------------------------------------------------------------
