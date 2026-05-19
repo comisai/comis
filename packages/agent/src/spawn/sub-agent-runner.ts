@@ -350,6 +350,52 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const runs = new Map<string, SubAgentRun>();
   const activePromises = new Set<Promise<void>>();
 
+  // ---------------------------------------------------------------------
+  // In-flight spawn dedup (Task wkj):
+  //   Maps `(callerSessionKey + agentId + task)` triples to in-flight runIds.
+  //   Populated when a non-graph session-spawn starts (running OR queued)
+  //   and removed at terminal status transitions. A spawn() call whose
+  //   dedup key already maps to an in-flight run short-circuits and returns
+  //   the existing runId AND records `lastDedupHit` for the calling RPC
+  //   handler to surface `deduped: true, existingRunId, ageMs` to the LLM.
+  // Skipped for:
+  //   - top-level spawns (no callerSessionKey) — scoped dedup requires a
+  //     known caller identity, otherwise CLI/scheduler spawns would collide.
+  //   - graph-marked spawns (callerType === "graph") — graph coordinator
+  //     owns its own dedup via `runIdToNode`; matching by task would break
+  //     graph parallelism when two nodes coincidentally share task wording.
+  // ---------------------------------------------------------------------
+  const inFlightByDedupKey = new Map<string, string>();
+  let lastDedupHit: { existingRunId: string; ageMs: number } | undefined;
+
+  function computeDedupKey(
+    callerSessionKey: string,
+    task: string,
+    agentId: string,
+  ): string {
+    // NUL byte separator: cannot appear in JSON-source session keys or
+    // agent IDs and is vanishingly unlikely in task prose. The map is
+    // in-process only and never serialized — collisions are not
+    // attacker-controlled.
+    return `${callerSessionKey}\x00${agentId}\x00${task}`;
+  }
+
+  function isDedupEligible(params: { callerSessionKey?: string; callerType?: string }): boolean {
+    return params.callerSessionKey !== undefined && params.callerType !== "graph";
+  }
+
+  function removeDedupEntry(run: SubAgentRun): void {
+    if (!run.callerSessionKey) return;
+    // Graph-marked runs were never registered.
+    if (run.graphId !== undefined) return;
+    const dedupKey = computeDedupKey(run.callerSessionKey, run.task, run.agentId);
+    // Only delete if the slot still points at THIS runId — defensive against
+    // a re-spawn that already won the slot after our terminal transition.
+    if (inFlightByDedupKey.get(dedupKey) === run.runId) {
+      inFlightByDedupKey.delete(dedupKey);
+    }
+  }
+
   // Late-binding ref for graph coordinator (created after sub-agent runner in daemon.ts)
   let graphCoordinatorRef: { notifyNodeFailed(graphId: string, nodeId: string, runId: string, error: string): void } | undefined;
 
@@ -436,6 +482,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         });
 
         deps.logger?.debug({ runId, ageMs: now - run.completedAt }, "Sub-agent run auto-archived");
+        // Belt-and-suspenders: terminal-transition sites already remove the
+        // dedup entry, but archive is the last chance to evict if those missed.
+        removeDedupEntry(run);
         runs.delete(runId);
       }
     }
@@ -448,7 +497,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       const toRemove = runs.size - MAX_RUNS;
       for (let i = 0; i < toRemove && i < completedRuns.length; i++) {
-        runs.delete(completedRuns[i]![0]);
+        const [pruneRunId, pruneRun] = completedRuns[i]!;
+        removeDedupEntry(pruneRun);
+        runs.delete(pruneRunId);
       }
     }
 
@@ -467,6 +518,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             run.status = "failed";
             run.error = `Queue timeout: waited ${queueTimeoutMs}ms for an execution slot`;
             run.completedAt = now;
+            removeDedupEntry(run);
 
             deps.eventBus.emit("session:sub_agent_spawn_rejected", {
               parentSessionKey: callerKey,
@@ -524,6 +576,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       run.status = "failed";
       run.completedAt = now;
       run.error = `Ghost run: stuck in 'running' for ${(runningDurationMs / 1000).toFixed(0)}s (grace: ${(ghostGraceMs / 1000).toFixed(0)}s)`;
+      removeDedupEntry(run);
 
       // Persist failure record
       if (deps.dataDir) {
@@ -618,6 +671,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   // -------------------------------------------------------------------------
 
   function spawn(params: SpawnParams): string {
+    // Reset dedup signal at the start of every call so a non-deduped spawn
+    // does not see a stale hit from the previous invocation.
+    lastDedupHit = undefined;
+
     // 0. Resolve depth and config values for limit enforcement
     const currentDepth = params.depth ?? 0;
     const maxDepth = params.maxDepth ?? deps.config.subagentContext?.maxSpawnDepth ?? 3;
@@ -649,6 +706,37 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       throw new Error(
         `Spawn rejected: depth limit exceeded (current: ${currentDepth}, max: ${maxDepth}). This sub-agent cannot spawn further children at this nesting level.`,
       );
+    }
+
+    // In-flight dedup check (Task wkj). A duplicate same-caller-same-task spawn
+    // returns the existing runId rather than starting a parallel run. Placed
+    // AFTER the depth throw (depth violations must always reject) but BEFORE
+    // the children-limit / queue / allowlist logic — a deduped spawn does NOT
+    // consume a child slot or create a new run; the existing run was already
+    // validated by these gates when it was first started.
+    if (isDedupEligible(params)) {
+      const dedupKey = computeDedupKey(params.callerSessionKey!, params.task, params.agentId);
+      const existingRunId = inFlightByDedupKey.get(dedupKey);
+      if (existingRunId !== undefined) {
+        const existing = runs.get(existingRunId);
+        if (existing && (existing.status === "running" || existing.status === "queued")) {
+          const startRef = existing.startedAt || existing.queuedAt || clock.now();
+          const ageMs = clock.now() - startRef;
+          lastDedupHit = { existingRunId, ageMs };
+          deps.logger?.debug({
+            runId: existingRunId,
+            existingRunId,
+            taskLength: params.task.length,
+            callerSessionKey: params.callerSessionKey,
+            ageMs,
+            hint: "Duplicate spawn deduped against in-flight run",
+          }, "Sub-agent spawn deduped");
+          return existingRunId;
+        }
+        // Stale entry — the prior run reached terminal status without cleanup.
+        // Drop it so we don't keep returning a dead runId.
+        inFlightByDedupKey.delete(dedupKey);
+      }
     }
 
     // Children check (bypassed for graph spawns)
@@ -741,6 +829,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         };
         runs.set(queuedRunId, queuedRun);
 
+        // Register dedup entry for the queued run so a second same-caller-same-task
+        // spawn at children-limit returns the queued runId rather than starting another.
+        if (isDedupEligible(params)) {
+          const dedupKey = computeDedupKey(params.callerSessionKey, params.task, params.agentId);
+          inFlightByDedupKey.set(dedupKey, queuedRunId);
+        }
+
         const callerQueue = spawnQueue.get(params.callerSessionKey) ?? [];
         callerQueue.push({ runId: queuedRunId, params, queuedAt: now });
         spawnQueue.set(params.callerSessionKey, callerQueue);
@@ -803,6 +898,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         : params.callerSessionKey,
     };
     runs.set(runId, run);
+
+    // Register dedup entry for the just-started run so duplicate spawns
+    // arriving while it is in flight short-circuit to this runId.
+    if (isDedupEligible(params)) {
+      const dedupKey = computeDedupKey(params.callerSessionKey!, params.task, params.agentId);
+      inFlightByDedupKey.set(dedupKey, runId);
+    }
 
     startExecution(runId, run, params, currentDepth, maxDepth);
 
@@ -988,6 +1090,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         run.status = "completed";
         run.completedAt = completedAt;
         run.result = result;
+        removeDedupEntry(run);
 
         // Populate run.error for non-successful completions so graph coordinator
         // and downstream consumers see a meaningful error instead of "Unknown error".
@@ -1303,6 +1406,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         const completedAt = clock.now();
         run.status = "failed";
         run.completedAt = completedAt;
+        removeDedupEntry(run);
         const errorMessage = error instanceof Error ? error.message : String(error);
         run.error = errorMessage;
 
@@ -1429,6 +1533,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       run.status = "failed";
       run.completedAt = completedAt;
       run.error = `Execution timeout: exceeded ${runTimeoutMs}ms wall-clock limit`;
+      removeDedupEntry(run);
 
       deps.logger?.error({
         runId, agentId: run.agentId,
@@ -1592,6 +1697,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
     run.status = "failed";
     run.completedAt = clock.now();
+    removeDedupEntry(run);
     run.error = "Killed by parent agent";
 
     // Persist failure record for killed runs (fire-and-forget, belt-defense)
@@ -1711,5 +1817,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     graphCoordinatorRef = gc;
   }
 
-  return { spawn, getRunStatus, listRuns, killRun, shutdown, setGraphCoordinator };
+  /**
+   * Return the most recent dedup hit observed by `spawn()`. Cleared at the
+   * start of every `spawn()` call so each invocation surfaces a fresh signal.
+   * Used by `session.spawn` RPC handler to set `deduped: true, existingRunId,
+   * dedupAgeMs` on the response when an LLM duplicate-spawned the same task.
+   */
+  function lastSpawnDedupInfo(): { deduped: true; existingRunId: string; ageMs: number } | undefined {
+    if (!lastDedupHit) return undefined;
+    return { deduped: true, existingRunId: lastDedupHit.existingRunId, ageMs: lastDedupHit.ageMs };
+  }
+
+  return { spawn, getRunStatus, listRuns, killRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
 }

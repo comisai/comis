@@ -138,12 +138,29 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
           toolGroups,
           includeParentHistory,
         });
-        // Check if spawn was queued rather than immediately started
+        // Capture dedup signal from this spawn so the response carries
+        // structured `deduped`/`existingRunId`/`dedupAgeMs` if the runner
+        // short-circuited against an in-flight run.
+        const asyncDedupInfo = deps.subAgentRunner.lastSpawnDedupInfo?.();
+        // Check if spawn was queued rather than immediately started.
         const spawnStatus = deps.subAgentRunner.getRunStatus(runId);
-        if (spawnStatus?.status === "queued") {
-          return { runId, async: true, queued: true };
+        // Either way the run is in-flight from the LLM's perspective — surface
+        // the same `inProgress`/`noteType` signal as the sync-timeout branch.
+        const baseAsyncResponse: Record<string, unknown> = {
+          runId,
+          async: true,
+          inProgress: true,
+          noteType: "background_running",
+        };
+        if (asyncDedupInfo?.deduped) {
+          baseAsyncResponse.deduped = true;
+          baseAsyncResponse.existingRunId = asyncDedupInfo.existingRunId;
+          baseAsyncResponse.dedupAgeMs = asyncDedupInfo.ageMs;
         }
-        return { runId, async: true };
+        if (spawnStatus?.status === "queued") {
+          return { ...baseAsyncResponse, queued: true };
+        }
+        return baseAsyncResponse;
       }
 
       // Synchronous (backward compatible) -- delegate to sub-agent runner but await result
@@ -166,6 +183,9 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         toolGroups,
         includeParentHistory,
       });
+      // Capture dedup signal BEFORE the poll loop — must not be clobbered by
+      // any subsequent spawn() call on the runner between now and the response.
+      const dedupInfo = deps.subAgentRunner.lastSpawnDedupInfo?.();
 
       // For sync mode, poll until complete (up to waitTimeoutMs)
       const timeout = deps.securityConfig.agentToAgent!.waitTimeoutMs;
@@ -177,7 +197,30 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       }
 
       if (!run || run.status === "running" || run.status === "queued") {
-        return { runId, async: true, note: "Spawn timed out, check run_status later" };
+        // Sub-agent is still in flight after the sync-wait window. The spawn
+        // SUCCEEDED — the result will be delivered automatically when complete.
+        // The previous timeout-flavored note caused LLMs to read this branch
+        // as a failure signal and hedge by spawning a second sub-agent for the
+        // same task (observed 2026-05-19 18:09–18:13). The new note plus
+        // structured `inProgress`/`noteType` fields tell the LLM explicitly
+        // that the spawn succeeded and that re-spawning is forbidden.
+        const response: Record<string, unknown> = {
+          runId,
+          async: true,
+          inProgress: true,
+          noteType: "background_running",
+          note:
+            `Sub-agent is running in background (runId=${runId}). ` +
+            `The result will be delivered automatically via the announcement channel when complete. ` +
+            `DO NOT spawn another sub-agent for the same task — call subagents(action='list') ` +
+            `or session.run_status(run_id='${runId}') to check progress.`,
+        };
+        if (dedupInfo?.deduped) {
+          response.deduped = true;
+          response.existingRunId = dedupInfo.existingRunId;
+          response.dedupAgeMs = dedupInfo.ageMs;
+        }
+        return response;
       }
 
       if (run.status === "failed") {
