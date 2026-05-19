@@ -23,6 +23,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { TypedEventBus } from "@comis/core";
+import type { EventMap } from "@comis/core";
 
 import { attachTrajectoryToEventBus, TRAJECTORY_BRIDGE_MAPPING } from "./event-bus-bridge.js";
 import type { TrajectoryEventType, TrajectoryRecorder } from "./types.js";
@@ -62,7 +63,7 @@ function makeBus(): TypedEventBus {
 // ---------------------------------------------------------------------------
 
 describe("attachTrajectoryToEventBus -- tool events", () => {
-  it("tool_started_maps_to_tool.call with toolName, toolCallId, traceId in data", () => {
+  it("tool_started_maps_to_tool.call with toolName + toolCallId; correlation keys stripped from data (design §6.2)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -81,7 +82,11 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     const data = recorder.calls[0].data as Record<string, unknown>;
     expect(data.toolName).toBe("bash");
     expect(data.toolCallId).toBe("tc-1");
-    expect(data.traceId).toBe("trace-1");
+    // Envelope-only correlation keys (deviation C) — must NOT appear in data.
+    expect(data.traceId).toBeUndefined();
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.sessionId).toBeUndefined();
   });
 
   it("tool_executed_maps_to_tool.result with durationMs, success, errorKind", () => {
@@ -332,6 +337,145 @@ describe("attachTrajectoryToEventBus -- unsubscribe + filter", () => {
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0].type).toBe("tool.call");
   });
+});
+
+describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (design §6.2)", () => {
+  // Parameterized over EVERY mapped event name. Each emit carries the
+  // four correlation keys (`traceId`, `agentId`, `sessionKey`, `sessionId`);
+  // the bridge MUST strip them out before handing to `recordEvent`.
+  // Sample-shaped payloads carry the minimum fields each translator
+  // reads so the switch doesn't error on missing nested fields
+  // (e.g., `tokens.prompt`, `totalChunks`, `tokens` object for token_usage).
+  const SAMPLE_PAYLOADS: Record<string, Record<string, unknown>> = {
+    "tool:started": { toolName: "x", toolCallId: "tc-1", timestamp: 0 },
+    "tool:executed": { toolName: "x", toolCallId: "tc-1", durationMs: 1, success: true, timestamp: 0 },
+    "tool:timeout": { toolName: "x", toolCallId: "tc-1", timeoutMs: 1000, timestamp: 0 },
+    "tool:policy_filtered": { profile: "default", filtered: ["tool-a"] },
+    "observability:token_usage": {
+      tokens: { prompt: 1, completion: 1, total: 2 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 0,
+      provider: "anthropic",
+      model: "claude",
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      timestamp: 0,
+    },
+    "model:fallback_attempt": {
+      fromProvider: "a",
+      fromModel: "m",
+      toProvider: "b",
+      toModel: "n",
+      error: "x",
+      attemptNumber: 1,
+      timestamp: 0,
+    },
+    "model:lkw_fallback_attempt": {
+      fromProvider: "a",
+      fromModel: "m",
+      toProvider: "b",
+      toModel: "n",
+      timestamp: 0,
+    },
+    "model:fallback_exhausted": {
+      provider: "a",
+      model: "m",
+      totalAttempts: 3,
+      timestamp: 0,
+    },
+    "model:auth_cooldown": {
+      keyName: "k",
+      provider: "a",
+      cooldownMs: 0,
+      failureCount: 0,
+      timestamp: 0,
+    },
+    "skill:prompt_loaded": {
+      skillName: "s",
+      source: "registry",
+      bodyLength: 10,
+    },
+    "skill:prompt_invoked": {
+      skillName: "s",
+      invokedBy: "user",
+      args: {},
+    },
+    "prompt:submitted": {
+      promptChars: 100,
+      provider: "a",
+      modelId: "m",
+      messageCount: 1,
+      systemDigest: "d",
+      messagesDigest: "d",
+    },
+    "session:started": {
+      channelType: "telegram",
+      channelId: "c1",
+    },
+    "session:ended": {
+      totalTurns: 1,
+      totalInputTokens: 1,
+      totalOutputTokens: 1,
+      durationMs: 1,
+      exitReason: "ok",
+    },
+    "memory:injected": {
+      hitCount: 1,
+      charsInjected: 100,
+      trustTags: ["external"],
+    },
+    "delivery:enqueued": {
+      entryId: "e",
+      channelType: "telegram",
+      channelId: "c",
+      origin: "user",
+    },
+    "delivery:complete": {
+      entryId: "e",
+      channelType: "telegram",
+      channelId: "c",
+      origin: "user",
+      strategy: "single",
+      totalChunks: 1,
+      deliveredChunks: 1,
+      failedChunks: 0,
+      totalChars: 10,
+      durationMs: 10,
+      timestamp: 0,
+    },
+  };
+
+  it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
+    "translatePayload_strips_correlation_keys_from_data: %s",
+    (eventName) => {
+      const bus = makeBus();
+      const recorder = createCaptureRecorder();
+      attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+      const base = SAMPLE_PAYLOADS[eventName];
+      expect(base, `missing SAMPLE_PAYLOADS for ${eventName}`).toBeDefined();
+
+      // Inject the four correlation keys into every payload.
+      const payload = {
+        ...base,
+        traceId: "trace-X",
+        agentId: "agent-X",
+        sessionKey: "skey-X",
+        sessionId: "sid-X",
+      };
+      // Cast through `unknown` to satisfy TypeScript's strict EventMap
+      // typing — payloads are intentionally permissive shapes for the
+      // architecture-level test.
+      bus.emit(eventName as keyof EventMap, payload as never);
+
+      expect(recorder.calls).toHaveLength(1);
+      const data = recorder.calls[0].data as Record<string, unknown>;
+      expect(data.traceId, `${eventName}.data.traceId`).toBeUndefined();
+      expect(data.agentId, `${eventName}.data.agentId`).toBeUndefined();
+      expect(data.sessionKey, `${eventName}.data.sessionKey`).toBeUndefined();
+      expect(data.sessionId, `${eventName}.data.sessionId`).toBeUndefined();
+    },
+  );
 });
 
 describe("TRAJECTORY_BRIDGE_MAPPING -- architecture-test surface", () => {

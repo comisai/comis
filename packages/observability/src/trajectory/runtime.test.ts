@@ -380,6 +380,145 @@ describe("createTrajectoryRecorder -- trace.write_failures sentinel", () => {
   });
 });
 
+describe("createTrajectoryRecorder -- pointer file (design §6.1)", () => {
+  it("creates_pointer_file_when_sessionFile_provided", async () => {
+    const sessionFile = join(tmpDir, "session.jsonl");
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-ptr",
+      sessionFile,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("session.started", {});
+    await recorder!.flush();
+
+    // Trajectory file lives at <sessionFile>.trajectory.jsonl (paths.ts
+    // co-location case).
+    expect(existsSync(recorder!.filePath)).toBe(true);
+    // Pointer file lives at <sessionFile>.trajectory-path.json.
+    const pointerPath = sessionFile + ".trajectory-path.json";
+    expect(existsSync(pointerPath)).toBe(true);
+
+    const parsed = JSON.parse(readFileSync(pointerPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed.traceSchema).toBe("comis-trajectory-pointer");
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.sessionId).toBe("sid-ptr");
+    expect(parsed.runtimeFile).toBe(recorder!.filePath);
+  });
+
+  it("does_not_create_pointer_when_sessionFile_omitted (env/cwd fallback)", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-noptr",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("session.started", {});
+    await recorder!.flush();
+
+    // No sessionFile → no pointer file. (No path exists to compute the
+    // pointer location.)
+    // The trajectory file itself lives at <trajectoryDir>/<safe-sid>.trajectory.jsonl.
+    expect(existsSync(recorder!.filePath)).toBe(true);
+    // Spot-check: no sibling `*.trajectory-path.json` was created.
+    const trajPathSibling = recorder!.filePath.replace(
+      /\.jsonl$/,
+      "-path.json",
+    );
+    expect(existsSync(trajPathSibling)).toBe(false);
+  });
+});
+
+describe("createTrajectoryRecorder -- envelope shape (design §6.2)", () => {
+  it("emits_source_runtime_on_envelope by default", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-source",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("tool.call", { toolName: "x" });
+    await recorder!.flush();
+
+    const lines = readLines(recorder!.filePath) as Array<{ source: string; data: Record<string, unknown> }>;
+    expect(lines).toHaveLength(1);
+    expect(lines[0].source).toBe("runtime");
+    // source lives on the envelope, NOT inside data.
+    expect((lines[0].data as Record<string, unknown>)["source"]).toBeUndefined();
+  });
+
+  it("lifts_provider_modelid_modelapi_to_envelope from TrajectoryRecorderInit model cluster", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-lift",
+      trajectoryDir: tmpDir,
+      model: {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-20250514",
+        modelApi: "messages",
+      },
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("model.completed", { inputTokens: 10 });
+    await recorder!.flush();
+
+    const lines = readLines(recorder!.filePath) as Array<{
+      provider?: string;
+      modelId?: string;
+      modelApi?: string | null;
+      data: Record<string, unknown>;
+    }>;
+    expect(lines).toHaveLength(1);
+    expect(lines[0].provider).toBe("anthropic");
+    expect(lines[0].modelId).toBe("claude-sonnet-4-20250514");
+    expect(lines[0].modelApi).toBe("messages");
+    // The envelope fields are NOT duplicated into data when the payload
+    // doesn't already carry them.
+    expect((lines[0].data as Record<string, unknown>)["provider"]).toBeUndefined();
+    expect((lines[0].data as Record<string, unknown>)["modelId"]).toBeUndefined();
+    expect((lines[0].data as Record<string, unknown>)["modelApi"]).toBeUndefined();
+  });
+
+  it("omits_modelapi_when_init_omits_it (genuinely absent, not serialized as undefined)", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-no-modelapi",
+      trajectoryDir: tmpDir,
+      model: {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-20250514",
+      },
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("model.completed", {});
+    await recorder!.flush();
+
+    const raw = readFileSync(recorder!.filePath, "utf8");
+    // Field must NOT appear in the JSON-encoded line at all.
+    expect(raw.includes('"modelApi"')).toBe(false);
+    const lines = readLines(recorder!.filePath) as Array<Record<string, unknown>>;
+    expect(Object.prototype.hasOwnProperty.call(lines[0], "modelApi")).toBe(false);
+  });
+
+  it("lifts_workspaceDir_to_envelope_when_init_supplies_it", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-wsd",
+      trajectoryDir: tmpDir,
+      workspaceDir: "/tmp/agent-ws",
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("session.started", {});
+    await recorder!.flush();
+
+    const lines = readLines(recorder!.filePath) as Array<{ workspaceDir?: string }>;
+    expect(lines[0].workspaceDir).toBe("/tmp/agent-ws");
+  });
+});
+
 describe("createTrajectoryRecorder -- traceId resolution", () => {
   it("traceId_falls_back_to_sessionId when no AsyncLocalStorage context is in flight", async () => {
     const recorder = createTrajectoryRecorder({

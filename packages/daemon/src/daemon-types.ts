@@ -340,6 +340,8 @@ export interface AgentsHandle extends FoundationHandle {
   providerHealth: Awaited<ReturnType<typeof setupAgents>>["providerHealth"];
   oauthCredentialStore: Awaited<ReturnType<typeof setupAgents>>["oauthCredentialStore"];
   toolCapabilityPorts: Awaited<ReturnType<typeof setupAgents>>["toolCapabilityPorts"];
+  /** Session-scoped trajectory recorder registry. Drained on shutdown. */
+  trajectoryRegistry: Awaited<ReturnType<typeof setupAgents>>["trajectoryRegistry"];
   mcpClientManager: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
   // Restart continuation tracker
   continuationTracker: ReturnType<typeof createRestartContinuationTracker>;

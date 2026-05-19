@@ -104,6 +104,13 @@ export interface ShutdownDeps {
   contextPipelineCollector?: { dispose(): void };
   /** Gemini CachedContent lifecycle manager for shutdown disposal. */
   geminiCacheManager?: import("@comis/agent").GeminiCacheManager;
+  /**
+   * Session-scoped trajectory recorder registry. Shutdown drains every
+   * open per-session recorder via `closeAll()` — flushes the JSONL tail
+   * and writes the `trace.truncated` sentinel for any dropped events.
+   * Constructed in setupAgents and surfaced on AgentsResult.
+   */
+  trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
 }
 
 /** All services produced by the shutdown setup phase. */
@@ -193,6 +200,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     lifecycleReactors,
     obsPersistence,
     geminiCacheManager,
+    trajectoryRegistry,
   } = deps;
 
   const shutdownHandle = _registerGracefulShutdown({
@@ -255,6 +263,27 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           await subAgentRunner.shutdown();
           daemonLogger.info({ component: "sub-agent-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "sub-agent-runner", daemonLogger);
+      }
+
+      // Drain session-scoped trajectory recorders. Each open session's
+      // recorder flushes its queue, writes the trace.truncated sentinel
+      // when any events were dropped, and unsubscribes from the EventBus.
+      // Must run AFTER sub-agent-runner shutdown (no more events landing)
+      // and BEFORE the periodic-lock-cleanup teardown (which doesn't
+      // touch the trajectory files).
+      if (trajectoryRegistry) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await trajectoryRegistry.closeAll();
+          daemonLogger.info(
+            {
+              component: "trajectory-registry",
+              durationMs: systemNowMs() - stopMs,
+              shutdownOrder: ++shutdownOrder,
+            },
+            "Component stopped",
+          );
+        }, "trajectory-registry", daemonLogger);
       }
 
       // Clear periodic lock cleanup timer

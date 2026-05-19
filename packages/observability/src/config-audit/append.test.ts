@@ -36,31 +36,48 @@ function makeBaseRecord(overrides: Partial<ConfigWriteAuditRecord> = {}): Config
   const base: ConfigWriteAuditRecord = {
     traceSchema: "comis-config-audit",
     schemaVersion: 1,
-    phase: "write",
-    source: "config-patch-rpc",
+    ts: "2026-05-19T03:00:00.000Z",
+    source: "config-io",
+    event: "config.write",
+    result: "rename",
+
     configPath: "/home/test/.comis/config.yaml",
+    callerSource: "config-patch-rpc",
     pid: 12345,
     ppid: 1,
     argv: ["node", "daemon.js"],
     cwd: "/home/test",
     execArgv: [],
     watchMode: false,
+    watchSession: null,
+    watchCommand: null,
+
     existsBefore: true,
     previousHash:
       "0000000000000000000000000000000000000000000000000000000000000000",
-    previousBytes: 128,
-    previousStat: { dev: 64768, ino: 1, mode: 0o600, nlink: 1, uid: 1000, gid: 1000 },
-    hasMetaBefore: true,
     nextHash:
       "1111111111111111111111111111111111111111111111111111111111111111",
+    previousBytes: 128,
     nextBytes: 196,
-    nextStat: { dev: 64768, ino: 1, mode: 0o600, nlink: 1, uid: 1000, gid: 1000 },
-    hasMetaAfter: true,
+
+    previousDev: "64768",
+    nextDev: "64768",
+    previousIno: "1",
+    nextIno: "1",
+    previousMode: 0o600,
+    nextMode: 0o600,
+    previousNlink: 1,
+    nextNlink: 1,
+    previousUid: 1000,
+    nextUid: 1000,
+    previousGid: 1000,
+    nextGid: 1000,
+
     changedPathCount: 1,
-    result: "rename",
+    hasMetaBefore: true,
+    hasMetaAfter: true,
+
     suspicious: [],
-    ts: "2026-05-19T03:00:00.000Z",
-    tsMs: 1_779_148_800_000,
   };
   return { ...base, ...overrides };
 }
@@ -76,7 +93,8 @@ describe("config-audit/append", () => {
     const content = fs.readFileSync(filePath, "utf-8");
     expect(content.endsWith("\n")).toBe(true);
     const parsed = ConfigWriteAuditRecordSchema.parse(JSON.parse(content.trim()));
-    expect(parsed.source).toBe("config-patch-rpc");
+    expect(parsed.source).toBe("config-io");
+    expect(parsed.callerSource).toBe("config-patch-rpc");
     expect(parsed.pid).toBe(12345);
   });
 
@@ -185,7 +203,8 @@ describe("config-audit/append", () => {
 
     const contentSync = fs.readFileSync(filePathSync, "utf-8");
     const parsedSync = JSON.parse(contentSync.trim());
-    expect(parsedSync.source).toBe("config-patch-rpc");
+    expect(parsedSync.source).toBe("config-io");
+    expect(parsedSync.callerSource).toBe("config-patch-rpc");
 
     // Sync write should not have async-related artefacts.
     void filePathAsync;
@@ -207,7 +226,7 @@ describe("config-audit/append", () => {
       watchMode: false,
     });
 
-    expect(base.source).toBe("config-patch-rpc");
+    expect(base.callerSource).toBe("config-patch-rpc");
     expect(base.existsBefore).toBe(true);
     expect(base.previousBytes).toBeGreaterThan(0);
     expect(typeof base.previousHash).toBe("string");
@@ -312,7 +331,9 @@ describe("encodeRecord — sentinel on serialization failure", () => {
       expect(parsed.traceSchema).toBe("comis-config-audit");
       expect(parsed.schemaVersion).toBe(1);
       expect(parsed.__serializationError).toBe("record-not-serializable");
-      expect(typeof parsed.tsMs).toBe("number");
+      // Design §9.2 uses `ts` (ISO string). `tsMs` was dropped in 260519-rrm.
+      expect(typeof parsed.ts).toBe("string");
+      expect(Number.isFinite(Date.parse(parsed.ts))).toBe(true);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

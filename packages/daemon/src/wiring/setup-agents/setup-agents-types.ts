@@ -129,6 +129,17 @@ export interface SingleAgentDeps {
    * Threaded through createPiExecutor in setup-agents-runtime.ts.
    */
   obsStore?: import("@comis/memory").ObservabilityStore;
+  /**
+   * Session-scoped trajectory recorder registry — owns one
+   * `TrajectoryRecorder` per session (across N turns) so the design
+   * §6.4 + §6.5 + §6.8 invariants hold (monotonic `seq`, single
+   * `session.started`/`session.ended` per session). Constructed once
+   * in `setupAgents` via
+   * `createSessionTrajectoryHandleRegistry()` and threaded into
+   * every per-agent executor. Daemon shutdown calls `closeAll()` to
+   * drain open recorders.
+   */
+  trajectoryRegistry: import("@comis/observability").SessionTrajectoryHandleRegistry;
 }
 
 /** Per-agent outputs from setupSingleAgent(), matching the Maps in AgentsResult. */

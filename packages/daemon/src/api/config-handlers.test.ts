@@ -215,12 +215,17 @@ describe("config.patch", () => {
       expect(lines.length).toBeGreaterThanOrEqual(1);
       const record = JSON.parse(lines[lines.length - 1]!) as {
         source: string;
+        callerSource: string;
         result: string;
-        phase: string;
+        event: string;
       };
-      expect(record.source).toBe("config-patch-rpc");
+      // Design §9.2: `source` is the fixed literal "config-io"; legacy
+      // call-site identity ("config-patch-rpc") moves to `callerSource`.
+      // Discriminant is `event`, not `phase`.
+      expect(record.source).toBe("config-io");
+      expect(record.callerSource).toBe("config-patch-rpc");
       expect(record.result).toBe("rename");
-      expect(record.phase).toBe("write");
+      expect(record.event).toBe("config.write");
     });
 
     it("writes a rejected audit record on schema-validation failure", async () => {

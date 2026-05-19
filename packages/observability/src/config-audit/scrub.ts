@@ -37,7 +37,7 @@ import * as fs from "node:fs";
 
 import { ok, err, type Result } from "@comis/shared";
 import { writeRegularFile } from "../shared/fs-safe.js";
-import { systemNowMs } from "@comis/core";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
@@ -97,14 +97,89 @@ export interface ScrubParams {
  * append.ts:42 import.
  */
 function emitSerializationErrorSentinel(): string {
+  // Uses `ts` (ISO string) per design §9.2; `tsMs` dropped in
+  // 260519-rrm deviation G.
   const sentinel = {
     traceSchema: "comis-config-audit" as const,
     schemaVersion: 1 as const,
     __serializationError: "record-not-serializable" as const,
-    tsMs: systemNowMs(),
+    ts: systemDateFrom(systemNowMs()).toISOString(),
   };
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   return JSON.stringify(sentinel)! + "\n";
+}
+
+/**
+ * Lenient migrator: rewrite an OLD-shape record (carrying `phase`,
+ * nested `previousStat`/`nextStat`, `tsMs`, and the four-value `source`
+ * enum) into the NEW design §9.2 shape (`event` discriminant, flat stat
+ * fields, no `tsMs`, `source: "config-io"`, `callerSource` holding the
+ * prior `source` value).
+ *
+ * LEGACY: pre-fix records may carry the old shape — read leniently,
+ * write the new shape. Idempotent — passing a new-shape record through
+ * is a no-op (the discriminant rename is the only mutating branch).
+ */
+function migrateRecordShape(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...obj };
+
+  // Discriminant rename: old `phase` → new `event`.
+  if (typeof out.phase === "string" && typeof out.event !== "string") {
+    out.event = out.phase === "read" ? "config.observe" : "config.write";
+    delete out.phase;
+  }
+
+  // Source migration: old four-value enum → new literal + callerSource.
+  // Only do the rewrite when the existing `source` isn't already
+  // "config-io" (idempotency).
+  if (typeof out.source === "string" && out.source !== "config-io") {
+    out.callerSource = out.source;
+    out.source = "config-io";
+  }
+
+  // Drop tsMs (design §9.2 has no tsMs slot). If `ts` is absent but
+  // `tsMs` is present, materialize an ISO string before dropping it.
+  if (out.tsMs !== undefined) {
+    if (typeof out.tsMs === "number" && typeof out.ts !== "string") {
+      out.ts = systemDateFrom(out.tsMs).toISOString();
+    }
+    delete out.tsMs;
+  }
+
+  // Flatten previousStat / nextStat into the design's flat fields.
+  // Old shape: { previousStat: { dev, ino, mode, nlink, uid, gid }, ... }
+  // New shape: { previousDev, previousIno, ..., previousGid, ... }
+  // dev/ino are stringified per design §9.2.
+  const flatten = (
+    nested: unknown,
+    prefix: "previous" | "next",
+  ): void => {
+    if (nested === null || typeof nested !== "object") return;
+    const stat = nested as Record<string, unknown>;
+    const stringify = (v: unknown): string | null => {
+      if (v === undefined || v === null) return null;
+      if (typeof v === "bigint") return v.toString();
+      if (typeof v === "number") return String(v);
+      if (typeof v === "string") return v;
+      return null;
+    };
+    out[`${prefix}Dev`] = stringify(stat.dev);
+    out[`${prefix}Ino`] = stringify(stat.ino);
+    out[`${prefix}Mode`] = typeof stat.mode === "number" ? stat.mode : null;
+    out[`${prefix}Nlink`] = typeof stat.nlink === "number" ? stat.nlink : null;
+    out[`${prefix}Uid`] = typeof stat.uid === "number" ? stat.uid : null;
+    out[`${prefix}Gid`] = typeof stat.gid === "number" ? stat.gid : null;
+  };
+  if (out.previousStat !== undefined) {
+    flatten(out.previousStat, "previous");
+    delete out.previousStat;
+  }
+  if (out.nextStat !== undefined) {
+    flatten(out.nextStat, "next");
+    delete out.nextStat;
+  }
+
+  return out;
 }
 
 /** Re-encode a single parsed record through the redactor + sanitizer.
@@ -116,13 +191,15 @@ export function reEncodeRecord(parsed: unknown): string {
     if (json === undefined) return emitSerializationErrorSentinel();
     return json + "\n";
   }
-  const obj = parsed as Record<string, unknown>;
-  const withoutArgv: Record<string, unknown> = { ...obj };
+  // LEGACY: pre-260519-rrm records may carry the old shape — migrate
+  // to the design §9.2 shape on read, write only the new shape.
+  const migrated = migrateRecordShape(parsed as Record<string, unknown>);
+  const withoutArgv: Record<string, unknown> = { ...migrated };
   delete (withoutArgv as { argv?: unknown }).argv;
   const sanitized = sanitizeForPersistence(withoutArgv) as Record<string, unknown>;
   // If the record carries an argv array, run it through the
   // dedicated redactor.
-  const rawArgv = obj.argv;
+  const rawArgv = migrated.argv;
   if (Array.isArray(rawArgv)) {
     const safeArgv = rawArgv.map((v) =>
       typeof v === "string" ? v : String(v),

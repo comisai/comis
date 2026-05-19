@@ -582,13 +582,33 @@ async function runSessionLocked(
       deps.trajectoryConfig?.dir === undefined
         ? safePath(os.homedir(), ".comis")
         : undefined;
-    trajectoryRecorder = createTrajectoryRecorder({
+    // Recorder lifecycle:
+    //   - `deps.trajectoryRegistry` present → session-scoped: registry
+    //     owns the recorder + bridge subscription for the session's
+    //     lifetime, this `execute()` call just looks it up (or
+    //     materializes it on the first turn). `flushAndClose` runs in
+    //     the daemon's shutdown chain via `closeAll()`, NOT in this
+    //     execute's finally — that's what fixes design §6.4 + §6.5
+    //     + §6.8 deviations (per-turn seq reset, repeated
+    //     session.started/ended).
+    //   - `deps.trajectoryRegistry` undefined → fall back to per-turn
+    //     construction (legacy path; kept so tests + non-daemon callers
+    //     keep working).
+    const trajectoryInit = {
       agentId: agentId ?? config.name,
       sessionId: formattedKey,
       sessionKey: formattedKey,
       workspaceDir: deps.workspaceDir,
-      provider: resolvedModel?.provider ?? config.provider,
-      modelId: resolvedModel?.id ?? config.model,
+      // provider + modelId + modelApi live inside the `model` cluster
+      // on TrajectoryRecorderInit (architecture invariant: ≤12 optional
+      // fields per interface). The runtime lifts each cluster field
+      // onto the trajectory envelope when defined (design §6.2).
+      // modelApi is not threaded from this site yet — wire it in when
+      // resolvedModel exposes the API discriminator.
+      model: {
+        provider: resolvedModel?.provider ?? config.provider,
+        modelId: resolvedModel?.id ?? config.model,
+      },
       ...(trajectoryConfinedBase !== undefined
         ? { confinedBaseDir: trajectoryConfinedBase }
         : {}),
@@ -601,23 +621,49 @@ async function runSessionLocked(
       ...(deps.trajectoryConfig?.maxFileBytes !== undefined
         ? { maxRuntimeFileBytes: deps.trajectoryConfig.maxFileBytes }
         : {}),
-    });
-    if (trajectoryRecorder !== null) {
-      // Honor diagnostics.trajectory.eventTypes as a subscription-time
-      // allowlist. When set and non-empty, only the listed EventBus event
-      // names are subscribed-to by the bridge — every other event is
-      // silently dropped. The bridge accepts a
-      // `filter: (eventName) => boolean` predicate that runs ONCE per name
-      // at attach time (not per emit). Default (eventTypes unset or empty)
-      // preserves the prior behavior of subscribing to every mapped event.
-      const eventTypes = deps.trajectoryConfig?.eventTypes;
-      trajectoryUnsubscribe = attachTrajectoryToEventBus({
-        eventBus: deps.eventBus,
-        recorder: trajectoryRecorder,
-        ...(eventTypes && eventTypes.length > 0
-          ? { filter: (n) => eventTypes.includes(n) }
-          : {}),
-      });
+    };
+    const eventTypes = deps.trajectoryConfig?.eventTypes;
+    const eventTypesFilter =
+      eventTypes && eventTypes.length > 0
+        ? (n: string) => eventTypes.includes(n)
+        : undefined;
+
+    if (deps.trajectoryRegistry !== undefined) {
+      // Session-scoped: registry returns the same recorder across turns.
+      // The bridge subscription is owned by the registry — no
+      // `trajectoryUnsubscribe` to track locally; the registry's
+      // `close(formattedKey)` (driven by session-destroy) and
+      // `closeAll()` (daemon shutdown) own the teardown.
+      const { recorder } = deps.trajectoryRegistry.getOrCreate(
+        formattedKey,
+        trajectoryInit,
+        deps.eventBus,
+        eventTypesFilter as
+          | ((n: import("@comis/observability").TrajectoryBridgedEventName) => boolean)
+          | undefined,
+      );
+      trajectoryRecorder = recorder;
+      // trajectoryUnsubscribe stays undefined — registry owns it.
+    } else {
+      // Legacy per-turn path. flushAndClose still runs in this execute's
+      // finally; seq resets between turns and session.started/ended
+      // fires per turn (deviations E + F). Kept for tests and callers
+      // that haven't wired the registry yet.
+      trajectoryRecorder = createTrajectoryRecorder(trajectoryInit);
+      if (trajectoryRecorder !== null) {
+        trajectoryUnsubscribe = attachTrajectoryToEventBus({
+          eventBus: deps.eventBus,
+          recorder: trajectoryRecorder,
+          ...(eventTypesFilter !== undefined
+            ? {
+                filter:
+                  eventTypesFilter as (
+                    n: import("@comis/observability").TrajectoryBridgedEventName,
+                  ) => boolean,
+              }
+            : {}),
+        });
+      }
     }
 
     // Cache-trace recorder lifecycle (mirrors trajectory's).
@@ -1357,20 +1403,27 @@ async function runSessionLocked(
     // Tear down the trajectory recorder + bridge subscription as the very
     // last action of this execute() call. Both are best-effort — a
     // flush/unsubscribe failure must NEVER throw out of finally.
-    try {
-      trajectoryUnsubscribe?.();
-    } catch {
-      // Unsubscribe failure is unreachable in practice (EventEmitter.off
-      // is sync); swallow defensively so this never aborts cleanup.
-    }
-    if (trajectoryRecorder !== null) {
+    //
+    // When `deps.trajectoryRegistry` is present, the registry owns
+    // both the recorder and its bridge subscription. The teardown
+    // here is a no-op — `closeAll()` (daemon shutdown) and `close()`
+    // (session-destroy) are the only paths that flush + unsubscribe.
+    if (deps.trajectoryRegistry === undefined) {
       try {
-        await trajectoryRecorder.flushAndClose();
-      } catch (err) {
-        deps.logger.debug(
-          { err, hint: "trajectory flushAndClose failed; sidecar may be partial", errorKind: "internal" as ErrorKind },
-          "Trajectory recorder flushAndClose failed",
-        );
+        trajectoryUnsubscribe?.();
+      } catch {
+        // Unsubscribe failure is unreachable in practice (EventEmitter.off
+        // is sync); swallow defensively so this never aborts cleanup.
+      }
+      if (trajectoryRecorder !== null) {
+        try {
+          await trajectoryRecorder.flushAndClose();
+        } catch (err) {
+          deps.logger.debug(
+            { err, hint: "trajectory flushAndClose failed; sidecar may be partial", errorKind: "internal" as ErrorKind },
+            "Trajectory recorder flushAndClose failed",
+          );
+        }
       }
     }
 

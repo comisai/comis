@@ -116,6 +116,7 @@ export {
 } from "./trajectory/types.js";
 export type {
   TrajectoryEvent,
+  TrajectoryEventSource,
   TrajectoryEventType,
   TrajectoryRecorder,
   TrajectoryRecorderBudgets,
@@ -128,6 +129,9 @@ export {
   resolveTrajectoryPointerOpenFlags,
 } from "./trajectory/paths.js";
 
+export { writeTrajectoryPointerFileBestEffort } from "./trajectory/pointer-file.js";
+export type { WriteTrajectoryPointerFileParams } from "./trajectory/pointer-file.js";
+
 export { createTrajectoryRecorder } from "./trajectory/runtime.js";
 
 export {
@@ -135,6 +139,12 @@ export {
   TRAJECTORY_BRIDGE_MAPPING,
 } from "./trajectory/event-bus-bridge.js";
 export type { TrajectoryBridgedEventName } from "./trajectory/event-bus-bridge.js";
+
+export { createSessionTrajectoryHandleRegistry } from "./trajectory/session-registry.js";
+export type {
+  SessionTrajectoryHandleRegistry,
+  SessionTrajectoryFilter,
+} from "./trajectory/session-registry.js";
 
 // ---------------------------------------------------------------------------
 // SystemPromptReport surface.

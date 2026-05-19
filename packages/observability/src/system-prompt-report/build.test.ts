@@ -175,6 +175,71 @@ describe("buildSystemPromptReport", () => {
   });
 });
 
+describe("buildSystemPromptReport — single-trailing-whitespace tolerance (deviation H)", () => {
+  it("does_not_flag_single_char_delta_as_truncation: rawChars - injectedChars == 1", () => {
+    // Mirrors the audit evidence: SOUL.md 2840→2839, IDENTITY.md
+    // 787→786, USER.md 458→457. All three are single-newline strips.
+    const bootstrapFiles: BootstrapFileForReport[] = [
+      {
+        name: "SOUL.md",
+        missing: false,
+        rawChars: 2840,
+        injectedChars: 2839,
+        rawContent: "x".repeat(2840),
+      },
+    ];
+    const report = buildSystemPromptReport(makeBaseParams({ bootstrapFiles }));
+    expect(report.injectedWorkspaceFiles[0]?.truncated).toBe(false);
+    expect(report.bootstrapTruncation.filesTruncated).toBe(0);
+    expect(report.bootstrapTruncation.applied).toBe(false);
+  });
+
+  it("does_flag_multi_char_delta_as_truncation: rawChars - injectedChars > 1", () => {
+    const bootstrapFiles: BootstrapFileForReport[] = [
+      {
+        name: "SOUL.md",
+        missing: false,
+        rawChars: 2840,
+        injectedChars: 2820, // 20-char delta — real truncation
+        rawContent: "x".repeat(2840),
+      },
+    ];
+    const report = buildSystemPromptReport(makeBaseParams({ bootstrapFiles }));
+    expect(report.injectedWorkspaceFiles[0]?.truncated).toBe(true);
+    expect(report.bootstrapTruncation.filesTruncated).toBe(1);
+    expect(report.bootstrapTruncation.applied).toBe(true);
+  });
+
+  it("zero_delta_is_not_truncation: rawChars == injectedChars", () => {
+    const bootstrapFiles: BootstrapFileForReport[] = [
+      {
+        name: "IDENTITY.md",
+        missing: false,
+        rawChars: 100,
+        injectedChars: 100,
+        rawContent: "y".repeat(100),
+      },
+    ];
+    const report = buildSystemPromptReport(makeBaseParams({ bootstrapFiles }));
+    expect(report.injectedWorkspaceFiles[0]?.truncated).toBe(false);
+    expect(report.bootstrapTruncation.filesTruncated).toBe(0);
+  });
+
+  it("missing_file_never_truncated_regardless_of_delta (existing regression guard)", () => {
+    const bootstrapFiles: BootstrapFileForReport[] = [
+      {
+        name: "USER.md",
+        missing: true,
+        rawChars: 0,
+        injectedChars: 0,
+      },
+    ];
+    const report = buildSystemPromptReport(makeBaseParams({ bootstrapFiles }));
+    expect(report.injectedWorkspaceFiles[0]?.truncated).toBe(false);
+    expect(report.injectedWorkspaceFiles[0]?.missing).toBe(true);
+  });
+});
+
 describe("buildSystemPromptReport — metadata pass-through", () => {
   beforeEach(() => {
     // No-op; placeholder for any future stateful cache shared across cases.
