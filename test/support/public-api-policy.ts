@@ -1401,35 +1401,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // bootstrap closure + production retargets consume them. Tracked here
     // per the public-export-consumers gate; removed wholesale when the
     // daemon composition root wires them in.
+    // Plan 45.1-06 (TRAJ-FIX-10): the six fs-safe symbols
+    // (SymlinkParentRejected, FileSizeLimitExceeded,
+    // AppendRegularFileOptions / Success / Error, PathEscapesConfinementError)
+    // previously listed here moved to @comis/observability/src/shared/fs-safe.ts
+    // and are no longer exported by @comis/infra's barrel. The
+    // log-related runtime adapters (createSystemClock / Env / Timers,
+    // LogFields, VALID_LOG_LEVELS) remain baseline orphans — they are
+    // Node-backed runtime adapters surfaced for future consumers that
+    // get wired in at the daemon composition root.
     ["@comis/infra", new Set<string>([
       "LogFields",
       "VALID_LOG_LEVELS",
       "createSystemClock",
       "createSystemEnv",
       "createSystemTimers",
-      // Plan 45-01 Task 8: appendRegularFile is consumed by
-      // @comis/observability/src/shared/queued-file-writer.ts (a real
-      // consumer — not listed here). The five symbols below are the
-      // error classes + option/result type aliases that form the public
-      // contract — Plan 45-03 (trajectory writer), 45-04 (system-prompt-
-      // report), and 45-05 (config-audit) consume them for their own
-      // try-catch boundaries. Tracked here as baseline orphans until
-      // those plans land.
-      "SymlinkParentRejected",
-      "FileSizeLimitExceeded",
-      "AppendRegularFileOptions",
-      "AppendRegularFileSuccess",
-      "AppendRegularFileError",
-      // Plan 45.1-03 (TRAJ-FIX-01): PathEscapesConfinementError is the
-      // sentinel for the opt-in real-path confinement check on
-      // appendRegularFile / writeRegularFile. The three observability
-      // callers (queued-file-writer, config-audit/append, scrub) emit
-      // the error implicitly through the Result return path; they
-      // don't need to import the sentinel class because the swallow /
-      // surface boundary in those callers handles the union by error
-      // shape. Tracked as a baseline orphan until a caller chooses to
-      // pattern-match on `instanceof PathEscapesConfinementError`.
-      "PathEscapesConfinementError",
     ])],
     // @comis/memory: baseline orphans tracked here + 5 transient orphans
     // (SessionStore alias + SessionDetailedEntry + 3 Ctx*Row types).

@@ -17,9 +17,10 @@
  *      `@comis/core/security.safePath`. `safePath` also walks symlinks
  *      at intermediate path components. The observability writer pairs
  *      `resolveContainedPath` with `appendRegularFile` from
- *      `@comis/infra/fs-safe` which performs `lstat` + `O_NOFOLLOW`
- *      at the actual open() boundary — splitting the symlink check
- *      from the path-string check keeps each helper single-purpose.
+ *      `./fs-safe.ts` (moved out of `@comis/infra` in Plan 45.1-06)
+ *      which performs `lstat` + `O_NOFOLLOW` at the actual open()
+ *      boundary — splitting the symlink check from the path-string
+ *      check keeps each helper single-purpose.
  *
  *   2. **`safeTrajectorySessionFileName`** — collapse an arbitrary
  *      session id into a filesystem-safe filename. Any character

@@ -36,7 +36,7 @@
 import * as fs from "node:fs";
 
 import { ok, err, type Result } from "@comis/shared";
-import { writeRegularFile } from "@comis/infra";
+import { writeRegularFile } from "../shared/fs-safe.js";
 import { systemNowMs } from "@comis/core";
 
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
@@ -190,7 +190,8 @@ export async function scrubConfigAuditLog(
   const rewritten = out.join("\n") + "\n";
 
   // BL-02 fix (Plan 45-gap-01): replace fs.writeFileSync with the
-  // symlink-safe writeRegularFile from @comis/infra. Default
+  // symlink-safe writeRegularFile from ../shared/fs-safe.js (moved out
+  // of @comis/infra into @comis/observability in Plan 45.1-06). Default
   // unlinkExisting:true closes the symlink-pre-stage window — an
   // attacker who stages a symlink at tmpPath pointing to an arbitrary
   // file the daemon can write would have the symlink unlinked before

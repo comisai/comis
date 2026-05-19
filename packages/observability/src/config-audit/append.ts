@@ -39,8 +39,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { ok, err, type Result } from "@comis/shared";
-import { appendRegularFile } from "@comis/infra";
-import { systemDateFrom, systemNowMs } from "@comis/core";
+import { appendRegularFile } from "../shared/fs-safe.js";
+import { safePath, systemDateFrom, systemNowMs } from "@comis/core";
 
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
@@ -333,7 +333,7 @@ export interface AppendConfigAuditParams {
 export function getDefaultConfigAuditConfinedBase(
   resolvedAuditLogPath?: string,
 ): string | undefined {
-  const defaultBase = path.join(os.homedir(), ".comis");
+  const defaultBase = safePath(os.homedir(), ".comis");
   if (resolvedAuditLogPath === undefined) return defaultBase;
   // When the resolved log path stays inside ~/.comis/, the default
   // base applies. When the operator points the env-var elsewhere

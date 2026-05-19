@@ -52,7 +52,10 @@ describe("Config Schema Validation", () => {
       // Snapshot-style guard: bump this count when a new top-level section is
       // added so the change surfaces in code review. Count reflects all scalars
       // plus all object sections currently in AppConfigSchema.shape.
-      expect(allKeys).toHaveLength(40);
+      // Phase 45.1 added `diagnostics` (the scaffold registered by 45-01 task 12
+      // and wired by 45.1-04 task 2 at the schema level) — top-level count
+      // bumped from 40 to 41.
+      expect(allKeys).toHaveLength(41);
     });
 
     it("empty config {} produces valid defaults for all sections", () => {

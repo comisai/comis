@@ -103,4 +103,39 @@ describe("@comis/observability isolation — no @comis/agent + @comis/daemon + @
       );
     }
   });
+
+  // TRAJ-FIX-10 — Plan 45.1-06 closed the bidirectional package-deps cycle
+  // between @comis/infra and @comis/observability:
+  //   - fs-safe.ts moved from @comis/infra to @comis/observability (task 2).
+  //   - @comis/infra dep was dropped from @comis/observability/package.json
+  //     and the corresponding tsconfig project reference (task 3).
+  //   - redact-transport.ts was rewritten as a static re-export of
+  //     @comis/observability/dist/redact/pino-redact-transport.js (task 3),
+  //     and packages/infra/tsconfig.json gained `{ "path": "../observability" }`.
+  // The resulting graph is one-direction: @comis/infra → @comis/observability.
+  // This assertion locks the architectural invariant at the package-deps
+  // layer. The companion forward-direction check
+  // (`@comis/infra DOES depend on @comis/observability`) is the other
+  // active case in this describe block.
+  it("@comis/observability does NOT depend on @comis/infra (TRAJ-FIX-10)", () => {
+    const pkg = JSON.parse(
+      readFileSync(
+        resolve(REPO_ROOT, "packages/observability/package.json"),
+        "utf8",
+      ),
+    );
+    const deps = pkg.dependencies ?? {};
+    expect(deps["@comis/infra"]).toBeUndefined();
+  });
+
+  it("@comis/infra DOES depend on @comis/observability (one-arrow preserved, TRAJ-FIX-10)", () => {
+    const pkg = JSON.parse(
+      readFileSync(
+        resolve(REPO_ROOT, "packages/infra/package.json"),
+        "utf8",
+      ),
+    );
+    const deps = pkg.dependencies ?? {};
+    expect(deps["@comis/observability"]).toBe("workspace:*");
+  });
 });

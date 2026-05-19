@@ -20,30 +20,10 @@ export { createSystemClock } from "./runtime/clock.js";
 export { createSystemEnv } from "./runtime/env.js";
 export { createSystemTimers } from "./runtime/timers.js";
 
-// Symlink-safe file-append primitive for diagnostic artifact writers.
-// First O_NOFOLLOW + lstat-parent + fchmod 0o600 user in the repo (research §7).
-// Plan 45-gap-01 Task 1: writeRegularFile (write-truncate analogue) for the
-// config-audit scrubber tmp-write site (closes BL-02).
-// Plan 45.1-03 (TRAJ-FIX-01): PathEscapesConfinementError sentinel for the
-// opt-in `confinedBaseDir` real-path containment check that closes the
-// ancestor-symlink gap (O_NOFOLLOW + parent-lstat together do not cover
-// a symlinked grandparent of the target).
-export {
-  appendRegularFile,
-  writeRegularFile,
-  SymlinkParentRejected,
-  PathEscapesConfinementError,
-  FileSizeLimitExceeded,
-} from "./fs-safe.js";
-export type {
-  AppendRegularFileOptions,
-  AppendRegularFileSuccess,
-  AppendRegularFileError,
-  // WriteRegularFile* types are NOT re-exported from the barrel: the
-  // public consumer (config-audit/scrub.ts) imports `writeRegularFile`
-  // by value only and lets TypeScript infer the option/result shapes
-  // from the function signature. Per public-export-consumers policy,
-  // dead barrel exports must be removed unless there's a documented
-  // out-of-repo consumer; re-add here (with a consumer added in the
-  // same PR) only if a published API contract requires it.
-} from "./fs-safe.js";
+// Plan 45.1-06 (TRAJ-FIX-10): the fs-safe primitives (appendRegularFile +
+// writeRegularFile + SymlinkParentRejected / PathEscapesConfinementError /
+// FileSizeLimitExceeded sentinels + option/result types) moved out of this
+// package into @comis/observability/shared/fs-safe.ts. The package-deps
+// arrow is now one-direction: @comis/infra → @comis/observability (via the
+// static re-export in logging/redact-transport.ts). The architecture
+// invariant is locked by test/architecture/observability-package-isolation.test.ts.
