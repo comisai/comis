@@ -494,6 +494,28 @@ export const DeliveryStatsDbRowSchema = z.strictObject({
 });
 export type DeliveryStatsDbRowFromSchema = z.infer<typeof DeliveryStatsDbRowSchema>;
 
+/**
+ * Schema for `system_prompt_reports` rows (Plan 45-04).
+ * SSOT for the file-internal `SystemPromptReportDbRow` interface in
+ * observability-store-types.ts. The full report JSON is stored in
+ * `report_json` (post-sanitizeForPersistence); this on-disk schema
+ * validates only the column shape, not the JSON contents (those flow
+ * through JSON.parse(row.report_json) at read time).
+ */
+export const SystemPromptReportDbRowSchema = z.strictObject({
+  agent_id: z.string(),
+  tenant_id: z.string().nullable(),
+  session_id: z.string(),
+  run_id: z.string().nullable(),
+  generated_at: z.number().int(),
+  provider: z.string().nullable(),
+  model: z.string().nullable(),
+  system_chars: z.number().int(),
+  system_sha256: z.string(),
+  report_json: z.string(),
+});
+export type SystemPromptReportDbRowFromSchema = z.infer<typeof SystemPromptReportDbRowSchema>;
+
 // --- OAuth profile store (packages/memory/src/oauth-profile-store-encrypted.ts:29) ---
 
 /**

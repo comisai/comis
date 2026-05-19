@@ -77,6 +77,7 @@ import {
   SessionAggDbRowSchema,
   HourlyBucketDbRowSchema,
   DeliveryStatsDbRowSchema,
+  SystemPromptReportDbRowSchema,
   OAuthProfileRowSchema,
   CredentialMappingRowSchema,
   DeliveryMirrorDbRowSchema,
@@ -301,6 +302,71 @@ describe("row-schemas — internal DB row runtime parses", () => {
       avg_latency_ms: 150,
     };
     expect(DeliveryStatsDbRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("SystemPromptReportDbRowSchema parses a complete system_prompt_reports row", () => {
+    const sample = {
+      agent_id: "agent-1",
+      tenant_id: "tenant-x",
+      session_id: "session-1",
+      run_id: "run-1",
+      generated_at: 1_700_000_000_000,
+      provider: "anthropic",
+      model: "claude-3-opus",
+      system_chars: 1024,
+      system_sha256: "deadbeefcafebabe",
+      report_json: '{"traceSchema":"comis-system-prompt-report","schemaVersion":1}',
+    };
+    expect(SystemPromptReportDbRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("SystemPromptReportDbRowSchema accepts null for nullable columns", () => {
+    const sample = {
+      agent_id: "agent-1",
+      tenant_id: null,
+      session_id: "session-1",
+      run_id: null,
+      generated_at: 1_700_000_000_000,
+      provider: null,
+      model: null,
+      system_chars: 100,
+      system_sha256: "abc",
+      report_json: "{}",
+    };
+    expect(SystemPromptReportDbRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("SystemPromptReportDbRowSchema rejects an extra column (strictObject invariant)", () => {
+    const sample = {
+      agent_id: "agent-1",
+      tenant_id: null,
+      session_id: "session-1",
+      run_id: null,
+      generated_at: 1,
+      provider: null,
+      model: null,
+      system_chars: 1,
+      system_sha256: "a",
+      report_json: "{}",
+      extra_column_not_in_schema: "x",
+    };
+    expect(SystemPromptReportDbRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it("SystemPromptReportDbRowSchema rejects a row missing the required agent_id field", () => {
+    const sample = {
+      // agent_id missing
+      tenant_id: null,
+      session_id: "session-1",
+      run_id: null,
+      generated_at: 1,
+      provider: null,
+      model: null,
+      system_chars: 1,
+      system_sha256: "a",
+      report_json: "{}",
+    };
+    expect(SystemPromptReportDbRowSchema.safeParse(sample).success).toBe(false);
   });
 
   it("OAuthProfileRowSchema parses an encrypted oauth_profiles row with Buffer columns", () => {
