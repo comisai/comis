@@ -42,13 +42,13 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 20 entries (18 original + 2 SystemPromptReport methods)", () => {
-    // Plan 45-04 added 2 new methods (obs.systemPromptReport.latest +
-    // obs.systemPromptReport.list); count bumped 18 → 20.
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(20);
+  it("OBSERVABILITY_CONTRACTS has exactly 21 entries (20 prior + 1 cache-stats window)", () => {
+    // Plan 46-02 added 1 new method (obs.cacheStats.window); count
+    // bumped 20 → 21.
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(21);
   });
 
-  it("all 20 contracts are admin-scoped", () => {
+  it("all 21 contracts are admin-scoped", () => {
     for (const c of OBSERVABILITY_CONTRACTS) {
       expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
     }
@@ -64,6 +64,8 @@ describe("observability-domain contracts", () => {
       "obs.billing.bySession",
       "obs.billing.total",
       "obs.billing.usage24h",
+      // Plan 46-02: durable cache-stats window aggregator.
+      "obs.cacheStats.window",
       "obs.channels.all",
       "obs.channels.get",
       "obs.channels.stale",

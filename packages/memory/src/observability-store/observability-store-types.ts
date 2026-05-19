@@ -22,6 +22,15 @@ import {
   SystemPromptReportDbRowSchema,
 } from "../row-schemas.js";
 import { createRowMapper } from "../row-mapper.js";
+import type { CacheStatsQueriesSlice } from "./cache-stats-types.js";
+
+export type {
+  CacheStatsWindowRow,
+  CacheStatsByProviderRow,
+  CacheStatsByModelRow,
+  CacheStatsByAgentRow,
+  CacheStatsQueriesSlice,
+} from "./cache-stats-types.js";
 
 // ---------------------------------------------------------------------------
 // Row mappers (typed row parsing via createRowMapper)
@@ -222,7 +231,8 @@ export interface DiagnosticQueryParams {
 }
 
 /** The ObservabilityStore interface. */
-export interface ObservabilityStore {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface ObservabilityStore extends CacheStatsQueriesSlice {
   // Token usage
   insertTokenUsage(entry: TokenUsageRow): void;
   queryTokenUsage(params?: TokenUsageQueryParams): TokenUsageRow[];
@@ -257,66 +267,12 @@ export interface ObservabilityStore {
   latestSystemPromptReport(agentId: string, sessionId: string, runId?: string): SystemPromptReportRow | undefined;
   listSystemPromptReports(sessionId: string, limit: number): SystemPromptReportRow[];
 
-  // Plan 46-02: cache-stats queries over `obs_token_usage`
-  /**
-   * Single-row window aggregate for the durable cache-stats RPC. All
-   * snake_case to match the SQLite column shape; the `@comis/observability`
-   * aggregator maps these to the camelCase `CacheStatsWindow` surface.
-   * `non_cached_input_tokens` is derived as `prompt - cache_read -
-   * cache_write` (clamped ≥ 0 — see cache-stats-queries.ts).
-   */
-  queryCacheStatsWindow(params: {
-    since: number;
-    until?: number;
-    agent?: string;
-    provider?: string;
-  }): {
-    cache_read_tokens: number;
-    cache_write_tokens: number;
-    non_cached_input_tokens: number;
-    output_tokens: number;
-    turns: number;
-  };
-  /** GROUP BY provider breakdown for the same window. */
-  queryCacheStatsByProvider(params: {
-    since: number;
-    until?: number;
-    agent?: string;
-  }): Array<{
-    provider: string;
-    cache_read_tokens: number;
-    cache_write_tokens: number;
-    non_cached_input_tokens: number;
-    output_tokens: number;
-    turns: number;
-  }>;
-  /** GROUP BY provider, model breakdown for the same window. */
-  queryCacheStatsByModel(params: {
-    since: number;
-    until?: number;
-    agent?: string;
-  }): Array<{
-    provider: string;
-    model: string;
-    cache_read_tokens: number;
-    cache_write_tokens: number;
-    non_cached_input_tokens: number;
-    output_tokens: number;
-    turns: number;
-  }>;
-  /** GROUP BY agent_id breakdown for the same window. */
-  queryCacheStatsByAgent(params: {
-    since: number;
-    until?: number;
-    provider?: string;
-  }): Array<{
-    agent_id: string;
-    cache_read_tokens: number;
-    cache_write_tokens: number;
-    non_cached_input_tokens: number;
-    output_tokens: number;
-    turns: number;
-  }>;
+  // Plan 46-02: cache-stats queries are inherited from
+  // `CacheStatsQueriesSlice` (see top-of-file import). Methods:
+  //   - queryCacheStatsWindow
+  //   - queryCacheStatsByProvider
+  //   - queryCacheStatsByModel
+  //   - queryCacheStatsByAgent
 
   // Maintenance
   prune(retentionDays: number): PruneResult;

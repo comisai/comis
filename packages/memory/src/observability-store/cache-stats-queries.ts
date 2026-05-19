@@ -26,6 +26,18 @@
  * @module
  */
 import type Database from "better-sqlite3";
+import {
+  CacheStatsWindowRawDbRowSchema,
+  CacheStatsByProviderRawDbRowSchema,
+  CacheStatsByModelRawDbRowSchema,
+  CacheStatsByAgentRawDbRowSchema,
+} from "../row-schemas.js";
+import { createRowMapper } from "../row-mapper.js";
+
+const cacheStatsWindowMapper = createRowMapper(CacheStatsWindowRawDbRowSchema);
+const cacheStatsByProviderMapper = createRowMapper(CacheStatsByProviderRawDbRowSchema);
+const cacheStatsByModelMapper = createRowMapper(CacheStatsByModelRawDbRowSchema);
+const cacheStatsByAgentMapper = createRowMapper(CacheStatsByAgentRawDbRowSchema);
 
 /**
  * Raw shape returned by the window-aggregate SQL. Snake_case to match
@@ -38,19 +50,6 @@ export interface CacheStatsWindowResult {
   non_cached_input_tokens: number;
   output_tokens: number;
   turns: number;
-}
-
-interface RawWindowAggregate {
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  prompt_tokens: number;
-  output_tokens: number;
-  turns: number;
-}
-
-interface RawGroupedRow extends RawWindowAggregate {
-  // Group key fields are added at use site.
-  [key: string]: number | string;
 }
 
 interface WindowParams {
@@ -132,7 +131,10 @@ export function buildCacheStatsQueries(db: Database.Database) {
 
   function queryCacheStatsWindow(params: WindowParams): CacheStatsWindowResult {
     const { sql, args } = buildWindowSql(params);
-    const row = db.prepare(sql).get(...args) as RawWindowAggregate | undefined;
+    const raw = db.prepare(sql).get(...args);
+    const parsed = cacheStatsWindowMapper.parseOptionalRow(raw);
+    // Degrade-on-validation-error: observability aggregate → zero-row shape.
+    const row = parsed.ok ? parsed.value : undefined;
     if (!row) {
       return {
         cache_read_tokens: 0,
@@ -188,7 +190,9 @@ export function buildCacheStatsQueries(db: Database.Database) {
     turns: number;
   }> {
     const { sql, args } = buildByProviderSql(params);
-    const rows = db.prepare(sql).all(...args) as Array<RawGroupedRow & { provider: string }>;
+    const raw = db.prepare(sql).all(...args);
+    const parsed = cacheStatsByProviderMapper.parseRows(raw);
+    const rows = parsed.ok ? parsed.value : [];
     return rows.map((r) => ({
       provider: r.provider,
       cache_read_tokens: r.cache_read_tokens,
@@ -238,9 +242,9 @@ export function buildCacheStatsQueries(db: Database.Database) {
     turns: number;
   }> {
     const { sql, args } = buildByModelSql(params);
-    const rows = db.prepare(sql).all(...args) as Array<
-      RawGroupedRow & { provider: string; model: string }
-    >;
+    const raw = db.prepare(sql).all(...args);
+    const parsed = cacheStatsByModelMapper.parseRows(raw);
+    const rows = parsed.ok ? parsed.value : [];
     return rows.map((r) => ({
       provider: r.provider,
       model: r.model,
@@ -289,9 +293,9 @@ export function buildCacheStatsQueries(db: Database.Database) {
     turns: number;
   }> {
     const { sql, args } = buildByAgentSql(params);
-    const rows = db.prepare(sql).all(...args) as Array<
-      RawGroupedRow & { agent_id: string }
-    >;
+    const raw = db.prepare(sql).all(...args);
+    const parsed = cacheStatsByAgentMapper.parseRows(raw);
+    const rows = parsed.ok ? parsed.value : [];
     return rows.map((r) => ({
       agent_id: r.agent_id,
       cache_read_tokens: r.cache_read_tokens,

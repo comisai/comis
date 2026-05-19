@@ -220,3 +220,31 @@ export type {
 
 export { scrubConfigAuditLog, ScrubConfigAuditError } from "./config-audit/scrub.js";
 export type { ScrubResult, ScrubParams } from "./config-audit/scrub.js";
+
+// ---------------------------------------------------------------------------
+// Cache-stats surface (Plan 46-02).
+// ---------------------------------------------------------------------------
+//
+// Durable warm-cache hit-rate aggregator over the `obs_token_usage`
+// SQLite table. The CLI dispatches `obs.cacheStats.window` via this
+// surface; the daemon wires its `ObservabilityStore` into the
+// `CacheStatsStore` port.
+//
+// Architecture: the aggregator depends on the port, not on
+// `@comis/memory`. The package-isolation invariant
+// (`test/architecture/observability-package-isolation.test.ts`) keeps
+// `@comis/observability` a leaf consumer.
+
+export { CacheStatsWindowSchema } from "./cache-stats/types.js";
+export type {
+  CacheStatsWindow,
+  CacheStatsBreakdown,
+  CacheStatsStore,
+} from "./cache-stats/types.js";
+export { aggregateCacheStats } from "./cache-stats/aggregator.js";
+export { buildCacheStatsRpcHandler } from "./cache-stats/rpc-handler-shape.js";
+export type {
+  BuildCacheStatsRpcHandlerDeps,
+  CacheStatsRpcContract,
+} from "./cache-stats/rpc-handler-shape.js";
+export { parseSince } from "./cache-stats/parse-since.js";

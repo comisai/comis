@@ -6588,6 +6588,56 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   },
+  "obs.cacheStats.window": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sinceMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "untilMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "sinceMs"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "window": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "window"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "obs.channels.all": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

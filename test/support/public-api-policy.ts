@@ -1545,6 +1545,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Plan 45-04: system_prompt_reports table row schema.
       "SystemPromptReportDbRowSchema",
       "SystemPromptReportDbRowFromSchema",
+      // Plan 46-02: cache-stats SQL row schemas (4 × 2 = 8 entries).
+      "CacheStatsWindowRawDbRowSchema",
+      "CacheStatsWindowRawDbRowFromSchema",
+      "CacheStatsByProviderRawDbRowSchema",
+      "CacheStatsByProviderRawDbRowFromSchema",
+      "CacheStatsByModelRawDbRowSchema",
+      "CacheStatsByModelRawDbRowFromSchema",
+      "CacheStatsByAgentRawDbRowSchema",
+      "CacheStatsByAgentRawDbRowFromSchema",
       "OAuthProfileRowSchema",
       "OAuthProfileRowFromSchema",
       "CredentialMappingRowSchema",

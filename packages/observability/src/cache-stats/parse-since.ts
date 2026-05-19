@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: CLI input parser — invalid input bubbles to a user-readable error message + process.exit(1) at the CLI call site (packages/cli/src/commands/cache.ts). The two throws below are the only validation surface; their messages embed the offending input for operator diagnosis.
 /**
  * Plan 46-02 (CACHE-OBS-03): `--since` window shorthand parser.
  *

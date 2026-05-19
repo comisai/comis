@@ -32,6 +32,7 @@ import { createSubagentHandlers } from "./subagent-handlers.js";
 import { createApprovalHandlers } from "./approval-handlers.js";
 import { createAgentHandlers } from "./agent-handlers.js";
 import { createObsHandlers } from "./obs-handlers/index.js";
+import { createCacheHandlers } from "./cache-handlers.js";
 import { createModelHandlers } from "./model-handlers.js";
 import { createChannelHandlers } from "./channel-handlers.js";
 import { createTokenHandlers } from "./token-handlers.js";
@@ -198,6 +199,9 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       },
     }),
     ...createObsHandlers(deps),
+    // Plan 46-02: durable cache-stats window aggregator. Distinct from
+    // obs-handlers (in-memory) — reads from `obs_token_usage` SQLite.
+    ...createCacheHandlers(deps),
     ...createModelHandlers({
       ...deps,
       providerEntries: deps.container.config.providers.entries,

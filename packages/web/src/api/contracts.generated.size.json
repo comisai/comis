@@ -1,6 +1,6 @@
 {
-  "totalMinified": 105209,
-  "totalGzipped": 9704,
+  "totalMinified": 105794,
+  "totalGzipped": 9780,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -134,6 +134,7 @@
     "obs.billing.bySession": 514,
     "obs.billing.total": 443,
     "obs.billing.usage24h": 278,
+    "obs.cacheStats.window": 587,
     "obs.channels.all": 375,
     "obs.channels.get": 444,
     "obs.channels.stale": 400,

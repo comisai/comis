@@ -567,6 +567,19 @@ export const ObsGetCacheStatsContract = defineContract({
   scopes: ["admin"] as const,
 });
 
+/** `obs.cacheStats.window` (Plan 46-02) — durable cache stats from
+ *  `obs_token_usage`. Admin-only. CacheStatsWindow SSOT lives in
+ *  `@comis/observability`. Tenant deferred (RESEARCH §7 — no `tenant_id`). */
+export const ObsCacheStatsWindowContract = defineContract({
+  method: "obs.cacheStats.window",
+  request: z.object({
+    sinceMs: z.number().int().nonnegative(), untilMs: z.number().int().nonnegative().optional(),
+    agent: z.string().min(1).optional(), provider: z.string().min(1).optional(),
+  }),
+  response: z.object({ window: ObsRecord }),
+  scopes: ["admin"] as const,
+});
+
 // ---------------------------------------------------------------------------
 // memory.embeddingCache
 // ---------------------------------------------------------------------------
@@ -769,6 +782,7 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsBillingBySessionContract,
   ObsBillingTotalContract,
   ObsBillingUsage24hContract,
+  ObsCacheStatsWindowContract, // Plan 46-02
   ObsChannelsAllContract,
   ObsChannelsGetContract,
   ObsChannelsStaleContract,

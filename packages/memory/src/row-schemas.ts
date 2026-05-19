@@ -516,6 +516,59 @@ export const SystemPromptReportDbRowSchema = z.strictObject({
 });
 export type SystemPromptReportDbRowFromSchema = z.infer<typeof SystemPromptReportDbRowSchema>;
 
+/**
+ * Plan 46-02: cache-stats SQL row schemas. Four shapes — the single-row
+ * window aggregate plus three GROUP BY variants. The `prompt_tokens` field
+ * is present on raw rows (used to derive `non_cached_input_tokens` in
+ * `cache-stats-queries.ts` via TS clamping); the camelCase
+ * `CacheStatsWindow` surface drops it.
+ */
+export const CacheStatsWindowRawDbRowSchema = z.strictObject({
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  prompt_tokens: z.number(),
+  output_tokens: z.number(),
+  turns: z.number(),
+});
+export type CacheStatsWindowRawDbRowFromSchema = z.infer<typeof CacheStatsWindowRawDbRowSchema>;
+
+export const CacheStatsByProviderRawDbRowSchema = z.strictObject({
+  provider: z.string(),
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  prompt_tokens: z.number(),
+  output_tokens: z.number(),
+  turns: z.number(),
+});
+export type CacheStatsByProviderRawDbRowFromSchema = z.infer<
+  typeof CacheStatsByProviderRawDbRowSchema
+>;
+
+export const CacheStatsByModelRawDbRowSchema = z.strictObject({
+  provider: z.string(),
+  model: z.string(),
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  prompt_tokens: z.number(),
+  output_tokens: z.number(),
+  turns: z.number(),
+});
+export type CacheStatsByModelRawDbRowFromSchema = z.infer<
+  typeof CacheStatsByModelRawDbRowSchema
+>;
+
+export const CacheStatsByAgentRawDbRowSchema = z.strictObject({
+  agent_id: z.string(),
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  prompt_tokens: z.number(),
+  output_tokens: z.number(),
+  turns: z.number(),
+});
+export type CacheStatsByAgentRawDbRowFromSchema = z.infer<
+  typeof CacheStatsByAgentRawDbRowSchema
+>;
+
 // --- OAuth profile store (packages/memory/src/oauth-profile-store-encrypted.ts:29) ---
 
 /**

@@ -23,6 +23,7 @@
  *
  * @module
  */
+import { systemNowMs } from "@comis/core";
 import type {
   CacheStatsStore,
   CacheStatsWindow,
@@ -92,7 +93,7 @@ export async function aggregateCacheStats(
   params: { sinceMs: number; untilMs?: number; agent?: string; provider?: string },
 ): Promise<CacheStatsWindow> {
   const since = params.sinceMs;
-  const until = params.untilMs ?? Date.now();
+  const until = params.untilMs ?? systemNowMs();
   const filter = { since, until, agent: params.agent, provider: params.provider };
 
   const window = deps.store.queryCacheStatsWindow(filter);
