@@ -8,6 +8,7 @@ import { ChannelConfigSchema } from "./schema-channel.js";
 import { CoalescerConfigSchema } from "./schema-coalescer.js";
 import { DaemonConfigSchema } from "./schema-daemon.js";
 import { DeliveryMirrorConfigSchema, DeliveryQueueConfigSchema, DeliveryTimingConfigSchema } from "./schema-delivery.js";
+import { DiagnosticsConfigSchema } from "./schema-diagnostics.js";
 import { OutputRetentionConfigSchema } from "./schema-output-retention.js";
 import { DocumentationConfigSchema } from "./schema-documentation.js";
 import { EmbeddingConfigSchema } from "./schema-embedding.js";
@@ -72,6 +73,18 @@ export const AppConfigSchema = z.strictObject({
     monitoring: MonitoringConfigSchema.default(() => MonitoringConfigSchema.parse({})),
     /** Observability persistence configuration */
     observability: ObservabilityConfigSchema.default(() => ObservabilityConfigSchema.parse({})),
+    /**
+     * Diagnostics configuration scaffold (Plan 45-01 task 12 registry,
+     * Plan 45.1-04 task 2 schema-level wiring). Subsections:
+     *   - `diagnostics.trajectory` — per-session trajectory JSONL knobs
+     *     (enabled, dir, maxFileBytes, eventTypes — owned by 45-03).
+     *   - `diagnostics.configAudit` — config-audit log toggle + rotation
+     *     (enabled, rotateAtBytes, keepRotated — owned by 45-05).
+     *   - `diagnostics.cacheTrace` — placeholder for Phase 46.
+     *   - `diagnostics.redact` — placeholder.
+     * Defaults are sticky so an empty `diagnostics: {}` block is valid.
+     */
+    diagnostics: DiagnosticsConfigSchema.default(() => DiagnosticsConfigSchema.parse({})),
     /** OAuth credential storage configuration (storage backend selector) */
     oauth: OAuthConfigSchema.default(() => OAuthConfigSchema.parse({})),
     /** Plugin system configuration */

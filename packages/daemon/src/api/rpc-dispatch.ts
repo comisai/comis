@@ -106,9 +106,18 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     // pass-through mirrors the createAgentHandlers wiring below; do not
     // simplify back to `...createConfigHandlers(deps)` (the structural-typing
     // inheritance is fragile to future deps-shape narrowing).
+    //
+    // Plan 45.1-04 (TRAJ-FIX-06): wire auditEnabled from
+    // diagnostics.configAudit.enabled. Default-true semantics via the
+    // `!== false` check preserves the schema's default-true contract;
+    // operators who omit the knob (undefined via optional-chain) or
+    // explicitly set true see the audit line; only an explicit
+    // `enabled: false` skips the JSONL append in config-write.ts.
     ...createConfigHandlers({
       ...deps,
       oauthCredentialStore: deps.oauthCredentialStore,
+      auditEnabled:
+        deps.container.config.diagnostics?.configAudit?.enabled !== false,
     }),
     ...createEnvHandlers(deps),
     // Encrypted secret management. Admin scope is enforced both at

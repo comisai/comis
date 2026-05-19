@@ -214,4 +214,55 @@ describe("last-known-good config", () => {
       expect(record.result).toBe("rename");
     });
   });
+
+  // Plan 45.1-04 task 4 (TRAJ-FIX-06): saveLastKnownGood/restoreLastKnownGood
+  // honor an auditEnabled parameter — when false the audit JSONL append is
+  // skipped but the LKG copy still runs.
+  describe("config-audit hook honors auditEnabled (TRAJ-FIX-06)", () => {
+    it("saveLastKnownGood with auditEnabled: false skips the audit JSONL append", () => {
+      writeFileSync(configPath, "key: value\n");
+      const result = saveLastKnownGood(configPath, false);
+      // LKG copy still happens — the audit log is a forensics aid, not
+      // a gate on the snapshot itself.
+      expect(result.saved).toBe(true);
+      expect(existsSync(result.path)).toBe(true);
+      expect(readFileSync(result.path, "utf-8")).toBe("key: value\n");
+
+      // Audit log must NOT have been written. If pre-existing, must
+      // still be empty.
+      if (existsSync(auditLogPath)) {
+        expect(readFileSync(auditLogPath, "utf-8")).toBe("");
+      } else {
+        expect(existsSync(auditLogPath)).toBe(false);
+      }
+    });
+
+    it("restoreLastKnownGood with auditEnabled: false skips the audit JSONL append but still copies the snapshot", () => {
+      writeFileSync(configPath, "good: true\n");
+      saveLastKnownGood(configPath);
+      // Clear the audit log so we can detect new appends.
+      writeFileSync(auditLogPath, "");
+
+      writeFileSync(configPath, "bad: true\n");
+      const result = restoreLastKnownGood(configPath, false);
+      expect(result.restored).toBe(true);
+      // Restore happened: configPath now matches the saved snapshot.
+      expect(readFileSync(configPath, "utf-8")).toBe("good: true\n");
+      // No new audit lines appended.
+      expect(readFileSync(auditLogPath, "utf-8")).toBe("");
+    });
+
+    it("saveLastKnownGood with auditEnabled omitted writes the audit line (default = true preserves pre-fix behavior)", () => {
+      // Symmetric positive case that gates the negative tests above.
+      // The default-parameter contract must keep existing callers
+      // (daemon.ts pre-rewire) producing the audit record.
+      writeFileSync(configPath, "key: value\n");
+      const result = saveLastKnownGood(configPath);
+      expect(result.saved).toBe(true);
+
+      expect(existsSync(auditLogPath)).toBe(true);
+      const log = readFileSync(auditLogPath, "utf-8").trim().split("\n");
+      expect(log.length).toBe(1);
+    });
+  });
 });

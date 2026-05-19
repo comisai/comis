@@ -9183,6 +9183,95 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "cacheTrace": {},
+      "configAudit": {
+        "enabled": true,
+        "keepRotated": 5,
+        "rotateAtBytes": 10485760
+      },
+      "redact": {},
+      "trajectory": {
+        "enabled": true,
+        "maxFileBytes": 52428800
+      }
+    },
+    "immutable": false,
+    "path": "diagnostics",
+    "type": "object"
+  },
+  {
+    "default": {},
+    "immutable": false,
+    "path": "diagnostics.cacheTrace",
+    "type": "object"
+  },
+  {
+    "default": {
+      "enabled": true,
+      "keepRotated": 5,
+      "rotateAtBytes": 10485760
+    },
+    "immutable": false,
+    "path": "diagnostics.configAudit",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "diagnostics.configAudit.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 5,
+    "immutable": false,
+    "path": "diagnostics.configAudit.keepRotated",
+    "type": "integer"
+  },
+  {
+    "default": 10485760,
+    "immutable": false,
+    "path": "diagnostics.configAudit.rotateAtBytes",
+    "type": "integer"
+  },
+  {
+    "default": {},
+    "immutable": false,
+    "path": "diagnostics.redact",
+    "type": "object"
+  },
+  {
+    "default": {
+      "enabled": true,
+      "maxFileBytes": 52428800
+    },
+    "immutable": false,
+    "path": "diagnostics.trajectory",
+    "type": "object"
+  },
+  {
+    "immutable": false,
+    "path": "diagnostics.trajectory.dir",
+    "type": "string"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "diagnostics.trajectory.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": false,
+    "path": "diagnostics.trajectory.eventTypes",
+    "type": "array"
+  },
+  {
+    "default": 52428800,
+    "immutable": false,
+    "path": "diagnostics.trajectory.maxFileBytes",
+    "type": "integer"
+  },
+  {
+    "default": {
       "communityUrl": "",
       "customLinks": [],
       "enabled": false,
@@ -26776,6 +26865,108 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       ],
       "type": "object"
     },
+    "diagnostics": {
+      "additionalProperties": false,
+      "default": {
+        "cacheTrace": {},
+        "configAudit": {
+          "enabled": true,
+          "keepRotated": 5,
+          "rotateAtBytes": 10485760
+        },
+        "redact": {},
+        "trajectory": {
+          "enabled": true,
+          "maxFileBytes": 52428800
+        }
+      },
+      "properties": {
+        "cacheTrace": {
+          "additionalProperties": false,
+          "default": {},
+          "properties": {},
+          "type": "object"
+        },
+        "configAudit": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": true,
+            "keepRotated": 5,
+            "rotateAtBytes": 10485760
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "keepRotated": {
+              "default": 5,
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rotateAtBytes": {
+              "default": 10485760,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "rotateAtBytes",
+            "keepRotated"
+          ],
+          "type": "object"
+        },
+        "redact": {
+          "additionalProperties": false,
+          "default": {},
+          "properties": {},
+          "type": "object"
+        },
+        "trajectory": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": true,
+            "maxFileBytes": 52428800
+          },
+          "properties": {
+            "dir": {
+              "type": "string"
+            },
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "eventTypes": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "maxFileBytes": {
+              "default": 52428800,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "maxFileBytes"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "trajectory",
+        "cacheTrace",
+        "configAudit",
+        "redact"
+      ],
+      "type": "object"
+    },
     "documentation": {
       "additionalProperties": false,
       "default": {
@@ -31622,6 +31813,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "integrations",
     "monitoring",
     "observability",
+    "diagnostics",
     "oauth",
     "plugins",
     "queue",

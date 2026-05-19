@@ -508,6 +508,27 @@ export async function setupSingleAgent(
     tenantId: container.config.tenantId,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
+    // Plan 45.1-04 (TRAJ-FIX-05): thread diagnostics.trajectory into the
+    // per-session trajectory recorder + bridge wiring. Restores
+    // enabled/dir/maxFileBytes plumbing (previously a latent bug — pi-executor
+    // read these but the daemon never assigned the field, so all reads
+    // short-circuited to defaults). Also threads `eventTypes` which the
+    // bridge consumes as a subscription-time filter
+    // (packages/observability/src/trajectory/event-bus-bridge.ts).
+    //
+    // Stealth behavior change (Risk #6): operators who set
+    // `diagnostics.trajectory.enabled: false` in YAML now actually disable
+    // the recorder. The pre-fix tree ignored this knob (the JSONL writer
+    // ran with hardcoded defaults). This is a correctness fix, not a
+    // regression.
+    trajectoryConfig: container.config.diagnostics?.trajectory
+      ? {
+          enabled: container.config.diagnostics.trajectory.enabled,
+          dir: container.config.diagnostics.trajectory.dir,
+          maxFileBytes: container.config.diagnostics.trajectory.maxFileBytes,
+          eventTypes: container.config.diagnostics.trajectory.eventTypes,
+        }
+      : undefined,
     geminiCacheManager: deps.geminiCacheManager,  // Gemini cache lifecycle manager
     getChannelMaxChars: deps.getChannelMaxChars,  // Platform char limit for verbosity hints
     backgroundTaskManager: deps.backgroundTaskManager,  // Auto-background middleware

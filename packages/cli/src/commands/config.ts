@@ -580,9 +580,26 @@ export function registerConfigCommand(program: Command): void {
 
         // Plan 45-05 task 9: two-phase audit around the single atomicWriteFile call site
         // (per checker Finding #5 -- only write site in this file). Best-effort.
-        const auditBase = buildCliSyncToolingAuditBase(configPath);
+        // Plan 45.1-04 (TRAJ-FIX-06): honor diagnostics.configAudit.enabled —
+        // when explicitly false, skip both buildCliSyncToolingAuditBase
+        // (build) and appendCliSyncToolingAudit (append). Default-true
+        // semantics via the `!== false` check: omitted or true continues
+        // to emit the audit line; only an explicit false silences it.
+        // configJs was loaded above at line 464 (Record<string, unknown> shape)
+        // and is `{}` in the init-when-absent recovery path, which evaluates
+        // to true via the optional-chain returning undefined !== false.
+        const configJsAudit = configJs as {
+          diagnostics?: { configAudit?: { enabled?: boolean } };
+        };
+        const cliAuditEnabled =
+          configJsAudit?.diagnostics?.configAudit?.enabled !== false;
+        const auditBase = cliAuditEnabled
+          ? buildCliSyncToolingAuditBase(configPath)
+          : undefined;
         const written = atomicWriteFile(configPath, doc.toString());
-        appendCliSyncToolingAudit(auditBase, written);
+        if (auditBase !== undefined) {
+          appendCliSyncToolingAudit(auditBase, written);
+        }
 
         if (!written.ok) {
           error(`Atomic write failed (${written.error.code}): ${written.error.cause}`);

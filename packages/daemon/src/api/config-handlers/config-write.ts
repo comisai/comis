@@ -116,12 +116,17 @@ export function bindConfigWriteHandlers(
       const coercedValue = coerceConfigValue(value, subSchema);
       const ctx = rawParams._context as { agentId?: string; userId?: string; traceId?: string } | undefined;
 
-      // Plan 45-05 task 8: build the config-audit base BEFORE the validate / write
-      // so a rejected patch still surfaces in the JSONL log. See config-audit-hook.ts.
+      // Plan 45-05 task 8 + 45.1-04 (TRAJ-FIX-06): build the config-audit
+      // base BEFORE validate/write so a rejected patch still surfaces in the
+      // JSONL log. When deps.auditEnabled === false, skip the build —
+      // appendConfigAuditWithOutcome no-ops on base === undefined, so the
+      // gate covers both halves of the two-phase pattern. Default-true
+      // semantics preserve pre-fix behavior.
       const localPathForAudit = deps.configPaths.length > 0
         ? deps.configPaths[deps.configPaths.length - 1]!
         : deps.defaultConfigPaths[deps.defaultConfigPaths.length - 1]!;
-      const auditBase: ConfigWriteAuditRecordBase | undefined = buildConfigAuditBase(localPathForAudit);
+      const auditBase: ConfigWriteAuditRecordBase | undefined =
+        deps.auditEnabled === false ? undefined : buildConfigAuditBase(localPathForAudit);
       let wroteFile = false;
       let writeError: { code?: string; message?: string } | undefined;
 

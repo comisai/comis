@@ -126,11 +126,33 @@ function withAuditHook(params: {
 /**
  * Save a copy of the current config as the last-known-good snapshot.
  * Called after successful daemon startup.
+ *
+ * Plan 45.1-04 (TRAJ-FIX-06): `auditEnabled` honors
+ * `diagnostics.configAudit.enabled`. Default `true` preserves the
+ * pre-fix behavior for callers that don't pass the parameter. When
+ * `false`, the audit JSONL append is skipped but the LKG copy itself
+ * still runs — the audit log is a forensics aid, not a correctness
+ * gate.
  */
-export function saveLastKnownGood(configPath: string): { saved: boolean; path: string } {
+export function saveLastKnownGood(
+  configPath: string,
+  auditEnabled: boolean = true,
+): { saved: boolean; path: string } {
   const lkgPath = lastKnownGoodPath(configPath);
   if (!existsSync(configPath)) {
     return { saved: false, path: lkgPath };
+  }
+  // TRAJ-FIX-06: when audit is disabled, skip the JSONL append wrapper
+  // and call the write callback directly. Mirrors the success-path
+  // return shape of withAuditHook for the caller.
+  if (!auditEnabled) {
+    try {
+      copyFileSync(configPath, lkgPath);
+      chmodSync(lkgPath, 0o600);
+      return { saved: true, path: lkgPath };
+    } catch {
+      return { saved: false, path: lkgPath };
+    }
   }
   const audit = withAuditHook({
     source: "last-known-good-save",
@@ -147,11 +169,29 @@ export function saveLastKnownGood(configPath: string): { saved: boolean; path: s
  * Restore config from the last-known-good snapshot.
  * Used by `--restore-last-good` CLI flag.
  * Returns the path restored from, or null if no snapshot exists.
+ *
+ * Plan 45.1-04 (TRAJ-FIX-06): `auditEnabled` honors
+ * `diagnostics.configAudit.enabled`. Default `true` preserves the
+ * pre-fix behavior; when `false`, the audit JSONL append is skipped
+ * but the restore copy itself still runs.
  */
-export function restoreLastKnownGood(configPath: string): { restored: boolean; lkgPath: string } {
+export function restoreLastKnownGood(
+  configPath: string,
+  auditEnabled: boolean = true,
+): { restored: boolean; lkgPath: string } {
   const lkgPath = lastKnownGoodPath(configPath);
   if (!existsSync(lkgPath)) {
     return { restored: false, lkgPath };
+  }
+  // TRAJ-FIX-06: when audit is disabled, skip the JSONL append wrapper.
+  if (!auditEnabled) {
+    try {
+      copyFileSync(lkgPath, configPath);
+      chmodSync(configPath, 0o600);
+      return { restored: true, lkgPath };
+    } catch {
+      return { restored: false, lkgPath };
+    }
   }
   const audit = withAuditHook({
     source: "last-known-good-restore",
@@ -233,8 +273,18 @@ function buildSimpleDiff(oldText: string, newText: string): string {
 /**
  * Handle `--restore-last-good` CLI flag.
  * Writes to stderr (logger not yet initialized) and exits.
+ *
+ * Plan 45.1-04 (TRAJ-FIX-06): `auditEnabled` defaults to `true`. The
+ * `--restore-last-good` flag runs BEFORE the daemon loads its config
+ * (it's an emergency-recovery path), so the daemon.ts caller has no
+ * cfg in scope and uses the default. Programmatic callers that DO
+ * have cfg can pass the gate explicitly.
  */
-export function handleRestoreFlag(configPaths: string[], exitFn: (code: number) => void): void {
+export function handleRestoreFlag(
+  configPaths: string[],
+  exitFn: (code: number) => void,
+  auditEnabled: boolean = true,
+): void {
   if (configPaths.length === 0) {
     process.stderr.write("ERROR: No config paths configured. Cannot restore.\n");
     exitFn(1);
@@ -242,7 +292,7 @@ export function handleRestoreFlag(configPaths: string[], exitFn: (code: number) 
   }
 
   const configPath = configPaths[configPaths.length - 1]!;
-  const { restored, lkgPath } = restoreLastKnownGood(configPath);
+  const { restored, lkgPath } = restoreLastKnownGood(configPath, auditEnabled);
 
   if (restored) {
     process.stderr.write(`Restored last-known-good config from ${lkgPath}\n`);

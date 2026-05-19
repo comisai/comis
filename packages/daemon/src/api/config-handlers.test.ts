@@ -246,6 +246,60 @@ describe("config.patch", () => {
       const record = JSON.parse(lines[lines.length - 1]!) as { result: string };
       expect(record.result).toBe("rejected");
     });
+
+    // Plan 45.1-04 (TRAJ-FIX-06): the audit append is gated on
+    // deps.auditEnabled — when explicitly false, neither
+    // buildConfigAuditBase nor appendConfigAuditWithOutcome runs.
+    it("skips the audit JSONL append when deps.auditEnabled === false (TRAJ-FIX-06)", async () => {
+      vi.useRealTimers();
+
+      const baseDeps = makeDeps(tempConfig.configPath);
+      const deps = { ...baseDeps, auditEnabled: false };
+      const handlers = createConfigHandlers(deps);
+
+      await handlers["config.patch"]!({
+        section: "logLevel",
+        value: "debug",
+        _trustLevel: "admin",
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const fs = await import("node:fs");
+      // The audit log must NOT have been touched.
+      if (fs.existsSync(auditPath)) {
+        const after = fs.statSync(auditPath).size;
+        expect(after).toBe(0);
+      } else {
+        expect(fs.existsSync(auditPath)).toBe(false);
+      }
+    });
+
+    it("writes the audit JSONL line when deps.auditEnabled === true (symmetric positive — TRAJ-FIX-06)", async () => {
+      // Gates the negative test above: ensures the audit log path is
+      // correctly threaded, and that the default-true contract works
+      // for callers that explicitly pass true.
+      vi.useRealTimers();
+
+      const baseDeps = makeDeps(tempConfig.configPath);
+      const deps = { ...baseDeps, auditEnabled: true };
+      const handlers = createConfigHandlers(deps);
+
+      await handlers["config.patch"]!({
+        section: "logLevel",
+        value: "debug",
+        _trustLevel: "admin",
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const fs = await import("node:fs");
+      expect(fs.existsSync(auditPath)).toBe(true);
+      const lines = fs
+        .readFileSync(auditPath, "utf-8")
+        .trim()
+        .split("\n")
+        .filter((l) => l.length > 0);
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+    });
   });
 });
 
