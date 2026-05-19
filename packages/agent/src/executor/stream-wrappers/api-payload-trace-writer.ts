@@ -13,7 +13,7 @@ import type { ComisLogger, ClockPort } from "@comis/core";
 import { suppressError } from "@comis/shared";
 
 import type { StreamFnWrapper } from "./types.js";
-import { appendJsonlLine } from "./cache-trace-writer.js";
+import { appendJsonlLine } from "./jsonl-rotation.js";
 
 // ---------------------------------------------------------------------------
 // Public types

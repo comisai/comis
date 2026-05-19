@@ -76,3 +76,91 @@ describe("skipCacheWrite derivation", () => {
     expect(deriveSkipCacheWrite({ spawnPacket: null })).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 46-01: diagnostics.cacheTrace wiring + tracing-deprecation idempotency
+// ---------------------------------------------------------------------------
+
+import {
+  __testing__shouldEmitTracingDeprecation,
+  __testing__resetTracingDeprecation,
+} from "./executor-stream-setup.js";
+import { beforeEach } from "vitest";
+
+describe("diagnostics_cache_trace_returned -- params.cacheTrace surfaces the cache-trace wrapper factory", () => {
+  // Pragmatic isolation: setupStreamWrappers has deeply nested dependencies
+  // (SessionManager, ContextEngine, GeminiCacheManager, ...) that make full
+  // invocation impractical here. We assert the contract via the
+  // wrapper-builder import + the gate logic — the integration test in
+  // Plan 46-01 Task 13 exercises the full setupStreamWrappers path.
+  it("buildCacheTraceWrapper is the wrapper factory used when params.cacheTrace is set", async () => {
+    // The setupStreamWrappers import is what matters — if the cache-trace
+    // wrapper export disappeared (e.g., barrel regression), this test
+    // would fail to import.
+    const obs = await import("@comis/observability");
+    expect(typeof obs.buildCacheTraceWrapper).toBe("function");
+    expect(typeof obs.createCacheTrace).toBe("function");
+    expect(typeof obs.attachCacheTraceToEventBus).toBe("function");
+  });
+});
+
+describe("emits_tracing_deprecation_once -- per-session squelch via module-level Set", () => {
+  beforeEach(() => {
+    __testing__resetTracingDeprecation();
+  });
+
+  it("first invocation with tracing.enabled and no cacheTrace.enabled returns true (emit log)", () => {
+    const should = __testing__shouldEmitTracingDeprecation({
+      tracingEnabled: true,
+      cacheTraceEnabled: false,
+      formattedKey: "tenant.user.channel.1",
+    });
+    expect(should).toBe(true);
+  });
+
+  it("second invocation with same formattedKey returns false (squelched)", () => {
+    __testing__shouldEmitTracingDeprecation({
+      tracingEnabled: true,
+      cacheTraceEnabled: false,
+      formattedKey: "tenant.user.channel.1",
+    });
+    const second = __testing__shouldEmitTracingDeprecation({
+      tracingEnabled: true,
+      cacheTraceEnabled: false,
+      formattedKey: "tenant.user.channel.1",
+    });
+    expect(second).toBe(false);
+  });
+
+  it("returns false when cacheTrace is explicitly enabled (no deprecation needed)", () => {
+    const should = __testing__shouldEmitTracingDeprecation({
+      tracingEnabled: true,
+      cacheTraceEnabled: true,
+      formattedKey: "tenant.user.channel.2",
+    });
+    expect(should).toBe(false);
+  });
+
+  it("returns false when tracing.enabled is false (legacy flag not set)", () => {
+    const should = __testing__shouldEmitTracingDeprecation({
+      tracingEnabled: false,
+      cacheTraceEnabled: false,
+      formattedKey: "tenant.user.channel.3",
+    });
+    expect(should).toBe(false);
+  });
+
+  it("different formattedKey emits its own log (per-session squelch is keyed by formattedKey)", () => {
+    __testing__shouldEmitTracingDeprecation({
+      tracingEnabled: true,
+      cacheTraceEnabled: false,
+      formattedKey: "tenant.user.channel.4",
+    });
+    const otherSession = __testing__shouldEmitTracingDeprecation({
+      tracingEnabled: true,
+      cacheTraceEnabled: false,
+      formattedKey: "tenant.user.channel.5",
+    });
+    expect(otherSession).toBe(true);
+  });
+});

@@ -53,12 +53,29 @@ function listSourceFiles(dir: string): string[] {
 }
 
 describe("architecture — observability flush sentinel symmetry (TRAJ-FIX-03)", () => {
-  it("every consumer of getQueuedFileWriter that defines flushAndClose references BOTH trace.truncated AND trace.write_failures string literals", () => {
+  it("every consumer of getQueuedFileWriter that defines flushAndClose references at least one namespaced *.write_failures sentinel", () => {
     // Sanity check the source root resolves to a real directory.
     expect(statSync(OBSERVABILITY_SRC).isDirectory()).toBe(true);
 
     const files = listSourceFiles(OBSERVABILITY_SRC);
     expect(files.length).toBeGreaterThan(0);
+
+    // Per-namespace sentinel registry. Each recorder family may use its
+    // own naming (trajectory uses `trace.*`, cache-trace uses `cache_trace.*`).
+    // The invariant is: a flush-defining consumer of the queued-file-writer
+    // MUST emit AT LEAST the namespace's `write_failures` sentinel.
+    //
+    // The `truncated` sentinel is optional per-recorder: trajectory needs
+    // it because it enforces a per-file byte cap above the writer's own
+    // cap (with 2 KB sentinel head-room reserved); cache-trace defers
+    // bounds entirely to the queued writer chassis so it has no
+    // additional dropped-events accounting and emits only the
+    // `write_failures` sentinel. The check below picks the right pair
+    // based on which namespace literals appear in the source.
+    const namespaces = [
+      { truncated: '"trace.truncated"', writeFailures: '"trace.write_failures"', name: "trace" },
+      { truncated: '"cache_trace.truncated"', writeFailures: '"cache_trace.write_failures"', name: "cache_trace" },
+    ];
 
     const offenders: string[] = [];
     for (const file of files) {
@@ -72,19 +89,37 @@ describe("architecture — observability flush sentinel symmetry (TRAJ-FIX-03)",
       const hasFlush = /flushAndClose\s*\(/.test(src);
       if (!usesWriter || !hasFlush) continue;
 
-      const hasTruncated = /"trace\.truncated"/.test(src);
-      const hasWriteFailures = /"trace\.write_failures"/.test(src);
-      if (!hasTruncated || !hasWriteFailures) {
+      // Pick the namespace by which write-failures literal is present.
+      const ns = namespaces.find((n) =>
+        new RegExp(n.writeFailures.replace(/\./g, "\\.")).test(src),
+      );
+      if (!ns) {
         offenders.push(
-          `${file}: truncated=${hasTruncated} write_failures=${hasWriteFailures}`,
+          `${file}: no namespaced *.write_failures sentinel found (expected one of ${namespaces.map((n) => n.writeFailures).join(" / ")})`,
         );
+        continue;
+      }
+
+      // For the trajectory namespace, both sentinels are required (the
+      // recorder enforces a per-file cap above the writer's own and
+      // emits a separate `truncated` sentinel when events were dropped).
+      // For cache_trace, only the write_failures sentinel is required
+      // (no separate per-file dropped-event accounting — bounds are
+      // delegated to the writer chassis).
+      if (ns.name === "trace") {
+        const hasTruncated = new RegExp(ns.truncated.replace(/\./g, "\\.")).test(src);
+        if (!hasTruncated) {
+          offenders.push(
+            `${file}: missing ${ns.truncated} (namespace="${ns.name}" requires BOTH sentinels for symmetry)`,
+          );
+        }
       }
     }
 
     expect(offenders, [
       "Files that consume the queued-file-writer and define flushAndClose",
-      "must emit BOTH control-plane sentinels (TRAJ-FIX-03). Add the missing",
-      "string-literal emit alongside the existing one. See",
+      "must emit the namespace-correct control-plane sentinel(s) (TRAJ-FIX-03).",
+      "Add the missing string-literal emit alongside the existing one. See",
       "packages/observability/src/trajectory/runtime.ts:flushAndClose for",
       "the canonical buildEvent + encodeLine + writer.write pattern.",
       "",

@@ -3233,7 +3233,7 @@ describe("PiExecutor", () => {
       expect(composedLog![0].wrapperCount).toBe(7);
     });
 
-    it("adds trace wrappers when tracing.enabled is true", async () => {
+    it("adds the api-payload trace wrapper when tracing.enabled is true (Plan 46-01: cache-trace moved to diagnostics.cacheTrace)", async () => {
       const configWithTracing = {
         ...testConfig,
         tracing: { enabled: true, outputDir: "/tmp/test-traces" },
@@ -3243,27 +3243,31 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-trace");
 
-      // "JSONL tracing enabled" INFO log should be emitted
+      // "JSONL api-payload tracing enabled" INFO log should be emitted.
+      // Plan 46-01 split the legacy combined tracing into two artifacts:
+      // api-payload remains under `agents.<name>.tracing.enabled`; the
+      // cache-trace moved to `diagnostics.cacheTrace.enabled`.
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const traceLog = infoCalls.find(
-        ([_fields, msg]: [any, string]) => msg === "JSONL tracing enabled",
+        ([_fields, msg]: [any, string]) => msg === "JSONL api-payload tracing enabled",
       );
       expect(traceLog).toBeDefined();
       expect(traceLog![0]).toMatchObject({
         outputDir: "/tmp/test-traces",
       });
-      expect(traceLog![0].cacheTracePath).toContain("/tmp/test-traces/");
-      expect(traceLog![0].cacheTracePath).toContain(".cache-trace.jsonl");
+      // cacheTracePath is no longer logged here — it lives under
+      // diagnostics.cacheTrace.enabled now.
+      expect(traceLog![0].cacheTracePath).toBeUndefined();
       expect(traceLog![0].apiPayloadPath).toContain("/tmp/test-traces/");
       expect(traceLog![0].apiPayloadPath).toContain(".api-payload.jsonl");
 
-      // Should have 9 wrappers applied (7 base + 2 trace)
+      // Should have 8 wrappers applied (7 base + 1 api-payload trace)
       const debugCalls = (deps.logger.debug as Mock).mock.calls;
       const composedLog = debugCalls.find(
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      expect(composedLog![0].wrapperCount).toBe(9);
+      expect(composedLog![0].wrapperCount).toBe(8);
     });
 
     it("trace wrappers are positioned after requestBodyInjector in chain", async () => {
@@ -3291,6 +3295,9 @@ describe("PiExecutor", () => {
       expect(composedLog).toBeDefined();
 
       const wrapperNames = composedLog![0].wrapperNames as string[];
+      // Plan 46-01: cacheTraceWriter removed from this chain — the
+      // cache-trace artifact is independently gated by
+      // `diagnostics.cacheTrace.enabled` (not set in this test).
       expect(wrapperNames).toEqual([
         "ttlGuard",
         "validationErrorFormatter",
@@ -3298,13 +3305,12 @@ describe("PiExecutor", () => {
         "turnResultBudget",
         "configResolver",
         "requestBodyInjector",
-        "cacheTraceWriter",
         "apiPayloadTraceWriter",
         "stubFilterInjector",
       ]);
 
-      // Trace wrappers are innermost (closest to base SDK streamFn),
-      // meaning they see the final options including injected cacheRetention
+      // api-payload-trace wrapper is innermost (closest to base SDK streamFn),
+      // meaning it sees the final options including injected cacheRetention.
     });
 
     it("does not add trace wrappers when tracing.enabled is explicitly false", async () => {
@@ -3332,7 +3338,7 @@ describe("PiExecutor", () => {
       expect(composedLog![0].wrapperCount).toBe(7);
     });
 
-    it("passes sessionId (formattedKey) to both trace wrapper configs", async () => {
+    it("passes sessionId (formattedKey) to the api-payload trace wrapper (Plan 46-01: cache-trace moved)", async () => {
       const configWithTracing = {
         ...testConfig,
         tracing: { enabled: true, outputDir: "/tmp/test-traces" },
@@ -3342,27 +3348,22 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-sid");
 
-      // Exercise the wrapped streamFn -- this triggers the trace writers
+      // Exercise the wrapped streamFn -- triggers the api-payload trace writer.
       const wrappedStreamFn = mockSession.agent.streamFn;
       const model = { id: "claude-test", provider: "anthropic" } as any;
       const context = { systemPrompt: "test", messages: [], tools: [] };
       wrappedStreamFn(model, context, {});
 
-      // Verify appendFileSync was called with JSONL containing sessionId
-      // The formatted session key for testSessionKey is "telegram:test-chat:test-user"
+      // Plan 46-01: only the api-payload trace fires under the legacy
+      // `tracing.enabled` flag — cache-trace is independently gated.
       const jsonlCalls = mockAppendFileSync.mock.calls;
-      expect(jsonlCalls.length).toBeGreaterThanOrEqual(2); // cache_trace + api_payload
+      expect(jsonlCalls.length).toBeGreaterThanOrEqual(1);
 
       // testSessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" }
       // formatSessionKey produces "t1:u1:c1"
       const expectedSessionId = "t1:u1:c1";
 
-      const cacheTraceLine = JSON.parse((jsonlCalls[0][1] as string).trim());
-      expect(cacheTraceLine.type).toBe("cache_trace");
-      expect(cacheTraceLine.sessionId).toBe(expectedSessionId);
-      expect(cacheTraceLine.agentId).toBe("agent-sid");
-
-      const apiPayloadLine = JSON.parse((jsonlCalls[1][1] as string).trim());
+      const apiPayloadLine = JSON.parse((jsonlCalls[0][1] as string).trim());
       expect(apiPayloadLine.type).toBe("api_payload");
       expect(apiPayloadLine.sessionId).toBe(expectedSessionId);
       expect(apiPayloadLine.agentId).toBe("agent-sid");
@@ -3380,8 +3381,9 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-rot");
 
-      // Exercise the wrapped streamFn -- this triggers the trace writers
-      // which call appendJsonlLine -> rotateIfNeeded -> statSync
+      // Exercise the wrapped streamFn -- this triggers the api-payload
+      // trace writer, which calls appendJsonlLine -> rotation check ->
+      // statSync (legacy rotation lives in api-payload-trace-writer).
       const wrappedStreamFn = mockSession.agent.streamFn;
       const model = { id: "claude-test", provider: "anthropic" } as any;
       const context = { systemPrompt: "test", messages: [], tools: [] };

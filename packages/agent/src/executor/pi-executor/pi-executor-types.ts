@@ -190,6 +190,21 @@ export interface PiExecutorDeps {
     readonly eventTypes?: ReadonlyArray<string>;
   };
   /**
+   * Plan 46-01: cache-trace writer configuration. Forwarded from
+   * AppConfig.diagnostics.cacheTrace by daemon wiring. When omitted or
+   * `enabled: false`, the per-session cache-trace recorder is a no-op.
+   * The `filePath` override threads through to
+   * `resolveCacheTraceFilePath` (else the default
+   * `~/.comis/logs/cache-trace.jsonl` applies).
+   */
+  cacheTraceConfig?: {
+    readonly enabled?: boolean;
+    readonly filePath?: string;
+    readonly includeMessages?: boolean;
+    readonly includePrompt?: boolean;
+    readonly includeSystem?: boolean;
+  };
+  /**
    * Plan 45-gap-01: ObservabilityStore for SystemPromptReport SQLite
    * persistence. Forwarded from daemon composition root through
    * SingleAgentDeps.obsStore. When undefined (persistence disabled),

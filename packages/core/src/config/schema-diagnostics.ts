@@ -82,8 +82,45 @@ const TrajectoryConfigSchema = z
     maxFileBytes: 50 * 1024 * 1024,
   });
 
-// Owned by Phase 46 (cache-trace subsection, out of Phase 45 scope).
-const CacheTraceConfigSchema = z.object({}).default({});
+/**
+ * `diagnostics.cacheTrace.*` schema (Plan 46-01).
+ *
+ * Configures the per-session cache-trace JSONL artifact written by
+ * `packages/observability/src/cache-trace/runtime.ts`. All fields carry
+ * defaults so an empty `diagnostics.cacheTrace: {}` block in YAML
+ * produces a valid configuration:
+ *
+ *   - `enabled: false` — the writer is OFF by default (opt-in, contrary
+ *     to trajectory which is on-by-default). Operators set this true to
+ *     start gathering cache-hit / cache-write digests for diagnostics.
+ *   - `filePath` — optional full path override. Default resolved at
+ *     runtime via `resolveCacheTraceFilePath` to
+ *     `~/.comis/logs/cache-trace.jsonl`. Tilde (`~`) prefix supported.
+ *   - `includeMessages: false` — PII gate. When false (default), the
+ *     emitted events carry `messageFingerprints[]` + `messagesDigest`
+ *     only; the raw `messages` field is omitted. Operators opt-in by
+ *     setting true (typically for short-lived debug sessions).
+ *   - `includePrompt: true` — reserved for future wrapper passes that
+ *     may want to include / omit the raw prompt context. Currently
+ *     informational.
+ *   - `includeSystem: true` — gates the `system` raw field emit. When
+ *     false, only `systemDigest` (the sha256 fingerprint) is recorded.
+ *
+ * Uses the inner-then-default pattern from `TrajectoryConfigSchema`
+ * (above) and `DiagnosticsConfigSchema` (below) so a missing key in
+ * YAML still produces a fully-populated default object.
+ */
+const CacheTraceConfigSchemaInner = z.object({
+  enabled: z.boolean().default(false),
+  filePath: z.string().optional(),
+  includeMessages: z.boolean().default(false),
+  includePrompt: z.boolean().default(true),
+  includeSystem: z.boolean().default(true),
+});
+
+const CacheTraceConfigSchema = CacheTraceConfigSchemaInner.default(() =>
+  CacheTraceConfigSchemaInner.parse({}),
+);
 
 /**
  * `diagnostics.configAudit.*` schema (Plan 45-05 task 14).
