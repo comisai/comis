@@ -129,6 +129,9 @@ export {
   resolveTrajectoryPointerOpenFlags,
 } from "./trajectory/paths.js";
 
+export { writeTrajectoryPointerFileBestEffort } from "./trajectory/pointer-file.js";
+export type { WriteTrajectoryPointerFileParams } from "./trajectory/pointer-file.js";
+
 export { createTrajectoryRecorder } from "./trajectory/runtime.js";
 
 export {

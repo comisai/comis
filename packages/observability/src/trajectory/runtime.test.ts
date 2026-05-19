@@ -380,6 +380,58 @@ describe("createTrajectoryRecorder -- trace.write_failures sentinel", () => {
   });
 });
 
+describe("createTrajectoryRecorder -- pointer file (design §6.1)", () => {
+  it("creates_pointer_file_when_sessionFile_provided", async () => {
+    const sessionFile = join(tmpDir, "session.jsonl");
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-ptr",
+      sessionFile,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("session.started", {});
+    await recorder!.flush();
+
+    // Trajectory file lives at <sessionFile>.trajectory.jsonl (paths.ts
+    // co-location case).
+    expect(existsSync(recorder!.filePath)).toBe(true);
+    // Pointer file lives at <sessionFile>.trajectory-path.json.
+    const pointerPath = sessionFile + ".trajectory-path.json";
+    expect(existsSync(pointerPath)).toBe(true);
+
+    const parsed = JSON.parse(readFileSync(pointerPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed.traceSchema).toBe("comis-trajectory-pointer");
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.sessionId).toBe("sid-ptr");
+    expect(parsed.runtimeFile).toBe(recorder!.filePath);
+  });
+
+  it("does_not_create_pointer_when_sessionFile_omitted (env/cwd fallback)", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-noptr",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("session.started", {});
+    await recorder!.flush();
+
+    // No sessionFile → no pointer file. (No path exists to compute the
+    // pointer location.)
+    // The trajectory file itself lives at <trajectoryDir>/<safe-sid>.trajectory.jsonl.
+    expect(existsSync(recorder!.filePath)).toBe(true);
+    // Spot-check: no sibling `*.trajectory-path.json` was created.
+    const trajPathSibling = recorder!.filePath.replace(
+      /\.jsonl$/,
+      "-path.json",
+    );
+    expect(existsSync(trajPathSibling)).toBe(false);
+  });
+});
+
 describe("createTrajectoryRecorder -- envelope shape (design §6.2)", () => {
   it("emits_source_runtime_on_envelope by default", async () => {
     const recorder = createTrajectoryRecorder({

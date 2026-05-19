@@ -55,6 +55,7 @@ import { safeJsonStringify } from "../shared/safe-json-stringify.js";
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
 
 import { resolveTrajectoryFilePath } from "./paths.js";
+import { writeTrajectoryPointerFileBestEffort } from "./pointer-file.js";
 import type {
   TrajectoryEvent,
   TrajectoryEventType,
@@ -130,6 +131,19 @@ export function createTrajectoryRecorder(
       ? { confinedBaseDir: init.confinedBaseDir }
       : {}),
   });
+
+  // Best-effort pointer-file sidecar at `<sessionFile>.trajectory-path.json`
+  // (design §6.1 + §2.3). Only emit when the recorder was constructed
+  // alongside a per-session JSONL file — the env / cwd fallback paths
+  // have no session file to anchor the pointer to. Errors are swallowed
+  // by the helper; a missing pointer MUST NOT block trajectory writes.
+  if (init.sessionFile !== undefined) {
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile: init.sessionFile,
+      sessionId: init.sessionId,
+      runtimeFile: filePath,
+    });
+  }
 
   // Mutable per-recorder state. Each recorder owns its own seq counter
   // and write-byte accumulator (the writer chassis is shared across
