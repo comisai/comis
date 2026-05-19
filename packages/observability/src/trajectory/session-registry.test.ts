@@ -67,13 +67,13 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
       agentId: "agent-1",
       sessionId: "sid-1",
       trajectoryDir: tmpDir,
-      provider: "anthropic",
+      model: { provider: "anthropic" },
     };
     const init2 = {
       agentId: "agent-2", // would change agentId if re-constructed
       sessionId: "sid-1",
       trajectoryDir: tmpDir,
-      provider: "openai",
+      model: { provider: "openai" },
     };
     const { recorder: r1 } = reg.getOrCreate("k1", init1, bus);
     const { recorder: r2 } = reg.getOrCreate("k1", init2, bus);

@@ -599,8 +599,16 @@ async function runSessionLocked(
       sessionId: formattedKey,
       sessionKey: formattedKey,
       workspaceDir: deps.workspaceDir,
-      provider: resolvedModel?.provider ?? config.provider,
-      modelId: resolvedModel?.id ?? config.model,
+      // provider + modelId + modelApi live inside the `model` cluster
+      // on TrajectoryRecorderInit (architecture invariant: ≤12 optional
+      // fields per interface). The runtime lifts each cluster field
+      // onto the trajectory envelope when defined (design §6.2).
+      // modelApi is not threaded from this site yet — wire it in when
+      // resolvedModel exposes the API discriminator.
+      model: {
+        provider: resolvedModel?.provider ?? config.provider,
+        modelId: resolvedModel?.id ?? config.model,
+      },
       ...(trajectoryConfinedBase !== undefined
         ? { confinedBaseDir: trajectoryConfinedBase }
         : {}),

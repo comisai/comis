@@ -198,12 +198,24 @@ export interface TrajectoryRecorderInit {
   readonly sessionFile?: string;
   /** Agent workspace directory — used as last-resort base for path resolution. */
   readonly workspaceDir?: string;
-  /** Provider id (e.g., "anthropic"). Optional metadata for trajectory consumers. */
-  readonly provider?: string;
-  /** Model id (e.g., "claude-sonnet-4-20250514"). Optional metadata for trajectory consumers. */
-  readonly modelId?: string;
-  /** Model API (e.g., "messages", "responses"). `null` permitted per design §6.2. */
-  readonly modelApi?: string | null;
+  /**
+   * Model-metadata cluster (provider id + model id + model API). Adding
+   * `modelApi` (design §6.2 deviation B) at the top level would push
+   * TrajectoryRecorderInit past the ≤12-optional-fields architecture
+   * invariant — clustering the three model identifiers into one
+   * optional field collapses three slots into one. Resolver in
+   * `runtime.ts` reads `init.model?.provider`, `init.model?.modelId`,
+   * `init.model?.modelApi` and lifts each onto the trajectory envelope
+   * when defined.
+   */
+  readonly model?: {
+    /** Provider id (e.g., "anthropic"). */
+    readonly provider?: string;
+    /** Model id (e.g., "claude-sonnet-4-20250514"). */
+    readonly modelId?: string;
+    /** Model API (e.g., "messages", "responses"). `null` permitted per design §6.2. */
+    readonly modelApi?: string | null;
+  };
 
   /** Override for the trajectory base directory (precedes COMIS_TRAJECTORY_DIR). */
   readonly trajectoryDir?: string;

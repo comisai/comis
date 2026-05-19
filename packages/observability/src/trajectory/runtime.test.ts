@@ -450,14 +450,16 @@ describe("createTrajectoryRecorder -- envelope shape (design §6.2)", () => {
     expect((lines[0].data as Record<string, unknown>)["source"]).toBeUndefined();
   });
 
-  it("lifts_provider_modelid_modelapi_to_envelope from TrajectoryRecorderInit", async () => {
+  it("lifts_provider_modelid_modelapi_to_envelope from TrajectoryRecorderInit model cluster", async () => {
     const recorder = createTrajectoryRecorder({
       agentId: "agent-1",
       sessionId: "sid-lift",
       trajectoryDir: tmpDir,
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
-      modelApi: "messages",
+      model: {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-20250514",
+        modelApi: "messages",
+      },
     });
     expect(recorder).not.toBeNull();
     recorder!.recordEvent("model.completed", { inputTokens: 10 });
@@ -485,8 +487,10 @@ describe("createTrajectoryRecorder -- envelope shape (design §6.2)", () => {
       agentId: "agent-1",
       sessionId: "sid-no-modelapi",
       trajectoryDir: tmpDir,
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      model: {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-20250514",
+      },
     });
     expect(recorder).not.toBeNull();
     recorder!.recordEvent("model.completed", {});
@@ -499,7 +503,7 @@ describe("createTrajectoryRecorder -- envelope shape (design §6.2)", () => {
     expect(Object.prototype.hasOwnProperty.call(lines[0], "modelApi")).toBe(false);
   });
 
-  it("workspaceDir_envelope_field_lifted_when_init_supplies_it", async () => {
+  it("lifts_workspaceDir_to_envelope_when_init_supplies_it", async () => {
     const recorder = createTrajectoryRecorder({
       agentId: "agent-1",
       sessionId: "sid-wsd",

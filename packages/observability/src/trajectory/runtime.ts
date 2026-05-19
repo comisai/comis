@@ -344,9 +344,19 @@ function buildEvent(input: BuildEventInput): TrajectoryEvent {
   if (input.init.sessionKey !== undefined) envelope.sessionKey = input.init.sessionKey;
   if (input.init.runId !== undefined) envelope.runId = input.init.runId;
   if (input.init.workspaceDir !== undefined) envelope.workspaceDir = input.init.workspaceDir;
-  if (input.init.provider !== undefined) envelope.provider = input.init.provider;
-  if (input.init.modelId !== undefined) envelope.modelId = input.init.modelId;
-  if (input.init.modelApi !== undefined) envelope.modelApi = input.init.modelApi;
+  // provider/modelId/modelApi live in the `model` cluster on
+  // TrajectoryRecorderInit (see types.ts) so the interface stays under
+  // the ≤12-optional-fields architecture invariant. Lift each onto the
+  // envelope when defined.
+  if (input.init.model?.provider !== undefined) {
+    envelope.provider = input.init.model.provider;
+  }
+  if (input.init.model?.modelId !== undefined) {
+    envelope.modelId = input.init.model.modelId;
+  }
+  if (input.init.model?.modelApi !== undefined) {
+    envelope.modelApi = input.init.model.modelApi;
+  }
   if (input.parentEntryId !== undefined) envelope.parentEntryId = input.parentEntryId;
   if (input.sanitized !== undefined) envelope.data = input.sanitized;
   return envelope as TrajectoryEvent;

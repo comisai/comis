@@ -92,17 +92,18 @@ export type ConfigWriteSource = string;
  * JS-safe-integer overflow protection (design §9.2). The internal
  * `snapshotStat` helper in `append.ts` returns this shape and the
  * `finalize`/`createBase` helpers flatten it into the record's flat
- * fields (no nested object on disk).
+ * fields (no nested object on disk). Kept as a plain type interface
+ * (not a Zod schema) because the nested object never lands on disk
+ * post-260519-rrm; the schema isn't reusable as a parser anymore.
  */
-const FileStatSnapshotSchema = z.object({
-  dev: z.string().nullable(),
-  ino: z.string().nullable(),
-  mode: z.number().int().nullable(),
-  nlink: z.number().int().nullable(),
-  uid: z.number().int().nullable(),
-  gid: z.number().int().nullable(),
-});
-export type FileStatSnapshot = z.infer<typeof FileStatSnapshotSchema>;
+export interface FileStatSnapshot {
+  readonly dev: string | null;
+  readonly ino: string | null;
+  readonly mode: number | null;
+  readonly nlink: number | null;
+  readonly uid: number | null;
+  readonly gid: number | null;
+}
 
 /**
  * Full `ConfigWriteAuditRecord` shape (design §9.2).
