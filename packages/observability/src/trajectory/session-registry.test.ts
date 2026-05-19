@@ -186,6 +186,60 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
   });
 });
 
+describe("SessionTrajectoryHandleRegistry — session:started latch (design §6.4)", () => {
+  it("has_session_started_been_emitted_returns_false_before_first_mark", () => {
+    const reg = createSessionTrajectoryHandleRegistry();
+    const bus = new TypedEventBus();
+    // Entry must exist (latch lives on SessionEntry) before consultation.
+    reg.getOrCreate("k-latch", { agentId: "a", sessionId: "sid-latch", trajectoryDir: tmpDir }, bus);
+    expect(reg.hasSessionStartedBeenEmitted("k-latch")).toBe(false);
+  });
+
+  it("mark_session_started_flips_the_latch_and_is_idempotent", () => {
+    const reg = createSessionTrajectoryHandleRegistry();
+    const bus = new TypedEventBus();
+    reg.getOrCreate("k-latch", { agentId: "a", sessionId: "sid-latch", trajectoryDir: tmpDir }, bus);
+    expect(reg.hasSessionStartedBeenEmitted("k-latch")).toBe(false);
+    reg.markSessionStarted("k-latch");
+    expect(reg.hasSessionStartedBeenEmitted("k-latch")).toBe(true);
+    // Second call is a no-op — still `true`.
+    reg.markSessionStarted("k-latch");
+    expect(reg.hasSessionStartedBeenEmitted("k-latch")).toBe(true);
+  });
+
+  it("has_session_started_returns_false_for_unknown_key", () => {
+    // Bridge calls hasSessionStartedBeenEmitted BEFORE getOrCreate has
+    // possibly materialized the entry (e.g., a stray agent_start event
+    // for a session we haven't seen yet). The latch must safely default
+    // to false so the first emit goes through.
+    const reg = createSessionTrajectoryHandleRegistry();
+    expect(reg.hasSessionStartedBeenEmitted("never-created")).toBe(false);
+  });
+
+  it("close_resets_the_latch_so_a_fresh_getOrCreate_re_emits", async () => {
+    // A daemon restart re-creates the registry from scratch; this
+    // covers the per-process case where close() + re-getOrCreate
+    // resets the latch within the SAME registry lifetime (operator
+    // /reset followed by a new message).
+    const reg = createSessionTrajectoryHandleRegistry();
+    const bus = new TypedEventBus();
+    reg.getOrCreate("k-reset", { agentId: "a", sessionId: "sid-reset", trajectoryDir: tmpDir }, bus);
+    reg.markSessionStarted("k-reset");
+    expect(reg.hasSessionStartedBeenEmitted("k-reset")).toBe(true);
+    await reg.close("k-reset");
+    reg.getOrCreate("k-reset", { agentId: "a", sessionId: "sid-reset", trajectoryDir: tmpDir }, bus);
+    expect(reg.hasSessionStartedBeenEmitted("k-reset")).toBe(false);
+  });
+
+  it("mark_session_started_on_unknown_key_is_silent_noop", () => {
+    // Defensive: bridge calling markSessionStarted before getOrCreate
+    // (shouldn't happen in production, but the API must not throw).
+    const reg = createSessionTrajectoryHandleRegistry();
+    expect(() => reg.markSessionStarted("never-created")).not.toThrow();
+    expect(reg.hasSessionStartedBeenEmitted("never-created")).toBe(false);
+  });
+});
+
 describe("createSessionTrajectoryHandleRegistry — monotonic seq + single session.started/ended (design §6.4 + §6.8)", () => {
   it("seq_is_monotonic_across_multiple_event_batches_on_same_recorder", async () => {
     // Simulate two consecutive execute() calls (turns) feeding events

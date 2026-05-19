@@ -17,8 +17,9 @@
  */
 
 import { SessionManager as SdkSessionManager } from "@earendil-works/pi-coding-agent";
-import { formatSessionKey, safePath, systemNowDate, type SessionKey } from "@comis/core";
-import type { ComisLogger, FileLockPort } from "@comis/core";
+import { formatSessionKey, safePath, systemNowDate, systemNowMs, type SessionKey } from "@comis/core";
+import type { ComisLogger, FileLockPort, TypedEventBus } from "@comis/core";
+import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
 import { suppressError, type Result } from "@comis/shared";
 import { mkdir, unlink, rm, rmdir } from "node:fs/promises";
 import { existsSync, writeFileSync, readFileSync } from "node:fs";
@@ -54,6 +55,30 @@ export interface ComisSessionManagerDeps {
    * directory'. The public Result API is unchanged either way.
    */
   logger?: ComisLogger;
+  /**
+   * Optional TypedEventBus. When provided, `destroySession` emits a
+   * `session:ended` event with `exitReason: "destroyed"` BEFORE unlinking
+   * the JSONL transcript (design §6.4 mapping table — `session.ended`
+   * fires on session-destroy, NOT per-turn). When omitted (legacy / test
+   * harnesses, ephemeral sub-agent path), the emit step is a silent no-op
+   * and `destroySession` still unlinks the file as before.
+   *
+   * Production wiring: daemon's setup-agents-runtime threads
+   * `container.eventBus` here.
+   */
+  eventBus?: TypedEventBus;
+  /**
+   * Optional session-scoped trajectory recorder registry. When provided,
+   * `destroySession` calls `trajectoryRegistry.close(formattedKey)` AFTER
+   * the `session:ended` emit and BEFORE unlinking the JSONL — the
+   * registry's `flushAndClose` drains the writer's queue tail so the
+   * just-emitted `session.ended` JSONL line lands on disk before the
+   * recorder tears down (design §6.5).
+   *
+   * Production wiring: daemon's setup-agents-runtime threads the
+   * singleton registry from setup-agents-registry here.
+   */
+  trajectoryRegistry?: SessionTrajectoryHandleRegistry;
 }
 
 /**
@@ -216,6 +241,36 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
     async destroySession(sessionKey: SessionKey): Promise<void> {
       const sessionPath = sessionKeyToPath(sessionKey, deps.sessionBaseDir);
       const sessionKeyStr = formatSessionKey(sessionKey);
+
+      // Emit session:ended BEFORE registry close — the bridge translates
+      // the EventBus emit to a recorder.recordEvent call (sync), which
+      // enqueues the JSONL line. trajectoryRegistry.close then runs
+      // flushAndClose which awaits the queue tail, guaranteeing the
+      // session.ended line lands on disk. Design §6.4 mapping:
+      // "(session) ended → session.ended" fires here, NOT on per-turn
+      // agent_end. Counters are zero placeholders — the session manager
+      // doesn't accumulate per-session totals; the `exitReason:"destroyed"`
+      // discriminator distinguishes from a normal end-of-turn close. See
+      // 260519-tlx PLAN §F.4 note for the rationale.
+      if (deps.eventBus !== undefined) {
+        deps.eventBus.emit("session:ended", {
+          agentId: "",
+          sessionKey: sessionKeyStr,
+          traceId: sessionKeyStr,
+          totalTurns: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          durationMs: 0,
+          exitReason: "destroyed",
+          timestamp: systemNowMs(),
+        });
+      }
+      if (deps.trajectoryRegistry !== undefined) {
+        // Best-effort: close() swallows per-entry errors. Awaiting it
+        // ensures the flush-tail completes before the JSONL unlink races
+        // the bridge's recordEvent enqueue.
+        await deps.trajectoryRegistry.close(sessionKeyStr);
+      }
 
       await withSessionLock(deps.fileLock, deps.lockDir, sessionKeyStr, async () => {
         try { await unlink(sessionPath); } catch { /* ENOENT ok */ }

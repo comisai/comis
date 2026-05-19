@@ -297,6 +297,11 @@ export async function setupSingleAgent(
     // union to the legacy 'locked' | 'error' string. Enables operator
     // triage of EACCES / disk-full vs lock contention.
     logger: agentLogger,
+    // Bus + registry let destroySession emit `session:ended` and drain
+    // the trajectory recorder before unlinking the JSONL (260519-tlx
+    // Gap F, design §6.4).
+    eventBus: container.eventBus,
+    trajectoryRegistry: deps.trajectoryRegistry,
   });
 
   // Clean up stale lock sentinel files from previous daemon runs

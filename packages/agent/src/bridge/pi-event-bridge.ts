@@ -25,6 +25,7 @@ import {
   type ModelOperationType,
   type ErrorKind,
 } from "@comis/core";
+import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
 import type { ComisLogger } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { randomUUID } from "node:crypto";
@@ -172,6 +173,18 @@ export interface PiEventBridgeDeps {
    *  restoration hook. Optional — when omitted, the wire-edge diagnostic is
    *  a silent no-op. */
   getSessionJsonlPath?: () => string | null;
+  /**
+   * Session-scoped trajectory registry. When present, the bridge's
+   * `agent_start` case consults `hasSessionStartedBeenEmitted(formattedKey)`
+   * to suppress per-turn `session:started` re-emits (design §6.4 mapping
+   * table — `session.started` fires once per session, NOT per pi-mono
+   * turn). The bridge itself is per-turn; the registry survives every
+   * turn so the latch lives there.
+   *
+   * When omitted (legacy/test callers), the bridge falls back to the
+   * pre-tlx unconditional emit so existing harnesses keep working.
+   */
+  trajectoryRegistry?: SessionTrajectoryHandleRegistry;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -272,38 +285,49 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           if (m.agentStartMs === undefined) {
             m.agentStartMs = systemNowMs();
           }
+          // Suppress per-turn re-emits: design §6.4 makes session.started
+          // fire ONCE per session (not per pi-mono turn). The bridge is
+          // per-turn, so consult the session-scoped trajectoryRegistry
+          // latch — it survives across turns and resets only when the
+          // session is destroyed (or the daemon restarts and rebuilds
+          // the registry fresh). When the registry is absent
+          // (legacy/test callers), fall through to the legacy
+          // unconditional emit so existing harnesses keep working.
+          const formattedKey = formatSessionKey(deps.sessionKey);
+          if (deps.trajectoryRegistry?.hasSessionStartedBeenEmitted(formattedKey) === true) {
+            break;
+          }
           // channelType lives on RequestContext (AsyncLocalStorage); fall
           // back to "" when running outside a scope (e.g., direct test
           // invocation). Trajectory consumers tolerate the empty case.
           const channelType = tryGetContext()?.channelType ?? "";
           deps.eventBus.emit("session:started", {
             agentId: deps.agentId,
-            sessionKey: formatSessionKey(deps.sessionKey),
+            sessionKey: formattedKey,
             traceId: deps.executionId,
             channelType,
             channelId: deps.channelId,
             timestamp: systemNowMs(),
           });
+          deps.trajectoryRegistry?.markSessionStarted(formattedKey);
           break;
         }
 
         case "agent_end": {
+          // session:ended is NO LONGER emitted from agent_end (design
+          // §6.4 — "(session) ended" is a session-destroy semantic, not
+          // per-turn). The emit moved to
+          // ComisSessionManager.destroySession. Per-turn duration metrics
+          // are surfaced via observability:token_usage → model.completed,
+          // which already carries durationMs.
+          //
+          // We preserve the m.agentStartMs / m.lastStopReason reads since
+          // other accumulators may rely on these — only the eventBus
+          // emit is removed.
           const startMs = m.agentStartMs ?? systemNowMs();
           const durationMs = systemNowMs() - startMs;
-          // Exit reason: derive from last stopReason (or empty when
-          // pi-mono shut down cleanly without one).
-          const exitReason = m.lastStopReason ?? "end";
-          deps.eventBus.emit("session:ended", {
-            agentId: deps.agentId,
-            sessionKey: formatSessionKey(deps.sessionKey),
-            traceId: deps.executionId,
-            totalTurns: m.turnCount,
-            totalInputTokens: m.totalInputTokens,
-            totalOutputTokens: m.totalOutputTokens,
-            durationMs,
-            exitReason,
-            timestamp: systemNowMs(),
-          });
+          void durationMs;
+          void (m.lastStopReason ?? "end");
           break;
         }
 

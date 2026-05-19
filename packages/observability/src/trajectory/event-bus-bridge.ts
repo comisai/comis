@@ -76,6 +76,15 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // ---- Delivery lifecycle ----
   "delivery:enqueued": "delivery.queued",
   "delivery:complete": "delivery.dispatched",
+
+  // ---- Context engine ----
+  // Context pipeline runs once per turn (pre-LLM context assembly).
+  // Mapping closes 260519-tlx Gap COV — design §6.4 mapping table entry
+  // "(executor) prompt assembled (or context layer) → context.compiled".
+  // The post-LLM `context:pipeline:cache` patch event is NOT mapped here;
+  // its cache fields land in this initial pipeline snapshot at emit time
+  // (the producer reuses the same payload-fence semantics for both events).
+  "context:pipeline": "context.compiled",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**
@@ -336,6 +345,31 @@ function translatePayload(
         status,
       };
     }
+
+    case "context:pipeline":
+      // Envelope-only correlation keys (agentId, sessionKey) intentionally
+      // stripped per design §6.2 + 260519-rrm deviation C. The trajectory
+      // envelope carries them via TrajectoryRecorderInit + AsyncLocalStorage.
+      return {
+        tokensLoaded: payload.tokensLoaded,
+        tokensEvicted: payload.tokensEvicted,
+        tokensMasked: payload.tokensMasked,
+        tokensCompacted: payload.tokensCompacted,
+        thinkingBlocksRemoved: payload.thinkingBlocksRemoved,
+        budgetUtilization: payload.budgetUtilization,
+        evictionCategories: payload.evictionCategories,
+        rereadCount: payload.rereadCount,
+        rereadTools: payload.rereadTools,
+        sessionDepth: payload.sessionDepth,
+        sessionToolResults: payload.sessionToolResults,
+        cacheHitTokens: payload.cacheHitTokens,
+        cacheWriteTokens: payload.cacheWriteTokens,
+        cacheMissTokens: payload.cacheMissTokens,
+        ...(payload.cacheFenceIndex !== undefined ? { cacheFenceIndex: payload.cacheFenceIndex } : {}),
+        durationMs: payload.durationMs,
+        layerCount: payload.layerCount,
+        layers: payload.layers,
+      };
 
     default: {
       // Exhaustiveness — switch covers every TrajectoryBridgedEventName.
