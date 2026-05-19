@@ -76,11 +76,36 @@ export interface ScrubParams {
   readonly injectedAfterRead?: () => void;
 }
 
-/** Re-encode a single parsed record through the redactor + sanitizer. */
-function reEncodeRecord(parsed: unknown): string {
+/**
+ * Plan 45-gap-01 (BL-01): Sentinel emitted when re-encoding a parsed
+ * line fails. See identical helper in append.ts:
+ * emitSerializationErrorSentinel for rationale.
+ *
+ * scrub.ts intentionally does NOT depend on @comis/core for
+ * systemNowMs — Date.now() is acceptable here because the scrub path
+ * runs from the CLI doctor command, not the daemon (no ClockPort in
+ * scope). The forensic value is the timestamp's wall-clock
+ * approximation, not the monotonic precision.
+ */
+function emitSerializationErrorSentinel(): string {
+  const sentinel = {
+    traceSchema: "comis-config-audit" as const,
+    schemaVersion: 1 as const,
+    __serializationError: "record-not-serializable" as const,
+    tsMs: Date.now(),
+  };
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  return JSON.stringify(sentinel)! + "\n";
+}
+
+/** Re-encode a single parsed record through the redactor + sanitizer.
+ *  Exported for test-driven BL-01 verification (plan 45-gap-01). */
+export function reEncodeRecord(parsed: unknown): string {
   if (parsed === null || typeof parsed !== "object") {
     // Not an object — leave alone (encode as-is).
-    return safeJsonStringify(parsed) + "\n";
+    const json = safeJsonStringify(parsed);
+    if (json === undefined) return emitSerializationErrorSentinel();
+    return json + "\n";
   }
   const obj = parsed as Record<string, unknown>;
   const withoutArgv: Record<string, unknown> = { ...obj };
@@ -100,7 +125,9 @@ function reEncodeRecord(parsed: unknown): string {
   } else if (rawArgv !== undefined) {
     sanitized.argv = rawArgv;
   }
-  return safeJsonStringify(sanitized) + "\n";
+  const json = safeJsonStringify(sanitized);
+  if (json === undefined) return emitSerializationErrorSentinel();
+  return json + "\n";
 }
 
 /**

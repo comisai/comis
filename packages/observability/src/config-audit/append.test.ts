@@ -276,7 +276,12 @@ describe("encodeRecord — BL-01 sentinel on serialization failure", () => {
     }
   });
 
-  it("emits sentinel when the record contains a circular reference", () => {
+  it("emits sentinel when the record contains a nested BigInt inside an array (survives sanitizer)", () => {
+    // NOTE: per plan 45-gap-01 review, raw circular refs are normalized by
+    // sanitizeForPersistence (cycles become `{__bounded__: "bounded-..."}`
+    // markers) so they no longer trigger the BL-01 fallback. A nested BigInt
+    // inside an array survives the sanitizer untouched and exercises the
+    // same code path: safeJsonStringify returns undefined → sentinel emitted.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "config-audit-bl01-circ-"));
     const filePath = path.join(dir, "config-audit.jsonl");
 
@@ -292,8 +297,8 @@ describe("encodeRecord — BL-01 sentinel on serialization failure", () => {
         watchMode: false,
       });
       const record = finalizeConfigWriteAuditRecord(base, { result: "rename" });
-      // Force a circular ref via cast.
-      (record as unknown as { self: unknown }).self = record;
+      // Inject a BigInt inside an array — survives the sanitizer.
+      (record as unknown as { suspiciousValues: unknown[] }).suspiciousValues = [BigInt(7), 1];
 
       const appendResult = appendConfigAuditRecordSync({ filePath, record });
       expect(appendResult.ok).toBe(true);
