@@ -131,9 +131,15 @@ describe("obs.systemPromptReport.latest handler", () => {
   });
 
   it("latest_returns_null_when_runId_does_not_match", async () => {
+    // Plan 45.1-05 (TRAJ-FIX-07): the store now does the narrowing in
+    // the WHERE clause, so the mock simulates a non-match by returning
+    // undefined when the runId argument doesn't match the stored row.
     const reportRow = makeReportRow({ runId: "run-a" });
     const obsStore = makeObsStore({
-      latestSystemPromptReport: vi.fn().mockReturnValue(reportRow),
+      latestSystemPromptReport: vi.fn().mockImplementation(
+        (agentId: string, sessionId: string, runId?: string) =>
+          runId === undefined || runId === "run-a" ? reportRow : undefined,
+      ),
     });
     const handlers = bindObsSystemPromptReportHandlers(
       makeDeps({ obsStore: obsStore as any }),
@@ -145,6 +151,30 @@ describe("obs.systemPromptReport.latest handler", () => {
       runId: "run-different",
     }) as { report: Record<string, unknown> | null };
     expect(result.report).toBeNull();
+  });
+
+  it("latest narrows by runId via SQL not post-filter (TRAJ-FIX-07)", async () => {
+    // Plan 45.1-05 task 3: the handler must thread the runId param into
+    // the store call rather than fetching the latest-by-generatedAt row
+    // and post-filtering. Spy on the store to assert the call signature.
+    const reportRow = makeReportRow({ runId: "run-a", reportJson: '{"runId":"run-a"}' });
+    const latestSpy = vi.fn().mockImplementation(
+      (agentId: string, sessionId: string, runId?: string) =>
+        runId === "run-a" ? reportRow : undefined,
+    );
+    const obsStore = makeObsStore({ latestSystemPromptReport: latestSpy });
+    const handlers = bindObsSystemPromptReportHandlers(
+      makeDeps({ obsStore: obsStore as any }),
+    );
+    const result = await handlers["obs.systemPromptReport.latest"]!({
+      _trustLevel: "admin",
+      agentId: "a",
+      sessionId: "s",
+      runId: "run-a",
+    }) as { report: Record<string, unknown> | null };
+    expect(latestSpy).toHaveBeenCalledWith("a", "s", "run-a");
+    expect(result.report).not.toBeNull();
+    expect((result.report as { runId?: unknown }).runId).toBe("run-a");
   });
 
   it("latest_returns_null_when_obsStore_is_absent", async () => {

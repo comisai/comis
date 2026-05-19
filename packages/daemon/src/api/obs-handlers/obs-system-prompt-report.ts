@@ -56,26 +56,25 @@ export function bindObsSystemPromptReportHandlers(
       if (!obsStore) {
         result = { report: null };
       } else {
+        // Plan 45.1-05 (TRAJ-FIX-07): push the optional runId into the
+        // SQL WHERE clause instead of post-filtering the latest-by-
+        // generatedAt row. The previous post-filter (returning null
+        // when the latest row's runId didn't match the requested
+        // runId) was a bug — it dropped older rows that DID match.
         const row: SystemPromptReportRow | undefined = obsStore.latestSystemPromptReport(
           params.agentId,
           params.sessionId,
+          params.runId,
         );
         if (!row) {
           result = { report: null };
         } else {
-          // The runId param narrows further when supplied; the SQL
-          // ORDER BY generated_at DESC already returned the latest, so
-          // we filter post-hoc when runId is present.
-          if (params.runId !== undefined && row.runId !== params.runId) {
+          try {
+            const parsed = JSON.parse(row.reportJson) as Record<string, unknown>;
+            result = { report: parsed };
+          } catch {
+            // Corrupt report_json — degrade to null (observability is non-fatal).
             result = { report: null };
-          } else {
-            try {
-              const parsed = JSON.parse(row.reportJson) as Record<string, unknown>;
-              result = { report: parsed };
-            } catch {
-              // Corrupt report_json — degrade to null (observability is non-fatal).
-              result = { report: null };
-            }
           }
         }
       }
