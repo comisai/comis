@@ -278,6 +278,68 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
+  // 4b. Plan 45-03: memory:injected event emit
+  // -----------------------------------------------------------------
+  it("emits_memory_injected_when_inline_memory_set with hitCount/charsInjected/trustTags", async () => {
+    const mockSearchResults = [
+      {
+        entry: { id: "m1", tenantId: "t", content: "Inline pick", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
+        score: 0.9,
+      },
+      {
+        entry: { id: "m2", tenantId: "t", content: "Section pick", createdAt: Date.now(), tags: [], trustLevel: "system", source: { channel: "test" } },
+        score: 0.8,
+      },
+    ];
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({ ok: true, value: mockSearchResults }),
+      store: vi.fn(),
+    } as any;
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn(), once: vi.fn(), listenerCount: vi.fn().mockReturnValue(0) } as any;
+    // Hybrid split: inline memory present, plus a non-empty system section.
+    mockHybridSplit.mockReturnValueOnce({
+      inlineMemory: "[inline rag chunk]",
+      systemPromptSections: ["section body"],
+    });
+
+    const params = makeParams({
+      config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned", "system"], maxContextChars: 5000 } }),
+      deps: { workspaceDir: "/workspace", memoryPort, eventBus },
+    });
+    await assembleExecutionPrompt(params);
+
+    const memoryEmit = emit.mock.calls.find((c: any[]) => c[0] === "memory:injected");
+    expect(memoryEmit, "memory:injected emit must fire when injection produces content").toBeTruthy();
+    const payload = memoryEmit![1];
+    expect(payload.hitCount).toBe(2);
+    expect(payload.charsInjected).toBe("[inline rag chunk]".length + "section body".length);
+    expect(new Set(payload.trustTags)).toEqual(new Set(["learned", "system"]));
+    expect(typeof payload.timestamp).toBe("number");
+    expect(typeof payload.traceId).toBe("string");
+  });
+
+  it("does_not_emit_when_no_injection (deduped is empty, the if-block is skipped)", async () => {
+    const memoryPort = {
+      // Empty results — deduplicateResults will produce an empty array
+      // and the injector block is skipped entirely.
+      search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      store: vi.fn(),
+    } as any;
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn(), once: vi.fn(), listenerCount: vi.fn().mockReturnValue(0) } as any;
+
+    const params = makeParams({
+      config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 } }),
+      deps: { workspaceDir: "/workspace", memoryPort, eventBus },
+    });
+    await assembleExecutionPrompt(params);
+
+    const memoryEmit = emit.mock.calls.find((c: any[]) => c[0] === "memory:injected");
+    expect(memoryEmit, "memory:injected must not fire when no injection occurred").toBeUndefined();
+  });
+
+  // -----------------------------------------------------------------
   // 5. RAG failure is non-fatal
   // -----------------------------------------------------------------
   it("does not throw when RAG retrieval fails", async () => {

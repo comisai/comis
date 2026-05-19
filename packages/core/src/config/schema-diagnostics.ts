@@ -37,8 +37,50 @@
 
 import { z } from "zod";
 
-// Owned by 45-03 (filled with trajectory.{enabled,dir,maxFileBytes,eventTypes} in that plan).
-const TrajectoryConfigSchema = z.object({}).default({});
+/**
+ * `diagnostics.trajectory.*` schema (Plan 45-03 task 11).
+ *
+ * Configures the per-session trajectory JSONL sidecar that the
+ * pi-executor recorder writes (see
+ * `packages/observability/src/trajectory/runtime.ts`). All fields
+ * carry defaults so an empty `diagnostics.trajectory: {}` block in
+ * YAML produces a valid configuration:
+ *
+ *   - `enabled: true` — the writer is on by default (the env
+ *     `COMIS_TRAJECTORY=0` is the operator escape hatch).
+ *   - `dir` — optional override for the trajectory base directory.
+ *     When omitted the writer's path resolution falls back through
+ *     `COMIS_TRAJECTORY_DIR` env → sessionFile co-location →
+ *     workspaceDir → `process.cwd()` (see `resolveTrajectoryFilePath`).
+ *   - `maxFileBytes: 50 MB` — the file cap (the per-event cap of
+ *     256 KB is fixed by the runtime; only the file cap is
+ *     operator-tunable).
+ *   - `eventTypes` — optional allowlist of trajectory event types to
+ *     record. When omitted the writer records every bridge-mapped
+ *     event (the default mode). Consumer-side filtering is deferred
+ *     to a Phase 45 follow-up if needed.
+ *
+ * Per the 45-01 sequencing decision the section-registry parity
+ * snapshot is NOT touched here — the `diagnostics` section was already
+ * registered in 45-01 task 12. Only the field-metadata snapshot for
+ * `diagnostics.trajectory` (which previously showed an empty object)
+ * is regenerated when the schema below lands.
+ */
+const TrajectoryConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    dir: z.string().optional(),
+    maxFileBytes: z
+      .number()
+      .int()
+      .positive()
+      .default(50 * 1024 * 1024),
+    eventTypes: z.array(z.string()).optional(),
+  })
+  .default({
+    enabled: true,
+    maxFileBytes: 50 * 1024 * 1024,
+  });
 
 // Owned by Phase 46 (cache-trace subsection, out of Phase 45 scope).
 const CacheTraceConfigSchema = z.object({}).default({});

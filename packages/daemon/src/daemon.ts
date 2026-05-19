@@ -404,7 +404,7 @@ async function stageFoundation(input: {
         return { obsStore: store, obsPersistence: persistence };
       })()
     : undefined;
-  const obsStore = obsBundle?.obsStore;
+  const obsStore = obsBundle?.obsStore; // Plan 45-03: trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
 
   // Create context store + daemon-level runtime registries

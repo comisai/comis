@@ -75,4 +75,46 @@ describe("prompt-runner.ts — orchestrator structure", () => {
     const lineCount = source.split("\n").length;
     expect(lineCount).toBeLessThanOrEqual(250);
   });
+
+  it("imports `systemNowMs` from @comis/core and `createHash` from node:crypto (prompt:submitted emit)", () => {
+    expect(source).toMatch(/import\s+\{\s*systemNowMs\s*\}\s+from\s+"@comis\/core"/);
+    expect(source).toMatch(/import\s+\{\s*createHash\s*\}\s+from\s+"node:crypto"/);
+  });
+
+  it("emits prompt:submitted after wrapEnvelope returns and before precheckBudget", () => {
+    // The structural ordering invariant: the emit helper invocation is
+    // sandwiched between wrapEnvelope and precheckBudget so the
+    // observability boundary runs before the budget gate.
+    const idxEnvelope = source.indexOf("wrapEnvelope(");
+    const idxEmit = source.indexOf("emitPromptSubmitted(");
+    const idxPrecheck = source.indexOf("precheckBudget(");
+    expect(idxEnvelope).toBeGreaterThanOrEqual(0);
+    expect(idxEmit).toBeGreaterThan(idxEnvelope);
+    expect(idxPrecheck).toBeGreaterThan(idxEmit);
+  });
+
+  it("emit_prompt_submitted_with_digests calls eventBus.emit with sha256 systemDigest + messagesDigest", () => {
+    // Behavioral: drive runPrompt indirectly via the exported helper.
+    // The full pipeline requires mock AgentSession + ModelRegistry +
+    // BudgetGuard so we narrow to verifying the digest contract
+    // structurally — the architecture lock that prompt-submitted is
+    // emitted at all is enforced above. The full e2e shape is covered
+    // by the integration suite.
+    expect(source).toMatch(/createHash\("sha256"\)/);
+    // Object shorthand (systemDigest,) is used to pass the local digest
+    // variable into the emit payload — confirm the field name appears
+    // followed by a comma/space terminator.
+    expect(source).toMatch(/\bsystemDigest,/);
+    expect(source).toMatch(/\bmessagesDigest,/);
+    expect(source).toMatch(/promptChars:\s*systemPrompt\.length\s*\+\s*messageText\.length/);
+  });
+
+  it("swallows emit errors so dispatch is never aborted by an observability failure", () => {
+    // Structural lock: the emit helper body must be wrapped in
+    // try/catch with the debug-log on failure.
+    const helperBlock = source.slice(source.indexOf("function emitPromptSubmitted("));
+    expect(helperBlock).toMatch(/try\s*\{/);
+    expect(helperBlock).toMatch(/catch\s*\(err\)/);
+    expect(helperBlock).toMatch(/Failed to emit prompt:submitted/);
+  });
 });

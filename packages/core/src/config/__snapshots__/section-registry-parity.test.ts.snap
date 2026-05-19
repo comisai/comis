@@ -4042,10 +4042,35 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
     "type": "object"
   },
   {
-    "default": {},
+    "default": {
+      "enabled": true,
+      "maxFileBytes": 52428800
+    },
     "immutable": false,
     "path": "diagnostics.trajectory",
     "type": "object"
+  },
+  {
+    "immutable": false,
+    "path": "diagnostics.trajectory.dir",
+    "type": "string"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "diagnostics.trajectory.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": false,
+    "path": "diagnostics.trajectory.eventTypes",
+    "type": "array"
+  },
+  {
+    "default": 52428800,
+    "immutable": false,
+    "path": "diagnostics.trajectory.maxFileBytes",
+    "type": "integer"
   }
 ]"
 `;
@@ -18019,7 +18044,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
     "cacheTrace": {},
     "configAudit": {},
     "redact": {},
-    "trajectory": {}
+    "trajectory": {
+      "enabled": true,
+      "maxFileBytes": 52428800
+    }
   },
   "properties": {
     "cacheTrace": {
@@ -18042,8 +18070,35 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
     },
     "trajectory": {
       "additionalProperties": false,
-      "default": {},
-      "properties": {},
+      "default": {
+        "enabled": true,
+        "maxFileBytes": 52428800
+      },
+      "properties": {
+        "dir": {
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "eventTypes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "maxFileBytes": {
+          "default": 52428800,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "enabled",
+        "maxFileBytes"
+      ],
       "type": "object"
     }
   },

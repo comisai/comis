@@ -111,7 +111,13 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // contract types canonically live in @comis/core. No @comis/memory edge:
   // agent's type-only imports resolve through @comis/core; the OAuth-store
   // value-import lives in daemon.
-  agent: new Set(["shared", "core", "scheduler"]),
+  //
+  // @comis/observability runtime edge added by Plan 45-03 task 10:
+  // pi-executor.ts imports `createTrajectoryRecorder` and
+  // `attachTrajectoryToEventBus` for the per-session trajectory writer.
+  // Direction is forward (agent → observability → infra/core/shared);
+  // no cycle.
+  agent: new Set(["shared", "core", "observability", "scheduler"]),
   // channels: no agent dep — the shared/ pipeline carriers (inbound +
   // execution) moved to @comis/orchestrator. No @comis/infra edge either.
   channels: new Set(["shared", "core"]),

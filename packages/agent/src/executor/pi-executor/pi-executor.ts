@@ -34,6 +34,11 @@
  */
 
 import {
+  attachTrajectoryToEventBus,
+  createTrajectoryRecorder,
+  type TrajectoryRecorder,
+} from "@comis/observability";
+import {
   createAgentSession,
   DefaultResourceLoader,
 } from "@earendil-works/pi-coding-agent";
@@ -542,6 +547,48 @@ async function runSessionLocked(
 
   // Compute formatted key early for trace file paths and active run registry
   const formattedKey = formatSessionKey(sessionKey);
+
+  // Plan 45-03: per-session trajectory recorder. The recorder writes
+  // one JSONL line per typed-EventBus event the bridge translates;
+  // attachTrajectoryToEventBus subscribes once for the duration of this
+  // execute() call. Both the recorder and the bridge subscription are
+  // torn down in the runner-block finally (after postExecution).
+  // createTrajectoryRecorder returns null when COMIS_TRAJECTORY=0 or
+  // diagnostics.trajectory.enabled=false — the null-check below makes
+  // the wiring a no-op in that case.
+  let trajectoryRecorder: TrajectoryRecorder | null = null;
+  let trajectoryUnsubscribe: (() => void) | undefined;
+  try {
+    trajectoryRecorder = createTrajectoryRecorder({
+      agentId: agentId ?? config.name,
+      sessionId: formattedKey,
+      sessionKey: formattedKey,
+      workspaceDir: deps.workspaceDir,
+      provider: resolvedModel?.provider ?? config.provider,
+      modelId: resolvedModel?.id ?? config.model,
+      ...(deps.trajectoryConfig?.enabled !== undefined
+        ? { enabled: deps.trajectoryConfig.enabled }
+        : {}),
+      ...(deps.trajectoryConfig?.dir !== undefined
+        ? { trajectoryDir: deps.trajectoryConfig.dir }
+        : {}),
+      ...(deps.trajectoryConfig?.maxFileBytes !== undefined
+        ? { maxRuntimeFileBytes: deps.trajectoryConfig.maxFileBytes }
+        : {}),
+    });
+    if (trajectoryRecorder !== null) {
+      trajectoryUnsubscribe = attachTrajectoryToEventBus({
+        eventBus: deps.eventBus,
+        recorder: trajectoryRecorder,
+      });
+    }
+  } catch (err) {
+    // Best-effort — recorder construction must never block execution.
+    deps.logger.debug(
+      { err, hint: "trajectory recorder init failed; continuing without trajectory sidecar", errorKind: "internal" as ErrorKind },
+      "Trajectory recorder init failed",
+    );
+  }
 
   // Per-execution tool retry breaker (state resets each message)
   const toolRetryBreakerConfig = config.toolRetryBreaker;
@@ -1230,6 +1277,27 @@ async function runSessionLocked(
       adaptiveRetentionClear,
       executionMinTokensOverrideClear,
     });
+
+    // Plan 45-03: tear down the trajectory recorder + bridge
+    // subscription as the very last action of this execute() call.
+    // Both are best-effort — a flush/unsubscribe failure must NEVER
+    // throw out of finally.
+    try {
+      trajectoryUnsubscribe?.();
+    } catch {
+      // Unsubscribe failure is unreachable in practice (EventEmitter.off
+      // is sync); swallow defensively so this never aborts cleanup.
+    }
+    if (trajectoryRecorder !== null) {
+      try {
+        await trajectoryRecorder.flushAndClose();
+      } catch (err) {
+        deps.logger.debug(
+          { err, hint: "trajectory flushAndClose failed; sidecar may be partial", errorKind: "internal" as ErrorKind },
+          "Trajectory recorder flushAndClose failed",
+        );
+      }
+    }
   }
 
   return result;
