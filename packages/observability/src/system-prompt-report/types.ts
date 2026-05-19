@@ -142,6 +142,16 @@ export const SystemPromptReportSchema = z.object({
   model: z.string().optional(),
   workspaceDir: z.string().optional(),
   systemPrompt: SystemPromptBlockSchema,
+  /** Plan 45.1-05 (TRAJ-FIX-09): per-file bootstrap budget knob (from
+   *  `config.bootstrap.maxChars`) that produced the truncation
+   *  outcome — required so operators can read the budget alongside
+   *  the result. Breaking change vs pre-45.1 persisted rows by
+   *  design (see plan §Risks). */
+  bootstrapMaxChars: z.number().int().nonnegative(),
+  /** Plan 45.1-05 (TRAJ-FIX-09): aggregate cap across all bootstrap
+   *  files, when configured. Optional because the aggregate cap is
+   *  not configured in every deployment. */
+  bootstrapTotalMaxChars: z.number().int().nonnegative().optional(),
   bootstrapTruncation: BootstrapTruncationSchema.optional(),
   injectedWorkspaceFiles: z.array(InjectedWorkspaceFileSchema),
   skills: SkillsBlockSchema,
@@ -184,6 +194,11 @@ export type SystemPromptReport = {
     readonly projectContextChars: number;
     readonly nonProjectContextChars: number;
   };
+  /** Plan 45.1-05 (TRAJ-FIX-09): per-file bootstrap budget knob. */
+  readonly bootstrapMaxChars: number;
+  /** Plan 45.1-05 (TRAJ-FIX-09): aggregate cap across all bootstrap
+   *  files (optional — not every deployment configures it). */
+  readonly bootstrapTotalMaxChars?: number;
   readonly bootstrapTruncation?: {
     readonly applied: boolean;
     readonly filesTruncated: number;
