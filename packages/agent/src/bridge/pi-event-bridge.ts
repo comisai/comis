@@ -17,6 +17,7 @@ import {
   formatSessionKey,
   sanitizeLogString,
   systemNowMs,
+  tryGetContext,
   type SessionKey,
   type TypedEventBus,
   type MemoryPort,
@@ -257,6 +258,56 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         }
 
         // -----------------------------------------------------------------
+        // Agent run lifecycle (Plan 45-03)
+        //
+        // pi-mono emits `agent_start` at the top of each AgentSession.send()
+        // and `agent_end` after the entire agentic loop completes. The
+        // trajectory writer subscribes to the corresponding EventMap
+        // events to bracket every run. session.started is the FIRST
+        // trajectory record; session.ended is the LAST (plus the
+        // trace.truncated sentinel from flushAndClose if dropped events
+        // accumulated).
+        // -----------------------------------------------------------------
+        case "agent_start": {
+          if (m.agentStartMs === undefined) {
+            m.agentStartMs = systemNowMs();
+          }
+          // channelType lives on RequestContext (AsyncLocalStorage); fall
+          // back to "" when running outside a scope (e.g., direct test
+          // invocation). Trajectory consumers tolerate the empty case.
+          const channelType = tryGetContext()?.channelType ?? "";
+          deps.eventBus.emit("session:started", {
+            agentId: deps.agentId,
+            sessionKey: formatSessionKey(deps.sessionKey),
+            traceId: deps.executionId,
+            channelType,
+            channelId: deps.channelId,
+            timestamp: systemNowMs(),
+          });
+          break;
+        }
+
+        case "agent_end": {
+          const startMs = m.agentStartMs ?? systemNowMs();
+          const durationMs = systemNowMs() - startMs;
+          // Exit reason: derive from last stopReason (or empty when
+          // pi-mono shut down cleanly without one).
+          const exitReason = m.lastStopReason ?? "end";
+          deps.eventBus.emit("session:ended", {
+            agentId: deps.agentId,
+            sessionKey: formatSessionKey(deps.sessionKey),
+            traceId: deps.executionId,
+            totalTurns: m.turnCount,
+            totalInputTokens: m.totalInputTokens,
+            totalOutputTokens: m.totalOutputTokens,
+            durationMs,
+            exitReason,
+            timestamp: systemNowMs(),
+          });
+          break;
+        }
+
+        // -----------------------------------------------------------------
         // Tool execution lifecycle
         // -----------------------------------------------------------------
         case "tool_execution_start": {
@@ -464,6 +515,24 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(!toolSuccess && mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
             ...(truncMeta && { truncated: truncMeta.truncated, fullChars: truncMeta.fullChars, returnedChars: truncMeta.returnedChars }),
           });
+
+          // Plan 45-03: explicit tool:timeout emit when the tool was
+          // classified as timed-out. Fires alongside tool:executed for
+          // the same physical timeout — both share toolCallId, so the
+          // trajectory writer + downstream consumers dedupe by that key
+          // (see TRAJECTORY_BRIDGE_MAPPING JSDoc + events-agent.ts
+          // tool:timeout declaration for the dedup contract).
+          if (toolErrorKind === "timeout") {
+            deps.eventBus.emit("tool:timeout", {
+              agentId: deps.agentId,
+              sessionKey: formatSessionKey(deps.sessionKey),
+              traceId: deps.executionId,
+              toolName: endEvent.toolName,
+              toolCallId: endEvent.toolCallId,
+              timeoutMs: durationMs,
+              timestamp: systemNowMs(),
+            });
+          }
 
           // Reset prompt timeout after each tool completion so slow tools
           // do not starve subsequent LLM turns.
