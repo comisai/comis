@@ -169,6 +169,24 @@ export type {
 } from "./system-prompt-report/persist.js";
 
 // ---------------------------------------------------------------------------
+// Cache-trace surface (Plan 46-01).
+// ---------------------------------------------------------------------------
+
+export { CACHE_TRACE_STAGES, CacheTraceEventSchema } from "./cache-trace/types.js";
+export type { CacheTraceEvent, CacheTraceStage } from "./cache-trace/types.js";
+
+export { resolveCacheTraceFilePath } from "./cache-trace/paths.js";
+export type { ResolveCacheTraceFilePathInput } from "./cache-trace/paths.js";
+
+export { createCacheTrace } from "./cache-trace/runtime.js";
+export type { CacheTrace, CacheTraceInit } from "./cache-trace/runtime.js";
+
+export { buildCacheTraceWrapper } from "./cache-trace/stream-fn-wrapper.js";
+export type { StreamFnWrapper as CacheTraceStreamFnWrapper } from "./cache-trace/stream-fn-wrapper.js";
+
+export { attachCacheTraceToEventBus } from "./cache-trace/event-bus-bridge.js";
+
+// ---------------------------------------------------------------------------
 // Config-audit surface (Plan 45-05).
 // ---------------------------------------------------------------------------
 
