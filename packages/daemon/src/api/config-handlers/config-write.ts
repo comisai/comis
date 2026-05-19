@@ -118,10 +118,17 @@ export function bindConfigWriteHandlers(
 
       // Plan 45-05 task 8: build the config-audit base BEFORE the validate / write
       // so a rejected patch still surfaces in the JSONL log. See config-audit-hook.ts.
+      // Plan 45.1-04 (TRAJ-FIX-06): honor diagnostics.configAudit.enabled —
+      // when explicitly false, skip both the build AND the append-on-finally.
+      // Default-true semantics: `undefined` / `true` preserves the pre-fix
+      // behavior of always emitting the JSONL line.
       const localPathForAudit = deps.configPaths.length > 0
         ? deps.configPaths[deps.configPaths.length - 1]!
         : deps.defaultConfigPaths[deps.defaultConfigPaths.length - 1]!;
-      const auditBase: ConfigWriteAuditRecordBase | undefined = buildConfigAuditBase(localPathForAudit);
+      const auditEnabled = deps.auditEnabled !== false;
+      const auditBase: ConfigWriteAuditRecordBase | undefined = auditEnabled
+        ? buildConfigAuditBase(localPathForAudit)
+        : undefined;
       let wroteFile = false;
       let writeError: { code?: string; message?: string } | undefined;
 
