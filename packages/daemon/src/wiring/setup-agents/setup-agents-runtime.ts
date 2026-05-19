@@ -529,6 +529,18 @@ export async function setupSingleAgent(
           eventTypes: container.config.diagnostics.trajectory.eventTypes,
         }
       : undefined,
+    // Plan 46-01: forward AppConfig.diagnostics.cacheTrace into the
+    // executor. The per-session cache-trace recorder reads this; when
+    // omitted or `enabled: false`, the recorder is a no-op.
+    cacheTraceConfig: container.config.diagnostics?.cacheTrace
+      ? {
+          enabled: container.config.diagnostics.cacheTrace.enabled,
+          filePath: container.config.diagnostics.cacheTrace.filePath,
+          includeMessages: container.config.diagnostics.cacheTrace.includeMessages,
+          includePrompt: container.config.diagnostics.cacheTrace.includePrompt,
+          includeSystem: container.config.diagnostics.cacheTrace.includeSystem,
+        }
+      : undefined,
     geminiCacheManager: deps.geminiCacheManager,  // Gemini cache lifecycle manager
     getChannelMaxChars: deps.getChannelMaxChars,  // Platform char limit for verbosity hints
     backgroundTaskManager: deps.backgroundTaskManager,  // Auto-background middleware

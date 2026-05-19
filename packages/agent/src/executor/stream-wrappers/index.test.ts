@@ -35,10 +35,11 @@ describe("stream-wrappers/index — barrel exports smoke contract", () => {
     expect(barrel.SYSTEM_PROMPT_DYNAMIC_BOUNDARY).toBeDefined();
   });
 
-  it("exports cache-trace helpers (createCacheTraceWriter, parseSize, rotateIfNeeded) as functions", () => {
-    expect(typeof barrel.createCacheTraceWriter).toBe("function");
-    expect(typeof barrel.parseSize).toBe("function");
-    expect(typeof barrel.rotateIfNeeded).toBe("function");
+  it("Plan 46-01: legacy cache-trace exports (createCacheTraceWriter, parseSize, rotateIfNeeded, CacheTraceConfig) are deleted", () => {
+    expect((barrel as Record<string, unknown>).createCacheTraceWriter).toBeUndefined();
+    expect((barrel as Record<string, unknown>).parseSize).toBeUndefined();
+    expect((barrel as Record<string, unknown>).rotateIfNeeded).toBeUndefined();
+    expect((barrel as Record<string, unknown>).CacheTraceConfig).toBeUndefined();
   });
 
   it("exports createApiPayloadTraceWriter as a function", () => {

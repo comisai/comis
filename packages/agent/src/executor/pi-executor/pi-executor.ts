@@ -39,6 +39,9 @@ import {
   attachTrajectoryToEventBus,
   createTrajectoryRecorder,
   type TrajectoryRecorder,
+  attachCacheTraceToEventBus,
+  createCacheTrace,
+  type CacheTrace,
 } from "@comis/observability";
 import {
   createAgentSession,
@@ -561,6 +564,11 @@ async function runSessionLocked(
   // the wiring a no-op in that case.
   let trajectoryRecorder: TrajectoryRecorder | null = null;
   let trajectoryUnsubscribe: (() => void) | undefined;
+  // Plan 46-01: cache-trace recorder local-variable lifecycle. Mirrors
+  // the trajectory pattern — declared here, assigned inside the try
+  // below, torn down in the finally block at end of execute().
+  let cacheTrace: CacheTrace | null = null;
+  let unsubscribeCacheTrace: (() => void) | undefined;
   try {
     // TRAJ-FIX-01: when the operator has NOT overridden the trajectory
     // dir (the default ~/.comis/ path applies), confine writes to
@@ -611,11 +619,46 @@ async function runSessionLocked(
           : {}),
       });
     }
+
+    // Plan 46-01: cache-trace recorder lifecycle (mirrors trajectory's).
+    // Gated by `deps.cacheTraceConfig.enabled` (forwarded from
+    // AppConfig.diagnostics.cacheTrace by daemon wiring; false by default).
+    // When enabled, instantiate the recorder + subscribe to the live
+    // `observability:token_usage` EventBus emit so the next
+    // `recordStage("session:after", {...})` carries cacheReadInputTokens +
+    // cacheCreationInputTokens. The recorder's null-return semantics
+    // (createCacheTrace returns null when COMIS_DISABLE_CACHE_TRACE=1)
+    // make this a no-op in that case.
+    if (deps.cacheTraceConfig?.enabled) {
+      const cacheTraceConfinedBase =
+        deps.cacheTraceConfig.filePath === undefined
+          ? safePath(os.homedir(), ".comis")
+          : undefined;
+      cacheTrace = createCacheTrace({
+        enabled: true,
+        ...(deps.cacheTraceConfig.filePath !== undefined
+          ? { filePath: deps.cacheTraceConfig.filePath }
+          : {}),
+        includeMessages: deps.cacheTraceConfig.includeMessages ?? false,
+        includePrompt: deps.cacheTraceConfig.includePrompt ?? true,
+        includeSystem: deps.cacheTraceConfig.includeSystem ?? true,
+        agentId: agentId ?? config.name,
+        sessionId: formattedKey,
+        provider: resolvedModel?.provider ?? config.provider,
+        modelId: resolvedModel?.id ?? config.model,
+        ...(cacheTraceConfinedBase !== undefined
+          ? { confinedBaseDir: cacheTraceConfinedBase }
+          : {}),
+      });
+      if (cacheTrace !== null) {
+        unsubscribeCacheTrace = attachCacheTraceToEventBus(cacheTrace, deps.eventBus);
+      }
+    }
   } catch (err) {
     // Best-effort — recorder construction must never block execution.
     deps.logger.debug(
-      { err, hint: "trajectory recorder init failed; continuing without trajectory sidecar", errorKind: "internal" as ErrorKind },
-      "Trajectory recorder init failed",
+      { err, hint: "trajectory/cache-trace recorder init failed; continuing without sidecar", errorKind: "internal" as ErrorKind },
+      "Trajectory/cache-trace recorder init failed",
     );
   }
 
@@ -727,6 +770,10 @@ async function runSessionLocked(
     config, deps, sessionKey, formattedKey, sm,
     resolvedModel, modelTier, executionOverrides,
     deferralResult, systemPromptBlocks, agentId,
+    // Plan 46-01: forward the cache-trace recorder so the wrapper chain
+    // can include the cache-trace `stream:context` emit. When the
+    // recorder is null (disabled), setupStreamWrappers skips the wrapper.
+    ...(cacheTrace !== null ? { cacheTrace } : {}),
     getAdaptiveRetention: () => adaptiveRetentionRef.get(),
     getExecutionCacheRetention: () => cacheRetentionRef.get(),
     getExecutionMinTokensOverride: () => minTokensOverrideRef.get(),
@@ -1324,6 +1371,26 @@ async function runSessionLocked(
         deps.logger.debug(
           { err, hint: "trajectory flushAndClose failed; sidecar may be partial", errorKind: "internal" as ErrorKind },
           "Trajectory recorder flushAndClose failed",
+        );
+      }
+    }
+
+    // Plan 46-01: tear down the cache-trace recorder + bridge subscription.
+    // Sibling block to the trajectory teardown above — best-effort,
+    // failures must never throw out of finally.
+    try {
+      unsubscribeCacheTrace?.();
+    } catch {
+      // Unsubscribe failure is unreachable in practice (EventEmitter.off
+      // is sync); swallow defensively so this never aborts cleanup.
+    }
+    if (cacheTrace !== null) {
+      try {
+        await cacheTrace.flushAndClose();
+      } catch (err) {
+        deps.logger.debug(
+          { err, hint: "cache-trace flushAndClose failed; sidecar may be partial", errorKind: "internal" as ErrorKind },
+          "Cache-trace recorder flushAndClose failed",
         );
       }
     }
