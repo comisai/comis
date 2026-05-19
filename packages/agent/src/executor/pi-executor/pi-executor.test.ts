@@ -3233,7 +3233,7 @@ describe("PiExecutor", () => {
       expect(composedLog![0].wrapperCount).toBe(7);
     });
 
-    it("adds the api-payload trace wrapper when tracing.enabled is true (Plan 46-01: cache-trace moved to diagnostics.cacheTrace)", async () => {
+    it("adds the api-payload trace wrapper when tracing.enabled is true", async () => {
       const configWithTracing = {
         ...testConfig,
         tracing: { enabled: true, outputDir: "/tmp/test-traces" },
@@ -3244,9 +3244,9 @@ describe("PiExecutor", () => {
       await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-trace");
 
       // "JSONL api-payload tracing enabled" INFO log should be emitted.
-      // Plan 46-01 split the legacy combined tracing into two artifacts:
-      // api-payload remains under `agents.<name>.tracing.enabled`; the
-      // cache-trace moved to `diagnostics.cacheTrace.enabled`.
+      // Tracing is split across two artifacts: api-payload remains under
+      // `agents.<name>.tracing.enabled`; the cache-trace lives under
+      // `diagnostics.cacheTrace.enabled`.
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const traceLog = infoCalls.find(
         ([_fields, msg]: [any, string]) => msg === "JSONL api-payload tracing enabled",
@@ -3295,8 +3295,8 @@ describe("PiExecutor", () => {
       expect(composedLog).toBeDefined();
 
       const wrapperNames = composedLog![0].wrapperNames as string[];
-      // Plan 46-01: cacheTraceWriter removed from this chain — the
-      // cache-trace artifact is independently gated by
+      // cacheTraceWriter is not in this chain — the cache-trace
+      // artifact is independently gated by
       // `diagnostics.cacheTrace.enabled` (not set in this test).
       expect(wrapperNames).toEqual([
         "ttlGuard",
@@ -3338,7 +3338,7 @@ describe("PiExecutor", () => {
       expect(composedLog![0].wrapperCount).toBe(7);
     });
 
-    it("passes sessionId (formattedKey) to the api-payload trace wrapper (Plan 46-01: cache-trace moved)", async () => {
+    it("passes sessionId (formattedKey) to the api-payload trace wrapper", async () => {
       const configWithTracing = {
         ...testConfig,
         tracing: { enabled: true, outputDir: "/tmp/test-traces" },
@@ -3354,7 +3354,7 @@ describe("PiExecutor", () => {
       const context = { systemPrompt: "test", messages: [], tools: [] };
       wrappedStreamFn(model, context, {});
 
-      // Plan 46-01: only the api-payload trace fires under the legacy
+      // Only the api-payload trace fires under the legacy
       // `tracing.enabled` flag — cache-trace is independently gated.
       const jsonlCalls = mockAppendFileSync.mock.calls;
       expect(jsonlCalls.length).toBeGreaterThanOrEqual(1);
@@ -6236,10 +6236,10 @@ describe("skip guard for lookback_window_exceeded cache breaks", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45-03: per-session trajectory recorder lifecycle wiring
+// Per-session trajectory recorder lifecycle wiring
 // ---------------------------------------------------------------------------
 
-describe("creates_and_closes_trajectory_recorder_for_session (Plan 45-03 task 10)", () => {
+describe("creates_and_closes_trajectory_recorder_for_session", () => {
   async function readPiExecutorSrc(): Promise<string> {
     const fs = await import("node:fs/promises");
     const url = await import("node:url");

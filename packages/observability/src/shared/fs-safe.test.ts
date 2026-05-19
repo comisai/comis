@@ -160,7 +160,7 @@ describe("appendRegularFile — defensive chmod 0o600 even when file already exi
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45-gap-01 Task 1: writeRegularFile (symlink-safe write-truncate)
+// writeRegularFile (symlink-safe write-truncate)
 // ---------------------------------------------------------------------------
 describe("writeRegularFile — happy path", () => {
   it("creates a new file with mode 0o600 and the given content", () => {
@@ -250,7 +250,7 @@ describe("writeRegularFile — symlink parent rejection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45.1-03 Task 3: H1 confinedBaseDir ancestor-escape rejection.
+// confinedBaseDir ancestor-escape rejection.
 //
 // The existing `SymlinkParentRejected` rule only catches a symlinked
 // IMMEDIATE parent of the target. An attacker controlling a grandparent
@@ -261,10 +261,8 @@ describe("writeRegularFile — symlink parent rejection", () => {
 // passes, the helper runs realpathSync(target) (or the parent when the
 // target doesn't yet exist) and asserts the resolved path stays inside
 // realpathSync(confinedBaseDir).
-//
-// Per RESEARCH.md §3 H1 row.
 // ---------------------------------------------------------------------------
-describe("appendRegularFile — confined-base-dir ancestor escape rejection (TRAJ-FIX-01)", () => {
+describe("appendRegularFile — confined-base-dir ancestor escape rejection", () => {
   it("rejects when an ancestor (not the immediate parent) is a symlink escaping the base", () => {
     // Build: base/  base/evil -> escape-target/
     // target = base/evil/writes.txt  resolves to escape-target/writes.txt
@@ -401,7 +399,7 @@ describe("appendRegularFile — confined-base-dir ancestor escape rejection (TRA
   });
 });
 
-describe("writeRegularFile — confined-base-dir ancestor escape rejection (TRAJ-FIX-01)", () => {
+describe("writeRegularFile — confined-base-dir ancestor escape rejection", () => {
   it("rejects via realpath when the GRANDPARENT is the symlink (the immediate parent is real)", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-confine-gp-"));
     const escapeTarget = path.join(tmpDir, "escape-target");

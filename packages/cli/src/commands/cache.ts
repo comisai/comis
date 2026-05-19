@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: CLI command module — Commander.js boundary catches throws and surfaces user-readable messages. The catch block below converts them to error()/process.exit(1) directly.
 /**
- * Plan 46-02 (CACHE-OBS-03): `comis cache stats` subcommand.
+ * `comis cache stats` subcommand.
  *
  * Dispatches the `obs.cacheStats.window` RPC and renders the response
  * in table (default), JSON, or Markdown format. The user-facing
@@ -13,12 +13,11 @@
  * bounded-regex / unit-table convention; CLI already depends on
  * `@comis/observability` via `packages/cli/package.json`).
  *
- * Tenant scope: the `--tenant` flag is intentionally absent. RESEARCH
- * §7 + Pitfall 5 + Plan 46-02 "Out of scope": `obs_token_usage` lacks a
- * `tenant_id` column, so the filter would silently no-op. Adding
- * tenant filtering requires extending the write path (event payload
- * + token-tracker + schema migration) and is deferred to a follow-on
- * plan.
+ * Tenant scope: the `--tenant` flag is intentionally absent.
+ * `obs_token_usage` lacks a `tenant_id` column, so the filter would
+ * silently no-op. Adding tenant filtering requires extending the write
+ * path (event payload + token-tracker + schema migration) and is
+ * deferred.
  *
  * @module
  */
@@ -185,9 +184,8 @@ function renderTableFormat(window: CacheStatsWindowDisplay): void {
 /**
  * Register the `cache` subcommand group on the program.
  *
- * Currently exposes only `comis cache stats`. Future plans
- * (post-Phase 46) may add `cache trace tail` to consume the JSONL
- * artifact from 46-01.
+ * Currently exposes only `comis cache stats`. A future `cache trace
+ * tail` subcommand may consume the JSONL trace artifact.
  */
 export function registerCacheCommand(program: Command): void {
   const cache = program

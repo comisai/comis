@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * Plan 46-02 (CACHE-OBS-02): `buildCacheStatsRpcHandler` shape factory.
+ * `buildCacheStatsRpcHandler` shape factory.
  *
  * Returns a `{ [method]: handler }` object that the daemon spreads into
  * its dispatch map. The contract is INJECTED as a dep (rather than

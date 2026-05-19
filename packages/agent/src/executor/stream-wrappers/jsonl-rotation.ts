@@ -2,9 +2,7 @@
 /**
  * Shared JSONL append + rotation helper.
  *
- * Plan 46-01: extracted from `cache-trace-writer.ts` (which was deleted
- * when the cache-trace artifact moved to `@comis/observability/cache-trace/*`).
- * The legacy api-payload-trace writer still relies on this rotation logic
+ * The legacy api-payload-trace writer relies on this rotation logic
  * — kept in this module so both the api-payload trace and any future
  * legacy-style JSONL trace can share the size/rotation handling.
  *

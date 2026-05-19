@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * Config-audit RPC handlers (Plan 45-05 task 11).
+ * Config-audit RPC handlers.
  *
  * Two admin-gated methods read + manage the daemon-wide
  * `~/.comis/logs/config-audit.jsonl` log:
@@ -20,9 +20,8 @@
  * `_trustLevel === "admin"` gate + dev-mode `response.parse()`
  * defense in depth; `stripInternalFields` BEFORE contract parse).
  *
- * Lives in `obs-handlers/` (not `config-handlers/`) per research
- * §1.18 — obs-handlers is the canonical home for admin-only
- * read-side and forensics RPCs.
+ * Lives in `obs-handlers/` (not `config-handlers/`) — obs-handlers is
+ * the canonical home for admin-only read-side and forensics RPCs.
  *
  * @module
  */
@@ -194,9 +193,9 @@ export function bindConfigAuditHandlers(
       const scrubConfinedBase = getDefaultConfigAuditConfinedBase(filePath);
       const scrubResult = await scrubConfigAuditLog({
         filePath,
-        // TRAJ-FIX-01: confine the scrub tmp-write to ~/.comis/ when
-        // the default log path applies; skip confinement when the
-        // operator set COMIS_CONFIG_AUDIT_LOG to a custom location.
+        // Confine the scrub tmp-write to ~/.comis/ when the default
+        // log path applies; skip confinement when the operator set
+        // COMIS_CONFIG_AUDIT_LOG to a custom location.
         ...(scrubConfinedBase !== undefined && {
           confinedBaseDir: scrubConfinedBase,
         }),

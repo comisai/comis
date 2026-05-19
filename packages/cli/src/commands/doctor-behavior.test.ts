@@ -29,7 +29,7 @@ vi.mock("../doctor/output.js", () => ({
   renderDoctorJson: vi.fn(),
 }));
 
-// Mock all four repair modules (3 legacy + 1 from Plan 45-05 task 13)
+// Mock all four repair modules
 vi.mock("../doctor/repairs/repair-config.js", () => ({
   repairConfig: vi.fn(),
 }));
@@ -188,7 +188,7 @@ describe("doctor --repair auto-fixes and re-runs", () => {
     // runDoctorChecks called twice (initial + re-run after repair)
     expect(vi.mocked(runDoctorChecks)).toHaveBeenCalledTimes(2);
 
-    // All four repair modules called (3 legacy + 1 from Plan 45-05 task 13).
+    // All four repair modules called.
     expect(vi.mocked(repairConfig)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(repairDaemon)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(repairWorkspace)).toHaveBeenCalledTimes(1);
@@ -205,7 +205,7 @@ describe("doctor --repair auto-fixes and re-runs", () => {
     expect(exitSpy.spy).not.toHaveBeenCalled();
   });
 
-  it("does NOT call repairConfigAudit when --repair is omitted (Plan 45-05 task 13 opt-in semantics)", async () => {
+  it("does NOT call repairConfigAudit when --repair is omitted (opt-in semantics)", async () => {
     vi.mocked(runDoctorChecks).mockResolvedValueOnce(failingResult);
 
     const program = createTestProgram();

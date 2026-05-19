@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-02): cache-handlers tests.
+ * Cache-handlers tests.
  *
  * Mirrors `obs-handlers/obs-system-prompt-report.test.ts` pattern
  * (admin trust check + parse + delegation).
@@ -51,7 +51,7 @@ function makeObsStore(overrides: Record<string, unknown> = {}) {
     latestSystemPromptReport: vi.fn().mockReturnValue(undefined),
     listSystemPromptReports: vi.fn().mockReturnValue([]),
     insertSystemPromptReport: vi.fn(),
-    // Plan 46-02: cache-stats queries
+    // Cache-stats queries
     queryCacheStatsWindow: vi.fn().mockReturnValue({
       cache_read_tokens: 0,
       cache_write_tokens: 0,

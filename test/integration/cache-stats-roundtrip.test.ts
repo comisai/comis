@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-01, 03): cache-stats end-to-end roundtrip
- * integration.
+ * Cache-stats end-to-end roundtrip integration.
  *
  * Tests the full insert → aggregate → contract-parse cycle without
  * spinning up a full daemon process. Validates that:
  *
- *   1. Rows inserted into `obs_token_usage` (live since Phase 45 via
- *      `insertTokenUsage`) are aggregated correctly by
- *      `aggregateCacheStats` over the durable `CacheStatsStore` port.
+ *   1. Rows inserted into `obs_token_usage` via `insertTokenUsage` are
+ *      aggregated correctly by `aggregateCacheStats` over the durable
+ *      `CacheStatsStore` port.
  *   2. The aggregate response conforms to the shape returned by the
  *      `obs.cacheStats.window` contract — same payload shape the CLI
  *      consumes via `callTyped(client, ObsCacheStatsWindowContract,
@@ -68,7 +67,7 @@ describe("cache-stats roundtrip — insert → aggregate → contract response",
     store = createObservabilityStore(db);
   });
 
-  it("comis cache stats --since=24h aggregates obs_token_usage rows and renders the canonical CacheStatsWindow shape (CACHE-OBS-01, CACHE-OBS-03)", async () => {
+  it("comis cache stats --since=24h aggregates obs_token_usage rows and renders the canonical CacheStatsWindow shape", async () => {
     // Seed three rows: two anthropic, one openai. All within the
     // --since=24h window.
     const now = 1_700_000_000_000;
@@ -156,7 +155,7 @@ describe("cache-stats roundtrip — insert → aggregate → contract response",
     void _typeCheck;
   });
 
-  it("agent + provider filters thread through to the SQL WHERE clause (CACHE-OBS-01)", async () => {
+  it("agent + provider filters thread through to the SQL WHERE clause", async () => {
     const now = 1_700_000_000_000;
     store.insertTokenUsage(
       makeRow({ timestamp: now - 1000, provider: "anthropic", agentId: "a" }),
@@ -176,7 +175,7 @@ describe("cache-stats roundtrip — insert → aggregate → contract response",
     expect(filtered.turns).toBe(1);
   });
 
-  it("empty window returns zero rates with no divide-by-zero (CACHE-OBS-01)", async () => {
+  it("empty window returns zero rates with no divide-by-zero", async () => {
     const now = 1_700_000_000_000;
     const since = now - 24 * 60 * 60 * 1000;
     const result = await aggregateCacheStats(

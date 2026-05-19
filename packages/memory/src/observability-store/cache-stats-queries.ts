@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-01): cache-stats SQL queries over `obs_token_usage`.
+ * Cache-stats SQL queries over `obs_token_usage`.
  *
  * Four read-side helpers:
  *   - queryCacheStatsWindow   — single-row aggregate for the whole window
@@ -10,16 +10,16 @@
  *
  * Each accepts optional filters (`agent`, `provider`, `until`) and uses
  * dynamic WHERE construction with parameterized bind args — NEVER string
- * concatenation of user input (RESEARCH §"Security Domain" SQL-injection row).
+ * concatenation of user input (SQL-injection defense).
  *
- * `non_cached_input_tokens` is derived per RESEARCH §7:
+ * `non_cached_input_tokens` is derived as
  *   `prompt_tokens - cache_read_tokens - cache_write_tokens`,
  * clamped to ≥ 0 in TypeScript (SQLite's `max(a, b)` scalar inside an
  * aggregate query is unportable — clamping in TS keeps the SQL simple
  * and the result identical).
  *
  * `turns` is `COUNT(*)` — a turn is a recorded token-usage row. Rows
- * with absent cache columns (pre-Phase-45 backfill, cache-ineligible
+ * with absent cache columns (older backfill, cache-ineligible
  * providers) count as turns; their absence of cache tokens flows into
  * the SUM aggregates as 0 (via `COALESCE`).
  *

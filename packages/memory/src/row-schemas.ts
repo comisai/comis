@@ -495,7 +495,7 @@ export const DeliveryStatsDbRowSchema = z.strictObject({
 export type DeliveryStatsDbRowFromSchema = z.infer<typeof DeliveryStatsDbRowSchema>;
 
 /**
- * Schema for `system_prompt_reports` rows (Plan 45-04).
+ * Schema for `system_prompt_reports` rows.
  * SSOT for the file-internal `SystemPromptReportDbRow` interface in
  * observability-store-types.ts. The full report JSON is stored in
  * `report_json` (post-sanitizeForPersistence); this on-disk schema
@@ -517,9 +517,9 @@ export const SystemPromptReportDbRowSchema = z.strictObject({
 export type SystemPromptReportDbRowFromSchema = z.infer<typeof SystemPromptReportDbRowSchema>;
 
 /**
- * Plan 46-02: cache-stats SQL row schemas. Four shapes — the single-row
- * window aggregate plus three GROUP BY variants. The `prompt_tokens` field
- * is present on raw rows (used to derive `non_cached_input_tokens` in
+ * Cache-stats SQL row schemas. Four shapes — the single-row window
+ * aggregate plus three GROUP BY variants. The `prompt_tokens` field is
+ * present on raw rows (used to derive `non_cached_input_tokens` in
  * `cache-stats-queries.ts` via TS clamping); the camelCase
  * `CacheStatsWindow` surface drops it.
  */

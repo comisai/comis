@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Retroactive config-audit scrubber (Plan 45-05 task 6).
+ * Retroactive config-audit scrubber.
  *
  * `scrubConfigAuditLog({filePath})` rewrites the existing audit log
  * with up-to-date redaction:
@@ -27,8 +27,8 @@
  * file produces a byte-identical output (modulo non-determinism in
  * the underlying redactor, which today is deterministic).
  *
- * `comis doctor --repair` (task 13) drives this scrubber via the
- * daemon's `config.audit.scrub` RPC.
+ * `comis doctor --repair` drives this scrubber via the daemon's
+ * `config.audit.scrub` RPC.
  *
  * @module
  */
@@ -77,19 +77,18 @@ export interface ScrubParams {
    */
   readonly injectedAfterRead?: () => void;
   /**
-   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base
-   * forwarded to `writeRegularFile` (the scrub tmp-write). Production
-   * callers (doctor --repair, config.audit.scrub RPC) pass
-   * `getDefaultConfigAuditConfinedBase()` so an ancestor-symlink escape
-   * is rejected at the open() boundary. Tests omit it.
+   * Opt-in real-path confinement base forwarded to `writeRegularFile`
+   * (the scrub tmp-write). Production callers (doctor --repair,
+   * config.audit.scrub RPC) pass `getDefaultConfigAuditConfinedBase()`
+   * so an ancestor-symlink escape is rejected at the open() boundary.
+   * Tests omit it.
    */
   readonly confinedBaseDir?: string;
 }
 
 /**
- * Plan 45-gap-01 (BL-01): Sentinel emitted when re-encoding a parsed
- * line fails. See identical helper in append.ts:
- * emitSerializationErrorSentinel for rationale.
+ * Sentinel emitted when re-encoding a parsed line fails. See identical
+ * helper in append.ts:emitSerializationErrorSentinel for rationale.
  *
  * Uses `systemNowMs` from @comis/core (Pattern B per
  * test/support/architecture-allowlist.ts) — sanctioned helper that
@@ -109,7 +108,7 @@ function emitSerializationErrorSentinel(): string {
 }
 
 /** Re-encode a single parsed record through the redactor + sanitizer.
- *  Exported for test-driven BL-01 verification (plan 45-gap-01). */
+ *  Exported for test-driven verification. */
 export function reEncodeRecord(parsed: unknown): string {
   if (parsed === null || typeof parsed !== "object") {
     // Not an object — leave alone (encode as-is).
@@ -189,9 +188,7 @@ export async function scrubConfigAuditLog(
   }
   const rewritten = out.join("\n") + "\n";
 
-  // BL-02 fix (Plan 45-gap-01): replace fs.writeFileSync with the
-  // symlink-safe writeRegularFile from ../shared/fs-safe.js (moved out
-  // of @comis/infra into @comis/observability in Plan 45.1-06). Default
+  // Symlink-safe writeRegularFile from ../shared/fs-safe.js. Default
   // unlinkExisting:true closes the symlink-pre-stage window — an
   // attacker who stages a symlink at tmpPath pointing to an arbitrary
   // file the daemon can write would have the symlink unlinked before
@@ -203,11 +200,11 @@ export async function scrubConfigAuditLog(
     path: tmpPath,
     content: rewritten,
     // unlinkExisting defaults to true — leaves the symlink window closed.
-    // TRAJ-FIX-01: forward the caller's confinement base (typically
-    // `~/.comis/`) so an ancestor-symlink escape is rejected before the
-    // open() call. The scrub tmp lives at `<filePath>.scrub.tmp` which,
-    // for the legitimate ~/.comis/logs/config-audit.jsonl path, is
-    // inside ~/.comis/.
+    // Forward the caller's confinement base (typically `~/.comis/`) so
+    // an ancestor-symlink escape is rejected before the open() call.
+    // The scrub tmp lives at `<filePath>.scrub.tmp` which, for the
+    // legitimate ~/.comis/logs/config-audit.jsonl path, is inside
+    // ~/.comis/.
     ...(params.confinedBaseDir !== undefined
       ? { confinedBaseDir: params.confinedBaseDir }
       : {}),

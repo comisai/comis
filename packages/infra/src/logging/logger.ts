@@ -8,7 +8,7 @@ import type { ComisLogger as CoreComisLogger } from "@comis/core";
 // (not the package barrel) to defeat the cyclic-package cycle detection
 // that Node 22's require()-of-ESM emits when the package graph itself
 // has a cycle (@comis/observability already depends on @comis/infra for
-// appendRegularFile + O_NOFOLLOW helpers landed in 45-01).
+// appendRegularFile + O_NOFOLLOW helpers).
 //
 // The subpath `@comis/observability/dist/redact/edge-keeping.js` is a
 // pure-function leaf module with no static imports of @comis/infra,
@@ -18,9 +18,7 @@ import type { ComisLogger as CoreComisLogger } from "@comis/core";
 //
 // createRequire defers resolution to module-load time, at which point
 // both dist trees exist (sequential build: infra first, then
-// observability against infra's dist). See Plan 45-02 task 7 for the
-// worker-thread resolution rationale and task 9 for this cycle
-// trade-off.
+// observability against infra's dist).
 const _edgeKeeping = createRequire(import.meta.url)(
   "@comis/observability/dist/redact/edge-keeping.js",
 ) as { maskToken: (input: string) => string };
@@ -143,7 +141,7 @@ export interface LoggerOptions {
    */
   disableRedaction?: boolean;
   /**
-   * Disable the Pino regex-redact transport (Plan 45-02).
+   * Disable the Pino regex-redact transport.
    *
    * The transport runs the free-form regex pass (`redactSecretsInText`)
    * over every JSON log line; structured-field redaction (Pino's
@@ -215,20 +213,20 @@ export function createLogger(options: LoggerOptions): ComisLogger {
     // the literal assignment form and fails the build on any
     // production-source match.
     //
-    // Plan 45-02: the censor is now a callback that applies maskToken
-    // (edge-keeping mask: "sk-123...cdef") for string values, preserving
-    // correlation-token utility while never re-leaking the body. Non-
-    // string values fall back to the literal "[REDACTED]" — that is the
-    // ONE sanctioned use of the literal in production source, narrowed
-    // to this exact call site via an eslint-disable annotation (see
-    // eslint.config.js and test/architecture/source-rules.test.ts).
+    // The censor is a callback that applies maskToken (edge-keeping
+    // mask: "sk-123...cdef") for string values, preserving correlation-
+    // token utility while never re-leaking the body. Non-string values
+    // fall back to the literal "[REDACTED]" — that is the ONE sanctioned
+    // use of the literal in production source, narrowed to this exact
+    // call site via an eslint-disable annotation (see eslint.config.js
+    // and test/architecture/source-rules.test.ts).
     redact: options.disableRedaction
       ? undefined
       : {
           paths: allRedactPaths,
           censor: (value: unknown): string => {
             if (typeof value === "string") return maskToken(value);
-            // eslint-disable-next-line no-restricted-syntax -- non-string Pino censor fallback (Plan 45-02 sanctioned literal)
+            // eslint-disable-next-line no-restricted-syntax -- non-string Pino censor fallback (sanctioned literal)
             return "[REDACTED]";
           },
         },
@@ -251,8 +249,8 @@ export function createLogger(options: LoggerOptions): ComisLogger {
   // Transport selection:
   //   1. Explicit `transport` option wins (caller knows what they want).
   //   2. Dev mode → pino-pretty for terminal output.
-  //   3. Production default (Plan 45-02) → redact transport target via
-  //      the @comis/infra resolution shim. The transport runs
+  //   3. Production default → redact transport target via the
+  //      @comis/infra resolution shim. The transport runs
   //      `redactSecretsInText` over every JSON log line (free-form
   //      regex pass) as a second-line defense for credential bodies
   //      that survived the structured-field censor above.

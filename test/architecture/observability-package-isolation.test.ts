@@ -4,11 +4,11 @@
  * @comis/daemon nor @comis/cli nor @comis/orchestrator. Top-level
  * defense-in-depth boundary at the architecture-allowlist level.
  *
- * Mirrors `cli-no-agent-no-infra.test.ts` per research §6.1: source-level
- * AST walker via `findForbiddenImports` PLUS grep-assertions on
- * `package.json` and `tsconfig.json` — so a future PR that re-adds a
- * workspace dep or tsconfig reference is caught by the architecture
- * suite before any source-level import regression.
+ * Mirrors `cli-no-agent-no-infra.test.ts`: source-level AST walker via
+ * `findForbiddenImports` PLUS grep-assertions on `package.json` and
+ * `tsconfig.json` — so a future PR that re-adds a workspace dep or
+ * tsconfig reference is caught by the architecture suite before any
+ * source-level import regression.
  *
  * The four forbidden packages are the consumer-tier siblings of
  * observability: agent runs LLM execution flow, daemon hosts the
@@ -56,7 +56,7 @@ describe("@comis/observability isolation — no @comis/agent + @comis/daemon + @
           suggestedFix:
             "Substrate is a leaf dep of agent/daemon/cli/orchestrator. Retarget the import to @comis/core / @comis/infra / @comis/shared (the substrate's only three allowed peer packages).",
           designRef:
-            "@comis/observability must remain a leaf in the dep graph (research §6.1)",
+            "@comis/observability must remain a leaf in the dep graph",
         }),
       ).toEqual([]);
       expect(
@@ -104,20 +104,20 @@ describe("@comis/observability isolation — no @comis/agent + @comis/daemon + @
     }
   });
 
-  // TRAJ-FIX-10 — Plan 45.1-06 closed the bidirectional package-deps cycle
-  // between @comis/infra and @comis/observability:
-  //   - fs-safe.ts moved from @comis/infra to @comis/observability (task 2).
+  // The bidirectional package-deps cycle between @comis/infra and
+  // @comis/observability was closed:
+  //   - fs-safe.ts moved from @comis/infra to @comis/observability.
   //   - @comis/infra dep was dropped from @comis/observability/package.json
-  //     and the corresponding tsconfig project reference (task 3).
+  //     and the corresponding tsconfig project reference.
   //   - redact-transport.ts was rewritten as a static re-export of
-  //     @comis/observability/dist/redact/pino-redact-transport.js (task 3),
+  //     @comis/observability/dist/redact/pino-redact-transport.js,
   //     and packages/infra/tsconfig.json gained `{ "path": "../observability" }`.
   // The resulting graph is one-direction: @comis/infra → @comis/observability.
   // This assertion locks the architectural invariant at the package-deps
   // layer. The companion forward-direction check
   // (`@comis/infra DOES depend on @comis/observability`) is the other
   // active case in this describe block.
-  it("@comis/observability does NOT depend on @comis/infra (TRAJ-FIX-10)", () => {
+  it("@comis/observability does NOT depend on @comis/infra", () => {
     const pkg = JSON.parse(
       readFileSync(
         resolve(REPO_ROOT, "packages/observability/package.json"),
@@ -128,7 +128,7 @@ describe("@comis/observability isolation — no @comis/agent + @comis/daemon + @
     expect(deps["@comis/infra"]).toBeUndefined();
   });
 
-  it("@comis/infra DOES depend on @comis/observability (one-arrow preserved, TRAJ-FIX-10)", () => {
+  it("@comis/infra DOES depend on @comis/observability (one-arrow preserved)", () => {
     const pkg = JSON.parse(
       readFileSync(
         resolve(REPO_ROOT, "packages/infra/package.json"),

@@ -332,9 +332,9 @@ describe("initSchema", () => {
     });
   });
 
-  // ── Plan 45-04: system_prompt_reports table ─────────────────────
+  // ── system_prompt_reports table ─────────────────────────────────
 
-  describe("system_prompt_reports table (Plan 45-04)", () => {
+  describe("system_prompt_reports table", () => {
     it("creates the system_prompt_reports table on initSchema", () => {
       initSchema(db, 1536);
       const tables = db

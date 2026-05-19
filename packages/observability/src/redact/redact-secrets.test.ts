@@ -3,7 +3,7 @@
  * `redactSecrets` structured-walker tests + `sanitizeForPersistence`
  * canonical pipeline.
  *
- * Design §5.3 + §5.5 behavior:
+ * Behavior:
  *   - Object field whose key matches a credential-name suffix → value
  *     replaced by `maskToken(value)` (or `"***"` for non-string values
  *     since masking only applies to strings).
@@ -12,11 +12,11 @@
  *   - Cyclic objects produce the `"[Circular]"` sentinel string at the
  *     back-edge.
  *   - Diagnostic strings like `Unrecognized key: "llm"` pass through
- *     unchanged (case-sensitive ENV regex; research §10).
+ *     unchanged (case-sensitive ENV regex).
  *
  * `sanitizeForPersistence = redactSecrets ∘ sanitizeDiagnosticPayload
  *   ∘ limitPayloadValue` — the canonical composition for "safe to write
- *   to disk" diagnostic artifacts (design §5.3.3).
+ *   to disk" diagnostic artifacts.
  *
  * @module
  */
@@ -78,8 +78,8 @@ describe("redactSecrets — in-string credential redaction", () => {
   });
 
   it("leaves a diagnostic message 'Unrecognized key: \"llm\"' unchanged", () => {
-    // Research §10 closing note: the case-sensitive ENV regex must not
-    // match lowercase keys like "llm" in diagnostic strings.
+    // The case-sensitive ENV regex must not match lowercase keys like
+    // "llm" in diagnostic strings.
     const out = redactSecrets({
       message: 'Unrecognized key: "llm" in config',
     }) as { message: string };

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-trace runtime tests (Plan 46-01 Task 4).
+ * Cache-trace runtime tests.
  *
- * Per design §7 + RESEARCH §8 / Validation Architecture §"Test Map".
  * The recorder is a per-session writer (`createCacheTrace`) that emits
  * one JSONL line per cache-relevant stage. The runtime's contract is
  * independent of the EventBus bridge — these tests drive `recordStage`

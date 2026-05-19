@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Trajectory runtime recorder tests (Plan 45-03 Task 4).
+ * Trajectory runtime recorder tests.
  *
- * Per design §6.3 + §6.8. The recorder is a per-session writer that
- * subscribes to the typed EventBus (Task 5) and emits one JSONL line
- * per event. The runtime's contract is independent of the EventBus
- * bridge — these tests drive `recordEvent` directly.
+ * The recorder is a per-session writer that subscribes to the typed
+ * EventBus and emits one JSONL line per event. The runtime's contract is
+ * independent of the EventBus bridge — these tests drive `recordEvent`
+ * directly.
  *
  * Coverage (10 behavior-named cases):
  *   - writes_well_formed_event
@@ -279,22 +279,22 @@ describe("createTrajectoryRecorder -- env disable", () => {
   });
 });
 
-describe("createTrajectoryRecorder -- trace.write_failures sentinel (TRAJ-FIX-03)", () => {
-  // H3: when the underlying queued writer reports per-line append
-  // failures at flushAndClose() time, the recorder MUST emit a
+describe("createTrajectoryRecorder -- trace.write_failures sentinel", () => {
+  // When the underlying queued writer reports per-line append failures
+  // at flushAndClose() time, the recorder MUST emit a
   // trace.write_failures sentinel symmetric to trace.truncated — via
   // the same buildEvent + encodeLine + writer.write envelope shape, so
   // downstream consumers parsing lines.find(l => l.type ===
   // "trace.write_failures") work.
   //
   // To exercise the failure → sentinel path with the sentinel landing
-  // on disk (separable from the recursive-failure case design §6.5
-  // punts on), we drive writer-level failure through a tight
-  // maxFileBytes cap that the first event overflows but the post-flush
-  // sentinel emit lands inside. The recorder forwards maxRuntimeFileBytes
-  // to the writer as maxFileBytes; we pre-stage the file with enough
-  // bytes that the first JSONL event line exceeds the cap, then truncate
-  // the file mid-test so the sentinel write has head-room.
+  // on disk (separable from the recursive-failure case), we drive
+  // writer-level failure through a tight maxFileBytes cap that the
+  // first event overflows but the post-flush sentinel emit lands
+  // inside. The recorder forwards maxRuntimeFileBytes to the writer as
+  // maxFileBytes; we pre-stage the file with enough bytes that the
+  // first JSONL event line exceeds the cap, then truncate the file
+  // mid-test so the sentinel write has head-room.
 
   it("emits trace.write_failures via the same writer.write envelope when failureCount > 0 (sentinel lands after truncate window)", async () => {
     const targetDir = join(tmpDir, "wf-recover");
@@ -357,7 +357,7 @@ describe("createTrajectoryRecorder -- trace.write_failures sentinel (TRAJ-FIX-03
     expect(sentinel!.schemaVersion).toBe(1);
     expect(typeof sentinel!.ts).toBe("string");
     expect(typeof sentinel!.seq).toBe("number");
-    // Sentinel data block shape (TRAJ-FIX-03 contract).
+    // Sentinel data block shape.
     expect(sentinel!.data.reason).toBe("queued_writer_rejected");
     expect(sentinel!.data.count as number).toBeGreaterThanOrEqual(1);
     expect(typeof sentinel!.data.rejectedBytes).toBe("number");

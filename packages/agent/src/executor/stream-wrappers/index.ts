@@ -27,8 +27,8 @@ export { createValidationErrorFormatter } from "./validation-error-formatter.js"
 export { createConfigResolver, resolveBreakpointStrategy, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from "./config-resolver.js";
 export type { ConfigResolverConfig } from "./config-resolver.js";
 
-// Plan 46-01: createCacheTraceWriter (+ parseSize, rotateIfNeeded,
-// CacheTraceConfig) were removed when cache-trace moved to
+// createCacheTraceWriter (+ parseSize, rotateIfNeeded, CacheTraceConfig)
+// were removed when cache-trace moved to
 // @comis/observability/cache-trace/*. Operators using
 // `diagnostics.cacheTrace.enabled` get the schema-versioned artifact;
 // the legacy `agents.<name>.tracing.enabled` now only gates the

@@ -82,7 +82,7 @@ describe("getConfigSections", () => {
     expect(sections).toContain("approvals");
     // v1.1 capability layer
     expect(sections).toContain("tooling");
-    // v2.1 Phase 45 diagnostics scaffold (Plan 45-01 Task 12)
+    // diagnostics scaffold
     expect(sections).toContain("diagnostics");
   });
 });

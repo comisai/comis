@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * SystemPromptReport RPC handlers (Plan 45-04).
+ * SystemPromptReport RPC handlers.
  *
  * Two admin-gated methods:
  *   - obs.systemPromptReport.latest — latest report for (agentId, sessionId, runId?)
@@ -56,11 +56,9 @@ export function bindObsSystemPromptReportHandlers(
       if (!obsStore) {
         result = { report: null };
       } else {
-        // Plan 45.1-05 (TRAJ-FIX-07): push the optional runId into the
-        // SQL WHERE clause instead of post-filtering the latest-by-
-        // generatedAt row. The previous post-filter (returning null
-        // when the latest row's runId didn't match the requested
-        // runId) was a bug — it dropped older rows that DID match.
+        // Push the optional runId into the SQL WHERE clause instead of
+        // post-filtering the latest-by-generatedAt row. Post-filtering
+        // would drop older rows that DID match.
         const row: SystemPromptReportRow | undefined = obsStore.latestSystemPromptReport(
           params.agentId,
           params.sessionId,

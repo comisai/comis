@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Config-audit record writer (Plan 45-05 task 5).
+ * Config-audit record writer.
  *
  * Three entry points compose the persisted-write pipeline:
  *
@@ -15,10 +15,10 @@
  *
  *   3. `appendConfigAuditRecord(...)` / `appendConfigAuditRecordSync(...)`
  *      — pipe the record through `redactConfigAuditArgv` +
- *      `sanitizeForPersistence` (45-02) and append as one JSONL line
- *      via `appendRegularFile` from 45-01 (symlink-safe, file-mode
- *      0o600). When the file exceeds `rotateAtBytes`, rotate to
- *      `<path>.1`, shift `.N` → `.N+1`, discard at `keepRotated`.
+ *      `sanitizeForPersistence` and append as one JSONL line via
+ *      `appendRegularFile` (symlink-safe, file-mode 0o600). When the
+ *      file exceeds `rotateAtBytes`, rotate to `<path>.1`, shift
+ *      `.N` → `.N+1`, discard at `keepRotated`.
  *
  * The two-phase split is required because the previous-file state
  * (hash/bytes/stat) must be captured BEFORE the write mutates them,
@@ -59,9 +59,8 @@ import type {
 } from "./types.js";
 
 /**
- * Default rotation thresholds per design §9.4. The 10 MB cap keeps
- * the audit log bounded; `keepRotated=5` retains roughly the last
- * 50 MB of history.
+ * Default rotation thresholds. The 10 MB cap keeps the audit log
+ * bounded; `keepRotated=5` retains roughly the last 50 MB of history.
  */
 export const DEFAULT_ROTATE_AT_BYTES = 10 * 1024 * 1024;
 export const DEFAULT_KEEP_ROTATED = 5;
@@ -303,19 +302,18 @@ export interface AppendConfigAuditParams {
   readonly rotateAtBytes?: number;
   readonly keepRotated?: number;
   /**
-   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base
-   * forwarded to `appendRegularFile`. Production callers (last-known-good,
-   * config-audit-hook, CLI sync-tooling audit) should pass
-   * `path.join(os.homedir(), ".comis")` via `getDefaultConfigAuditConfinedBase()`
-   * to close the ancestor-symlink gap. Tests omit it (default `undefined`)
-   * to keep tmp-dir paths legal.
+   * Opt-in real-path confinement base forwarded to `appendRegularFile`.
+   * Production callers (last-known-good, config-audit-hook, CLI
+   * sync-tooling audit) should pass `path.join(os.homedir(), ".comis")`
+   * via `getDefaultConfigAuditConfinedBase()` to close the
+   * ancestor-symlink gap. Tests omit it (default `undefined`) to keep
+   * tmp-dir paths legal.
    */
   readonly confinedBaseDir?: string;
 }
 
 /**
- * Plan 45.1-03 (TRAJ-FIX-01): resolve the confinement base for
- * production config-audit callers.
+ * Resolve the confinement base for production config-audit callers.
  *
  * - When the audit-log path is the default `~/.comis/logs/config-audit.jsonl`,
  *   confine writes to `~/.comis/` so ancestor-symlink escapes are
@@ -359,12 +357,11 @@ export class ConfigAuditAppendError extends Error {
 }
 
 /**
- * Plan 45-gap-01 (BL-01): Sentinel emitted when `safeJsonStringify`
- * returns undefined (BigInt, circular reference, or other host-throw in
- * JSON.stringify). The sentinel is hand-crafted with only string +
- * number primitives so it is guaranteed to be JSON-serializable —
- * `JSON.stringify` on the sentinel can never itself fail (BL-01 closure
- * invariant).
+ * Sentinel emitted when `safeJsonStringify` returns undefined (BigInt,
+ * circular reference, or other host-throw in JSON.stringify). The
+ * sentinel is hand-crafted with only string + number primitives so it
+ * is guaranteed to be JSON-serializable — `JSON.stringify` on the
+ * sentinel can never itself fail.
  *
  * Downstream consumers (config.audit.list, scrubber, doctor) see a
  * parseable record they can recognize and skip / report. Compare to
@@ -388,10 +385,10 @@ function emitSerializationErrorSentinel(): string {
 /**
  * Encode a record for on-disk persistence: argv goes through the
  * dedicated `redactConfigAuditArgv` (which knows `--flag=value`
- * shape); the rest of the record goes through `sanitizeForPersistence`
- * (45-02). The two redactors are NOT composed because they would
- * mutually over-redact — `redactSecretsInText` matches `--api-key=...`
- * as a credential pattern and would collapse the already-masked
+ * shape); the rest of the record goes through `sanitizeForPersistence`.
+ * The two redactors are NOT composed because they would mutually
+ * over-redact — `redactSecretsInText` matches `--api-key=...` as a
+ * credential pattern and would collapse the already-masked
  * `--api-key=***` to a bare `***`, losing the flag-name evidence
  * operators need for forensics.
  */
@@ -411,7 +408,7 @@ function encodeRecord(record: ConfigWriteAuditRecord): string {
   sanitized.argv = argvRedacted;
   const json = safeJsonStringify(sanitized);
   if (json === undefined) {
-    // BL-01: safeJsonStringify returned undefined (BigInt, circular ref,
+    // safeJsonStringify returned undefined (BigInt, circular ref,
     // or host throw in JSON.stringify). Falling back to a JSON-parseable
     // sentinel preserves audit-log forensic integrity; downstream
     // consumers can recognize and skip the sentinel without parse failures.
@@ -423,12 +420,12 @@ function encodeRecord(record: ConfigWriteAuditRecord): string {
 /**
  * Ensure the parent dir exists with mode 0o700 (fresh-create only).
  *
- * Plan 45.1-03 Task 2 (TRAJ-FIX-02): the prior implementation also
- * `chmodSync(dir, 0o700)`'d a pre-existing parent before the symlink
- * check inside `appendRegularFile` ran. The chmod-target is only
- * `0o700` (no privilege escalation), but the side-effect on a
- * possibly-symlinked target is a confused-deputy violation
- * (TOCTOU window). The fix deletes that else-branch outright:
+ * The prior implementation also `chmodSync(dir, 0o700)`'d a
+ * pre-existing parent before the symlink check inside
+ * `appendRegularFile` ran. The chmod-target is only `0o700` (no
+ * privilege escalation), but the side-effect on a possibly-symlinked
+ * target is a confused-deputy violation (TOCTOU window). The fix
+ * deletes that else-branch outright:
  *
  *   - Fresh-create case: `mkdirSync({recursive: true, mode: 0o700})`
  *     keeps creating the dir with the correct mode.
@@ -442,9 +439,9 @@ function ensureParentDir(filePath: string): void {
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   } catch (err) {
-    // EEXIST is the existing-dir case — we no longer chmod it (see
-    // TRAJ-FIX-02). Any other error propagates so callers can report
-    // (e.g., EACCES, ENOSPC).
+    // EEXIST is the existing-dir case — we no longer chmod it. Any
+    // other error propagates so callers can report (e.g., EACCES,
+    // ENOSPC).
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
   }
 }
@@ -482,14 +479,15 @@ function appendConfigAuditRecordSyncImpl(
   const appendResult = appendRegularFile({
     path: params.filePath,
     content: encoded,
-    // Per design §9.4 the rotation check above is the operative
-    // bound; we do NOT pass maxFileBytes through to appendRegularFile
-    // (which would reject the append, not rotate). Rotation already
-    // ensured space for the new record.
-    // Plan 45.1-03 (TRAJ-FIX-01): forward the caller's confinement base
-    // (typically `~/.comis/`) so an ancestor-symlink escape would be
-    // rejected by `appendRegularFile`. Tests omit it; production
-    // callers pass `getDefaultConfigAuditConfinedBase()`.
+    // The rotation check above is the operative bound; we do NOT pass
+    // maxFileBytes through to appendRegularFile (which would reject
+    // the append, not rotate). Rotation already ensured space for the
+    // new record.
+    //
+    // Forward the caller's confinement base (typically `~/.comis/`)
+    // so an ancestor-symlink escape would be rejected by
+    // `appendRegularFile`. Tests omit it; production callers pass
+    // `getDefaultConfigAuditConfinedBase()`.
     ...(params.confinedBaseDir !== undefined
       ? { confinedBaseDir: params.confinedBaseDir }
       : {}),

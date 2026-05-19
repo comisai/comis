@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 45-04: SystemPromptReport end-to-end roundtrip integration.
+ * SystemPromptReport end-to-end roundtrip integration.
  *
  * Tests the full build → persist → query cycle without spinning up a
  * full daemon process. Validates that:
  *
  *   1. After a prompt-assembly run, the report is emitted to the
  *      observability store with a non-zero `injectedWorkspaceFiles[]`
- *      array (matches the design's success criterion for TRAJ-05..07).
+ *      array.
  *   2. With a bootstrap file deleted (missing on disk), the report
- *      shows that file with `missing: true` — directly gates ROADMAP
- *      Phase 45 success criterion #2: "Operator can answer 'why didn't
- *      the model use IDENTITY.md?' by checking injectedWorkspaceFiles[]".
+ *      shows that file with `missing: true` — operators can answer
+ *      "why didn't the model use IDENTITY.md?" by checking
+ *      injectedWorkspaceFiles[].
  *
  * Per AGENTS.md §2.5: imports from dist/ — requires `pnpm build` first.
  * Vitest aliases @comis/* → packages/*\/dist/index.js.
@@ -112,7 +112,7 @@ describe("SystemPromptReport — build → persist → query roundtrip", () => {
     expect(fileNames).toContain("USER.md");
   });
 
-  it("report_marks_missing_bootstrap_file_when_deleted (gates ROADMAP success criterion #2)", async () => {
+  it("report_marks_missing_bootstrap_file_when_deleted", async () => {
     // Simulate IDENTITY.md being deleted from the workspace.
     const bootstrapFiles = makeBootstrapFiles({ identityMissing: true });
     const report = buildSystemPromptReport({
@@ -139,9 +139,9 @@ describe("SystemPromptReport — build → persist → query roundtrip", () => {
       (f: any) => f.name === "IDENTITY.md",
     );
     expect(identityEntry).toBeDefined();
-    // This is the load-bearing assertion for ROADMAP success criterion #2:
-    // an operator inspecting the report can answer "why didn't the model
-    // use IDENTITY.md?" by reading `missing: true`.
+    // This is the load-bearing assertion: an operator inspecting the
+    // report can answer "why didn't the model use IDENTITY.md?" by
+    // reading `missing: true`.
     expect(identityEntry.missing).toBe(true);
     expect(identityEntry.rawChars).toBe(0);
     expect(identityEntry.sha256).toBeUndefined();
@@ -179,7 +179,7 @@ describe("SystemPromptReport — build → persist → query roundtrip", () => {
     expect(list[0]!.runId).toBe("run-2");
   });
 
-  it("redaction_applied_to_persisted_report_json (45-02 pipeline)", async () => {
+  it("redaction_applied_to_persisted_report_json", async () => {
     // Build a report with a credential-shaped string inside a tool name
     // (mimicking an accidentally-named tool).
     const bootstrapFiles = makeBootstrapFiles({});
@@ -203,34 +203,29 @@ describe("SystemPromptReport — build → persist → query roundtrip", () => {
     const persisted = store.latestSystemPromptReport(AGENT_ID, SESSION_ID);
     expect(persisted).toBeDefined();
     // The raw secret-shaped substring must not survive in the persisted
-    // JSON — the 45-02 sanitize pipeline applies before INSERT.
+    // JSON — the sanitize pipeline applies before INSERT.
     expect(persisted!.reportJson).not.toContain(
       "sk-ant-api03-AABBCCDDEEFFGGHHIIJJKKLL-very-long-tail-suffix-here",
     );
 
-    // Plan 45.1-01 (TRAJ-FIX-04): the persisted `report_json` must
-    // also round-trip back into a valid `SystemPromptReport` via
-    // `SystemPromptReportSchema`. Pre-fix this throws because the
-    // sanitizer dropped `sessionId`. The credential-text masking above
-    // is independent (lives in `redactSecretsInText`), so the
-    // `sk-ant-…` assertion continues to pass alongside the schema
-    // round-trip.
+    // The persisted `report_json` must also round-trip back into a
+    // valid `SystemPromptReport` via `SystemPromptReportSchema`. The
+    // credential-text masking above is independent (lives in
+    // `redactSecretsInText`), so the `sk-ant-…` assertion continues to
+    // pass alongside the schema round-trip.
     expect(() =>
       SystemPromptReportSchema.parse(JSON.parse(persisted!.reportJson)),
     ).not.toThrow();
   });
 
-  it("RAG-sections-only run persists memoryInjection AND bootstrap budgets (TRAJ-FIX-08, TRAJ-FIX-09)", async () => {
-    // Plan 45.1-05 (M4 + M5 integration): a turn where the hybrid
-    // memory injector emits RAG sections but no inline-memory chunk.
-    // The persisted report must:
-    //   - carry a non-undefined memoryInjection block (M4 / TRAJ-FIX-08)
+  it("RAG-sections-only run persists memoryInjection AND bootstrap budgets", async () => {
+    // A turn where the hybrid memory injector emits RAG sections but
+    // no inline-memory chunk. The persisted report must:
+    //   - carry a non-undefined memoryInjection block
     //   - carry bootstrapMaxChars + bootstrapTotalMaxChars knobs
-    //     (M5 / TRAJ-FIX-09)
     //
     // Driven via buildSystemPromptReport directly (not the agent-
-    // package call site) — the unit-level prompt-assembly test from
-    // task 4 covers the predicate; this integration case verifies the
+    // package call site) — this integration case verifies the
     // round-trip through sanitize → SQLite INSERT → JSON.parse.
     const sectionA = "RAG section body A: useful context here";
     const sectionB = "RAG section body B: more useful context";
@@ -261,12 +256,12 @@ describe("SystemPromptReport — build → persist → query roundtrip", () => {
 
     const parsed = JSON.parse(persisted!.reportJson);
 
-    // M4 / TRAJ-FIX-08: memoryInjection block populated for sections-only.
+    // memoryInjection block populated for sections-only.
     expect(parsed.memoryInjection).toBeDefined();
     expect(parsed.memoryInjection.ragHits).toBeGreaterThan(0);
     expect(parsed.memoryInjection.charsInjected).toBeGreaterThan(0);
 
-    // M5 / TRAJ-FIX-09: bootstrap-budget knobs persisted through the JSON.
+    // bootstrap-budget knobs persisted through the JSON.
     expect(parsed.bootstrapMaxChars).toBe(25_000);
     expect(parsed.bootstrapTotalMaxChars).toBe(60_000);
   });

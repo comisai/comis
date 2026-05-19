@@ -8,7 +8,7 @@ describe("DaemonConfigSchema", () => {
       const result = DaemonConfigSchema.safeParse({});
       expect(result.success).toBe(true);
       if (result.success) {
-        // Plan 45-02: redact fields (redactSensitive / redactMinLength /
+        // Redact fields (redactSensitive / redactMinLength /
         // redactKeepStart / redactKeepEnd) join the canonical defaults
         // alongside the existing rotation knobs. `redactPatterns` is
         // optional (z.array(string).optional()) and stays absent when
@@ -113,7 +113,7 @@ describe("DaemonConfigSchema", () => {
     });
   });
 
-  describe("Plan 45-02 redact fields", () => {
+  describe("redact fields", () => {
     it("redactSensitive defaults to 'tools'", () => {
       const result = DaemonConfigSchema.safeParse({});
       expect(result.success).toBe(true);

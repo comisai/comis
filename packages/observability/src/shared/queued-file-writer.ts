@@ -15,9 +15,8 @@
  * cached after first success — re-runs are no-ops on existing dir).
  *
  * The file write itself goes through `appendRegularFile` from
- * `./fs-safe.js` (moved out of `@comis/infra` into this package in
- * Plan 45.1-06), which guarantees `O_NOFOLLOW`, parent-symlink rejection,
- * and `fchmod 0o600` per Plan 45-01 Task 8.
+ * `./fs-safe.js`, which guarantees `O_NOFOLLOW`, parent-symlink rejection,
+ * and `fchmod 0o600`.
  *
  * `yieldBeforeWrite: true` (default) inserts a `await Promise.resolve()`
  * before the actual fs work so the synchronous caller of `write()` sees
@@ -31,8 +30,6 @@
  * is the operator's LRU registry — they own creation + replacement;
  * `flushAndClose()` removes the writer so the next `getQueuedFileWriter`
  * call constructs fresh.
- *
- * Design §4.1.
  *
  * @module
  */
@@ -68,16 +65,15 @@ export interface QueuedFileWriterOptions {
    */
   readonly yieldBeforeWrite?: boolean;
   /**
-   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base
-   * forwarded to `appendRegularFile`. When supplied, every write through
-   * this writer asserts the resolved target stays inside this base
-   * directory; rejects with `PathEscapesConfinementError` on escape.
+   * Opt-in real-path confinement base forwarded to `appendRegularFile`.
+   * When supplied, every write through this writer asserts the resolved
+   * target stays inside this base directory; rejects with
+   * `PathEscapesConfinementError` on escape.
    *
    * The rejection prevents the symlink-traversal attack from succeeding
    * at the open() boundary — even though the Result error today is
-   * silently swallowed by the catch block at line ~158 (45.1-02 owns
-   * the per-writer error sink), the failure path stops the write before
-   * the kernel hands out the fd.
+   * silently swallowed by the catch block (the per-writer error sink),
+   * the failure path stops the write before the kernel hands out the fd.
    *
    * Observability callers pass `~/.comis/`; non-observability callers
    * may omit the option (back-compat).
@@ -111,8 +107,7 @@ export interface QueuedFileWriter {
   /**
    * Count of per-line append failures observed since construction —
    * either `appendRegularFile` returned `!result.ok` or the call threw.
-   * Mirrors `queuedBytes()` as an honest disk-side accounting surface
-   * (closes reviewer Finding H3 — TRAJ-FIX-03).
+   * Mirrors `queuedBytes()` as an honest disk-side accounting surface.
    */
   failureCount(): number;
 
@@ -140,7 +135,7 @@ interface InternalState {
   tail: Promise<void>;
   queuedBytes: number;
   mkdirPromise: Promise<void> | undefined;
-  // TRAJ-FIX-03: per-line append-failure introspection.
+  // Per-line append-failure introspection.
   failureCount: number;
   lastError: Error | undefined;
   rejectedBytes: number;
@@ -207,7 +202,7 @@ function createWriter(
               : {}),
           });
           if (!result.ok) {
-            // TRAJ-FIX-03 (Finding H3): capture per-line append failure.
+            // Capture per-line append failure.
             state.failureCount += 1;
             state.lastError = result.error;
             state.rejectedBytes += lineBytes;
@@ -245,7 +240,7 @@ function createWriter(
       return state.queuedBytes;
     },
 
-    // TRAJ-FIX-03 (Finding H3): per-line append-failure introspection.
+    // Per-line append-failure introspection.
     failureCount(): number {
       return state.failureCount;
     },

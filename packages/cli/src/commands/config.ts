@@ -84,7 +84,7 @@ const SYNC_TOOLING_DEFAULT_CONFIG = os.homedir() + "/.comis/config.yaml";
 export function registerConfigCommand(program: Command): void {
   const config = program.command("config").description("Configuration management");
 
-  // Plan 45-05 task 12: `comis config audit show|scrub` subcommand group.
+  // `comis config audit show|scrub` subcommand group.
   registerConfigAuditCommand(config);
 
   // --- config validate -------------------------------------------------------
@@ -578,13 +578,13 @@ export function registerConfigCommand(program: Command): void {
 
         const counts = applyToDocument(doc, artifacts, { overwrite: isOverwrite });
 
-        // Plan 45-05 task 9: two-phase audit around the single atomicWriteFile call site
-        // (per checker Finding #5 -- only write site in this file). Best-effort.
-        // Plan 45.1-04 (TRAJ-FIX-06): honor diagnostics.configAudit.enabled —
-        // when explicitly false, skip both buildCliSyncToolingAuditBase
-        // (build) and appendCliSyncToolingAudit (append). Default-true
-        // semantics via the `!== false` check: omitted or true continues
-        // to emit the audit line; only an explicit false silences it.
+        // Two-phase audit around the single atomicWriteFile call site
+        // (only write site in this file). Best-effort.
+        // Honor diagnostics.configAudit.enabled — when explicitly false,
+        // skip both buildCliSyncToolingAuditBase (build) and
+        // appendCliSyncToolingAudit (append). Default-true semantics via
+        // the `!== false` check: omitted or true continues to emit the
+        // audit line; only an explicit false silences it.
         // configJs was loaded above at line 464 (Record<string, unknown> shape)
         // and is `{}` in the init-when-absent recovery path, which evaluates
         // to true via the optional-chain returning undefined !== false.

@@ -18,14 +18,12 @@
  * **Pure data**: each pattern is a `RegExp` with the `/g` flag set so
  * `replacePatternBounded(text, p.regex, …)` works correctly. Patterns
  * are compiled directly via `new RegExp(...)` — no `safe-regex` helper
- * is involved (research §5: `@comis/core/security/safe-regex.ts` does
- * not exist; ReDoS protection comes from the chunked replace in
- * `replacePatternBounded`).
+ * is involved; ReDoS protection comes from the chunked replace in
+ * `replacePatternBounded`.
  *
  * **Case-sensitivity:** the ENV-style pattern uses `[A-Z][A-Z0-9_]+` with
  * NO `/i` flag so lowercase strings like `Unrecognized key: "llm"`
- * (a diagnostic message, not a credential) pass through unchanged
- * (research §10).
+ * (a diagnostic message, not a credential) pass through unchanged.
  *
  * **MIN_LENGTH ≥ 18:** every bare-token / prefix pattern requires at
  * least 16-18 chars of body (matches the edge-keeping mask's threshold)
@@ -226,8 +224,8 @@ const STRUCTURAL_PATTERNS: RedactPattern[] = [
 const COMIS_PATTERNS: RedactPattern[] = [
   {
     name: "comis-prefix-token",
-    // comis_ + 16+ token-body chars. Per design §5.2 — this is the
-    // canonical shape for Comis-issued credentials.
+    // comis_ + 16+ token-body chars. This is the canonical shape for
+    // Comis-issued credentials.
     regex: /\bcomis_[A-Za-z0-9_-]{16,}\b/g,
     kind: "platform",
   },

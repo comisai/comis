@@ -35,13 +35,13 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
   // Envelope wrapping + preamble + RAG + images + user-budget parsing.
   const envelope = wrapEnvelope(params);
 
-  // Plan 45-03: emit prompt:submitted observability boundary event.
+  // Emit prompt:submitted observability boundary event.
   // Fires after envelope assembly + before the retry-loop drives the
   // model call so the trajectory writer captures the exact (system,
   // messages) pair the model is about to see. Sha256 digests over
   // stableStringify make the digest stable across runs that produce
-  // semantically-identical prompts (the cache-trace consumer in
-  // Phase 46 joins on these digests).
+  // semantically-identical prompts (the cache-trace consumer joins on
+  // these digests).
   emitPromptSubmitted(params, envelope.messageText);
 
   // Budget pre-check (skipped automatically when skipPrompt is true).
@@ -89,8 +89,8 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
     // strings so a canonical-key-sort serializer (e.g.,
     // @comis/observability's stableStringify) is unnecessary here. The
     // digest only needs to be stable across runs that produce
-    // byte-identical strings; cross-correlating with cache-trace
-    // (Phase 46) and SystemPromptReport (45-04) uses the same primitive.
+    // byte-identical strings; cross-correlating with cache-trace and
+    // SystemPromptReport uses the same primitive.
     const systemDigest = sha256Hex(systemPrompt);
     // Digest the assembled user-side text. This is the load-bearing
     // signal: the wrapped envelope, capability-index context, deferred

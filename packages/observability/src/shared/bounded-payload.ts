@@ -3,7 +3,7 @@
  * Payload-bounding limiter for diagnostic artifacts.
  *
  * Walks a payload value, replacing any sub-tree that exceeds one of the
- * five canonical bounds with a sentinel record. Bounds (design §4.2):
+ * five canonical bounds with a sentinel record. Bounds:
  *
  *   - string > 32 KB        → `bounded-payload-field-size-limit`
  *   - array > 64 items      → `bounded-payload-array-length-limit`
@@ -38,7 +38,7 @@
  * @module
  */
 
-/** Numeric thresholds (design §4.2). */
+/** Numeric thresholds. */
 export const PAYLOAD_BOUNDS = Object.freeze({
   maxFieldSizeBytes: 32 * 1024,
   maxArrayLength: 64,

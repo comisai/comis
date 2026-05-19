@@ -20,7 +20,7 @@
  *   - **Primitives** (number / boolean / null / undefined) pass through.
  *
  * `sanitizeForPersistence(value)` is the canonical "safe-to-disk"
- * composition for diagnostic artifacts (design §5.3.3):
+ * composition for diagnostic artifacts:
  *
  *   `redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value)))`
  *
@@ -108,7 +108,7 @@ export function redactSecrets<T = unknown>(value: T): unknown {
 }
 
 /**
- * Canonical "safe to persist to disk" pipeline (design §5.3.3).
+ * Canonical "safe to persist to disk" pipeline.
  *
  * `redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value)))`
  *

@@ -52,7 +52,7 @@ const SENSITIVE_ARG_NAMES = /^(api[_-]?key|apikey|token|secret|password|credenti
  * Check if a string value looks like an API key.
  */
 export function looksLikeApiKey(value: string): boolean {
-  // eslint-disable-next-line no-restricted-syntax -- session-secret sentinel for "already-redacted" detection (predates Plan 45-02; not the Pino censor literal)
+  // eslint-disable-next-line no-restricted-syntax -- session-secret sentinel for "already-redacted" detection (not the Pino censor literal)
   if (value === "[REDACTED]") return false;
   return API_KEY_PATTERNS.some((re) => re.test(value));
 }
@@ -81,7 +81,7 @@ function redactKeysInCommand(command: string): [string, boolean] {
     re.lastIndex = 0;
     const replaced = result.replace(re, () => {
       changed = true;
-      // eslint-disable-next-line no-restricted-syntax -- session shell-command redaction sentinel (predates Plan 45-02; not the Pino censor literal)
+      // eslint-disable-next-line no-restricted-syntax -- session shell-command redaction sentinel (not the Pino censor literal)
       return "[REDACTED]";
     });
     result = replaced;
@@ -117,10 +117,10 @@ const SANITIZATION_RULES: SanitizationRule[] = [
         toolName === "gateway" &&
         args.action === "env_set" &&
         "env_value" in args &&
-        // eslint-disable-next-line no-restricted-syntax -- gateway env_set already-redacted sentinel (predates Plan 45-02; not the Pino censor literal)
+        // eslint-disable-next-line no-restricted-syntax -- gateway env_set already-redacted sentinel (not the Pino censor literal)
         args.env_value !== "[REDACTED]"
       ) {
-        // eslint-disable-next-line no-restricted-syntax -- gateway env_set redaction value (predates Plan 45-02; not the Pino censor literal)
+        // eslint-disable-next-line no-restricted-syntax -- gateway env_set redaction value (not the Pino censor literal)
         args.env_value = "[REDACTED]";
         return true;
       }
@@ -137,9 +137,9 @@ const SANITIZATION_RULES: SanitizationRule[] = [
       for (const key of Object.keys(args)) {
         if (SENSITIVE_ARG_NAMES.test(key)) {
           const val = args[key];
-          // eslint-disable-next-line no-restricted-syntax -- session sensitive-arg already-redacted sentinel (predates Plan 45-02; not the Pino censor literal)
+          // eslint-disable-next-line no-restricted-syntax -- session sensitive-arg already-redacted sentinel (not the Pino censor literal)
           if (typeof val === "string" && val !== "[REDACTED]" && val.length > 0) {
-            // eslint-disable-next-line no-restricted-syntax -- session sensitive-arg redaction (predates Plan 45-02; not the Pino censor literal)
+            // eslint-disable-next-line no-restricted-syntax -- session sensitive-arg redaction (not the Pino censor literal)
             args[key] = "[REDACTED]";
             changed = true;
           }
@@ -158,7 +158,7 @@ const SANITIZATION_RULES: SanitizationRule[] = [
       for (const key of Object.keys(args)) {
         const val = args[key];
         if (typeof val === "string" && looksLikeApiKey(val)) {
-          // eslint-disable-next-line no-restricted-syntax -- session api-key-pattern redaction (predates Plan 45-02; not the Pino censor literal)
+          // eslint-disable-next-line no-restricted-syntax -- session api-key-pattern redaction (not the Pino censor literal)
           args[key] = "[REDACTED]";
           changed = true;
         }

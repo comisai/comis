@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-03): `comis cache stats` CLI tests.
+ * `comis cache stats` CLI tests.
  *
  * Mirrors `sessions-behavior.test.ts` mocking pattern — `vi.mock`
  * `withClient` while letting `callTyped` resolve to the real wrapper,

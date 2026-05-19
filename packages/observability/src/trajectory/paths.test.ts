@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Trajectory file-path resolution tests (Plan 45-03 Task 3).
+ * Trajectory file-path resolution tests.
  *
- * Per design §6.1, the trajectory file path resolution has a small
- * deterministic precedence:
+ * The trajectory file path resolution has a small deterministic precedence:
  *
  *   1. Explicit `trajectoryDir` arg, if present → `<dir>/<safeSessionId>.trajectory.jsonl`
  *   2. `COMIS_TRAJECTORY_DIR` env var, if set → same shape as (1)
@@ -22,8 +21,8 @@
  *
  * Path-escape contract: when `trajectoryDir` is absolute and
  * `sessionId` contains traversal characters, the helper goes through
- * `safeTrajectorySessionFileName` (45-01) so the resulting filename
- * cannot escape the dir.
+ * `safeTrajectorySessionFileName` so the resulting filename cannot escape
+ * the dir.
  *
  * @module
  */
@@ -160,7 +159,7 @@ describe("resolveTrajectoryPointerOpenFlags -- safe open flags", () => {
 
     // Sanity: should at least be CREAT | TRUNC | WRONLY (the three required flags).
     // We do not assert the exact O_NOFOLLOW bit because it is platform-specific.
-    // Instead we delegate to resolveSafeOpenFlags from 45-01 and assert parity.
+    // Instead we delegate to resolveSafeOpenFlags and assert parity.
     const fs = require("node:fs") as typeof import("node:fs");
     const minimum =
       fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_WRONLY;

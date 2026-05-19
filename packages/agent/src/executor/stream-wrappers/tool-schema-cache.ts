@@ -4,7 +4,7 @@
  *
  * Pure data structures for session-scoped rendered tool caching.
  * Leaf module: imports only from cache-detection/ (computeHash).
- * Zero imports from request-body/ (the post-Phase-42 split of request-body-injector.ts).
+ * Zero imports from request-body/.
  *
  * @module
  */

@@ -348,14 +348,13 @@ describe("source-rules -- secret-residency", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45-02: source-grep for the literal "[REDACTED]" string.
+// Source-grep for the literal "[REDACTED]" string.
 //
-// The Pino redact censor was originally the literal sentinel; Plan
-// 45-02 swaps it for the edge-keeping maskToken callback from
-// @comis/observability/redact. ESLint enforces this via a
-// no-restricted-syntax selector in eslint.config.js; this source-grep
-// is the defense-in-depth mirror — it catches the bytes even if the
-// AST walker is bypassed.
+// The Pino redact censor uses the edge-keeping maskToken callback from
+// @comis/observability/redact, not the literal sentinel. ESLint
+// enforces this via a no-restricted-syntax selector in eslint.config.js;
+// this source-grep is the defense-in-depth mirror — it catches the
+// bytes even if the AST walker is bypassed.
 //
 // The grep walks every production packages/*/src/**/*.ts file
 // (excluding .test.ts). Sites that legitimately need the literal
@@ -428,8 +427,7 @@ describe("source-rules -- [REDACTED] literal forbidden in production source", ()
           description:
             `packages/${pkg}/src must not contain a bare "[REDACTED]" literal in production source. ` +
             `The Pino censor uses maskToken() (edge-keeping mask) from @comis/observability/redact. ` +
-            `Pre-existing non-Pino-censor sentinels carry an inline eslint-disable-next-line annotation citing them as pre-existing patterns. ` +
-            `Plan 45-02 task 13.`,
+            `Pre-existing non-Pino-censor sentinels carry an inline eslint-disable-next-line annotation citing them as pre-existing patterns.`,
           violations: offenders.map((entry) => {
             const [file, line] = entry.split(":");
             return {

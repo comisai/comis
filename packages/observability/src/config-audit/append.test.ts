@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// File-mode invariant: appendRegularFile() from 45-01 calls
-// fchmodSync(fd, 0o600) defensively after open, so the test below
-// does NOT need to manipulate process.umask. The chmod-by-fd
-// behavior is verified in 45-01 task 8; we rely on it transitively
-// here.
+// File-mode invariant: appendRegularFile() calls fchmodSync(fd, 0o600)
+// defensively after open, so the test below does NOT need to manipulate
+// process.umask. The chmod-by-fd behavior is verified elsewhere; we rely
+// on it transitively here.
 //
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
@@ -226,18 +225,18 @@ describe("config-audit/append", () => {
     expect(final.nextBytes).toBeGreaterThan(0);
     expect(final.hasMetaAfter).toBe(true);
     expect(final.ts).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    // Suspicious heuristics computed via task 4.
+    // Suspicious heuristics computed.
     expect(Array.isArray(final.suspicious)).toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45.1-03 Task 1: H2 chmod TOCTOU fix — ensureParentDir must NOT chmod
-// a pre-existing parent directory. The mkdir-with-mode-0o700 branch is the
-// only place the parent's mode is touched; the file itself is locked to
-// 0o600 via fchmodSync inside appendRegularFile.
+// chmod TOCTOU fix — ensureParentDir must NOT chmod a pre-existing parent
+// directory. The mkdir-with-mode-0o700 branch is the only place the parent's
+// mode is touched; the file itself is locked to 0o600 via fchmodSync inside
+// appendRegularFile.
 // ---------------------------------------------------------------------------
-describe("ensureParentDir — chmod TOCTOU fix (TRAJ-FIX-02)", () => {
+describe("ensureParentDir — chmod TOCTOU fix", () => {
   it("does NOT chmod a pre-existing parent directory", async () => {
     // Create parent with intentionally-different mode (0o755) so we can
     // detect any chmod call back to 0o700.
@@ -253,9 +252,8 @@ describe("ensureParentDir — chmod TOCTOU fix (TRAJ-FIX-02)", () => {
     expect(result.ok).toBe(true);
 
     const modeAfter = fs.statSync(auditDir).mode & 0o777;
-    // After TRAJ-FIX-02 the existing-parent chmod-else branch is removed,
-    // so the pre-existing 0o755 mode is preserved. Today (before the fix)
-    // this fails: the else-branch chmods back to 0o700.
+    // The existing-parent chmod-else branch is removed, so the
+    // pre-existing 0o755 mode is preserved.
     expect(modeAfter).toBe(0o755);
   });
 
@@ -276,10 +274,10 @@ describe("ensureParentDir — chmod TOCTOU fix (TRAJ-FIX-02)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45-gap-01 Task 2: BL-01 sentinel-record fallback when safeJsonStringify
-// returns undefined (BigInt / circular reference / unrepresentable).
+// Sentinel-record fallback when safeJsonStringify returns undefined
+// (BigInt / circular reference / unrepresentable).
 // ---------------------------------------------------------------------------
-describe("encodeRecord — BL-01 sentinel on serialization failure", () => {
+describe("encodeRecord — sentinel on serialization failure", () => {
   it("emits a JSON-parseable sentinel when the record contains a BigInt", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "config-audit-bl01-bigint-"));
     const filePath = path.join(dir, "config-audit.jsonl");
@@ -321,11 +319,11 @@ describe("encodeRecord — BL-01 sentinel on serialization failure", () => {
   });
 
   it("emits sentinel when the record contains a nested BigInt inside an array (survives sanitizer)", () => {
-    // NOTE: per plan 45-gap-01 review, raw circular refs are normalized by
-    // sanitizeForPersistence (cycles become `{__bounded__: "bounded-..."}`
-    // markers) so they no longer trigger the BL-01 fallback. A nested BigInt
-    // inside an array survives the sanitizer untouched and exercises the
-    // same code path: safeJsonStringify returns undefined → sentinel emitted.
+    // NOTE: raw circular refs are normalized by sanitizeForPersistence
+    // (cycles become `{__bounded__: "bounded-..."}` markers) so they no
+    // longer trigger the sentinel fallback. A nested BigInt inside an
+    // array survives the sanitizer untouched and exercises the same code
+    // path: safeJsonStringify returns undefined → sentinel emitted.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "config-audit-bl01-circ-"));
     const filePath = path.join(dir, "config-audit.jsonl");
 

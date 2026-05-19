@@ -554,30 +554,30 @@ async function runSessionLocked(
   // Compute formatted key early for trace file paths and active run registry
   const formattedKey = formatSessionKey(sessionKey);
 
-  // Plan 45-03: per-session trajectory recorder. The recorder writes
-  // one JSONL line per typed-EventBus event the bridge translates;
-  // attachTrajectoryToEventBus subscribes once for the duration of this
-  // execute() call. Both the recorder and the bridge subscription are
-  // torn down in the runner-block finally (after postExecution).
+  // Per-session trajectory recorder. The recorder writes one JSONL line
+  // per typed-EventBus event the bridge translates; attachTrajectoryToEventBus
+  // subscribes once for the duration of this execute() call. Both the
+  // recorder and the bridge subscription are torn down in the runner-block
+  // finally (after postExecution).
   // createTrajectoryRecorder returns null when COMIS_TRAJECTORY=0 or
   // diagnostics.trajectory.enabled=false — the null-check below makes
   // the wiring a no-op in that case.
   let trajectoryRecorder: TrajectoryRecorder | null = null;
   let trajectoryUnsubscribe: (() => void) | undefined;
-  // Plan 46-01: cache-trace recorder local-variable lifecycle. Mirrors
-  // the trajectory pattern — declared here, assigned inside the try
-  // below, torn down in the finally block at end of execute().
+  // Cache-trace recorder local-variable lifecycle. Mirrors the trajectory
+  // pattern — declared here, assigned inside the try below, torn down in
+  // the finally block at end of execute().
   let cacheTrace: CacheTrace | null = null;
   let unsubscribeCacheTrace: (() => void) | undefined;
   try {
-    // TRAJ-FIX-01: when the operator has NOT overridden the trajectory
-    // dir (the default ~/.comis/ path applies), confine writes to
-    // ~/.comis/ so an ancestor-symlink escape is rejected at open().
+    // When the operator has NOT overridden the trajectory dir (the default
+    // ~/.comis/ path applies), confine writes to ~/.comis/ so an
+    // ancestor-symlink escape is rejected at open().
     // When the operator explicitly sets `diagnostics.trajectory.dir` to
     // a non-~/.comis path (e.g., /var/log/comis/traj/), they own the
     // legitimacy of that location — the confinement is skipped so we
     // don't reject the operator's own write path. The option is opt-in
-    // by design (RESEARCH.md §2 H1).
+    // by design.
     const trajectoryConfinedBase =
       deps.trajectoryConfig?.dir === undefined
         ? safePath(os.homedir(), ".comis")
@@ -603,10 +603,10 @@ async function runSessionLocked(
         : {}),
     });
     if (trajectoryRecorder !== null) {
-      // Plan 45.1-04 (TRAJ-FIX-05): honor diagnostics.trajectory.eventTypes
-      // as a subscription-time allowlist. When set and non-empty, only the
-      // listed EventBus event names are subscribed-to by the bridge — every
-      // other event is silently dropped. The bridge accepts a
+      // Honor diagnostics.trajectory.eventTypes as a subscription-time
+      // allowlist. When set and non-empty, only the listed EventBus event
+      // names are subscribed-to by the bridge — every other event is
+      // silently dropped. The bridge accepts a
       // `filter: (eventName) => boolean` predicate that runs ONCE per name
       // at attach time (not per emit). Default (eventTypes unset or empty)
       // preserves the prior behavior of subscribing to every mapped event.
@@ -620,7 +620,7 @@ async function runSessionLocked(
       });
     }
 
-    // Plan 46-01: cache-trace recorder lifecycle (mirrors trajectory's).
+    // Cache-trace recorder lifecycle (mirrors trajectory's).
     // Gated by `deps.cacheTraceConfig.enabled` (forwarded from
     // AppConfig.diagnostics.cacheTrace by daemon wiring; false by default).
     // When enabled, instantiate the recorder + subscribe to the live
@@ -770,7 +770,7 @@ async function runSessionLocked(
     config, deps, sessionKey, formattedKey, sm,
     resolvedModel, modelTier, executionOverrides,
     deferralResult, systemPromptBlocks, agentId,
-    // Plan 46-01: forward the cache-trace recorder so the wrapper chain
+    // Forward the cache-trace recorder so the wrapper chain
     // can include the cache-trace `stream:context` emit. When the
     // recorder is null (disabled), setupStreamWrappers skips the wrapper.
     ...(cacheTrace !== null ? { cacheTrace } : {}),
@@ -1161,7 +1161,7 @@ async function runSessionLocked(
 
   const unsubscribe = session.subscribe(bridge.listener);
 
-  // Execution started bookend (Finding 1)
+  // Execution started bookend
   deps.logger.info(
     {
       agentId,
@@ -1354,10 +1354,9 @@ async function runSessionLocked(
       executionMinTokensOverrideClear,
     });
 
-    // Plan 45-03: tear down the trajectory recorder + bridge
-    // subscription as the very last action of this execute() call.
-    // Both are best-effort — a flush/unsubscribe failure must NEVER
-    // throw out of finally.
+    // Tear down the trajectory recorder + bridge subscription as the very
+    // last action of this execute() call. Both are best-effort — a
+    // flush/unsubscribe failure must NEVER throw out of finally.
     try {
       trajectoryUnsubscribe?.();
     } catch {
@@ -1375,7 +1374,7 @@ async function runSessionLocked(
       }
     }
 
-    // Plan 46-01: tear down the cache-trace recorder + bridge subscription.
+    // Tear down the cache-trace recorder + bridge subscription.
     // Sibling block to the trajectory teardown above — best-effort,
     // failures must never throw out of finally.
     try {

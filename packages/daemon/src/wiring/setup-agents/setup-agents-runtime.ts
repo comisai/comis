@@ -508,19 +508,14 @@ export async function setupSingleAgent(
     tenantId: container.config.tenantId,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
-    // Plan 45.1-04 (TRAJ-FIX-05): thread diagnostics.trajectory into the
-    // per-session trajectory recorder + bridge wiring. Restores
-    // enabled/dir/maxFileBytes plumbing (previously a latent bug — pi-executor
-    // read these but the daemon never assigned the field, so all reads
-    // short-circuited to defaults). Also threads `eventTypes` which the
-    // bridge consumes as a subscription-time filter
+    // Thread diagnostics.trajectory into the per-session trajectory
+    // recorder + bridge wiring. Handles enabled/dir/maxFileBytes plumbing
+    // and threads `eventTypes` which the bridge consumes as a
+    // subscription-time filter
     // (packages/observability/src/trajectory/event-bus-bridge.ts).
     //
-    // Stealth behavior change (Risk #6): operators who set
-    // `diagnostics.trajectory.enabled: false` in YAML now actually disable
-    // the recorder. The pre-fix tree ignored this knob (the JSONL writer
-    // ran with hardcoded defaults). This is a correctness fix, not a
-    // regression.
+    // Operators who set `diagnostics.trajectory.enabled: false` in YAML
+    // disable the recorder entirely.
     trajectoryConfig: container.config.diagnostics?.trajectory
       ? {
           enabled: container.config.diagnostics.trajectory.enabled,
@@ -529,9 +524,9 @@ export async function setupSingleAgent(
           eventTypes: container.config.diagnostics.trajectory.eventTypes,
         }
       : undefined,
-    // Plan 46-01: forward AppConfig.diagnostics.cacheTrace into the
-    // executor. The per-session cache-trace recorder reads this; when
-    // omitted or `enabled: false`, the recorder is a no-op.
+    // Forward AppConfig.diagnostics.cacheTrace into the executor. The
+    // per-session cache-trace recorder reads this; when omitted or
+    // `enabled: false`, the recorder is a no-op.
     cacheTraceConfig: container.config.diagnostics?.cacheTrace
       ? {
           enabled: container.config.diagnostics.cacheTrace.enabled,
@@ -554,15 +549,15 @@ export async function setupSingleAgent(
     clock: deps.clock,
     env: deps.env,
     timers: deps.timers,
-    // Plan 45-gap-01: thread ObservabilityStore through to prompt-assembly
-    // for production SystemPromptReport persistence. Without this thread,
-    // the build+persist block at prompt-assembly.ts:920 is a permanent
-    // no-op in production (the library + isolated tests pass, but the
-    // operator cannot answer "why didn't the model use IDENTITY.md?"
-    // against a real daemon run).
+    // Thread ObservabilityStore through to prompt-assembly for production
+    // SystemPromptReport persistence. Without this thread, the
+    // build+persist block at prompt-assembly.ts:920 is a no-op in
+    // production (the library + isolated tests pass, but the operator
+    // cannot answer "why didn't the model use IDENTITY.md?" against a
+    // real daemon run).
     // The memory.sessionStore (createSessionStore) does NOT implement
     // SessionStoreReportSink — the per-session ledger sink is omitted
-    // here; observabilityStore is the load-bearing sink (45-04 design).
+    // here; observabilityStore is the load-bearing sink.
     observabilityStore: deps.obsStore,
   });
 

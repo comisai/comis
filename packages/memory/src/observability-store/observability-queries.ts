@@ -137,7 +137,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     ) latest ON s.channel_type = latest.channel_type AND s.timestamp = latest.max_ts
   `);
 
-  // Plan 45-04: SystemPromptReport queries.
+  // SystemPromptReport queries.
   const latestSystemPromptReportStmt = db.prepare(`
     SELECT * FROM system_prompt_reports
     WHERE agent_id = ? AND session_id = ?
@@ -145,11 +145,11 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     LIMIT 1
   `);
 
-  // Plan 45.1-05 (TRAJ-FIX-07): runId pushed into WHERE clause so an
-  // older row with the matching runId is returned even when a newer
-  // row (different runId) exists. The contract forbids `null`, so a
-  // null-runId param never reaches here (would compare to NULL via
-  // `=` and return no rows — UNKNOWN evaluates to false in WHERE).
+  // runId is pushed into the WHERE clause so an older row with the
+  // matching runId is returned even when a newer row (different
+  // runId) exists. The contract forbids `null`, so a null-runId param
+  // never reaches here (would compare to NULL via `=` and return no
+  // rows — UNKNOWN evaluates to false in WHERE).
   const latestSystemPromptReportByRunIdStmt = db.prepare(`
     SELECT * FROM system_prompt_reports
     WHERE agent_id = ? AND session_id = ? AND run_id = ?
@@ -354,12 +354,12 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     sessionId: string,
     runId?: string,
   ): SystemPromptReportRow | undefined {
-    // Plan 45.1-05 (TRAJ-FIX-07): when a runId is supplied, push it
-    // into the SQL WHERE clause so the named runId is returned even
-    // when an older-than-the-latest-by-generatedAt row matches. The
-    // pre-existing post-filter at the RPC handler (returning null when
-    // the latest-by-generatedAt row's runId didn't match) was the
-    // bug — the SQL ORDER BY + LIMIT 1 already collapsed to one row.
+    // When a runId is supplied, push it into the SQL WHERE clause so
+    // the named runId is returned even when an older-than-the-latest-
+    // by-generatedAt row matches. A prior post-filter at the RPC
+    // handler (returning null when the latest-by-generatedAt row's
+    // runId didn't match) was a bug — the SQL ORDER BY + LIMIT 1
+    // already collapsed to one row.
     const raw = runId !== undefined
       ? latestSystemPromptReportByRunIdStmt.get(agentId, sessionId, runId)
       : latestSystemPromptReportStmt.get(agentId, sessionId);

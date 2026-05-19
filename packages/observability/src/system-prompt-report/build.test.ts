@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * buildSystemPromptReport — TDD cases per design §8.5 (adapted for
- * Comis per research §1.4/§1.6).
+ * buildSystemPromptReport — TDD cases.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { createHash } from "node:crypto";
@@ -236,24 +235,24 @@ describe("buildSystemPromptReport — metadata pass-through", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Plan 45.1-05 (TRAJ-FIX-09): buildSystemPromptReport must persist
-  // bootstrapMaxChars (required) and bootstrapTotalMaxChars (optional)
-  // through to the returned report so operators can read the budget
-  // knobs that produced the truncation outcome (design §8.1).
+  // buildSystemPromptReport must persist bootstrapMaxChars (required) and
+  // bootstrapTotalMaxChars (optional) through to the returned report so
+  // operators can read the budget knobs that produced the truncation
+  // outcome.
   // -------------------------------------------------------------------------
-  it("buildSystemPromptReport persists bootstrapMaxChars from BuildParams (TRAJ-FIX-09)", () => {
+  it("buildSystemPromptReport persists bootstrapMaxChars from BuildParams", () => {
     const report = buildSystemPromptReport(makeBaseParams({ bootstrapMaxChars: 20_000 }));
     expect(report.bootstrapMaxChars).toBe(20_000);
   });
 
-  it("buildSystemPromptReport persists bootstrapTotalMaxChars when supplied (TRAJ-FIX-09)", () => {
+  it("buildSystemPromptReport persists bootstrapTotalMaxChars when supplied", () => {
     const report = buildSystemPromptReport(
       makeBaseParams({ bootstrapMaxChars: 20_000, bootstrapTotalMaxChars: 50_000 }),
     );
     expect(report.bootstrapTotalMaxChars).toBe(50_000);
   });
 
-  it("buildSystemPromptReport omits bootstrapTotalMaxChars when not supplied (TRAJ-FIX-09)", () => {
+  it("buildSystemPromptReport omits bootstrapTotalMaxChars when not supplied", () => {
     const report = buildSystemPromptReport(makeBaseParams({ bootstrapMaxChars: 20_000 }));
     expect(report.bootstrapTotalMaxChars).toBeUndefined();
   });

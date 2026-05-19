@@ -26,7 +26,7 @@ describe("BOUNDED_PAYLOAD_REASONS — Comis-renamed sentinel enum", () => {
     );
   });
 
-  it("PAYLOAD_BOUNDS exposes the five numeric thresholds at their design §4.2 values", () => {
+  it("PAYLOAD_BOUNDS exposes the five numeric thresholds at their canonical values", () => {
     expect(PAYLOAD_BOUNDS.maxFieldSizeBytes).toBe(32 * 1024);
     expect(PAYLOAD_BOUNDS.maxArrayLength).toBe(64);
     expect(PAYLOAD_BOUNDS.maxObjectKeys).toBe(64);

@@ -27,15 +27,14 @@ const TracingDefaultsSchema = z.strictObject({
  * Log file rotation + redactor configuration schema.
  *
  * Controls where the daemon writes structured log files, how
- * rotation/retention is handled, and (per Plan 45-02) the edge-keeping
- * redactor knobs that govern Pino's censor function. All fields are
- * immutable at runtime (daemon restart required to change).
+ * rotation/retention is handled, and the edge-keeping redactor knobs
+ * that govern Pino's censor function. All fields are immutable at
+ * runtime (daemon restart required to change).
  *
- * Per Plan 45-02 (checker Finding #3): the redact knobs land inside
- * this existing `daemon.logging` section (NOT a new `schema-logging.ts`
- * file and NOT inside `diagnostics.redact`), so the section-registry
- * parity snapshot is unaffected — the snapshot covers section names,
- * not field additions.
+ * The redact knobs land inside this existing `daemon.logging` section
+ * (NOT a new `schema-logging.ts` file and NOT inside
+ * `diagnostics.redact`), so the section-registry parity snapshot is
+ * unaffected — the snapshot covers section names, not field additions.
  */
 const LoggingConfigSchema = z.strictObject({
     /** Path to the active log file. Supports ~ expansion. */
@@ -52,7 +51,7 @@ const LoggingConfigSchema = z.strictObject({
     /** JSONL trace file defaults (overridable per agent in agents.<name>.tracing) */
     tracing: TracingDefaultsSchema.default(() => TracingDefaultsSchema.parse({})),
     /**
-     * Plan 45-02 redact-sensitive mode.
+     * Redact-sensitive mode.
      *   - `"off"`   — redactor is disabled (residency-test only; production
      *                 source is forbidden from setting this; equivalent of
      *                 the `disableRedaction` LoggerOptions escape hatch).

@@ -2,7 +2,7 @@
 /**
  * Cache-trace event v1 schema — closed-union stages + Zod envelope.
  *
- * Design §7.2. The cache-trace is a per-session JSONL sidecar capturing
+ * The cache-trace is a per-session JSONL sidecar capturing
  * cache-relevant lifecycle stages for a single agent turn. Each event is
  * one JSONL line; the file is bounded (`maxFileBytes`) and the writer
  * gracefully degrades on write failures (the queued writer chassis).
@@ -97,7 +97,7 @@ export const CacheTraceEventSchema = z.object({
   messagesDigest: z.string().optional(),
   system: z.unknown().optional(),
   systemDigest: z.string().optional(),
-  // Token attribution (attached to session:after only — RESEARCH §4).
+  // Token attribution (attached to session:after only).
   cacheReadInputTokens: z.number().int().nonnegative().optional(),
   cacheCreationInputTokens: z.number().int().nonnegative().optional(),
   // Sentinel data (cache_trace.write_failures only).

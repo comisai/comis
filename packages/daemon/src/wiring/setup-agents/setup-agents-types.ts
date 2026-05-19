@@ -121,11 +121,11 @@ export interface SingleAgentDeps {
   /** Timer scheduling. */
   timers: import("@comis/core").TimerPort;
   /**
-   * Plan 45-gap-01: ObservabilityStore for SystemPromptReport persistence
-   * in the production prompt-assembly path. Constructed at daemon.ts:389
+   * ObservabilityStore for SystemPromptReport persistence in the
+   * production prompt-assembly path. Constructed in daemon.ts
    * (createObservabilityStore(db) when obsConfig.persistence.enabled is
    * true). Undefined when persistence is disabled — the build+persist
-   * block at prompt-assembly.ts:920 remains a no-op in that mode.
+   * block in prompt-assembly.ts remains a no-op in that mode.
    * Threaded through createPiExecutor in setup-agents-runtime.ts.
    */
   obsStore?: import("@comis/memory").ObservabilityStore;

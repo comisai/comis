@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: CLI input parser — invalid input bubbles to a user-readable error message + process.exit(1) at the CLI call site (packages/cli/src/commands/cache.ts). The two throws below are the only validation surface; their messages embed the offending input for operator diagnosis.
 /**
- * Plan 46-02 (CACHE-OBS-03): `--since` window shorthand parser.
+ * `--since` window shorthand parser.
  *
  * Accepts `Nh | Nd | Nw | Nm | Ny` where N is 1..99999. Returns the
  * window width in milliseconds. The CLI subtracts the result from
  * `Date.now()` to derive the `sinceMs` RPC parameter.
  *
- * The regex is bounded at 5 digits + single unit letter (RESEARCH
- * §"Security Domain" ReDoS row). Empty / malformed input throws —
- * the CLI wraps the throw in a `try` and surfaces a user-readable
- * error message before `process.exit(1)`.
+ * The regex is bounded at 5 digits + single unit letter to avoid ReDoS.
+ * Empty / malformed input throws — the CLI wraps the throw in a `try`
+ * and surfaces a user-readable error message before `process.exit(1)`.
  *
  * Lives under `cache-stats/` (not `shared/`) because no other surface
  * needs the same lookup table yet. If a second consumer arrives, the

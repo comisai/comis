@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Argv redactor for config-audit records (Plan 45-05 task 2).
+ * Argv redactor for config-audit records.
  *
- * Three-layer fail-closed argv redaction per design §9.3:
+ * Three-layer fail-closed argv redaction:
  *
  *   1. **Explicit `--flag=value`** form — the flag name (before `=`)
  *      is checked against `SECRET_FLAG_NAMES` (39-entry closed set)
@@ -18,7 +18,7 @@
  *      like a flag therefore preserve it").
  *
  *   3. **Regex fallback** — anything else is piped through
- *      `redactSecretsInText` from 45-02 so positional tokens like
+ *      `redactSecretsInText` so positional tokens like
  *      `API_KEY=sk-…` inside a single argv element get caught by the
  *      28-pattern regex set. This is the last-line defense for
  *      `comis exec API_KEY=sk-…` style invocations where the secret
@@ -35,12 +35,11 @@
 
 // Cycle-breaking import: redactSecretsInText is the leaf regex
 // helper; importing the full barrel from `../redact/redact-text.js`
-// stays within the observability package and does not trip the
-// infra:observability cycle workaround (45-02 deviation #1).
+// stays within the observability package.
 import { redactSecretsInText } from "../redact/redact-text.js";
 
 /**
- * 39-entry explicit secret-flag name set per design §9.3.
+ * 39-entry explicit secret-flag name set.
  *
  * Names are stored with the leading `--` so the contains-check at
  * the top of `redactConfigAuditArgv` does not have to strip the
@@ -106,10 +105,10 @@ export const SECRET_FLAG_SUFFIX_PATTERN =
   /^--[a-z0-9][a-z0-9-_]*-(?:api-key|api_key|token|secret|password|passwd|key|auth)$/;
 
 /**
- * Cap on argv length for the persisted record. Per design §9.3 the
- * audit record's argv field is the first 8 elements. POSIX atomic
- * append is < PIPE_BUF (4 KB on Linux); 8 short argv elements keep
- * the record well inside that bound.
+ * Cap on argv length for the persisted record. The audit record's
+ * argv field is the first 8 elements. POSIX atomic append is <
+ * PIPE_BUF (4 KB on Linux); 8 short argv elements keep the record
+ * well inside that bound.
  */
 export const CONFIG_AUDIT_ARGV_CAP = 8;
 
@@ -168,7 +167,7 @@ export function redactConfigAuditArgv(
       continue;
     }
 
-    // Layer 3: regex fallback. Pipes the element through 45-02's
+    // Layer 3: regex fallback. Pipes the element through the
     // text redactor so positional `API_KEY=sk-…` slots get caught.
     result.push(redactSecretsInText(arg));
   }

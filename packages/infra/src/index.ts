@@ -20,10 +20,10 @@ export { createSystemClock } from "./runtime/clock.js";
 export { createSystemEnv } from "./runtime/env.js";
 export { createSystemTimers } from "./runtime/timers.js";
 
-// Plan 45.1-06 (TRAJ-FIX-10): the fs-safe primitives (appendRegularFile +
-// writeRegularFile + SymlinkParentRejected / PathEscapesConfinementError /
-// FileSizeLimitExceeded sentinels + option/result types) moved out of this
-// package into @comis/observability/shared/fs-safe.ts. The package-deps
-// arrow is now one-direction: @comis/infra → @comis/observability (via the
-// static re-export in logging/redact-transport.ts). The architecture
-// invariant is locked by test/architecture/observability-package-isolation.test.ts.
+// The fs-safe primitives (appendRegularFile + writeRegularFile +
+// SymlinkParentRejected / PathEscapesConfinementError /
+// FileSizeLimitExceeded sentinels + option/result types) live in
+// @comis/observability/shared/fs-safe.ts. The package-deps arrow is
+// one-direction: @comis/infra → @comis/observability (via the static
+// re-export in logging/redact-transport.ts). The architecture invariant
+// is locked by test/architecture/observability-package-isolation.test.ts.

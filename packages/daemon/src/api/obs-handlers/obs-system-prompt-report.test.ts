@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 45-04: obs.systemPromptReport.{latest, list} handler tests.
+ * obs.systemPromptReport.{latest, list} handler tests.
  *
  * Mirrors the `obs-handlers.test.ts` `makeDeps()` factory pattern; only
  * the SystemPromptReport-relevant fields are stubbed.
@@ -131,9 +131,9 @@ describe("obs.systemPromptReport.latest handler", () => {
   });
 
   it("latest_returns_null_when_runId_does_not_match", async () => {
-    // Plan 45.1-05 (TRAJ-FIX-07): the store now does the narrowing in
-    // the WHERE clause, so the mock simulates a non-match by returning
-    // undefined when the runId argument doesn't match the stored row.
+    // The store does the narrowing in the WHERE clause, so the mock
+    // simulates a non-match by returning undefined when the runId
+    // argument doesn't match the stored row.
     const reportRow = makeReportRow({ runId: "run-a" });
     const obsStore = makeObsStore({
       latestSystemPromptReport: vi.fn().mockImplementation(
@@ -153,10 +153,10 @@ describe("obs.systemPromptReport.latest handler", () => {
     expect(result.report).toBeNull();
   });
 
-  it("latest narrows by runId via SQL not post-filter (TRAJ-FIX-07)", async () => {
-    // Plan 45.1-05 task 3: the handler must thread the runId param into
-    // the store call rather than fetching the latest-by-generatedAt row
-    // and post-filtering. Spy on the store to assert the call signature.
+  it("latest narrows by runId via SQL not post-filter", async () => {
+    // The handler must thread the runId param into the store call
+    // rather than fetching the latest-by-generatedAt row and
+    // post-filtering. Spy on the store to assert the call signature.
     const reportRow = makeReportRow({ runId: "run-a", reportJson: '{"runId":"run-a"}' });
     const latestSpy = vi.fn().mockImplementation(
       (agentId: string, sessionId: string, runId?: string) =>

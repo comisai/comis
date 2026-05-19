@@ -176,7 +176,7 @@ export interface PiExecutorDeps {
   /** Timer scheduling. Required by executor-prompt-runner (race timers) and prompt-timeout. */
   timers: TimerPort;
   /**
-   * Optional trajectory writer configuration (Plan 45-03). When omitted
+   * Optional trajectory writer configuration. When omitted
    * or `enabled: false`, the per-session trajectory recorder is a
    * no-op. Forwarded from AppConfig.diagnostics.trajectory by daemon
    * wiring; the `dir` override threads through to
@@ -190,7 +190,7 @@ export interface PiExecutorDeps {
     readonly eventTypes?: ReadonlyArray<string>;
   };
   /**
-   * Plan 46-01: cache-trace writer configuration. Forwarded from
+   * Cache-trace writer configuration. Forwarded from
    * AppConfig.diagnostics.cacheTrace by daemon wiring. When omitted or
    * `enabled: false`, the per-session cache-trace recorder is a no-op.
    * The `filePath` override threads through to
@@ -205,7 +205,7 @@ export interface PiExecutorDeps {
     readonly includeSystem?: boolean;
   };
   /**
-   * Plan 45-gap-01: ObservabilityStore for SystemPromptReport SQLite
+   * ObservabilityStore for SystemPromptReport SQLite
    * persistence. Forwarded from daemon composition root through
    * SingleAgentDeps.obsStore. When undefined (persistence disabled),
    * the build+persist block in prompt-assembly.ts:920 is a no-op —

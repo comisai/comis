@@ -11,8 +11,8 @@ export default defineConfig({
   // registry architecture tests (api-contracts-bidirectional,
   // api-contracts-allowlist, contract-internal-fields) need the COMPILED
   // runtime values — the actual API_CONTRACTS Map, the frozen
-  // INTERNAL_FIELD_NAMES tuple — not source AST. Plan 45-03 added the
-  // trajectory-event-types-known.test.ts that needs the compiled
+  // INTERNAL_FIELD_NAMES tuple — not source AST. The
+  // trajectory-event-types-known.test.ts also needs the compiled
   // TRAJECTORY_BRIDGE_MAPPING from @comis/observability for the same
   // reason — the bridge mapping is the runtime closed set.
   //

@@ -193,7 +193,7 @@ export function registerDoctorCommand(program: Command): void {
           error(`FAILED: Workspace repair: ${workspaceResult.error.message}`);
         }
 
-        // Plan 45-05 task 13: retroactive config-audit-log scrubber.
+        // Retroactive config-audit-log scrubber.
         // Opt-in only via --repair; safe to run even when no
         // pre-existing findings flag the audit log because the
         // scrubber is idempotent (same output on a clean file).

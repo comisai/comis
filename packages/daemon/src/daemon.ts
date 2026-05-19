@@ -404,7 +404,7 @@ async function stageFoundation(input: {
         return { obsStore: store, obsPersistence: persistence };
       })()
     : undefined;
-  const obsStore = obsBundle?.obsStore; // Plan 45-03: trajectory recorder is per-session (pi-executor.ts).
+  const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
 
   // Create context store + daemon-level runtime registries
@@ -517,7 +517,7 @@ async function stageAgents(input: {
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
-    secretsCrypto, secretsDb, obsStore, // Plan 45-gap-01: thread into setupAgents
+    secretsCrypto, secretsDb, obsStore, // thread into setupAgents
   } = foundation;
   const _setupMedia = overrides.setupMedia ?? setupMedia;
 
@@ -570,7 +570,7 @@ async function stageAgents(input: {
     deliveryMirrorConfig: container.config.deliveryMirror
       ? { maxEntriesPerInjection: container.config.deliveryMirror.maxEntriesPerInjection, maxCharsPerInjection: container.config.deliveryMirror.maxCharsPerInjection }
       : undefined,
-    geminiCacheManager, obsStore,  // Plan 45-gap-01: SystemPromptReport persistence
+    geminiCacheManager, obsStore,  // SystemPromptReport persistence
     // Resolve platform char limit via deferred channelPlugins ref
     getChannelMaxChars: (channelType: string) => {
       const plugin = channelPluginsRef.ref?.get(channelType);
@@ -1137,7 +1137,7 @@ async function stageShutdown(input: {
   });
 
   // Snapshot current config as last-known-good after successful startup.
-  // Plan 45.1-04 (TRAJ-FIX-06): honor diagnostics.configAudit.enabled.
+  // Honor diagnostics.configAudit.enabled.
   // `!== false` semantics preserve the schema's default-true contract;
   // operators who omit the knob or explicitly set true see the audit
   // line; only `enabled: false` skips the JSONL append.

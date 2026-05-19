@@ -8,10 +8,10 @@
  *     (especially diagnostic-shaped strings like
  *     `Unrecognized key: "llm"`, lowercase config-key paths, etc.)
  *
- * Plan §5.2 + design §2.4 set: 28 default token-shape patterns + 4
- * Comis additions (Slack/Discord bot tokens, Discord webhook URL,
- * generic HMAC signature, comis_* prefix). Coverage criterion: each
- * pattern is exercised by at least one positive and one negative case
+ * Default set: 28 default token-shape patterns + 4 Comis additions
+ * (Slack/Discord bot tokens, Discord webhook URL, generic HMAC
+ * signature, comis_* prefix). Coverage criterion: each pattern is
+ * exercised by at least one positive and one negative case
  * (~32+ test cases total).
  *
  * The bare-token / prefix-token patterns require a MIN_LENGTH ≥ 18
@@ -175,8 +175,8 @@ describe("structural patterns", () => {
   });
 
   it("ENV-style uppercase: does NOT match lowercase api_key=... (preserves diagnostic strings)", () => {
-    // From research §10: `Unrecognized key: "llm"` and similar diagnostic
-    // strings must pass through unchanged.
+    // `Unrecognized key: "llm"` and similar diagnostic strings must pass
+    // through unchanged.
     expect(patternMatches(findPattern("env-uppercase-credential"), "api_key=lowercase-skip")).toBe(false);
     expect(patternMatches(findPattern("env-uppercase-credential"), 'Unrecognized key: "llm"')).toBe(false);
   });

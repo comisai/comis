@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 45-gap-01: End-to-end SystemPromptReport wiring test.
+ * End-to-end SystemPromptReport wiring test.
  *
- * Closes the verification gap from 45-VERIFICATION.md Truth #2: the
- * library + persist path works in isolation, but production traffic
- * produces ZERO reports because the daemon composition root never
- * threads observabilityStore through the executor -> tool-assembly ->
- * prompt-assembly chain.
+ * Guards against the failure mode where the library + persist path
+ * works in isolation, but production traffic produces ZERO reports
+ * because the daemon composition root never threads observabilityStore
+ * through the executor -> tool-assembly -> prompt-assembly chain.
  *
  * This test exercises:
  *   - the WIRING CHAIN by source-grep regression guards:
@@ -105,14 +104,14 @@ describe("SystemPromptReport — daemon-level E2E wiring", () => {
     expect(persisted).toBeDefined();
     expect(persisted!.agentId).toBe("agent-e2e");
 
-    // The injectedWorkspaceFiles[] (the SC #2 anchor) is in reportJson.
+    // The injectedWorkspaceFiles[] is in reportJson.
     const reportJson = JSON.parse(persisted!.reportJson) as Record<string, unknown>;
     const injectedFiles = reportJson.injectedWorkspaceFiles as Array<{ name: string; missing: boolean }>;
     expect(injectedFiles.length).toBeGreaterThan(0);
 
-    // Per ROADMAP SC #2: "Operator can answer 'why didn't the model use
-    // IDENTITY.md?'" by checking injectedWorkspaceFiles[].missing — verify
-    // the missing file is flagged.
+    // Operator can answer "why didn't the model use IDENTITY.md?" by
+    // checking injectedWorkspaceFiles[].missing — verify the missing
+    // file is flagged.
     const identityEntry = injectedFiles.find((f) => f.name === "IDENTITY.md");
     expect(identityEntry).toBeDefined();
     expect(identityEntry!.missing).toBe(true);

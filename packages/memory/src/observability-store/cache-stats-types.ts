@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-01): cache-stats query slice types.
+ * Cache-stats query slice types.
  *
  * Extracted from `observability-store-types.ts` for file-size cap
  * compliance (per-subdirectory cap = 500 lines). The four query

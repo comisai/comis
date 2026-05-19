@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Event-bus bridge tests (Plan 45-03 Task 5).
+ * Event-bus bridge tests.
  *
  * The bridge subscribes to the typed EventBus and translates each
- * mapped event into a trajectory `recordEvent` call. Per design §6.4 +
- * research §2 mappings (verified against EventMap declarations in
- * packages/core/src/event-bus/events-agent.ts and events-channel.ts).
+ * mapped event into a trajectory `recordEvent` call. Mappings are
+ * verified against EventMap declarations in
+ * packages/core/src/event-bus/events-agent.ts and events-channel.ts.
  *
  * Coverage (10 behavior-named cases):
  *   - tool_started_maps_to_tool.call
@@ -336,7 +336,7 @@ describe("attachTrajectoryToEventBus -- unsubscribe + filter", () => {
 
 describe("TRAJECTORY_BRIDGE_MAPPING -- architecture-test surface", () => {
   it("exposes the EventBus → trajectory mapping for enumeration by the architecture test", () => {
-    // Spot-check: the 5 events introduced in Task 1 are all mapped.
+    // Spot-check: prompt/session/memory/tool-timeout events are all mapped.
     expect(TRAJECTORY_BRIDGE_MAPPING["prompt:submitted"]).toBe("prompt.submitted");
     expect(TRAJECTORY_BRIDGE_MAPPING["session:started"]).toBe("session.started");
     expect(TRAJECTORY_BRIDGE_MAPPING["session:ended"]).toBe("session.ended");

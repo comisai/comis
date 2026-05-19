@@ -4,7 +4,7 @@
 # Configures `oauth.storage: encrypted` so the CLI's auth list/logout/status
 # subcommands take the daemon-RPC path. The matrix test verifies:
 #   - (encrypted, up)   -> CLI succeeds via auth.list / auth.logout RPC.
-#   - (encrypted, down) -> CLI exits 4 + REMEDIATION_MESSAGE (plan 31-09).
+#   - (encrypted, down) -> CLI exits 4 + REMEDIATION_MESSAGE.
 #
 # Uses port 8563 to avoid conflicts with other test suites.
 #

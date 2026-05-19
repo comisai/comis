@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 45.1-04 (TRAJ-FIX-06): `diagnostics.configAudit.enabled` honored
- * at all three caller sites.
+ * `diagnostics.configAudit.enabled` honored at all three caller sites.
  *
  * The schema declares `diagnostics.configAudit.enabled` defaulting to
  * `true` (`packages/core/src/config/schema-diagnostics.ts:116-130`).
@@ -15,10 +14,6 @@
  *      `appendConfigAuditWithOutcome`.
  *   3. `packages/cli/src/commands/config.ts:583, 585` — CLI sync-tooling
  *      build/append helpers.
- *
- * Before 45.1-04, NONE of these caller sites consult the knob — the
- * audit JSONL is always appended, regardless of YAML. This is the
- * dead-config-knob bug the plan fixes.
  *
  * The test verifies two of the three sites end-to-end:
  *
@@ -65,7 +60,7 @@ afterEach(() => {
   else process.env["COMIS_CONFIG_AUDIT_LOG"] = prevAuditEnv;
 });
 
-describe("diagnostics.configAudit.enabled — honored at all three caller sites (TRAJ-FIX-06)", () => {
+describe("diagnostics.configAudit.enabled — honored at all three caller sites", () => {
   it("last-known-good.ts saveLastKnownGood/restoreLastKnownGood read auditEnabled and skip the audit hook when false", () => {
     // Wiring-chain regression guard #1: last-known-good.ts must read an
     // auditEnabled parameter and skip withAuditHook when it is false.

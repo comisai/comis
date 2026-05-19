@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-01): `CacheStatsWindow` Type ⇄ schema sync invariant.
+ * `CacheStatsWindow` Type ⇄ schema sync invariant.
  *
  * Four cases:
  *   1. `expectTypeOf` proves the inferred type of `CacheStatsWindowSchema`
@@ -9,7 +9,7 @@
  *   3. Schema rejects negative token counts.
  *   4. Schema accepts breakdowns with provider+model composite key.
  *
- * Mirrors `system-prompt-report/types.test.ts` (Plan 45-04 lock-in).
+ * Mirrors `system-prompt-report/types.test.ts`.
  *
  * @module
  */

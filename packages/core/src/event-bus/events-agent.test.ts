@@ -485,11 +485,11 @@ describe("AgentEvents payload structure", () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Trajectory observability events (Plan 45-03):
+// Trajectory observability events:
 // prompt:submitted, session:started, session:ended, memory:injected, tool:timeout
 // ---------------------------------------------------------------------------
 
-describe("Trajectory observability events (Plan 45-03)", () => {
+describe("Trajectory observability events", () => {
   it("prompt:submitted delivers digests, promptChars, messageCount, provider/model", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();

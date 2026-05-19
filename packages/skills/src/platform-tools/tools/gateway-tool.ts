@@ -328,7 +328,7 @@ export function createGatewayTool(
             // emit "[REDACTED]" as the value on the next env_set.
             // scrubRedactedToolCalls handles this upstream; this is the
             // last line of defense at the tool boundary.
-            // eslint-disable-next-line no-restricted-syntax -- gateway-tool placeholder-rejection guard (predates Plan 45-02; not the Pino censor literal)
+            // eslint-disable-next-line no-restricted-syntax -- gateway-tool placeholder-rejection guard (not the Pino censor literal)
             if (envValue === "[REDACTED]" || /^\[REDACTED[^\]]*\]$/.test(envValue)) {
               return {
                 error: "env_value_is_placeholder",

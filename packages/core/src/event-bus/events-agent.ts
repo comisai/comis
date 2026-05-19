@@ -455,11 +455,11 @@ export interface AgentEvents {
   };
 
   // ---------------------------------------------------------------------
-  // Trajectory observability events (Plan 45-03).
+  // Trajectory observability events.
   //
   // Subscribed via @comis/observability/trajectory/event-bus-bridge.ts.
   // Each is emitted at a single canonical site and consumed via the
-  // EventBus rather than call-site instrumentation (research §11).
+  // EventBus rather than call-site instrumentation.
   // ---------------------------------------------------------------------
 
   /**
@@ -467,8 +467,8 @@ export interface AgentEvents {
    * submit this exact `(systemPrompt, messages)` pair to the model.
    * `systemDigest` and `messagesDigest` are sha256 over the canonical
    * `stableStringify` of the respective inputs — they line up with the
-   * SystemPromptReport digest (Plan 45-04) and the cache-trace artifact
-   * (Phase 46) for cross-correlation.
+   * SystemPromptReport digest and the cache-trace artifact for
+   * cross-correlation.
    *
    * Emit site: `packages/agent/src/executor/prompt-runner/prompt-runner.ts`
    * after `wrapEnvelope()` returns and before `runRetryLoop`.

@@ -193,10 +193,10 @@ export async function setupAgents(deps: {
   /** Timer scheduling. */
   timers: import("@comis/core").TimerPort;
   /**
-   * Plan 45-gap-01: ObservabilityStore for SystemPromptReport persistence.
-   * Forwarded into SingleAgentDeps and then into createPiExecutor's
-   * `observabilityStore` slot — drives the build+persist block at
-   * prompt-assembly.ts:920. When undefined (persistence disabled), the
+   * ObservabilityStore for SystemPromptReport persistence. Forwarded
+   * into SingleAgentDeps and then into createPiExecutor's
+   * `observabilityStore` slot — drives the build+persist block in
+   * prompt-assembly.ts. When undefined (persistence disabled), the
    * block is a no-op.
    */
   obsStore?: import("@comis/memory").ObservabilityStore;
@@ -381,9 +381,8 @@ export async function setupAgents(deps: {
     clock: deps.clock,
     env: deps.env,
     timers: deps.timers,
-    // Plan 45-gap-01: ObservabilityStore for SystemPromptReport
-    // persistence — forwarded from daemon.ts into createPiExecutor via
-    // setupSingleAgent.
+    // ObservabilityStore for SystemPromptReport persistence —
+    // forwarded from daemon.ts into createPiExecutor via setupSingleAgent.
     obsStore: deps.obsStore,
   };
 

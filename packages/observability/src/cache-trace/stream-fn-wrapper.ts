@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `buildCacheTraceWrapper` — StreamFn wrapper factory (Plan 46-01 Task 7).
+ * `buildCacheTraceWrapper` — StreamFn wrapper factory.
  *
  * Closure factory that emits one `stream:context` cache-trace event per
- * LLM call. RESEARCH §"Pattern 1" — the wrapper itself is purely a
- * closure factory; no shared state outside the captured `CacheTrace`
- * instance.
+ * LLM call. The wrapper itself is purely a closure factory; no shared
+ * state outside the captured `CacheTrace` instance.
  *
  * Per-call payload shape:
  *   - `provider`, `modelId` from the model arg.
@@ -20,8 +19,8 @@
  *     field is omitted.
  *
  * The wrapper is intentionally minimal — `recordStage("session:after",
- * {...})` is fired elsewhere (by the executor at session-end, see
- * Task 11). This wrapper only handles per-stream context.
+ * {...})` is fired elsewhere (by the executor at session-end). This
+ * wrapper only handles per-stream context.
  *
  * @module
  */

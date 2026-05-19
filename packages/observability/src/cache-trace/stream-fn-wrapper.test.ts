@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `buildCacheTraceWrapper` behavior tests (Plan 46-01 Task 7).
+ * `buildCacheTraceWrapper` behavior tests.
  *
  * Three cases:
  *   - wrapper_emits_stream_context_before_delegating_to_next

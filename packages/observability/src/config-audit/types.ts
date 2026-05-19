@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Config audit record v1 types + Zod schemas (Plan 45-05).
+ * Config audit record v1 types + Zod schemas.
  *
  * Two record shapes are persisted to the daemon-wide
  * `~/.comis/logs/config-audit.jsonl` file:
@@ -17,9 +17,9 @@
  *
  *   - `ConfigObserveAuditRecord` — read-side audit records for
  *     `phase: "read"` events (currently unused by the writer hooks,
- *     but the file format reserves space for it; a downstream plan
- *     may wire a read-side audit hook). Same caller-provenance
- *     fields plus a single `source` field naming the read site.
+ *     but the file format reserves space for it; a future hook may
+ *     wire a read-side audit). Same caller-provenance fields plus
+ *     a single `source` field naming the read site.
  *
  * Both shapes carry the `traceSchema:"comis-config-audit"` +
  * `schemaVersion:1` invariant at the top level so a future
@@ -28,16 +28,9 @@
  * audit log's `config.audit.list` RPC handler returns them as a
  * union; the read side is currently expected to be empty.
  *
- * **Comis-specific deletion from the OpenClaw template (design §9.2):**
- * the `gatewayModeBefore` / `gatewayModeAfter` fields are NOT carried
- * — Comis has no gateway-mode concept analogous to OpenClaw's, and
- * the `source` field already disambiguates the call site for
- * forensics. The record shape is otherwise a 1:1 port of the design.
- *
  * Both TS types AND Zod schemas are exported so contract definitions
- * (task 10) can reference the schemas directly without re-deriving
- * them. This mirrors the 45-04 SystemPromptReport pattern where
- * Type ⇄ Schema are paired SSOT.
+ * can reference the schemas directly without re-deriving them
+ * (Type ⇄ Schema paired SSOT).
  *
  * @module
  */
@@ -53,7 +46,7 @@ const SuspiciousFlagSchema = z.enum([
 export type SuspiciousFlag = z.infer<typeof SuspiciousFlagSchema>;
 
 /**
- * Outcome of the config-write attempt. Mirrors design §9.2.
+ * Outcome of the config-write attempt.
  *
  *   - `rename`   — atomic-write tmp + rename succeeded.
  *   - `rejected` — pre-write validation rejected the patch (e.g.
@@ -91,9 +84,7 @@ const FileStatSnapshotSchema = z.object({
 export type FileStatSnapshot = z.infer<typeof FileStatSnapshotSchema>;
 
 /**
- * Full `ConfigWriteAuditRecord` shape per design §9.2 (with
- * `gatewayMode{Before,After}` removed — Comis has no gateway-mode
- * concept).
+ * Full `ConfigWriteAuditRecord` shape.
  *
  * Field groups:
  *   - **Identity** — `traceSchema`, `schemaVersion`, `phase`,
@@ -157,8 +148,8 @@ export type ConfigWriteAuditRecord = z.infer<typeof ConfigWriteAuditRecordSchema
  * `ConfigObserveAuditRecord` — read-side audit shape. Carries the
  * same caller-provenance + timestamp fields plus a single `source`
  * naming the read site. No file-state snapshots (reads do not change
- * state). Currently unused by writer hooks; reserved for a
- * downstream plan to wire a read-side audit hook.
+ * state). Currently unused by writer hooks; reserved for a future
+ * read-side audit hook.
  */
 export const ConfigObserveAuditRecordSchema = z.object({
   traceSchema: z.literal("comis-config-audit"),

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Edge-keeping mask tests (design §5.5 + §2.4).
+ * Edge-keeping mask tests.
  *
  * Behavioral cases:
  *   - `maskToken("sk-1234567890abcdef")` → "sk-123…cdef"

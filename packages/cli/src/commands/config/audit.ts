@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `comis config audit show|scrub` subcommands (Plan 45-05 task 12).
+ * `comis config audit show|scrub` subcommands.
  *
  * Two subcommands surface the daemon-wide
  * `~/.comis/logs/config-audit.jsonl` log via the
@@ -40,8 +40,8 @@ import { callTyped, withClient } from "../../client/rpc-client.js";
 import { error, info, json, success, warn } from "../../output/format.js";
 
 // ---------------------------------------------------------------------------
-// CLI sync-tooling audit helpers (Plan 45-05 task 9 -- extracted from
-// config.ts to keep that file under the 800-line cap).
+// CLI sync-tooling audit helpers (extracted from config.ts to keep that file
+// under the 800-line cap).
 // ---------------------------------------------------------------------------
 
 /** Build the pre-write audit base for the CLI sync-tooling write site. */
@@ -92,9 +92,9 @@ export function appendCliSyncToolingAudit(
     appendConfigAuditRecordSync({
       filePath: auditLogPath,
       record,
-      // TRAJ-FIX-01: confine the audit-log write to ~/.comis/ when the
-      // default log path applies; skip confinement when the operator
-      // set COMIS_CONFIG_AUDIT_LOG to a custom location.
+      // Confine the audit-log write to ~/.comis/ when the default log path
+      // applies; skip confinement when the operator set COMIS_CONFIG_AUDIT_LOG
+      // to a custom location.
       ...(auditConfinedBase !== undefined && {
         confinedBaseDir: auditConfinedBase,
       }),
@@ -227,7 +227,7 @@ export function registerConfigAuditCommand(configCmd: Command): void {
 }
 
 /**
- * Pretty-print one config-audit record per design §9.7.
+ * Pretty-print one config-audit record.
  */
 function renderConfigAuditRecord(r: Record<string, unknown>): void {
   const ts = typeof r.ts === "string" ? r.ts : "(no-ts)";

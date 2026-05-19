@@ -3,9 +3,9 @@
  * buildSystemPromptReport — synthesize a SystemPromptReport v1 from
  * the prompt-assembly outputs.
  *
- * Per design §2.6 + §8.1:
- *   - SHA256 digests for cross-correlation with the prompt:submitted
- *     event from 45-03.
+ * Highlights:
+ *   - SHA256 digests for cross-correlation with the `prompt:submitted`
+ *     event.
  *   - `# Project Context` ↔ `## Silent Replies` marker extraction
  *     splits the assembled prompt into project-context vs the static
  *     prefix (the cache-stable region).
@@ -135,7 +135,7 @@ const SILENT_REPLIES_MARKER = "## Silent Replies";
 /**
  * Measure the character count between the `# Project Context` header
  * and the `## Silent Replies` marker (the bootstrap-file injection
- * region per design §2.6).
+ * region).
  *
  * Returns 0 when either marker is missing.
  */
@@ -282,12 +282,11 @@ export function buildSystemPromptReport(params: BuildParams): SystemPromptReport
       projectContextChars,
       nonProjectContextChars,
     },
-    // Plan 45.1-05 (TRAJ-FIX-09): persist the bootstrap budgets that
-    // produced the truncation outcome. `bootstrapMaxChars` is
-    // required; `bootstrapTotalMaxChars` is conditionally spread so
-    // the field is genuinely absent (rather than serialized as
-    // `undefined`) when the caller didn't supply it — matches the
-    // optional-field convention used by `traceId`, `runId`, etc.
+    // Persist the bootstrap budgets that produced the truncation outcome.
+    // `bootstrapMaxChars` is required; `bootstrapTotalMaxChars` is
+    // conditionally spread so the field is genuinely absent (rather than
+    // serialized as `undefined`) when the caller didn't supply it —
+    // matches the optional-field convention used by `traceId`, `runId`, etc.
     bootstrapMaxChars: params.bootstrapMaxChars,
     ...(params.bootstrapTotalMaxChars !== undefined
       ? { bootstrapTotalMaxChars: params.bootstrapTotalMaxChars }

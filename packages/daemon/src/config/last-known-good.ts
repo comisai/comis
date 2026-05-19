@@ -4,9 +4,9 @@
  * successful daemon startup and suggests rollback on startup failure.
  * Snapshot on success, suggest on failure, restore via CLI flag.
  *
- * Plan 45-05 task 7: each save / restore call writes a config-audit
- * record to `~/.comis/logs/config-audit.jsonl` via the two-phase
- * pattern (`createConfigWriteAuditRecordBase` + `finalizeConfigWriteAuditRecord`
+ * Each save / restore call writes a config-audit record to
+ * `~/.comis/logs/config-audit.jsonl` via the two-phase pattern
+ * (`createConfigWriteAuditRecordBase` + `finalizeConfigWriteAuditRecord`
  * + `appendConfigAuditRecordSync` — sync because last-known-good runs
  * during shutdown when async appends may not flush).
  *
@@ -110,10 +110,10 @@ function withAuditHook(params: {
     appendConfigAuditRecordSync({
       filePath: auditLogPath,
       record,
-      // TRAJ-FIX-01: confine the audit-log write to ~/.comis/ when the
-      // default log path applies; skip confinement when the operator
-      // overrode COMIS_CONFIG_AUDIT_LOG to a custom location (they own
-      // the legitimacy of the override target).
+      // Confine the audit-log write to ~/.comis/ when the default log
+      // path applies; skip confinement when the operator overrode
+      // COMIS_CONFIG_AUDIT_LOG to a custom location (they own the
+      // legitimacy of the override target).
       ...(auditConfinedBase !== undefined && {
         confinedBaseDir: auditConfinedBase,
       }),
@@ -137,12 +137,10 @@ function withAuditHook(params: {
  * Save a copy of the current config as the last-known-good snapshot.
  * Called after successful daemon startup.
  *
- * Plan 45.1-04 (TRAJ-FIX-06): `auditEnabled` honors
- * `diagnostics.configAudit.enabled`. Default `true` preserves the
- * pre-fix behavior for callers that don't pass the parameter. When
- * `false`, the audit JSONL append is skipped but the LKG copy itself
- * still runs — the audit log is a forensics aid, not a correctness
- * gate.
+ * `auditEnabled` honors `diagnostics.configAudit.enabled`. Default
+ * `true` for callers that don't pass the parameter. When `false`, the
+ * audit JSONL append is skipped but the LKG copy itself still runs —
+ * the audit log is a forensics aid, not a correctness gate.
  */
 export function saveLastKnownGood(
   configPath: string,
@@ -152,9 +150,9 @@ export function saveLastKnownGood(
   if (!existsSync(configPath)) {
     return { saved: false, path: lkgPath };
   }
-  // TRAJ-FIX-06: when audit is disabled, skip the JSONL append wrapper
-  // and call the write callback directly. Mirrors the success-path
-  // return shape of withAuditHook for the caller.
+  // When audit is disabled, skip the JSONL append wrapper and call
+  // the write callback directly. Mirrors the success-path return
+  // shape of withAuditHook for the caller.
   if (!auditEnabled) {
     try {
       copyFileSync(configPath, lkgPath);
@@ -180,10 +178,9 @@ export function saveLastKnownGood(
  * Used by `--restore-last-good` CLI flag.
  * Returns the path restored from, or null if no snapshot exists.
  *
- * Plan 45.1-04 (TRAJ-FIX-06): `auditEnabled` honors
- * `diagnostics.configAudit.enabled`. Default `true` preserves the
- * pre-fix behavior; when `false`, the audit JSONL append is skipped
- * but the restore copy itself still runs.
+ * `auditEnabled` honors `diagnostics.configAudit.enabled`. Default
+ * `true` for callers that don't pass the parameter; when `false`, the
+ * audit JSONL append is skipped but the restore copy itself still runs.
  */
 export function restoreLastKnownGood(
   configPath: string,
@@ -193,7 +190,7 @@ export function restoreLastKnownGood(
   if (!existsSync(lkgPath)) {
     return { restored: false, lkgPath };
   }
-  // TRAJ-FIX-06: when audit is disabled, skip the JSONL append wrapper.
+  // When audit is disabled, skip the JSONL append wrapper.
   if (!auditEnabled) {
     try {
       copyFileSync(lkgPath, configPath);
@@ -284,11 +281,11 @@ function buildSimpleDiff(oldText: string, newText: string): string {
  * Handle `--restore-last-good` CLI flag.
  * Writes to stderr (logger not yet initialized) and exits.
  *
- * Plan 45.1-04 (TRAJ-FIX-06): `auditEnabled` defaults to `true`. The
- * `--restore-last-good` flag runs BEFORE the daemon loads its config
- * (it's an emergency-recovery path), so the daemon.ts caller has no
- * cfg in scope and uses the default. Programmatic callers that DO
- * have cfg can pass the gate explicitly.
+ * `auditEnabled` defaults to `true`. The `--restore-last-good` flag
+ * runs BEFORE the daemon loads its config (it's an emergency-recovery
+ * path), so the daemon.ts caller has no cfg in scope and uses the
+ * default. Programmatic callers that DO have cfg can pass the gate
+ * explicitly.
  */
 export function handleRestoreFlag(
   configPaths: string[],

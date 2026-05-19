@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * persistSystemPromptReport — TDD cases per design §8.5.
+ * persistSystemPromptReport — TDD cases.
  *
  * Both dual targets (`observabilityStore` and the
  * `SessionStoreReportSink` soft port) are exercised. The persist
@@ -26,8 +26,7 @@ function makeReport(overrides: Partial<SystemPromptReport> = {}): SystemPromptRe
       projectContextChars: 40,
       nonProjectContextChars: 60,
     },
-    // Plan 45.1-05 (TRAJ-FIX-09): per-file bootstrap budget knob is required
-    // on SystemPromptReport. The original fixture predated the field.
+    // Per-file bootstrap budget knob is required on SystemPromptReport.
     bootstrapMaxChars: 0,
     injectedWorkspaceFiles: [],
     skills: { entries: [], promptChars: 0 },
@@ -151,13 +150,12 @@ describe("persistSystemPromptReport", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("persisted reportJson parses back to a valid SystemPromptReport (TRAJ-FIX-04)", async () => {
-    // Architecture-invariant mirror at the unit-test tier (RESEARCH.md
-    // §5 Invariant 1): the JSON string written to the SQLite row must
-    // be parseable back into a `SystemPromptReport` via
-    // `SystemPromptReportSchema.parse`. Pre-Plan-45.1-01 this failed
-    // because the sanitizer dropped `sessionId` and the schema marks
-    // `sessionId` as non-optional.
+  it("persisted reportJson parses back to a valid SystemPromptReport", async () => {
+    // Architecture-invariant mirror at the unit-test tier: the JSON
+    // string written to the SQLite row must be parseable back into a
+    // `SystemPromptReport` via `SystemPromptReportSchema.parse`.
+    // Previously this failed because the sanitizer dropped `sessionId`
+    // and the schema marks `sessionId` as non-optional.
     const observabilityStore = makeObsStore();
     const report = makeReport({
       agentId: "agent-roundtrip",

@@ -145,7 +145,7 @@ describe("log-payload-checker -- closed errorKind invariant", () => {
         suggestedFix:
           "Use one of the 9 valid ErrorKind values per AGENTS.md §2.1. If a new kind is genuinely required, the closed union must be extended via design-doc amendment (NOT a feature PR).",
         designRef:
-          "AGENTS.md §2.1 / design §1.3",
+          "AGENTS.md §2.1",
         allowlistRef: "L16_BASELINE_VIOLATIONS (in-file sub-allowlist)",
       }),
     ).toEqual([]);

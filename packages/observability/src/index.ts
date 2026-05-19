@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // @comis/observability — Observability substrate barrel.
 //
-// Plan 45-01 wires the six pure-function helpers + Type aliases that
-// the trajectory / system-prompt-report / config-audit artifact writers
-// (Plans 45-03/04/05) all compose through. Plan 45-02 adds the redactor
-// surface (edge-keeping mask, pattern set, walker, Pino transport).
 // Public surface:
 //
 //   - Queued single-promise-chain writer chassis
@@ -20,9 +16,8 @@
 //   - Text-level redactor + structured walker + sanitizeForPersistence
 //   - Pino redact transport factory
 //
-// Boundary enforced by test/architecture/observability-package-isolation.test.ts
-// (Plan 45-01 Task 11): no imports from @comis/agent, @comis/daemon,
-// @comis/cli, @comis/orchestrator.
+// Boundary enforced by test/architecture/observability-package-isolation.test.ts:
+// no imports from @comis/agent, @comis/daemon, @comis/cli, @comis/orchestrator.
 
 export {
   getQueuedFileWriter,
@@ -60,13 +55,11 @@ export { stableStringify } from "./shared/stable-stringify.js";
 
 export { safeJsonStringify } from "./shared/safe-json-stringify.js";
 
-// Plan 45.1-06 (TRAJ-FIX-10): the symlink-safe file primitives moved from
-// @comis/infra into this package. The three error sentinels and the option /
+// Symlink-safe file primitives. The three error sentinels and the option /
 // success / error type aliases form the public contract that downstream
 // writers (queued-file-writer, config-audit/append, config-audit/scrub) all
-// rely on at their try-catch boundaries. The barrel re-export keeps the
-// surface symmetric with what @comis/infra previously exposed — any future
-// out-of-package consumer should `import { appendRegularFile } from "@comis/observability"`.
+// rely on at their try-catch boundaries. Out-of-package consumers should
+// `import { appendRegularFile } from "@comis/observability"`.
 export {
   appendRegularFile,
   writeRegularFile,
@@ -84,7 +77,7 @@ export type {
 } from "./shared/fs-safe.js";
 
 // ---------------------------------------------------------------------------
-// Redactor surface (Plan 45-02).
+// Redactor surface.
 // ---------------------------------------------------------------------------
 
 export {
@@ -115,7 +108,7 @@ export {
 export { default as pinoRedactTransport } from "./redact/pino-redact-transport.js";
 
 // ---------------------------------------------------------------------------
-// Trajectory surface (Plan 45-03).
+// Trajectory surface.
 // ---------------------------------------------------------------------------
 
 export {
@@ -144,7 +137,7 @@ export {
 export type { TrajectoryBridgedEventName } from "./trajectory/event-bus-bridge.js";
 
 // ---------------------------------------------------------------------------
-// SystemPromptReport surface (Plan 45-04).
+// SystemPromptReport surface.
 // ---------------------------------------------------------------------------
 
 export { SystemPromptReportSchema } from "./system-prompt-report/types.js";
@@ -169,7 +162,7 @@ export type {
 } from "./system-prompt-report/persist.js";
 
 // ---------------------------------------------------------------------------
-// Cache-trace surface (Plan 46-01).
+// Cache-trace surface.
 // ---------------------------------------------------------------------------
 
 export { CACHE_TRACE_STAGES, CacheTraceEventSchema } from "./cache-trace/types.js";
@@ -187,7 +180,7 @@ export type { StreamFnWrapper as CacheTraceStreamFnWrapper } from "./cache-trace
 export { attachCacheTraceToEventBus } from "./cache-trace/event-bus-bridge.js";
 
 // ---------------------------------------------------------------------------
-// Config-audit surface (Plan 45-05).
+// Config-audit surface.
 // ---------------------------------------------------------------------------
 
 export {
@@ -240,7 +233,7 @@ export { scrubConfigAuditLog, ScrubConfigAuditError } from "./config-audit/scrub
 export type { ScrubResult, ScrubParams } from "./config-audit/scrub.js";
 
 // ---------------------------------------------------------------------------
-// Cache-stats surface (Plan 46-02).
+// Cache-stats surface.
 // ---------------------------------------------------------------------------
 //
 // Durable warm-cache hit-rate aggregator over the `obs_token_usage`

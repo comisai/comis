@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 45-gap-01: BL-02 symlink-safe scrub tmp-write integration test.
+ * Symlink-safe scrub tmp-write integration test.
  *
  * Verifies that an attacker who pre-stages a symlink at the predictable
  * scrub tmp path (`<auditLog>.scrub.tmp`) CANNOT redirect the scrub

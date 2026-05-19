@@ -57,7 +57,7 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
     ...bindQueries(db),
     ...bindMutations(db),
     ...bindReset(db),
-    // Plan 46-02: durable cache-stats queries over `obs_token_usage`.
+    // Durable cache-stats queries over `obs_token_usage`.
     ...buildCacheStatsQueries(db),
   };
   return Object.freeze(store);

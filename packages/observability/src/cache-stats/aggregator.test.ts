@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-01): `aggregateCacheStats` suite.
+ * `aggregateCacheStats` suite.
  *
  * The aggregator depends on the `CacheStatsStore` PORT, not on
  * `@comis/memory`. Tests use a literal stub object satisfying the
  * port — keeps `@comis/observability` package-isolation invariant
- * green (RESEARCH "Anti-Patterns to Avoid" + Pitfall 4).
+ * green.
  *
  * Six behavior-named cases:
  *   - empty_window_returns_zero_with_no_divide_by_zero

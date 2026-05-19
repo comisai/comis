@@ -1,6 +1,5 @@
 # ConfigApiDeps Audit
 
-**Generated:** 2026-05-12 (last updated 2026-05-19 — Plan 45.1-04 adds `auditEnabled`)
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:300–332`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
@@ -26,7 +25,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field corresponds to a feature-gate documented above. `configGitManager` and `configWebhook` are operator-configured audit/notification subsystems; `oauthCredentialStore` is a credential-validation hook that mirrors the same field on AgentsApiDeps + AuthApiDeps (multi-extends parity); `secretStore` selects between encrypted and plaintext env-write paths; `auditEnabled` honors `diagnostics.configAudit.enabled` and gates the config.patch JSONL append (Plan 45.1-04, TRAJ-FIX-06).
+**None.** Every optional field corresponds to a feature-gate documented above. `configGitManager` and `configWebhook` are operator-configured audit/notification subsystems; `oauthCredentialStore` is a credential-validation hook that mirrors the same field on AgentsApiDeps + AuthApiDeps (multi-extends parity); `secretStore` selects between encrypted and plaintext env-write paths; `auditEnabled` honors `diagnostics.configAudit.enabled` and gates the config.patch JSONL append.
 
 ## Summary
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-trace EventBus bridge behavior tests (Plan 46-01 Task 6).
+ * Cache-trace EventBus bridge behavior tests.
  *
  * Two cases:
  *   - subscribes_and_unsubscribes_cleanly (no listener leaks)

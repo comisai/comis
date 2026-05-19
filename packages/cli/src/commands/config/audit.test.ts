@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for `comis config audit show|scrub` subcommands (Plan 45-05
- * task 12). Mirror sessions report show|list test patterns.
+ * Tests for `comis config audit show|scrub` subcommands. Mirror sessions
+ * report show|list test patterns.
  */
 import { Command } from "commander";
 import { describe, it, expect, vi, beforeEach } from "vitest";

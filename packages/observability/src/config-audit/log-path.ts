@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Resolve the absolute filesystem path of the daemon-wide config
- * audit log (Plan 45-05 task 3).
+ * audit log.
  *
  * The log lives at `~/.comis/logs/config-audit.jsonl` by default;
  * the `COMIS_CONFIG_AUDIT_LOG` env var overrides the full path.

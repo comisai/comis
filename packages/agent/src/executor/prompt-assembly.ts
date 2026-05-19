@@ -262,25 +262,24 @@ export interface PromptAssemblyParams {
     toolCapabilityPort: ToolCapabilityPort;
     /** Wall-clock + monotonic time reads. */
     clock: import("@comis/core").ClockPort;
-    /** Plan 45-04: optional ObservabilityStore sink for SystemPromptReport
-     *  persistence. Type-only narrow Pick (see
+    /** Optional ObservabilityStore sink for SystemPromptReport persistence.
+     *  Type-only narrow Pick (see
      *  @comis/observability#ObservabilityStoreLike). When omitted, the
      *  report is built but not persisted to SQLite. Forwarded by the
      *  daemon composition root. */
     observabilityStore?: import("@comis/observability").ObservabilityStoreLike;
-    /** Plan 45-04: optional SessionStoreReportSink for per-session
-     *  SystemPromptReport persistence. When omitted, the report is
-     *  built but not written to a session ledger. */
+    /** Optional SessionStoreReportSink for per-session SystemPromptReport
+     *  persistence. When omitted, the report is built but not written to a
+     *  session ledger. */
     sessionStore?: import("@comis/observability").SessionStoreReportSink;
-    /** Plan 45-04: optional set of tool names registered in the prompt
-     *  but filtered out by policy (toolPolicy.deny / capability gate).
-     *  The SystemPromptReport's tools.entries[].callable reflects this. */
+    /** Optional set of tool names registered in the prompt but filtered out
+     *  by policy (toolPolicy.deny / capability gate). The SystemPromptReport's
+     *  tools.entries[].callable reflects this. */
     policyFilteredToolNames?: ReadonlySet<string>;
-    /** Plan 45-04: optional run-scoped identifier (per pi-mono turn).
-     *  Becomes the report's `runId` field for cross-correlation with
-     *  trajectory events from 45-03. */
+    /** Optional run-scoped identifier (per pi-mono turn). Becomes the report's
+     *  `runId` field for cross-correlation with trajectory events. */
     runId?: string;
-    /** Plan 45-04: optional tenant ID for multi-tenant deployments. */
+    /** Optional tenant ID for multi-tenant deployments. */
     tenantId?: string;
   };
   msg: NormalizedMessage;
@@ -590,12 +589,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
   // 2. Load workspace bootstrap files (skip for "none" mode)
   let bootstrapContextFiles: BootstrapContextFile[] = [];
-  // Plan 45-04: track the raw bootstrap-file shape (post-filter) so the
+  // Track the raw bootstrap-file shape (post-filter) so the
   // SystemPromptReport can populate injectedWorkspaceFiles[] with
   // missing/truncated/rawChars/injectedChars accounting.
   let bootstrapFilesForReport: BootstrapFile[] = [];
-  // Plan 45-04: capture the bootstrap budget for the report (and any
-  // truncation summary the system prompt assembler applies).
+  // Capture the bootstrap budget for the report (and any truncation summary
+  // the system prompt assembler applies).
   const bootstrapMaxChars = config.bootstrap?.maxChars ?? 20_000;
   if (promptMode !== "none") {
     // Snapshot raw bootstrap files on first turn to keep system prompt stable.
@@ -663,12 +662,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           inlineMemory = injection.inlineMemory;
           memorySections = injection.systemPromptSections;
 
-          // Plan 45-03: emit memory:injected observability event so the
-          // trajectory bridge can record one line per RAG injection.
-          // Fires only on turns where the injector actually produced
-          // content (inline OR sections) — no-injection turns produce
-          // no event. Best-effort: any failure in the emit is
-          // swallowed via try/catch so it never aborts assembly.
+          // Emit memory:injected observability event so the trajectory bridge
+          // can record one line per RAG injection. Fires only on turns where
+          // the injector actually produced content (inline OR sections) —
+          // no-injection turns produce no event. Best-effort: any failure in
+          // the emit is swallowed via try/catch so it never aborts assembly.
           if (deps.eventBus) {
             try {
               const charsInjected =
@@ -906,7 +904,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // matter for the cache prefix split which is unaffected by hook prepends.
   // The frozenSystemPrompt (string) remains the source of truth for content.
 
-  // Plan 45-04: build + persist SystemPromptReport.
+  // Build + persist SystemPromptReport.
   // Hook site: after assembleRichSystemPrompt + assembleRichSystemPromptBlocks
   // and after the before_agent_start hook applies any prompt modification —
   // the report captures the FINAL system prompt that flows to the model
@@ -968,14 +966,13 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         bootstrapFiles: reportBootstrapFiles,
         tools: reportTools,
         policyFilteredToolNames: deps.policyFilteredToolNames,
-        // Plan 45.1-05 (TRAJ-FIX-08): the memoryInjection block must
-        // reflect every memory component of the assembled prompt
-        // (inline + system-prompt sections) per design §8.1. The
-        // previous predicate dropped the block entirely when only
-        // RAG sections were injected (inlineMemory === undefined).
-        // The `?? 0` on inlineMemory.length is load-bearing for the
-        // sections-only branch now that the outer predicate can be
-        // true with inlineMemory undefined.
+        // The memoryInjection block must reflect every memory component of
+        // the assembled prompt (inline + system-prompt sections). The
+        // previous predicate dropped the block entirely when only RAG
+        // sections were injected (inlineMemory === undefined). The `?? 0`
+        // on inlineMemory.length is load-bearing for the sections-only
+        // branch now that the outer predicate can be true with inlineMemory
+        // undefined.
         memoryInjection: (inlineMemory !== undefined || memorySections.length > 0)
           ? {
               ragHits: memorySections.length + (inlineMemory ? 1 : 0),
@@ -1006,8 +1003,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         );
       }
     } catch (err) {
-      // Never abort assembly because of the report. Plan 45-03
-      // memory:injected emit pattern; same risk profile.
+      // Never abort assembly because of the report. Same best-effort
+      // pattern as memory:injected emit above; same risk profile.
       logger.debug(
         {
           err,

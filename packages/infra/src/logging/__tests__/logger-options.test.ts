@@ -4,9 +4,9 @@
  *
  * Two assertions for the new optional flag:
  *   - default (disableRedaction omitted) → a known sensitive field
- *     ("password") is MASKED (Plan 45-02: edge-keeping mask for strings
- *     ≥ 18 chars, "***" for shorter, "[REDACTED]" for non-string) and
- *     does NOT appear verbatim.
+ *     ("password") is MASKED (edge-keeping mask for strings ≥ 18 chars,
+ *     "***" for shorter, "[REDACTED]" for non-string) and does NOT
+ *     appear verbatim.
  *   - disableRedaction=true → the same sensitive field appears verbatim
  *     and no mask/sentinel is emitted.
  *
@@ -16,14 +16,10 @@
  * mirrors the documented Pino default destination and proves the flag
  * end-to-end without bypassing the factory.
  *
- * **Plan 45-02 deviation note (Rule 1 — test assertion shape):** the
- * default-redaction assertion was originally `toContain("[REDACTED]")`.
- * Plan 45-02 swaps the literal censor for a callback that emits the
- * edge-keeping mask for string values. The residency invariant TIGHTENS
- * (mask is stricter than the literal sentinel — it never re-leaks the
- * body) so the test's negative assertion (plaintext absent) is the
- * load-bearing check; the positive shape changes from "[REDACTED]" to
- * "the original plaintext does not appear".
+ * The censor is a callback that emits the edge-keeping mask for string
+ * values; the test's negative assertion (plaintext absent) is the
+ * load-bearing check, while the positive shape is "the original
+ * plaintext does not appear".
  *
  * @module
  */
@@ -63,7 +59,7 @@ describe("LoggerOptions.disableRedaction", () => {
   });
 
   it("default (disableRedaction omitted) — masks known sensitive paths and the plaintext does not appear", () => {
-    // The censor is the Plan 45-02 callback: maskToken for strings, the
+    // The censor is a callback: maskToken for strings, the
     // "[REDACTED]" sentinel for non-strings. The 18+-char password value
     // becomes an edge-keeping mask "should…0xyz"-like shape (NOT the
     // literal sentinel). Sub-18-char strings become "***".

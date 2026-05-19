@@ -4182,10 +4182,10 @@ describe("drain at bridge call site", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45-03: session and tool-timeout lifecycle events
+// Session and tool-timeout lifecycle events
 // ---------------------------------------------------------------------------
 
-describe("Plan 45-03 lifecycle events", () => {
+describe("session and tool-timeout lifecycle events", () => {
   // Local source-read helper (the readSrcRelative in the drain describe
   // block is not in scope here; we duplicate to keep the new tests
   // self-contained).

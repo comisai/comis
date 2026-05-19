@@ -230,10 +230,10 @@ export function registerSessionsCommand(program: Command): void {
       }
     });
 
-  // sessions report (Plan 45-04 — SystemPromptReport surfacing)
+  // sessions report — SystemPromptReport surfacing
   const report = sessions
     .command("report")
-    .description("Inspect SystemPromptReport (Plan 45-04)");
+    .description("Inspect SystemPromptReport");
 
   // sessions report show <sessionId>
   report
@@ -337,7 +337,7 @@ export function registerSessionsCommand(program: Command): void {
 }
 
 /**
- * Pretty-print a SystemPromptReport (design §8.4) for the
+ * Pretty-print a SystemPromptReport for the
  * `sessions report show` table view.
  *
  * Renders a header + per-file table for `injectedWorkspaceFiles[]`,

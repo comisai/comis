@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-01: cache-trace end-to-end JSONL roundtrip integration.
+ * Cache-trace end-to-end JSONL roundtrip integration.
  *
  * Tests the full write-side cache-trace pipeline without spinning up a
  * full agent turn:
@@ -65,8 +65,8 @@ function readLines(filePath: string): CacheTraceEvent[] {
     .map((l) => JSON.parse(l)) as CacheTraceEvent[];
 }
 
-describe("cache-trace v1 JSONL emission (Plan 46-01)", () => {
-  it("agent turn with diagnostics.cacheTrace.enabled writes schema-versioned JSONL with messagesDigest + systemDigest + session:after token counts (CACHE-OBS-04, CACHE-OBS-05)", async () => {
+describe("cache-trace v1 JSONL emission", () => {
+  it("agent turn with diagnostics.cacheTrace.enabled writes schema-versioned JSONL with messagesDigest + systemDigest + session:after token counts", async () => {
     const traceFile = join(tmpDir, "cache-trace.jsonl");
 
     // Step 1: construct the recorder.

@@ -2,9 +2,9 @@
 /**
  * SystemPromptReport v1 type and Zod schema.
  *
- * Per design §8.1: a structured snapshot of every component of an
- * assembled system prompt, capturing per-file accounting so operators
- * can answer "why didn't the model use IDENTITY.md?" by inspecting
+ * A structured snapshot of every component of an assembled system
+ * prompt, capturing per-file accounting so operators can answer "why
+ * didn't the model use IDENTITY.md?" by inspecting
  * `injectedWorkspaceFiles[].missing` / `truncated` / `rawChars` /
  * `injectedChars`.
  *
@@ -22,10 +22,9 @@
  *   - `injectedWorkspaceFiles[]` reflects bootstrap-injected files only
  *     (from `loadWorkspaceBootstrapFiles`). Today only `AGENTS.md` is
  *     loaded; the schema accommodates N entries.
- *   - `tools.entries[].callable` is a Comis improvement over the design:
- *     `false` indicates the tool was registered but filtered out by
- *     policy (e.g., toolPolicy.deny). Present in the prompt but not
- *     invocable.
+ *   - `tools.entries[].callable`: `false` indicates the tool was
+ *     registered but filtered out by policy (e.g., toolPolicy.deny).
+ *     Present in the prompt but not invocable.
  *
  * @module
  */
@@ -42,7 +41,7 @@ const SystemPromptBlockSchema = z.object({
   /** Total characters in the assembled system prompt. */
   chars: z.number().int().nonnegative(),
   /** Characters between the `# Project Context` and `## Silent Replies`
-   *  markers (the bootstrap-file injection region per design §2.6).
+   *  markers (the bootstrap-file injection region).
    *  `0` when markers are absent. */
   projectContextChars: z.number().int().nonnegative(),
   /** chars - projectContextChars (the static-prefix region). */
@@ -121,7 +120,7 @@ const SandboxSchema = z.object({
 
 /**
  * Zod schema for SystemPromptReport v1. Consumed by `@comis/core`
- * API contracts (task 8) for RPC-surface validation.
+ * API contracts for RPC-surface validation.
  */
 export const SystemPromptReportSchema = z.object({
   traceSchema: z.literal("comis-system-prompt-report"),
@@ -142,15 +141,13 @@ export const SystemPromptReportSchema = z.object({
   model: z.string().optional(),
   workspaceDir: z.string().optional(),
   systemPrompt: SystemPromptBlockSchema,
-  /** Plan 45.1-05 (TRAJ-FIX-09): per-file bootstrap budget knob (from
-   *  `config.bootstrap.maxChars`) that produced the truncation
-   *  outcome — required so operators can read the budget alongside
-   *  the result. Breaking change vs pre-45.1 persisted rows by
-   *  design (see plan §Risks). */
+  /** Per-file bootstrap budget knob (from `config.bootstrap.maxChars`)
+   *  that produced the truncation outcome — required so operators can
+   *  read the budget alongside the result. */
   bootstrapMaxChars: z.number().int().nonnegative(),
-  /** Plan 45.1-05 (TRAJ-FIX-09): aggregate cap across all bootstrap
-   *  files, when configured. Optional because the aggregate cap is
-   *  not configured in every deployment. */
+  /** Aggregate cap across all bootstrap files, when configured.
+   *  Optional because the aggregate cap is not configured in every
+   *  deployment. */
   bootstrapTotalMaxChars: z.number().int().nonnegative().optional(),
   bootstrapTruncation: BootstrapTruncationSchema.optional(),
   injectedWorkspaceFiles: z.array(InjectedWorkspaceFileSchema),
@@ -194,10 +191,10 @@ export type SystemPromptReport = {
     readonly projectContextChars: number;
     readonly nonProjectContextChars: number;
   };
-  /** Plan 45.1-05 (TRAJ-FIX-09): per-file bootstrap budget knob. */
+  /** Per-file bootstrap budget knob. */
   readonly bootstrapMaxChars: number;
-  /** Plan 45.1-05 (TRAJ-FIX-09): aggregate cap across all bootstrap
-   *  files (optional — not every deployment configures it). */
+  /** Aggregate cap across all bootstrap files (optional — not every
+   *  deployment configures it). */
   readonly bootstrapTotalMaxChars?: number;
   readonly bootstrapTruncation?: {
     readonly applied: boolean;

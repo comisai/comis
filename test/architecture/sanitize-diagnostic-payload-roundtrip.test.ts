@@ -1,26 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 45.1-01 (H4): structural identity fields must survive the
- * persistence sanitizer (`sanitizeForPersistence`) so that
- * `SystemPromptReportSchema.parse(JSON.parse(row.reportJson))`
- * succeeds end-to-end.
+ * Structural identity fields must survive the persistence sanitizer
+ * (`sanitizeForPersistence`) so that
+ * `SystemPromptReportSchema.parse(JSON.parse(row.reportJson))` succeeds
+ * end-to-end.
  *
- * Before this plan, `CREDENTIAL_KEYS` masked `sessionid`/`session_id`
- * as credentials. SystemPromptReport's `sessionId` is the join key
- * used by the entire observability stack (design §4.3), not a
- * credential — masking it broke the `(agentId, sessionId, runId)`
- * correlation invariant and made the persisted `report_json` invalid
- * against its own Zod schema.
+ * SystemPromptReport's `sessionId` is the join key used by the entire
+ * observability stack, not a credential — masking it would break the
+ * `(agentId, sessionId, runId)` correlation invariant and make the
+ * persisted `report_json` invalid against its own Zod schema.
  *
- * Architecture-tier invariant (RESEARCH.md §5 Invariant 1):
+ * Architecture-tier invariant:
  *   `sanitizeForPersistence(report)` retains the structural identity
  *   fields as plain strings AND the result parses against
  *   `SystemPromptReportSchema`.
  *
- * Locked in at the sanitizer/schema boundary directly so any
- * regression that re-adds these names to `CREDENTIAL_KEYS` (or a
- * symmetric set in `redactSecrets`) fails this test, not the
- * integration round-trip that catches it three tiers downstream.
+ * Locked in at the sanitizer/schema boundary directly so any regression
+ * that re-adds these names to `CREDENTIAL_KEYS` (or a symmetric set in
+ * `redactSecrets`) fails this test, not the integration round-trip that
+ * catches it three tiers downstream.
  *
  * @module
  */
@@ -35,11 +33,11 @@ function makeValidReport(
   overrides?: Partial<SystemPromptReport>,
 ): SystemPromptReport {
   // Minimum-valid SystemPromptReport shape that SystemPromptReportSchema
-  // accepts. `bootstrapMaxChars: 20_000` IS required after Plan 45.1-05
-  // (TRAJ-FIX-09). The fixture below includes the field as a literal
-  // value so the schema parse succeeds regardless of the credential-
-  // filter outcome (the 45.1-01 H4 invariant is about sessionId being
-  // preserved, not about the bootstrap budget knobs).
+  // accepts. `bootstrapMaxChars: 20_000` is required by the schema. The
+  // fixture below includes the field as a literal value so the schema
+  // parse succeeds regardless of the credential-filter outcome (the
+  // invariant under test is about sessionId being preserved, not about
+  // the bootstrap budget knobs).
   return {
     traceSchema: "comis-system-prompt-report",
     schemaVersion: 1,

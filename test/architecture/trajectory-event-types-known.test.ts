@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Trajectory event-type coverage test (Plan 45-03 Task 12).
+ * Trajectory event-type coverage test.
  *
  * Walks every `eventBus.emit("name", payload)` call site in
  * `packages/agent/src/**` and `packages/orchestrator/src/**` (the two
@@ -12,16 +12,15 @@
  *   2. listed in `EVENTS_NOT_TRAJECTORY_MAPPED` — events deliberately
  *      not on the trajectory (audit-log, internal lifecycle, etc.).
  *
- * Per design §13.2, the bidirectional check is:
+ * The bidirectional check is:
  *   - Emitted event not in EventMap → caught at compile time by
  *     `TypedEventBus<EventMap>` (no test needed).
  *   - Emitted event in EventMap but neither in bridge mapping nor in
  *     allowlist → FAIL with file:line + actionable hint.
  *
- * Per Plan 45-03 checker minor #2, BOTH `tool:executed` AND
- * `tool:timeout` are present in TRAJECTORY_BRIDGE_MAPPING; downstream
- * consumers dedupe by toolCallId. The architecture test enforces both
- * have entries.
+ * BOTH `tool:executed` AND `tool:timeout` are present in
+ * TRAJECTORY_BRIDGE_MAPPING; downstream consumers dedupe by toolCallId.
+ * The architecture test enforces both have entries.
  *
  * Walker style mirrors `log-payload-checker.test.ts:79-100` (recursive
  * readdirSync with the standard exclusion set: __tests__, dist,
@@ -50,7 +49,7 @@ const REPO_ROOT = resolve(here, "../..");
  * test continues to pass as long as the event has a `TRAJECTORY_BRIDGE_MAPPING`
  * entry OR stays in this set.
  *
- * Dedup contract reminder (checker minor #2):
+ * Dedup contract reminder:
  *   Both `tool:executed` AND `tool:timeout` are in TRAJECTORY_BRIDGE_MAPPING
  *   for the SAME physical timeout. Downstream consumers join on toolCallId
  *   to dedupe. The architecture test enforces both have bridge entries.
@@ -401,7 +400,7 @@ describe("trajectory-event-types-known -- bridge mapping coverage from emit site
         suggestedFix:
           "Add the event name to TRAJECTORY_BRIDGE_MAPPING (packages/observability/src/trajectory/event-bus-bridge.ts) with the appropriate translator branch, OR add it to EVENTS_NOT_TRAJECTORY_MAPPED in this test with a one-line rationale.",
         designRef:
-          "design §13.2 / Plan 45-03 task 12",
+          "TRAJECTORY_BRIDGE_MAPPING in packages/observability/src/trajectory/event-bus-bridge.ts",
         allowlistRef:
           "EVENTS_NOT_TRAJECTORY_MAPPED in test/architecture/trajectory-event-types-known.test.ts",
       }),
@@ -412,15 +411,15 @@ describe("trajectory-event-types-known -- bridge mapping coverage from emit site
     expect(allSites.length).toBeGreaterThan(0);
   });
 
-  // Dedup contract reminder (checker minor #2): both tool:executed AND
-  // tool:timeout must be in TRAJECTORY_BRIDGE_MAPPING. Downstream
-  // trajectory consumers dedupe by toolCallId.
-  it("tool:executed AND tool:timeout are both trajectory-mapped (dedup contract per checker minor #2)", () => {
+  // Dedup contract reminder: both tool:executed AND tool:timeout must be
+  // in TRAJECTORY_BRIDGE_MAPPING. Downstream trajectory consumers dedupe
+  // by toolCallId.
+  it("tool:executed AND tool:timeout are both trajectory-mapped (dedup contract)", () => {
     expect(mapped.has("tool:executed")).toBe(true);
     expect(mapped.has("tool:timeout")).toBe(true);
   });
 
-  it("Plan 45-03 events introduced in task 1 are all trajectory-mapped", () => {
+  it("core trajectory events are all trajectory-mapped", () => {
     expect(mapped.has("prompt:submitted")).toBe(true);
     expect(mapped.has("session:started")).toBe(true);
     expect(mapped.has("session:ended")).toBe(true);

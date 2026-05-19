@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-03): `parseSince` regression suite.
+ * `parseSince` regression suite.
  *
  * Six cases cover the four supported window shorthands plus the two
  * primary failure modes (bare integer, zero). The regex is bounded
  * (max 5 digits + single unit) — see `parse-since.ts` — so the
- * ReDoS surface is closed at the schema level (RESEARCH §"Security
- * Domain" ReDoS row).
+ * ReDoS surface is closed at the schema level.
  *
  * @module
  */

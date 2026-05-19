@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture invariant — cache-trace-writer.ts deletion (Plan 46-01).
+ * Architecture invariant — cache-trace-writer.ts deletion.
  *
  * Asserts that the legacy
  * `packages/agent/src/executor/stream-wrappers/cache-trace-writer.ts`
  * file no longer exists, and that no live source file imports
  * `createCacheTraceWriter`. The cache-trace artifact was promoted to
- * `@comis/observability/cache-trace/*` in plan 46-01; any future PR
- * that re-introduces the legacy file or the old import symbol is
- * caught here.
+ * `@comis/observability/cache-trace/*`; any future PR that
+ * re-introduces the legacy file or the old import symbol is caught
+ * here.
  *
- * Out of scope:
+ * Exceptions:
  *   - `CacheTraceConfig` type literal — kept off the deny-list because
  *     `CacheTraceConfigSchema` in `packages/core/src/config/` is the
  *     NEW symbol (different shape, owned by Zod).
@@ -59,11 +59,11 @@ function listSourceFiles(dir: string): string[] {
   return out;
 }
 
-describe("CACHE-OBS-06 — cache-trace-writer.ts is deleted and not re-exported", () => {
+describe("cache-trace-writer.ts is deleted and not re-exported", () => {
   it("the legacy file path does not exist", () => {
     expect(
       existsSync(LEGACY_WRITER_PATH),
-      `Expected legacy ${LEGACY_WRITER_PATH} to be deleted by Plan 46-01 Task 11`,
+      `Expected legacy ${LEGACY_WRITER_PATH} to be deleted`,
     ).toBe(false);
   });
 
@@ -93,7 +93,7 @@ describe("CACHE-OBS-06 — cache-trace-writer.ts is deleted and not re-exported"
     expect(
       offenders,
       [
-        "Files still referencing createCacheTraceWriter (deleted symbol, Plan 46-01):",
+        "Files still referencing createCacheTraceWriter (deleted symbol):",
         ...offenders,
         "",
         "Use @comis/observability buildCacheTraceWrapper / createCacheTrace instead.",

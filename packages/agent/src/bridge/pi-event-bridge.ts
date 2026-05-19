@@ -258,7 +258,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         }
 
         // -----------------------------------------------------------------
-        // Agent run lifecycle (Plan 45-03)
+        // Agent run lifecycle
         //
         // pi-mono emits `agent_start` at the top of each AgentSession.send()
         // and `agent_end` after the entire agentic loop completes. The
@@ -516,11 +516,11 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(truncMeta && { truncated: truncMeta.truncated, fullChars: truncMeta.fullChars, returnedChars: truncMeta.returnedChars }),
           });
 
-          // Plan 45-03: explicit tool:timeout emit when the tool was
-          // classified as timed-out. Fires alongside tool:executed for
-          // the same physical timeout — both share toolCallId, so the
-          // trajectory writer + downstream consumers dedupe by that key
-          // (see TRAJECTORY_BRIDGE_MAPPING JSDoc + events-agent.ts
+          // Explicit tool:timeout emit when the tool was classified as
+          // timed-out. Fires alongside tool:executed for the same
+          // physical timeout — both share toolCallId, so the trajectory
+          // writer + downstream consumers dedupe by that key (see
+          // TRAJECTORY_BRIDGE_MAPPING JSDoc + events-agent.ts
           // tool:timeout declaration for the dedup contract).
           if (toolErrorKind === "timeout") {
             deps.eventBus.emit("tool:timeout", {

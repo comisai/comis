@@ -140,12 +140,6 @@ export interface SectionRegistryEntry {
  *   autoReplyEngine, sendPolicy, embedding, envelope, tooling.
  * The 7 fieldMetadata-only entries (plugins → envelope) are inserted between
  * `diagnostics` and `tooling` so both filtered subsequences are stable.
- *
- * Phase 45 Plan 45-01 inserted `diagnostics` immediately after `monitoring`.
- * Per the plan's milestone-wide invariant this is the ONE registry
- * insertion + parity snapshot regeneration for Phase 45 — later plans
- * (45-03/04/05, Phase 46) add fields *within* existing subschemas, which
- * does not trip the snapshot.
  */
 export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = Object.freeze({
   // The 11 common (both views) at the head — matches both legacy orders up to index 9, then diagnostics at index 10.
@@ -222,13 +216,8 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
     schemaSerializable: true,
     fieldMetadataVisible: true,
   },
-  // Phase 45 diagnostics scaffold (Plan 45-01 Task 12). Both views visible —
-  // placed immediately after monitoring so it groups with the
-  // observability-adjacent sections. Subsections (trajectory, cacheTrace,
-  // configAudit, redact) are placeholder empty z.object({}).default({}) and
-  // are filled in 45-03 / Phase 46 / 45-05 respectively. This is the
-  // one-and-only registry insertion + parity snapshot regeneration for
-  // the whole milestone.
+  // Diagnostics scaffold. Both views visible — placed immediately after
+  // monitoring so it groups with the observability-adjacent sections.
   diagnostics: {
     schema: DiagnosticsConfigSchema,
     schemaSerializable: true,

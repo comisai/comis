@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 45-04: ObservabilityStore SystemPromptReport CRUD smoke tests.
+ * ObservabilityStore SystemPromptReport CRUD smoke tests.
  *
  * Uses better-sqlite3 in-memory DB so that `initSchema(db, 1536)`
  * creates the full schema before exercising the store. Three
- * behavior-named cases per the plan: insert + retrieve latest,
- * insert + list with limit, and validation degrade.
+ * behavior-named cases: insert + retrieve latest, insert + list with
+ * limit, and validation degrade.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
@@ -84,11 +84,11 @@ describe("ObservabilityStore — SystemPromptReport CRUD", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Plan 45.1-05 (TRAJ-FIX-07): runId-in-SQL narrowing — push the optional
-  // runId filter into the WHERE clause so an older row with the matching
-  // runId is returned even when a newer row (different runId) exists.
+  // runId-in-SQL narrowing — push the optional runId filter into the WHERE
+  // clause so an older row with the matching runId is returned even when a
+  // newer row (different runId) exists.
   // -------------------------------------------------------------------------
-  it("latestSystemPromptReport with runId narrows to the named run (TRAJ-FIX-07)", () => {
+  it("latestSystemPromptReport with runId narrows to the named run", () => {
     // Three rows: latest-by-generatedAt is run-b (gen=2000), but we ask for run-a (gen=1000).
     store.insertSystemPromptReport(makeRow({ generatedAt: 1_000, runId: "run-a" }));
     store.insertSystemPromptReport(makeRow({ generatedAt: 2_000, runId: "run-b" }));
@@ -99,14 +99,14 @@ describe("ObservabilityStore — SystemPromptReport CRUD", () => {
     expect(result?.generatedAt).toBe(1_000);
   });
 
-  it("latestSystemPromptReport with runId for a non-existent run returns undefined (TRAJ-FIX-07)", () => {
+  it("latestSystemPromptReport with runId for a non-existent run returns undefined", () => {
     store.insertSystemPromptReport(makeRow({ generatedAt: 1_000, runId: "run-a" }));
     store.insertSystemPromptReport(makeRow({ generatedAt: 2_000, runId: "run-b" }));
     const result = store.latestSystemPromptReport("agent-1", "session-1", "run-nonexistent");
     expect(result).toBeUndefined();
   });
 
-  it("latestSystemPromptReport without runId still returns the most-recent row (TRAJ-FIX-07 regression guard)", () => {
+  it("latestSystemPromptReport without runId still returns the most-recent row (regression guard)", () => {
     store.insertSystemPromptReport(makeRow({ generatedAt: 1_000, runId: "run-a" }));
     store.insertSystemPromptReport(makeRow({ generatedAt: 2_000, runId: "run-b" }));
     store.insertSystemPromptReport(makeRow({ generatedAt: 1_500, runId: "run-c" }));

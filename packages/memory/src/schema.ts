@@ -294,8 +294,8 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_obs_channel_timestamp ON obs_channel_snapshots(timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_channel_type ON obs_channel_snapshots(channel_type, timestamp);
 
-    -- Plan 45-04: SystemPromptReport persistence (design §8.3).
-    -- Full JSON payload stored after sanitizeForPersistence (45-02) pipeline.
+    -- SystemPromptReport persistence.
+    -- Full JSON payload stored after sanitizeForPersistence pipeline.
     -- PRIMARY KEY (agent_id, session_id, run_id, generated_at) — run_id is
     -- nullable; composite key tolerates multiple reports per session.
     CREATE TABLE IF NOT EXISTS system_prompt_reports (

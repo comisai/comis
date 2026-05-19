@@ -174,7 +174,7 @@ describe("last-known-good config", () => {
     });
   });
 
-  describe("config-audit hook (Plan 45-05 task 7)", () => {
+  describe("config-audit hook", () => {
     it("writes a config-audit JSONL line for a successful save", () => {
       writeFileSync(configPath, "key: value\n");
       const result = saveLastKnownGood(configPath);
@@ -215,10 +215,10 @@ describe("last-known-good config", () => {
     });
   });
 
-  // Plan 45.1-04 task 4 (TRAJ-FIX-06): saveLastKnownGood/restoreLastKnownGood
-  // honor an auditEnabled parameter — when false the audit JSONL append is
-  // skipped but the LKG copy still runs.
-  describe("config-audit hook honors auditEnabled (TRAJ-FIX-06)", () => {
+  // saveLastKnownGood/restoreLastKnownGood honor an auditEnabled parameter
+  // — when false the audit JSONL append is skipped but the LKG copy still
+  // runs.
+  describe("config-audit hook honors auditEnabled", () => {
     it("saveLastKnownGood with auditEnabled: false skips the audit JSONL append", () => {
       writeFileSync(configPath, "key: value\n");
       const result = saveLastKnownGood(configPath, false);
@@ -252,10 +252,10 @@ describe("last-known-good config", () => {
       expect(readFileSync(auditLogPath, "utf-8")).toBe("");
     });
 
-    it("saveLastKnownGood with auditEnabled omitted writes the audit line (default = true preserves pre-fix behavior)", () => {
+    it("saveLastKnownGood with auditEnabled omitted writes the audit line (default = true preserves prior behavior)", () => {
       // Symmetric positive case that gates the negative tests above.
       // The default-parameter contract must keep existing callers
-      // (daemon.ts pre-rewire) producing the audit record.
+      // producing the audit record.
       writeFileSync(configPath, "key: value\n");
       const result = saveLastKnownGood(configPath);
       expect(result.saved).toBe(true);

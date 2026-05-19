@@ -42,9 +42,7 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 21 entries (20 prior + 1 cache-stats window)", () => {
-    // Plan 46-02 added 1 new method (obs.cacheStats.window); count
-    // bumped 20 → 21.
+  it("OBSERVABILITY_CONTRACTS has exactly 21 entries", () => {
     expect(OBSERVABILITY_CONTRACTS.length).toBe(21);
   });
 
@@ -64,7 +62,7 @@ describe("observability-domain contracts", () => {
       "obs.billing.bySession",
       "obs.billing.total",
       "obs.billing.usage24h",
-      // Plan 46-02: durable cache-stats window aggregator.
+      // Durable cache-stats window aggregator.
       "obs.cacheStats.window",
       "obs.channels.all",
       "obs.channels.get",
@@ -77,7 +75,7 @@ describe("observability-domain contracts", () => {
       "obs.getCacheStats",
       "obs.reset",
       "obs.reset.table",
-      // Plan 45-04: SystemPromptReport surface.
+      // SystemPromptReport surface.
       "obs.systemPromptReport.latest",
       "obs.systemPromptReport.list",
     ]);

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-01): cache-stats query suite.
+ * Cache-stats query suite.
  *
  * Six behavior-named cases covering the four query shapes
  * (window-aggregate, byProvider, byModel, byAgent) + window-bound
  * filter. The fixture inserts rows via `bindMutations(db).insertTokenUsage`
  * — the live mutation path — so we exercise the same column shape the
- * write side produces (RESEARCH §7 column list, lines 305-309).
+ * write side produces.
  *
  * Uses an in-memory better-sqlite3 instance; `initSchema(db, 1536)`
  * creates the full schema before exercising the queries.

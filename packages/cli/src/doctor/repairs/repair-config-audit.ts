@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `comis doctor --repair` integration: retroactive config-audit
- * scrubber (Plan 45-05 task 13 / design §9.6).
+ * scrubber.
  *
  * Calls the daemon's `config.audit.scrub` RPC to re-run the
- * 45-02 redactor + 45-05 argv-redactor pipeline over the
- * historical config-audit log. The scrubber is idempotent and
- * safe to run unconditionally during repair-mode — it returns
+ * redactor + argv-redactor pipeline over the historical
+ * config-audit log. The scrubber is idempotent and safe to run
+ * unconditionally during repair-mode — it returns
  * `rewrittenRecords: 0` on a clean log.
  *
  * Daemon-not-running is the only common failure mode; doctor.ts
@@ -27,8 +27,8 @@ import { callTyped, withClient } from "../../client/rpc-client.js";
  * Error on failure.
  *
  * The function does NOT consume any findings — the scrub is
- * unconditional and idempotent. The plan's design §9.6 calls for
- * always-on retroactive scrubbing in repair mode.
+ * unconditional and idempotent. Retroactive scrubbing is always-on
+ * in repair mode.
  */
 export async function repairConfigAudit(): Promise<Result<string[], Error>> {
   try {

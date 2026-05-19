@@ -100,7 +100,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     expect(Object.keys(service)).toEqual(["deliverToChannel"]);
   });
 
-  it("Test 3: constructing the service does NOT call tryGetContext() (research Pitfall 5)", () => {
+  it("Test 3: constructing the service does NOT call tryGetContext()", () => {
     // If construction touched AsyncLocalStorage outside a runWithContext frame,
     // tryGetContext() would return undefined (it's the non-throwing variant),
     // but a per-construction lookup would still surface as a side-effect we

@@ -157,10 +157,10 @@ describe("QueuedFileWriter — yieldBeforeWrite default behavior", () => {
   });
 });
 
-describe("QueuedFileWriter — failure introspection (TRAJ-FIX-03)", () => {
-  // H3 reviewer finding: the writer used to silently swallow the Result
-  // returned by appendRegularFile. These cases lock in the new
-  // observability surface: failureCount() + lastError() + rejectedBytes().
+describe("QueuedFileWriter — failure introspection", () => {
+  // The writer used to silently swallow the Result returned by
+  // appendRegularFile. These cases lock in the observability surface:
+  // failureCount() + lastError() + rejectedBytes().
 
   it("starts with failureCount === 0 and lastError === undefined and rejectedBytes === 0 before any writes", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "qfw-baseline-"));

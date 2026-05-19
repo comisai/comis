@@ -3,19 +3,18 @@
  * persistSystemPromptReport — double-write persister with sanitize
  * pipeline.
  *
- * Per design §8.3 the persistence path writes the assembled report
- * to:
+ * The persistence path writes the assembled report to:
  *   - the observability store (SQLite `system_prompt_reports` table)
  *   - optionally a session-level sink (so the report rides alongside
  *     other per-session diagnostics)
  *
  * The function:
- *   - Sanitizes the report via `sanitizeForPersistence` (the 45-02
- *     pipeline: limitPayloadValue + sanitizeDiagnosticPayload +
- *     redactSecrets) BEFORE the INSERT.
+ *   - Sanitizes the report via `sanitizeForPersistence`
+ *     (limitPayloadValue + sanitizeDiagnosticPayload + redactSecrets)
+ *     BEFORE the INSERT.
  *   - JSON.stringify's the sanitized report into `report_json`.
  *   - Returns `Result<void, PersistError>` per AGENTS.md §2.1 — never
- *     throws. Store errors degrade silently per research §4.1.
+ *     throws. Store errors degrade silently.
  *
  * The `ObservabilityStore` interface is imported as a TYPE only from
  * `@comis/memory`. The narrow Pick<> shape decouples this module from
@@ -88,7 +87,7 @@ function toError(e: unknown): Error {
 /**
  * Persist a SystemPromptReport via the configured sinks.
  *
- * - Sanitizes the report via the 45-02 pipeline.
+ * - Sanitizes the report via the persistence pipeline.
  * - Best-effort dual write: failures of one sink do not abort the
  *   other. Errors are collected and reported via `Result.err`.
  *
@@ -106,12 +105,12 @@ export async function persistSystemPromptReport(
   //    credential bodies, bound payload size/depth. Same pipeline as
   //    trajectory + (future) config-audit writers.
   //
-  // Per Plan 45.1-01 (TRAJ-FIX-04) the sanitizer no longer masks
+  // The sanitizer does not mask
   // `sessionId`/`agentId`/`runId`/`tenantId`/`traceId` — those are
-  // structural join keys (design §4.3), not credentials. They flow
-  // through `sanitizeForPersistence` intact as plain strings, so the
-  // INSERT row can be built directly from `safeReport` without a
-  // parallel "captured from the original" key object.
+  // structural join keys, not credentials. They flow through
+  // `sanitizeForPersistence` intact as plain strings, so the INSERT
+  // row can be built directly from `safeReport` without a parallel
+  // "captured from the original" key object.
   const safeReport = sanitizeForPersistence(report) as SystemPromptReport;
   const reportJson = JSON.stringify(safeReport);
 

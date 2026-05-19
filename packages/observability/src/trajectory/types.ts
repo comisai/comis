@@ -2,8 +2,8 @@
 /**
  * Trajectory event v1 schema — closed type union + payload shape.
  *
- * Design §6.2. The trajectory is a per-session JSONL sidecar capturing
- * the model-visible state changes for a single agent run. Each event is
+ * The trajectory is a per-session JSONL sidecar capturing the
+ * model-visible state changes for a single agent run. Each event is
  * one JSONL line; the file is bounded (`maxRuntimeFileBytes`) and the
  * payload is bounded per-event (`maxRuntimeEventBytes`) — see
  * `runtime.ts` for the runtime contract.
@@ -17,7 +17,7 @@
  *   2. explicitly listed in the `EVENTS_NOT_TRAJECTORY_MAPPED`
  *      allowlist.
  *
- * Comis improvements over the OpenClaw original (design §6.2):
+ * Comis improvements over the OpenClaw original:
  *   - `agentId`, `tenantId`, `entryId`, `parentEntryId` — multi-tenant
  *     correlation across artifacts (cache-trace, system-prompt-report,
  *     config-audit) within the same session.
@@ -91,7 +91,7 @@ export type TrajectoryEventType = (typeof TRAJECTORY_EVENT_TYPES)[number];
  *   from a parent (e.g., `tool.result.parentEntryId === tool.call.entryId`).
  * - `seq`: monotonic per-file counter (1-indexed). Consumers can
  *   detect dropped lines by gap detection.
- * - `data`: typed payload (after `sanitizeForPersistence` from 45-02).
+ * - `data`: typed payload (after `sanitizeForPersistence`).
  */
 export interface TrajectoryEvent {
   readonly traceSchema: "comis-trajectory";
@@ -110,7 +110,7 @@ export interface TrajectoryEvent {
   readonly entryId: string;
   readonly parentEntryId?: string;
 
-  // Payload — passed through `sanitizeForPersistence` (45-02) before write.
+  // Payload — passed through `sanitizeForPersistence` before write.
   readonly data: unknown;
 }
 
@@ -122,7 +122,7 @@ export interface TrajectoryEvent {
  * When `sessionFile` is missing the recorder falls back to
  * `${COMIS_TRAJECTORY_DIR ?? cwd}/<safeSessionId>.trajectory.jsonl`.
  *
- * The optional budgets default to the design §6 invariants:
+ * The optional budgets default to:
  *   - `maxRuntimeEventBytes = 256 * 1024`
  *   - `maxRuntimeFileBytes = 50 * 1024 * 1024`
  *   - `maxQueuedBytes = 4 * 1024 * 1024`
@@ -190,11 +190,11 @@ export interface TrajectoryRecorderInit {
   readonly enabled?: boolean;
 
   /**
-   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base
-   * forwarded to the underlying queued writer (and from there to
-   * `appendRegularFile`). Production callers (daemon trajectory wiring)
-   * pass `path.join(os.homedir(), ".comis")` so an ancestor-symlink
-   * escape is rejected before the open() call. Tests omit it (default
+   * Opt-in real-path confinement base forwarded to the underlying
+   * queued writer (and from there to `appendRegularFile`). Production
+   * callers (daemon trajectory wiring) pass
+   * `path.join(os.homedir(), ".comis")` so an ancestor-symlink escape
+   * is rejected before the open() call. Tests omit it (default
    * `undefined`) to keep tmp-dir paths legal.
    */
   readonly confinedBaseDir?: string;
@@ -219,9 +219,9 @@ export interface TrajectoryRecorder {
 
   /**
    * Enqueue one event. `type` must be a closed-union TrajectoryEventType.
-   * `data` is passed through `sanitizeForPersistence` (45-02) before
-   * write. When `data` exceeds `maxRuntimeEventBytes` after sanitization
-   * the entire event is replaced with a single-key sentinel record.
+   * `data` is passed through `sanitizeForPersistence` before write.
+   * When `data` exceeds `maxRuntimeEventBytes` after sanitization the
+   * entire event is replaced with a single-key sentinel record.
    *
    * Returns "queued" on accept, "dropped" when the per-writer queue cap
    * would be exceeded (operator-tunable backpressure).

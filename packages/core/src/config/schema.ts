@@ -74,13 +74,12 @@ export const AppConfigSchema = z.strictObject({
     /** Observability persistence configuration */
     observability: ObservabilityConfigSchema.default(() => ObservabilityConfigSchema.parse({})),
     /**
-     * Diagnostics configuration scaffold (Plan 45-01 task 12 registry,
-     * Plan 45.1-04 task 2 schema-level wiring). Subsections:
+     * Diagnostics configuration scaffold. Subsections:
      *   - `diagnostics.trajectory` — per-session trajectory JSONL knobs
-     *     (enabled, dir, maxFileBytes, eventTypes — owned by 45-03).
+     *     (enabled, dir, maxFileBytes, eventTypes).
      *   - `diagnostics.configAudit` — config-audit log toggle + rotation
-     *     (enabled, rotateAtBytes, keepRotated — owned by 45-05).
-     *   - `diagnostics.cacheTrace` — placeholder for Phase 46.
+     *     (enabled, rotateAtBytes, keepRotated).
+     *   - `diagnostics.cacheTrace` — cache-trace knobs.
      *   - `diagnostics.redact` — placeholder.
      * Defaults are sticky so an empty `diagnostics: {}` block is valid.
      */

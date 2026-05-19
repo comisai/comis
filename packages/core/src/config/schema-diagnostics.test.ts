@@ -8,17 +8,15 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
     const result = DiagnosticsConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      // Plan 45-03: trajectory now has populated defaults (enabled +
-      // maxFileBytes); other subsections remain empty pending their
-      // owning plans.
+      // trajectory has populated defaults (enabled + maxFileBytes).
       expect(result.data.trajectory.enabled).toBe(true);
       expect(result.data.trajectory.maxFileBytes).toBe(50 * 1024 * 1024);
-      // Plan 46-01: cacheTrace now has populated defaults.
+      // cacheTrace defaults.
       expect(result.data.cacheTrace.enabled).toBe(false);
       expect(result.data.cacheTrace.includeMessages).toBe(false);
       expect(result.data.cacheTrace.includePrompt).toBe(true);
       expect(result.data.cacheTrace.includeSystem).toBe(true);
-      // Plan 45-05: configAudit now has populated defaults.
+      // configAudit defaults.
       expect(result.data.configAudit.enabled).toBe(true);
       expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
       expect(result.data.configAudit.keepRotated).toBe(5);
@@ -32,12 +30,12 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
     if (result.success) {
       expect(result.data.trajectory.enabled).toBe(true);
       expect(result.data.trajectory.maxFileBytes).toBe(50 * 1024 * 1024);
-      // Plan 46-01: cacheTrace defaults populated.
+      // cacheTrace defaults populated.
       expect(result.data.cacheTrace.enabled).toBe(false);
       expect(result.data.cacheTrace.includeMessages).toBe(false);
       expect(result.data.cacheTrace.includePrompt).toBe(true);
       expect(result.data.cacheTrace.includeSystem).toBe(true);
-      // Plan 45-05: configAudit now has populated defaults.
+      // configAudit defaults.
       expect(result.data.configAudit.enabled).toBe(true);
       expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
       expect(result.data.configAudit.keepRotated).toBe(5);
@@ -56,11 +54,10 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
   });
 
   it("schema is forward-compatible: unknown keys are passed through (not a strictObject)", () => {
-    // Future plans add fields inside each subsection. The placeholder
-    // subschemas use z.object({}) (NOT z.strictObject({})) so a partially-
-    // configured YAML doesn't reject the whole diagnostics block during
-    // the milestone-spanning rollout. This is the documented contract for
-    // forward-compat placeholder subschemas.
+    // The placeholder subschemas use z.object({}) (NOT z.strictObject({}))
+    // so a partially-configured YAML doesn't reject the whole diagnostics
+    // block while new fields are still being added. This is the documented
+    // contract for forward-compat placeholder subschemas.
     const result = DiagnosticsConfigSchema.safeParse({
       trajectory: { enabled: true, dir: "/tmp/trj" },
     });
@@ -69,7 +66,7 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45-03: trajectory subsection
+// trajectory subsection
 // ---------------------------------------------------------------------------
 
 describe("DiagnosticsConfigSchema.trajectory — fields and defaults", () => {
@@ -157,7 +154,7 @@ describe("DiagnosticsConfigSchema.trajectory — fields and defaults", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45-05: configAudit subsection
+// configAudit subsection
 // ---------------------------------------------------------------------------
 
 describe("DiagnosticsConfigSchema.configAudit — fields and defaults", () => {
@@ -225,7 +222,7 @@ describe("DiagnosticsConfigSchema.configAudit — fields and defaults", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 46-01: cacheTrace subsection
+// cacheTrace subsection
 // ---------------------------------------------------------------------------
 
 describe("DiagnosticsConfigSchema.cacheTrace — fields and defaults", () => {

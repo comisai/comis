@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Two-phase config-audit hook helpers for the config.patch RPC
- * (Plan 45-05 task 8). Extracted from config-write.ts to keep that
- * file under the 400-line per-subdir cap.
+ * Two-phase config-audit hook helpers for the config.patch RPC.
+ * Extracted from config-write.ts to keep that file under the 400-line
+ * per-subdir cap.
  *
  * Two entry points:
  *   - `buildConfigAuditBase(localPath)` — capture pre-write state.
@@ -92,9 +92,9 @@ export function appendConfigAuditWithOutcome(
       appendConfigAuditRecord({
         filePath: auditLogPath,
         record,
-        // TRAJ-FIX-01: confine the audit-log write to ~/.comis/ when
-        // the default log path applies; skip confinement when the
-        // operator set COMIS_CONFIG_AUDIT_LOG to a custom location.
+        // Confine the audit-log write to ~/.comis/ when the default
+        // log path applies; skip confinement when the operator set
+        // COMIS_CONFIG_AUDIT_LOG to a custom location.
         ...(auditConfinedBase !== undefined && {
           confinedBaseDir: auditConfinedBase,
         }),

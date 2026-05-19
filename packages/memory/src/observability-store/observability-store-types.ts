@@ -51,7 +51,7 @@ export const agentAggMapper = createRowMapper(AgentAggDbRowSchema);
 export const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
 export const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
 export const deliveryStatsMapper = createRowMapper(DeliveryStatsDbRowSchema);
-/** Plan 45-04: SystemPromptReport row mapper. */
+/** SystemPromptReport row mapper. */
 export const systemPromptReportMapper = createRowMapper(SystemPromptReportDbRowSchema);
 
 // ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ export interface ChannelSnapshotRow {
   uptimeMs?: number;
 }
 
-/** Plan 45-04: SystemPromptReport row (insert or query result). */
+/** SystemPromptReport row (insert or query result). */
 export interface SystemPromptReportRow {
   agentId: string;
   tenantId: string | null;
@@ -140,7 +140,7 @@ export interface SystemPromptReportRow {
   model: string | null;
   systemChars: number;
   systemSha256: string;
-  /** Serialized SystemPromptReport JSON (sanitized via 45-02 pipeline). */
+  /** Serialized SystemPromptReport JSON (sanitized). */
   reportJson: string;
 }
 
@@ -254,21 +254,20 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice {
   insertChannelSnapshot(entry: ChannelSnapshotRow): void;
   latestChannelSnapshots(): ChannelSnapshotRow[];
 
-  // Plan 45-04: SystemPromptReport
+  // SystemPromptReport
   insertSystemPromptReport(row: SystemPromptReportRow): void;
   /**
    * Latest report for `(agentId, sessionId)`, optionally narrowed to a
-   * specific `runId`. Plan 45.1-05 (TRAJ-FIX-07): the optional
-   * `runId` filter is pushed into the SQL WHERE clause so an older
-   * row with the matching runId is returned even when a newer row
-   * (different runId) exists. Caller must not pass `null` — the
-   * contract is `runId?: string`.
+   * specific `runId`. The optional `runId` filter is pushed into the
+   * SQL WHERE clause so an older row with the matching runId is
+   * returned even when a newer row (different runId) exists. Caller
+   * must not pass `null` — the contract is `runId?: string`.
    */
   latestSystemPromptReport(agentId: string, sessionId: string, runId?: string): SystemPromptReportRow | undefined;
   listSystemPromptReports(sessionId: string, limit: number): SystemPromptReportRow[];
 
-  // Plan 46-02: cache-stats queries are inherited from
-  // `CacheStatsQueriesSlice` (see top-of-file import). Methods:
+  // Cache-stats queries are inherited from `CacheStatsQueriesSlice`
+  // (see top-of-file import). Methods:
   //   - queryCacheStatsWindow
   //   - queryCacheStatsByProvider
   //   - queryCacheStatsByModel
@@ -350,7 +349,7 @@ export interface ChannelSnapshotDbRow {
   uptime_ms: number;
 }
 
-/** Plan 45-04: snake_case DB row matching SystemPromptReportDbRowSchema. */
+/** snake_case DB row matching SystemPromptReportDbRowSchema. */
 export interface SystemPromptReportDbRow {
   agent_id: string;
   tenant_id: string | null;

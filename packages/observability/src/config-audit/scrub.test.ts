@@ -136,9 +136,9 @@ describe("config-audit/scrub", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45-gap-01 Task 3: BL-02 symlink-safe scrub tmp-write — unit-level guard.
+// Symlink-safe scrub tmp-write — unit-level guard.
 // ---------------------------------------------------------------------------
-describe("scrubConfigAuditLog — BL-02 symlink-safe tmp-write", () => {
+describe("scrubConfigAuditLog — symlink-safe tmp-write", () => {
   it("does NOT follow a pre-staged symlink at the .scrub.tmp path (unit-level)", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scrub-bl02-unit-"));
     const filePath = path.join(dir, "config-audit.jsonl");
@@ -179,9 +179,9 @@ describe("scrubConfigAuditLog — BL-02 symlink-safe tmp-write", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 45-gap-01 Task 2: BL-01 sentinel-record fallback in reEncodeRecord.
+// Sentinel-record fallback in reEncodeRecord.
 // ---------------------------------------------------------------------------
-describe("reEncodeRecord — BL-01 sentinel on serialization failure", () => {
+describe("reEncodeRecord — sentinel on serialization failure", () => {
   it("emits sentinel when an object record contains a BigInt", async () => {
     const { reEncodeRecord } = await import("./scrub.js");
 

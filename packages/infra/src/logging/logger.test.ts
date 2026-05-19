@@ -508,10 +508,10 @@ describe("createLogger", () => {
   });
 
   // -----------------------------------------------------------------
-  // Plan 45-02: edge-keeping censor + transport-shim wiring.
+  // Edge-keeping censor + transport-shim wiring.
   // -----------------------------------------------------------------
 
-  describe("createLogger Plan 45-02 censor + transport (factory shape)", () => {
+  describe("createLogger censor + transport (factory shape)", () => {
     it("createLogger with disableRedaction:true produces a logger that does not crash", () => {
       // The residency-test harness flips this flag; production source
       // is FORBIDDEN from setting it (architecture invariant). This
@@ -550,7 +550,7 @@ describe("createLogger", () => {
     });
   });
 
-  describe("Plan 45-02 edge-keeping censor — applies maskToken to string secrets", () => {
+  describe("edge-keeping censor — applies maskToken to string secrets", () => {
     // The factory-built logger wires a Pino transport at
     // `@comis/infra/dist/logging/redact-transport.js`, which Pino runs
     // in a worker thread. The worker is heavyweight and asynchronous;

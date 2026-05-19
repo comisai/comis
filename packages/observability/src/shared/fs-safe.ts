@@ -3,9 +3,9 @@
  * Symlink-safe file-append helper for diagnostic artifact writers.
  *
  * `appendRegularFile()` is the runtime-side primitive that the
- * `@comis/observability` writer chassis (Plan 45-01 Task 9) calls under
- * the hood. It guarantees three properties at the actual `open()`
- * boundary that no path-string check can guarantee on its own:
+ * `@comis/observability` writer chassis calls under the hood. It
+ * guarantees three properties at the actual `open()` boundary that no
+ * path-string check can guarantee on its own:
  *
  *   1. **O_NOFOLLOW** — the kernel refuses to traverse a final
  *      component that is itself a symlink. POSIX-only flag; conditionally
@@ -73,15 +73,15 @@ export class SymlinkParentRejected extends Error {
  * when the target doesn't yet exist) escapes the configured
  * `confinedBaseDir`.
  *
- * Plan 45.1-03 (TRAJ-FIX-01): the existing `SymlinkParentRejected`
- * check only `lstat`s the IMMEDIATE parent — an attacker controlling
- * a grandparent (or any higher ancestor) can pre-stage a symlink there
- * which the kernel follows during normal path-walk (O_NOFOLLOW inspects
- * only the final component). When the caller supplies `confinedBaseDir`,
- * the helpers run `fs.realpathSync(target_or_parent)` and assert the
- * resolved path is inside `fs.realpathSync(confinedBaseDir)`, closing
- * the ancestor gap. The option is opt-in so non-observability callers
- * that write outside `~/.comis/` continue to work.
+ * The existing `SymlinkParentRejected` check only `lstat`s the IMMEDIATE
+ * parent — an attacker controlling a grandparent (or any higher ancestor)
+ * can pre-stage a symlink there which the kernel follows during normal
+ * path-walk (O_NOFOLLOW inspects only the final component). When the
+ * caller supplies `confinedBaseDir`, the helpers run
+ * `fs.realpathSync(target_or_parent)` and assert the resolved path is
+ * inside `fs.realpathSync(confinedBaseDir)`, closing the ancestor gap.
+ * The option is opt-in so non-observability callers that write outside
+ * `~/.comis/` continue to work.
  */
 export class PathEscapesConfinementError extends Error {
   public readonly name = "PathEscapesConfinementError" as const;
@@ -123,7 +123,7 @@ export interface AppendRegularFileOptions {
   /** Maximum cumulative file size (bytes); omit for no cap. */
   readonly maxFileBytes?: number;
   /**
-   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base.
+   * Opt-in real-path confinement base.
    *
    * When supplied, after the existing parent-`lstat` check passes the
    * helper runs `fs.realpathSync` on `target` (or its parent when the
@@ -151,8 +151,8 @@ export type AppendRegularFileError =
   | Error;
 
 /**
- * Plan 45.1-03 (TRAJ-FIX-01): assert `target`'s resolved real path stays
- * inside `confinedBaseDir`'s resolved real path.
+ * Assert `target`'s resolved real path stays inside `confinedBaseDir`'s
+ * resolved real path.
  *
  * Behaviour:
  *   - `fs.realpathSync(confinedBaseDir)` — must exist (callers pass
@@ -262,10 +262,10 @@ export function appendRegularFile(
     return err(e instanceof Error ? e : new Error(String(e)));
   }
 
-  // Step 1b (Plan 45.1-03 TRAJ-FIX-01): opt-in confinement-base check.
-  // Closes the ancestor-symlink gap that step 1 misses (lstat only
-  // inspects the immediate parent). When `confinedBaseDir` is undefined
-  // the check is skipped — back-compat for non-observability callers.
+  // Step 1b: opt-in confinement-base check. Closes the ancestor-symlink
+  // gap that step 1 misses (lstat only inspects the immediate parent).
+  // When `confinedBaseDir` is undefined the check is skipped —
+  // back-compat for non-observability callers.
   if (options.confinedBaseDir !== undefined) {
     try {
       const rejection = assertConfinedPath(target, options.confinedBaseDir);
@@ -317,7 +317,7 @@ export function appendRegularFile(
 }
 
 // ---------------------------------------------------------------------------
-// Plan 45-gap-01 Task 1: writeRegularFile — symlink-safe write-truncate.
+// writeRegularFile — symlink-safe write-truncate.
 // ---------------------------------------------------------------------------
 
 /** Options for `writeRegularFile`. */
@@ -344,11 +344,11 @@ export interface WriteRegularFileOptions {
    */
   readonly unlinkExisting?: boolean;
   /**
-   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base.
-   * Symmetric to AppendRegularFileOptions.confinedBaseDir — see that
-   * field's docs for the threat model and behaviour. Observability
-   * callers (config-audit scrub) pass `~/.comis/`; non-observability
-   * callers may legitimately omit it.
+   * Opt-in real-path confinement base. Symmetric to
+   * AppendRegularFileOptions.confinedBaseDir — see that field's docs
+   * for the threat model and behaviour. Observability callers
+   * (config-audit scrub) pass `~/.comis/`; non-observability callers
+   * may legitimately omit it.
    */
   readonly confinedBaseDir?: string;
 }
@@ -420,11 +420,10 @@ export function writeRegularFile(
     return err(e instanceof Error ? e : new Error(String(e)));
   }
 
-  // Step 1b (Plan 45.1-03 TRAJ-FIX-01): opt-in confinement-base check.
-  // Mirrors the same gate added to `appendRegularFile`. Closes the
-  // ancestor-symlink gap that step 1 misses (lstat only inspects the
-  // immediate parent). Back-compat: when `confinedBaseDir` is undefined
-  // the check is skipped.
+  // Step 1b: opt-in confinement-base check. Mirrors the same gate
+  // added to `appendRegularFile`. Closes the ancestor-symlink gap that
+  // step 1 misses (lstat only inspects the immediate parent).
+  // Back-compat: when `confinedBaseDir` is undefined the check is skipped.
   if (options.confinedBaseDir !== undefined) {
     try {
       const rejection = assertConfinedPath(target, options.confinedBaseDir);

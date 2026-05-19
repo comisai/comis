@@ -165,7 +165,7 @@ describe("config.patch", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
-  // Plan 45-05 task 8: config-audit JSONL hook around the atomic write.
+  // Config-audit JSONL hook around the atomic write.
   describe("config-audit hook", () => {
     let auditPath: string;
     let prevAuditEnv: string | undefined;
@@ -253,10 +253,10 @@ describe("config.patch", () => {
       expect(record.result).toBe("rejected");
     });
 
-    // Plan 45.1-04 (TRAJ-FIX-06): the audit append is gated on
-    // deps.auditEnabled — when explicitly false, neither
-    // buildConfigAuditBase nor appendConfigAuditWithOutcome runs.
-    it("skips the audit JSONL append when deps.auditEnabled === false (TRAJ-FIX-06)", async () => {
+    // The audit append is gated on deps.auditEnabled — when
+    // explicitly false, neither buildConfigAuditBase nor
+    // appendConfigAuditWithOutcome runs.
+    it("skips the audit JSONL append when deps.auditEnabled === false", async () => {
       vi.useRealTimers();
 
       const baseDeps = makeDeps(tempConfig.configPath);
@@ -280,7 +280,7 @@ describe("config.patch", () => {
       }
     });
 
-    it("writes the audit JSONL line when deps.auditEnabled === true (symmetric positive — TRAJ-FIX-06)", async () => {
+    it("writes the audit JSONL line when deps.auditEnabled === true (symmetric positive)", async () => {
       // Gates the negative test above: ensures the audit log path is
       // correctly threaded, and that the default-true contract works
       // for callers that explicitly pass true.

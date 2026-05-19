@@ -79,9 +79,9 @@ export interface BridgeMetricsState {
   turnStartMs: number;
 
   /** Wall-clock timestamp when the pi-mono `agent_start` event fired for
-   *  this run. Plan 45-03 uses this to compute `durationMs` in the
-   *  `session:ended` emit. Undefined until the first `agent_start` for
-   *  the AgentSession (matches the bridge's once-per-run lifecycle). */
+   *  this run. Used to compute `durationMs` in the `session:ended` emit.
+   *  Undefined until the first `agent_start` for the AgentSession
+   *  (matches the bridge's once-per-run lifecycle). */
   agentStartMs: number | undefined;
 
   // Compaction timing

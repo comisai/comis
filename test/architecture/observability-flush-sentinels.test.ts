@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture invariant — flush-sentinel symmetry (TRAJ-FIX-03).
+ * Architecture invariant — flush-sentinel symmetry.
  *
- * RESEARCH.md §5 Invariant 2. Any *.ts file under packages/observability/src/
- * that consumes the queued-file-writer (imports it or calls
- * `getQueuedFileWriter`) AND defines a `flushAndClose` method MUST reference
- * BOTH `"trace.truncated"` AND `"trace.write_failures"` string literals in
- * its source body.
+ * Any *.ts file under packages/observability/src/ that consumes the
+ * queued-file-writer (imports it or calls `getQueuedFileWriter`) AND defines
+ * a `flushAndClose` method MUST reference BOTH `"trace.truncated"` AND
+ * `"trace.write_failures"` string literals in its source body.
  *
- * Rationale (Finding H3, plan 45.1-02):
- * The trajectory recorder currently has TWO control-plane sentinels for
- * writer-side failure modes:
+ * The trajectory recorder has TWO control-plane sentinels for writer-side
+ * failure modes:
  *   - "trace.truncated" — emitted at flushAndClose when events were dropped
  *     because the per-file budget or queued-bytes cap was exceeded.
  *   - "trace.write_failures" — emitted at flushAndClose when the underlying
@@ -22,12 +20,11 @@
  * structural-fitness check (source string-match). The semantic-correctness
  * gate is the unit test in trajectory/runtime.test.ts.
  *
- * Out of scope: this test does NOT walk runtime behavior; it greps source.
- * It catches the "I forgot to add the second sentinel" class of bug. A
- * recorder that emits a string-formatted sentinel without the literal "type"
- * key escapes detection — that gap is intentional (string-match is the
- * cheapest invariant available; the runtime test in 45.1-02 task 4 is the
- * stricter semantic gate).
+ * Scope: this test does NOT walk runtime behavior; it greps source. It
+ * catches the "I forgot to add the second sentinel" class of bug. A recorder
+ * that emits a string-formatted sentinel without the literal "type" key
+ * escapes detection — that gap is intentional (string-match is the cheapest
+ * invariant available; the runtime test is the stricter semantic gate).
  *
  * @module
  */
@@ -52,7 +49,7 @@ function listSourceFiles(dir: string): string[] {
   return out;
 }
 
-describe("architecture — observability flush sentinel symmetry (TRAJ-FIX-03)", () => {
+describe("architecture — observability flush sentinel symmetry", () => {
   it("every consumer of getQueuedFileWriter that defines flushAndClose references at least one namespaced *.write_failures sentinel", () => {
     // Sanity check the source root resolves to a real directory.
     expect(statSync(OBSERVABILITY_SRC).isDirectory()).toBe(true);
@@ -118,7 +115,7 @@ describe("architecture — observability flush sentinel symmetry (TRAJ-FIX-03)",
 
     expect(offenders, [
       "Files that consume the queued-file-writer and define flushAndClose",
-      "must emit the namespace-correct control-plane sentinel(s) (TRAJ-FIX-03).",
+      "must emit the namespace-correct control-plane sentinel(s).",
       "Add the missing string-literal emit alongside the existing one. See",
       "packages/observability/src/trajectory/runtime.ts:flushAndClose for",
       "the canonical buildEvent + encodeLine + writer.write pattern.",

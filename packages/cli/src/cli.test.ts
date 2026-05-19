@@ -81,7 +81,7 @@ describe("CLI entry point", () => {
       "signal-setup",
       "uninstall",
       "auth",
-      // Plan 46-02: cache stats.
+      // Cache stats.
       "cache",
     ] as const;
 

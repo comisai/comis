@@ -8,8 +8,7 @@
  *      type (compile-time; the test passes iff `tsc` accepts).
  *   2. Runtime parse-failure: an empty object fails the schema.
  *
- * Per checker minor #3, both the Type AND the Zod schema are first-class
- * deliverables of task 1.
+ * Both the Type AND the Zod schema are first-class deliverables.
  */
 import { describe, it, expect, expectTypeOf } from "vitest";
 import type { z } from "zod";
@@ -45,11 +44,11 @@ describe("SystemPromptReport v1 — type and schema sync", () => {
   });
 
   it("accepts a minimal valid SystemPromptReport via safeParse", () => {
-    // Plan 45.1-05 (TRAJ-FIX-09): bootstrapMaxChars is required.
-    // The fixture below uses an unknown-cast for the field because the
-    // exported `SystemPromptReport` Type ships in the same commit as
-    // this assertion (single GREEN landing). Once the Type adds the
-    // field, this cast becomes a no-op.
+    // bootstrapMaxChars is required. The fixture below uses an
+    // unknown-cast for the field because the exported
+    // `SystemPromptReport` Type ships in the same commit as this
+    // assertion (single GREEN landing). Once the Type adds the field,
+    // this cast becomes a no-op.
     const minimal = {
       traceSchema: "comis-system-prompt-report",
       schemaVersion: 1,
@@ -79,9 +78,9 @@ describe("SystemPromptReport v1 — type and schema sync", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Plan 45.1-05 (TRAJ-FIX-09): bootstrapMaxChars + bootstrapTotalMaxChars
-  // must persist through the schema and the Type so operators can read
-  // the bootstrap-budget knobs that produced the truncation outcome.
+  // bootstrapMaxChars + bootstrapTotalMaxChars must persist through the
+  // schema and the Type so operators can read the bootstrap-budget knobs
+  // that produced the truncation outcome.
   // -------------------------------------------------------------------------
   function makeMinimalBody(): Record<string, unknown> {
     return {
@@ -103,13 +102,13 @@ describe("SystemPromptReport v1 — type and schema sync", () => {
     };
   }
 
-  it("rejects a minimal report missing bootstrapMaxChars (TRAJ-FIX-09)", () => {
+  it("rejects a minimal report missing bootstrapMaxChars", () => {
     const minus = makeMinimalBody();
     const result = SystemPromptReportSchema.safeParse(minus);
     expect(result.success).toBe(false);
   });
 
-  it("accepts a minimal report including bootstrapMaxChars (TRAJ-FIX-09)", () => {
+  it("accepts a minimal report including bootstrapMaxChars", () => {
     const r = SystemPromptReportSchema.parse({
       ...makeMinimalBody(),
       bootstrapMaxChars: 20_000,
@@ -117,7 +116,7 @@ describe("SystemPromptReport v1 — type and schema sync", () => {
     expect(r.bootstrapMaxChars).toBe(20_000);
   });
 
-  it("accepts a report with bootstrapTotalMaxChars optionally set (TRAJ-FIX-09)", () => {
+  it("accepts a report with bootstrapTotalMaxChars optionally set", () => {
     const r = SystemPromptReportSchema.parse({
       ...makeMinimalBody(),
       bootstrapMaxChars: 20_000,

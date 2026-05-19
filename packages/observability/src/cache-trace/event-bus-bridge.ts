@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-trace EventBus bridge (Plan 46-01 Task 6).
+ * Cache-trace EventBus bridge.
  *
  * Subscribes to the single `observability:token_usage` event (already
  * emitted live by `pi-event-bridge.ts:993-1021`) and stashes the
@@ -9,9 +9,7 @@
  * the stash and attaches the values to the emitted event.
  *
  * Why a single-event bridge: physical sequencing — the token counts
- * do not exist before the model responds (RESEARCH §4 / Pitfall 2).
- * The design's §7.5 grep on `stream:context` is corrected to
- * `session:after` in this plan. Mirrors trajectory's
+ * do not exist before the model responds. Mirrors trajectory's
  * `event-bus-bridge.ts:48-80` pattern but with one event instead of 18.
  *
  * @module

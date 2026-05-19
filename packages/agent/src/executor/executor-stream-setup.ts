@@ -76,7 +76,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 // ---------------------------------------------------------------------------
-// Plan 46-01: tracing-deprecation log idempotency (per-session squelch)
+// Tracing-deprecation log idempotency (per-session squelch)
 // ---------------------------------------------------------------------------
 
 /**
@@ -84,7 +84,7 @@ import path from "node:path";
  * `agents.<name>.tracing.enabled` deprecation log has already been emitted.
  *
  * The set never clears within the daemon lifetime — one log per session per
- * daemon process is the design intent (Plan 46-01 §"Config migration").
+ * daemon process is the design intent.
  *
  * Exposed for testing via `__testing__shouldEmitTracingDeprecation` and
  * `__testing__resetTracingDeprecation`.
@@ -117,7 +117,7 @@ function shouldEmitTracingDeprecation(input: {
 }
 
 /**
- * Test-only export for the deprecation predicate (Plan 46-01 Task 10).
+ * Test-only export for the deprecation predicate.
  * @internal
  */
 export const __testing__shouldEmitTracingDeprecation = shouldEmitTracingDeprecation;
@@ -163,7 +163,7 @@ export interface StreamSetupParams {
   agentId?: string;
 
   /**
-   * Per-session cache-trace recorder (Plan 46-01). The recorder is
+   * Per-session cache-trace recorder. The recorder is
    * instantiated + bus-subscribed in `pi-executor.ts` (mirroring the
    * trajectory-recorder lifecycle). This field forwards it into
    * `setupStreamWrappers` so the wrapper chain can include the
@@ -231,7 +231,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     onBreakpointsPlaced, onGeminiCacheHit,
   } = params;
 
-  // Plan 46-01: deprecation warning for the legacy `agents.<name>.tracing.enabled`.
+  // Deprecation warning for the legacy `agents.<name>.tracing.enabled`.
   // When the operator has set the legacy flag but not the new
   // `diagnostics.cacheTrace.enabled` (signaled via params.cacheTrace
   // presence — daemon wiring instantiates the recorder when the new
@@ -489,8 +489,8 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       const traceMaxSize = deps.tracingDefaults?.maxSize ?? "5m";
       const traceMaxFiles = deps.tracingDefaults?.maxFiles ?? 3;
 
-      // Plan 46-01: api-payload-trace remains under the legacy
-      // `agents.<name>.tracing.enabled` flag per design §1.2. The
+      // api-payload-trace remains under the legacy
+      // `agents.<name>.tracing.enabled` flag. The
       // cache-trace artifact moved to `diagnostics.cacheTrace.enabled`
       // and is gated by the sibling `if (cacheTrace)` block below.
       wrappers.push(
@@ -507,7 +507,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     }
   }
 
-  // Plan 46-01: cache-trace artifact (independent of agents.<name>.tracing.enabled).
+  // Cache-trace artifact (independent of agents.<name>.tracing.enabled).
   // The recorder + EventBus subscription are owned by pi-executor.ts
   // (per-execution lifecycle, alongside the trajectory recorder); this
   // block only adds the StreamFn wrapper to the chain when the recorder

@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Trajectory runtime recorder (Plan 45-03 Task 4, design §6.3).
+ * Trajectory runtime recorder.
  *
  * Per-session writer that emits one JSONL line per trajectory event.
  * Composes:
  *
- *   - `sanitizeForPersistence` (45-02): credential redaction +
+ *   - `sanitizeForPersistence`: credential redaction +
  *     diagnostic-payload sanitizer + bounded-payload limiter.
- *   - `getQueuedFileWriter` (45-01): single-promise-chain queued writer
+ *   - `getQueuedFileWriter`: single-promise-chain queued writer
  *     backed by `appendRegularFile` with `O_NOFOLLOW`.
- *   - `safeJsonStringify` (45-01): cycle-safe JSON serializer.
+ *   - `safeJsonStringify`: cycle-safe JSON serializer.
  *   - `tryGetContext` (@comis/core): AsyncLocalStorage read for trace
  *     correlation (falls back to `sessionId` when no scope).
  *
- * Three layered budgets (design §6.3):
+ * Three layered budgets:
  *
  *   1. **Per-payload**: `sanitizeForPersistence` clamps any sub-tree
  *      via the 5-sentinel `limitPayloadValue` (string >32 KB, array
@@ -36,8 +36,7 @@
  *
  * Disabled state: when `enabled === false` OR `COMIS_TRAJECTORY=0` the
  * factory returns `null`. Consumers null-check at the construction
- * site (matches the design §6.3 "no-op stub" contract — we ship a
- * literal null instead of a stub-shape object).
+ * site — we ship a literal null instead of a stub-shape object.
  *
  * Cross-cutting:
  *   - `randomUUID()` for `entryId` is the standard global; we use the
@@ -74,7 +73,7 @@ const DEFAULT_SENTINEL_RESERVE_BYTES = 2 * 1024;
 const EVENT_SIZE_SENTINEL_REASON = "trajectory-event-size-limit";
 
 // Module-level writer registry — keyed by file path. Multiple recorders
-// for the same file share one writer (rare, but matches the 45-01
+// for the same file share one writer (rare, but matches the
 // queued-writer chassis contract).
 const writerRegistry = new Map<string, QueuedFileWriter>();
 
@@ -123,7 +122,7 @@ export function createTrajectoryRecorder(
   const writer = getQueuedFileWriter(writerRegistry, filePath, {
     maxQueuedBytes,
     maxFileBytes: maxRuntimeFileBytes,
-    // TRAJ-FIX-01: forward the caller's confinement base (typically
+    // Forward the caller's confinement base (typically
     // `~/.comis/`) so every trajectory-line write asserts the resolved
     // target stays inside the base. Daemon wiring passes this; tests
     // omit it (the option is opt-in for back-compat).
@@ -147,7 +146,7 @@ export function createTrajectoryRecorder(
     recordEvent(type: TrajectoryEventType, data: unknown, parentEntryId?: string): "queued" | "dropped" {
       if (state.closed) return "dropped";
 
-      // 1. Sanitize payload through the canonical pipeline (45-02).
+      // 1. Sanitize payload through the canonical pipeline.
       const sanitized = sanitizeForPersistence(data);
 
       // 2. Build the envelope.
@@ -231,13 +230,12 @@ export function createTrajectoryRecorder(
         writer.write(line);
       }
 
-      // TRAJ-FIX-03 (Finding H3): emit trace.write_failures when the
-      // underlying queued writer reports per-line append failures.
-      // Mirrors trace.truncated above (same buildEvent + encodeLine +
-      // writer.write envelope shape). Per design §6.5 the sentinel
-      // write itself may fail when the underlying failure source is
-      // unrecoverable (e.g., symlinked parent for the lifetime of the
-      // session); that recursive-failure case is acceptable — the
+      // Emit trace.write_failures when the underlying queued writer
+      // reports per-line append failures. Mirrors trace.truncated above
+      // (same buildEvent + encodeLine + writer.write envelope shape).
+      // The sentinel write itself may fail when the underlying failure
+      // source is unrecoverable (e.g., symlinked parent for the lifetime
+      // of the session); that recursive-failure case is acceptable — the
       // writer's failureCount stays > 0 and the user-visible signal
       // is preserved through the introspection surface even when no
       // sentinel record lands on disk.

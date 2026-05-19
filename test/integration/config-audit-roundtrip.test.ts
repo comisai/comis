@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Plan 45-05: config-audit roundtrip integration.
+// Config-audit roundtrip integration.
 //
 // Tests the persisted-write pipeline end-to-end without spinning up a
 // full daemon process. Two gating cases:
@@ -10,8 +10,6 @@
 //      appendConfigAuditRecordSync, then list it back via the
 //      reader path used by config.audit.list (parse the JSONL
 //      directly here). Asserts result: "rename" flows through.
-//      Directly gates ROADMAP Phase 45 success criterion #3
-//      (TRAJ-08..10).
 //
 //   2. Rejected-write recording: simulate a config-write rejection
 //      (validation failure / immutable path), finalize with
@@ -55,7 +53,7 @@ function readAuditRecords(file: string): ConfigWriteAuditRecord[] {
 }
 
 describe("config-audit roundtrip integration", () => {
-  it("records a successful config.write -- rename outcome with non-empty hash diff (TRAJ-08..10)", () => {
+  it("records a successful config.write -- rename outcome with non-empty hash diff", () => {
     // Seed the config with an initial value (the "before" state).
     fs.writeFileSync(configPath, "logging:\n  level: info\n", { mode: 0o600 });
 

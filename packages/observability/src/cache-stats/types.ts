@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-01): `CacheStatsWindow` Type + Zod schema + port.
+ * `CacheStatsWindow` Type + Zod schema + port.
  *
- * Surface for the durable warm-cache hit-rate aggregator. The shape mirrors
- * the design §10.2 output fields (camelCase) but is sourced from the
- * `obs_token_usage` SQLite table (snake_case columns mapped at the
- * aggregator boundary — see `aggregator.ts`).
+ * Surface for the durable warm-cache hit-rate aggregator. The shape uses
+ * camelCase output fields but is sourced from the `obs_token_usage` SQLite
+ * table (snake_case columns mapped at the aggregator boundary — see
+ * `aggregator.ts`).
  *
  * Tenant scope is intentionally absent. `obs_token_usage` has no
- * `tenant_id` column (RESEARCH §7 + Pitfall 5); adding tenant tracking
- * requires extending the write path (event payload + token-tracker +
- * schema migration). Deferred to a follow-on plan.
+ * `tenant_id` column; adding tenant tracking would require extending the
+ * write path (event payload + token-tracker + schema migration).
  *
  * @module
  */
@@ -64,7 +63,7 @@ export type CacheStatsBreakdown =
  *
  * `cacheCreationTokens` maps to the DB's `cache_write_tokens` column
  * (Anthropic's "cache_creation" term lands as `cache_write_tokens` in
- * Comis storage — design §10.2 / RESEARCH §7).
+ * Comis storage).
  *
  * `nonCachedInputTokens` is derived:
  *   `prompt_tokens - cache_read_tokens - cache_write_tokens` (clamped ≥ 0).

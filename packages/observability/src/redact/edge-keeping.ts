@@ -7,7 +7,7 @@
  * `MIN_LENGTH` threshold are collapsed to the literal `"***"` sentinel —
  * a partial preview of a very short token would re-leak the secret.
  *
- * Defaults (design §5.4 + §2.4):
+ * Defaults:
  *   MIN_LENGTH = 18  — minimum input length to keep edge-mask shape
  *   KEEP_START = 6   — characters preserved at the head
  *   KEEP_END   = 4   — characters preserved at the tail
@@ -29,7 +29,7 @@
  * @module
  */
 
-/** Default edge-keeping mask parameters (design §5.4). */
+/** Default edge-keeping mask parameters. */
 export const REDACT_DEFAULTS = Object.freeze({
   /** Minimum input length to apply the edge-keeping mask; below → "***". */
   MIN_LENGTH: 18,

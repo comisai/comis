@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-/** Pino transport resolution shim (static re-export — see Phase 45.1-06).
+/** Pino transport resolution shim (static re-export).
  *
  * The shim exists so logger.ts can pass the stable
  * `@comis/infra/dist/logging/redact-transport.js` path to Pino's transport
@@ -12,13 +12,13 @@
  * @comis/observability; we re-export statically here (no `createRequire`)
  * so the module graph is cycle-free and TypeScript-visible.
  *
- * Plan 45.1-06 task 3 (TRAJ-FIX-10): the prior implementation used
- * `createRequire(import.meta.url)` to dynamically resolve the factory at
- * module-load time, hiding the static type-graph arrow from `tsc`. That
- * trick worked when @comis/observability also depended on @comis/infra
- * (for fs-safe primitives), since a static re-export would have
- * introduced a `tsc --build` project-reference cycle. The fs-safe move
- * (task 2) breaks the cycle at the source — @comis/observability no
+ * A prior implementation used `createRequire(import.meta.url)` to
+ * dynamically resolve the factory at module-load time, hiding the static
+ * type-graph arrow from `tsc`. That trick was needed when
+ * @comis/observability also depended on @comis/infra (for fs-safe
+ * primitives), since a static re-export would have introduced a
+ * `tsc --build` project-reference cycle. Moving fs-safe out of
+ * @comis/infra broke the cycle at the source — @comis/observability no
  * longer needs @comis/infra — so the static re-export is now safe and
  * preferred.
  *

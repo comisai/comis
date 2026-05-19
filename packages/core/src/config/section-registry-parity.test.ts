@@ -29,7 +29,7 @@ describe("section-registry parity", () => {
       expect(stableStringify(getConfigSections())).toMatchSnapshot();
     });
     // The 17 schema-serializer-view sections — each as its own snapshot for reviewability.
-    // `diagnostics` inserted Plan 45-01 Task 12 between `monitoring` and `browser`.
+    // `diagnostics` sits between `monitoring` and `browser`.
     for (const section of [
       "agents",
       "channels",
@@ -60,7 +60,7 @@ describe("section-registry parity", () => {
       expect(stableStringify(getFieldMetadata())).toMatchSnapshot();
     });
     // The 19 field-metadata-view sections.
-    // `diagnostics` inserted Plan 45-01 Task 12 between `monitoring` and `plugins`.
+    // `diagnostics` sits between `monitoring` and `plugins`.
     for (const section of [
       "agents",
       "channels",

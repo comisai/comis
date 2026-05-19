@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Trajectory event-bus bridge (Plan 45-03 Task 5).
+ * Trajectory event-bus bridge.
  *
  * Subscribes to the typed `EventBus` and translates each mapped event
- * into a trajectory `recordEvent` call. Per design §6.4 and research
- * §2, the bridge avoids N call-site instrumentations — one subscription
- * per session is the entire surface.
+ * into a trajectory `recordEvent` call. The bridge avoids N call-site
+ * instrumentations — one subscription per session is the entire surface.
  *
  * The mapping is declared as a single `TRAJECTORY_BRIDGE_MAPPING`
  * record so the architecture test (`trajectory-event-types-known.test.ts`)
@@ -15,7 +14,7 @@
  * OR appear in the `EVENTS_NOT_TRAJECTORY_MAPPED` allowlist
  * (defined in the architecture test).
  *
- * Dedup contract (per checker minor #2):
+ * Dedup contract:
  *   - `tool:executed{errorKind:"timeout"}` AND `tool:timeout` are
  *     BOTH mapped. They share `toolCallId` — downstream consumers
  *     join on that key to dedupe. The architecture test enforces
@@ -53,11 +52,11 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "tool:policy_filtered": "tool.policy_filtered",
 
   // ---- Model lifecycle ----
-  // `observability:token_usage` is reused as `model.completed` (Comis
-  // improvement — research §2 confirms the token-usage event already
-  // carries everything the trajectory needs for a model-completed
-  // record). `model:fallback_attempt` and the LKW variant both map to
-  // `model.fallback_attempt`; the LKW variant attaches `lkw: true`.
+  // `observability:token_usage` is reused as `model.completed` — the
+  // token-usage event already carries everything the trajectory needs
+  // for a model-completed record. `model:fallback_attempt` and the LKW
+  // variant both map to `model.fallback_attempt`; the LKW variant
+  // attaches `lkw: true`.
   "observability:token_usage": "model.completed",
   "model:fallback_attempt": "model.fallback_attempt",
   "model:lkw_fallback_attempt": "model.fallback_attempt",
@@ -68,7 +67,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "skill:prompt_loaded": "skill.prompt_loaded",
   "skill:prompt_invoked": "skill.prompt_invoked",
 
-  // ---- 45-03 additions ----
+  // ---- Session + prompt lifecycle ----
   "prompt:submitted": "prompt.submitted",
   "session:started": "session.started",
   "session:ended": "session.ended",
@@ -109,8 +108,8 @@ export interface AttachTrajectoryParams {
  * this call.
  *
  * Per-session lifecycle: pi-executor calls this once after `formattedKey`
- * materializes (Task 10); the returned `unsubscribe()` runs in the
- * `try/finally` covering the runner block.
+ * materializes; the returned `unsubscribe()` runs in the `try/finally`
+ * covering the runner block.
  */
 export function attachTrajectoryToEventBus(
   params: AttachTrajectoryParams,
@@ -210,7 +209,7 @@ function translatePayload(
     case "observability:token_usage": {
       // EventMap shape: { tokens: { prompt, completion, total }, cost, latencyMs, ... }
       // Trajectory model.completed shape: inputTokens/outputTokens/cacheReadTokens/
-      // cacheCreationTokens/durationMs (Comis: research §2).
+      // cacheCreationTokens/durationMs.
       const tokens = payload.tokens as { prompt: number; completion: number; total: number };
       return {
         agentId: payload.agentId,

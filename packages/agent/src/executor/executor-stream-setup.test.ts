@@ -78,7 +78,7 @@ describe("skipCacheWrite derivation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 46-01: diagnostics.cacheTrace wiring + tracing-deprecation idempotency
+// diagnostics.cacheTrace wiring + tracing-deprecation idempotency
 // ---------------------------------------------------------------------------
 
 import {
@@ -91,8 +91,8 @@ describe("diagnostics_cache_trace_returned -- params.cacheTrace surfaces the cac
   // Pragmatic isolation: setupStreamWrappers has deeply nested dependencies
   // (SessionManager, ContextEngine, GeminiCacheManager, ...) that make full
   // invocation impractical here. We assert the contract via the
-  // wrapper-builder import + the gate logic — the integration test in
-  // Plan 46-01 Task 13 exercises the full setupStreamWrappers path.
+  // wrapper-builder import + the gate logic — the integration test
+  // exercises the full setupStreamWrappers path.
   it("buildCacheTraceWrapper is the wrapper factory used when params.cacheTrace is set", async () => {
     // The setupStreamWrappers import is what matters — if the cache-trace
     // wrapper export disappeared (e.g., barrel regression), this test

@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Suspicious-caller heuristics for config-audit records (Plan 45-05
- * task 4 / design §9.5).
+ * Suspicious-caller heuristics for config-audit records.
  *
  * Each `detectSuspicious(...)` call returns an array of zero or more
  * `SuspiciousFlag` literals. The empty array is the "looks normal"
  * outcome. Flags are NOT exhaustive — the heuristics catch the most
  * common adversarial shapes (wrong-binary, off-script, sandboxed
- * caller); future plans may add more flags by extending the union
- * in `types.ts` and the closed switch here.
+ * caller); more flags can be added by extending the union in
+ * `types.ts` and the closed switch here.
  *
  * Three heuristics, all stateless:
  *
@@ -47,9 +46,9 @@ export interface SuspiciousInput {
 
 /**
  * Pattern matching the canonical Node/Comis runtimes at the
- * basename slot. Per design §9.5 the regex anchors at `/` or
- * start-of-string so an absolute-path argv0 (`/usr/local/bin/node`)
- * matches. The optional `.exe` suffix handles Windows.
+ * basename slot. The regex anchors at `/` or start-of-string so an
+ * absolute-path argv0 (`/usr/local/bin/node`) matches. The optional
+ * `.exe` suffix handles Windows.
  */
 const RUNTIME_BINARY_PATTERN = /(?:^|\/)(node|comis|deno|bun)(?:\.exe)?$/;
 

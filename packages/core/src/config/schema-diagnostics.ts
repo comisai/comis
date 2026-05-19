@@ -2,25 +2,14 @@
 /**
  * Diagnostics configuration scaffold.
  *
- * Top-level `diagnostics` section with four placeholder subschemas.
- * Each subsection is owned by a later plan and filled in that plan
- * only — this file is created here once and never re-created
- * downstream:
+ * Top-level `diagnostics` section with four subschemas:
  *
- *   - `diagnostics.trajectory`  — owned by Plan 45-03
- *     (filled with `{enabled, dir, maxFileBytes, eventTypes}` then).
- *
- *   - `diagnostics.cacheTrace`  — owned by Phase 46 (out of Phase 45
- *     scope).
- *
- *   - `diagnostics.configAudit` — owned by Plan 45-05
- *     (filled with `{enabled, rotateAtBytes, keepRotated}` then).
- *
- *   - `diagnostics.redact`      — placeholder slot.
- *     Per checker Finding #3, Plan 45-02 lands the redact knobs inside
- *     the existing `daemon.logging` section (schema-daemon.ts), NOT
- *     here. This subschema remains empty for forward-compat (Phase 46+
- *     may move redact knobs here).
+ *   - `diagnostics.trajectory`  — `{enabled, dir, maxFileBytes, eventTypes}`.
+ *   - `diagnostics.cacheTrace`  — cache-trace JSONL artifact knobs.
+ *   - `diagnostics.configAudit` — `{enabled, rotateAtBytes, keepRotated}`.
+ *   - `diagnostics.redact`      — placeholder slot. Redact knobs live
+ *     in the existing `daemon.logging` section (schema-daemon.ts), NOT
+ *     here. This subschema remains empty for forward-compat.
  *
  * Defaults are sticky: `.default({})` on each empty subschema so a
  * minimal AppConfig parse populates the whole tree without explicit
@@ -28,17 +17,13 @@
  * (see schema-observability.ts ObservabilityConfigSchema for the same
  * shape).
  *
- * The section-registry parity snapshot is regenerated ONCE on this
- * file's introduction. Later plans add fields *within* existing
- * subschemas, which does not trip the snapshot.
- *
  * @module
  */
 
 import { z } from "zod";
 
 /**
- * `diagnostics.trajectory.*` schema (Plan 45-03 task 11).
+ * `diagnostics.trajectory.*` schema.
  *
  * Configures the per-session trajectory JSONL sidecar that the
  * pi-executor recorder writes (see
@@ -57,14 +42,7 @@ import { z } from "zod";
  *     operator-tunable).
  *   - `eventTypes` — optional allowlist of trajectory event types to
  *     record. When omitted the writer records every bridge-mapped
- *     event (the default mode). Consumer-side filtering is deferred
- *     to a Phase 45 follow-up if needed.
- *
- * Per the 45-01 sequencing decision the section-registry parity
- * snapshot is NOT touched here — the `diagnostics` section was already
- * registered in 45-01 task 12. Only the field-metadata snapshot for
- * `diagnostics.trajectory` (which previously showed an empty object)
- * is regenerated when the schema below lands.
+ *     event (the default mode).
  */
 const TrajectoryConfigSchema = z
   .object({
@@ -83,7 +61,7 @@ const TrajectoryConfigSchema = z
   });
 
 /**
- * `diagnostics.cacheTrace.*` schema (Plan 46-01).
+ * `diagnostics.cacheTrace.*` schema.
  *
  * Configures the per-session cache-trace JSONL artifact written by
  * `packages/observability/src/cache-trace/runtime.ts`. All fields carry
@@ -123,7 +101,7 @@ const CacheTraceConfigSchema = CacheTraceConfigSchemaInner.default(() =>
 );
 
 /**
- * `diagnostics.configAudit.*` schema (Plan 45-05 task 14).
+ * `diagnostics.configAudit.*` schema.
  *
  * Configures the daemon-wide `~/.comis/logs/config-audit.jsonl`
  * append-only log written by the three config-write hook sites
@@ -135,8 +113,7 @@ const CacheTraceConfigSchema = CacheTraceConfigSchemaInner.default(() =>
  *   - `enabled: true` — the audit log is on by default. Operators
  *     who want to disable it (e.g., a privacy-sensitive deployment)
  *     can set `false`; the three hook sites SHOULD honor this flag,
- *     though they presently always write (a downstream plan may
- *     wire the gate at the hook).
+ *     though they presently always write.
  *   - `rotateAtBytes: 10 MB` — file-size cap that triggers rotation.
  *     The append helper does NOT use the size-cap rejection path
  *     from `appendRegularFile`; rotation is what bounds total disk
@@ -144,11 +121,6 @@ const CacheTraceConfigSchema = CacheTraceConfigSchemaInner.default(() =>
  *   - `keepRotated: 5` — number of historical rotations to retain
  *     (`.1` through `.5`). The oldest is discarded when rotation
  *     fires at the cap.
- *
- * Per the 45-01 sequencing decision the section-registry parity
- * snapshot is NOT touched here — the `diagnostics` section was
- * already registered in 45-01 task 12. This task only fills an
- * empty subschema (a field-level change, not section-level).
  */
 const ConfigAuditConfigSchema = z
   .object({
@@ -166,17 +138,15 @@ const ConfigAuditConfigSchema = z
     keepRotated: 5,
   });
 
-// Placeholder slot — per checker Finding #3, 45-02 lands redact knobs inside the
-// existing daemon.logging section (schema-daemon.ts), NOT here. This subschema
-// remains empty for forward-compat (Phase 46+ may move redact knobs here).
+// Placeholder slot — redact knobs live in the existing daemon.logging section
+// (schema-daemon.ts), NOT here. This subschema remains empty for forward-compat.
 const DiagnosticsRedactConfigSchema = z.object({}).default({});
 
 /**
  * Root diagnostics configuration schema.
  *
  * Has sensible defaults so an empty object produces a valid
- * DiagnosticsConfig. The four subsections are placeholders owned by
- * later plans (see file header).
+ * DiagnosticsConfig.
  *
  * `.default(() => ...parse({}))` is the canonical Comis pattern (mirror
  * of ObservabilityConfigSchema in schema-observability.ts) — Zod 4

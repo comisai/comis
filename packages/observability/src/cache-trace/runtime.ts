@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cache-trace runtime recorder (Plan 46-01 Task 5, design §7).
+ * Cache-trace runtime recorder.
  *
  * Per-session cache-trace writer that emits one JSONL line per
  * cache-relevant stage. Mirrors the trajectory runtime structure
@@ -13,7 +13,7 @@
  *     rather than per-session JSONL.
  *   - 10 MB per-file cap (smaller than trajectory's 50 MB because
  *     cache-trace events accumulate across many sessions in one
- *     long-lived file — RESEARCH §"Security Domain" DoS row).
+ *     long-lived file — bounded to limit DoS exposure).
  *   - `setLatestTokenUsage` + `attachToEventBus` (see
  *     `event-bus-bridge.ts`): the EventBus bridge subscribes to
  *     `observability:token_usage` (the only event that physically
@@ -23,7 +23,7 @@
  *
  * Disabled state: `init.enabled === false` OR `COMIS_DISABLE_CACHE_TRACE=1`
  * returns `null` (consumers null-check at the construction site —
- * matches the design's "no-op stub" contract with a literal null).
+ * a "no-op stub" contract represented as a literal null).
  *
  * @module
  */
@@ -49,7 +49,7 @@ const DEFAULT_MAX_QUEUED_BYTES = 4 * 1024 * 1024;
 
 // Module-level writer registry — keyed by file path. Multiple recorders
 // for the same file (the typical case — cache-trace is daemon-wide)
-// share one writer via the 45-01 queued-writer chassis contract.
+// share one writer via the queued-writer chassis contract.
 const writerRegistry = new Map<string, QueuedFileWriter>();
 
 // ---------------------------------------------------------------------------
@@ -202,15 +202,14 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
     ): "queued" | "dropped" {
       if (state.closed) return "dropped";
 
-      // 1. Sanitize the payload through the canonical pipeline (45-02).
+      // 1. Sanitize the payload through the canonical pipeline.
       //    sanitizeForPersistence applies credential redaction +
       //    diagnostic-payload sanitization + bounded-payload limiter.
       const sanitized = sanitizeForPersistence(payload) as Record<string, unknown>;
 
-      // 2. Splat token attribution onto `session:after`. RESEARCH §4 +
-      //    Pitfall 2: only session:after carries the token counts (the
-      //    values do not physically exist before observability:token_usage
-      //    fires).
+      // 2. Splat token attribution onto `session:after`. Only
+      //    session:after carries the token counts (the values do not
+      //    physically exist before observability:token_usage fires).
       const tokenSplat =
         stage === "session:after" && state.latestTokenUsage !== undefined
           ? {
@@ -273,7 +272,7 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
 
       // Emit the cache_trace.write_failures sentinel when the underlying
       // queued writer reports per-line append failures. Mirrors
-      // trajectory's trace.write_failures pattern (TRAJ-FIX-03 / H3).
+      // trajectory's trace.write_failures pattern.
       const failureCount = writer.failureCount();
       if (failureCount > 0) {
         const lastError = writer.lastError();

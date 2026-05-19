@@ -34,7 +34,7 @@ function walk(obj: unknown): void {
   const record = obj as Record<string, unknown>;
   for (const key of Object.keys(record)) {
     if (SECRET_FIELD_PATTERN.test(key) && typeof record[key] === "string") {
-      // eslint-disable-next-line no-restricted-syntax -- config-redaction sentinel for serialized config output (predates Plan 45-02; not the Pino censor literal)
+      // eslint-disable-next-line no-restricted-syntax -- config-redaction sentinel for serialized config output (not the Pino censor literal)
       record[key] = "[REDACTED]";
     } else {
       walk(record[key]);

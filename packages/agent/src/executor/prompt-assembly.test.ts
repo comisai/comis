@@ -278,7 +278,7 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 4b. Plan 45-03: memory:injected event emit
+  // 4b. memory:injected event emit
   // -----------------------------------------------------------------
   it("emits_memory_injected_when_inline_memory_set with hitCount/charsInjected/trustTags", async () => {
     const mockSearchResults = [
@@ -494,7 +494,7 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 12b. Plan 45-04: SystemPromptReport build + persist
+  // 12b. SystemPromptReport build + persist
   // -----------------------------------------------------------------
   it("assembles_and_persists_system_prompt_report when observabilityStore wired", async () => {
     const insertSystemPromptReport = vi.fn();
@@ -540,10 +540,10 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // Plan 45.1-05 (TRAJ-FIX-08): memoryInjection block must populate
-  // for RAG-section-only sessions, not just inlineMemory.
+  // memoryInjection block must populate for RAG-section-only sessions,
+  // not just inlineMemory.
   // -----------------------------------------------------------------
-  it("memoryInjection populated when memorySections is non-empty even without inlineMemory (TRAJ-FIX-08)", async () => {
+  it("memoryInjection populated when memorySections is non-empty even without inlineMemory", async () => {
     // Wire a RAG-enabled memoryPort + hybrid injector returning
     // sections-only (inlineMemory undefined, systemPromptSections populated).
     const sectionBody = "RAG section body here";

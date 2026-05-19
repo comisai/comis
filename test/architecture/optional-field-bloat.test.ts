@@ -5,8 +5,8 @@
  * Every `interface` or type-literal `type` declaration in production
  * source must have ≤12 optional fields unless it carries an
  * `// @optional-field-count: <reason>` audit-stamp comment immediately
- * above the declaration OR is the v3-owned `ChannelManagerDeps`
- * (explicit exclusion — design §9.2.5 owns its audit).
+ * above the declaration OR is the explicitly-excluded
+ * `ChannelManagerDeps` (owned by a separate audit).
  *
  * Walker: `ts.createSourceFile` (no `ts.createProgram`, no TypeChecker)
  * — pure syntactic check. Counts members where
@@ -38,8 +38,8 @@ const THRESHOLD = 12;
 
 /**
  * Hard-coded exclusion: `ChannelManagerDeps` is the largest bloated
- * interface (44 optional fields) but v3 §9.2.5 owns its audit
- * — it is NOT subject to the broader shrink. Matched on file+name pair
+ * interface (44 optional fields) but is owned by a separate audit —
+ * it is NOT subject to the broader shrink. Matched on file+name pair
  * (NOT path alone) because `orchestrator/src/commands/types.ts` also
  * declares interfaces in the bloat list.
  */

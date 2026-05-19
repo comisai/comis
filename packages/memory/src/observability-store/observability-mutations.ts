@@ -67,9 +67,9 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // Plan 45-04: INSERT OR REPLACE so re-running the same (agent_id,
-  // session_id, run_id, generated_at) tuple (e.g., retry path) updates
-  // the row in place. The composite PK ensures a unique slot.
+  // INSERT OR REPLACE so re-running the same (agent_id, session_id,
+  // run_id, generated_at) tuple (e.g., retry path) updates the row in
+  // place. The composite PK ensures a unique slot.
   const insertSystemPromptReportStmt = db.prepare(`
     INSERT OR REPLACE INTO system_prompt_reports (
       agent_id, tenant_id, session_id, run_id, generated_at,

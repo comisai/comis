@@ -24,20 +24,19 @@
  * Drives `createLogger` exclusively (no direct pino import) so the
  * test pins the public Comis logger contract, not Pino's surface.
  *
- * **Plan 45-02 — Mask shape evolution.** The censor was originally the
- * literal "[REDACTED]" sentinel; Plan 45-02 swaps it for a callback
- * that emits the edge-keeping mask shape ("sk-123…cdef" with a U+2026
- * ellipsis) for string values ≥ 18 chars, "***" for shorter strings,
- * and "[REDACTED]" for non-string values. The residency invariant
- * TIGHTENS (the mask never re-leaks the body), so the load-bearing
- * assertion is "plaintext is absent" — positive shape assertions
- * accept any of the three mask forms via the {@link isCensored} helper.
+ * **Mask shape.** The censor is a callback that emits the edge-keeping
+ * mask shape ("sk-123…cdef" with a U+2026 ellipsis) for string values
+ * ≥ 18 chars, "***" for shorter strings, and "[REDACTED]" for
+ * non-string values. The residency invariant is strict (the mask never
+ * re-leaks the body), so the load-bearing assertion is "plaintext is
+ * absent" — positive shape assertions accept any of the three mask
+ * forms via the {@link isCensored} helper.
  *
- * **Transport gating.** Plan 45-02 wires a default Pino transport that
- * runs the free-form regex pass in a worker thread; that intercepts
- * stdout output. These tests need synchronous stdout capture, so they
- * pass `regexRedactInTransport: false` to skip the transport while
- * keeping the structured censor active.
+ * **Transport gating.** The default Pino transport runs the free-form
+ * regex pass in a worker thread; that intercepts stdout output. These
+ * tests need synchronous stdout capture, so they pass
+ * `regexRedactInTransport: false` to skip the transport while keeping
+ * the structured censor active.
  *
  * @module
  */
@@ -46,11 +45,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createLogger, type LoggerOptions } from "@comis/infra";
 
 // ---------------------------------------------------------------------------
-// Plan 45-02 helpers: the redact transport runs in a worker thread and
-// would intercept stdout output. These integration tests need
-// synchronous stdout capture, so we disable the transport while keeping
-// the structured censor active. The censor produces three possible
-// mask shapes per Plan 45-02:
+// The redact transport runs in a worker thread and would intercept stdout
+// output. These integration tests need synchronous stdout capture, so we
+// disable the transport while keeping the structured censor active. The
+// censor produces three possible mask shapes:
 //   - edge-keeping mask with U+2026 ellipsis ("sk-123…cdef") for strings ≥ 18 chars
 //   - "***" sentinel for strings below MIN_LENGTH
 //   - "[REDACTED]" sentinel for non-string credential values
@@ -158,8 +156,8 @@ describe("Log redaction -- top-level credential fields via createLogger", () => 
     expect(text).not.toContain("-----BEGIN PRIVATE KEY-----");
     expect(text).not.toContain("session=abc");
     expect(text).not.toContain("wh_abc");
-    // 10 redacted fields → at least 10 mask occurrences. Plan 45-02
-    // mask shapes: edge-keeping ("…" U+2026), "***", or "[REDACTED]".
+    // 10 redacted fields → at least 10 mask occurrences.
+    // Mask shapes: edge-keeping ("…" U+2026), "***", or "[REDACTED]".
     // Count every occurrence of any of the three shapes.
     const maskCount =
       (text.match(/\[REDACTED\]/g) ?? []).length +
@@ -188,7 +186,7 @@ describe("Log redaction -- top-level credential fields via createLogger", () => 
           entry !== null && entry["msg"] === "json shape",
       );
     expect(matched).toBeDefined();
-    // Plan 45-02: the 14-char "must-be-hidden" input is below the
+    // The 14-char "must-be-hidden" input is below the
     // 18-char MIN_LENGTH boundary, so maskToken collapses it to "***".
     expect(matched!["apiKey"]).toBe("***");
   });

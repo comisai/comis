@@ -1399,8 +1399,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // bootstrap closure + production retargets consume them. Tracked here
     // per the public-export-consumers gate; removed wholesale when the
     // daemon composition root wires them in.
-    // Plan 45.1-06 (TRAJ-FIX-10): the six fs-safe symbols
-    // (SymlinkParentRejected, FileSizeLimitExceeded,
+    // The six fs-safe symbols (SymlinkParentRejected, FileSizeLimitExceeded,
     // AppendRegularFileOptions / Success / Error, PathEscapesConfinementError)
     // previously listed here moved to @comis/observability/src/shared/fs-safe.ts
     // and are no longer exported by @comis/infra's barrel. The
@@ -1540,10 +1539,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "HourlyBucketDbRowFromSchema",
       "DeliveryStatsDbRowSchema",
       "DeliveryStatsDbRowFromSchema",
-      // Plan 45-04: system_prompt_reports table row schema.
+      // system_prompt_reports table row schema.
       "SystemPromptReportDbRowSchema",
       "SystemPromptReportDbRowFromSchema",
-      // Plan 46-02: cache-stats SQL row schemas (4 × 2 = 8 entries).
+      // cache-stats SQL row schemas (4 × 2 = 8 entries).
       "CacheStatsWindowRawDbRowSchema",
       "CacheStatsWindowRawDbRowFromSchema",
       "CacheStatsByProviderRawDbRowSchema",

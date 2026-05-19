@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-02): `buildCacheStatsRpcHandler` shape suite.
+ * `buildCacheStatsRpcHandler` shape suite.
  *
  * The handler factory accepts the contract as a dependency (rather
  * than importing `@comis/core` directly) — this keeps the
@@ -23,7 +23,7 @@ import type { CacheStatsStore } from "./types.js";
 
 // Minimal in-test contract shape — mirrors the eventual
 // `ObsCacheStatsWindowContract` request/response surface so the test
-// stays valid once the real contract lands at task 12.
+// stays valid once the real contract lands.
 const StubContract = {
   method: "obs.cacheStats.window" as const,
   request: z.object({

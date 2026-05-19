@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 46-02 (CACHE-OBS-01): warm-cache hit-rate aggregator.
+ * Warm-cache hit-rate aggregator.
  *
  * Reads from the durable `obs_token_usage` SQLite table via the
  * `CacheStatsStore` port. Returns a `CacheStatsWindow` with totals,
@@ -15,9 +15,9 @@
  * Notes:
  *   - `cacheCreationTokens` maps to the DB's `cache_write_tokens` column
  *     (Anthropic's "cache_creation" lands as `cache_write_tokens` in
- *     storage — design §10.2 / RESEARCH §7).
+ *     storage).
  *   - Empty windows return `cacheHitRate: 0` / `cacheWriteRate: 0` with
- *     no divide-by-zero throw — required by CACHE-OBS-01 acceptance.
+ *     no divide-by-zero throw.
  *   - `untilMs` defaults to `Date.now()` in the aggregator boundary so
  *     callers (RPC handler + tests) can omit it consistently.
  *

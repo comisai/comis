@@ -1,25 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 45.1-04 (TRAJ-FIX-05): `diagnostics.trajectory.eventTypes`
- * honored end-to-end.
+ * `diagnostics.trajectory.eventTypes` honored end-to-end.
  *
  * The schema declares `diagnostics.trajectory.eventTypes` as an
- * optional allowlist of trajectory event names (Plan 45-03 task 11,
- * `packages/core/src/config/schema-diagnostics.ts:78`). The bridge
+ * optional allowlist of trajectory event names
+ * (`packages/core/src/config/schema-diagnostics.ts:78`). The bridge
  * `attachTrajectoryToEventBus` already accepts an optional
- * `filter: (eventName) => boolean` predicate. Before 45.1-04 the
- * pi-executor call site at
- * `packages/agent/src/executor/pi-executor/pi-executor.ts:579-583`
- * never read `deps.trajectoryConfig?.eventTypes` to construct the
- * filter — operators who set `eventTypes: ["model.completed"]` in
- * YAML got every event regardless.
+ * `filter: (eventName) => boolean` predicate. The pi-executor call
+ * site at `packages/agent/src/executor/pi-executor/pi-executor.ts:579-583`
+ * reads `deps.trajectoryConfig?.eventTypes` to construct the filter —
+ * operators who set `eventTypes: ["model.completed"]` in YAML get only
+ * matching events.
  *
- * Additionally, the daemon-side composition root in
+ * The daemon-side composition root in
  * `packages/daemon/src/wiring/setup-agents/setup-agents-runtime.ts`
- * never populated the `trajectoryConfig` field on `PiExecutorDeps`,
- * so even `enabled`/`dir`/`maxFileBytes` reads in pi-executor
- * short-circuited (Risk #6 in the plan — a latent bug that this
- * plan also fixes).
+ * populates the `trajectoryConfig` field on `PiExecutorDeps` so
+ * `enabled`/`dir`/`maxFileBytes` reads in pi-executor resolve.
  *
  * This test exercises BOTH dimensions:
  *   1. WIRING CHAIN (source-grep regression guards) — the daemon
@@ -62,14 +58,12 @@ afterEach(() => {
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe("diagnostics.trajectory.eventTypes filter — end-to-end honor check (TRAJ-FIX-05)", () => {
+describe("diagnostics.trajectory.eventTypes filter — end-to-end honor check", () => {
   it("daemon composition root populates trajectoryConfig (incl. eventTypes) into pi-executor deps", () => {
     // Wiring-chain regression guard #1: setup-agents-runtime.ts must
     // assign a `trajectoryConfig` field reading from
-    // `container.config.diagnostics?.trajectory`. Before 45.1-04 this
-    // assignment was MISSING — Risk #6 in the plan documents the
-    // resulting latent bug (pi-executor's reads always evaluated to
-    // `undefined`).
+    // `container.config.diagnostics?.trajectory`. Without this
+    // assignment pi-executor's reads always evaluate to `undefined`.
     const repoRoot = process.cwd();
     const setupAgentsSrc = fs.readFileSync(
       path.join(repoRoot, "packages/daemon/src/wiring/setup-agents/setup-agents-runtime.ts"),
@@ -163,11 +157,6 @@ describe("diagnostics.trajectory.eventTypes filter — end-to-end honor check (T
     // names → EventBus names at the executor wiring; for now the
     // simpler contract is "operators set EventBus event names" since
     // that matches what the bridge filter actually receives.
-    //
-    // RED PHASE: This test must fail today because the production
-    // wiring at pi-executor.ts:579-583 never passes ANY filter, so
-    // ALL three events would land in the JSONL. The source-grep
-    // guards above also fail because `eventTypes` is never read.
     eventBus.emit("tool:started", {
       toolName: "bash",
       toolCallId: "tc-1",

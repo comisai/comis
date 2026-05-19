@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Trajectory file-path resolution helpers (Plan 45-03).
+ * Trajectory file-path resolution helpers.
  *
  * Three concerns kept as separate functions:
  *
@@ -19,14 +19,14 @@
  *      to a non-default location.
  *
  *   3. `resolveTrajectoryPointerOpenFlags()` — proxy to
- *      `resolveSafeOpenFlags()` from 45-01 (same `O_CREAT | O_TRUNC |
- *      O_WRONLY | O_NOFOLLOW` on POSIX). Re-exported under a
- *      trajectory-named symbol so call-site reads cleanly.
+ *      `resolveSafeOpenFlags()` (same `O_CREAT | O_TRUNC | O_WRONLY |
+ *      O_NOFOLLOW` on POSIX). Re-exported under a trajectory-named
+ *      symbol so call-site reads cleanly.
  *
  * The session ID is always passed through `safeTrajectorySessionFileName`
- * (45-01) before being used as a filename component — defense-in-depth
- * even when the runtime path resolves through a sessionFile or
- * workspaceDir. `resolveContainedPath` enforces the parent-dir bound.
+ * before being used as a filename component — defense-in-depth even
+ * when the runtime path resolves through a sessionFile or workspaceDir.
+ * `resolveContainedPath` enforces the parent-dir bound.
  *
  * @module
  */
@@ -117,7 +117,7 @@ export function resolveTrajectoryPointerFilePath(sessionFile: string): string {
 /**
  * Canonical fs.open flag set for the pointer-file write:
  * `O_CREAT | O_TRUNC | O_WRONLY | O_NOFOLLOW` on POSIX. Re-exports the
- * 45-01 helper under a trajectory-specific name so call sites read
+ * shared helper under a trajectory-specific name so call sites read
  * cleanly without leaking the shared helper's name.
  */
 export function resolveTrajectoryPointerOpenFlags(): number {

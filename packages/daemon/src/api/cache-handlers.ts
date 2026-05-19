@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — admin-gate throw is caught by rpc-dispatch.ts.
 /**
- * Plan 46-02 (CACHE-OBS-02): durable cache-stats RPC handler.
+ * Durable cache-stats RPC handler.
  *
  * Binds the `obs.cacheStats.window` method to the
  * `buildCacheStatsRpcHandler` factory from `@comis/observability`,
  * supplying:
  *   - the observability store (`deps.obsStore`) as the cache-stats
  *     port (the store interface extends the four `queryCacheStats*`
- *     methods at Plan 46-02 task 6),
+ *     methods),
  *   - `IS_DEV` to gate the dev-mode response-parse defense in depth,
  *   - the canonical `ObsCacheStatsWindowContract` from `@comis/core`.
  *

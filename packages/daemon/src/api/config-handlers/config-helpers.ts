@@ -20,7 +20,14 @@
  * @module
  */
 
-import { type GitCommitMetadata, systemGetEnv, systemNowMs, systemNowDate } from "@comis/core";
+import {
+  type GitCommitMetadata,
+  findUnresolvedEnvRefs,
+  formatMissingEnvRefError,
+  systemGetEnv,
+  systemNowMs,
+  systemNowDate,
+} from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { resolveProviderCredential } from "../shared/credential-resolver.js";
 
@@ -221,6 +228,34 @@ export function rejectDuplicateMcpServerNames(patch: Record<string, unknown>): v
         }
         seen.add(name);
       }
+    }
+  }
+}
+
+/**
+ * Reject patches that reference env vars not in the secrets store, on
+ * enabled MCP servers only. Walks `patch` (not the deep-merged config) so
+ * only what's being written this RPC is validated. Skips servers with an
+ * explicit `enabled: false` (preserves the placeholder-for-later pattern).
+ */
+export function validateMcpEnvRefs(
+  patch: Record<string, unknown>,
+  getSecret: (key: string) => string | undefined,
+): void {
+  const patchInteg = patch.integrations as Record<string, unknown> | undefined;
+  const patchMcp = patchInteg?.mcp as Record<string, unknown> | undefined;
+  const patchServers = patchMcp?.servers;
+  if (!Array.isArray(patchServers)) return;
+
+  for (const s of patchServers) {
+    if (!s || typeof s !== "object") continue;
+    const server = s as Record<string, unknown>;
+    if (server.enabled === false) continue;
+    if (!server.env) continue;
+    const serverName = typeof server.name === "string" ? server.name : "<unnamed>";
+    const unresolved = findUnresolvedEnvRefs(server.env, getSecret);
+    if (unresolved.length > 0) {
+      throw new Error(formatMissingEnvRefError(serverName, unresolved.map((u) => u.varName)));
     }
   }
 }

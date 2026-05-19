@@ -137,13 +137,11 @@ export default tseslint.config(
             "`module:` in a log payload duplicates the parent-bound `module` field on the emitted JSON line. Use `submodule:` instead (see LogFields in @comis/infra).",
         },
 
-        // Plan 45-02: ban the literal "[REDACTED]" string in production
-        // source.
+        // Ban the literal "[REDACTED]" string in production source.
         //
-        // The Pino redact censor was originally the literal sentinel.
-        // Plan 45-02 swaps it for an edge-keeping mask callback (see
-        // maskToken in @comis/observability/redact/edge-keeping.ts);
-        // the only sanctioned production use of "[REDACTED]" is the
+        // The Pino redact censor uses an edge-keeping mask callback (see
+        // maskToken in @comis/observability/redact/edge-keeping.ts); the
+        // only sanctioned production use of "[REDACTED]" is the
         // non-string fallback inside packages/infra/src/logging/
         // logger.ts, which carries an `// eslint-disable-next-line
         // no-restricted-syntax` annotation citing this rule.
@@ -151,13 +149,12 @@ export default tseslint.config(
         // Mirrored by an architecture-test source-grep in
         // test/architecture/source-rules.test.ts (defense-in-depth:
         // ESLint catches the AST literal; the source-grep catches the
-        // bytes in case ESLint is bypassed). Research §5.2 Approach A
-        // — eslint-plugin-comis does NOT exist; we use
-        // no-restricted-syntax per house style.
+        // bytes in case ESLint is bypassed). eslint-plugin-comis does
+        // NOT exist; we use no-restricted-syntax per house style.
         {
           selector: "Literal[value='[REDACTED]']",
           message:
-            "The literal '[REDACTED]' is banned in production source. Use maskToken() from @comis/observability/redact instead. The one sanctioned use (non-string Pino censor fallback) carries an inline eslint-disable annotation. See Plan 45-02 task 12.",
+            "The literal '[REDACTED]' is banned in production source. Use maskToken() from @comis/observability/redact instead. The one sanctioned use (non-string Pino censor fallback) carries an inline eslint-disable annotation.",
         },
       ],
     },
@@ -169,11 +166,11 @@ export default tseslint.config(
   // ObjectExpression-style type literal. Disable the rule for the
   // logging schema files only — every other source file remains guarded.
   //
-  // Plan 45-02: keeping the carve-out narrow. The non-string Pino
-  // censor fallback in logger.ts uses an inline
-  // `// eslint-disable-next-line no-restricted-syntax` instead of
-  // relying on this file-level carve-out, but the carve-out remains
-  // for the LogFields type-literal `module` property declaration.
+  // Keeping the carve-out narrow. The non-string Pino censor fallback
+  // in logger.ts uses an inline `// eslint-disable-next-line
+  // no-restricted-syntax` instead of relying on this file-level
+  // carve-out, but the carve-out remains for the LogFields type-literal
+  // `module` property declaration.
   {
     files: ["packages/infra/src/logging/**/*.ts"],
     rules: {
