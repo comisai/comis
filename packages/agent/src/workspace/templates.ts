@@ -212,10 +212,9 @@ Capture what matters. The system persists it automatically.
 
 \`\`\`
 projects/    -- Code repos (each in its own subfolder, .venv per repo)
-venv/        -- Pre-warmed Python env (matplotlib, numpy, pandas on PATH).
-                Use venv/bin/python for chart/data work; venv/bin/pip
-                install <pkg> for extras. Per-project venvs go inside
-                projects/<name>/.venv (separate lifecycle).
+venv/        -- Python virtualenv (create on demand with \`python3 -m venv venv\`,
+                then call venv/bin/python3 and venv/bin/pip install <pkgs>).
+                Per-project venvs go inside projects/<name>/.venv.
 scripts/     -- Standalone reusable scripts
 documents/   -- Text docs, PDFs, spreadsheets, markdown
 media/       -- User-provided images, audio, video

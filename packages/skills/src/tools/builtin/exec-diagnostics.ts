@@ -120,11 +120,82 @@ const matchPythonModuleNotFound: Matcher = ({ stderr, exitCode, cwd }) => {
 };
 
 // ---------------------------------------------------------------------------
+// Matcher: workspace-rooted venv binary missing
+// ---------------------------------------------------------------------------
+
+/**
+ * Match exec failures where stderr references a missing executable at a path
+ * under `<cwd>/.../venv/bin/<binary>` AND the venv root does not exist on disk.
+ *
+ * Captures two stderr forms:
+ *   1. `<path>/venv/bin/python3: No such file or directory`  (exec/spawn ENOENT)
+ *   2. `<path>/venv/bin/python3: command not found`           (shell "127: not found")
+ *
+ * Binary name is restricted to `python[0-9.]*` or `pip[0-9.]*` to keep the
+ * false-positive surface tight (other venv binaries like `pydoc` /
+ * `python-config` are out of scope).
+ *
+ * Scope-restricted: the candidate venv root MUST resolve under `cwd` via
+ * `safePath(cwd, relPath)`. Paths that escape `cwd` (e.g. attacker-supplied
+ * `/etc/venv/bin/python3` or `../../../etc/venv/bin/python3`) are rejected
+ * and the matcher abstains — no information disclosure about out-of-workspace
+ * paths. Mirrors the safePath pattern already used in matchPythonModuleNotFound.
+ */
+const VENV_MISSING_RE =
+  /(?<path>\/[^\s:]+\/venv\/bin\/(?<binary>python[0-9.]*|pip[0-9.]*))\s*:\s*(?:No such file or directory|command not found)/m;
+
+function pathExistsSafe(p: string): boolean {
+  try {
+    return existsSync(p);
+  } catch {
+    return false;
+  }
+}
+
+const matchVenvMissing: Matcher = ({ stderr, exitCode, cwd }) => {
+  if (exitCode === 0) return null;
+  if (!stderr) return null;
+  const m = VENV_MISSING_RE.exec(stderr);
+  if (!m?.groups) return null;
+  const binaryPath = m.groups.path;
+  // Compute the venv root by stripping `/bin/<binary>` from the matched path.
+  // e.g. `/Users/.../.comis/workspace/venv/bin/python3` -> `/Users/.../.comis/workspace/venv`
+  const venvBinIdx = binaryPath.lastIndexOf("/venv/bin/");
+  if (venvBinIdx < 0) return null; // belt-and-suspenders; regex guarantees /venv/bin/
+  const venvRoot = binaryPath.slice(0, venvBinIdx) + "/venv";
+
+  // Workspace-root scope: require the venv root to be under cwd. The `+ "/"`
+  // boundary prevents the `${cwd}foo` accidental-prefix attack
+  // (cwd="/tmp/work" must not match venvRoot="/tmp/workfoo/venv").
+  if (!venvRoot.startsWith(cwd + "/") && venvRoot !== cwd) return null;
+  const relFromCwd = venvRoot === cwd ? "" : venvRoot.slice(cwd.length + 1);
+  try {
+    const resolvedVenvRoot =
+      relFromCwd === "" ? cwd : safePath(cwd, relFromCwd);
+    // Defensive: confirm round-trip matches (paranoia against weird path inputs).
+    if (resolvedVenvRoot !== venvRoot) return null;
+    // If the venv root DOES exist, the failure is something other than a
+    // missing venv (wrong pip args, permission, network) — abstain so the
+    // LLM sees the real error.
+    if (pathExistsSafe(resolvedVenvRoot)) return null;
+    return (
+      `RECOVERY HINT: Virtualenv not found at ${resolvedVenvRoot}. ` +
+      `Create it with: python3 -m venv ${resolvedVenvRoot} && ${resolvedVenvRoot}/bin/pip install <pkgs> ` +
+      `(replace <pkgs> with the actual packages your task needs — e.g. matplotlib numpy pandas for charting).`
+    );
+  } catch {
+    // safePath threw (traversal segments, null bytes, etc.) — abstain.
+    return null;
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Registry + entry point
 // ---------------------------------------------------------------------------
 
 const matchers: ReadonlyArray<Matcher> = [
   matchPythonModuleNotFound,
+  matchVenvMissing,
   // Future: matchNodeModuleNotFound, matchCommandNotFound, matchEnvVarMissing, ...
 ];
 

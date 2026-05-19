@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: Apache-2.0
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve, dirname } from "node:path";
+
+import { DEFAULT_TEMPLATES } from "./templates.js";
+
+// ---------------------------------------------------------------------------
+// Prose invariants for the workspace AGENTS.md template.
+//
+// These tests lock the 2026-05-20 fix for the false-promise venv prose:
+// before this fix, the template advertised a "Pre-warmed Python env
+// (matplotlib, numpy, pandas on PATH)" that no code actually provisioned.
+// Sub-agents read the lie, attempted `venv/bin/python3`, hit exit-127, and
+// cascaded into the 5-failure exec kill-switch. The replacement prose tells
+// the agent to create the venv on demand with `python3 -m venv venv`.
+// ---------------------------------------------------------------------------
+
+describe("DEFAULT_TEMPLATES workspace prose invariants", () => {
+  it("AGENTS.md template must not advertise a pre-warmed venv that does not exist on disk", () => {
+    const agentsMd = DEFAULT_TEMPLATES["AGENTS.md"];
+    expect(agentsMd).not.toContain("Pre-warmed");
+    expect(agentsMd).not.toContain("matplotlib, numpy, pandas on PATH");
+  });
+
+  it("AGENTS.md template must instruct the agent to create the venv on demand with python3 -m venv", () => {
+    const agentsMd = DEFAULT_TEMPLATES["AGENTS.md"];
+    expect(agentsMd).toContain("python3 -m venv");
+  });
+
+  it("AGENTS.md template must still document per-project venv convention so other guidance holds", () => {
+    const agentsMd = DEFAULT_TEMPLATES["AGENTS.md"];
+    expect(agentsMd).toContain("projects/<name>/.venv");
+  });
+
+  it("core templates.ts and agent templates.ts remain byte-identical duplicates after the edit", () => {
+    // Per AGENTS.md §2.3 KISS, the duplicate is intentional and tracked here.
+    // From packages/core/src/workspace/templates.test.ts navigate up to the
+    // repo root, then sibling-package into agent's copy.
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const repoRoot = resolve(thisDir, "..", "..", "..", "..");
+    const coreCopy = readFileSync(
+      resolve(repoRoot, "packages", "core", "src", "workspace", "templates.ts"),
+      "utf-8",
+    );
+    const agentCopy = readFileSync(
+      resolve(repoRoot, "packages", "agent", "src", "workspace", "templates.ts"),
+      "utf-8",
+    );
+    expect(coreCopy).toEqual(agentCopy);
+  });
+});
