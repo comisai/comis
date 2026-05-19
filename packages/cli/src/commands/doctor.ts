@@ -27,6 +27,7 @@ import { oauthHealthCheck } from "../doctor/checks/oauth-health.js";
 import { repairConfig } from "../doctor/repairs/repair-config.js";
 import { repairDaemon } from "../doctor/repairs/repair-daemon.js";
 import { repairWorkspace } from "../doctor/repairs/repair-workspace.js";
+import { repairConfigAudit } from "../doctor/repairs/repair-config-audit.js";
 import type { DoctorContext } from "../doctor/types.js";
 
 /** All doctor checks in execution order (6 categories). */
@@ -190,6 +191,20 @@ export function registerDoctorCommand(program: Command): void {
           }
         } else {
           error(`FAILED: Workspace repair: ${workspaceResult.error.message}`);
+        }
+
+        // Plan 45-05 task 13: retroactive config-audit-log scrubber.
+        // Opt-in only via --repair; safe to run even when no
+        // pre-existing findings flag the audit log because the
+        // scrubber is idempotent (same output on a clean file).
+        const auditScrubResult = await repairConfigAudit();
+        if (auditScrubResult.ok) {
+          for (const action of auditScrubResult.value) {
+            success(`REPAIRED: ${action}`);
+          }
+        } else {
+          // Daemon-down is the common non-error case; surface as info.
+          info(`SKIPPED: Config-audit scrub: ${auditScrubResult.error.message}`);
         }
 
         // Re-run diagnostics after repairs
