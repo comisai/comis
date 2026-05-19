@@ -33,6 +33,7 @@ import {
   ConfigAuditListContract,
   ConfigAuditScrubContract,
   stripInternalFields,
+  systemNowMs,
 } from "@comis/core";
 import {
   resolveConfigAuditLogPath,
@@ -122,7 +123,7 @@ export function bindConfigAuditHandlers(
       const filePath = resolveConfigAuditLogPath();
       const all = readAuditLog(filePath);
 
-      const now = Date.now();
+      const now = systemNowMs();
       const sinceMs = parseTimestamp(params.since, now);
       const untilMs = parseTimestamp(params.until, now);
 

@@ -43,12 +43,10 @@ import {
   type InspectPayload,
 } from "../sync-tooling/index.js";
 import {
-  createConfigWriteAuditRecordBase,
-  finalizeConfigWriteAuditRecord,
-  appendConfigAuditRecordSync,
-  resolveConfigAuditLogPath,
-} from "@comis/observability";
-import { registerConfigAuditCommand } from "./config/audit.js";
+  registerConfigAuditCommand,
+  buildCliSyncToolingAuditBase,
+  appendCliSyncToolingAudit,
+} from "./config/audit.js";
 import {
   runToolingFill,
   type PromptIO,
@@ -580,52 +578,11 @@ export function registerConfigCommand(program: Command): void {
 
         const counts = applyToDocument(doc, artifacts, { overwrite: isOverwrite });
 
-        // Plan 45-05 task 9: two-phase config-audit hook around the
-        // single atomicWriteFile call site (per checker Finding #5
-        // grep-verified: this is the only write site in this file).
-        // Best-effort: audit failures swallowed.
-        let auditBase;
-        try {
-          auditBase = createConfigWriteAuditRecordBase({
-            source: "cli-sync-tooling",
-            configPath,
-            // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
-            pid: process.pid,
-            // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
-            ppid: process.ppid,
-            // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
-            argv: process.argv,
-            // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
-            cwd: process.cwd(),
-            // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
-            execArgv: process.execArgv,
-            watchMode: false,
-          });
-        } catch {
-          // Base construction failed — fall through with no audit.
-          auditBase = undefined;
-        }
-
+        // Plan 45-05 task 9: two-phase audit around the single atomicWriteFile call site
+        // (per checker Finding #5 -- only write site in this file). Best-effort.
+        const auditBase = buildCliSyncToolingAuditBase(configPath);
         const written = atomicWriteFile(configPath, doc.toString());
-
-        if (auditBase !== undefined) {
-          try {
-            const finalize = written.ok
-              ? ({ result: "rename" as const })
-              : ({
-                  result: "failed" as const,
-                  errorCode: (written.error as { code?: string }).code,
-                  errorMessage: (written.error as { cause?: string }).cause,
-                });
-            const record = finalizeConfigWriteAuditRecord(auditBase, finalize);
-            appendConfigAuditRecordSync({
-              filePath: resolveConfigAuditLogPath(),
-              record,
-            });
-          } catch {
-            // Audit failures swallowed.
-          }
-        }
+        appendCliSyncToolingAudit(auditBase, written);
 
         if (!written.ok) {
           error(`Atomic write failed (${written.error.code}): ${written.error.cause}`);

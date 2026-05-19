@@ -115,10 +115,24 @@ describe("config-audit/argv-redactor", () => {
   });
 
   it("exports SECRET_FLAG_SUFFIX_PATTERN regex that matches *-key|-token|-secret style flag names", () => {
-    expect(SECRET_FLAG_SUFFIX_PATTERN.test("--alibaba-api-key")).toBe(true);
-    expect(SECRET_FLAG_SUFFIX_PATTERN.test("--my-plugin-token")).toBe(true);
-    expect(SECRET_FLAG_SUFFIX_PATTERN.test("--app-secret")).toBe(true);
-    expect(SECRET_FLAG_SUFFIX_PATTERN.test("--port")).toBe(false);
-    expect(SECRET_FLAG_SUFFIX_PATTERN.test("--host")).toBe(false);
+    // Use the redactor end-to-end rather than asserting regex.test()
+    // directly — the test-naming architecture regex picks up bare
+    // `.test(...)` calls as fake test descriptions.
+    const masked = redactConfigAuditArgv([
+      "comis",
+      "--alibaba-api-key=secret",
+      "--my-plugin-token=secret",
+      "--app-secret=secret",
+    ]);
+    expect(masked).toEqual([
+      "comis",
+      "--alibaba-api-key=***",
+      "--my-plugin-token=***",
+      "--app-secret=***",
+    ]);
+
+    // Non-secret flags are passthrough.
+    const passthrough = redactConfigAuditArgv(["comis", "--port", "--host"]);
+    expect(passthrough).toEqual(["comis", "--port", "--host"]);
   });
 });

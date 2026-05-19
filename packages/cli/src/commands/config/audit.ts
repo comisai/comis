@@ -26,9 +26,74 @@ import {
   ConfigAuditListContract,
   ConfigAuditScrubContract,
 } from "@comis/core";
+import {
+  createConfigWriteAuditRecordBase,
+  finalizeConfigWriteAuditRecord,
+  appendConfigAuditRecordSync,
+  resolveConfigAuditLogPath,
+  type ConfigWriteAuditRecordBase,
+} from "@comis/observability";
+import type { Result } from "@comis/shared";
 
 import { callTyped, withClient } from "../../client/rpc-client.js";
 import { error, info, json, success, warn } from "../../output/format.js";
+
+// ---------------------------------------------------------------------------
+// CLI sync-tooling audit helpers (Plan 45-05 task 9 -- extracted from
+// config.ts to keep that file under the 800-line cap).
+// ---------------------------------------------------------------------------
+
+/** Build the pre-write audit base for the CLI sync-tooling write site. */
+export function buildCliSyncToolingAuditBase(
+  configPath: string,
+): ConfigWriteAuditRecordBase | undefined {
+  try {
+    return createConfigWriteAuditRecordBase({
+      source: "cli-sync-tooling",
+      configPath,
+      // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
+      pid: process.pid,
+      // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
+      ppid: process.ppid,
+      // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
+      argv: process.argv,
+      // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
+      cwd: process.cwd(),
+      // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
+      execArgv: process.execArgv,
+      watchMode: false,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Finalize + sync-append the audit record for the CLI sync-tooling
+ * write site. Failures swallowed (audit is a forensics aid).
+ */
+export function appendCliSyncToolingAudit(
+  base: ConfigWriteAuditRecordBase | undefined,
+  written: Result<unknown, { code?: string; cause?: string }>,
+): void {
+  if (base === undefined) return;
+  try {
+    const finalize = written.ok
+      ? ({ result: "rename" as const })
+      : {
+          result: "failed" as const,
+          ...(written.error.code !== undefined && { errorCode: written.error.code }),
+          ...(written.error.cause !== undefined && { errorMessage: written.error.cause }),
+        };
+    const record = finalizeConfigWriteAuditRecord(base, finalize);
+    appendConfigAuditRecordSync({
+      filePath: resolveConfigAuditLogPath(),
+      record,
+    });
+  } catch {
+    // Audit failures swallowed.
+  }
+}
 
 /**
  * Register the `audit` subcommand group on the parent `config`

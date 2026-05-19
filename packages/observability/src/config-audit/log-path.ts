@@ -16,9 +16,7 @@
  * @module
  */
 
-import * as path from "node:path";
-
-import { systemGetEnv } from "@comis/core";
+import { safePath, systemGetEnv } from "@comis/core";
 import * as os from "node:os";
 
 /** Env var name for the audit-log path override. */
@@ -58,5 +56,5 @@ export function resolveConfigAuditLogPath(
   if (typeof override === "string" && override.length > 0) {
     return override;
   }
-  return path.join(deps.homedir(), ".comis", ...DEFAULT_RELATIVE_PATH);
+  return safePath(deps.homedir(), ".comis", ...DEFAULT_RELATIVE_PATH);
 }

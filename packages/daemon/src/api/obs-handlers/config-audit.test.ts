@@ -109,7 +109,7 @@ describe("config.audit.list handler", () => {
     expect(result.records[0]!.pid).toBe(2);
   });
 
-  it("list filters by pid", async () => {
+  it("list filters records by exact pid match", async () => {
     fs.mkdirSync(path.dirname(auditLogPath), { recursive: true, mode: 0o700 });
     const now = Date.now();
     writeRecord(100, now);
