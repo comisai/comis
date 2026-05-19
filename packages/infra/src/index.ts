@@ -34,7 +34,11 @@ export type {
   AppendRegularFileOptions,
   AppendRegularFileSuccess,
   AppendRegularFileError,
-  WriteRegularFileOptions,
-  WriteRegularFileSuccess,
-  WriteRegularFileError,
+  // WriteRegularFile* types are NOT re-exported from the barrel: the
+  // public consumer (config-audit/scrub.ts) imports `writeRegularFile`
+  // by value only and lets TypeScript infer the option/result shapes
+  // from the function signature. Per public-export-consumers policy,
+  // dead barrel exports must be removed unless there's a documented
+  // out-of-repo consumer; re-add here (with a consumer added in the
+  // same PR) only if a published API contract requires it.
 } from "./fs-safe.js";

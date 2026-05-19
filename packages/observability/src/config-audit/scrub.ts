@@ -37,6 +37,7 @@ import * as fs from "node:fs";
 
 import { ok, err, type Result } from "@comis/shared";
 import { writeRegularFile } from "@comis/infra";
+import { systemNowMs } from "@comis/core";
 
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
@@ -82,18 +83,18 @@ export interface ScrubParams {
  * line fails. See identical helper in append.ts:
  * emitSerializationErrorSentinel for rationale.
  *
- * scrub.ts intentionally does NOT depend on @comis/core for
- * systemNowMs — Date.now() is acceptable here because the scrub path
- * runs from the CLI doctor command, not the daemon (no ClockPort in
- * scope). The forensic value is the timestamp's wall-clock
- * approximation, not the monotonic precision.
+ * Uses `systemNowMs` from @comis/core (Pattern B per
+ * test/support/architecture-allowlist.ts) — sanctioned helper that
+ * preserves the no-direct-globals invariant. @comis/core is already
+ * a dependency of @comis/observability for the existing
+ * append.ts:42 import.
  */
 function emitSerializationErrorSentinel(): string {
   const sentinel = {
     traceSchema: "comis-config-audit" as const,
     schemaVersion: 1 as const,
     __serializationError: "record-not-serializable" as const,
-    tsMs: Date.now(),
+    tsMs: systemNowMs(),
   };
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   return JSON.stringify(sentinel)! + "\n";
