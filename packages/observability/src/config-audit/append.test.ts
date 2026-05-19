@@ -232,6 +232,50 @@ describe("config-audit/append", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Plan 45.1-03 Task 1: H2 chmod TOCTOU fix — ensureParentDir must NOT chmod
+// a pre-existing parent directory. The mkdir-with-mode-0o700 branch is the
+// only place the parent's mode is touched; the file itself is locked to
+// 0o600 via fchmodSync inside appendRegularFile.
+// ---------------------------------------------------------------------------
+describe("ensureParentDir — chmod TOCTOU fix (TRAJ-FIX-02)", () => {
+  it("does NOT chmod a pre-existing parent directory", async () => {
+    // Create parent with intentionally-different mode (0o755) so we can
+    // detect any chmod call back to 0o700.
+    const auditDir = path.join(tmpDir, "config-audit");
+    fs.mkdirSync(auditDir, { recursive: true });
+    // umask may mask out group/other write bits — re-chmod explicitly so
+    // the snapshot is deterministic regardless of test-runner umask.
+    fs.chmodSync(auditDir, 0o755);
+    expect(fs.statSync(auditDir).mode & 0o777).toBe(0o755);
+
+    const filePath = path.join(auditDir, "config-audit.jsonl");
+    const result = await appendConfigAuditRecord({ filePath, record: makeBaseRecord() });
+    expect(result.ok).toBe(true);
+
+    const modeAfter = fs.statSync(auditDir).mode & 0o777;
+    // After TRAJ-FIX-02 the existing-parent chmod-else branch is removed,
+    // so the pre-existing 0o755 mode is preserved. Today (before the fix)
+    // this fails: the else-branch chmods back to 0o700.
+    expect(modeAfter).toBe(0o755);
+  });
+
+  it("still creates the parent with 0o700 when it does NOT exist (regression guard)", async () => {
+    // The "fresh create" case stays at 0o700 because the
+    // `mkdirSync({mode: 0o700})` branch keeps that responsibility
+    // after the chmod-else branch is removed.
+    const auditDir = path.join(tmpDir, "fresh-audit");
+    expect(fs.existsSync(auditDir)).toBe(false);
+
+    const filePath = path.join(auditDir, "config-audit.jsonl");
+    const result = await appendConfigAuditRecord({ filePath, record: makeBaseRecord() });
+    expect(result.ok).toBe(true);
+
+    const mode = fs.statSync(auditDir).mode & 0o777;
+    expect(mode).toBe(0o700);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Plan 45-gap-01 Task 2: BL-01 sentinel-record fallback when safeJsonStringify
 // returns undefined (BigInt / circular reference / unrepresentable).
 // ---------------------------------------------------------------------------

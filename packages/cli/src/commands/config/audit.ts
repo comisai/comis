@@ -31,6 +31,7 @@ import {
   finalizeConfigWriteAuditRecord,
   appendConfigAuditRecordSync,
   resolveConfigAuditLogPath,
+  getDefaultConfigAuditConfinedBase,
   type ConfigWriteAuditRecordBase,
 } from "@comis/observability";
 import type { Result } from "@comis/shared";
@@ -86,9 +87,17 @@ export function appendCliSyncToolingAudit(
           ...(written.error.cause !== undefined && { errorMessage: written.error.cause }),
         };
     const record = finalizeConfigWriteAuditRecord(base, finalize);
+    const auditLogPath = resolveConfigAuditLogPath();
+    const auditConfinedBase = getDefaultConfigAuditConfinedBase(auditLogPath);
     appendConfigAuditRecordSync({
-      filePath: resolveConfigAuditLogPath(),
+      filePath: auditLogPath,
       record,
+      // TRAJ-FIX-01: confine the audit-log write to ~/.comis/ when the
+      // default log path applies; skip confinement when the operator
+      // set COMIS_CONFIG_AUDIT_LOG to a custom location.
+      ...(auditConfinedBase !== undefined && {
+        confinedBaseDir: auditConfinedBase,
+      }),
     });
   } catch {
     // Audit failures swallowed.

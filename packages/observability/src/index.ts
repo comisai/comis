@@ -186,6 +186,7 @@ export {
   DEFAULT_ROTATE_AT_BYTES,
   DEFAULT_KEEP_ROTATED,
   ConfigAuditAppendError,
+  getDefaultConfigAuditConfinedBase,
 } from "./config-audit/append.js";
 export type {
   ConfigWriteAuditRecordBase,

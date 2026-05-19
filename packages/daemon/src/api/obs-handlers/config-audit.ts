@@ -38,6 +38,7 @@ import {
 import {
   resolveConfigAuditLogPath,
   scrubConfigAuditLog,
+  getDefaultConfigAuditConfinedBase,
 } from "@comis/observability";
 
 import type { RpcHandler } from "../types.js";
@@ -190,7 +191,16 @@ export function bindConfigAuditHandlers(
         return result;
       }
 
-      const scrubResult = await scrubConfigAuditLog({ filePath });
+      const scrubConfinedBase = getDefaultConfigAuditConfinedBase(filePath);
+      const scrubResult = await scrubConfigAuditLog({
+        filePath,
+        // TRAJ-FIX-01: confine the scrub tmp-write to ~/.comis/ when
+        // the default log path applies; skip confinement when the
+        // operator set COMIS_CONFIG_AUDIT_LOG to a custom location.
+        ...(scrubConfinedBase !== undefined && {
+          confinedBaseDir: scrubConfinedBase,
+        }),
+      });
       if (!scrubResult.ok) {
         throw new Error(`Audit scrub failed: ${scrubResult.error.message}`);
       }

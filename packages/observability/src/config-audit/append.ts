@@ -35,6 +35,7 @@
 
 import * as fs from "node:fs";
 import * as crypto from "node:crypto";
+import * as os from "node:os";
 import * as path from "node:path";
 
 import { ok, err, type Result } from "@comis/shared";
@@ -301,6 +302,50 @@ export interface AppendConfigAuditParams {
   readonly record: ConfigWriteAuditRecord;
   readonly rotateAtBytes?: number;
   readonly keepRotated?: number;
+  /**
+   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base
+   * forwarded to `appendRegularFile`. Production callers (last-known-good,
+   * config-audit-hook, CLI sync-tooling audit) should pass
+   * `path.join(os.homedir(), ".comis")` via `getDefaultConfigAuditConfinedBase()`
+   * to close the ancestor-symlink gap. Tests omit it (default `undefined`)
+   * to keep tmp-dir paths legal.
+   */
+  readonly confinedBaseDir?: string;
+}
+
+/**
+ * Plan 45.1-03 (TRAJ-FIX-01): resolve the confinement base for
+ * production config-audit callers.
+ *
+ * - When the audit-log path is the default `~/.comis/logs/config-audit.jsonl`,
+ *   confine writes to `~/.comis/` so ancestor-symlink escapes are
+ *   rejected with `PathEscapesConfinementError`.
+ * - When the operator has set `COMIS_CONFIG_AUDIT_LOG` to a custom path
+ *   (sentinel: the resolved audit-log path lives outside `~/.comis/`),
+ *   they own the legitimacy of that location — confinement is skipped
+ *   (return `undefined`) so we don't reject the operator's own write
+ *   path. Callers receive `undefined` and pass through to the
+ *   `confinedBaseDir`-omit branch.
+ *
+ * The function takes the resolved log path so the env-override
+ * detection is consistent with the actual write target.
+ */
+export function getDefaultConfigAuditConfinedBase(
+  resolvedAuditLogPath?: string,
+): string | undefined {
+  const defaultBase = path.join(os.homedir(), ".comis");
+  if (resolvedAuditLogPath === undefined) return defaultBase;
+  // When the resolved log path stays inside ~/.comis/, the default
+  // base applies. When the operator points the env-var elsewhere
+  // (override case), drop confinement — they own that path.
+  const normalized = path.resolve(resolvedAuditLogPath);
+  if (
+    normalized === defaultBase ||
+    normalized.startsWith(defaultBase + path.sep)
+  ) {
+    return defaultBase;
+  }
+  return undefined;
 }
 
 /** Error class for the appender. Wraps `appendRegularFile` errors. */
@@ -375,17 +420,32 @@ function encodeRecord(record: ConfigWriteAuditRecord): string {
   return json + "\n";
 }
 
-/** Ensure the parent dir exists with mode 0o700. */
+/**
+ * Ensure the parent dir exists with mode 0o700 (fresh-create only).
+ *
+ * Plan 45.1-03 Task 2 (TRAJ-FIX-02): the prior implementation also
+ * `chmodSync(dir, 0o700)`'d a pre-existing parent before the symlink
+ * check inside `appendRegularFile` ran. The chmod-target is only
+ * `0o700` (no privilege escalation), but the side-effect on a
+ * possibly-symlinked target is a confused-deputy violation
+ * (TOCTOU window). The fix deletes that else-branch outright:
+ *
+ *   - Fresh-create case: `mkdirSync({recursive: true, mode: 0o700})`
+ *     keeps creating the dir with the correct mode.
+ *   - Existing-parent case: leave the operator's mode untouched. The
+ *     **file** itself is still locked to `0o600` by the defensive
+ *     `fchmodSync(fd, 0o600)` inside `appendRegularFile` (fs-safe.ts
+ *     step 3). Per-record file-mode invariant is preserved.
+ */
 function ensureParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
+  try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  } else {
-    try {
-      fs.chmodSync(dir, 0o700);
-    } catch {
-      // Best-effort — operator may have intentionally set wider perms.
-    }
+  } catch (err) {
+    // EEXIST is the existing-dir case — we no longer chmod it (see
+    // TRAJ-FIX-02). Any other error propagates so callers can report
+    // (e.g., EACCES, ENOSPC).
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
   }
 }
 
@@ -426,6 +486,13 @@ function appendConfigAuditRecordSyncImpl(
     // bound; we do NOT pass maxFileBytes through to appendRegularFile
     // (which would reject the append, not rotate). Rotation already
     // ensured space for the new record.
+    // Plan 45.1-03 (TRAJ-FIX-01): forward the caller's confinement base
+    // (typically `~/.comis/`) so an ancestor-symlink escape would be
+    // rejected by `appendRegularFile`. Tests omit it; production
+    // callers pass `getDefaultConfigAuditConfinedBase()`.
+    ...(params.confinedBaseDir !== undefined
+      ? { confinedBaseDir: params.confinedBaseDir }
+      : {}),
   });
   if (!appendResult.ok) {
     return err(

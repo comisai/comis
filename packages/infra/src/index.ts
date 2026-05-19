@@ -24,10 +24,15 @@ export { createSystemTimers } from "./runtime/timers.js";
 // First O_NOFOLLOW + lstat-parent + fchmod 0o600 user in the repo (research §7).
 // Plan 45-gap-01 Task 1: writeRegularFile (write-truncate analogue) for the
 // config-audit scrubber tmp-write site (closes BL-02).
+// Plan 45.1-03 (TRAJ-FIX-01): PathEscapesConfinementError sentinel for the
+// opt-in `confinedBaseDir` real-path containment check that closes the
+// ancestor-symlink gap (O_NOFOLLOW + parent-lstat together do not cover
+// a symlinked grandparent of the target).
 export {
   appendRegularFile,
   writeRegularFile,
   SymlinkParentRejected,
+  PathEscapesConfinementError,
   FileSizeLimitExceeded,
 } from "./fs-safe.js";
 export type {

@@ -76,6 +76,14 @@ export interface ScrubParams {
    * append; production callers leave it undefined.
    */
   readonly injectedAfterRead?: () => void;
+  /**
+   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base
+   * forwarded to `writeRegularFile` (the scrub tmp-write). Production
+   * callers (doctor --repair, config.audit.scrub RPC) pass
+   * `getDefaultConfigAuditConfinedBase()` so an ancestor-symlink escape
+   * is rejected at the open() boundary. Tests omit it.
+   */
+  readonly confinedBaseDir?: string;
 }
 
 /**
@@ -194,6 +202,14 @@ export async function scrubConfigAuditLog(
     path: tmpPath,
     content: rewritten,
     // unlinkExisting defaults to true — leaves the symlink window closed.
+    // TRAJ-FIX-01: forward the caller's confinement base (typically
+    // `~/.comis/`) so an ancestor-symlink escape is rejected before the
+    // open() call. The scrub tmp lives at `<filePath>.scrub.tmp` which,
+    // for the legitimate ~/.comis/logs/config-audit.jsonl path, is
+    // inside ~/.comis/.
+    ...(params.confinedBaseDir !== undefined
+      ? { confinedBaseDir: params.confinedBaseDir }
+      : {}),
   });
   if (!writeResult.ok) {
     return err(

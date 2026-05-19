@@ -25,6 +25,7 @@ import {
   finalizeConfigWriteAuditRecord,
   appendConfigAuditRecordSync,
   resolveConfigAuditLogPath,
+  getDefaultConfigAuditConfinedBase,
 } from "@comis/observability";
 
 /** Suffix appended to the config filename for the last-known-good snapshot. */
@@ -104,9 +105,18 @@ function withAuditHook(params: {
       ...(errorCode !== undefined && { errorCode }),
       ...(errorMessage !== undefined && { errorMessage }),
     });
+    const auditLogPath = resolveConfigAuditLogPath();
+    const auditConfinedBase = getDefaultConfigAuditConfinedBase(auditLogPath);
     appendConfigAuditRecordSync({
-      filePath: resolveConfigAuditLogPath(),
+      filePath: auditLogPath,
       record,
+      // TRAJ-FIX-01: confine the audit-log write to ~/.comis/ when the
+      // default log path applies; skip confinement when the operator
+      // overrode COMIS_CONFIG_AUDIT_LOG to a custom location (they own
+      // the legitimacy of the override target).
+      ...(auditConfinedBase !== undefined && {
+        confinedBaseDir: auditConfinedBase,
+      }),
     });
   } catch {
     // Audit append failed — swallow. The JSONL is a forensics aid.

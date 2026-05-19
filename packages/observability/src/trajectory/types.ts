@@ -188,6 +188,16 @@ export interface TrajectoryRecorderInit {
    * short-circuits to null.
    */
   readonly enabled?: boolean;
+
+  /**
+   * Plan 45.1-03 (TRAJ-FIX-01): opt-in real-path confinement base
+   * forwarded to the underlying queued writer (and from there to
+   * `appendRegularFile`). Production callers (daemon trajectory wiring)
+   * pass `path.join(os.homedir(), ".comis")` so an ancestor-symlink
+   * escape is rejected before the open() call. Tests omit it (default
+   * `undefined`) to keep tmp-dir paths legal.
+   */
+  readonly confinedBaseDir?: string;
 }
 
 /**

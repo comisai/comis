@@ -1420,6 +1420,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "AppendRegularFileOptions",
       "AppendRegularFileSuccess",
       "AppendRegularFileError",
+      // Plan 45.1-03 (TRAJ-FIX-01): PathEscapesConfinementError is the
+      // sentinel for the opt-in real-path confinement check on
+      // appendRegularFile / writeRegularFile. The three observability
+      // callers (queued-file-writer, config-audit/append, scrub) emit
+      // the error implicitly through the Result return path; they
+      // don't need to import the sentinel class because the swallow /
+      // surface boundary in those callers handles the union by error
+      // shape. Tracked as a baseline orphan until a caller chooses to
+      // pattern-match on `instanceof PathEscapesConfinementError`.
+      "PathEscapesConfinementError",
     ])],
     // @comis/memory: baseline orphans tracked here + 5 transient orphans
     // (SessionStore alias + SessionDetailedEntry + 3 Ctx*Row types).
