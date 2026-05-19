@@ -4024,10 +4024,44 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("daemo
 exports[`section-registry parity > field-metadata view > getFieldMetadata("diagnostics") 1`] = `
 "[
   {
-    "default": {},
+    "default": {
+      "enabled": false,
+      "includeMessages": false,
+      "includePrompt": true,
+      "includeSystem": true
+    },
     "immutable": false,
     "path": "diagnostics.cacheTrace",
     "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.filePath",
+    "type": "string"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.includeMessages",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.includePrompt",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.includeSystem",
+    "type": "boolean"
   },
   {
     "default": {
@@ -9183,7 +9217,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "cacheTrace": {},
+      "cacheTrace": {
+        "enabled": false,
+        "includeMessages": false,
+        "includePrompt": true,
+        "includeSystem": true
+      },
       "configAudit": {
         "enabled": true,
         "keepRotated": 5,
@@ -9200,10 +9239,44 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "object"
   },
   {
-    "default": {},
+    "default": {
+      "enabled": false,
+      "includeMessages": false,
+      "includePrompt": true,
+      "includeSystem": true
+    },
     "immutable": false,
     "path": "diagnostics.cacheTrace",
     "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.filePath",
+    "type": "string"
+  },
+  {
+    "default": false,
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.includeMessages",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.includePrompt",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.includeSystem",
+    "type": "boolean"
   },
   {
     "default": {
@@ -18152,7 +18225,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "default": {
-    "cacheTrace": {},
+    "cacheTrace": {
+      "enabled": false,
+      "includeMessages": false,
+      "includePrompt": true,
+      "includeSystem": true
+    },
     "configAudit": {
       "enabled": true,
       "keepRotated": 5,
@@ -18167,8 +18245,39 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
   "properties": {
     "cacheTrace": {
       "additionalProperties": false,
-      "default": {},
-      "properties": {},
+      "default": {
+        "enabled": false,
+        "includeMessages": false,
+        "includePrompt": true,
+        "includeSystem": true
+      },
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "filePath": {
+          "type": "string"
+        },
+        "includeMessages": {
+          "default": false,
+          "type": "boolean"
+        },
+        "includePrompt": {
+          "default": true,
+          "type": "boolean"
+        },
+        "includeSystem": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled",
+        "includeMessages",
+        "includePrompt",
+        "includeSystem"
+      ],
       "type": "object"
     },
     "configAudit": {
@@ -26868,7 +26977,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "diagnostics": {
       "additionalProperties": false,
       "default": {
-        "cacheTrace": {},
+        "cacheTrace": {
+          "enabled": false,
+          "includeMessages": false,
+          "includePrompt": true,
+          "includeSystem": true
+        },
         "configAudit": {
           "enabled": true,
           "keepRotated": 5,
@@ -26883,8 +26997,39 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "properties": {
         "cacheTrace": {
           "additionalProperties": false,
-          "default": {},
-          "properties": {},
+          "default": {
+            "enabled": false,
+            "includeMessages": false,
+            "includePrompt": true,
+            "includeSystem": true
+          },
+          "properties": {
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            },
+            "filePath": {
+              "type": "string"
+            },
+            "includeMessages": {
+              "default": false,
+              "type": "boolean"
+            },
+            "includePrompt": {
+              "default": true,
+              "type": "boolean"
+            },
+            "includeSystem": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled",
+            "includeMessages",
+            "includePrompt",
+            "includeSystem"
+          ],
           "type": "object"
         },
         "configAudit": {

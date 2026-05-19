@@ -13,7 +13,11 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
       // owning plans.
       expect(result.data.trajectory.enabled).toBe(true);
       expect(result.data.trajectory.maxFileBytes).toBe(50 * 1024 * 1024);
-      expect(result.data.cacheTrace).toEqual({});
+      // Plan 46-01: cacheTrace now has populated defaults.
+      expect(result.data.cacheTrace.enabled).toBe(false);
+      expect(result.data.cacheTrace.includeMessages).toBe(false);
+      expect(result.data.cacheTrace.includePrompt).toBe(true);
+      expect(result.data.cacheTrace.includeSystem).toBe(true);
       // Plan 45-05: configAudit now has populated defaults.
       expect(result.data.configAudit.enabled).toBe(true);
       expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
@@ -28,7 +32,11 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
     if (result.success) {
       expect(result.data.trajectory.enabled).toBe(true);
       expect(result.data.trajectory.maxFileBytes).toBe(50 * 1024 * 1024);
-      expect(result.data.cacheTrace).toEqual({});
+      // Plan 46-01: cacheTrace defaults populated.
+      expect(result.data.cacheTrace.enabled).toBe(false);
+      expect(result.data.cacheTrace.includeMessages).toBe(false);
+      expect(result.data.cacheTrace.includePrompt).toBe(true);
+      expect(result.data.cacheTrace.includeSystem).toBe(true);
       // Plan 45-05: configAudit now has populated defaults.
       expect(result.data.configAudit.enabled).toBe(true);
       expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
@@ -213,5 +221,48 @@ describe("DiagnosticsConfigSchema.configAudit — fields and defaults", () => {
       configAudit: { keepRotated: -1 },
     });
     expect(failRes.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 46-01: cacheTrace subsection
+// ---------------------------------------------------------------------------
+
+describe("DiagnosticsConfigSchema.cacheTrace — fields and defaults", () => {
+  it("cacheTrace defaults populate the full shape (off by default; includeMessages off; prompt + system on)", () => {
+    const result = DiagnosticsConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cacheTrace.enabled).toBe(false);
+      expect(result.data.cacheTrace.includeMessages).toBe(false);
+      expect(result.data.cacheTrace.includePrompt).toBe(true);
+      expect(result.data.cacheTrace.includeSystem).toBe(true);
+      expect(result.data.cacheTrace.filePath).toBeUndefined();
+    }
+  });
+
+  it("cacheTrace.enabled=true with explicit overrides applies the merge", () => {
+    const result = DiagnosticsConfigSchema.safeParse({
+      diagnostics: undefined,
+      cacheTrace: { enabled: true, includeMessages: true },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cacheTrace.enabled).toBe(true);
+      expect(result.data.cacheTrace.includeMessages).toBe(true);
+      // Untouched fields keep their defaults.
+      expect(result.data.cacheTrace.includePrompt).toBe(true);
+      expect(result.data.cacheTrace.includeSystem).toBe(true);
+    }
+  });
+
+  it("cacheTrace accepts an explicit filePath override (tilde expansion happens at runtime, not schema-parse)", () => {
+    const result = DiagnosticsConfigSchema.safeParse({
+      cacheTrace: { filePath: "/var/log/comis/cache-trace.jsonl" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cacheTrace.filePath).toBe("/var/log/comis/cache-trace.jsonl");
+    }
   });
 });
