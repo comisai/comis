@@ -77,8 +77,6 @@ const CREDENTIAL_KEYS = new Set<string>([
   "refresh_token",
   "clientsecret",
   "client_secret",
-  "sessionid",
-  "session_id",
 ]);
 
 /**
