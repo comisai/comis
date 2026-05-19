@@ -524,6 +524,11 @@ export async function setupSingleAgent(
           eventTypes: container.config.diagnostics.trajectory.eventTypes,
         }
       : undefined,
+    // Session-scoped trajectory recorder registry — same instance for
+    // every per-agent executor so a session's recorder spans every
+    // turn (design §6.4 + §6.5 + §6.8). Daemon shutdown drains via
+    // `closeAll()` on the registry surfaced through AgentsResult.
+    trajectoryRegistry: deps.trajectoryRegistry,
     // Forward AppConfig.diagnostics.cacheTrace into the executor. The
     // per-session cache-trace recorder reads this; when omitted or
     // `enabled: false`, the recorder is a no-op.

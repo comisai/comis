@@ -52,6 +52,12 @@ import {
   type SkillWatcherHandle,
   type McpClientManager,
 } from "@comis/skills";
+// Session-scoped trajectory recorder registry (design §6.4 + §6.5 + §6.8).
+// Construct once here so every per-agent executor shares the same registry
+// and the daemon shutdown chain can drain all open recorders via closeAll().
+import {
+  createSessionTrajectoryHandleRegistry,
+} from "@comis/observability";
 import { setupSingleAgent } from "./setup-agents-runtime.js";
 import type { SingleAgentDeps } from "./setup-agents-types.js";
 import { resolveSubAgentToolNames } from "./setup-agents-tooling.js";
@@ -119,6 +125,11 @@ export interface AgentsResult {
    * via has().
    */
   oauthCredentialStore: OAuthCredentialStorePort;
+  /**
+   * Session-scoped trajectory recorder registry. Daemon shutdown MUST
+   * call `closeAll()` to flush every open per-session recorder.
+   */
+  trajectoryRegistry: import("@comis/observability").SessionTrajectoryHandleRegistry;
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +350,15 @@ export async function setupAgents(deps: {
     encryptedStore,
   });
 
+  // Construct the session-scoped trajectory recorder registry ONCE here.
+  // The registry is the single owner of per-session TrajectoryRecorder
+  // lifecycle: getOrCreate(formattedKey, init, eventBus) on the first
+  // turn, reuse across subsequent turns, close on session-destroy, and
+  // closeAll() in the daemon shutdown chain. Lifting ownership out of
+  // pi-executor.runSessionLocked closes design §6.4 + §6.5 + §6.8
+  // deviations E + F.
+  const trajectoryRegistry = createSessionTrajectoryHandleRegistry();
+
   // Construct shared deps struct once before the loop (for hot-add reuse)
   const singleAgentDeps: SingleAgentDeps = {
     container,
@@ -384,6 +404,9 @@ export async function setupAgents(deps: {
     // ObservabilityStore for SystemPromptReport persistence —
     // forwarded from daemon.ts into createPiExecutor via setupSingleAgent.
     obsStore: deps.obsStore,
+    // Session-scoped trajectory recorder registry — threaded into every
+    // per-agent executor so the same registry is shared across agents.
+    trajectoryRegistry,
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
@@ -454,6 +477,10 @@ export async function setupAgents(deps: {
     // RpcDispatchDeps.oauthCredentialStore so agents.update can validate
     // oauthProfiles patches via has().
     oauthCredentialStore,
+    // Session-scoped trajectory recorder registry. daemon.ts MUST call
+    // `closeAll()` on this in the shutdown chain — see the trajectory
+    // sidecar drain step in daemon shutdown wiring.
+    trajectoryRegistry,
   };
 }
 

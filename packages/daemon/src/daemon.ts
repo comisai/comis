@@ -550,8 +550,8 @@ async function stageAgents(input: {
     oauthCredentialStore,
     // Per-agent live ToolCapabilityPort adapters; daemon.ts threads
     // getCapabilityPortForAgent into setupTools and mutates this map on
-    // hot-add / hot-remove.
-    toolCapabilityPorts,
+    // hot-add / hot-remove. trajectoryRegistry is drained by setupShutdown.
+    toolCapabilityPorts, trajectoryRegistry,
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
@@ -700,7 +700,7 @@ async function stageAgents(input: {
     transcriber, ssrfFetcher, fileExtractor,
     rpcCall, wireDispatch, approvalGate,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    cronWakeCallbackRef,
+    cronWakeCallbackRef, trajectoryRegistry,
   };
 }
 
@@ -1088,6 +1088,7 @@ async function stageShutdown(input: {
     promptTimeoutTimestamps,
     sessionStoreBridge, shutdownRef, gatewayHandle,
     activeExecutions, getActiveConnectionCount,
+    trajectoryRegistry,
   } = gateway;
   void _execs; void _suspended;
   // Override-derived locals -- only consumed by setupShutdown below.
@@ -1114,6 +1115,7 @@ async function stageShutdown(input: {
     lifecycleReactors,  // destroy lifecycle reactors on shutdown
     obsPersistence,  // drain write buffers before db.close
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
+    trajectoryRegistry,  // Drain session-scoped trajectory recorders
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:
