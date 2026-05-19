@@ -26,6 +26,9 @@ function makeReport(overrides: Partial<SystemPromptReport> = {}): SystemPromptRe
       projectContextChars: 40,
       nonProjectContextChars: 60,
     },
+    // Plan 45.1-05 (TRAJ-FIX-09): per-file bootstrap budget knob is required
+    // on SystemPromptReport. The original fixture predated the field.
+    bootstrapMaxChars: 0,
     injectedWorkspaceFiles: [],
     skills: { entries: [], promptChars: 0 },
     tools: { entries: [], totalSchemaChars: 0 },
