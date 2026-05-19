@@ -24,6 +24,7 @@ import { initSchema, createObservabilityStore } from "@comis/memory";
 import {
   buildSystemPromptReport,
   persistSystemPromptReport,
+  SystemPromptReportSchema,
   type BootstrapFileForReport,
   type SystemPromptReport,
 } from "@comis/observability";
@@ -206,5 +207,16 @@ describe("SystemPromptReport — build → persist → query roundtrip", () => {
     expect(persisted!.reportJson).not.toContain(
       "sk-ant-api03-AABBCCDDEEFFGGHHIIJJKKLL-very-long-tail-suffix-here",
     );
+
+    // Plan 45.1-01 (TRAJ-FIX-04): the persisted `report_json` must
+    // also round-trip back into a valid `SystemPromptReport` via
+    // `SystemPromptReportSchema`. Pre-fix this throws because the
+    // sanitizer dropped `sessionId`. The credential-text masking above
+    // is independent (lives in `redactSecretsInText`), so the
+    // `sk-ant-…` assertion continues to pass alongside the schema
+    // round-trip.
+    expect(() =>
+      SystemPromptReportSchema.parse(JSON.parse(persisted!.reportJson)),
+    ).not.toThrow();
   });
 });
