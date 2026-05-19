@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import type { SystemPromptReport } from "./types.js";
+import { SystemPromptReportSchema } from "./types.js";
 import type { ObservabilityStoreLike, SessionStoreReportSink } from "./persist.js";
 import { persistSystemPromptReport } from "./persist.js";
 
@@ -145,5 +146,40 @@ describe("persistSystemPromptReport", () => {
     const report = makeReport();
     const result = await persistSystemPromptReport(report, { sessionStore });
     expect(result.ok).toBe(false);
+  });
+
+  it("persisted reportJson parses back to a valid SystemPromptReport (TRAJ-FIX-04)", async () => {
+    // Architecture-invariant mirror at the unit-test tier (RESEARCH.md
+    // §5 Invariant 1): the JSON string written to the SQLite row must
+    // be parseable back into a `SystemPromptReport` via
+    // `SystemPromptReportSchema.parse`. Pre-Plan-45.1-01 this failed
+    // because the sanitizer dropped `sessionId` and the schema marks
+    // `sessionId` as non-optional.
+    const observabilityStore = makeObsStore();
+    const report = makeReport({
+      agentId: "agent-roundtrip",
+      sessionId: "session-roundtrip",
+      runId: "run-roundtrip",
+      tenantId: "tenant-roundtrip",
+      traceId: "trace-roundtrip",
+      provider: "anthropic",
+      model: "claude-3-opus",
+    });
+
+    const result = await persistSystemPromptReport(report, { observabilityStore });
+    expect(result.ok).toBe(true);
+
+    const row = observabilityStore.insertSystemPromptReport.mock.calls[0][0];
+    const parsed = JSON.parse(row.reportJson);
+
+    // 1. Round-trip parses against the schema.
+    expect(() => SystemPromptReportSchema.parse(parsed)).not.toThrow();
+
+    // 2. Structural identity fields survived the sanitize pipeline.
+    expect(parsed.agentId).toBe("agent-roundtrip");
+    expect(parsed.sessionId).toBe("session-roundtrip");
+    expect(parsed.runId).toBe("run-roundtrip");
+    expect(parsed.tenantId).toBe("tenant-roundtrip");
+    expect(parsed.traceId).toBe("trace-roundtrip");
   });
 });
