@@ -185,6 +185,27 @@ function renderToolEntry(schema: object): ToolReportEntry {
   return { propertiesCount, schemaChars };
 }
 
+/**
+ * Per-file truncation predicate (260519-rrm deviation H fix).
+ *
+ * Tolerate a single trailing-whitespace character: the bootstrap injector
+ * strips trailing whitespace from injected content, so `rawChars -
+ * injectedChars === 1` is whitespace normalization, NOT truncation. A
+ * delta > 1 indicates real truncation.
+ *
+ * The audit captured `SOUL.md 2840→2839`, `IDENTITY.md 787→786`,
+ * `USER.md 458→457` — all three are single-newline strips, and the
+ * pre-fix predicate flagged all three as truncated. The 1-char tolerance
+ * is intentionally minimal; larger tolerances would mask real bugs.
+ */
+function isFileTruncated(f: BootstrapFileForReport): boolean {
+  return (
+    !f.missing &&
+    f.injectedChars < f.rawChars &&
+    f.rawChars - f.injectedChars > 1
+  );
+}
+
 function summarizeBootstrapTruncation(
   files: ReadonlyArray<BootstrapFileForReport>,
 ): SystemPromptReport["bootstrapTruncation"] {
@@ -194,7 +215,7 @@ function summarizeBootstrapTruncation(
   for (const f of files) {
     originalCharsTotal += f.rawChars;
     injectedCharsTotal += f.injectedChars;
-    if (!f.missing && f.injectedChars < f.rawChars) filesTruncated += 1;
+    if (isFileTruncated(f)) filesTruncated += 1;
   }
   return {
     applied: filesTruncated > 0,
@@ -224,9 +245,10 @@ export function buildSystemPromptReport(params: BuildParams): SystemPromptReport
   // --- injectedWorkspaceFiles[] -------------------------------------------
   const injectedWorkspaceFiles: SystemPromptReport["injectedWorkspaceFiles"] = params.bootstrapFiles.map(
     (f) => {
-      // truncated when on-disk content was larger than what was injected
-      // (and the file actually existed).
-      const truncated = !f.missing && f.injectedChars < f.rawChars;
+      // Truncation predicate tolerates a 1-char delta to absorb the
+      // bootstrap injector's trailing-whitespace strip (260519-rrm
+      // deviation H). See `isFileTruncated` for rationale.
+      const truncated = isFileTruncated(f);
       const sha256 = !f.missing && f.rawContent !== undefined ? sha256Hex(f.rawContent) : undefined;
       return {
         name: f.name,
