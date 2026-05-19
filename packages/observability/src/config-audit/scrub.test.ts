@@ -134,3 +134,28 @@ describe("config-audit/scrub", () => {
     expect(after).toContain('"--api-key=***"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 45-gap-01 Task 2: BL-01 sentinel-record fallback in reEncodeRecord.
+// ---------------------------------------------------------------------------
+describe("reEncodeRecord — BL-01 sentinel on serialization failure", () => {
+  it("emits sentinel when an object record contains a BigInt", async () => {
+    const { reEncodeRecord } = await import("./scrub.js");
+
+    // Pass an object containing BigInt to force safeJsonStringify -> undefined.
+    const result = reEncodeRecord({ traceSchema: "comis-config-audit", evil: BigInt(1) });
+    expect(result).not.toBe("undefined\n");
+    // Strip trailing newline for parse.
+    const parsed = JSON.parse(result.trimEnd());
+    expect(parsed.__serializationError).toBe("record-not-serializable");
+    expect(parsed.traceSchema).toBe("comis-config-audit");
+  });
+
+  it("emits sentinel when a non-object parsed value is unrepresentable (BigInt primitive)", async () => {
+    const { reEncodeRecord } = await import("./scrub.js");
+    const result = reEncodeRecord(BigInt(5));
+    expect(result).not.toBe("undefined\n");
+    const parsed = JSON.parse(result.trimEnd());
+    expect(parsed.__serializationError).toBe("record-not-serializable");
+  });
+});

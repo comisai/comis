@@ -230,3 +230,80 @@ describe("config-audit/append", () => {
     expect(Array.isArray(final.suspicious)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 45-gap-01 Task 2: BL-01 sentinel-record fallback when safeJsonStringify
+// returns undefined (BigInt / circular reference / unrepresentable).
+// ---------------------------------------------------------------------------
+describe("encodeRecord — BL-01 sentinel on serialization failure", () => {
+  it("emits a JSON-parseable sentinel when the record contains a BigInt", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "config-audit-bl01-bigint-"));
+    const filePath = path.join(dir, "config-audit.jsonl");
+
+    try {
+      // Build a valid record then inject a BigInt via cast (mirrors real-world
+      // hazard: a future bootstrap or test injects an unrepresentable value).
+      const base = createConfigWriteAuditRecordBase({
+        source: "cli",
+        configPath: path.join(dir, "config.yaml"),
+        pid: 1,
+        ppid: 0,
+        argv: ["node", "comis"],
+        cwd: dir,
+        execArgv: [],
+        watchMode: false,
+      });
+      const record = finalizeConfigWriteAuditRecord(base, { result: "rename" });
+      // Inject the BigInt — bypass readonly via cast.
+      (record as unknown as { nextBytes: bigint }).nextBytes = BigInt(123);
+
+      const appendResult = appendConfigAuditRecordSync({
+        filePath,
+        record,
+      });
+      expect(appendResult.ok).toBe(true);
+
+      const raw = fs.readFileSync(filePath, "utf-8").trim();
+      // The line MUST be valid JSON, NOT the literal string "undefined".
+      expect(raw).not.toBe("undefined");
+      const parsed = JSON.parse(raw);
+      expect(parsed.traceSchema).toBe("comis-config-audit");
+      expect(parsed.schemaVersion).toBe(1);
+      expect(parsed.__serializationError).toBe("record-not-serializable");
+      expect(typeof parsed.tsMs).toBe("number");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("emits sentinel when the record contains a circular reference", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "config-audit-bl01-circ-"));
+    const filePath = path.join(dir, "config-audit.jsonl");
+
+    try {
+      const base = createConfigWriteAuditRecordBase({
+        source: "cli",
+        configPath: path.join(dir, "config.yaml"),
+        pid: 1,
+        ppid: 0,
+        argv: ["node", "comis"],
+        cwd: dir,
+        execArgv: [],
+        watchMode: false,
+      });
+      const record = finalizeConfigWriteAuditRecord(base, { result: "rename" });
+      // Force a circular ref via cast.
+      (record as unknown as { self: unknown }).self = record;
+
+      const appendResult = appendConfigAuditRecordSync({ filePath, record });
+      expect(appendResult.ok).toBe(true);
+
+      const raw = fs.readFileSync(filePath, "utf-8").trim();
+      expect(raw).not.toBe("undefined");
+      const parsed = JSON.parse(raw);
+      expect(parsed.__serializationError).toBe("record-not-serializable");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
