@@ -506,4 +506,128 @@ describe("createLogger", () => {
       expect(lines[0]!.user).toBe("alice");
     });
   });
+
+  // -----------------------------------------------------------------
+  // Edge-keeping censor + transport-shim wiring.
+  // -----------------------------------------------------------------
+
+  describe("createLogger censor + transport (factory shape)", () => {
+    it("createLogger with disableRedaction:true produces a logger that does not crash", () => {
+      // The residency-test harness flips this flag; production source
+      // is FORBIDDEN from setting it (architecture invariant). This
+      // test only proves the flag does not crash the factory.
+      const logger = createLogger({
+        name: "residency-test-shape",
+        disableRedaction: true,
+      });
+      expect(logger).toBeDefined();
+      expect(typeof logger.info).toBe("function");
+    });
+
+    it("createLogger with regexRedactInTransport:false produces a logger that does not crash", () => {
+      const logger = createLogger({
+        name: "skip-transport-shape",
+        regexRedactInTransport: false,
+      });
+      expect(logger).toBeDefined();
+      expect(typeof logger.info).toBe("function");
+    });
+
+    it("createLogger with an explicit transport overrides the default redact transport", () => {
+      const logger = createLogger({
+        name: "custom-transport-shape",
+        transport: {
+          targets: [
+            {
+              target: "pino/file",
+              options: { destination: 1 },
+            },
+          ],
+        },
+      });
+      expect(logger).toBeDefined();
+      expect(typeof logger.info).toBe("function");
+    });
+  });
+
+  describe("edge-keeping censor — applies maskToken to string secrets", () => {
+    // The factory-built logger wires a Pino transport at
+    // `@comis/infra/dist/logging/redact-transport.js`, which Pino runs
+    // in a worker thread. The worker is heavyweight and asynchronous;
+    // these tests instead instantiate Pino directly with the same
+    // censor function to verify the value-mapping shape — that is the
+    // load-bearing contract. Worker-thread plumbing is covered by the
+    // integration smoke in test/integration/secret-rpc-residency.
+    async function makeMaskingLogger() {
+      const { default: pino } = await import("pino");
+      // Load maskToken via the EDGE-KEEPING SUBPATH (not the package
+      // barrel) — Node 22 rejects require()-of-ESM when the resolved
+      // module is part of a package-level cycle. The edge-keeping
+      // module is a pure-function leaf and has no static imports of
+      // @comis/infra, so subpath-direct loading sidesteps the cycle.
+      // Mirrors the production resolution in `logger.ts`.
+      const edgeKeeping = await import(
+        "@comis/observability/dist/redact/edge-keeping.js"
+      );
+      const { maskToken } = edgeKeeping;
+      const capture = captureOutput();
+      const logger = pino(
+        {
+          name: "mask-token-test",
+          level: "trace",
+          redact: {
+            paths: ["apiKey", "token", "password", "*.apiKey"],
+            censor: (value: unknown): string =>
+              // eslint-disable-next-line no-restricted-syntax -- test mirror of production censor's non-string fallback
+              typeof value === "string" ? maskToken(value) : "[REDACTED]",
+          },
+          formatters: {
+            level(label: string, number: number) {
+              return { level: label, levelValue: number };
+            },
+          },
+        },
+        capture.stream,
+      );
+      return { logger, capture };
+    }
+
+    it("masks an 18+ char token with the edge-keeping shape (not the literal '[REDACTED]')", async () => {
+      const { logger, capture } = await makeMaskingLogger();
+      logger.info({ apiKey: "sk-1234567890abcdef" }, "long-token");
+
+      const lines = capture.lines();
+      expect(lines).toHaveLength(1);
+      const censored = lines[0]!.apiKey as string;
+      // The plaintext is gone.
+      expect(censored).not.toBe("sk-1234567890abcdef");
+      // The censor produced an edge-mask, not the literal "[REDACTED]".
+      expect(censored).not.toBe("[REDACTED]");
+      // The "sk-" prefix survives the head window (keepStart=6).
+      expect(censored.startsWith("sk-")).toBe(true);
+      // The U+2026 ellipsis appears in the middle.
+      expect(censored.includes("…")).toBe(true);
+    });
+
+    it("collapses sub-18-char tokens to the '***' short-token sentinel", async () => {
+      const { logger, capture } = await makeMaskingLogger();
+      logger.info({ apiKey: "short" }, "short-token");
+
+      const lines = capture.lines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]!.apiKey).toBe("***");
+    });
+
+    it("non-string credential values fall back to the literal '[REDACTED]' sentinel", async () => {
+      const { logger, capture } = await makeMaskingLogger();
+      // A boolean under a credential-keyed field — censor's non-string
+      // branch fires.
+      logger.info({ apiKey: true, password: 42 }, "non-string");
+
+      const lines = capture.lines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]!.apiKey).toBe("[REDACTED]");
+      expect(lines[0]!.password).toBe("[REDACTED]");
+    });
+  });
 });

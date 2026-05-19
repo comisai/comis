@@ -113,6 +113,7 @@ export function sanitizeToolOutput(
   for (const pattern of INSTRUCTION_PATTERNS) {
     // Reset lastIndex for sticky/global regexes across multiple calls
     pattern.lastIndex = 0;
+    // eslint-disable-next-line no-restricted-syntax -- tool-output injection-pattern sentinel (not the Pino censor literal)
     sanitized = sanitized.replace(pattern, "[REDACTED]");
   }
 

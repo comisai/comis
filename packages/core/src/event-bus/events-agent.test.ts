@@ -484,6 +484,158 @@ describe("AgentEvents payload structure", () => {
 // tool:install_detour_detected -- type + privacy invariants
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Trajectory observability events:
+// prompt:submitted, session:started, session:ended, memory:injected, tool:timeout
+// ---------------------------------------------------------------------------
+
+describe("Trajectory observability events", () => {
+  it("prompt:submitted delivers digests, promptChars, messageCount, provider/model", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["prompt:submitted"] = {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-prompt-001",
+      promptChars: 12_345,
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+      messageCount: 7,
+      systemDigest: "a".repeat(64),
+      messagesDigest: "b".repeat(64),
+      timestamp: Date.now(),
+    };
+
+    bus.on("prompt:submitted", handler);
+    bus.emit("prompt:submitted", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["prompt:submitted"];
+    expect(received.promptChars).toBe(12_345);
+    expect(received.messageCount).toBe(7);
+    expect(received.systemDigest.length).toBe(64);
+    expect(received.messagesDigest.length).toBe(64);
+    expect(received.provider).toBe("anthropic");
+    expect(received.modelId).toBe("claude-sonnet-4-20250514");
+  });
+
+  it("session:started delivers channelType, channelId, optional accountId", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const withAccount: EventMap["session:started"] = {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-sess-001",
+      channelType: "telegram",
+      channelId: "chan-123",
+      accountId: "acct-7",
+      timestamp: Date.now(),
+    };
+
+    bus.on("session:started", handler);
+    bus.emit("session:started", withAccount);
+
+    const r = handler.mock.calls[0]![0] as EventMap["session:started"];
+    expect(r.channelType).toBe("telegram");
+    expect(r.channelId).toBe("chan-123");
+    expect(r.accountId).toBe("acct-7");
+
+    // Without optional accountId
+    const noAccount: EventMap["session:started"] = {
+      agentId: "agent-1",
+      traceId: "trace-sess-002",
+      channelType: "discord",
+      channelId: "guild-22",
+      timestamp: Date.now(),
+    };
+    bus.emit("session:started", noAccount);
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler.mock.calls[1]![0].accountId).toBeUndefined();
+  });
+
+  it("session:ended delivers totalTurns, token totals, durationMs, exitReason", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["session:ended"] = {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-end-001",
+      totalTurns: 5,
+      totalInputTokens: 12_000,
+      totalOutputTokens: 3_500,
+      durationMs: 18_750,
+      exitReason: "completed",
+      timestamp: Date.now(),
+    };
+
+    bus.on("session:ended", handler);
+    bus.emit("session:ended", payload);
+
+    const r = handler.mock.calls[0]![0] as EventMap["session:ended"];
+    expect(r.totalTurns).toBe(5);
+    expect(r.totalInputTokens).toBe(12_000);
+    expect(r.totalOutputTokens).toBe(3_500);
+    expect(r.durationMs).toBe(18_750);
+    expect(r.exitReason).toBe("completed");
+  });
+
+  it("memory:injected delivers hitCount, charsInjected, trustTags array", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["memory:injected"] = {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-mem-001",
+      hitCount: 3,
+      charsInjected: 512,
+      trustTags: ["learned", "system"],
+      timestamp: Date.now(),
+    };
+
+    bus.on("memory:injected", handler);
+    bus.emit("memory:injected", payload);
+
+    const r = handler.mock.calls[0]![0] as EventMap["memory:injected"];
+    expect(r.hitCount).toBe(3);
+    expect(r.charsInjected).toBe(512);
+    expect(r.trustTags).toEqual(["learned", "system"]);
+  });
+
+  it("tool:timeout delivers toolName, timeoutMs, optional toolCallId for dedup with tool:executed", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const withCallId: EventMap["tool:timeout"] = {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-tout-001",
+      toolName: "bash",
+      toolCallId: "tc-77",
+      timeoutMs: 30_000,
+      timestamp: Date.now(),
+    };
+
+    bus.on("tool:timeout", handler);
+    bus.emit("tool:timeout", withCallId);
+
+    const r = handler.mock.calls[0]![0] as EventMap["tool:timeout"];
+    expect(r.toolName).toBe("bash");
+    expect(r.toolCallId).toBe("tc-77");
+    expect(r.timeoutMs).toBe(30_000);
+
+    // toolCallId optional — bridge may omit when SDK didn't supply it
+    const noCallId: EventMap["tool:timeout"] = {
+      agentId: "agent-1",
+      traceId: "trace-tout-002",
+      toolName: "exec",
+      timeoutMs: 60_000,
+      timestamp: Date.now(),
+    };
+    bus.emit("tool:timeout", noCallId);
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler.mock.calls[1]![0].toolCallId).toBeUndefined();
+  });
+});
+
 describe("tool:install_detour_detected event type", () => {
   it("type-checks against the closed shape", () => {
     const bus = new TypedEventBus();

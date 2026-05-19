@@ -59,7 +59,7 @@ jobs:
         # TS6202 (project-reference cycle) without requiring a root tsconfig.json.
         run: pnpm tsc -b --dry packages/comis
 
-      - name: Architecture tests (explicit visibility — GUARDRAILS-11)
+      - name: Architecture tests (explicit visibility)
         run: pnpm test:architecture
 
       - name: Lint (security)
@@ -89,7 +89,7 @@ jobs:
             test/integration/install-detour-advise-e2e.test.ts \
             test/integration/tooling-fixture-render.test.ts
 
-      - name: Tarball smoke (GUARDRAILS-12)
+      - name: Tarball smoke
         run: pnpm smoke:tarball
 
       - name: Audit dependencies

@@ -28,7 +28,8 @@ describe("section-registry parity", () => {
     it("getConfigSections() returns the canonical section list", () => {
       expect(stableStringify(getConfigSections())).toMatchSnapshot();
     });
-    // The 16 schema-serializer-view sections — each as its own snapshot for reviewability.
+    // The 17 schema-serializer-view sections — each as its own snapshot for reviewability.
+    // `diagnostics` sits between `monitoring` and `browser`.
     for (const section of [
       "agents",
       "channels",
@@ -40,6 +41,7 @@ describe("section-registry parity", () => {
       "gateway",
       "integrations",
       "monitoring",
+      "diagnostics",
       "browser",
       "models",
       "providers",
@@ -57,7 +59,8 @@ describe("section-registry parity", () => {
     it("getFieldMetadata() — full flat array", () => {
       expect(stableStringify(getFieldMetadata())).toMatchSnapshot();
     });
-    // The 18 field-metadata-view sections.
+    // The 19 field-metadata-view sections.
+    // `diagnostics` sits between `monitoring` and `plugins`.
     for (const section of [
       "agents",
       "channels",
@@ -69,6 +72,7 @@ describe("section-registry parity", () => {
       "gateway",
       "integrations",
       "monitoring",
+      "diagnostics",
       "plugins",
       "queue",
       "streaming",

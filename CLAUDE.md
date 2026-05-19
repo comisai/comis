@@ -6,7 +6,7 @@ This file is a Claude-specific operational supplement. If anything here conflict
 
 ## Project
 
-Comis is a security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo, 14 packages, hexagonal architecture (ports + adapters). Node.js >= 22, Linux-only.
+Comis is a security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo, 15 packages, hexagonal architecture (ports + adapters). Node.js >= 22, Linux-only.
 
 ## Build & Test
 
@@ -96,7 +96,7 @@ git branch -D worktree-<name>
 
 Steps to ship `vX.Y.Z`:
 
-1. **Bump all 14 `packages/*/package.json` to `X.Y.Z`** — they must move together. The umbrella `comisai` package (in `packages/comis/`) bundles the others, so version drift between them surfaces at publish time, not in local builds.
+1. **Bump all 15 `packages/*/package.json` to `X.Y.Z`** — they must move together. The umbrella `comisai` package (in `packages/comis/`) bundles the others, so version drift between them surfaces at publish time, not in local builds.
 
 2. **Update version-pinned docs.** Sweep with:
    ```bash

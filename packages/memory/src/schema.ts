@@ -293,6 +293,26 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     );
     CREATE INDEX IF NOT EXISTS idx_obs_channel_timestamp ON obs_channel_snapshots(timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_channel_type ON obs_channel_snapshots(channel_type, timestamp);
+
+    -- SystemPromptReport persistence.
+    -- Full JSON payload stored after sanitizeForPersistence pipeline.
+    -- PRIMARY KEY (agent_id, session_id, run_id, generated_at) — run_id is
+    -- nullable; composite key tolerates multiple reports per session.
+    CREATE TABLE IF NOT EXISTS system_prompt_reports (
+      agent_id        TEXT NOT NULL,
+      tenant_id       TEXT,
+      session_id      TEXT NOT NULL,
+      run_id          TEXT,
+      generated_at    INTEGER NOT NULL,
+      provider        TEXT,
+      model           TEXT,
+      system_chars    INTEGER NOT NULL,
+      system_sha256   TEXT NOT NULL,
+      report_json     TEXT NOT NULL,
+      PRIMARY KEY (agent_id, session_id, run_id, generated_at)
+    );
+    CREATE INDEX IF NOT EXISTS idx_spr_session
+      ON system_prompt_reports(agent_id, session_id, generated_at);
   `);
 
   // --- Delivery queue table ---

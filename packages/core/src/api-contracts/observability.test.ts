@@ -42,11 +42,11 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 18 entries (the 18 methods in obs-handlers.ts)", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(18);
+  it("OBSERVABILITY_CONTRACTS has exactly 21 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(21);
   });
 
-  it("all 18 contracts are admin-scoped", () => {
+  it("all 21 contracts are admin-scoped", () => {
     for (const c of OBSERVABILITY_CONTRACTS) {
       expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
     }
@@ -62,6 +62,8 @@ describe("observability-domain contracts", () => {
       "obs.billing.bySession",
       "obs.billing.total",
       "obs.billing.usage24h",
+      // Durable cache-stats window aggregator.
+      "obs.cacheStats.window",
       "obs.channels.all",
       "obs.channels.get",
       "obs.channels.stale",
@@ -73,6 +75,9 @@ describe("observability-domain contracts", () => {
       "obs.getCacheStats",
       "obs.reset",
       "obs.reset.table",
+      // SystemPromptReport surface.
+      "obs.systemPromptReport.latest",
+      "obs.systemPromptReport.list",
     ]);
   });
 

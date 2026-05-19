@@ -4,9 +4,9 @@
  *
  * Asserts three invariants:
  *   1. Every packages/*\/tsconfig.json `references` block aligns with the
- *      §2.2 target package graph (closed set; no allowlist).
+ *      target package graph (closed set; no allowlist).
  *   2. Every packages/*\/package.json `dependencies` (filtered to @comis/*)
- *      aligns with the §2.2 target graph (closed set; no allowlist).
+ *      aligns with the target graph (closed set; no allowlist).
  *   3. The two graphs (#1 + #2) match each other — drift between
  *      tsconfig refs and package.json deps is a covert source of cycles
  *      and stale-build risk. Filtered through DRIFT_ALLOWLIST for
@@ -16,8 +16,8 @@
  * Also asserts:
  *   - test/architecture/tsconfig.madge.json `paths` block has exactly
  *     14 entries (12 workspace packages + 2 skills subpaths; `web` and
- *     `comis` umbrella excluded). Pitfall-5 regression coverage; the
- *     count grew from 12 to 14 with the skills package split.
+ *     `comis` umbrella excluded). Regression coverage; the count grew
+ *     from 12 to 14 with the skills package split.
  *
  * NOTE: the dist-mode madge gate AND `tsc -b --dry` gate live in
  * .github/workflows/ci.yml — NOT here. This file's scope is
@@ -79,7 +79,7 @@ const WORKSPACE_PACKAGES = [
 type WorkspacePackage = (typeof WORKSPACE_PACKAGES)[number];
 
 /**
- * §2.2 target package graph.
+ * Target package graph.
  *
  * Each value is the set of @comis/* packages that the key package SHOULD
  * reference in BOTH tsconfig.json `references` and package.json `dependencies`.
@@ -100,7 +100,15 @@ type WorkspacePackage = (typeof WORKSPACE_PACKAGES)[number];
 const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   shared: new Set(),
   core: new Set(["shared"]),
-  infra: new Set(["shared", "core"]),
+  // infra → observability is a static first-class arrow.
+  // `packages/infra/src/logging/redact-transport.ts` is a static re-export
+  // of `@comis/observability/dist/redact/pino-redact-transport.js`
+  // (previously a `createRequire(import.meta.url)` runtime shim that hid
+  // the dep from `tsc`). The fs-safe primitives that anchored the
+  // bidirectional cycle moved from @comis/infra to @comis/observability,
+  // so the graph is now one-arrow:
+  //   @comis/core ← @comis/observability ← @comis/infra
+  infra: new Set(["shared", "core", "observability"]),
   memory: new Set(["shared", "core"]),
   scheduler: new Set(["shared", "core"]),
   // skills: no infra edge. Logger type imports from @comis/core; isDocker
@@ -111,26 +119,31 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // contract types canonically live in @comis/core. No @comis/memory edge:
   // agent's type-only imports resolve through @comis/core; the OAuth-store
   // value-import lives in daemon.
-  agent: new Set(["shared", "core", "scheduler"]),
+  //
+  // @comis/observability runtime edge: pi-executor.ts imports
+  // `createTrajectoryRecorder` and `attachTrajectoryToEventBus` for the
+  // per-session trajectory writer. Direction is forward
+  // (agent → observability → infra/core/shared); no cycle.
+  agent: new Set(["shared", "core", "observability", "scheduler"]),
   // channels: no agent dep — the shared/ pipeline carriers (inbound +
   // execution) moved to @comis/orchestrator. No @comis/infra edge either.
   channels: new Set(["shared", "core"]),
-  // orchestrator: depends on shared, core, agent, channels per design §2.2
-  // + §9.5 acceptance criteria.
+  // orchestrator: depends on shared, core, agent, channels.
   orchestrator: new Set(["shared", "core", "agent", "channels"]),
   // gateway: no agent OAuth-helpers back-edge — OAuth helpers live in
   // @comis/core.
   gateway: new Set(["shared", "core"]),
-  // cli: no longer depends on @comis/infra, @comis/agent, or @comis/memory.
-  // Every CLI @comis/agent import was retargeted to @comis/core; the
-  // secrets + auth subcommands migrated to daemon RPC. cli's workspace
-  // dep graph collapses to {shared, core}.
-  cli: new Set(["shared", "core"]),
+  // cli: depends on shared, core, and observability — CLI's config-write
+  // hook in sync-tooling needs the config-audit JSONL append helpers.
+  // Other historical deps (@comis/infra, @comis/agent, @comis/memory)
+  // remain absent — those flows moved to daemon RPC.
+  cli: new Set(["shared", "core", "observability"]),
   daemon: new Set([
     "shared",
     "core",
     "infra",
     "memory",
+    "observability",
     "scheduler",
     "skills",
     "agent",
@@ -147,13 +160,23 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
  * Format: `"${packageShortName}:${depShortName}"` — both strings have the
  * `@comis/` prefix STRIPPED.
  *
- * The allowlist is currently empty.
+ * Currently empty: the last divergence (`infra:observability`) was closed by:
+ *   1. Moving fs-safe.ts from @comis/infra to @comis/observability, which
+ *      removed the `observability → infra` arrow that made the static
+ *      back-edge cyclic.
+ *   2. Rewriting `packages/infra/src/logging/redact-transport.ts` from a
+ *      `createRequire(import.meta.url)` runtime shim to a static re-export,
+ *      making `infra → observability` a first-class TypeScript type-graph
+ *      arrow visible to both `tsc --build` and `madge`.
+ *   3. Adding `{ "path": "../observability" }` to
+ *      `packages/infra/tsconfig.json` references, so the tsconfig and
+ *      package.json now agree (no drift).
  *
  * The allowlist mechanism mirrors test/support/architecture-allowlist.ts
  * shrink-only semantics: entries can be REMOVED but should NOT be ADDED
  * without a refactor PR + design-doc citation. PR review catches additions.
  */
-const DRIFT_ALLOWLIST: ReadonlySet<string> = new Set();
+const DRIFT_ALLOWLIST: ReadonlySet<string> = new Set([]);
 
 function readPackageJsonDeps(pkg: string): Set<string> {
   const path = resolve(REPO_ROOT, `packages/${pkg}/package.json`);
@@ -213,7 +236,7 @@ describe("architecture-graph -- dual-graph alignment", () => {
     }
   });
 
-  it("every packages/*/tsconfig.json `references` matches §2.2 target graph", () => {
+  it("every packages/*/tsconfig.json `references` matches the target graph", () => {
     const violations: string[] = [];
     for (const pkg of WORKSPACE_PACKAGES) {
       const actual = readTsconfigRefs(pkg);
@@ -223,7 +246,7 @@ describe("architecture-graph -- dual-graph alignment", () => {
       for (const requiredDep of expected) {
         if (!actual.has(requiredDep)) {
           violations.push(
-            `packages/${pkg}/tsconfig.json missing reference to ../${requiredDep} (per §2.2 target)`,
+            `packages/${pkg}/tsconfig.json missing reference to ../${requiredDep} (per target graph)`,
           );
         }
       }
@@ -235,7 +258,7 @@ describe("architecture-graph -- dual-graph alignment", () => {
             );
           } else {
             violations.push(
-              `packages/${pkg}/tsconfig.json has unexpected reference to ../${extraDep} (not in §2.2 target)`,
+              `packages/${pkg}/tsconfig.json has unexpected reference to ../${extraDep} (not in target graph)`,
             );
           }
         }
@@ -245,18 +268,18 @@ describe("architecture-graph -- dual-graph alignment", () => {
       violations,
       formatViolations({
         description:
-          "tsconfig.json `references` blocks must align with the §2.2 target package graph (CLOSED SET — no allowlist).",
+          "tsconfig.json `references` blocks must align with the target package graph (CLOSED SET — no allowlist).",
         violations: violations.map(structureViolation),
         suggestedFix:
           'Add the missing `{ "path": "../<dep>" }` reference, OR remove the unknown reference. If the divergence is intentional, update TARGET_GRAPH in this file with an inline rationale.',
         designRef:
-          "design §2.2 (target package graph) — closed set, no allowlist",
+          "target package graph — closed set, no allowlist",
         allowlistRef: "(none — closed set)",
       }),
     ).toEqual([]);
   });
 
-  it("every packages/*/package.json @comis/* `dependencies` matches §2.2 target graph", () => {
+  it("every packages/*/package.json @comis/* `dependencies` matches the target graph", () => {
     const violations: string[] = [];
     for (const pkg of WORKSPACE_PACKAGES) {
       const actual = readPackageJsonDeps(pkg);
@@ -264,7 +287,7 @@ describe("architecture-graph -- dual-graph alignment", () => {
       for (const requiredDep of expected) {
         if (!actual.has(requiredDep)) {
           violations.push(
-            `packages/${pkg}/package.json missing @comis/${requiredDep} in dependencies (per §2.2 target)`,
+            `packages/${pkg}/package.json missing @comis/${requiredDep} in dependencies (per target graph)`,
           );
         }
       }
@@ -281,7 +304,7 @@ describe("architecture-graph -- dual-graph alignment", () => {
             );
           } else {
             violations.push(
-              `packages/${pkg}/package.json has unexpected @comis/${extraDep} dep (not in §2.2 target and not in DRIFT_ALLOWLIST)`,
+              `packages/${pkg}/package.json has unexpected @comis/${extraDep} dep (not in target graph and not in DRIFT_ALLOWLIST)`,
             );
           }
         }
@@ -291,11 +314,11 @@ describe("architecture-graph -- dual-graph alignment", () => {
       violations,
       formatViolations({
         description:
-          "package.json @comis/* `dependencies` must align with the §2.2 target package graph (CLOSED SET — no allowlist).",
+          "package.json @comis/* `dependencies` must align with the target package graph (CLOSED SET — no allowlist).",
         violations: violations.map(structureViolation),
         suggestedFix:
           'Add the missing `"@comis/<dep>": "workspace:*"` to dependencies, OR remove the unknown dep. If the divergence is intentional, update TARGET_GRAPH or DRIFT_ALLOWLIST in this file with an inline rationale.',
-        designRef: "design §2.2 (closed set)",
+        designRef: "target package graph (closed set)",
         allowlistRef: "(none — closed set; DRIFT_ALLOWLIST is empty)",
       }),
     ).toEqual([]);
@@ -334,7 +357,7 @@ describe("architecture-graph -- dual-graph alignment", () => {
         suggestedFix:
           "Both files must list the same set of @comis/* deps. If a package needs a type-only reference (no runtime), keep it in tsconfig refs AND package.json devDependencies (or use workspace:* in dependencies for runtime). " +
           "For intentional divergence, see DRIFT_ALLOWLIST in this file — adding entries requires a PR review + design-doc citation.",
-        designRef: "design §2.2 (closed set)",
+        designRef: "target package graph (closed set)",
         allowlistRef: "(none — closed set; DRIFT_ALLOWLIST is empty)",
       }),
     ).toEqual([]);
@@ -371,7 +394,7 @@ describe("architecture-graph -- dual-graph alignment", () => {
         violations: stale.map(structureViolation),
         suggestedFix:
           "Remove the stale entry from DRIFT_ALLOWLIST. The allowlist follows shrink-only semantics by convention; an entry whose divergence is gone must be pruned in the same PR that closed the divergence.",
-        designRef: "design §2.2",
+        designRef: "target package graph",
         allowlistRef: "DRIFT_ALLOWLIST (shrink-only by convention)",
       }),
     ).toEqual([]);

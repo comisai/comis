@@ -1,6 +1,6 @@
 # Tool-First Replay Fixture
 
-Reproduces the v1 failure mode (model installs `pip install market-data-lib` despite a connected `finance-data` MCP server) so Phases 17-24 can drive red tests against a deterministic, provider-neutral surface.
+Reproduces the v1 failure mode (model installs `pip install market-data-lib` despite a connected `finance-data` MCP server) so downstream tests can drive red tests against a deterministic, provider-neutral surface.
 
 ## Canonical test invocation
 
@@ -23,20 +23,20 @@ pnpm --filter @comis/agent build && pnpm --filter @comis/agent test
 | File | Purpose |
 |------|---------|
 | `messages.json` | pi-ai `Message[]` log of the v1 failure scenario. |
-| `tooling-config.yaml` | Operator YAML matching design §9 (`finance-data` MCP hint with `replacesPackages`). |
+| `tooling-config.yaml` | Operator YAML (`finance-data` MCP hint with `replacesPackages`). |
 | `stub-mcp-server.ts` | Programmatic 10-tool stub with `setConnected(bool)` toggle. |
-| `fixture.test.ts` | Smoke test asserting fixture loads cleanly + invariants (lands in Plan 16.02). |
+| `fixture.test.ts` | Smoke test asserting fixture loads cleanly + invariants. |
 
 ## Downstream consumers
 
-| Phase | Files used | What it asserts |
-|-------|-----------|-----------------|
-| 17    | `tooling-config.yaml` | `ToolingConfigSchema` parses a real operator YAML without re-shaping. |
-| 20    | `tooling-config.yaml`, `stub-mcp-server.ts` | Renderer groups `finance-data` tools under `data-fetching-financial` cluster. |
-| 22    | `messages.json`, `tooling-config.yaml`, `stub-mcp-server.ts` | Install-detour parser detects `pip install market-data-lib` overlap with `finance-data`. |
-| 23    | `stub-mcp-server.ts` | `getConnectedMcpServers()` filters by `setConnected(false)`. |
-| 24    | All four | Full provider-gated replay round; tracks behavioral metrics. |
-| 19    | All four (grep) | Architecture-grep test scans fixtures for forbidden tokens. |
+| Files used | What it asserts |
+|-----------|-----------------|
+| `tooling-config.yaml` | `ToolingConfigSchema` parses a real operator YAML without re-shaping. |
+| `tooling-config.yaml`, `stub-mcp-server.ts` | Renderer groups `finance-data` tools under `data-fetching-financial` cluster. |
+| `messages.json`, `tooling-config.yaml`, `stub-mcp-server.ts` | Install-detour parser detects `pip install market-data-lib` overlap with `finance-data`. |
+| `stub-mcp-server.ts` | `getConnectedMcpServers()` filters by `setConnected(false)`. |
+| All four | Full provider-gated replay round; tracks behavioral metrics. |
+| All four (grep) | Architecture-grep test scans fixtures for forbidden tokens. |
 
 ## Why provider-neutral?
 

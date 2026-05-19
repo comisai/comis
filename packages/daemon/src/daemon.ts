@@ -404,7 +404,7 @@ async function stageFoundation(input: {
         return { obsStore: store, obsPersistence: persistence };
       })()
     : undefined;
-  const obsStore = obsBundle?.obsStore;
+  const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
 
   // Create context store + daemon-level runtime registries
@@ -517,7 +517,7 @@ async function stageAgents(input: {
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
-    secretsCrypto, secretsDb,
+    secretsCrypto, secretsDb, obsStore, // thread into setupAgents
   } = foundation;
   const _setupMedia = overrides.setupMedia ?? setupMedia;
 
@@ -570,7 +570,7 @@ async function stageAgents(input: {
     deliveryMirrorConfig: container.config.deliveryMirror
       ? { maxEntriesPerInjection: container.config.deliveryMirror.maxEntriesPerInjection, maxCharsPerInjection: container.config.deliveryMirror.maxCharsPerInjection }
       : undefined,
-    geminiCacheManager,  // Gemini cache lifecycle manager
+    geminiCacheManager, obsStore,  // SystemPromptReport persistence
     // Resolve platform char limit via deferred channelPlugins ref
     getChannelMaxChars: (channelType: string) => {
       const plugin = channelPluginsRef.ref?.get(channelType);
@@ -1136,10 +1136,16 @@ async function stageShutdown(input: {
     startupStartMs, instanceId,
   });
 
-  // Snapshot current config as last-known-good after successful startup
+  // Snapshot current config as last-known-good after successful startup.
+  // Honor diagnostics.configAudit.enabled.
+  // `!== false` semantics preserve the schema's default-true contract;
+  // operators who omit the knob or explicitly set true see the audit
+  // line; only `enabled: false` skips the JSONL append.
   if (configPaths.length > 0) {
     const activeConfigPath = configPaths[configPaths.length - 1]!;
-    const lkg = saveLastKnownGood(activeConfigPath);
+    const auditEnabled =
+      container.config.diagnostics?.configAudit?.enabled !== false;
+    const lkg = saveLastKnownGood(activeConfigPath, auditEnabled);
     if (lkg.saved) {
       daemonLogger.debug({ lkgPath: lkg.path }, "Last-known-good config snapshot saved");
     }

@@ -52,7 +52,7 @@ describe("Config Schema Validation", () => {
       // Snapshot-style guard: bump this count when a new top-level section is
       // added so the change surfaces in code review. Count reflects all scalars
       // plus all object sections currently in AppConfigSchema.shape.
-      expect(allKeys).toHaveLength(40);
+      expect(allKeys).toHaveLength(41);
     });
 
     it("empty config {} produces valid defaults for all sections", () => {

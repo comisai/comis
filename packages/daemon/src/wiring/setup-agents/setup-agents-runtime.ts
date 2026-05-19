@@ -508,6 +508,34 @@ export async function setupSingleAgent(
     tenantId: container.config.tenantId,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
+    // Thread diagnostics.trajectory into the per-session trajectory
+    // recorder + bridge wiring. Handles enabled/dir/maxFileBytes plumbing
+    // and threads `eventTypes` which the bridge consumes as a
+    // subscription-time filter
+    // (packages/observability/src/trajectory/event-bus-bridge.ts).
+    //
+    // Operators who set `diagnostics.trajectory.enabled: false` in YAML
+    // disable the recorder entirely.
+    trajectoryConfig: container.config.diagnostics?.trajectory
+      ? {
+          enabled: container.config.diagnostics.trajectory.enabled,
+          dir: container.config.diagnostics.trajectory.dir,
+          maxFileBytes: container.config.diagnostics.trajectory.maxFileBytes,
+          eventTypes: container.config.diagnostics.trajectory.eventTypes,
+        }
+      : undefined,
+    // Forward AppConfig.diagnostics.cacheTrace into the executor. The
+    // per-session cache-trace recorder reads this; when omitted or
+    // `enabled: false`, the recorder is a no-op.
+    cacheTraceConfig: container.config.diagnostics?.cacheTrace
+      ? {
+          enabled: container.config.diagnostics.cacheTrace.enabled,
+          filePath: container.config.diagnostics.cacheTrace.filePath,
+          includeMessages: container.config.diagnostics.cacheTrace.includeMessages,
+          includePrompt: container.config.diagnostics.cacheTrace.includePrompt,
+          includeSystem: container.config.diagnostics.cacheTrace.includeSystem,
+        }
+      : undefined,
     geminiCacheManager: deps.geminiCacheManager,  // Gemini cache lifecycle manager
     getChannelMaxChars: deps.getChannelMaxChars,  // Platform char limit for verbosity hints
     backgroundTaskManager: deps.backgroundTaskManager,  // Auto-background middleware
@@ -521,6 +549,16 @@ export async function setupSingleAgent(
     clock: deps.clock,
     env: deps.env,
     timers: deps.timers,
+    // Thread ObservabilityStore through to prompt-assembly for production
+    // SystemPromptReport persistence. Without this thread, the
+    // build+persist block at prompt-assembly.ts:920 is a no-op in
+    // production (the library + isolated tests pass, but the operator
+    // cannot answer "why didn't the model use IDENTITY.md?" against a
+    // real daemon run).
+    // The memory.sessionStore (createSessionStore) does NOT implement
+    // SessionStoreReportSink — the per-session ledger sink is omitted
+    // here; observabilityStore is the load-bearing sink.
+    observabilityStore: deps.obsStore,
   });
 
   agentLogger.debug(

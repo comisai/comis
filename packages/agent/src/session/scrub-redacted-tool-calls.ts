@@ -33,6 +33,7 @@
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 
 /** Literal placeholder written by sanitizeSessionSecrets. */
+// eslint-disable-next-line no-restricted-syntax -- session-scrub placeholder constant (not the Pino censor literal)
 const REDACTION_PLACEHOLDER = "[REDACTED]";
 
 /** Result of scrubbing redacted tool calls. */

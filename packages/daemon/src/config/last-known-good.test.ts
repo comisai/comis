@@ -14,14 +14,27 @@ import {
 describe("last-known-good config", () => {
   let tmpDir: string;
   let configPath: string;
+  let auditLogPath: string;
+  let prevAuditEnv: string | undefined;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "lkg-test-"));
     configPath = join(tmpDir, "config.yaml");
+    // Redirect the daemon-wide config-audit log into the tmpdir so the
+    // hook does not pollute ~/.comis/logs/ during tests.
+    auditLogPath = join(tmpDir, "config-audit.jsonl");
+    // eslint-disable-next-line no-restricted-syntax -- test fixture env override
+    prevAuditEnv = process.env["COMIS_CONFIG_AUDIT_LOG"];
+    // eslint-disable-next-line no-restricted-syntax -- test fixture env override
+    process.env["COMIS_CONFIG_AUDIT_LOG"] = auditLogPath;
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+    // eslint-disable-next-line no-restricted-syntax -- test fixture env restore
+    if (prevAuditEnv === undefined) delete process.env["COMIS_CONFIG_AUDIT_LOG"];
+    // eslint-disable-next-line no-restricted-syntax -- test fixture env restore
+    else process.env["COMIS_CONFIG_AUDIT_LOG"] = prevAuditEnv;
   });
 
   describe("lastKnownGoodPath", () => {
@@ -158,6 +171,98 @@ describe("last-known-good config", () => {
       let exitCode = -1;
       handleRestoreFlag([], (code) => { exitCode = code; });
       expect(exitCode).toBe(1);
+    });
+  });
+
+  describe("config-audit hook", () => {
+    it("writes a config-audit JSONL line for a successful save", () => {
+      writeFileSync(configPath, "key: value\n");
+      const result = saveLastKnownGood(configPath);
+      expect(result.saved).toBe(true);
+
+      // The audit log lives at the env-override path.
+      expect(existsSync(auditLogPath)).toBe(true);
+      const log = readFileSync(auditLogPath, "utf-8").trim().split("\n");
+      expect(log.length).toBe(1);
+      const record = JSON.parse(log[0]!) as {
+        source: string;
+        result: string;
+        configPath: string;
+        phase: string;
+      };
+      expect(record.source).toBe("last-known-good-save");
+      expect(record.result).toBe("rename");
+      expect(record.configPath).toBe(result.path);
+      expect(record.phase).toBe("write");
+    });
+
+    it("writes a config-audit JSONL line for a successful restore", () => {
+      writeFileSync(configPath, "good: true\n");
+      saveLastKnownGood(configPath);
+      // Drop the save record so the restore line is the only one
+      // visible in the assertion below.
+      writeFileSync(auditLogPath, "");
+
+      writeFileSync(configPath, "bad: true\n");
+      const result = restoreLastKnownGood(configPath);
+      expect(result.restored).toBe(true);
+
+      const log = readFileSync(auditLogPath, "utf-8").trim().split("\n");
+      expect(log.length).toBe(1);
+      const record = JSON.parse(log[0]!) as { source: string; result: string };
+      expect(record.source).toBe("last-known-good-restore");
+      expect(record.result).toBe("rename");
+    });
+  });
+
+  // saveLastKnownGood/restoreLastKnownGood honor an auditEnabled parameter
+  // — when false the audit JSONL append is skipped but the LKG copy still
+  // runs.
+  describe("config-audit hook honors auditEnabled", () => {
+    it("saveLastKnownGood with auditEnabled: false skips the audit JSONL append", () => {
+      writeFileSync(configPath, "key: value\n");
+      const result = saveLastKnownGood(configPath, false);
+      // LKG copy still happens — the audit log is a forensics aid, not
+      // a gate on the snapshot itself.
+      expect(result.saved).toBe(true);
+      expect(existsSync(result.path)).toBe(true);
+      expect(readFileSync(result.path, "utf-8")).toBe("key: value\n");
+
+      // Audit log must NOT have been written. If pre-existing, must
+      // still be empty.
+      if (existsSync(auditLogPath)) {
+        expect(readFileSync(auditLogPath, "utf-8")).toBe("");
+      } else {
+        expect(existsSync(auditLogPath)).toBe(false);
+      }
+    });
+
+    it("restoreLastKnownGood with auditEnabled: false skips the audit JSONL append but still copies the snapshot", () => {
+      writeFileSync(configPath, "good: true\n");
+      saveLastKnownGood(configPath);
+      // Clear the audit log so we can detect new appends.
+      writeFileSync(auditLogPath, "");
+
+      writeFileSync(configPath, "bad: true\n");
+      const result = restoreLastKnownGood(configPath, false);
+      expect(result.restored).toBe(true);
+      // Restore happened: configPath now matches the saved snapshot.
+      expect(readFileSync(configPath, "utf-8")).toBe("good: true\n");
+      // No new audit lines appended.
+      expect(readFileSync(auditLogPath, "utf-8")).toBe("");
+    });
+
+    it("saveLastKnownGood with auditEnabled omitted writes the audit line (default = true preserves prior behavior)", () => {
+      // Symmetric positive case that gates the negative tests above.
+      // The default-parameter contract must keep existing callers
+      // producing the audit record.
+      writeFileSync(configPath, "key: value\n");
+      const result = saveLastKnownGood(configPath);
+      expect(result.saved).toBe(true);
+
+      expect(existsSync(auditLogPath)).toBe(true);
+      const log = readFileSync(auditLogPath, "utf-8").trim().split("\n");
+      expect(log.length).toBe(1);
     });
   });
 });

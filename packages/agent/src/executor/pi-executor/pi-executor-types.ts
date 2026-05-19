@@ -175,4 +175,41 @@ export interface PiExecutorDeps {
   env: EnvPort;
   /** Timer scheduling. Required by executor-prompt-runner (race timers) and prompt-timeout. */
   timers: TimerPort;
+  /**
+   * Optional trajectory writer configuration. When omitted
+   * or `enabled: false`, the per-session trajectory recorder is a
+   * no-op. Forwarded from AppConfig.diagnostics.trajectory by daemon
+   * wiring; the `dir` override threads through to
+   * `resolveTrajectoryFilePath` (else COMIS_TRAJECTORY_DIR env or
+   * workspaceDir/cwd fallbacks apply).
+   */
+  trajectoryConfig?: {
+    readonly enabled?: boolean;
+    readonly dir?: string;
+    readonly maxFileBytes?: number;
+    readonly eventTypes?: ReadonlyArray<string>;
+  };
+  /**
+   * Cache-trace writer configuration. Forwarded from
+   * AppConfig.diagnostics.cacheTrace by daemon wiring. When omitted or
+   * `enabled: false`, the per-session cache-trace recorder is a no-op.
+   * The `filePath` override threads through to
+   * `resolveCacheTraceFilePath` (else the default
+   * `~/.comis/logs/cache-trace.jsonl` applies).
+   */
+  cacheTraceConfig?: {
+    readonly enabled?: boolean;
+    readonly filePath?: string;
+    readonly includeMessages?: boolean;
+    readonly includePrompt?: boolean;
+    readonly includeSystem?: boolean;
+  };
+  /**
+   * ObservabilityStore for SystemPromptReport SQLite
+   * persistence. Forwarded from daemon composition root through
+   * SingleAgentDeps.obsStore. When undefined (persistence disabled),
+   * the build+persist block in prompt-assembly.ts:920 is a no-op —
+   * production traffic produces no reports without this dep.
+   */
+  observabilityStore?: import("@comis/observability").ObservabilityStoreLike;
 }

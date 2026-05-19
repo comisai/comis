@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Composition-root invariant (GUARDRAILS-03 + GUARDRAILS-04).
+ * Composition-root invariant.
  *
  * Asserts that production source value-imports `bootstrap` from `@comis/core`
  * ONLY from `packages/daemon/src/daemon.ts` — every other production import
  * MUST be type-only (`import type { bootstrap } from "@comis/core"`) or
  * MUST live inside the umbrella facade re-export allowlist
- * (`packages/comis/src/{core,index}.ts` — per RES-ARCH-10).
+ * (`packages/comis/src/{core,index}.ts`).
  *
  * Type-only imports are allowed anywhere; the test uses the
  * `valueImportsOnly: true` flag on `findForbiddenImports` to filter out
@@ -28,15 +28,15 @@ const ALLOWED_DAEMON_BOOTSTRAP_FILE = resolve(
   "daemon/src/daemon.ts",
 );
 
-// Umbrella facade re-exports the @comis/core barrel; these are allowed per
-// RES-ARCH-10 (the umbrella `comisai` package is the public surface for
-// downstream consumers, including `import * as core from "@comis/core"`).
+// Umbrella facade re-exports the @comis/core barrel; these are allowed
+// because the umbrella `comisai` package is the public surface for
+// downstream consumers, including `import * as core from "@comis/core"`.
 const FACADE_REEXPORT_ALLOWLIST: readonly string[] = [
   "packages/comis/src/core.ts",
   "packages/comis/src/index.ts",
 ] as const;
 
-describe("composition-root — single production bootstrap value-import (GUARDRAILS-03 + GUARDRAILS-04)", () => {
+describe("composition-root — single production bootstrap value-import", () => {
   it("only daemon/src/daemon.ts value-imports `bootstrap` from @comis/core (umbrella facade allowed)", () => {
     const { violations, checkedFiles } = findForbiddenImports({
       rootDir: PACKAGES_ROOT,
@@ -63,7 +63,7 @@ describe("composition-root — single production bootstrap value-import (GUARDRA
       offenders,
       formatViolations({
         description:
-          "production source must not value-import `bootstrap` from @comis/core (only daemon/src/daemon.ts may; umbrella facade re-exports allowed per RES-ARCH-10).",
+          "production source must not value-import `bootstrap` from @comis/core (only daemon/src/daemon.ts may; umbrella facade re-exports allowed).",
         violations: offenders.map((v) => ({
           file: v.file,
           line: v.line,
@@ -72,7 +72,7 @@ describe("composition-root — single production bootstrap value-import (GUARDRA
         })),
         suggestedFix:
           'Use `import type { ... } from "@comis/core"` if you need the type. If you need to CALL bootstrap, you are at the composition root — code belongs in `daemon/src/daemon.ts`.',
-        designRef: "design §13.3 (single-production-composition-root) / RES-ARCH-10 (umbrella facade allowance) / GUARDRAILS-03 + GUARDRAILS-04",
+        designRef: "single-production-composition-root invariant",
         allowlistRef: "FACADE_REEXPORT_ALLOWLIST (in-file)",
       }),
     ).toEqual([]);

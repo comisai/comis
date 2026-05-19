@@ -136,6 +136,26 @@ export default tseslint.config(
           message:
             "`module:` in a log payload duplicates the parent-bound `module` field on the emitted JSON line. Use `submodule:` instead (see LogFields in @comis/infra).",
         },
+
+        // Ban the literal "[REDACTED]" string in production source.
+        //
+        // The Pino redact censor uses an edge-keeping mask callback (see
+        // maskToken in @comis/observability/redact/edge-keeping.ts); the
+        // only sanctioned production use of "[REDACTED]" is the
+        // non-string fallback inside packages/infra/src/logging/
+        // logger.ts, which carries an `// eslint-disable-next-line
+        // no-restricted-syntax` annotation citing this rule.
+        //
+        // Mirrored by an architecture-test source-grep in
+        // test/architecture/source-rules.test.ts (defense-in-depth:
+        // ESLint catches the AST literal; the source-grep catches the
+        // bytes in case ESLint is bypassed). eslint-plugin-comis does
+        // NOT exist; we use no-restricted-syntax per house style.
+        {
+          selector: "Literal[value='[REDACTED]']",
+          message:
+            "The literal '[REDACTED]' is banned in production source. Use maskToken() from @comis/observability/redact instead. The one sanctioned use (non-string Pino censor fallback) carries an inline eslint-disable annotation.",
+        },
       ],
     },
   },
@@ -145,6 +165,12 @@ export default tseslint.config(
   // trip the `module:`-in-log-payload guard above when ESLint walks the
   // ObjectExpression-style type literal. Disable the rule for the
   // logging schema files only — every other source file remains guarded.
+  //
+  // Keeping the carve-out narrow. The non-string Pino censor fallback
+  // in logger.ts uses an inline `// eslint-disable-next-line
+  // no-restricted-syntax` instead of relying on this file-level
+  // carve-out, but the carve-out remains for the LogFields type-literal
+  // `module` property declaration.
   {
     files: ["packages/infra/src/logging/**/*.ts"],
     rules: {

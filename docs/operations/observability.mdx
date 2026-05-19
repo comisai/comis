@@ -221,17 +221,16 @@ conflicts between the two systems.
 
 ### Cache Observability Metrics
 
-Comis emits 8 cache observability metrics (OBSV-CACHE) covering breakpoint
-budget auditing, placement results, cache fence warnings, per-execution hit
-rates, cache break enrichment, session savings, and thinking block impact on
-cache fences. These metrics provide visibility into prompt cache behavior
-across all providers.
+Comis emits cache observability metrics covering breakpoint budget auditing,
+placement results, cache fence warnings, per-execution hit rates, cache break
+enrichment, session savings, and thinking block impact on cache fences. These
+metrics provide visibility into prompt cache behavior across all providers.
 
-#### OBSV-CACHE-01: Breakpoint Budget Audit
+#### Breakpoint Budget Audit
 
 - **Level:** INFO
 - **Fires:** Every Anthropic API call (pre-message-placement)
-- **Log message:** `"OBSV-CACHE-01: Breakpoint budget audit (pre-message-placement)"`
+- **Log message:** `"Breakpoint budget audit (pre-message-placement)"`
 - **Payload:**
   - `existingCount` -- total `cache_control` markers before placement
   - `slotsAvailable` -- remaining slots (4 - existingCount)
@@ -239,11 +238,11 @@ across all providers.
   - `toolBreakpoints` -- count on tool blocks
   - `modelId` -- the model being called
 
-#### OBSV-CACHE-02: Breakpoint Placement Result
+#### Breakpoint Placement Result
 
 - **Level:** DEBUG
 - **Fires:** After message breakpoint placement when placed > 0
-- **Log message:** `"OBSV-CACHE-02: Message breakpoints placed"`
+- **Log message:** `"Message breakpoints placed"`
 - **Payload:**
   - `placed` -- number of breakpoints placed in this call
   - `existingCount` -- pre-existing breakpoints
@@ -252,11 +251,10 @@ across all providers.
   - `modelId` -- the model being called
   - `strategy` -- breakpoint strategy: `"single"`, `"multi-zone"`, or `"auto"`
 
-#### OBSV-CACHE-03: Breakpoint Placement Skipped
+#### Breakpoint Placement Skipped
 
 <Info>
-The `OBSV-CACHE-03` tag does not appear as a literal string in source code.
-Its designed behavior is covered by two implementations:
+Breakpoint-placement-skipped behavior is covered by two implementations:
 
 1. **Threshold skip** (DEBUG) -- logged as `"Cache breakpoints skipped: token
    gaps below minTokens threshold"` when `placed=0` and messages >= 4.
@@ -265,18 +263,18 @@ Its designed behavior is covered by two implementations:
    are consumed.
 </Info>
 
-#### OBSV-CACHE-04: Cache Fence Unset Warning
+#### Cache Fence Unset Warning
 
 - **Level:** WARN
 - **Fires:** When no `cache_control` marker is found on ANY message in a conversation with >= 10 messages
-- **Log message:** `"OBSV-CACHE-04: Cache fence unset in mature session"`
+- **Log message:** `"Cache fence unset in mature session"`
 - **Payload:**
   - `messageCount` -- total messages in the conversation
   - `modelId` -- the model being called
   - `hint` -- `"No cache breakpoint found on any message..."`
   - `errorKind` -- `"performance"`
 
-#### OBSV-CACHE-05: Per-Execution Cache Hit Rate
+#### Per-Execution Cache Hit Rate
 
 - **Level:** INFO (added to existing "Execution complete" log -- zero new log lines)
 - **Fires:** After every agent execution completes
@@ -284,7 +282,7 @@ Its designed behavior is covered by two implementations:
 - **Payload:**
   - `cacheHitRate` -- percentage 0-100
 
-#### OBSV-CACHE-06: Cache Break Enrichment
+#### Cache Break Enrichment
 
 - **Level:** N/A (enriches existing `observability:cache_break` event payload and diff JSON files)
 - **Fires:** When a cache break is detected
@@ -295,7 +293,7 @@ Its designed behavior is covered by two implementations:
   - `breakpointBudget.message` -- breakpoints on message blocks
   - `breakpointBudget.sdkAuto` -- breakpoints placed by SDK automatically
 
-#### OBSV-CACHE-07: Session Cache Savings Rate
+#### Session Cache Savings Rate
 
 - **Level:** INFO (added to existing "Execution complete" log -- zero new log lines)
 - **Fires:** After every agent execution completes
@@ -303,13 +301,7 @@ Its designed behavior is covered by two implementations:
 - **Payload:**
   - `sessionCacheSavingsRate` -- percentage 0-100
 
-<Info>
-The original design specified a full session-end summary. The implementation
-is a per-execution cumulative savings rate added to the existing "Execution
-complete" log line.
-</Info>
-
-#### OBSV-CACHE-08: Thinking Block Cleaner Cache Fence Impact
+#### Thinking Block Cleaner Cache Fence Impact
 
 - **Level:** DEBUG (reported via callback, logged in context engine)
 - **Fires:** When thinking blocks are removed AND a cache fence is active (`cacheFenceIndex >= 0`)

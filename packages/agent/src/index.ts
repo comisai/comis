@@ -256,8 +256,8 @@ export type { ErrorCategory, ClassifiedError } from "./executor/error-classifier
 // Stream function wrapper chain
 // JSONL trace wrappers
 // Cache breakpoint injector
-export type { StreamFnWrapper, ConfigResolverConfig, RequestBodyInjectorConfig, CacheTraceConfig, ApiPayloadTraceConfig, TruncationSummary, ToolResultSizeBouncerResult } from "./executor/stream-wrappers/index.js";
-export { composeStreamWrappers, createConfigResolver, createRequestBodyInjector, createCacheTraceWriter, createApiPayloadTraceWriter, createToolResultSizeBouncer, clearSessionRenderedToolCache } from "./executor/stream-wrappers/index.js";
+export type { StreamFnWrapper, ConfigResolverConfig, RequestBodyInjectorConfig, ApiPayloadTraceConfig, TruncationSummary, ToolResultSizeBouncerResult } from "./executor/stream-wrappers/index.js";
+export { composeStreamWrappers, createConfigResolver, createRequestBodyInjector, createApiPayloadTraceWriter, createToolResultSizeBouncer, clearSessionRenderedToolCache } from "./executor/stream-wrappers/index.js";
 
 // Active run registry (tracks running sessions for mid-stream steering)
 export { createActiveRunRegistry } from "./executor/active-run-registry.js";

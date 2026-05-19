@@ -1,0 +1,434 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Trajectory event-type coverage test.
+ *
+ * Walks every `eventBus.emit("name", payload)` call site in
+ * `packages/agent/src/**` and `packages/orchestrator/src/**` (the two
+ * packages where EventMap producers live), confirms each captured
+ * event name is EITHER:
+ *
+ *   1. a key in `TRAJECTORY_BRIDGE_MAPPING` (the trajectory bridge
+ *      translates it into a trajectory event), OR
+ *   2. listed in `EVENTS_NOT_TRAJECTORY_MAPPED` — events deliberately
+ *      not on the trajectory (audit-log, internal lifecycle, etc.).
+ *
+ * The bidirectional check is:
+ *   - Emitted event not in EventMap → caught at compile time by
+ *     `TypedEventBus<EventMap>` (no test needed).
+ *   - Emitted event in EventMap but neither in bridge mapping nor in
+ *     allowlist → FAIL with file:line + actionable hint.
+ *
+ * BOTH `tool:executed` AND `tool:timeout` are present in
+ * TRAJECTORY_BRIDGE_MAPPING; downstream consumers dedupe by toolCallId.
+ * The architecture test enforces both have entries.
+ *
+ * Walker style mirrors `log-payload-checker.test.ts:79-100` (recursive
+ * readdirSync with the standard exclusion set: __tests__, dist,
+ * node_modules, __test-helpers, fixtures).
+ *
+ * @module
+ */
+import { describe, it, expect } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { TRAJECTORY_BRIDGE_MAPPING } from "@comis/observability";
+import { formatViolations } from "../support/architecture-helpers.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(here, "../..");
+
+/**
+ * EventBus events deliberately NOT on the trajectory. Updating this set
+ * is shrink-friendly — adding an event acknowledges it's intentionally
+ * out-of-scope for the per-session sidecar (audit-log path, internal
+ * registry signals, etc.).
+ *
+ * Add entries with one-line rationales. Removing entries is free; the
+ * test continues to pass as long as the event has a `TRAJECTORY_BRIDGE_MAPPING`
+ * entry OR stays in this set.
+ *
+ * Dedup contract reminder:
+ *   Both `tool:executed` AND `tool:timeout` are in TRAJECTORY_BRIDGE_MAPPING
+ *   for the SAME physical timeout. Downstream consumers join on toolCallId
+ *   to dedupe. The architecture test enforces both have bridge entries.
+ */
+const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
+  // -------------------------------------------------------------------
+  // Audit / governance — fed by daemon audit-log, not the trajectory.
+  // -------------------------------------------------------------------
+  "audit:event",
+
+  // -------------------------------------------------------------------
+  // Compaction signals — internal context-engine state, not user-
+  // visible turn-level observability.
+  // -------------------------------------------------------------------
+  "compaction:flush",
+  "compaction:started",
+  "compaction:recommended",
+
+  // -------------------------------------------------------------------
+  // Skill registry events — internal, not turn-scoped.
+  // -------------------------------------------------------------------
+  "skill:loaded",
+  "skill:executed",
+  "skill:rejected",
+  "skill:registry_reset",
+  "skill:created",
+  "skill:updated",
+  "skill:failed",
+  "skills:reloaded",
+
+  // -------------------------------------------------------------------
+  // Security / safety — fed by separate alerting paths; trajectory
+  // intentionally does not record raw injection patterns.
+  // -------------------------------------------------------------------
+  "security:injection_detected",
+  "security:injection_rate_exceeded",
+  "security:memory_tainted",
+  "sender:trust_resolved",
+  "tool:install_detour_detected",
+
+  // -------------------------------------------------------------------
+  // Provider-level aggregates — daemon-level rollup, not per-session.
+  // -------------------------------------------------------------------
+  "provider:degraded",
+  "provider:recovered",
+
+  // -------------------------------------------------------------------
+  // Model catalog + observability metadata not tied to a single turn.
+  // -------------------------------------------------------------------
+  "model:catalog_loaded",
+  "model:lkw_fallback_succeeded",
+  "observability:cache_break",
+  "observability:latency",
+
+  // -------------------------------------------------------------------
+  // Graph / SEP — separate observability artifact owns these.
+  // -------------------------------------------------------------------
+  "graph:started",
+  "graph:node_updated",
+  "graph:completed",
+  "graph:driver_lifecycle",
+  "sep:plan_extracted",
+  "sep:plan_completed",
+  "cache:graph_prefix_written",
+
+  // -------------------------------------------------------------------
+  // Command + memory-review lifecycle — internal handlers.
+  // -------------------------------------------------------------------
+  "command:blocked",
+  "memory:review_completed",
+
+  // -------------------------------------------------------------------
+  // Session-store lifecycle (distinct from session:started/ended which
+  // ARE on the trajectory).
+  // -------------------------------------------------------------------
+  "session:created",
+  "session:expired",
+
+  // -------------------------------------------------------------------
+  // Delivery low-level events — only delivery:enqueued and
+  // delivery:complete are on the trajectory; intermediates stay
+  // internal.
+  // -------------------------------------------------------------------
+  "delivery:acked",
+  "delivery:dropped",
+  "delivery:failed",
+  "delivery:retry",
+
+  // -------------------------------------------------------------------
+  // Channel lifecycle — internal to orchestrator.
+  // -------------------------------------------------------------------
+  "channel:connected",
+  "channel:disconnected",
+  "channel:degraded",
+  "channel:recovered",
+
+  // -------------------------------------------------------------------
+  // Infra events — system metrics, not turn-scoped.
+  // -------------------------------------------------------------------
+  "infra:heartbeat",
+  "infra:resource_pressure",
+
+  // -------------------------------------------------------------------
+  // Acknowledgement events — channel-level reaction signals; observed
+  // via the delivery path, not the trajectory.
+  // -------------------------------------------------------------------
+  "ack:reaction_sent",
+
+  // -------------------------------------------------------------------
+  // Announcement / dead-letter delivery — separate observability path.
+  // -------------------------------------------------------------------
+  "announcement:dead_letter_delivered",
+  "announcement:dead_lettered",
+
+  // -------------------------------------------------------------------
+  // Auth provider lifecycle — fed through auth-audit, not trajectory.
+  // -------------------------------------------------------------------
+  "auth:profile_added",
+  "auth:profile_bootstrapped",
+  "auth:refresh_failed",
+  "auth:token_rotated",
+
+  // -------------------------------------------------------------------
+  // Auto-reply system - daemon-level policy, not turn-scoped.
+  // -------------------------------------------------------------------
+  "autoreply:activated",
+  "autoreply:suppressed",
+
+  // -------------------------------------------------------------------
+  // Background task manager — long-running task lifecycle outside the
+  // single execute() boundary.
+  // -------------------------------------------------------------------
+  "background_task:cancelled",
+  "background_task:completed",
+  "background_task:failed",
+  "background_task:promoted",
+  "background_task:reentered",
+
+  // -------------------------------------------------------------------
+  // Coalescing + buffering at the orchestrator queue level — not on
+  // the trajectory (the trajectory captures the post-coalesced
+  // execution path via prompt.submitted etc.).
+  // -------------------------------------------------------------------
+  "coalesce:flushed",
+  "debounce:buffered",
+  "debounce:flushed",
+  "queue:coalesced",
+  "queue:dequeued",
+  "queue:enqueued",
+  "queue:overflow",
+  "priority:aged_promotion",
+  "priority:lane_assigned",
+
+  // -------------------------------------------------------------------
+  // Context-engine internals — granular pipeline signals; the
+  // turn-level summary lands in prompt.submitted instead.
+  // -------------------------------------------------------------------
+  "context:compacted",
+  "context:evicted",
+  "context:masked",
+  "context:overflow",
+  "context:pipeline",
+  "context:pipeline:cache",
+  "context:rehydrated",
+  "context:reread",
+
+  // -------------------------------------------------------------------
+  // Diagnostic counters — internal aggregation, not user-visible.
+  // -------------------------------------------------------------------
+  "diagnostic:message_processed",
+
+  // -------------------------------------------------------------------
+  // Elevated-model routing - daemon decision before the turn starts.
+  // -------------------------------------------------------------------
+  "elevated:model_routed",
+
+  // -------------------------------------------------------------------
+  // Execution-level orchestrator signals — captured indirectly via
+  // tool.result / model.completed; the trajectory does not duplicate.
+  // -------------------------------------------------------------------
+  "execution:aborted",
+  "execution:budget_warning",
+  "execution:output_escalated",
+  "execution:prompt_timeout",
+  "execution:signed_replay_recovered",
+
+  // -------------------------------------------------------------------
+  // Follow-up handler events - internal scheduler.
+  // -------------------------------------------------------------------
+  "followup:depth_exceeded",
+  "followup:enqueued",
+
+  // -------------------------------------------------------------------
+  // Group history injection - internal to the prompt assembler; the
+  // observable surface is captured by prompt.submitted (digest deltas).
+  // -------------------------------------------------------------------
+  "grouphistory:injected",
+
+  // -------------------------------------------------------------------
+  // Message lifecycle - orchestrator-level, not turn-scoped (the
+  // trajectory captures the model-visible turn boundary instead).
+  // -------------------------------------------------------------------
+  "message:received",
+  "message:sent",
+
+  // -------------------------------------------------------------------
+  // Response filtering - safety pipeline at the output guard layer.
+  // -------------------------------------------------------------------
+  "response:filtered",
+
+  // -------------------------------------------------------------------
+  // Sender / send-policy events - access control, not observability.
+  // -------------------------------------------------------------------
+  "sender:blocked",
+  "sendpolicy:allowed",
+  "sendpolicy:denied",
+  "sendpolicy:override_changed",
+
+  // -------------------------------------------------------------------
+  // Cross-session messaging + sub-agent spawn lifecycle - separate
+  // observability artifact; the trajectory writer is per-session and
+  // does not span the sub-agent tree.
+  // -------------------------------------------------------------------
+  "session:cross_send",
+  "session:ping_pong_turn",
+  "session:sub_agent_archived",
+  "session:sub_agent_completed",
+  "session:sub_agent_lifecycle_ended",
+  "session:sub_agent_result_condensed",
+  "session:sub_agent_spawn_prepared",
+  "session:sub_agent_spawn_queued",
+  "session:sub_agent_spawn_rejected",
+  "session:sub_agent_spawned",
+
+  // -------------------------------------------------------------------
+  // Steering injection - orchestrator-driven mid-execution control.
+  // -------------------------------------------------------------------
+  "steer:followup_queued",
+  "steer:injected",
+  "steer:rejected",
+
+  // -------------------------------------------------------------------
+  // Streaming block + typing-indicator events - presentation-layer.
+  // -------------------------------------------------------------------
+  "streaming:block_sent",
+  "typing:proxy_stop",
+  "typing:started",
+  "typing:stopped",
+]);
+
+const SCANNED_PACKAGES = ["agent", "orchestrator"] as const;
+const EMIT_REGEX = /eventBus\.emit\(\s*"([^"]+)"/g;
+
+interface EmitSite {
+  readonly file: string;
+  readonly line: number;
+  readonly eventName: string;
+}
+
+function walkProductionFiles(dir: string, out: string[]): void {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    const full = resolve(dir, entry.name);
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) {
+      if (
+        [
+          "__tests__",
+          "__snapshots__",
+          "dist",
+          "node_modules",
+          "__test-helpers",
+          "fixtures",
+        ].includes(entry.name)
+      ) {
+        continue;
+      }
+      walkProductionFiles(full, out);
+    } else if (
+      entry.isFile() &&
+      entry.name.endsWith(".ts") &&
+      !entry.name.endsWith(".test.ts") &&
+      !entry.name.endsWith(".generated.ts") &&
+      !entry.name.endsWith(".d.ts")
+    ) {
+      out.push(full);
+    }
+  }
+}
+
+function collectEmitSites(files: string[]): EmitSite[] {
+  const sites: EmitSite[] = [];
+  for (const file of files) {
+    const content = readFileSync(file, "utf-8");
+    const lines = content.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? "";
+      // Reset lastIndex per-line so the global flag plays nice.
+      EMIT_REGEX.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = EMIT_REGEX.exec(line)) !== null) {
+        const eventName = match[1] ?? "";
+        if (eventName.length === 0) continue;
+        sites.push({ file, line: i + 1, eventName });
+      }
+    }
+  }
+  return sites;
+}
+
+function repoRelative(absPath: string): string {
+  return absPath.startsWith(REPO_ROOT)
+    ? absPath.slice(REPO_ROOT.length + 1)
+    : absPath;
+}
+
+describe("trajectory-event-types-known -- bridge mapping coverage from emit sites", () => {
+  // Pre-compute mapping keys + walker output once for the whole describe.
+  const mapped = new Set<string>(Object.keys(TRAJECTORY_BRIDGE_MAPPING));
+
+  const allFiles: string[] = [];
+  for (const pkg of SCANNED_PACKAGES) {
+    walkProductionFiles(resolve(REPO_ROOT, "packages", pkg, "src"), allFiles);
+  }
+  const allSites = collectEmitSites(allFiles);
+
+  it("every eventBus.emit name is either trajectory-mapped or explicitly allowlisted", () => {
+    const violations = allSites.filter(
+      (s) => !mapped.has(s.eventName) && !EVENTS_NOT_TRAJECTORY_MAPPED.has(s.eventName),
+    );
+
+    expect(
+      violations,
+      formatViolations({
+        description:
+          "Trajectory event coverage: every eventBus.emit(...) site in packages/agent + packages/orchestrator must reference an event name that is EITHER in TRAJECTORY_BRIDGE_MAPPING (trajectory writer records it) OR in EVENTS_NOT_TRAJECTORY_MAPPED (deliberately out of scope).",
+        violations: violations.map((v) => ({
+          file: `${repoRelative(v.file)}:${v.line}`,
+          line: v.line,
+          snippet: `eventBus.emit("${v.eventName}", …) — neither mapped nor allowlisted`,
+        })),
+        suggestedFix:
+          "Add the event name to TRAJECTORY_BRIDGE_MAPPING (packages/observability/src/trajectory/event-bus-bridge.ts) with the appropriate translator branch, OR add it to EVENTS_NOT_TRAJECTORY_MAPPED in this test with a one-line rationale.",
+        designRef:
+          "TRAJECTORY_BRIDGE_MAPPING in packages/observability/src/trajectory/event-bus-bridge.ts",
+        allowlistRef:
+          "EVENTS_NOT_TRAJECTORY_MAPPED in test/architecture/trajectory-event-types-known.test.ts",
+      }),
+    ).toEqual([]);
+  });
+
+  it("walker found at least one emit site (sanity check)", () => {
+    expect(allSites.length).toBeGreaterThan(0);
+  });
+
+  // Dedup contract reminder: both tool:executed AND tool:timeout must be
+  // in TRAJECTORY_BRIDGE_MAPPING. Downstream trajectory consumers dedupe
+  // by toolCallId.
+  it("tool:executed AND tool:timeout are both trajectory-mapped (dedup contract)", () => {
+    expect(mapped.has("tool:executed")).toBe(true);
+    expect(mapped.has("tool:timeout")).toBe(true);
+  });
+
+  it("core trajectory events are all trajectory-mapped", () => {
+    expect(mapped.has("prompt:submitted")).toBe(true);
+    expect(mapped.has("session:started")).toBe(true);
+    expect(mapped.has("session:ended")).toBe(true);
+    expect(mapped.has("memory:injected")).toBe(true);
+    expect(mapped.has("tool:timeout")).toBe(true);
+  });
+
+  it("EVENTS_NOT_TRAJECTORY_MAPPED is disjoint from TRAJECTORY_BRIDGE_MAPPING (no double-coverage)", () => {
+    const intersection = [...EVENTS_NOT_TRAJECTORY_MAPPED].filter((e) => mapped.has(e));
+    expect(intersection, "events in BOTH sets — pick one").toEqual([]);
+  });
+});

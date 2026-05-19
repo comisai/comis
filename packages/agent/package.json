@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@comis/core": "workspace:*",
+    "@comis/observability": "workspace:*",
     "@comis/scheduler": "workspace:*",
     "@comis/shared": "workspace:*",
     "@google/genai": "1.50.1",

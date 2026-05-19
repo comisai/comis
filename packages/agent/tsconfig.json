@@ -6,5 +6,10 @@
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts", "src/__tests__/**"],
-  "references": [{ "path": "../shared" }, { "path": "../core" }, { "path": "../scheduler" }]
+  "references": [
+    { "path": "../shared" },
+    { "path": "../core" },
+    { "path": "../observability" },
+    { "path": "../scheduler" }
+  ]
 }

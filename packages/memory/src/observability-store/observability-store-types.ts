@@ -19,8 +19,18 @@ import {
   SessionAggDbRowSchema,
   HourlyBucketDbRowSchema,
   DeliveryStatsDbRowSchema,
+  SystemPromptReportDbRowSchema,
 } from "../row-schemas.js";
 import { createRowMapper } from "../row-mapper.js";
+import type { CacheStatsQueriesSlice } from "./cache-stats-types.js";
+
+export type {
+  CacheStatsWindowRow,
+  CacheStatsByProviderRow,
+  CacheStatsByModelRow,
+  CacheStatsByAgentRow,
+  CacheStatsQueriesSlice,
+} from "./cache-stats-types.js";
 
 // ---------------------------------------------------------------------------
 // Row mappers (typed row parsing via createRowMapper)
@@ -41,6 +51,8 @@ export const agentAggMapper = createRowMapper(AgentAggDbRowSchema);
 export const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
 export const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
 export const deliveryStatsMapper = createRowMapper(DeliveryStatsDbRowSchema);
+/** SystemPromptReport row mapper. */
+export const systemPromptReportMapper = createRowMapper(SystemPromptReportDbRowSchema);
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -115,6 +127,21 @@ export interface ChannelSnapshotRow {
   messagesSent?: number;
   messagesReceived?: number;
   uptimeMs?: number;
+}
+
+/** SystemPromptReport row (insert or query result). */
+export interface SystemPromptReportRow {
+  agentId: string;
+  tenantId: string | null;
+  sessionId: string;
+  runId: string | null;
+  generatedAt: number;
+  provider: string | null;
+  model: string | null;
+  systemChars: number;
+  systemSha256: string;
+  /** Serialized SystemPromptReport JSON (sanitized). */
+  reportJson: string;
 }
 
 /** Aggregation by provider and model. */
@@ -204,7 +231,8 @@ export interface DiagnosticQueryParams {
 }
 
 /** The ObservabilityStore interface. */
-export interface ObservabilityStore {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface ObservabilityStore extends CacheStatsQueriesSlice {
   // Token usage
   insertTokenUsage(entry: TokenUsageRow): void;
   queryTokenUsage(params?: TokenUsageQueryParams): TokenUsageRow[];
@@ -225,6 +253,25 @@ export interface ObservabilityStore {
   // Channel snapshots
   insertChannelSnapshot(entry: ChannelSnapshotRow): void;
   latestChannelSnapshots(): ChannelSnapshotRow[];
+
+  // SystemPromptReport
+  insertSystemPromptReport(row: SystemPromptReportRow): void;
+  /**
+   * Latest report for `(agentId, sessionId)`, optionally narrowed to a
+   * specific `runId`. The optional `runId` filter is pushed into the
+   * SQL WHERE clause so an older row with the matching runId is
+   * returned even when a newer row (different runId) exists. Caller
+   * must not pass `null` — the contract is `runId?: string`.
+   */
+  latestSystemPromptReport(agentId: string, sessionId: string, runId?: string): SystemPromptReportRow | undefined;
+  listSystemPromptReports(sessionId: string, limit: number): SystemPromptReportRow[];
+
+  // Cache-stats queries are inherited from `CacheStatsQueriesSlice`
+  // (see top-of-file import). Methods:
+  //   - queryCacheStatsWindow
+  //   - queryCacheStatsByProvider
+  //   - queryCacheStatsByModel
+  //   - queryCacheStatsByAgent
 
   // Maintenance
   prune(retentionDays: number): PruneResult;
@@ -300,6 +347,20 @@ export interface ChannelSnapshotDbRow {
   messages_sent: number;
   messages_received: number;
   uptime_ms: number;
+}
+
+/** snake_case DB row matching SystemPromptReportDbRowSchema. */
+export interface SystemPromptReportDbRow {
+  agent_id: string;
+  tenant_id: string | null;
+  session_id: string;
+  run_id: string | null;
+  generated_at: number;
+  provider: string | null;
+  model: string | null;
+  system_chars: number;
+  system_sha256: string;
+  report_json: string;
 }
 
 // Aggregate row shapes (ProviderAggDbRow, AgentAggDbRow, SessionAggDbRow,
@@ -382,6 +443,21 @@ export function snapshotFromRow(row: ChannelSnapshotDbRow): ChannelSnapshotRow {
     messagesSent: row.messages_sent,
     messagesReceived: row.messages_received,
     uptimeMs: row.uptime_ms,
+  };
+}
+
+export function systemPromptReportFromRow(row: SystemPromptReportDbRow): SystemPromptReportRow {
+  return {
+    agentId: row.agent_id,
+    tenantId: row.tenant_id,
+    sessionId: row.session_id,
+    runId: row.run_id,
+    generatedAt: row.generated_at,
+    provider: row.provider,
+    model: row.model,
+    systemChars: row.system_chars,
+    systemSha256: row.system_sha256,
+    reportJson: row.report_json,
   };
 }
 

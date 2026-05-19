@@ -104,6 +104,26 @@ export interface ToolAssemblyDeps {
   getChannelMaxChars?: (channelType: string) => number | undefined;
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
+  /**
+   * ObservabilityStore for SystemPromptReport SQLite persistence.
+   * Forwarded from PiExecutorDeps via frozenDeps spread in
+   * pi-executor.ts. Threaded through to prompt-assembly.ts deps for
+   * the build+persist hook.
+   */
+  observabilityStore?: import("@comis/observability").ObservabilityStoreLike;
+  /**
+   * Set of tool names registered in the prompt but filtered out by
+   * policy (toolPolicy.deny / capability gate). The
+   * SystemPromptReport's tools.entries[].callable reflects this.
+   */
+  policyFilteredToolNames?: ReadonlySet<string>;
+  /**
+   * Run-scoped identifier (per pi-mono turn). Becomes the report's
+   * `runId` field for cross-correlation with trajectory events.
+   */
+  runId?: string;
+  /** Tenant ID for multi-tenant deployments. */
+  tenantId?: string;
 }
 
 /** Result of the tool assembly pipeline. */
@@ -344,6 +364,14 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // `port.isCapabilityIndexEnabled()` for the static-prompt swap gate.
       toolCapabilityPort: deps.toolCapabilityPort,
       clock: deps.clock,
+      // SystemPromptReport persistence wiring. Forwarded from
+      // ToolAssemblyDeps -> PromptAssemblyParams.deps. When
+      // observabilityStore is undefined the build+persist block in
+      // prompt-assembly.ts is a no-op.
+      observabilityStore: deps.observabilityStore,
+      policyFilteredToolNames: deps.policyFilteredToolNames,
+      runId: deps.runId,
+      tenantId: deps.tenantId,
     },
     msg,
     sessionKey,

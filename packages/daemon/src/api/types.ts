@@ -312,6 +312,15 @@ export interface ConfigApiDeps {
    *  write path. Same shape as AuthApiDeps.secretStore so the ApiDispatchDeps
    *  multi-extends remains well-formed. */
   secretStore?: SecretStorePort;
+  /**
+   * When `false`, config-handlers skip the config-audit JSONL append
+   * at the config.patch RPC handler call sites (config-write.ts:124,
+   * 390). Default-true semantics — when `undefined`, the audit hook
+   * runs. Wired from
+   * `container.config.diagnostics?.configAudit?.enabled !== false`
+   * at the rpc-dispatch.ts composition root.
+   */
+  auditEnabled?: boolean;
 }
 
 /**

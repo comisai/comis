@@ -31,6 +31,7 @@ import * as directScheduler from "@comis/scheduler";
 import * as directAgent from "@comis/agent";
 import * as directChannels from "@comis/channels";
 import * as directOrchestrator from "@comis/orchestrator";
+import * as directObservability from "@comis/observability";
 import * as directCli from "@comis/cli";
 import * as directDaemon from "@comis/daemon";
 
@@ -115,6 +116,16 @@ describe("comisai umbrella namespace re-exports — shape matches sub-package ba
     );
   });
 
+  it("exposes namespace 'observability' whose sentinel 'stableStringify' is identity-equal to @comis/observability.stableStringify", () => {
+    expect(typeof comis.observability).toBe("object");
+    expect(comis.observability).toHaveProperty("stableStringify");
+    expect(
+      (comis.observability as Record<string, unknown>).stableStringify,
+    ).toBe(
+      (directObservability as Record<string, unknown>).stableStringify,
+    );
+  });
+
   it("exposes namespace 'cli' whose sentinel 'withClient' is identity-equal to @comis/cli.withClient", () => {
     expect(typeof comis.cli).toBe("object");
     expect(comis.cli).toHaveProperty("withClient");
@@ -131,7 +142,7 @@ describe("comisai umbrella namespace re-exports — shape matches sub-package ba
     );
   });
 
-  it("exports exactly 12 namespace re-exports — no silent additions, no silent deletions", () => {
+  it("exports exactly 13 namespace re-exports — no silent additions, no silent deletions", () => {
     const names = Object.keys(comis).sort();
     expect(names).toEqual([
       "agent",
@@ -142,11 +153,12 @@ describe("comisai umbrella namespace re-exports — shape matches sub-package ba
       "gateway",
       "infra",
       "memory",
+      "observability",
       "orchestrator",
       "scheduler",
       "shared",
       "skills",
     ]);
-    expect(names.length).toBe(12);
+    expect(names.length).toBe(13);
   });
 });

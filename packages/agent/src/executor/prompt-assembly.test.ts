@@ -278,6 +278,68 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
+  // 4b. memory:injected event emit
+  // -----------------------------------------------------------------
+  it("emits_memory_injected_when_inline_memory_set with hitCount/charsInjected/trustTags", async () => {
+    const mockSearchResults = [
+      {
+        entry: { id: "m1", tenantId: "t", content: "Inline pick", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
+        score: 0.9,
+      },
+      {
+        entry: { id: "m2", tenantId: "t", content: "Section pick", createdAt: Date.now(), tags: [], trustLevel: "system", source: { channel: "test" } },
+        score: 0.8,
+      },
+    ];
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({ ok: true, value: mockSearchResults }),
+      store: vi.fn(),
+    } as any;
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn(), once: vi.fn(), listenerCount: vi.fn().mockReturnValue(0) } as any;
+    // Hybrid split: inline memory present, plus a non-empty system section.
+    mockHybridSplit.mockReturnValueOnce({
+      inlineMemory: "[inline rag chunk]",
+      systemPromptSections: ["section body"],
+    });
+
+    const params = makeParams({
+      config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned", "system"], maxContextChars: 5000 } }),
+      deps: { workspaceDir: "/workspace", memoryPort, eventBus },
+    });
+    await assembleExecutionPrompt(params);
+
+    const memoryEmit = emit.mock.calls.find((c: any[]) => c[0] === "memory:injected");
+    expect(memoryEmit, "memory:injected emit must fire when injection produces content").toBeTruthy();
+    const payload = memoryEmit![1];
+    expect(payload.hitCount).toBe(2);
+    expect(payload.charsInjected).toBe("[inline rag chunk]".length + "section body".length);
+    expect(new Set(payload.trustTags)).toEqual(new Set(["learned", "system"]));
+    expect(typeof payload.timestamp).toBe("number");
+    expect(typeof payload.traceId).toBe("string");
+  });
+
+  it("does_not_emit_when_no_injection (deduped is empty, the if-block is skipped)", async () => {
+    const memoryPort = {
+      // Empty results — deduplicateResults will produce an empty array
+      // and the injector block is skipped entirely.
+      search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      store: vi.fn(),
+    } as any;
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn(), once: vi.fn(), listenerCount: vi.fn().mockReturnValue(0) } as any;
+
+    const params = makeParams({
+      config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 } }),
+      deps: { workspaceDir: "/workspace", memoryPort, eventBus },
+    });
+    await assembleExecutionPrompt(params);
+
+    const memoryEmit = emit.mock.calls.find((c: any[]) => c[0] === "memory:injected");
+    expect(memoryEmit, "memory:injected must not fire when no injection occurred").toBeUndefined();
+  });
+
+  // -----------------------------------------------------------------
   // 5. RAG failure is non-fatal
   // -----------------------------------------------------------------
   it("does not throw when RAG retrieval fails", async () => {
@@ -429,6 +491,111 @@ describe("assembleExecutionPrompt", () => {
     expect(result.systemPrompt).not.toContain("external instruction");
     // System prompt is untouched
     expect(result.systemPrompt).toBe("assembled-prompt");
+  });
+
+  // -----------------------------------------------------------------
+  // 12b. SystemPromptReport build + persist
+  // -----------------------------------------------------------------
+  it("assembles_and_persists_system_prompt_report when observabilityStore wired", async () => {
+    const insertSystemPromptReport = vi.fn();
+    const observabilityStore = { insertSystemPromptReport };
+    const params = makeParams({
+      mergedCustomTools: [
+        { name: "read_file", parameters: { type: "object", properties: { path: { type: "string" } } } } as any,
+      ],
+      deps: { workspaceDir: "/workspace", observabilityStore: observabilityStore as any },
+    });
+    await assembleExecutionPrompt(params);
+
+    expect(insertSystemPromptReport).toHaveBeenCalledTimes(1);
+    const row = insertSystemPromptReport.mock.calls[0]![0];
+    expect(row.agentId).toBe("agent-1");
+    // sessionId is the formatSessionKey result; sanity check it's a string.
+    expect(typeof row.sessionId).toBe("string");
+    expect(row.sessionId.length).toBeGreaterThan(0);
+    // The assembled prompt is the mock "assembled-prompt" — chars=16.
+    expect(row.systemChars).toBe("assembled-prompt".length);
+    // sha256 over "assembled-prompt"
+    expect(typeof row.systemSha256).toBe("string");
+    expect(row.systemSha256.length).toBe(64);
+    // report_json is parsable and carries the schema marker
+    const parsed = JSON.parse(row.reportJson);
+    expect(parsed.traceSchema).toBe("comis-system-prompt-report");
+    expect(parsed.schemaVersion).toBe(1);
+    // The tool we registered surfaces in the tools.entries (with callable=true)
+    const tool = parsed.tools.entries.find((t: any) => t.name === "read_file");
+    expect(tool).toBeDefined();
+    expect(tool.callable).toBe(true);
+  });
+
+  it("does_not_persist_when_no_observability_store_or_session_store_provided", async () => {
+    const params = makeParams({
+      mergedCustomTools: [],
+      deps: { workspaceDir: "/workspace" },
+    });
+    // Should not throw — guarded by the `deps.observabilityStore !== undefined ||
+    // deps.sessionStore !== undefined` check.
+    const result = await assembleExecutionPrompt(params);
+    expect(result.systemPrompt).toBe("assembled-prompt");
+  });
+
+  // -----------------------------------------------------------------
+  // memoryInjection block must populate for RAG-section-only sessions,
+  // not just inlineMemory.
+  // -----------------------------------------------------------------
+  it("memoryInjection populated when memorySections is non-empty even without inlineMemory", async () => {
+    // Wire a RAG-enabled memoryPort + hybrid injector returning
+    // sections-only (inlineMemory undefined, systemPromptSections populated).
+    const sectionBody = "RAG section body here";
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({
+        ok: true,
+        value: [
+          {
+            entry: { id: "m1", tenantId: "t", content: "memory entry", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
+            score: 0.9,
+          },
+        ],
+      }),
+      store: vi.fn(),
+    } as any;
+    mockHybridSplit.mockReturnValueOnce({
+      inlineMemory: undefined,
+      systemPromptSections: [sectionBody],
+    });
+
+    const insertSystemPromptReport = vi.fn();
+    const observabilityStore = { insertSystemPromptReport };
+    const params = makeParams({
+      config: makeConfig({
+        rag: {
+          enabled: true,
+          maxResults: 5,
+          minScore: 0.3,
+          includeTrustLevels: ["learned"],
+          maxContextChars: 5000,
+        },
+      }),
+      deps: {
+        workspaceDir: "/workspace",
+        observabilityStore: observabilityStore as any,
+        memoryPort,
+      },
+    });
+    await assembleExecutionPrompt(params);
+
+    expect(insertSystemPromptReport).toHaveBeenCalledTimes(1);
+    const row = insertSystemPromptReport.mock.calls[0]![0];
+    const parsed = JSON.parse(row.reportJson);
+    // The persisted report MUST carry a memoryInjection block (not
+    // undefined) reflecting the RAG-sections-only injection. Today
+    // this fails because prompt-assembly's predicate is `inlineMemory
+    // ? { … } : undefined` — undefined inlineMemory drops the block
+    // entirely even when memorySections.length > 0.
+    expect(parsed.memoryInjection).toBeDefined();
+    expect(parsed.memoryInjection.ragHits).toBe(1);
+    expect(parsed.memoryInjection.charsInjected).toBe(sectionBody.length);
+    expect(parsed.memoryInjection.trustTags).toEqual([]);
   });
 
   // -----------------------------------------------------------------

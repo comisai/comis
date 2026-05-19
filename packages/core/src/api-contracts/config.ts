@@ -600,6 +600,79 @@ export const EnvListContract = defineContract({
 // Domain array — registered into API_CONTRACTS_ORDERED in index.ts.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// config.audit.list
+// ---------------------------------------------------------------------------
+
+/**
+ * `config.audit.list` — query the daemon-wide config-audit JSONL log.
+ * Admin-only. Read-only.
+ *
+ * Returns up to `tail` (default 1000, max 1000) recent records,
+ * optionally filtered by `since` / `until` ISO-8601 timestamps (or
+ * relative `"1h"`/`"24h"` shortcuts), `suspiciousOnly`, or `pid`.
+ *
+ * The records returned are the union of `ConfigWriteAuditRecord`
+ * (phase: "write") and `ConfigObserveAuditRecord` (phase: "read")
+ * shapes — both live in @comis/observability. The contract response
+ * is loose-modeled (`z.array(z.record(z.string(), z.unknown()))`) to
+ * avoid a @comis/core → @comis/observability dep cycle. The
+ * authoritative shape is `ConfigWriteAuditRecordSchema` /
+ * `ConfigObserveAuditRecordSchema` exported from
+ * @comis/observability; the contract is type narrowing only.
+ */
+export const ConfigAuditListContract = defineContract({
+  method: "config.audit.list",
+  request: z.object({
+    since: z.string().optional(),
+    until: z.string().optional(),
+    suspiciousOnly: z.boolean().optional(),
+    pid: z.number().int().optional(),
+    /** Default applied at the handler. */
+    tail: z.number().int().positive().max(1000).optional(),
+  }),
+  response: z.object({
+    records: z.array(z.record(z.string(), z.unknown())),
+  }),
+  scopes: ["admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
+// config.audit.scrub
+// ---------------------------------------------------------------------------
+
+/**
+ * `config.audit.scrub` — retroactively re-run the redactor pipeline
+ * over the historical audit log. Admin-only. Side-effects: rewrites
+ * the audit log atomically via `scrubConfigAuditLog` from
+ * @comis/observability.
+ *
+ * Request: `{ dryRun?: boolean }`. When `dryRun` is true, the handler
+ * reads + sanitizes records to compute the counters but does NOT
+ * write the result back; the file is left intact.
+ *
+ * Response: `{ rewrittenRecords, skippedMalformed, aborted }`.
+ * `aborted=true` indicates the byte-length concurrent-append guard
+ * tripped (someone appended between the scrubber's read and rename);
+ * the log is left untouched on abort.
+ */
+export const ConfigAuditScrubContract = defineContract({
+  method: "config.audit.scrub",
+  request: z.object({
+    dryRun: z.boolean().optional(),
+  }),
+  response: z.object({
+    rewrittenRecords: z.number().int().nonnegative(),
+    skippedMalformed: z.number().int().nonnegative(),
+    aborted: z.boolean(),
+  }),
+  scopes: ["admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
+// Domain array — registered into API_CONTRACTS_ORDERED in index.ts.
+// ---------------------------------------------------------------------------
+
 /**
  * Config + env + gateway-infrastructure contract array. Registered
  * into `API_CONTRACTS_ORDERED` by
@@ -613,6 +686,8 @@ export const EnvListContract = defineContract({
  */
 export const CONFIG_CONTRACTS = [
   ConfigApplyContract,
+  ConfigAuditListContract,
+  ConfigAuditScrubContract,
   ConfigDiffContract,
   ConfigGcContract,
   ConfigHistoryContract,

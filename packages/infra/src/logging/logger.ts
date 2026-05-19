@@ -1,7 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createRequire } from "node:module";
 import pino from "pino";
 import type { TransportMultiOptions, TransportSingleOptions } from "pino";
 import type { ComisLogger as CoreComisLogger } from "@comis/core";
+
+// `maskToken` is loaded via createRequire on the EDGE-KEEPING SUBPATH
+// (not the package barrel) to defeat the cyclic-package cycle detection
+// that Node 22's require()-of-ESM emits when the package graph itself
+// has a cycle (@comis/observability already depends on @comis/infra for
+// appendRegularFile + O_NOFOLLOW helpers).
+//
+// The subpath `@comis/observability/dist/redact/edge-keeping.js` is a
+// pure-function leaf module with no static imports of @comis/infra,
+// so Node sees no cycle when loading it specifically (even though the
+// package graph as a whole is cyclic). The subpath is declared in
+// `packages/observability/package.json` `exports`.
+//
+// createRequire defers resolution to module-load time, at which point
+// both dist trees exist (sequential build: infra first, then
+// observability against infra's dist).
+const _edgeKeeping = createRequire(import.meta.url)(
+  "@comis/observability/dist/redact/edge-keeping.js",
+) as { maskToken: (input: string) => string };
+const maskToken = _edgeKeeping.maskToken;
 
 /**
  * Default paths to redact from all log output.
@@ -119,6 +140,20 @@ export interface LoggerOptions {
    * this to `true` via the test daemon harness.
    */
   disableRedaction?: boolean;
+  /**
+   * Disable the Pino regex-redact transport.
+   *
+   * The transport runs the free-form regex pass (`redactSecretsInText`)
+   * over every JSON log line; structured-field redaction (Pino's
+   * fast-redact `redact:` config) is unchanged. Set this to `false` to
+   * keep the structured censor active but skip the transport — useful
+   * for tests that compare raw JSON output without the regex pass.
+   *
+   * Defaults to `true` (transport enabled). When `disableRedaction` is
+   * `true`, this flag has no effect — the transport is also skipped to
+   * preserve the residency-test invariant.
+   */
+  regexRedactInTransport?: boolean;
 }
 
 /**
@@ -177,9 +212,24 @@ export function createLogger(options: LoggerOptions): ComisLogger {
     // invariant in `test/architecture/source-rules.test.ts` source-greps
     // the literal assignment form and fails the build on any
     // production-source match.
+    //
+    // The censor is a callback that applies maskToken (edge-keeping
+    // mask: "sk-123...cdef") for string values, preserving correlation-
+    // token utility while never re-leaking the body. Non-string values
+    // fall back to the literal "[REDACTED]" — that is the ONE sanctioned
+    // use of the literal in production source, narrowed to this exact
+    // call site via an eslint-disable annotation (see eslint.config.js
+    // and test/architecture/source-rules.test.ts).
     redact: options.disableRedaction
       ? undefined
-      : { paths: allRedactPaths, censor: "[REDACTED]" },
+      : {
+          paths: allRedactPaths,
+          censor: (value: unknown): string => {
+            if (typeof value === "string") return maskToken(value);
+            // eslint-disable-next-line no-restricted-syntax -- non-string Pino censor fallback (sanctioned literal)
+            return "[REDACTED]";
+          },
+        },
     timestamp: pino.stdTimeFunctions.isoTime,
     ...(isMultiTransport
       ? {}
@@ -196,6 +246,18 @@ export function createLogger(options: LoggerOptions): ComisLogger {
     pinoOptions.mixin = mixin;
   }
 
+  // Transport selection:
+  //   1. Explicit `transport` option wins (caller knows what they want).
+  //   2. Dev mode → pino-pretty for terminal output.
+  //   3. Production default → redact transport target via the
+  //      @comis/infra resolution shim. The transport runs
+  //      `redactSecretsInText` over every JSON log line (free-form
+  //      regex pass) as a second-line defense for credential bodies
+  //      that survived the structured-field censor above.
+  //
+  // The redact transport is skipped when (a) the caller disables
+  // redaction entirely (residency test harness) or (b) the caller
+  // explicitly opts out via `regexRedactInTransport: false`.
   if (transport) {
     pinoOptions.transport = transport;
   } else if (isDev) {
@@ -204,6 +266,10 @@ export function createLogger(options: LoggerOptions): ComisLogger {
       options: {
         colorize: true,
       },
+    };
+  } else if (!options.disableRedaction && options.regexRedactInTransport !== false) {
+    pinoOptions.transport = {
+      target: "@comis/infra/dist/logging/redact-transport.js",
     };
   }
 

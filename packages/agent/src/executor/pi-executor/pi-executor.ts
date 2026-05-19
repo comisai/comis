@@ -33,6 +33,16 @@
  * @module
  */
 
+import * as os from "node:os";
+
+import {
+  attachTrajectoryToEventBus,
+  createTrajectoryRecorder,
+  type TrajectoryRecorder,
+  attachCacheTraceToEventBus,
+  createCacheTrace,
+  type CacheTrace,
+} from "@comis/observability";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -46,6 +56,7 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
+  safePath,
   tryGetContext,
   ContextEngineConfigSchema,
   type SessionKey,
@@ -543,6 +554,114 @@ async function runSessionLocked(
   // Compute formatted key early for trace file paths and active run registry
   const formattedKey = formatSessionKey(sessionKey);
 
+  // Per-session trajectory recorder. The recorder writes one JSONL line
+  // per typed-EventBus event the bridge translates; attachTrajectoryToEventBus
+  // subscribes once for the duration of this execute() call. Both the
+  // recorder and the bridge subscription are torn down in the runner-block
+  // finally (after postExecution).
+  // createTrajectoryRecorder returns null when COMIS_TRAJECTORY=0 or
+  // diagnostics.trajectory.enabled=false — the null-check below makes
+  // the wiring a no-op in that case.
+  let trajectoryRecorder: TrajectoryRecorder | null = null;
+  let trajectoryUnsubscribe: (() => void) | undefined;
+  // Cache-trace recorder local-variable lifecycle. Mirrors the trajectory
+  // pattern — declared here, assigned inside the try below, torn down in
+  // the finally block at end of execute().
+  let cacheTrace: CacheTrace | null = null;
+  let unsubscribeCacheTrace: (() => void) | undefined;
+  try {
+    // When the operator has NOT overridden the trajectory dir (the default
+    // ~/.comis/ path applies), confine writes to ~/.comis/ so an
+    // ancestor-symlink escape is rejected at open().
+    // When the operator explicitly sets `diagnostics.trajectory.dir` to
+    // a non-~/.comis path (e.g., /var/log/comis/traj/), they own the
+    // legitimacy of that location — the confinement is skipped so we
+    // don't reject the operator's own write path. The option is opt-in
+    // by design.
+    const trajectoryConfinedBase =
+      deps.trajectoryConfig?.dir === undefined
+        ? safePath(os.homedir(), ".comis")
+        : undefined;
+    trajectoryRecorder = createTrajectoryRecorder({
+      agentId: agentId ?? config.name,
+      sessionId: formattedKey,
+      sessionKey: formattedKey,
+      workspaceDir: deps.workspaceDir,
+      provider: resolvedModel?.provider ?? config.provider,
+      modelId: resolvedModel?.id ?? config.model,
+      ...(trajectoryConfinedBase !== undefined
+        ? { confinedBaseDir: trajectoryConfinedBase }
+        : {}),
+      ...(deps.trajectoryConfig?.enabled !== undefined
+        ? { enabled: deps.trajectoryConfig.enabled }
+        : {}),
+      ...(deps.trajectoryConfig?.dir !== undefined
+        ? { trajectoryDir: deps.trajectoryConfig.dir }
+        : {}),
+      ...(deps.trajectoryConfig?.maxFileBytes !== undefined
+        ? { maxRuntimeFileBytes: deps.trajectoryConfig.maxFileBytes }
+        : {}),
+    });
+    if (trajectoryRecorder !== null) {
+      // Honor diagnostics.trajectory.eventTypes as a subscription-time
+      // allowlist. When set and non-empty, only the listed EventBus event
+      // names are subscribed-to by the bridge — every other event is
+      // silently dropped. The bridge accepts a
+      // `filter: (eventName) => boolean` predicate that runs ONCE per name
+      // at attach time (not per emit). Default (eventTypes unset or empty)
+      // preserves the prior behavior of subscribing to every mapped event.
+      const eventTypes = deps.trajectoryConfig?.eventTypes;
+      trajectoryUnsubscribe = attachTrajectoryToEventBus({
+        eventBus: deps.eventBus,
+        recorder: trajectoryRecorder,
+        ...(eventTypes && eventTypes.length > 0
+          ? { filter: (n) => eventTypes.includes(n) }
+          : {}),
+      });
+    }
+
+    // Cache-trace recorder lifecycle (mirrors trajectory's).
+    // Gated by `deps.cacheTraceConfig.enabled` (forwarded from
+    // AppConfig.diagnostics.cacheTrace by daemon wiring; false by default).
+    // When enabled, instantiate the recorder + subscribe to the live
+    // `observability:token_usage` EventBus emit so the next
+    // `recordStage("session:after", {...})` carries cacheReadInputTokens +
+    // cacheCreationInputTokens. The recorder's null-return semantics
+    // (createCacheTrace returns null when COMIS_DISABLE_CACHE_TRACE=1)
+    // make this a no-op in that case.
+    if (deps.cacheTraceConfig?.enabled) {
+      const cacheTraceConfinedBase =
+        deps.cacheTraceConfig.filePath === undefined
+          ? safePath(os.homedir(), ".comis")
+          : undefined;
+      cacheTrace = createCacheTrace({
+        enabled: true,
+        ...(deps.cacheTraceConfig.filePath !== undefined
+          ? { filePath: deps.cacheTraceConfig.filePath }
+          : {}),
+        includeMessages: deps.cacheTraceConfig.includeMessages ?? false,
+        includePrompt: deps.cacheTraceConfig.includePrompt ?? true,
+        includeSystem: deps.cacheTraceConfig.includeSystem ?? true,
+        agentId: agentId ?? config.name,
+        sessionId: formattedKey,
+        provider: resolvedModel?.provider ?? config.provider,
+        modelId: resolvedModel?.id ?? config.model,
+        ...(cacheTraceConfinedBase !== undefined
+          ? { confinedBaseDir: cacheTraceConfinedBase }
+          : {}),
+      });
+      if (cacheTrace !== null) {
+        unsubscribeCacheTrace = attachCacheTraceToEventBus(cacheTrace, deps.eventBus);
+      }
+    }
+  } catch (err) {
+    // Best-effort — recorder construction must never block execution.
+    deps.logger.debug(
+      { err, hint: "trajectory/cache-trace recorder init failed; continuing without sidecar", errorKind: "internal" as ErrorKind },
+      "Trajectory/cache-trace recorder init failed",
+    );
+  }
+
   // Per-execution tool retry breaker (state resets each message)
   const toolRetryBreakerConfig = config.toolRetryBreaker;
   const toolRetryBreaker = toolRetryBreakerConfig?.enabled !== false
@@ -651,6 +770,10 @@ async function runSessionLocked(
     config, deps, sessionKey, formattedKey, sm,
     resolvedModel, modelTier, executionOverrides,
     deferralResult, systemPromptBlocks, agentId,
+    // Forward the cache-trace recorder so the wrapper chain
+    // can include the cache-trace `stream:context` emit. When the
+    // recorder is null (disabled), setupStreamWrappers skips the wrapper.
+    ...(cacheTrace !== null ? { cacheTrace } : {}),
     getAdaptiveRetention: () => adaptiveRetentionRef.get(),
     getExecutionCacheRetention: () => cacheRetentionRef.get(),
     getExecutionMinTokensOverride: () => minTokensOverrideRef.get(),
@@ -1038,7 +1161,7 @@ async function runSessionLocked(
 
   const unsubscribe = session.subscribe(bridge.listener);
 
-  // Execution started bookend (Finding 1)
+  // Execution started bookend
   deps.logger.info(
     {
       agentId,
@@ -1230,6 +1353,46 @@ async function runSessionLocked(
       adaptiveRetentionClear,
       executionMinTokensOverrideClear,
     });
+
+    // Tear down the trajectory recorder + bridge subscription as the very
+    // last action of this execute() call. Both are best-effort — a
+    // flush/unsubscribe failure must NEVER throw out of finally.
+    try {
+      trajectoryUnsubscribe?.();
+    } catch {
+      // Unsubscribe failure is unreachable in practice (EventEmitter.off
+      // is sync); swallow defensively so this never aborts cleanup.
+    }
+    if (trajectoryRecorder !== null) {
+      try {
+        await trajectoryRecorder.flushAndClose();
+      } catch (err) {
+        deps.logger.debug(
+          { err, hint: "trajectory flushAndClose failed; sidecar may be partial", errorKind: "internal" as ErrorKind },
+          "Trajectory recorder flushAndClose failed",
+        );
+      }
+    }
+
+    // Tear down the cache-trace recorder + bridge subscription.
+    // Sibling block to the trajectory teardown above — best-effort,
+    // failures must never throw out of finally.
+    try {
+      unsubscribeCacheTrace?.();
+    } catch {
+      // Unsubscribe failure is unreachable in practice (EventEmitter.off
+      // is sync); swallow defensively so this never aborts cleanup.
+    }
+    if (cacheTrace !== null) {
+      try {
+        await cacheTrace.flushAndClose();
+      } catch (err) {
+        deps.logger.debug(
+          { err, hint: "cache-trace flushAndClose failed; sidecar may be partial", errorKind: "internal" as ErrorKind },
+          "Cache-trace recorder flushAndClose failed",
+        );
+      }
+    }
   }
 
   return result;

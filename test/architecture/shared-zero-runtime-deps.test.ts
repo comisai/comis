@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * @comis/shared zero-runtime-deps invariant (ARCH-BASE-09).
+ * @comis/shared zero-runtime-deps invariant.
  *
  * shared is the leaf-package guarantee for the published comisai bundle.
  * Adding any runtime dependency here breaks the bundling assumption that
@@ -18,7 +18,7 @@ import { formatViolations } from "../support/architecture-helpers.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
 
-describe("shared-zero-runtime-deps (ARCH-BASE-09)", () => {
+describe("shared-zero-runtime-deps", () => {
   it("@comis/shared MUST have zero runtime `dependencies`", () => {
     const pkgJson = JSON.parse(
       readFileSync(resolve(REPO_ROOT, "packages/shared/package.json"), "utf8"),
@@ -39,7 +39,7 @@ describe("shared-zero-runtime-deps (ARCH-BASE-09)", () => {
         suggestedFix:
           "Either move the dependency to devDependencies (if test-only) OR move the consumer code to a downstream package that already pins the dep.",
         designRef:
-          'design §2.2 / CLAUDE.md "Supply-chain invariants"',
+          'CLAUDE.md "Supply-chain invariants"',
       }),
     ).toEqual([]);
   });

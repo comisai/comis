@@ -53,6 +53,51 @@ describe("registerSessionsCommand", () => {
     const argNames = deleteCmd!.registeredArguments.map((a) => a.name());
     expect(argNames).toContain("key");
   });
+
+  it("registers the report subcommand group under sessions", () => {
+    const program = new Command();
+    registerSessionsCommand(program);
+    const sessionsCmd = program.commands.find((c) => c.name() === "sessions");
+    const reportCmd = sessionsCmd!.commands.find((c) => c.name() === "report");
+    expect(reportCmd).toBeDefined();
+    expect(reportCmd!.description()).toBe("Inspect SystemPromptReport");
+  });
+
+  it("report show subcommand has --agent (required), --runId, --format options", () => {
+    const program = new Command();
+    registerSessionsCommand(program);
+    const sessionsCmd = program.commands.find((c) => c.name() === "sessions");
+    const reportCmd = sessionsCmd!.commands.find((c) => c.name() === "report");
+    const showCmd = reportCmd!.commands.find((c) => c.name() === "show");
+    expect(showCmd).toBeDefined();
+
+    const optionNames = showCmd!.options.map((o) => o.long);
+    expect(optionNames).toContain("--agent");
+    expect(optionNames).toContain("--runId");
+    expect(optionNames).toContain("--format");
+
+    const agentOpt = showCmd!.options.find((o) => o.long === "--agent");
+    expect(agentOpt?.mandatory).toBe(true);
+
+    const argNames = showCmd!.registeredArguments.map((a) => a.name());
+    expect(argNames).toContain("sessionId");
+  });
+
+  it("report list subcommand has --limit and --format options", () => {
+    const program = new Command();
+    registerSessionsCommand(program);
+    const sessionsCmd = program.commands.find((c) => c.name() === "sessions");
+    const reportCmd = sessionsCmd!.commands.find((c) => c.name() === "report");
+    const listReportCmd = reportCmd!.commands.find((c) => c.name() === "list");
+    expect(listReportCmd).toBeDefined();
+
+    const optionNames = listReportCmd!.options.map((o) => o.long);
+    expect(optionNames).toContain("--limit");
+    expect(optionNames).toContain("--format");
+
+    const argNames = listReportCmd!.registeredArguments.map((a) => a.name());
+    expect(argNames).toContain("sessionId");
+  });
 });
 
 describe("formatRelativeTime", () => {

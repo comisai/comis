@@ -32,6 +32,7 @@ import { createSubagentHandlers } from "./subagent-handlers.js";
 import { createApprovalHandlers } from "./approval-handlers.js";
 import { createAgentHandlers } from "./agent-handlers.js";
 import { createObsHandlers } from "./obs-handlers/index.js";
+import { createCacheHandlers } from "./cache-handlers.js";
 import { createModelHandlers } from "./model-handlers.js";
 import { createChannelHandlers } from "./channel-handlers.js";
 import { createTokenHandlers } from "./token-handlers.js";
@@ -106,9 +107,17 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     // pass-through mirrors the createAgentHandlers wiring below; do not
     // simplify back to `...createConfigHandlers(deps)` (the structural-typing
     // inheritance is fragile to future deps-shape narrowing).
+    //
+    // Wire auditEnabled from diagnostics.configAudit.enabled. Default-true
+    // semantics via the `!== false` check preserves the schema's
+    // default-true contract; operators who omit the knob (undefined via
+    // optional-chain) or explicitly set true see the audit line; only an
+    // explicit `enabled: false` skips the JSONL append in config-write.ts.
     ...createConfigHandlers({
       ...deps,
       oauthCredentialStore: deps.oauthCredentialStore,
+      auditEnabled:
+        deps.container.config.diagnostics?.configAudit?.enabled !== false,
     }),
     ...createEnvHandlers(deps),
     // Encrypted secret management. Admin scope is enforced both at
@@ -189,6 +198,9 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       },
     }),
     ...createObsHandlers(deps),
+    // Durable cache-stats window aggregator. Distinct from obs-handlers
+    // (in-memory) — reads from `obs_token_usage` SQLite.
+    ...createCacheHandlers(deps),
     ...createModelHandlers({
       ...deps,
       providerEntries: deps.container.config.providers.entries,

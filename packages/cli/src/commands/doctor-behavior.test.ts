@@ -29,7 +29,7 @@ vi.mock("../doctor/output.js", () => ({
   renderDoctorJson: vi.fn(),
 }));
 
-// Mock all three repair modules
+// Mock all four repair modules
 vi.mock("../doctor/repairs/repair-config.js", () => ({
   repairConfig: vi.fn(),
 }));
@@ -38,6 +38,9 @@ vi.mock("../doctor/repairs/repair-daemon.js", () => ({
 }));
 vi.mock("../doctor/repairs/repair-workspace.js", () => ({
   repairWorkspace: vi.fn(),
+}));
+vi.mock("../doctor/repairs/repair-config-audit.js", () => ({
+  repairConfigAudit: vi.fn(),
 }));
 
 // Mock withSpinner to pass-through (no actual ora spinner in tests)
@@ -80,6 +83,7 @@ const { renderDoctorTable, renderDoctorJson } = await import("../doctor/output.j
 const { repairConfig } = await import("../doctor/repairs/repair-config.js");
 const { repairDaemon } = await import("../doctor/repairs/repair-daemon.js");
 const { repairWorkspace } = await import("../doctor/repairs/repair-workspace.js");
+const { repairConfigAudit } = await import("../doctor/repairs/repair-config-audit.js");
 
 /** Factory: a healthy doctor result with no failures. */
 const healthyResult: DoctorResult = {
@@ -152,6 +156,7 @@ describe("doctor --repair auto-fixes and re-runs", () => {
     vi.mocked(repairConfig).mockReset();
     vi.mocked(repairDaemon).mockReset();
     vi.mocked(repairWorkspace).mockReset();
+    vi.mocked(repairConfigAudit).mockReset();
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
   });
@@ -170,6 +175,10 @@ describe("doctor --repair auto-fixes and re-runs", () => {
     vi.mocked(repairConfig).mockResolvedValue({ ok: true, value: ["Created default config"] } as never);
     vi.mocked(repairDaemon).mockResolvedValue({ ok: true, value: ["Removed stale PID"] } as never);
     vi.mocked(repairWorkspace).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairConfigAudit).mockResolvedValue({
+      ok: true,
+      value: ["Config-audit scrub: log already clean (no changes)."],
+    } as never);
 
     const program = createTestProgram();
     registerDoctorCommand(program);
@@ -179,19 +188,37 @@ describe("doctor --repair auto-fixes and re-runs", () => {
     // runDoctorChecks called twice (initial + re-run after repair)
     expect(vi.mocked(runDoctorChecks)).toHaveBeenCalledTimes(2);
 
-    // All three repair modules called
+    // All four repair modules called.
     expect(vi.mocked(repairConfig)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(repairDaemon)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(repairWorkspace)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(repairConfigAudit)).toHaveBeenCalledTimes(1);
 
     // Output contains REPAIRED messages
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("REPAIRED:");
     expect(output).toContain("Created default config");
     expect(output).toContain("Removed stale PID");
+    expect(output).toContain("Config-audit scrub");
 
     // Post-repair result is healthy, so no exit(1)
     expect(exitSpy.spy).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call repairConfigAudit when --repair is omitted (opt-in semantics)", async () => {
+    vi.mocked(runDoctorChecks).mockResolvedValueOnce(failingResult);
+
+    const program = createTestProgram();
+    registerDoctorCommand(program);
+
+    // Without --repair (plain `comis doctor`), the repair modules
+    // are never invoked. The scrubber is opt-in only.
+    try {
+      await program.parseAsync(["node", "test", "doctor"]);
+    } catch {
+      // process.exit(1) from the failing result is expected.
+    }
+    expect(vi.mocked(repairConfigAudit)).not.toHaveBeenCalled();
   });
 });
 
@@ -206,6 +233,7 @@ describe("doctor --repair with repair failures", () => {
     vi.mocked(repairConfig).mockReset();
     vi.mocked(repairDaemon).mockReset();
     vi.mocked(repairWorkspace).mockReset();
+    vi.mocked(repairConfigAudit).mockReset();
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
   });
@@ -224,6 +252,12 @@ describe("doctor --repair with repair failures", () => {
     vi.mocked(repairConfig).mockResolvedValue({ ok: false, error: new Error("Permission denied") } as never);
     vi.mocked(repairDaemon).mockResolvedValue({ ok: true, value: [] } as never);
     vi.mocked(repairWorkspace).mockResolvedValue({ ok: true, value: [] } as never);
+    // Daemon-not-running is the typical failure mode for the audit
+    // scrub in repair contexts; surface as Err.
+    vi.mocked(repairConfigAudit).mockResolvedValue({
+      ok: false,
+      error: new Error("Daemon not running"),
+    } as never);
 
     const program = createTestProgram();
     registerDoctorCommand(program);

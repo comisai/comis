@@ -15,12 +15,17 @@ import type {
   DeliveryRow,
   DiagnosticRow,
   ChannelSnapshotRow,
+  SystemPromptReportRow,
 } from "./observability-store-types.js";
 
 /** Shape of the subset of ObservabilityStore implemented by this module. */
 export type ObservabilityMutations = Pick<
   ObservabilityStore,
-  "insertTokenUsage" | "insertDelivery" | "insertDiagnostic" | "insertChannelSnapshot"
+  | "insertTokenUsage"
+  | "insertDelivery"
+  | "insertDiagnostic"
+  | "insertChannelSnapshot"
+  | "insertSystemPromptReport"
 >;
 
 /**
@@ -60,6 +65,16 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
     INSERT INTO obs_channel_snapshots (
       timestamp, channel_type, channel_id, status, messages_sent, messages_received, uptime_ms
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  // INSERT OR REPLACE so re-running the same (agent_id, session_id,
+  // run_id, generated_at) tuple (e.g., retry path) updates the row in
+  // place. The composite PK ensures a unique slot.
+  const insertSystemPromptReportStmt = db.prepare(`
+    INSERT OR REPLACE INTO system_prompt_reports (
+      agent_id, tenant_id, session_id, run_id, generated_at,
+      provider, model, system_chars, system_sha256, report_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   // --- Bound methods ---
@@ -134,10 +149,26 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
     );
   }
 
+  function insertSystemPromptReport(entry: SystemPromptReportRow): void {
+    insertSystemPromptReportStmt.run(
+      entry.agentId,
+      entry.tenantId,
+      entry.sessionId,
+      entry.runId,
+      entry.generatedAt,
+      entry.provider,
+      entry.model,
+      entry.systemChars,
+      entry.systemSha256,
+      entry.reportJson,
+    );
+  }
+
   return {
     insertTokenUsage,
     insertDelivery,
     insertDiagnostic,
     insertChannelSnapshot,
+    insertSystemPromptReport,
   };
 }

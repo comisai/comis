@@ -494,6 +494,81 @@ export const DeliveryStatsDbRowSchema = z.strictObject({
 });
 export type DeliveryStatsDbRowFromSchema = z.infer<typeof DeliveryStatsDbRowSchema>;
 
+/**
+ * Schema for `system_prompt_reports` rows.
+ * SSOT for the file-internal `SystemPromptReportDbRow` interface in
+ * observability-store-types.ts. The full report JSON is stored in
+ * `report_json` (post-sanitizeForPersistence); this on-disk schema
+ * validates only the column shape, not the JSON contents (those flow
+ * through JSON.parse(row.report_json) at read time).
+ */
+export const SystemPromptReportDbRowSchema = z.strictObject({
+  agent_id: z.string(),
+  tenant_id: z.string().nullable(),
+  session_id: z.string(),
+  run_id: z.string().nullable(),
+  generated_at: z.number().int(),
+  provider: z.string().nullable(),
+  model: z.string().nullable(),
+  system_chars: z.number().int(),
+  system_sha256: z.string(),
+  report_json: z.string(),
+});
+export type SystemPromptReportDbRowFromSchema = z.infer<typeof SystemPromptReportDbRowSchema>;
+
+/**
+ * Cache-stats SQL row schemas. Four shapes — the single-row window
+ * aggregate plus three GROUP BY variants. The `prompt_tokens` field is
+ * present on raw rows (used to derive `non_cached_input_tokens` in
+ * `cache-stats-queries.ts` via TS clamping); the camelCase
+ * `CacheStatsWindow` surface drops it.
+ */
+export const CacheStatsWindowRawDbRowSchema = z.strictObject({
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  prompt_tokens: z.number(),
+  output_tokens: z.number(),
+  turns: z.number(),
+});
+export type CacheStatsWindowRawDbRowFromSchema = z.infer<typeof CacheStatsWindowRawDbRowSchema>;
+
+export const CacheStatsByProviderRawDbRowSchema = z.strictObject({
+  provider: z.string(),
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  prompt_tokens: z.number(),
+  output_tokens: z.number(),
+  turns: z.number(),
+});
+export type CacheStatsByProviderRawDbRowFromSchema = z.infer<
+  typeof CacheStatsByProviderRawDbRowSchema
+>;
+
+export const CacheStatsByModelRawDbRowSchema = z.strictObject({
+  provider: z.string(),
+  model: z.string(),
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  prompt_tokens: z.number(),
+  output_tokens: z.number(),
+  turns: z.number(),
+});
+export type CacheStatsByModelRawDbRowFromSchema = z.infer<
+  typeof CacheStatsByModelRawDbRowSchema
+>;
+
+export const CacheStatsByAgentRawDbRowSchema = z.strictObject({
+  agent_id: z.string(),
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  prompt_tokens: z.number(),
+  output_tokens: z.number(),
+  turns: z.number(),
+});
+export type CacheStatsByAgentRawDbRowFromSchema = z.infer<
+  typeof CacheStatsByAgentRawDbRowSchema
+>;
+
 // --- OAuth profile store (packages/memory/src/oauth-profile-store-encrypted.ts:29) ---
 
 /**

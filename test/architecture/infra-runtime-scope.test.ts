@@ -26,9 +26,17 @@ const REPO_ROOT = resolve(here, "../..");
 const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
 
 // Directories where value-imports of @comis/infra are allowed at runtime.
+//
+// `packages/observability/src/` is intentionally absent: the fs-safe primitives
+// (appendRegularFile / writeRegularFile / SymlinkParentRejected /
+// FileSizeLimitExceeded / PathEscapesConfinementError) live inside
+// @comis/observability itself, so no source file under
+// packages/observability/src/ value-imports @comis/infra. The dep arrow
+// points the OTHER way (infra → observability via the static re-export in
+// logging/redact-transport.ts).
 const ALLOWED_INFRA_RUNTIME_DIRS: readonly string[] = [
-  "packages/daemon/src/",    // composition root (runtime wiring)
-  "packages/infra/src/",     // self-imports during build
+  "packages/daemon/src/",         // composition root (runtime wiring)
+  "packages/infra/src/",          // self-imports during build
 ] as const;
 
 // Umbrella facade allowed value-imports.

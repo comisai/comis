@@ -24,13 +24,17 @@ const TracingDefaultsSchema = z.strictObject({
   });
 
 /**
- * Log file rotation configuration schema.
+ * Log file rotation + redactor configuration schema.
  *
- * Controls where the daemon writes structured log files and how
- * rotation/retention is handled.  All fields are immutable at runtime
- * (daemon restart required to change).
+ * Controls where the daemon writes structured log files, how
+ * rotation/retention is handled, and the edge-keeping redactor knobs
+ * that govern Pino's censor function. All fields are immutable at
+ * runtime (daemon restart required to change).
  *
- * Logging rotation config.
+ * The redact knobs land inside this existing `daemon.logging` section
+ * (NOT a new `schema-logging.ts` file and NOT inside
+ * `diagnostics.redact`), so the section-registry parity snapshot is
+ * unaffected — the snapshot covers section names, not field additions.
  */
 const LoggingConfigSchema = z.strictObject({
     /** Path to the active log file. Supports ~ expansion. */
@@ -46,6 +50,28 @@ const LoggingConfigSchema = z.strictObject({
     compress: z.boolean().default(false),
     /** JSONL trace file defaults (overridable per agent in agents.<name>.tracing) */
     tracing: TracingDefaultsSchema.default(() => TracingDefaultsSchema.parse({})),
+    /**
+     * Redact-sensitive mode.
+     *   - `"off"`   — redactor is disabled (residency-test only; production
+     *                 source is forbidden from setting this; equivalent of
+     *                 the `disableRedaction` LoggerOptions escape hatch).
+     *   - `"tools"` — full redactor: edge-keeping censor + free-form
+     *                 regex transport.
+     */
+    redactSensitive: z.enum(["off", "tools"]).default("tools"),
+    /**
+     * Optional operator-supplied additional pattern strings appended to
+     * the canonical default set in `@comis/observability`. Each entry is
+     * compiled via `new RegExp(...)` at logger init. Empty/undefined →
+     * use only the default pattern set.
+     */
+    redactPatterns: z.array(z.string()).optional(),
+    /** Minimum input length to apply the edge-keeping mask; below → "***". */
+    redactMinLength: z.number().int().min(8).default(18),
+    /** Characters preserved at the head of the masked value (0..12). */
+    redactKeepStart: z.number().int().min(0).max(12).default(6),
+    /** Characters preserved at the tail of the masked value (0..12). */
+    redactKeepEnd: z.number().int().min(0).max(12).default(4),
   });
 
 /**

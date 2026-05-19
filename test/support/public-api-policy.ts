@@ -230,14 +230,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "StreamFnWrapper",
       "ConfigResolverConfig",
       "RequestBodyInjectorConfig",
-      "CacheTraceConfig",
       "ApiPayloadTraceConfig",
       "TruncationSummary",
       "ToolResultSizeBouncerResult",
       "composeStreamWrappers",
       "createConfigResolver",
       "createRequestBodyInjector",
-      "createCacheTraceWriter",
       "createApiPayloadTraceWriter",
       "createToolResultSizeBouncer",
       "clearSessionRenderedToolCache",
@@ -1401,6 +1399,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // bootstrap closure + production retargets consume them. Tracked here
     // per the public-export-consumers gate; removed wholesale when the
     // daemon composition root wires them in.
+    // The six fs-safe symbols (SymlinkParentRejected, FileSizeLimitExceeded,
+    // AppendRegularFileOptions / Success / Error, PathEscapesConfinementError)
+    // previously listed here moved to @comis/observability/src/shared/fs-safe.ts
+    // and are no longer exported by @comis/infra's barrel. The
+    // log-related runtime adapters (createSystemClock / Env / Timers,
+    // LogFields, VALID_LOG_LEVELS) remain baseline orphans — they are
+    // Node-backed runtime adapters surfaced for future consumers that
+    // get wired in at the daemon composition root.
     ["@comis/infra", new Set<string>([
       "LogFields",
       "VALID_LOG_LEVELS",
@@ -1533,6 +1539,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "HourlyBucketDbRowFromSchema",
       "DeliveryStatsDbRowSchema",
       "DeliveryStatsDbRowFromSchema",
+      // system_prompt_reports table row schema.
+      "SystemPromptReportDbRowSchema",
+      "SystemPromptReportDbRowFromSchema",
+      // cache-stats SQL row schemas (4 × 2 = 8 entries).
+      "CacheStatsWindowRawDbRowSchema",
+      "CacheStatsWindowRawDbRowFromSchema",
+      "CacheStatsByProviderRawDbRowSchema",
+      "CacheStatsByProviderRawDbRowFromSchema",
+      "CacheStatsByModelRawDbRowSchema",
+      "CacheStatsByModelRawDbRowFromSchema",
+      "CacheStatsByAgentRawDbRowSchema",
+      "CacheStatsByAgentRawDbRowFromSchema",
       "OAuthProfileRowSchema",
       "OAuthProfileRowFromSchema",
       "CredentialMappingRowSchema",

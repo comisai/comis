@@ -78,6 +78,12 @@ export interface BridgeMetricsState {
   // Turn timing
   turnStartMs: number;
 
+  /** Wall-clock timestamp when the pi-mono `agent_start` event fired for
+   *  this run. Used to compute `durationMs` in the `session:ended` emit.
+   *  Undefined until the first `agent_start` for the AgentSession
+   *  (matches the bridge's once-per-run lifecycle). */
+  agentStartMs: number | undefined;
+
   // Compaction timing
   compactionStartMs: number;
 
@@ -180,6 +186,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     consecutiveEmptyTurns: 0,
     turnCount: 0,
     turnStartMs: systemNowMs(),
+    agentStartMs: undefined,
     compactionStartMs: 0,
     lastStopReason: undefined,
     ghostCostUsd: 0,

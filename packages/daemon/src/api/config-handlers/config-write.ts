@@ -25,8 +25,6 @@ import {
   deepMerge,
   AppConfigSchema,
   warnSuspiciousEnvValues,
-  findUnresolvedEnvRefs,
-  formatMissingEnvRefError,
   getManagedSectionRedirect,
   formatRedirectHint,
   ConfigPatchContract,
@@ -35,9 +33,12 @@ import {
   systemSetTimeout,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
+import type { ConfigWriteAuditRecordBase } from "@comis/observability";
 import { stringify as yamlStringify } from "yaml";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
+
+import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "./config-audit-hook.js";
 
 import type { RpcHandler } from "../types.js";
 import {
@@ -48,6 +49,7 @@ import {
   rejectDuplicateMcpServerNames,
   restoreMcpServerEnv,
   runAgentCredentialGuard,
+  validateMcpEnvRefs,
 } from "./config-helpers.js";
 import { coerceConfigValue, resolveSchemaForPath } from "./config-validate.js";
 
@@ -112,6 +114,20 @@ export function bindConfigWriteHandlers(
       const subSchema = resolveSchemaForPath(AppConfigSchema, section, key);
       const coercedValue = coerceConfigValue(value, subSchema);
       const ctx = rawParams._context as { agentId?: string; userId?: string; traceId?: string } | undefined;
+
+      // Build the config-audit base BEFORE validate/write so a rejected
+      // patch still surfaces in the JSONL log. When
+      // deps.auditEnabled === false, skip the build —
+      // appendConfigAuditWithOutcome no-ops on base === undefined, so the
+      // gate covers both halves of the two-phase pattern. Default-true
+      // semantics preserve prior behavior.
+      const localPathForAudit = deps.configPaths.length > 0
+        ? deps.configPaths[deps.configPaths.length - 1]!
+        : deps.defaultConfigPaths[deps.defaultConfigPaths.length - 1]!;
+      const auditBase: ConfigWriteAuditRecordBase | undefined =
+        deps.auditEnabled === false ? undefined : buildConfigAuditBase(localPathForAudit);
+      let wroteFile = false;
+      let writeError: { code?: string; message?: string } | undefined;
 
       try {
         // Check immutable paths.
@@ -217,44 +233,10 @@ export function bindConfigWriteHandlers(
           );
         }
 
-        // Reject patches that reference env vars not in the secrets store, on
-        // enabled MCP servers only. The env-substitution skip on disabled
-        // servers makes `enabled:false + ${VAR}` harmless at bootstrap; this
-        // gate forbids the partially-valid `enabled:true + missing ${VAR}`
-        // shape.
-        //
-        // We walk `patch` (not the deep-merged config) because we only
-        // validate what's being WRITTEN this RPC. `restoreMcpServerEnv` above
-        // already restored env from existing YAML for partial-update-without-
-        // env patches, so `patch.integrations.mcp.servers[].env` is the
-        // post-restore truth. Full-config validation would re-flag pre-
-        // existing valid-at-write-time refs whose secrets were later removed
-        // (out of scope, separate problem).
-        const patchInteg = (patch as Record<string, unknown>).integrations as
-          | Record<string, unknown>
-          | undefined;
-        const patchMcp = patchInteg?.mcp as Record<string, unknown> | undefined;
-        const patchServers = patchMcp?.servers;
-        if (Array.isArray(patchServers)) {
-          for (const s of patchServers) {
-            if (!s || typeof s !== "object") continue;
-            const server = s as Record<string, unknown>;
-            // McpServerEntrySchema.enabled defaults to true → absent = enabled.
-            // Only explicit `enabled: false` skips the check (preserves the
-            // placeholder-for-later pattern).
-            if (server.enabled === false) continue;
-            if (!server.env) continue;
-            const serverName = typeof server.name === "string" ? server.name : "<unnamed>";
-            const unresolved = findUnresolvedEnvRefs(
-              server.env,
-              (key) => deps.container.secretManager.get(key),
-            );
-            if (unresolved.length > 0) {
-              const missingNames = unresolved.map((u) => u.varName);
-              throw new Error(formatMissingEnvRefError(serverName, missingNames));
-            }
-          }
-        }
+        // Reject patches that reference env vars not in the secrets store
+        // on enabled MCP servers. Walks `patch` (post-restoreMcpServerEnv)
+        // so only what's being written this RPC is validated.
+        validateMcpEnvRefs(patch, (key) => deps.container.secretManager.get(key));
 
         const updatedLocal = deepMerge(existingLocal, patch);
 
@@ -267,8 +249,17 @@ export function bindConfigWriteHandlers(
           mkdirSync(localDir, { recursive: true });
         }
         const tmpPath = localPath + ".tmp";
-        writeFileSync(tmpPath, yamlStringify(updatedLocal), { encoding: "utf-8", mode: 0o600 });
-        renameSync(tmpPath, localPath);
+        try {
+          writeFileSync(tmpPath, yamlStringify(updatedLocal), { encoding: "utf-8", mode: 0o600 });
+          renameSync(tmpPath, localPath);
+          wroteFile = true;
+        } catch (writeErr) {
+          writeError = {
+            code: (writeErr as NodeJS.ErrnoException).code,
+            message: (writeErr as Error).message,
+          };
+          throw writeErr;
+        }
 
         // Best-effort git versioning
         if (deps.configGitManager) {
@@ -327,9 +318,13 @@ export function bindConfigWriteHandlers(
 
         // Schedule daemon restart so all subsystems pick up new config atomically.
         // 200ms delay allows the RPC response to flush over WebSocket before shutdown begins.
+        // `.unref()` so the timer doesn't keep the event loop alive on its own — in
+        // production the gateway/websocket server keeps the loop alive so the timer
+        // still fires; in tests using `vi.useRealTimers()` the worker can exit
+        // cleanly without waiting for or firing the SIGUSR2.
         systemSetTimeout(() => {
           process.kill(process.pid, "SIGUSR2");
-        }, 200);
+        }, 200).unref();
 
         const result = { patched: true as const, section, ...(key ? { key } : {}), value, restarting: true as const };
         if (IS_DEV) {
@@ -359,6 +354,14 @@ export function bindConfigWriteHandlers(
         );
 
         throw e;
+      } finally {
+        // Emit a JSONL config-audit record alongside the EventBus audit:event.
+        const outcome = wroteFile
+          ? ({ kind: "rename" } as const)
+          : writeError !== undefined
+            ? ({ kind: "failed", ...(writeError.code !== undefined && { code: writeError.code }), ...(writeError.message !== undefined && { message: writeError.message }) } as const)
+            : ({ kind: "rejected" } as const);
+        appendConfigAuditWithOutcome(auditBase, outcome, deps.logger);
       }
     },
   };

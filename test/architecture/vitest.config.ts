@@ -7,17 +7,23 @@ const here = dirname(fileURLToPath(import.meta.url));
 const packagesRoot = resolve(here, "../../packages");
 
 export default defineConfig({
-  // Scoped alias: ONLY `@comis/core`. The contract-registry architecture
-  // tests (api-contracts-bidirectional, api-contracts-allowlist, contract-
-  // internal-fields) need the COMPILED runtime values — the actual
-  // API_CONTRACTS Map, the frozen INTERNAL_FIELD_NAMES tuple — not source
-  // AST. Routing only `@comis/core` to dist/ leaves every other architecture
-  // test reading packages/*/src/ via source-grep + ts.createSourceFile
-  // (invariant: don't mask source-only changes through alias-routed dist/
-  // reads).
+  // Scoped alias: `@comis/core` + `@comis/observability`. The contract-
+  // registry architecture tests (api-contracts-bidirectional,
+  // api-contracts-allowlist, contract-internal-fields) need the COMPILED
+  // runtime values — the actual API_CONTRACTS Map, the frozen
+  // INTERNAL_FIELD_NAMES tuple — not source AST. The
+  // trajectory-event-types-known.test.ts also needs the compiled
+  // TRAJECTORY_BRIDGE_MAPPING from @comis/observability for the same
+  // reason — the bridge mapping is the runtime closed set.
+  //
+  // Routing these two specific packages to dist/ leaves every other
+  // architecture test reading packages/*/src/ via source-grep +
+  // ts.createSourceFile (invariant: don't mask source-only changes
+  // through alias-routed dist/ reads).
   resolve: {
     alias: {
       "@comis/core": resolve(packagesRoot, "core/dist/index.js"),
+      "@comis/observability": resolve(packagesRoot, "observability/dist/index.js"),
     },
   },
   test: {

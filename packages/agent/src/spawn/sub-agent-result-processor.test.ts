@@ -328,8 +328,8 @@ describe("deliverFailureNotification", () => {
 });
 
 // ---------------------------------------------------------------------------
-// classifyErrorContext - HTTP 5xx detection (regression: operator-precedence
-// bug pre-Phase-34 carried verbatim during 34-01 git mv). The old expression
+// classifyErrorContext - HTTP 5xx detection (operator-precedence regression).
+// The old expression
 // `lowerMsg.includes("provider") || lowerMsg.includes("5") && lowerMsg.includes("00")`
 // falsely classified any message containing both "5" and "00" substrings as a
 // retryable ProviderError. The fix uses a word-bounded regex /\b5\d{2}\b/ to

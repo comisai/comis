@@ -575,6 +575,7 @@ export class IcMcpManagement extends LitElement {
   private _stripRedactedEnv(servers: McpServerEntry[]): McpServerEntry[] {
     return servers.map((s) => {
       if (!s.env) return s;
+      // eslint-disable-next-line no-restricted-syntax -- mcp-management masked-env detection (not the Pino censor literal)
       const hasRedacted = Object.values(s.env).some((v) => v === "[REDACTED]");
       if (!hasRedacted) return s;
       const { env: _, ...rest } = s;

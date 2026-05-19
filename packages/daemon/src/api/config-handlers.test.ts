@@ -78,6 +78,12 @@ describe("config.patch", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -158,6 +164,149 @@ describe("config.patch", () => {
     vi.advanceTimersByTime(200);
     expect(killSpy).not.toHaveBeenCalled();
   });
+
+  // Config-audit JSONL hook around the atomic write.
+  describe("config-audit hook", () => {
+    let auditPath: string;
+    let prevAuditEnv: string | undefined;
+
+    beforeEach(() => {
+      auditPath = join(tempConfig.dir, "config-audit.jsonl");
+      // eslint-disable-next-line no-restricted-syntax -- test fixture env override
+      prevAuditEnv = process.env["COMIS_CONFIG_AUDIT_LOG"];
+      // eslint-disable-next-line no-restricted-syntax -- test fixture env override
+      process.env["COMIS_CONFIG_AUDIT_LOG"] = auditPath;
+    });
+
+    afterEach(() => {
+      // eslint-disable-next-line no-restricted-syntax -- test fixture env restore
+      if (prevAuditEnv === undefined) delete process.env["COMIS_CONFIG_AUDIT_LOG"];
+      // eslint-disable-next-line no-restricted-syntax -- test fixture env restore
+      else process.env["COMIS_CONFIG_AUDIT_LOG"] = prevAuditEnv;
+    });
+
+    it("writes a rename audit record on successful patch alongside the EventBus emit", async () => {
+      const deps = makeDeps(tempConfig.configPath);
+      const handlers = createConfigHandlers(deps);
+
+      const auditEvents: unknown[] = [];
+      deps.container.eventBus.on("audit:event", (e) => auditEvents.push(e));
+
+      await handlers["config.patch"]!({
+        section: "logLevel",
+        value: "debug",
+        _trustLevel: "admin",
+      });
+      // The append is launched async — flush microtasks before asserting.
+      // setImmediate is patched by fake timers, so drive it explicitly.
+      await vi.runAllTimersAsync();
+
+      // EventBus emit still happens (additive — JSONL is not a replacement).
+      expect(auditEvents.length).toBeGreaterThan(0);
+
+      // JSONL record present.
+      const fs = await import("node:fs");
+      expect(fs.existsSync(auditPath)).toBe(true);
+      const lines = fs
+        .readFileSync(auditPath, "utf-8")
+        .trim()
+        .split("\n")
+        .filter((l) => l.length > 0);
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+      const record = JSON.parse(lines[lines.length - 1]!) as {
+        source: string;
+        result: string;
+        phase: string;
+      };
+      expect(record.source).toBe("config-patch-rpc");
+      expect(record.result).toBe("rename");
+      expect(record.phase).toBe("write");
+    });
+
+    it("writes a rejected audit record on schema-validation failure", async () => {
+      // Use real timers for this test — fakeTimers patches setImmediate
+      // which blocks the suppressError microtask chain in the audit
+      // hook's finally block.
+      vi.useRealTimers();
+
+      const deps = makeDeps(tempConfig.configPath);
+      const handlers = createConfigHandlers(deps);
+
+      await expect(
+        handlers["config.patch"]!({
+          section: "logLevel",
+          value: "invalid_level",
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow("Config validation failed");
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const fs = await import("node:fs");
+      expect(fs.existsSync(auditPath)).toBe(true);
+      const lines = fs
+        .readFileSync(auditPath, "utf-8")
+        .trim()
+        .split("\n")
+        .filter((l) => l.length > 0);
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+      const record = JSON.parse(lines[lines.length - 1]!) as { result: string };
+      expect(record.result).toBe("rejected");
+    });
+
+    // The audit append is gated on deps.auditEnabled — when
+    // explicitly false, neither buildConfigAuditBase nor
+    // appendConfigAuditWithOutcome runs.
+    it("skips the audit JSONL append when deps.auditEnabled === false", async () => {
+      vi.useRealTimers();
+
+      const baseDeps = makeDeps(tempConfig.configPath);
+      const deps = { ...baseDeps, auditEnabled: false };
+      const handlers = createConfigHandlers(deps);
+
+      await handlers["config.patch"]!({
+        section: "logLevel",
+        value: "debug",
+        _trustLevel: "admin",
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const fs = await import("node:fs");
+      // The audit log must NOT have been touched.
+      if (fs.existsSync(auditPath)) {
+        const after = fs.statSync(auditPath).size;
+        expect(after).toBe(0);
+      } else {
+        expect(fs.existsSync(auditPath)).toBe(false);
+      }
+    });
+
+    it("writes the audit JSONL line when deps.auditEnabled === true (symmetric positive)", async () => {
+      // Gates the negative test above: ensures the audit log path is
+      // correctly threaded, and that the default-true contract works
+      // for callers that explicitly pass true.
+      vi.useRealTimers();
+
+      const baseDeps = makeDeps(tempConfig.configPath);
+      const deps = { ...baseDeps, auditEnabled: true };
+      const handlers = createConfigHandlers(deps);
+
+      await handlers["config.patch"]!({
+        section: "logLevel",
+        value: "debug",
+        _trustLevel: "admin",
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const fs = await import("node:fs");
+      expect(fs.existsSync(auditPath)).toBe(true);
+      const lines = fs
+        .readFileSync(auditPath, "utf-8")
+        .trim()
+        .split("\n")
+        .filter((l) => l.length > 0);
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+    });
+  });
 });
 
 describe("config.patch rate limiting", () => {
@@ -171,6 +320,12 @@ describe("config.patch rate limiting", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -262,6 +417,12 @@ describe("config.patch audit events", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -351,6 +512,12 @@ describe("config.patch structured logging", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -413,6 +580,12 @@ describe("rate limit WARN logging", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -466,6 +639,12 @@ describe("config.apply", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -621,6 +800,12 @@ describe("env var reference preservation", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -711,6 +896,12 @@ describe("config.patch env var reference validation", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -932,6 +1123,12 @@ describe("config webhook delivery", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -1070,6 +1267,12 @@ describe("config.gc", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -1304,6 +1507,12 @@ describe("config.patch type coercion", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();
@@ -1727,6 +1936,12 @@ describe("config.patch credential guard", () => {
   });
 
   afterEach(() => {
+    // Clear any pending fake timers BEFORE swapping to real timers — otherwise
+    // the queued setTimeout (e.g., the 200ms SIGUSR2 restart timer) migrates to
+    // the real-timer queue and fires after vi.restoreAllMocks() runs, calling
+    // the REAL process.kill(pid, "SIGUSR2") which terminates the vitest worker
+    // and surfaces as `[vitest-pool]: Worker exited unexpectedly`.
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     tempConfig.cleanup();

@@ -43,6 +43,11 @@ import {
   type InspectPayload,
 } from "../sync-tooling/index.js";
 import {
+  registerConfigAuditCommand,
+  buildCliSyncToolingAuditBase,
+  appendCliSyncToolingAudit,
+} from "./config/audit.js";
+import {
   runToolingFill,
   type PromptIO,
 } from "../tooling-fill/index.js";
@@ -78,6 +83,9 @@ const SYNC_TOOLING_DEFAULT_CONFIG = os.homedir() + "/.comis/config.yaml";
  */
 export function registerConfigCommand(program: Command): void {
   const config = program.command("config").description("Configuration management");
+
+  // `comis config audit show|scrub` subcommand group.
+  registerConfigAuditCommand(config);
 
   // --- config validate -------------------------------------------------------
 
@@ -569,7 +577,30 @@ export function registerConfigCommand(program: Command): void {
         }
 
         const counts = applyToDocument(doc, artifacts, { overwrite: isOverwrite });
+
+        // Two-phase audit around the single atomicWriteFile call site
+        // (only write site in this file). Best-effort.
+        // Honor diagnostics.configAudit.enabled — when explicitly false,
+        // skip both buildCliSyncToolingAuditBase (build) and
+        // appendCliSyncToolingAudit (append). Default-true semantics via
+        // the `!== false` check: omitted or true continues to emit the
+        // audit line; only an explicit false silences it.
+        // configJs was loaded above at line 464 (Record<string, unknown> shape)
+        // and is `{}` in the init-when-absent recovery path, which evaluates
+        // to true via the optional-chain returning undefined !== false.
+        const configJsAudit = configJs as {
+          diagnostics?: { configAudit?: { enabled?: boolean } };
+        };
+        const cliAuditEnabled =
+          configJsAudit?.diagnostics?.configAudit?.enabled !== false;
+        const auditBase = cliAuditEnabled
+          ? buildCliSyncToolingAuditBase(configPath)
+          : undefined;
         const written = atomicWriteFile(configPath, doc.toString());
+        if (auditBase !== undefined) {
+          appendCliSyncToolingAudit(auditBase, written);
+        }
+
         if (!written.ok) {
           error(`Atomic write failed (${written.error.code}): ${written.error.cause}`);
           process.exit(2);

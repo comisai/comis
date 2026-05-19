@@ -98,6 +98,9 @@ importers:
       '@comis/core':
         specifier: workspace:*
         version: link:../core
+      '@comis/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@comis/scheduler':
         specifier: workspace:*
         version: link:../scheduler
@@ -232,6 +235,9 @@ importers:
       '@comis/core':
         specifier: workspace:*
         version: link:../core
+      '@comis/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@comis/shared':
         specifier: workspace:*
         version: link:../shared
@@ -305,6 +311,9 @@ importers:
       '@comis/memory':
         specifier: workspace:*
         version: link:../memory
+      '@comis/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@comis/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator
@@ -578,6 +587,9 @@ importers:
       '@comis/memory':
         specifier: workspace:*
         version: link:../memory
+      '@comis/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@comis/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator
@@ -674,6 +686,9 @@ importers:
       '@comis/core':
         specifier: workspace:*
         version: link:../core
+      '@comis/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@comis/shared':
         specifier: workspace:*
         version: link:../shared
@@ -724,6 +739,25 @@ importers:
       '@types/better-sqlite3':
         specifier: 7.6.13
         version: 7.6.13
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.5
+        version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-v8@4.1.5)(happy-dom@20.9.0)(vite@8.0.10(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.8.4))
+
+  packages/observability:
+    dependencies:
+      '@comis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@comis/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@earendil-works/pi-agent-core':
+        specifier: 0.75.3
+        version: 0.75.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
+    devDependencies:
       typescript:
         specifier: 5.9.3
         version: 5.9.3

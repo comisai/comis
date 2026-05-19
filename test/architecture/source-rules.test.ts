@@ -36,7 +36,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findInSourceFiles } from "../support/source-grep.js";
@@ -345,6 +345,105 @@ describe("source-rules -- secret-residency", () => {
       ).toEqual([]);
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// Source-grep for the literal "[REDACTED]" string.
+//
+// The Pino redact censor uses the edge-keeping maskToken callback from
+// @comis/observability/redact, not the literal sentinel. ESLint
+// enforces this via a no-restricted-syntax selector in eslint.config.js;
+// this source-grep is the defense-in-depth mirror — it catches the
+// bytes even if the AST walker is bypassed.
+//
+// The grep walks every production packages/*/src/**/*.ts file
+// (excluding .test.ts). Sites that legitimately need the literal
+// (pre-existing non-Pino-censor sentinels, e.g. session-secret
+// scrubbing, RPC placeholder-rejection guards, web-API error
+// sanitization) carry an inline `// eslint-disable-next-line
+// no-restricted-syntax` annotation citing them as pre-existing
+// patterns. We grep for the literal AND filter out:
+//   1) lines carrying the eslint-disable annotation;
+//   2) the previous line carrying the eslint-disable-next-line annotation;
+//   3) comment-only lines (the rule is about value positions, not docs);
+//   4) regex character-class / pattern bodies referencing the literal
+//      for REJECTION purposes (e.g., `/^\[REDACTED[^\]]*\]$/`).
+// ---------------------------------------------------------------------------
+
+const REDACTED_INLINE_DISABLE_RE = /eslint-disable[^\n]*no-restricted-syntax/;
+
+// Matches a BARE `"[REDACTED]"` or `'[REDACTED]'` literal — exactly the
+// AST shape `Literal[value='[REDACTED]']` that ESLint's no-restricted-
+// syntax rule catches. We intentionally do NOT match templated literals
+// like `"sk-ant-[REDACTED]"` (which combine provider context with a
+// fixed mask suffix and are a legitimate sanitizer pattern — see
+// `packages/core/src/security/log-sanitizer.ts`). Those are not the
+// Pino censor literal and need no annotation.
+const BARE_REDACTED_LITERAL_RE = /(?<!\\)(?:"\[REDACTED\]"|'\[REDACTED\]')/;
+
+describe("source-rules -- [REDACTED] literal forbidden in production source", () => {
+  for (const pkg of WORKSPACE_PACKAGES) {
+    it(`packages/${pkg}/src does NOT contain a bare "[REDACTED]" literal (use maskToken instead)`, () => {
+      const pkgSrcDir = resolve(PACKAGES_ROOT, pkg, "src");
+      if (!existsSync(pkgSrcDir)) {
+        // Package has no src/ (e.g., umbrella package).
+        return;
+      }
+      const result = findInSourceFiles({
+        rootDir: pkgSrcDir,
+        needle: BARE_REDACTED_LITERAL_RE,
+        excludeFileSuffixes: [".test.ts"],
+      });
+      const offenders: string[] = [];
+      for (const file of result.matches) {
+        const contents = readFileSync(file, "utf8");
+        const lines = contents.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i]!;
+          if (!BARE_REDACTED_LITERAL_RE.test(line)) continue;
+          // (1) Same-line eslint-disable carve-out.
+          if (REDACTED_INLINE_DISABLE_RE.test(line)) continue;
+          // (2) Previous-line eslint-disable-next-line carve-out.
+          if (i > 0) {
+            const prev = lines[i - 1]!;
+            if (
+              prev.includes("eslint-disable-next-line") &&
+              REDACTED_INLINE_DISABLE_RE.test(prev)
+            ) {
+              continue;
+            }
+          }
+          // (3) Comment-only line — rule is about value positions.
+          const trimmed = line.trimStart();
+          if (trimmed.startsWith("*") || trimmed.startsWith("//")) continue;
+          // (4) Regex character-class / pattern body (rejection guards).
+          if (/\/\^?\\?\[REDACTED/.test(line) || /\\\[REDACTED/.test(line)) continue;
+          offenders.push(`${file}:${i + 1}`);
+        }
+      }
+      expect(
+        offenders,
+        formatViolations({
+          description:
+            `packages/${pkg}/src must not contain a bare "[REDACTED]" literal in production source. ` +
+            `The Pino censor uses maskToken() (edge-keeping mask) from @comis/observability/redact. ` +
+            `Pre-existing non-Pino-censor sentinels carry an inline eslint-disable-next-line annotation citing them as pre-existing patterns.`,
+          violations: offenders.map((entry) => {
+            const [file, line] = entry.split(":");
+            return {
+              file: file ?? entry,
+              line: Number(line ?? 0),
+              snippet: '"[REDACTED]"',
+            };
+          }),
+          suggestedFix:
+            "Use maskToken(value) from @comis/observability/redact (or import via @comis/observability barrel). " +
+            "If this is a pre-existing non-Pino-censor sentinel, add an inline " +
+            "`// eslint-disable-next-line no-restricted-syntax -- <reason>` annotation on the line above.",
+        }),
+      ).toEqual([]);
+    });
+  }
 });
 
 describe("source-rules -- ContextStorePort row-DTO residency", () => {

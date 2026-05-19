@@ -331,4 +331,48 @@ describe("initSchema", () => {
       expect(() => initSchema(db, Infinity)).toThrow("Invalid embeddingDimensions");
     });
   });
+
+  // ── system_prompt_reports table ─────────────────────────────────
+
+  describe("system_prompt_reports table", () => {
+    it("creates the system_prompt_reports table on initSchema", () => {
+      initSchema(db, 1536);
+      const tables = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='system_prompt_reports'",
+        )
+        .all() as Array<{ name: string }>;
+      expect(tables).toHaveLength(1);
+      expect(tables[0]!.name).toBe("system_prompt_reports");
+    });
+
+    it("creates the idx_spr_session index on initSchema", () => {
+      initSchema(db, 1536);
+      const indexes = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_spr_session'",
+        )
+        .all() as Array<{ name: string }>;
+      expect(indexes).toHaveLength(1);
+      expect(indexes[0]!.name).toBe("idx_spr_session");
+    });
+
+    it("system_prompt_reports has the expected column shape", () => {
+      initSchema(db, 1536);
+      const columns = db
+        .prepare("PRAGMA table_info(system_prompt_reports)")
+        .all() as Array<{ name: string; notnull: number }>;
+      const colNames = columns.map((c) => c.name);
+      expect(colNames).toContain("agent_id");
+      expect(colNames).toContain("tenant_id");
+      expect(colNames).toContain("session_id");
+      expect(colNames).toContain("run_id");
+      expect(colNames).toContain("generated_at");
+      expect(colNames).toContain("provider");
+      expect(colNames).toContain("model");
+      expect(colNames).toContain("system_chars");
+      expect(colNames).toContain("system_sha256");
+      expect(colNames).toContain("report_json");
+    });
+  });
 });

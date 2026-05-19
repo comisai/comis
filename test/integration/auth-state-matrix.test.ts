@@ -8,7 +8,7 @@
  *
  * Total: 3 commands × 2 storage × 2 daemon states = 12 it.each rows.
  *
- * Expected behavior per cell (per design §8.2.7):
+ * Expected behavior per cell:
  *   - file/up     → CLI-local; reads file backend directly. Exit 0.
  *   - file/down   → CLI-local; same as file/up (no daemon needed). Exit 0.
  *   - encrypted/up   → daemon RPC `auth.{list,logout}` (admin scope). Exit 0

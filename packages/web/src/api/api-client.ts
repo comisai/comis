@@ -208,7 +208,7 @@ export function createApiClient(
       const safeBody = body.length > 200 ? body.slice(0, 200) + "..." : body;
       const sanitized = safeBody
         .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
-        .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]");
+        .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]"); // eslint-disable-line no-restricted-syntax -- web-api-client error-body sanitization (not the Pino censor literal)
       throw new Error(`Request failed (${res.status}): ${sanitized}`);
     }
 
@@ -227,7 +227,7 @@ export function createApiClient(
       const safeBody = body.length > 200 ? body.slice(0, 200) + "..." : body;
       const sanitized = safeBody
         .replace(/https?:\/\/[^\s"')]+/g, "[URL]")
-        .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]");
+        .replace(/[A-Za-z0-9_-]{20,}/g, "[REDACTED]"); // eslint-disable-line no-restricted-syntax -- web-api-client error-body sanitization (not the Pino censor literal)
       throw new Error(`Request failed (${res.status}): ${sanitized}`);
     }
 

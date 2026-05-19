@@ -8,6 +8,15 @@ export default defineConfig({
     // adapter SDKs that are not hoisted to the repo root, so it cannot
     // run from the default `pnpm test` invocation in a clean install).
     projects: ["packages/*", "test/architecture", "scripts/contracts"],
+    // Forked workers reuse one process across many test files. Libraries
+    // (better-sqlite3, Pino transports, node-llama-cpp, ...) that register
+    // `process.on("unhandledRejection", ...)` on import accumulate listeners
+    // until Node fires `MaxListenersExceededWarning`, after which the worker
+    // fails to terminate at teardown. Setup file raises the ceiling; the
+    // teardown bump gives slow disposal paths room to drain. Neither
+    // changes any production code path.
+    setupFiles: ["./test/support/vitest-process-listeners.ts"],
+    teardownTimeout: 30000,
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],

@@ -24,6 +24,7 @@ Extension points in `packages/core/src/`:
 shared        Result type, utilities — zero runtime deps
 core          domain, ports, event bus, security, config, hooks, bootstrap, ComisLogger structural contract, FileLockPort, ContextStorePort + SessionStorePort + row DTOs (CtxConversationRow..CtxExpansionGrantRow, SessionData, SessionListEntry, SessionDetailedEntry), OAuth helpers, master-key helpers
 infra         Pino structured logging implementation (assignable to core's ComisLogger contract)
+observability Diagnostics substrate: queued writer, payload bounding, sanitization, path guards, cache-trace runtime + EventBus bridge, cache-stats aggregation/RPC
 memory        SQLite-backed ContextStorePort + SessionStorePort impls (return types
               from core) + MemoryApi + FTS5 + vector search (MemoryPort, SecretStorePort,
               CredentialMappingPort, DeliveryQueuePort, DeliveryMirrorPort, OAuth-store,

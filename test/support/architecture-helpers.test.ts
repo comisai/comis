@@ -26,14 +26,14 @@ describe("formatViolations -- verbose failure rendering", () => {
         },
       ],
       suggestedFix: "Move helper to @comis/core/security.",
-      designRef: "design §5.2 / L17",
+      designRef: "L17 boundary rule",
       allowlistRef: "L17",
     });
     expect(out).toContain("Found 1 violation");
     expect(out).toContain("/abs/cli/src/foo.ts:10:5");
     expect(out).toContain("Move helper to @comis/core/security");
     expect(out).toContain("Allowlist reference: L17");
-    expect(out).toContain("See: design §5.2 / L17");
+    expect(out).toContain("See: L17 boundary rule");
   });
 
   it("omits column when undefined", () => {

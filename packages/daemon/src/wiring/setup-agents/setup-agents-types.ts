@@ -120,6 +120,15 @@ export interface SingleAgentDeps {
   env: import("@comis/core").EnvPort;
   /** Timer scheduling. */
   timers: import("@comis/core").TimerPort;
+  /**
+   * ObservabilityStore for SystemPromptReport persistence in the
+   * production prompt-assembly path. Constructed in daemon.ts
+   * (createObservabilityStore(db) when obsConfig.persistence.enabled is
+   * true). Undefined when persistence is disabled — the build+persist
+   * block in prompt-assembly.ts remains a no-op in that mode.
+   * Threaded through createPiExecutor in setup-agents-runtime.ts.
+   */
+  obsStore?: import("@comis/memory").ObservabilityStore;
 }
 
 /** Per-agent outputs from setupSingleAgent(), matching the Maps in AgentsResult. */
