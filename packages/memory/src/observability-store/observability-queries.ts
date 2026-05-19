@@ -19,10 +19,12 @@ import {
   sessionAggMapper,
   hourlyBucketMapper,
   deliveryStatsMapper,
+  systemPromptReportMapper,
   tokenUsageFromRow,
   deliveryFromRow,
   diagnosticFromRow,
   snapshotFromRow,
+  systemPromptReportFromRow,
   type ObservabilityStore,
   type TokenUsageRow,
   type TokenUsageQueryParams,
@@ -36,6 +38,7 @@ import {
   type SessionAggregation,
   type HourlyBucket,
   type DeliveryStats,
+  type SystemPromptReportRow,
 } from "./observability-store-types.js";
 
 /** Shape of the subset of ObservabilityStore implemented by this module. */
@@ -50,6 +53,8 @@ export type ObservabilityQueries = Pick<
   | "deliveryStats"
   | "queryDiagnostics"
   | "latestChannelSnapshots"
+  | "latestSystemPromptReport"
+  | "listSystemPromptReports"
 >;
 
 /**
@@ -130,6 +135,21 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
       SELECT channel_type, MAX(timestamp) as max_ts
       FROM obs_channel_snapshots GROUP BY channel_type
     ) latest ON s.channel_type = latest.channel_type AND s.timestamp = latest.max_ts
+  `);
+
+  // Plan 45-04: SystemPromptReport queries.
+  const latestSystemPromptReportStmt = db.prepare(`
+    SELECT * FROM system_prompt_reports
+    WHERE agent_id = ? AND session_id = ?
+    ORDER BY generated_at DESC
+    LIMIT 1
+  `);
+
+  const listSystemPromptReportsStmt = db.prepare(`
+    SELECT * FROM system_prompt_reports
+    WHERE session_id = ?
+    ORDER BY generated_at DESC
+    LIMIT ?
   `);
 
   // --- Bound methods ---
@@ -317,6 +337,29 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     return rows.map(snapshotFromRow);
   }
 
+  function latestSystemPromptReport(
+    agentId: string,
+    sessionId: string,
+  ): SystemPromptReportRow | undefined {
+    const raw = latestSystemPromptReportStmt.get(agentId, sessionId);
+    const parsed = systemPromptReportMapper.parseOptionalRow(raw);
+    // Degrade-on-validation-error: observability is non-fatal → undefined.
+    const row = parsed.ok ? parsed.value : undefined;
+    if (!row) return undefined;
+    return systemPromptReportFromRow(row);
+  }
+
+  function listSystemPromptReports(
+    sessionId: string,
+    limit: number,
+  ): SystemPromptReportRow[] {
+    const raw = listSystemPromptReportsStmt.all(sessionId, limit);
+    const parsed = systemPromptReportMapper.parseRows(raw);
+    // Degrade-on-validation-error: observability is non-fatal → empty array.
+    const rows = parsed.ok ? parsed.value : [];
+    return rows.map(systemPromptReportFromRow);
+  }
+
   return {
     queryTokenUsage,
     aggregateByProvider,
@@ -327,5 +370,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     deliveryStats,
     queryDiagnostics,
     latestChannelSnapshots,
+    latestSystemPromptReport,
+    listSystemPromptReports,
   };
 }

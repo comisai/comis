@@ -38,6 +38,7 @@ export type {
   TokenUsageQueryParams,
   DeliveryQueryParams,
   DiagnosticQueryParams,
+  SystemPromptReportRow,
 } from "./observability-store-types.js";
 
 /**

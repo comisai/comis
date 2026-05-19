@@ -19,6 +19,7 @@ import {
   SessionAggDbRowSchema,
   HourlyBucketDbRowSchema,
   DeliveryStatsDbRowSchema,
+  SystemPromptReportDbRowSchema,
 } from "../row-schemas.js";
 import { createRowMapper } from "../row-mapper.js";
 
@@ -41,6 +42,8 @@ export const agentAggMapper = createRowMapper(AgentAggDbRowSchema);
 export const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
 export const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
 export const deliveryStatsMapper = createRowMapper(DeliveryStatsDbRowSchema);
+/** Plan 45-04: SystemPromptReport row mapper. */
+export const systemPromptReportMapper = createRowMapper(SystemPromptReportDbRowSchema);
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -115,6 +118,21 @@ export interface ChannelSnapshotRow {
   messagesSent?: number;
   messagesReceived?: number;
   uptimeMs?: number;
+}
+
+/** Plan 45-04: SystemPromptReport row (insert or query result). */
+export interface SystemPromptReportRow {
+  agentId: string;
+  tenantId: string | null;
+  sessionId: string;
+  runId: string | null;
+  generatedAt: number;
+  provider: string | null;
+  model: string | null;
+  systemChars: number;
+  systemSha256: string;
+  /** Serialized SystemPromptReport JSON (sanitized via 45-02 pipeline). */
+  reportJson: string;
 }
 
 /** Aggregation by provider and model. */
@@ -226,6 +244,11 @@ export interface ObservabilityStore {
   insertChannelSnapshot(entry: ChannelSnapshotRow): void;
   latestChannelSnapshots(): ChannelSnapshotRow[];
 
+  // Plan 45-04: SystemPromptReport
+  insertSystemPromptReport(row: SystemPromptReportRow): void;
+  latestSystemPromptReport(agentId: string, sessionId: string): SystemPromptReportRow | undefined;
+  listSystemPromptReports(sessionId: string, limit: number): SystemPromptReportRow[];
+
   // Maintenance
   prune(retentionDays: number): PruneResult;
   resetAll(): ResetResult;
@@ -300,6 +323,20 @@ export interface ChannelSnapshotDbRow {
   messages_sent: number;
   messages_received: number;
   uptime_ms: number;
+}
+
+/** Plan 45-04: snake_case DB row matching SystemPromptReportDbRowSchema. */
+export interface SystemPromptReportDbRow {
+  agent_id: string;
+  tenant_id: string | null;
+  session_id: string;
+  run_id: string | null;
+  generated_at: number;
+  provider: string | null;
+  model: string | null;
+  system_chars: number;
+  system_sha256: string;
+  report_json: string;
 }
 
 // Aggregate row shapes (ProviderAggDbRow, AgentAggDbRow, SessionAggDbRow,
@@ -382,6 +419,21 @@ export function snapshotFromRow(row: ChannelSnapshotDbRow): ChannelSnapshotRow {
     messagesSent: row.messages_sent,
     messagesReceived: row.messages_received,
     uptimeMs: row.uptime_ms,
+  };
+}
+
+export function systemPromptReportFromRow(row: SystemPromptReportDbRow): SystemPromptReportRow {
+  return {
+    agentId: row.agent_id,
+    tenantId: row.tenant_id,
+    sessionId: row.session_id,
+    runId: row.run_id,
+    generatedAt: row.generated_at,
+    provider: row.provider,
+    model: row.model,
+    systemChars: row.system_chars,
+    systemSha256: row.system_sha256,
+    reportJson: row.report_json,
   };
 }
 
