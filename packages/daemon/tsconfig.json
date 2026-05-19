@@ -15,6 +15,7 @@
     { "path": "../orchestrator" },
     { "path": "../gateway" },
     { "path": "../memory" },
+    { "path": "../observability" },
     { "path": "../scheduler" },
     { "path": "../skills" }
   ]
