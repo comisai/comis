@@ -42,11 +42,13 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 18 entries (the 18 methods in obs-handlers.ts)", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(18);
+  it("OBSERVABILITY_CONTRACTS has exactly 20 entries (18 original + 2 SystemPromptReport methods)", () => {
+    // Plan 45-04 added 2 new methods (obs.systemPromptReport.latest +
+    // obs.systemPromptReport.list); count bumped 18 → 20.
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(20);
   });
 
-  it("all 18 contracts are admin-scoped", () => {
+  it("all 20 contracts are admin-scoped", () => {
     for (const c of OBSERVABILITY_CONTRACTS) {
       expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
     }
@@ -73,6 +75,9 @@ describe("observability-domain contracts", () => {
       "obs.getCacheStats",
       "obs.reset",
       "obs.reset.table",
+      // Plan 45-04: SystemPromptReport surface.
+      "obs.systemPromptReport.latest",
+      "obs.systemPromptReport.list",
     ]);
   });
 
