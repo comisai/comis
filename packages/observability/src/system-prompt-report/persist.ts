@@ -106,35 +106,30 @@ export async function persistSystemPromptReport(
   //    credential bodies, bound payload size/depth. Same pipeline as
   //    trajectory + (future) config-audit writers.
   //
-  // NB: the sanitizer treats `sessionId` (and other "session_id"-shaped
-  // names) as credential-keyed and masks the VALUE. That's the right
-  // call for free-form diagnostic payloads, but the SystemPromptReport
-  // shape uses sessionId/agentId as PRIMARY-KEY columns in the
-  // `system_prompt_reports` table — they MUST flow through as plain
-  // strings into the SQLite row. Capture those keys from the ORIGINAL
-  // report (pre-sanitization) and use the sanitized graph only for the
-  // `report_json` payload that gets serialized.
-  const keys = {
-    agentId: report.agentId,
-    tenantId: report.tenantId ?? null,
-    sessionId: report.sessionId,
-    runId: report.runId ?? null,
-    generatedAt: report.generatedAt,
-    provider: report.provider ?? null,
-    model: report.model ?? null,
-    systemChars: report.systemPrompt.chars,
-    systemSha256: report.systemPrompt.sha256,
-  };
+  // Per Plan 45.1-01 (TRAJ-FIX-04) the sanitizer no longer masks
+  // `sessionId`/`agentId`/`runId`/`tenantId`/`traceId` — those are
+  // structural join keys (design §4.3), not credentials. They flow
+  // through `sanitizeForPersistence` intact as plain strings, so the
+  // INSERT row can be built directly from `safeReport` without a
+  // parallel "captured from the original" key object.
   const safeReport = sanitizeForPersistence(report) as SystemPromptReport;
+  const reportJson = JSON.stringify(safeReport);
 
   const errors: Error[] = [];
 
   // 2. observability-store write (best-effort).
   if (observabilityStore) {
     try {
-      const reportJson = JSON.stringify(safeReport);
       observabilityStore.insertSystemPromptReport({
-        ...keys,
+        agentId: safeReport.agentId,
+        tenantId: safeReport.tenantId ?? null,
+        sessionId: safeReport.sessionId,
+        runId: safeReport.runId ?? null,
+        generatedAt: safeReport.generatedAt,
+        provider: safeReport.provider ?? null,
+        model: safeReport.model ?? null,
+        systemChars: safeReport.systemPrompt.chars,
+        systemSha256: safeReport.systemPrompt.sha256,
         reportJson,
       });
     } catch (e) {
@@ -143,8 +138,8 @@ export async function persistSystemPromptReport(
       logger?.warn(
         {
           err: obsErr,
-          agentId: keys.agentId,
-          sessionId: keys.sessionId,
+          agentId: safeReport.agentId,
+          sessionId: safeReport.sessionId,
           hint: "SystemPromptReport observability-store write failed; report not persisted to SQLite",
           errorKind: "dependency" as const,
         },
@@ -157,9 +152,7 @@ export async function persistSystemPromptReport(
   if (sessionStore) {
     try {
       await sessionStore.writeSystemPromptReport({
-        // sessionId is from the ORIGINAL report — sanitizer would mask
-        // the value (see the explanation above the keys object).
-        sessionId: keys.sessionId,
+        sessionId: safeReport.sessionId,
         report: safeReport,
       });
     } catch (e) {
@@ -168,8 +161,8 @@ export async function persistSystemPromptReport(
       logger?.warn(
         {
           err: sessErr,
-          agentId: keys.agentId,
-          sessionId: keys.sessionId,
+          agentId: safeReport.agentId,
+          sessionId: safeReport.sessionId,
           hint: "SystemPromptReport session-store write failed; report not persisted to session sink",
           errorKind: "dependency" as const,
         },
