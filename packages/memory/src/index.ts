@@ -91,6 +91,7 @@ export type {
   ObsTableName,
   ResetResult,
   PruneResult,
+  SystemPromptReportRow,
 } from "./observability-store/index.js";
 
 // Context store schema (DAG mode)
