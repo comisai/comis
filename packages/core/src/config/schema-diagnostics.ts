@@ -85,8 +85,49 @@ const TrajectoryConfigSchema = z
 // Owned by Phase 46 (cache-trace subsection, out of Phase 45 scope).
 const CacheTraceConfigSchema = z.object({}).default({});
 
-// Owned by 45-05 (filled with configAudit.{enabled,rotateAtBytes,keepRotated} in that plan).
-const ConfigAuditConfigSchema = z.object({}).default({});
+/**
+ * `diagnostics.configAudit.*` schema (Plan 45-05 task 14).
+ *
+ * Configures the daemon-wide `~/.comis/logs/config-audit.jsonl`
+ * append-only log written by the three config-write hook sites
+ * (`last-known-good.ts`, `config-handlers/config-write.ts`,
+ * `cli/commands/config.ts`). All fields carry defaults so an empty
+ * `diagnostics.configAudit: {}` block in YAML produces a valid
+ * configuration.
+ *
+ *   - `enabled: true` — the audit log is on by default. Operators
+ *     who want to disable it (e.g., a privacy-sensitive deployment)
+ *     can set `false`; the three hook sites SHOULD honor this flag,
+ *     though they presently always write (a downstream plan may
+ *     wire the gate at the hook).
+ *   - `rotateAtBytes: 10 MB` — file-size cap that triggers rotation.
+ *     The append helper does NOT use the size-cap rejection path
+ *     from `appendRegularFile`; rotation is what bounds total disk
+ *     use.
+ *   - `keepRotated: 5` — number of historical rotations to retain
+ *     (`.1` through `.5`). The oldest is discarded when rotation
+ *     fires at the cap.
+ *
+ * Per the 45-01 sequencing decision the section-registry parity
+ * snapshot is NOT touched here — the `diagnostics` section was
+ * already registered in 45-01 task 12. This task only fills an
+ * empty subschema (a field-level change, not section-level).
+ */
+const ConfigAuditConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    rotateAtBytes: z
+      .number()
+      .int()
+      .positive()
+      .default(10 * 1024 * 1024),
+    keepRotated: z.number().int().nonnegative().default(5),
+  })
+  .default({
+    enabled: true,
+    rotateAtBytes: 10 * 1024 * 1024,
+    keepRotated: 5,
+  });
 
 // Placeholder slot — per checker Finding #3, 45-02 lands redact knobs inside the
 // existing daemon.logging section (schema-daemon.ts), NOT here. This subschema
