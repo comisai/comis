@@ -136,6 +136,49 @@ describe("config-audit/scrub", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Plan 45-gap-01 Task 3: BL-02 symlink-safe scrub tmp-write — unit-level guard.
+// ---------------------------------------------------------------------------
+describe("scrubConfigAuditLog — BL-02 symlink-safe tmp-write", () => {
+  it("does NOT follow a pre-staged symlink at the .scrub.tmp path (unit-level)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scrub-bl02-unit-"));
+    const filePath = path.join(dir, "config-audit.jsonl");
+    const tmpPath = filePath + ".scrub.tmp";
+    const sentinel = path.join(dir, "sentinel-do-not-touch");
+
+    try {
+      // Write a valid audit-log file with one parseable record.
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          traceSchema: "comis-config-audit",
+          schemaVersion: 1,
+          argv: ["node", "comis"],
+          cwd: dir,
+          tsMs: Date.now(),
+        }) + "\n",
+        { mode: 0o600 },
+      );
+
+      // Create the sentinel (this is what an attacker would have made writable).
+      fs.writeFileSync(sentinel, "ATTACKER_SHOULD_NOT_OVERWRITE_THIS");
+
+      // Pre-stage the symlink at the predictable tmp path.
+      fs.symlinkSync(sentinel, tmpPath);
+
+      await scrubConfigAuditLog({ filePath });
+
+      // Critical assertion: the sentinel content is UNCHANGED.
+      // (If writeFileSync followed the symlink, this content would be
+      // the rewritten audit-log payload instead of the attacker string.)
+      const sentinelAfter = fs.readFileSync(sentinel, "utf-8");
+      expect(sentinelAfter).toBe("ATTACKER_SHOULD_NOT_OVERWRITE_THIS");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Plan 45-gap-01 Task 2: BL-01 sentinel-record fallback in reEncodeRecord.
 // ---------------------------------------------------------------------------
 describe("reEncodeRecord — BL-01 sentinel on serialization failure", () => {
