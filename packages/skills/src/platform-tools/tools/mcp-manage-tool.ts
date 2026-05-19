@@ -12,7 +12,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate } from "@comis/core";
-import { readStringParam } from "../tool-helpers.js";
+import { readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
@@ -63,6 +63,118 @@ const McpManageToolParams = Type.Object({
   ),
 });
 
+const VALID_ACTIONS = ["list", "status", "connect", "disconnect", "reconnect"] as const;
+
+// ---------------------------------------------------------------------------
+// Helpers (LLM UX self-correction)
+// ---------------------------------------------------------------------------
+
+/**
+ * Coerce `args` from a JSON-encoded string into a real `string[]`.
+ *
+ * Mirrors `coerceConfig` in `providers-manage-tool.ts` (JSON-string + shape-check
+ * + fall-through pattern), with one adjustment: because `tool.execute()` in unit
+ * tests is invoked directly (not via the SDK's `prepareToolCall` path that runs
+ * TypeBox validation), this helper must REJECT non-array-parseable strings
+ * itself — otherwise a string `args` would silently flow through to the RPC
+ * handler and corrupt argv when the daemon spawns the stdio subprocess.
+ *
+ * - Non-string `raw` (array, undefined, anything else): pass through unchanged.
+ * - String `raw` that parses to `string[]`: return the parsed array.
+ * - String `raw` that fails to parse OR parses to a non-`string[]`: throw
+ *   `[invalid_value]` with an operator-actionable hint.
+ */
+function coerceArgs(p: Record<string, unknown>): unknown {
+  const raw = p.args;
+  if (typeof raw !== "string") {
+    return raw;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throwToolError(
+      "invalid_value",
+      `mcp_manage args must be a string array; received a non-JSON string.`,
+      {
+        param: "args",
+        hint: 'Provide args as a real array like ["-y", "@upstash/context7-mcp"], or as a JSON string whose elements are all strings.',
+      },
+    );
+  }
+  if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
+    return parsed;
+  }
+  throwToolError(
+    "invalid_value",
+    `mcp_manage args must be a string array; the supplied JSON did not parse to a string[].`,
+    {
+      param: "args",
+      hint: 'Provide args as a real array like ["-y", "@upstash/context7-mcp"], or as a JSON string whose elements are all strings.',
+    },
+  );
+}
+
+/**
+ * Smart-default `transport` from the presence of `command` (→ "stdio") or
+ * `url` (→ "http"). Explicit caller-supplied `transport` always wins —
+ * smart-default never overrides it.
+ *
+ * Enum validity ({"stdio","sse","http"}) is NOT enforced here; the daemon
+ * RPC handler's Zod schema is the canonical validator. We only handle the
+ * agent-UX layer where `transport` is omissible when the source field is
+ * unambiguous.
+ *
+ * Returns `undefined` when the caller supplied neither an explicit transport
+ * nor a deducible source — `validateConnectParams` reports that as a
+ * single-error missing-param surface.
+ */
+function defaultTransport(p: Record<string, unknown>): string | undefined {
+  const explicit = p.transport;
+  if (typeof explicit === "string" && explicit.length > 0) return explicit;
+  if (typeof p.command === "string" && p.command.length > 0) return "stdio";
+  if (typeof p.url === "string" && p.url.length > 0) return "http";
+  return undefined;
+}
+
+/**
+ * Up-front multi-field validator for `connect`: reports ALL missing required
+ * fields in a single `[missing_param]` error rather than surfacing them
+ * one-at-a-time across multiple LLM retries (the defect this task fixes).
+ *
+ * The `transport`-missing branch additionally requires a deducible source
+ * (`command` or `url`); when both are missing, the error names them together.
+ */
+function validateConnectParams(
+  serverName: string | undefined,
+  transport: string | undefined,
+  command: unknown,
+  url: unknown,
+): void {
+  const missing: string[] = [];
+  if (typeof serverName !== "string" || serverName.length === 0) {
+    missing.push("server_name");
+  }
+  if (transport === undefined) {
+    missing.push("transport");
+    if (
+      (typeof command !== "string" || command.length === 0) &&
+      (typeof url !== "string" || url.length === 0)
+    ) {
+      missing.push("command or url");
+    }
+  }
+  if (missing.length > 0) {
+    throwToolError(
+      "missing_param",
+      `mcp_manage(action="connect") is missing required parameters: ${missing.join(", ")}.`,
+      {
+        hint: 'Provide all required fields: server_name, transport ("stdio"|"sse"|"http"), and either command (for stdio) or url (for sse/http).',
+      },
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -80,8 +192,6 @@ const McpManageToolParams = Type.Object({
  * @param rpcCall - RPC call function for delegating to the daemon backend
  * @returns AgentTool implementing the MCP management interface
  */
-const VALID_ACTIONS = ["list", "status", "connect", "disconnect", "reconnect"] as const;
-
 export function createMcpManageTool(
   rpcCall: RpcCall,
   approvalGate?: ApprovalGate,
@@ -105,13 +215,17 @@ export function createMcpManageTool(
           return rpcCall("mcp.status", { server_name: name, _trustLevel: ctx.trustLevel });
         },
         async connect(p, rpcCall, ctx) {
-          const name = readStringParam(p, "server_name");
-          const transport = readStringParam(p, "transport");
+          const coercedArgs = coerceArgs(p);
+          const deducedTransport = defaultTransport(p);
+          const serverName = typeof p.server_name === "string" ? p.server_name : undefined;
+          validateConnectParams(serverName, deducedTransport, p.command, p.url);
+          // validateConnectParams threw if any field was missing — past this
+          // point both serverName and deducedTransport are non-empty strings.
           return rpcCall("mcp.connect", {
-            server_name: name,
-            transport,
+            server_name: serverName,
+            transport: deducedTransport,
             command: p.command,
-            args: p.args,
+            args: coercedArgs,
             url: p.url,
             headers: p.headers,
             _trustLevel: ctx.trustLevel,
@@ -123,11 +237,12 @@ export function createMcpManageTool(
         },
         async reconnect(p, rpcCall, ctx) {
           const name = readStringParam(p, "server_name");
+          const coercedArgs = coerceArgs(p);
           return rpcCall("mcp.reconnect", {
             server_name: name,
             transport: p.transport,
             command: p.command,
-            args: p.args,
+            args: coercedArgs,
             url: p.url,
             headers: p.headers,
             _trustLevel: ctx.trustLevel,
