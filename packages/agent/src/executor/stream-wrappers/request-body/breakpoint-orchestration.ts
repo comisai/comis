@@ -35,6 +35,7 @@ import {
   resolveCacheRetention,
 } from "./cache-breakpoints.js";
 import { injectToolDeferral } from "./tool-deferral-injection.js";
+import { enforceMonotonicTtlOrdering } from "./monotonic-ttl.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
 
 /**
@@ -140,6 +141,12 @@ export function runCacheBreakpointPhase(
   // 2 system blocks that didn't exist in the original params.
   const existingCount = countCacheBreakpoints(result);
   let slotsAvailable = 4 - existingCount;
+  // Tracks the message index where Fix E placed (or upgraded) the 1h
+  // anchor. Consumed by the recent-zone retention ternary below so the
+  // earlier breakpoint placed by placeCacheBreakpoints uses 1h instead
+  // of 5m — preventing the daemon.1.log:439 ordering violation at the
+  // source (the monotonic-ttl safety net remains as defense in depth).
+  let eFixFiredAt: number | undefined;
 
   // Breakpoint budget audit -- 1 per API call.
   {
@@ -230,6 +237,10 @@ export function runCacheBreakpointPhase(
         { messageIndex: i, modelId: model.id, sessionKey: config.sessionKey },
         "E-FIX: 1h cache anchor placed on user message carrying UNTRUSTED_ block",
       );
+      // Record the message index so the recent-zone retention below
+      // upgrades from "short" (5m) to "long" (1h) — keeping the
+      // tools->system->messages TTL sequence monotonically non-increasing.
+      eFixFiredAt = i;
       break;
     }
   }
@@ -247,7 +258,13 @@ export function runCacheBreakpointPhase(
       {
         minTokens,
         maxBreakpoints: inCooldown ? 1 : slotsAvailable,
-        retention: "short", // Recent zone always "short" (5m)
+        // Recent zone defaults to 5m, but when Fix E placed a 1h anchor on the
+        // latest user message, any earlier breakpoint must also be >= 1h to
+        // satisfy Anthropic's monotonicity rule (tools->system->messages).
+        // Without this coordination, enforceMonotonicTtlOrdering catches the
+        // violation but logs a WARN — Fix 2 makes the placement intent correct
+        // at source so the safety net stays quiet in the common UNTRUSTED path.
+        retention: eFixFiredAt !== undefined ? "long" : "short",
         resolvedRetention: inCooldown ? "short" : messageRetention, // Force "short" during cooldown
         strategy: resolveBreakpointStrategy(config.cacheBreakpointStrategy, model.provider),
         skipCacheWrite: effectiveSkipCacheWrite,
@@ -367,6 +384,14 @@ export function runCacheBreakpointPhase(
       "W7: Cache breakpoint budget exhausted -- no message breakpoints placed on mature conversation",
     );
   }
+
+  // Safety-net sweep: enforce Anthropic's monotonic non-increasing TTL
+  // invariant across tools->system->messages payload order. No-op when
+  // layout is already monotonic; load-bearing defense even when Fix 2
+  // (Fix-E-aware retention) correctly coordinates the source placement.
+  // Logs WARN with errorKind:"internal" if any upgrade fires — that
+  // indicates an upstream placement bug.
+  enforceMonotonicTtlOrdering(result, logger);
 
   return resolvedRetention;
 }
