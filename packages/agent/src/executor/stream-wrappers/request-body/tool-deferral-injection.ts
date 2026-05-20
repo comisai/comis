@@ -15,13 +15,24 @@
  *  - When `deferCount === 0` even after activation (deferred tools were
  *    excluded upstream; payload lacks deferred definitions and injecting
  *    the search tool would crash the API/SDK).
+ *  - For each tool, the stub-marker guard (DEFERRAL_STUB_MARKER) prevents
+ *    auto-discovery stub tools from being counted toward `deferCount`. This
+ *    interacts with `createStubFilterInjector` (stub-filter-injector.ts):
+ *    the stub-filter wrapper later strips stubs by name from the API
+ *    payload, but it runs AFTER this injector in the onPayload chain
+ *    (innermost wrapper's onPayload runs last because each wrapper calls
+ *    `existingOnPayload` first via `reduceRight` composition). Without
+ *    this guard, exclude-model sessions with auto-discovery stubs would
+ *    falsely set `deferCount > 0`, swap `discover_tools` for
+ *    `tool_search_tool_regex`, and ship a payload where neither
+ *    discovery mechanism works.
  *
  * @module
  */
 
 import type { ComisLogger } from "@comis/core";
 
-import { supportsToolSearch } from "../../tool-deferral.js";
+import { DEFERRAL_STUB_MARKER, supportsToolSearch } from "../../tool-deferral.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
 
 /**
@@ -48,7 +59,10 @@ export function injectToolDeferral(
   const tools = result.tools as Array<Record<string, unknown>>;
   let deferCount = 0;
   for (const tool of tools) {
-    if (deferredNames.has(tool.name as string)) {
+    if (
+      deferredNames.has(tool.name as string)
+      && tool[DEFERRAL_STUB_MARKER as unknown as string] !== true
+    ) {
       tool.defer_loading = true;
       deferCount++;
     }

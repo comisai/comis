@@ -516,12 +516,17 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     wrappers.push(buildCacheTraceWrapper(cacheTrace));
   }
 
-  // MUST be the last wrapper pushed (innermost). Runs its onPayload FIRST in
-  // the chain so all downstream wrappers operate on stub-free tools. Violating
-  // this ordering would (a) include stub schemas in the Anthropic rendered-tool
-  // cache hash, (b) persist stubs into the Gemini CachedContent entry for its
-  // whole lifetime, and (c) cause deferCount > 0 in the DEFER-TOOL block,
-  // unintentionally flipping Anthropic sessions to server-side tool_search.
+  // MUST be the last wrapper pushed (innermost). In `composeStreamWrappers`'
+  // reduceRight composition, each wrapper's onPayload calls `existingOnPayload`
+  // FIRST and then runs its own logic — so the innermost wrapper's onPayload
+  // runs LAST in the chain. That means the stub-filter strips stubs AFTER
+  // injectToolDeferral has already seen the payload. The defense against
+  // stubs leaking into DEFER-TOOL bookkeeping lives in injectToolDeferral
+  // itself (the DEFERRAL_STUB_MARKER guard, tool-deferral-injection.ts).
+  // This wrapper's job is to keep stubs out of the FINAL wire payload so
+  // they (a) do not consume input tokens, (b) do not enter the Anthropic
+  // rendered-tool cache hash, and (c) do not persist into the Gemini
+  // CachedContent entry for the cache's whole lifetime.
   wrappers.push(
     createStubFilterInjector(
       {
