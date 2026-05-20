@@ -152,4 +152,90 @@ describe("runCacheBreakpointPhase — Fix E: UNTRUSTED_ block 1h cache anchor", 
     // When the caller is skipping writes, Fix E must respect that — no anchor.
     expect(lastBlock.cache_control).toBeUndefined();
   });
+
+  // -------------------------------------------------------------------------
+  // Regression: daemon.1.log:439 — "1h cache_control block must not come
+  // after a 5m cache_control block" when Fix E places 1h on the LAST user
+  // message and placeCacheBreakpoints places 5m on the second-to-last.
+  // -------------------------------------------------------------------------
+  it("MONOTONIC-TTL: no 1h-after-5m violation when UNTRUSTED is on the last user message in a long conversation", () => {
+    // Build an 11-message conversation (6 user + 5 assistant). The LAST
+    // user message carries <<<UNTRUSTED_…>>>, triggering Fix E to place
+    // a 1h anchor on it. With Fix 2 (Fix-E-aware retention), the
+    // recent-zone breakpoint that placeCacheBreakpoints lays down on
+    // the second-to-last user message uses "long" retention instead of
+    // "short" — preventing the daemon.1.log:439 ordering violation.
+    // The monotonic-ttl safety-net sweep is the second layer of defense.
+    const messages: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 11; i++) {
+      const role = i % 2 === 0 ? "user" : "assistant";
+      // Pad each message with enough text so placeCacheBreakpoints'
+      // minTokens=0 path always treats the recent zone as eligible.
+      const text = i === 10
+        ? "Please summarize: <<<UNTRUSTED_HTML>>>...32KB of link-understanding output...<<<END_UNTRUSTED_HTML>>>"
+        : `message ${i}: lorem ipsum dolor sit amet consectetur adipiscing elit`;
+      messages.push({ role, content: [{ type: "text", text }] });
+    }
+    const result = makeResult(messages);
+    // resolvedRetention="long" so system block gets 1h cache_control —
+    // this is the precondition for the daemon.1.log:439 violation shape.
+    const config = makeConfig({ getCacheRetention: () => "long" });
+    const logger = makeLogger();
+
+    runCacheBreakpointPhase(result, model, config, true, false, 0, logger);
+
+    // Collect every ephemeral cache_control marker in payload wire order
+    // (tools -> system -> messages, each in array/content-block order).
+    type Marker = { location: string; ttl: "1h" | "5m" };
+    const markers: Marker[] = [];
+    if (Array.isArray(result.tools)) {
+      (result.tools as Array<Record<string, unknown>>).forEach((tool, ti) => {
+        const cc = tool.cache_control as { type?: string; ttl?: string } | undefined;
+        if (cc?.type === "ephemeral") {
+          markers.push({ location: `tools[${ti}]`, ttl: cc.ttl === "1h" ? "1h" : "5m" });
+        }
+      });
+    }
+    if (Array.isArray(result.system)) {
+      (result.system as Array<Record<string, unknown>>).forEach((blk, si) => {
+        const cc = blk.cache_control as { type?: string; ttl?: string } | undefined;
+        if (cc?.type === "ephemeral") {
+          markers.push({ location: `system[${si}]`, ttl: cc.ttl === "1h" ? "1h" : "5m" });
+        }
+      });
+    }
+    (result.messages as Array<Record<string, unknown>>).forEach((msg, mi) => {
+      const content = msg.content;
+      if (!Array.isArray(content)) return;
+      (content as Array<Record<string, unknown>>).forEach((blk, bi) => {
+        const cc = blk.cache_control as { type?: string; ttl?: string } | undefined;
+        if (cc?.type === "ephemeral") {
+          markers.push({ location: `messages[${mi}].content[${bi}]`, ttl: cc.ttl === "1h" ? "1h" : "5m" });
+        }
+      });
+    });
+
+    // Sanity: at least one 1h marker exists (the Fix E anchor on
+    // messages[10], plus the system block). Otherwise the test isn't
+    // actually exercising the ordering invariant.
+    const oneHourMarkers = markers.filter((m) => m.ttl === "1h");
+    expect(oneHourMarkers.length).toBeGreaterThanOrEqual(2);
+
+    // Monotonicity: walking backward, once we see a 1h marker, every
+    // earlier marker MUST be 1h too. Equivalently, no 5m marker may
+    // appear before any 1h marker in forward payload order.
+    let seenOneHour = false;
+    const violations: string[] = [];
+    for (let i = markers.length - 1; i >= 0; i--) {
+      const m = markers[i]!;
+      if (m.ttl === "1h") {
+        seenOneHour = true;
+        continue;
+      }
+      if (seenOneHour) {
+        violations.push(`${m.location} is 5m but a 1h marker appears later in payload order`);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
 });
