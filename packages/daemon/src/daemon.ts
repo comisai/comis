@@ -310,9 +310,9 @@ async function stageFoundation(input: {
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
 
-  // 1. Bootstrap core container
-  // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution
-  const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"];
+  // 1. Bootstrap core container. Fix A (log-review): under VITEST=true, refuse to silently read ~/.comis/config.yaml when COMIS_CONFIG_PATHS is unset.
+  // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
+  const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
   const configPaths = (rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS)
     .filter((p) => existsSync(p));
   const bootResult = _bootstrap({ configPaths, env: mergedEnv });

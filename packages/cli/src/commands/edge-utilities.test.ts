@@ -170,6 +170,10 @@ describe("RPC config resolver edge cases", () => {
     MockWebSocket.instances = [];
     delete process.env["COMIS_GATEWAY_URL"];
     delete process.env["COMIS_GATEWAY_TOKEN"];
+    // Fix A guard bypass: WebSocket is mocked above (`vi.mock("ws", …)`),
+    // so the E2E lane is the correct signal to the VITEST=true refusal
+    // guard in withClient.
+    process.env["COMIS_CLI_E2E"] = "true";
     mockedExistsSync.mockReset();
     mockedReadFileSync.mockReset();
   });
@@ -177,6 +181,7 @@ describe("RPC config resolver edge cases", () => {
   afterEach(() => {
     delete process.env["COMIS_GATEWAY_URL"];
     delete process.env["COMIS_GATEWAY_TOKEN"];
+    delete process.env["COMIS_CLI_E2E"];
   });
 
   it("handles config with no gateway section", async () => {

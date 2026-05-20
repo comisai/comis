@@ -488,9 +488,20 @@ describe("daemon main()", () => {
 
   it("uses default config paths when COMIS_CONFIG_PATHS is not set", async () => {
     delete process.env["COMIS_CONFIG_PATHS"];
+    // This test deliberately exercises the default-path branch. Fix A's
+    // VITEST guard (daemon.ts:~315) throws on that branch under
+    // VITEST=true to stop accidental ~/.comis/ reads from real test code.
+    // Here the test intent is the filtering behavior, not the guard, so
+    // we drop VITEST for the duration of the call.
+    const prevVitest = process.env["VITEST"];
+    delete process.env["VITEST"];
     const { overrides } = buildOverrides();
 
-    await main(overrides);
+    try {
+      await main(overrides);
+    } finally {
+      if (prevVitest !== undefined) process.env["VITEST"] = prevVitest;
+    }
 
     // Default paths are ~/.comis/config.yaml and ~/.comis/config.local.yaml,
     // filtered to only files that exist on disk
@@ -500,6 +511,20 @@ describe("daemon main()", () => {
     for (const p of call.configPaths) {
       expect(p).toMatch(/\.comis\/config(\.local)?\.yaml$/);
     }
+  });
+
+  it("Fix A: throws under VITEST=true when COMIS_CONFIG_PATHS is unset", async () => {
+    delete process.env["COMIS_CONFIG_PATHS"];
+    process.env["VITEST"] = "true";
+    const { overrides } = buildOverrides();
+
+    // The Fix A guard hard-throws rather than silently reading
+    // ~/.comis/config.yaml from a test process. The message MUST mention
+    // VITEST and the sandbox-path remediation so the failure is
+    // self-diagnosing for a test author.
+    await expect(main(overrides)).rejects.toThrow(
+      /VITEST=true and COMIS_CONFIG_PATHS unset/,
+    );
   });
 
   it("throws on bootstrap failure", async () => {
