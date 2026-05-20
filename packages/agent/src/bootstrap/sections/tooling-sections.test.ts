@@ -475,7 +475,7 @@ describe("buildToolCallStyleSection — tool-first counterweight", () => {
 
       ### Coding Guidelines
       - **Tool-first principle.** When this turn includes a \`Capabilities\` context and the task can be satisfied by a connected tool or available skill, prefer that capability over installing a Python or Node package. Use installs only for capabilities not covered by active tools, deferred tools, or visible prompt skills.
-      - **Python projects:** Always create a virtualenv per project (\`python3 -m venv .venv\`). Install packages into the project venv (\`source .venv/bin/activate && pip install ...\`). Never use \`--break-system-packages\` — it pollutes the system Python. Each project directory should have its own \`.venv\`.
+      - **Python projects:** Create a project virtualenv with \`python3 -m venv .venv\`, then call \`.venv/bin/python3\` and \`.venv/bin/pip install <pkgs>\` directly. Do not source the venv activate script — the exec sandbox blocks shell-source. Never use \`--break-system-packages\`. Each project gets its own \`.venv\`.
 
       ### Parallel vs Sequential
       Call independent tools in parallel to reduce round-trips:
@@ -508,6 +508,14 @@ describe("buildToolCallStyleSection — tool-first counterweight", () => {
     // architecture-grep test is the primary file-source enforcement).
     expect(joined).not.toContain("discover_tools");
     expect(joined).not.toContain("tool_search_tool_regex");
+
+    // 2026-05-20 fix: the previous bullet advised `source .venv/bin/activate`, which the
+    // exec sandbox blocks via the `\bsource\s` denylist pattern
+    // (exec-security-allowlist.ts line 109-116). The replacement bullet directs the agent
+    // to call .venv/bin/{python3,pip} directly, matching the AGENTS.md template guidance.
+    expect(joined).not.toContain("source .venv/bin/activate");
+    expect(joined).toContain(".venv/bin/pip install <pkgs>");
+    expect(joined).toContain("the exec sandbox blocks shell-source");
   });
 
   it("does NOT emit the tool-first bullet OR the venv rule when exec is absent", () => {
