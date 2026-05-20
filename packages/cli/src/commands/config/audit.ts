@@ -20,6 +20,8 @@
  * @module
  */
 
+import { fileURLToPath } from "node:url";
+
 import type { Command } from "commander";
 import chalk from "chalk";
 import {
@@ -63,6 +65,10 @@ export function buildCliSyncToolingAuditBase(
       // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
       execArgv: process.execArgv,
       watchMode: false,
+      // Kept uniform with the daemon hook so the non-comis-argv
+      // heuristic stays consistent across both write sites even though
+      // CLI argv typically already contains "comis".
+      entryScript: fileURLToPath(import.meta.url),
     });
   } catch {
     return undefined;

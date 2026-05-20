@@ -14,6 +14,8 @@
  * @module
  */
 
+import { fileURLToPath } from "node:url";
+
 import { suppressError } from "@comis/shared";
 import {
   createConfigWriteAuditRecordBase,
@@ -63,6 +65,11 @@ export function buildConfigAuditBase(
       // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
       execArgv: process.execArgv,
       watchMode: false,
+      // Resolved entry script for the non-comis-argv heuristic — pm2
+      // and systemd-indirect launches present `node ProcessContainerFork.js`
+      // in argv[0..1] without the literal "comis", so the heuristic
+      // would false-positive without this hint.
+      entryScript: fileURLToPath(import.meta.url),
     });
   } catch {
     return undefined;

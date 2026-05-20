@@ -109,6 +109,14 @@ export interface CreateBaseParams {
   readonly watchSession?: string | null;
   /** Optional watch-mode command label (forwarded into the record). */
   readonly watchCommand?: string | null;
+  /**
+   * Optional resolved entry-script path (typically
+   * `fileURLToPath(import.meta.url)`). Forwarded to the
+   * `non-comis-argv` heuristic so pm2 / systemd-indirect launches
+   * do not false-positive when the caller's resolved entry script
+   * contains "comis" but `process.argv[0..1]` does not.
+   */
+  readonly entryScript?: string;
 }
 
 /**
@@ -171,6 +179,7 @@ export function createConfigWriteAuditRecordBase(
   const suspicious = detectSuspicious({
     argv: params.argv,
     execArgv: params.execArgv,
+    ...(params.entryScript !== undefined && { entryScript: params.entryScript }),
   });
 
   return {
