@@ -12,7 +12,7 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
       expect(result.data.trajectory.enabled).toBe(true);
       expect(result.data.trajectory.maxFileBytes).toBe(50 * 1024 * 1024);
       // cacheTrace defaults.
-      expect(result.data.cacheTrace.enabled).toBe(false);
+      expect(result.data.cacheTrace.enabled).toBe(true);
       expect(result.data.cacheTrace.includeMessages).toBe(false);
       expect(result.data.cacheTrace.includePrompt).toBe(true);
       expect(result.data.cacheTrace.includeSystem).toBe(true);
@@ -31,7 +31,7 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
       expect(result.data.trajectory.enabled).toBe(true);
       expect(result.data.trajectory.maxFileBytes).toBe(50 * 1024 * 1024);
       // cacheTrace defaults populated.
-      expect(result.data.cacheTrace.enabled).toBe(false);
+      expect(result.data.cacheTrace.enabled).toBe(true);
       expect(result.data.cacheTrace.includeMessages).toBe(false);
       expect(result.data.cacheTrace.includePrompt).toBe(true);
       expect(result.data.cacheTrace.includeSystem).toBe(true);
@@ -226,11 +226,11 @@ describe("DiagnosticsConfigSchema.configAudit — fields and defaults", () => {
 // ---------------------------------------------------------------------------
 
 describe("DiagnosticsConfigSchema.cacheTrace — fields and defaults", () => {
-  it("cacheTrace defaults populate the full shape (off by default; includeMessages off; prompt + system on)", () => {
+  it("cacheTrace defaults populate the full shape (on by default; includeMessages off; prompt + system on)", () => {
     const result = DiagnosticsConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.cacheTrace.enabled).toBe(false);
+      expect(result.data.cacheTrace.enabled).toBe(true);
       expect(result.data.cacheTrace.includeMessages).toBe(false);
       expect(result.data.cacheTrace.includePrompt).toBe(true);
       expect(result.data.cacheTrace.includeSystem).toBe(true);

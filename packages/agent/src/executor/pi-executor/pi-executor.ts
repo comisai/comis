@@ -679,7 +679,7 @@ async function runSessionLocked(
 
     // Cache-trace recorder lifecycle (mirrors trajectory's).
     // Gated by `deps.cacheTraceConfig.enabled` (forwarded from
-    // AppConfig.diagnostics.cacheTrace by daemon wiring; false by default).
+    // AppConfig.diagnostics.cacheTrace by daemon wiring; on by default).
     // When enabled, instantiate the recorder + subscribe to the live
     // `observability:token_usage` EventBus emit so the next
     // `recordStage("session:after", {...})` carries cacheReadInputTokens +

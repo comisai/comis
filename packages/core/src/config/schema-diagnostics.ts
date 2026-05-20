@@ -68,9 +68,12 @@ const TrajectoryConfigSchema = z
  * defaults so an empty `diagnostics.cacheTrace: {}` block in YAML
  * produces a valid configuration:
  *
- *   - `enabled: false` — the writer is OFF by default (opt-in, contrary
- *     to trajectory which is on-by-default). Operators set this true to
- *     start gathering cache-hit / cache-write digests for diagnostics.
+ *   - `enabled: true` — the writer is ON by default (matching the
+ *     trajectory sidecar). Cache-hit/cache-write digests are recorded
+ *     for every LLM call so operators can diagnose cache-rate
+ *     regressions without flipping a flag first. PII gating remains:
+ *     `includeMessages: false` keeps raw message bodies off disk —
+ *     only fingerprints + digests are recorded by default.
  *   - `filePath` — optional full path override. Default resolved at
  *     runtime via `resolveCacheTraceFilePath` to
  *     `~/.comis/logs/cache-trace.jsonl`. Tilde (`~`) prefix supported.
@@ -89,7 +92,7 @@ const TrajectoryConfigSchema = z
  * YAML still produces a fully-populated default object.
  */
 const CacheTraceConfigSchemaInner = z.object({
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   filePath: z.string().optional(),
   includeMessages: z.boolean().default(false),
   includePrompt: z.boolean().default(true),
