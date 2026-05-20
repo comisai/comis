@@ -38,7 +38,7 @@ const McpManageToolParams = Type.Object({
   ),
   transport: Type.Optional(
     Type.String({
-      description: 'Transport type: "stdio", "sse", or "http". Required for connect. Use "http" for Streamable HTTP servers, "sse" for legacy SSE servers.',
+      description: "Transport: 'stdio' (default when 'command' is provided), 'sse', or 'http' (default when 'url' is provided). Override only when both command and url are set, or to force a specific transport.",
     }),
   ),
   command: Type.Optional(
@@ -113,28 +113,6 @@ function coerceArgs(p: Record<string, unknown>): unknown {
       hint: 'Provide args as a real array like ["-y", "@upstash/context7-mcp"], or as a JSON string whose elements are all strings.',
     },
   );
-}
-
-/**
- * Smart-default `transport` from the presence of `command` (→ "stdio") or
- * `url` (→ "http"). Explicit caller-supplied `transport` always wins —
- * smart-default never overrides it.
- *
- * Enum validity ({"stdio","sse","http"}) is NOT enforced here; the daemon
- * RPC handler's Zod schema is the canonical validator. We only handle the
- * agent-UX layer where `transport` is omissible when the source field is
- * unambiguous.
- *
- * Returns `undefined` when the caller supplied neither an explicit transport
- * nor a deducible source — `validateConnectParams` reports that as a
- * single-error missing-param surface.
- */
-function defaultTransport(p: Record<string, unknown>): string | undefined {
-  const explicit = p.transport;
-  if (typeof explicit === "string" && explicit.length > 0) return explicit;
-  if (typeof p.command === "string" && p.command.length > 0) return "stdio";
-  if (typeof p.url === "string" && p.url.length > 0) return "http";
-  return undefined;
 }
 
 /**
@@ -216,14 +194,27 @@ export function createMcpManageTool(
         },
         async connect(p, rpcCall, ctx) {
           const coercedArgs = coerceArgs(p);
-          const deducedTransport = defaultTransport(p);
           const serverName = typeof p.server_name === "string" ? p.server_name : undefined;
-          validateConnectParams(serverName, deducedTransport, p.command, p.url);
+          // Infer transport from command (stdio) or url (http) when not
+          // explicit. Mirrors the canonical inference in
+          // packages/core/src/config/schema-integrations.ts
+          // (McpServerEntrySchema z.preprocess). Kept inline here so the
+          // multi-field LLM-UX missing-param error from
+          // validateConnectParams fires BEFORE the RPC round-trip.
+          const explicitTransport =
+            typeof p.transport === "string" && p.transport.length > 0
+              ? p.transport
+              : undefined;
+          const hasCommand = typeof p.command === "string" && p.command.length > 0;
+          const hasUrl = typeof p.url === "string" && p.url.length > 0;
+          const inferredTransport =
+            explicitTransport ?? (hasCommand ? "stdio" : hasUrl ? "http" : undefined);
+          validateConnectParams(serverName, inferredTransport, p.command, p.url);
           // validateConnectParams threw if any field was missing — past this
-          // point both serverName and deducedTransport are non-empty strings.
+          // point both serverName and inferredTransport are non-empty strings.
           return rpcCall("mcp.connect", {
             server_name: serverName,
-            transport: deducedTransport,
+            transport: inferredTransport,
             command: p.command,
             args: coercedArgs,
             url: p.url,
