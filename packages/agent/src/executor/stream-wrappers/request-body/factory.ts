@@ -52,6 +52,7 @@ import {
 import { runPrefixStabilityDiagnostic } from "./prefix-stability.js";
 import { runCacheBreakpointPhase } from "./breakpoint-orchestration.js";
 import { maybePromoteBreakpoints } from "./cache-breakpoints.js";
+import { enforceMonotonicTtlOrdering } from "./monotonic-ttl.js";
 import { trackRecentZoneCadence } from "./cadence-tracking.js";
 import { upgradeSdkMarkers } from "./marker-upgrade.js";
 import { placeSkipCacheWriteMarker } from "./skip-cache-write-marker.js";
@@ -280,6 +281,12 @@ export function createRequestBodyInjector(
                   { promoted: promotedCount, threshold: promotionThreshold, modelId: model.id },
                   "Message breakpoints promoted to 1h TTL",
                 );
+                // Promotion may have produced an out-of-order layout (some
+                // markers now 1h, earlier ones still 5m). Re-run the safety
+                // net so any stray 5m-before-1h gets upgraded before the
+                // request leaves the wrapper. The sweep is a no-op when the
+                // promoted layout happens to remain monotonic.
+                enforceMonotonicTtlOrdering(result, logger);
               }
             }
           }
