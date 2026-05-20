@@ -115,7 +115,9 @@ describe("attachCacheTraceToEventBus", () => {
       cacheEligible: true,
     });
 
-    trace.recordStage("session:after", {});
+    // New lifecycle contract (260520-uh0): callers do NOT emit
+    // session:after directly. The terminal emit in flushAndClose drains
+    // the stashed token usage onto exactly one session:after record.
     await trace.flushAndClose();
 
     const lines = readLines(filePath);

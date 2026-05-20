@@ -220,36 +220,76 @@ describe("createCacheTrace -- digest + redaction + payload-gating", () => {
   });
 });
 
-describe("createCacheTrace -- token attribution to session:after", () => {
-  it("session_after_attaches_token_counts via setLatestTokenUsage in-runtime path", async () => {
+describe("createCacheTrace -- terminal session:after on flushAndClose", () => {
+  it("flushAndClose_emits_terminal_session_after_with_token_counts_from_stash", async () => {
+    // New lifecycle contract: callers do NOT emit session:after directly.
+    // `flushAndClose` drains the latest token-usage stash as one terminal
+    // session:after event before closing.
     const trace = makeTrace({});
     expect(trace).not.toBeNull();
     trace!.setLatestTokenUsage({
       cacheReadTokens: 1234,
       cacheWriteTokens: 56,
     });
-    trace!.recordStage("session:after", {});
-    await trace!.flush();
+    await trace!.flushAndClose();
 
     const lines = readLines(trace!.filePath);
-    expect(lines).toHaveLength(1);
-    const ev = lines[0]!;
-    expect(ev.stage).toBe("session:after");
-    expect(ev.cacheReadInputTokens).toBe(1234);
-    expect(ev.cacheCreationInputTokens).toBe(56);
+    // Terminal session:after is unconditional; no other events recorded
+    // → exactly one line.
+    const sessionAfter = lines.filter((l) => l.stage === "session:after");
+    expect(sessionAfter).toHaveLength(1);
+    expect(sessionAfter[0]!.cacheReadInputTokens).toBe(1234);
+    expect(sessionAfter[0]!.cacheCreationInputTokens).toBe(56);
   });
 
-  it("session:after with no prior token usage emits without token fields", async () => {
+  it("flushAndClose_terminal_session_after_emits_even_with_no_prior_token_usage", async () => {
+    // The terminal emit is UNCONDITIONAL — absence of token data does
+    // NOT skip the emit.
     const trace = makeTrace({});
     expect(trace).not.toBeNull();
-    trace!.recordStage("session:after", {});
-    await trace!.flush();
+    await trace!.flushAndClose();
 
     const lines = readLines(trace!.filePath);
-    expect(lines).toHaveLength(1);
-    const ev = lines[0]!;
-    expect(ev.cacheReadInputTokens).toBeUndefined();
-    expect(ev.cacheCreationInputTokens).toBeUndefined();
+    const sessionAfter = lines.filter((l) => l.stage === "session:after");
+    expect(sessionAfter).toHaveLength(1);
+    expect(sessionAfter[0]!.cacheReadInputTokens).toBeUndefined();
+    expect(sessionAfter[0]!.cacheCreationInputTokens).toBeUndefined();
+  });
+
+  it("flushAndClose_called_twice_emits_terminal_session_after_only_once_idempotent_close", async () => {
+    const trace = makeTrace({});
+    expect(trace).not.toBeNull();
+    trace!.setLatestTokenUsage({ cacheReadTokens: 1, cacheWriteTokens: 2 });
+    await trace!.flushAndClose();
+    await trace!.flushAndClose(); // second call is a no-op
+
+    const lines = readLines(trace!.filePath);
+    const sessionAfter = lines.filter((l) => l.stage === "session:after");
+    expect(sessionAfter).toHaveLength(1);
+  });
+
+  it("explicit_recordStage_session_after_PLUS_terminal_emit_yields_two_records_legacy_compat", async () => {
+    // The new contract removes the explicit recordStage("session:after",
+    // {}) call from callers. But existing test fixtures and legacy
+    // callers may still emit one; verify the terminal emit still fires
+    // (yielding TWO session:after records — one explicit, one terminal).
+    // This documents the migration semantic: callers should drop the
+    // explicit emit, but the recorder doesn't second-guess them.
+    const trace = makeTrace({});
+    expect(trace).not.toBeNull();
+    trace!.setLatestTokenUsage({ cacheReadTokens: 7, cacheWriteTokens: 3 });
+    trace!.recordStage("session:after", {}); // explicit (legacy) — consumes the stash
+    await trace!.flushAndClose();
+
+    const lines = readLines(trace!.filePath);
+    const sessionAfter = lines.filter((l) => l.stage === "session:after");
+    expect(sessionAfter).toHaveLength(2);
+    // First (explicit) carries the stash; second (terminal) has empty
+    // splat because the stash was consumed by the first.
+    expect(sessionAfter[0]!.cacheReadInputTokens).toBe(7);
+    expect(sessionAfter[0]!.cacheCreationInputTokens).toBe(3);
+    expect(sessionAfter[1]!.cacheReadInputTokens).toBeUndefined();
+    expect(sessionAfter[1]!.cacheCreationInputTokens).toBeUndefined();
   });
 });
 

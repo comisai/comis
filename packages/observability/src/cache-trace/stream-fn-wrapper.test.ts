@@ -76,7 +76,7 @@ function fakeContext(opts?: { systemPrompt?: string }): unknown {
 }
 
 describe("buildCacheTraceWrapper", () => {
-  it("wrapper_emits_stream_context_before_delegating_to_next", async () => {
+  it("wrapper_emits_stream_context_pre_call_and_model_after_post_call", async () => {
     const filePath = join(tmpDir, "trace.jsonl");
     const trace = makeTrace({ includeMessages: true, filePath });
     const wrap = buildCacheTraceWrapper(trace);
@@ -86,25 +86,86 @@ describe("buildCacheTraceWrapper", () => {
       callOrder.push("next");
       void model;
       void context;
-      return {} as ReturnType<StreamFn>;
+      // Test stub: return-value carries a `usage` block directly so the
+      // wrapper's "no .result() function" fallback projects the tokens
+      // onto model:after.
+      return { usage: { cacheRead: 1234, cacheWrite: 56 } } as unknown as ReturnType<StreamFn>;
     }) as StreamFn;
 
     const wrapped = wrap(next);
-    // The wrapper records BEFORE delegating; assert by checking that
-    // by the time `next` returns the file has at least one record.
     wrapped(fakeModel() as Parameters<StreamFn>[0], fakeContext() as Parameters<StreamFn>[1]);
 
     await trace.flush();
 
     expect(callOrder).toEqual(["next"]);
     const lines = readLines(filePath);
-    expect(lines).toHaveLength(1);
+    expect(lines).toHaveLength(2);
     expect(lines[0]!.stage).toBe("stream:context");
     expect(lines[0]!.provider).toBe("anthropic");
     expect(lines[0]!.modelId).toBe("claude-3-opus");
+    expect(lines[1]!.stage).toBe("model:after");
+    // Ordering preserved by monotonic seq.
+    expect(lines[0]!.seq).toBeLessThan(lines[1]!.seq);
   });
 
-  it("wrapper_passes_through_next_yielded_events (return value unchanged)", () => {
+  it("wrapper_model_after_carries_cache_tokens_from_streamfn_return_value_usage_block", async () => {
+    const filePath = join(tmpDir, "trace.jsonl");
+    const trace = makeTrace({ includeMessages: true, filePath });
+    const wrap = buildCacheTraceWrapper(trace);
+
+    const next: StreamFn = ((..._args: unknown[]) =>
+      ({ usage: { cacheRead: 7777, cacheWrite: 22 } }) as unknown as ReturnType<StreamFn>) as StreamFn;
+    const wrapped = wrap(next);
+    wrapped(fakeModel() as Parameters<StreamFn>[0], fakeContext() as Parameters<StreamFn>[1]);
+
+    await trace.flush();
+    const lines = readLines(filePath);
+    const postCall = lines.find((l) => l.stage === "model:after");
+    expect(postCall).toBeDefined();
+    expect(postCall!.cacheReadInputTokens).toBe(7777);
+    expect(postCall!.cacheCreationInputTokens).toBe(22);
+  });
+
+  it("wrapper_model_after_accepts_anthropic_named_fields_directly", async () => {
+    // Provider variant: usage carries Anthropic-style names directly.
+    const filePath = join(tmpDir, "trace.jsonl");
+    const trace = makeTrace({ includeMessages: true, filePath });
+    const wrap = buildCacheTraceWrapper(trace);
+
+    const next: StreamFn = ((..._args: unknown[]) =>
+      ({
+        usage: { cacheReadInputTokens: 111, cacheCreationInputTokens: 9 },
+      }) as unknown as ReturnType<StreamFn>) as StreamFn;
+    const wrapped = wrap(next);
+    wrapped(fakeModel() as Parameters<StreamFn>[0], fakeContext() as Parameters<StreamFn>[1]);
+
+    await trace.flush();
+    const lines = readLines(filePath);
+    const postCall = lines.find((l) => l.stage === "model:after");
+    expect(postCall!.cacheReadInputTokens).toBe(111);
+    expect(postCall!.cacheCreationInputTokens).toBe(9);
+  });
+
+  it("wrapper_model_after_still_emits_when_usage_block_is_absent", async () => {
+    const filePath = join(tmpDir, "trace.jsonl");
+    const trace = makeTrace({ includeMessages: true, filePath });
+    const wrap = buildCacheTraceWrapper(trace);
+
+    const next: StreamFn = ((..._args: unknown[]) =>
+      ({}) as ReturnType<StreamFn>) as StreamFn;
+    const wrapped = wrap(next);
+    wrapped(fakeModel() as Parameters<StreamFn>[0], fakeContext() as Parameters<StreamFn>[1]);
+
+    await trace.flush();
+    const lines = readLines(filePath);
+    const postCall = lines.find((l) => l.stage === "model:after");
+    expect(postCall).toBeDefined();
+    // Token fields omitted when usage is absent — model:after still emits.
+    expect(postCall!.cacheReadInputTokens).toBeUndefined();
+    expect(postCall!.cacheCreationInputTokens).toBeUndefined();
+  });
+
+  it("wrapper_passes_through_next_return_value_unchanged", () => {
     const filePath = join(tmpDir, "trace.jsonl");
     const trace = makeTrace({ includeMessages: true, filePath });
     const wrap = buildCacheTraceWrapper(trace);
@@ -118,7 +179,26 @@ describe("buildCacheTraceWrapper", () => {
       fakeModel() as Parameters<StreamFn>[0],
       fakeContext() as Parameters<StreamFn>[1],
     );
+    // The wrapper returns the original return value (the executor
+    // iterates the stream itself).
     expect(result).toBe(sentinel);
+  });
+
+  it("wrapper_emits_model_after_with_error_when_next_throws_synchronously", () => {
+    const filePath = join(tmpDir, "trace.jsonl");
+    const trace = makeTrace({ includeMessages: true, filePath });
+    const wrap = buildCacheTraceWrapper(trace);
+
+    const next: StreamFn = ((..._args: unknown[]) => {
+      throw new Error("synchronous-throw-from-streamfn");
+    }) as StreamFn;
+    const wrapped = wrap(next);
+    expect(() =>
+      wrapped(
+        fakeModel() as Parameters<StreamFn>[0],
+        fakeContext() as Parameters<StreamFn>[1],
+      ),
+    ).toThrow("synchronous-throw-from-streamfn");
   });
 
   it("wrapper_with_includeMessages_false_omits_messages_field but keeps fingerprints + digest", async () => {
@@ -136,12 +216,13 @@ describe("buildCacheTraceWrapper", () => {
 
     await trace.flush();
     const lines = readLines(filePath);
-    expect(lines).toHaveLength(1);
-    const ev = lines[0]!;
-    expect(ev.messages).toBeUndefined();
-    expect(Array.isArray(ev.messageFingerprints)).toBe(true);
-    expect(ev.messageFingerprints!.length).toBe(2);
-    expect(ev.messagesDigest).toMatch(/^[0-9a-f]{64}$/);
-    expect(ev.systemDigest).toMatch(/^[0-9a-f]{64}$/);
+    // Two records: stream:context + model:after.
+    const preCall = lines.find((l) => l.stage === "stream:context");
+    expect(preCall).toBeDefined();
+    expect(preCall!.messages).toBeUndefined();
+    expect(Array.isArray(preCall!.messageFingerprints)).toBe(true);
+    expect(preCall!.messageFingerprints!.length).toBe(2);
+    expect(preCall!.messagesDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(preCall!.systemDigest).toMatch(/^[0-9a-f]{64}$/);
   });
 });

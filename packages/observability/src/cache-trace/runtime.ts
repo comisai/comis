@@ -227,21 +227,13 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
       const sanitized = sanitizeForPersistence(payload) as Record<string, unknown>;
 
       // 2. Splat token attribution onto `session:after`. Only
-      //    session:after carries the token counts (the values do not
-      //    physically exist before observability:token_usage fires).
+      //    session:after carries the token counts via the bus stash
+      //    (the values do not physically exist before
+      //    observability:token_usage fires). Shared with flushAndClose's
+      //    terminal emit via the buildTokenSplat helper.
       const tokenSplat =
-        stage === "session:after" && state.latestTokenUsage !== undefined
-          ? {
-              ...(state.latestTokenUsage.cacheReadTokens !== undefined
-                ? { cacheReadInputTokens: state.latestTokenUsage.cacheReadTokens }
-                : {}),
-              ...(state.latestTokenUsage.cacheWriteTokens !== undefined
-                ? {
-                    cacheCreationInputTokens:
-                      state.latestTokenUsage.cacheWriteTokens,
-                  }
-                : {}),
-            }
+        stage === "session:after"
+          ? buildTokenSplat(state.latestTokenUsage)
           : {};
 
       // Clear stash after consuming (one-shot — the next session:after
@@ -286,12 +278,40 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
 
     async flushAndClose(): Promise<void> {
       if (state.closed) return;
+
+      // 1. Drain the latest token-usage stash as the terminal
+      //    session:after. The terminal emit is UNCONDITIONAL — the
+      //    absence of token data does not skip it. Every session
+      //    terminates with exactly one session:after event on disk.
+      //    This makes the lifecycle contract explicit and removes the
+      //    "did the executor remember to emit session:after?" question
+      //    from callers.
+      const terminalSplat = buildTokenSplat(state.latestTokenUsage);
+      state.latestTokenUsage = undefined;
+      const terminalEvent = buildEvent({
+        stage: "session:after",
+        seq: state.seq,
+        init,
+        payload: {},
+        extras: terminalSplat,
+      });
+      const terminalLine = encodeLine(terminalEvent);
+      const terminalResult = writer.write(terminalLine);
+      if (terminalResult === "queued") {
+        state.seq += 1;
+      }
+
+      // 2. Mark closed AFTER the terminal emit so the idempotent
+      //    early-return at the top of the method prevents a second
+      //    terminal emit on re-entry.
       state.closed = true;
       await writer.flush();
 
-      // Emit the cache_trace.write_failures sentinel when the underlying
-      // queued writer reports per-line append failures. Mirrors
-      // trajectory's trace.write_failures pattern.
+      // 3. Emit the cache_trace.write_failures sentinel when the underlying
+      //    queued writer reports per-line append failures. Mirrors
+      //    trajectory's trace.write_failures pattern. Ordering
+      //    invariant: terminal session:after → flush → optional
+      //    write-failures sentinel.
       const failureCount = writer.failureCount();
       if (failureCount > 0) {
         const lastError = writer.lastError();
@@ -331,6 +351,28 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Project a stashed token-usage record onto the cache-trace event
+ * extras. Used by both the explicit `recordStage("session:after", …)`
+ * call path and the terminal emit in `flushAndClose`. Returns `{}` when
+ * the stash is empty — callers can splat the result unconditionally.
+ */
+function buildTokenSplat(
+  latestTokenUsage:
+    | { cacheReadTokens?: number; cacheWriteTokens?: number }
+    | undefined,
+): Record<string, unknown> {
+  if (latestTokenUsage === undefined) return {};
+  const splat: Record<string, unknown> = {};
+  if (latestTokenUsage.cacheReadTokens !== undefined) {
+    splat.cacheReadInputTokens = latestTokenUsage.cacheReadTokens;
+  }
+  if (latestTokenUsage.cacheWriteTokens !== undefined) {
+    splat.cacheCreationInputTokens = latestTokenUsage.cacheWriteTokens;
+  }
+  return splat;
+}
 
 function isDisabledByEnv(): boolean {
   // systemGetEnv goes through the sanctioned-root helper in
