@@ -517,7 +517,19 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   }
 
   const deferralCtx: DeferralContext = {
-    trustLevel: config.elevatedReply?.defaultTrustLevel ?? "external",
+    // 260521-0bn: per-message trust resolution. Previously the deferral
+    // context used the GLOBAL `defaultTrustLevel` only, which meant
+    // `senderTrustMap` entries (e.g. {"678314278": "admin"}) never
+    // reached this code path — privileged tools like `mcp_manage`,
+    // `agents_manage`, `obs_query` (all 14 in `PRIVILEGED_TOOL_NAMES`)
+    // stayed in the deferred set even for explicitly-mapped admin users,
+    // forcing them through indirection tools. This now mirrors the
+    // resolution at packages/orchestrator/src/execution/execution-policy.ts:82:
+    //   elevCfg.senderTrustMap[senderId] ?? elevCfg.defaultTrustLevel
+    trustLevel:
+      config.elevatedReply?.senderTrustMap?.[msg.senderId]
+      ?? config.elevatedReply?.defaultTrustLevel
+      ?? "external",
     channelType: msg.channelType,
     modelTier,
     recentlyUsedToolNames: recentlyUsedTools,
