@@ -168,3 +168,63 @@ describe("limitPayloadValue — recursion preserves under-cap structure", () => 
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// 260520-wcf: per-key exemption overrides (PayloadBoundsOverrides).
+// Opt-in carve-outs for slots the operator has explicitly chosen to surface
+// in full (e.g., cache-trace `system` / `messages` when includeSystem /
+// includeMessages is true).
+// ---------------------------------------------------------------------------
+describe("limitPayloadValue — PayloadBoundsOverrides per-key exemption", () => {
+  it("preserves an exempted string field beyond the default 32 KB cap", () => {
+    const payload = {
+      system: "x".repeat(50_000),
+      other: "y".repeat(50_000),
+    };
+    const result = limitPayloadValue(payload, {
+      stringFieldExempt: new Set(["system"]),
+    }) as Record<string, unknown>;
+
+    // Exempted slot — kept verbatim past the 32 KB cap.
+    expect(typeof result["system"]).toBe("string");
+    expect((result["system"] as string).length).toBe(50_000);
+
+    // Non-exempted slot — capped as before.
+    expect(result["other"]).toEqual({
+      __bounded__: BOUNDED_PAYLOAD_REASONS.fieldSizeLimit,
+      originalBytes: 50_000,
+    });
+  });
+
+  it("preserves an exempted array field beyond the default 64-item cap", () => {
+    const payload = {
+      messages: Array.from({ length: 50_000 }, (_, i) => i),
+      other: Array.from({ length: 50_000 }, (_, i) => i),
+    };
+    const result = limitPayloadValue(payload, {
+      arrayFieldExempt: new Set(["messages"]),
+    }) as Record<string, unknown>;
+
+    // Exempted slot — kept verbatim past the array-length cap.
+    expect(Array.isArray(result["messages"])).toBe(true);
+    expect((result["messages"] as unknown[]).length).toBe(50_000);
+
+    // Non-exempted slot — capped as before.
+    expect(result["other"]).toEqual({
+      __bounded__: BOUNDED_PAYLOAD_REASONS.arrayLengthLimit,
+      originalLength: 50_000,
+    });
+  });
+
+  it("applies the default 32 KB cap when no overrides argument is supplied", () => {
+    // Regression lock-in: the default code path must continue to cap
+    // every string, regardless of any future override-default drift.
+    const payload = { system: "x".repeat(50_000) };
+    const result = limitPayloadValue(payload) as Record<string, unknown>;
+
+    expect(result["system"]).toEqual({
+      __bounded__: BOUNDED_PAYLOAD_REASONS.fieldSizeLimit,
+      originalBytes: 50_000,
+    });
+  });
+});

@@ -36,6 +36,7 @@ export {
 export type {
   BoundedPayloadReason,
   BoundedSentinel,
+  PayloadBoundsOverrides,
 } from "./shared/bounded-payload.js";
 
 export {

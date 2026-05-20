@@ -36,6 +36,7 @@ import {
 } from "../shared/queued-file-writer.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
+import type { PayloadBoundsOverrides } from "../shared/bounded-payload.js";
 
 import { resolveCacheTraceFilePath } from "./paths.js";
 import type { CacheTraceEvent, CacheTraceStage } from "./types.js";
@@ -224,7 +225,24 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
       // 1. Sanitize the payload through the canonical pipeline.
       //    sanitizeForPersistence applies credential redaction +
       //    diagnostic-payload sanitization + bounded-payload limiter.
-      const sanitized = sanitizeForPersistence(payload) as Record<string, unknown>;
+      //
+      //    260520-wcf: derive per-key exemption overrides from the
+      //    operator-set includeSystem / includeMessages flags. When the
+      //    operator opts in, the corresponding payload slot can carry
+      //    full SDK content even if it exceeds 32 KB (otherwise the
+      //    limiter would silently replace it with a sentinel and defeat
+      //    the opt-in). Exemption applies to both the string and array
+      //    shapes because the wrapper populates `messages` as an array
+      //    and `system` as a string OR an array of blocks depending on
+      //    provider.
+      const exempt = new Set<string>();
+      if (init.includeSystem) exempt.add("system");
+      if (init.includeMessages) exempt.add("messages");
+      const overrides: PayloadBoundsOverrides | undefined =
+        exempt.size > 0
+          ? { stringFieldExempt: exempt, arrayFieldExempt: exempt }
+          : undefined;
+      const sanitized = sanitizeForPersistence(payload, overrides) as Record<string, unknown>;
 
       // 2. Splat token attribution onto `session:after`. Only
       //    session:after carries the token counts via the bus stash

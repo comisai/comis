@@ -218,6 +218,29 @@ describe("createCacheTrace -- digest + redaction + payload-gating", () => {
     // sanitizeForPersistence drops/redacts credential field values.
     expect(json).not.toContain("sk-abc123secret");
   });
+
+  // 260520-wcf: when includeSystem is true, the system slot must round-trip
+  // verbatim past the default 32 KB bounded-payload cap. Without the
+  // per-key exemption, the runtime silently replaced the system payload
+  // with a `bounded-payload-field-size-limit` sentinel, defeating the
+  // operator's opt-in.
+  it("include_system_true_preserves_full_system_content_beyond_default_32KB_cap", async () => {
+    const trace = makeTrace({}); // makeTrace() defaults includeSystem to true
+    expect(trace).not.toBeNull();
+    expect(trace!.includeSystem).toBe(true);
+
+    const longSystem = "x".repeat(50_000); // exceeds the 32 KB default cap
+    trace!.recordStage("stream:context", { system: longSystem });
+    await trace!.flush();
+
+    const lines = readLines(trace!.filePath);
+    expect(lines).toHaveLength(1);
+    const ev = lines[0]!;
+    // System round-tripped verbatim — NOT replaced with the bounded
+    // sentinel.
+    expect(typeof (ev as Record<string, unknown>).system).toBe("string");
+    expect(((ev as Record<string, unknown>).system as string).length).toBe(50_000);
+  });
 });
 
 describe("createCacheTrace -- terminal session:after on flushAndClose", () => {
