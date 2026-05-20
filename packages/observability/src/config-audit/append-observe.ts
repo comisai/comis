@@ -105,12 +105,18 @@ export function createConfigObserveAuditRecord(
 
   const suspicious = detectSuspicious({ argv, execArgv });
 
+  // §9.2 defaults — Task 2 ships zero-knowledge nulls so the schema
+  // shape parses. Task 3 wires the daemon-side `readConfigFileObservation`
+  // aggregator that populates the file-state / LKG / backup / recovery
+  // groups from disk; until that lands, every field below stays at its
+  // null default (matches the `exists:false` shape).
   return {
     traceSchema: "comis-config-audit",
     schemaVersion: 1,
     ts: systemDateFrom(systemNowMs()).toISOString(),
     source: "config-io",
     event: "config.observe",
+    phase: "read",
 
     configPath: params.filePath,
     callerSource: params.callerSource,
@@ -121,6 +127,34 @@ export function createConfigObserveAuditRecord(
     cwd,
     execArgv,
     watchMode: false,
+
+    // §9.2 file-state — null defaults; Task 3 populates from disk.
+    exists: false,
+    valid: true,
+    hash: null,
+    bytes: null,
+    mtimeMs: null,
+    ctimeMs: null,
+    dev: null,
+    ino: null,
+    mode: null,
+    nlink: null,
+    uid: null,
+    gid: null,
+    // §9.2 LKG triple — null defaults; Task 3 populates from sibling.
+    lastKnownGoodHash: null,
+    lastKnownGoodBytes: null,
+    lastKnownGoodMtimeMs: null,
+    // §9.2 backup triple — null defaults; Task 3 populates from sibling.
+    backupHash: null,
+    backupBytes: null,
+    backupMtimeMs: null,
+    // §9.2 recovery state — null defaults; Task 3 populates from caller.
+    clobberedPath: null,
+    restoredFromBackup: false,
+    restoredBackupPath: null,
+    restoreErrorCode: null,
+    restoreErrorMessage: null,
 
     suspicious,
   };

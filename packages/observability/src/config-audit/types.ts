@@ -180,11 +180,30 @@ export type ConfigWriteAuditRecord = z.infer<typeof ConfigWriteAuditRecordSchema
 
 /**
  * `ConfigObserveAuditRecord` — read-side audit shape (design §9.2).
- * Carries caller provenance + the read-site metadata fields. Currently
- * unused by writer hooks; reserved for a future read-side audit hook.
- * Read-side fields (`lastKnownGoodHash`, `backupHash`,
- * `restoredFromBackup`) are optional so the schema parses cleanly even
- * when the producer hasn't populated them.
+ *
+ * Matches design §9.2 verbatim. Field groups:
+ *   - **Identity + caller provenance** — `traceSchema`,
+ *     `schemaVersion`, `ts`, `source`, `event`, `phase`, `configPath`,
+ *     `callerSource`, `pid`, `ppid`, `argv`, `cwd`, `execArgv`,
+ *     `watchMode`.
+ *   - **File state** — `exists`, `valid`, `hash`, `bytes`,
+ *     `mtimeMs`, `ctimeMs`, `dev`, `ino`, `mode`, `nlink`, `uid`,
+ *     `gid`. All nullable when `exists:false`.
+ *   - **LKG triple** — `lastKnownGoodHash`, `lastKnownGoodBytes`,
+ *     `lastKnownGoodMtimeMs`. All nullable when no LKG sibling.
+ *   - **Backup triple** — `backupHash`, `backupBytes`,
+ *     `backupMtimeMs`. All nullable when no backup sibling.
+ *   - **Recovery quartet** — `clobberedPath`, `restoredFromBackup`,
+ *     `restoredBackupPath`, `restoreErrorCode`, `restoreErrorMessage`.
+ *     Quintet by count; mismatched names follow design §9.2's
+ *     "recovery state" group.
+ *   - **Heuristics** — `suspicious` array.
+ *
+ * No-BC policy (AGENTS.md §2.9): every §9.2 field is REQUIRED on the
+ * schema. The sole producer (`createConfigObserveAuditRecord` in
+ * `append-observe.ts`) is updated in lock-step to populate them.
+ * On-disk records written by prior versions of the producer will not
+ * re-parse — this is the intentional forward-only contract change.
  */
 export const ConfigObserveAuditRecordSchema = z.object({
   traceSchema: z.literal("comis-config-audit"),
@@ -192,12 +211,11 @@ export const ConfigObserveAuditRecordSchema = z.object({
   ts: z.string(),
   source: z.literal("config-io"),
   event: z.literal("config.observe"),
+  phase: z.literal("read"),
 
-  // Identity.
+  // Identity / caller provenance.
   configPath: z.string(),
   callerSource: z.string(),
-
-  // Caller provenance.
   pid: z.number().int(),
   ppid: z.number().int(),
   argv: z.array(z.string()),
@@ -205,10 +223,36 @@ export const ConfigObserveAuditRecordSchema = z.object({
   execArgv: z.array(z.string()),
   watchMode: z.boolean(),
 
-  // Read-side metadata (all optional — producer fills what's known).
-  lastKnownGoodHash: z.string().nullable().optional(),
-  backupHash: z.string().nullable().optional(),
-  restoredFromBackup: z.boolean().optional(),
+  // §9.2 file-state — required, nullable when exists:false.
+  exists: z.boolean(),
+  valid: z.boolean(),
+  hash: z.string().nullable(),
+  bytes: z.number().int().nonnegative().nullable(),
+  mtimeMs: z.number().nullable(),
+  ctimeMs: z.number().nullable(),
+  dev: z.string().nullable(),
+  ino: z.string().nullable(),
+  mode: z.number().int().nullable(),
+  nlink: z.number().int().nullable(),
+  uid: z.number().int().nullable(),
+  gid: z.number().int().nullable(),
+
+  // §9.2 LKG triple — required, nullable when no LKG sibling.
+  lastKnownGoodHash: z.string().nullable(),
+  lastKnownGoodBytes: z.number().int().nonnegative().nullable(),
+  lastKnownGoodMtimeMs: z.number().nullable(),
+
+  // §9.2 backup triple — required, nullable when no backup sibling.
+  backupHash: z.string().nullable(),
+  backupBytes: z.number().int().nonnegative().nullable(),
+  backupMtimeMs: z.number().nullable(),
+
+  // §9.2 recovery state — required.
+  clobberedPath: z.string().nullable(),
+  restoredFromBackup: z.boolean(),
+  restoredBackupPath: z.string().nullable(),
+  restoreErrorCode: z.string().nullable(),
+  restoreErrorMessage: z.string().nullable(),
 
   // Heuristics.
   suspicious: z.array(SuspiciousFlagSchema),

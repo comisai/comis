@@ -203,13 +203,14 @@ describe("config-audit/types — design §9.2 shape", () => {
     expect(parsed.result).toBe("copy-fallback");
   });
 
-  it("accepts a fully-populated observe record with event=`config.observe`", () => {
+  it("accepts a fully-populated observe record with event=`config.observe` carrying the full §9.2 field set", () => {
     const valid: ConfigObserveAuditRecord = {
       traceSchema: "comis-config-audit",
       schemaVersion: 1,
       ts: "2026-05-19T03:00:00.000Z",
       source: "config-io",
       event: "config.observe",
+      phase: "read",
       configPath: "/home/test/.comis/config.yaml",
       callerSource: "config-load",
       pid: 12345,
@@ -218,32 +219,182 @@ describe("config-audit/types — design §9.2 shape", () => {
       cwd: "/home/test",
       execArgv: [],
       watchMode: true,
+      // §9.2 file-state.
+      exists: true,
+      valid: true,
+      hash: "0".repeat(64),
+      bytes: 128,
+      mtimeMs: 1_779_148_800_000,
+      ctimeMs: 1_779_148_800_000,
+      dev: "64768",
+      ino: "999999",
+      mode: 0o600,
+      nlink: 1,
+      uid: 1000,
+      gid: 1000,
+      // §9.2 LKG triple.
+      lastKnownGoodHash: "1".repeat(64),
+      lastKnownGoodBytes: 100,
+      lastKnownGoodMtimeMs: 1_779_148_000_000,
+      // §9.2 backup triple.
+      backupHash: null,
+      backupBytes: null,
+      backupMtimeMs: null,
+      // §9.2 recovery state.
+      clobberedPath: null,
+      restoredFromBackup: false,
+      restoredBackupPath: null,
+      restoreErrorCode: null,
+      restoreErrorMessage: null,
       suspicious: ["unknown-binary"],
     };
 
     const parsed = ConfigObserveAuditRecordSchema.parse(valid);
     expect(parsed.event).toBe("config.observe");
+    expect(parsed.phase).toBe("read");
+    expect(parsed.exists).toBe(true);
+    expect(parsed.valid).toBe(true);
+    expect(parsed.hash).toBe("0".repeat(64));
+    expect(parsed.dev).toBe("64768");
+    expect(parsed.lastKnownGoodHash).toBe("1".repeat(64));
     expect(parsed.suspicious).toEqual(["unknown-binary"]);
   });
 
-  it("rejects observe record carrying OLD `phase: \"read\"` discriminant", () => {
-    const old = {
+  it("accepts an `exists:false` observe record with the full file-stat block nulled", () => {
+    const missing: ConfigObserveAuditRecord = {
       traceSchema: "comis-config-audit",
       schemaVersion: 1,
+      ts: "2026-05-20T00:00:00.000Z",
+      source: "config-io",
+      event: "config.observe",
       phase: "read",
-      source: "config-load",
+      configPath: "/tmp/missing.yaml",
+      callerSource: "daemon-bootstrap",
+      pid: 1,
+      ppid: 0,
+      argv: ["node", "daemon.js"],
+      cwd: "/",
+      execArgv: [],
+      watchMode: false,
+      exists: false,
+      valid: false,
+      hash: null,
+      bytes: null,
+      mtimeMs: null,
+      ctimeMs: null,
+      dev: null,
+      ino: null,
+      mode: null,
+      nlink: null,
+      uid: null,
+      gid: null,
+      lastKnownGoodHash: null,
+      lastKnownGoodBytes: null,
+      lastKnownGoodMtimeMs: null,
+      backupHash: null,
+      backupBytes: null,
+      backupMtimeMs: null,
+      clobberedPath: null,
+      restoredFromBackup: false,
+      restoredBackupPath: null,
+      restoreErrorCode: null,
+      restoreErrorMessage: null,
+      suspicious: [],
+    };
+    const parsed = ConfigObserveAuditRecordSchema.parse(missing);
+    expect(parsed.exists).toBe(false);
+    expect(parsed.valid).toBe(false);
+    expect(parsed.hash).toBeNull();
+    expect(parsed.dev).toBeNull();
+  });
+
+  it("rejects observe record with `phase` other than `read`", () => {
+    const bad = {
+      traceSchema: "comis-config-audit",
+      schemaVersion: 1,
+      ts: "2026-05-20T00:00:00.000Z",
+      source: "config-io",
+      event: "config.observe",
+      phase: "write", // wrong literal
       configPath: "/x",
+      callerSource: "x",
       pid: 1,
       ppid: 0,
       argv: [],
       cwd: "/",
       execArgv: [],
       watchMode: false,
+      exists: false,
+      valid: false,
+      hash: null,
+      bytes: null,
+      mtimeMs: null,
+      ctimeMs: null,
+      dev: null,
+      ino: null,
+      mode: null,
+      nlink: null,
+      uid: null,
+      gid: null,
+      lastKnownGoodHash: null,
+      lastKnownGoodBytes: null,
+      lastKnownGoodMtimeMs: null,
+      backupHash: null,
+      backupBytes: null,
+      backupMtimeMs: null,
+      clobberedPath: null,
+      restoredFromBackup: false,
+      restoredBackupPath: null,
+      restoreErrorCode: null,
+      restoreErrorMessage: null,
       suspicious: [],
-      ts: "2026-05-19T03:00:00.000Z",
-      tsMs: 1_779_148_800_000,
     };
-    const r = ConfigObserveAuditRecordSchema.safeParse(old);
+    const r = ConfigObserveAuditRecordSchema.safeParse(bad);
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects observe record where `dev` is a number rather than a string", () => {
+    const bad = {
+      traceSchema: "comis-config-audit",
+      schemaVersion: 1,
+      ts: "2026-05-20T00:00:00.000Z",
+      source: "config-io",
+      event: "config.observe",
+      phase: "read",
+      configPath: "/x",
+      callerSource: "x",
+      pid: 1,
+      ppid: 0,
+      argv: [],
+      cwd: "/",
+      execArgv: [],
+      watchMode: false,
+      exists: true,
+      valid: true,
+      hash: "0".repeat(64),
+      bytes: 0,
+      mtimeMs: 0,
+      ctimeMs: 0,
+      dev: 17, // number — must be string|null per §9.2
+      ino: "999",
+      mode: 0o600,
+      nlink: 1,
+      uid: 0,
+      gid: 0,
+      lastKnownGoodHash: null,
+      lastKnownGoodBytes: null,
+      lastKnownGoodMtimeMs: null,
+      backupHash: null,
+      backupBytes: null,
+      backupMtimeMs: null,
+      clobberedPath: null,
+      restoredFromBackup: false,
+      restoredBackupPath: null,
+      restoreErrorCode: null,
+      restoreErrorMessage: null,
+      suspicious: [],
+    };
+    const r = ConfigObserveAuditRecordSchema.safeParse(bad);
     expect(r.success).toBe(false);
   });
 });
