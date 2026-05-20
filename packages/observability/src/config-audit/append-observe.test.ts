@@ -195,10 +195,18 @@ describe("appendConfigObserveAuditRecord — disk persistence", () => {
     });
 
     // After rotation: main file holds the new record only; .1 holds the
-    // pre-rotation seed content.
+    // pre-rotation seed content. We don't assert the new file's size
+    // against the cap — observe records can legitimately exceed the
+    // per-rotation cap (argv + cwd carry full paths). The rotation
+    // invariant we're proving is: the pre-rotation content moved to
+    // .1, and the main file is freshly built around the new record.
     expect(fs.existsSync(auditPath + ".1")).toBe(true);
+    const rotatedSeed = fs.readFileSync(auditPath + ".1", "utf-8");
+    expect(rotatedSeed).toContain("xxxxx"); // the pre-rotation seed
     const newContent = fs.readFileSync(auditPath, "utf-8");
-    expect(newContent.length).toBeLessThan(1024);
     expect(newContent).toContain("comis-config-audit");
+    expect(newContent).toContain("config.observe");
+    // New file is exactly one record line (no carry-over from seed).
+    expect(newContent.split("\n").filter((l) => l.length > 0).length).toBe(1);
   });
 });

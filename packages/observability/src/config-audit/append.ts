@@ -296,7 +296,12 @@ export function finalizeConfigWriteAuditRecord(
  * After this returns, the main path no longer exists — the next
  * `appendRegularFile` call will create it under `0o600`.
  */
-function rotateAuditLogIfNeeded(
+/**
+ * Exported so the observe-side writer (`append-observe.ts`) can share
+ * the same rotation strategy. The semantics are identical to the
+ * original private helper.
+ */
+export function rotateConfigAuditLogIfNeeded(
   filePath: string,
   appendBytes: number,
   rotateAtBytes: number,
@@ -493,7 +498,13 @@ function encodeRecord(record: ConfigWriteAuditRecord): string {
  * (fs-safe.ts step 3) — per-record file-mode invariant is preserved
  * regardless of the parent's pre-existing mode.
  */
-function ensureParentDir(filePath: string): void {
+/**
+ * Exported so the observe-side writer (`append-observe.ts`) can share
+ * the same parent-dir invariants without duplicating the chmod-gate
+ * code. The semantics are identical to the original private helper —
+ * see header above.
+ */
+export function ensureConfigAuditParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -541,8 +552,8 @@ function appendConfigAuditRecordSyncImpl(
   const encoded = encodeRecord(params.record);
   const bytes = Buffer.byteLength(encoded, "utf8");
 
-  ensureParentDir(params.filePath);
-  rotateAuditLogIfNeeded(params.filePath, bytes, rotateAtBytes, keepRotated);
+  ensureConfigAuditParentDir(params.filePath);
+  rotateConfigAuditLogIfNeeded(params.filePath, bytes, rotateAtBytes, keepRotated);
 
   const appendResult = appendRegularFile({
     path: params.filePath,
