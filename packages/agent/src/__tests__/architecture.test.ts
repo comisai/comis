@@ -168,9 +168,9 @@ describe("@comis/agent -- architecture invariants", () => {
 
   it("tool_search_tool_regex literal absent from production source (excluding allowlist)", () => {
     // Allowlist of files where "tool_search_tool_regex" legitimately appears
-    // as a tool-identifier in the Anthropic API payload reshape (NOT prompt
-    // teaching shipped to the model). Four legitimate carriers, all in the
-    // payload-reshape / cache-detection layer:
+    // as a tool-identifier in the Anthropic API payload reshape OR (post
+    // 260520-e8z-01) in the deferred-tools prompt teaching that explicitly
+    // names the discovery tool. Five legitimate carriers:
     //   - request-body/tool-deferral-injection.ts — appends the server-side
     //     tool to the API payload (type discriminant + name field) when
     //     supportsToolSearch gates a tool-search-eligible model.
@@ -182,6 +182,14 @@ describe("@comis/agent -- architecture invariants", () => {
     //   - stub-filter-injector.ts — JSDoc cross-reference explaining how the
     //     stub-filter interacts with the payload-reshape that appends this
     //     tool to the rendered Anthropic payload.
+    //   - tool-deferral.ts — `buildDeferredToolsContext` instruction names
+    //     `tool_search_tool_regex` (Sonnet/Opus 4.x path) AND `discover_tools`
+    //     (other models) so the model has a concrete discovery tool to call
+    //     instead of the pre-flip "discovery mechanism available in your
+    //     active toolspace" pointer. Provider branching is acceptable here:
+    //     the prompt teaches both paths because the actual carrier swap
+    //     happens inside `request-body/tool-deferral-injection.ts` and the
+    //     model only invokes whichever one is present in its toolspace.
     // The supportsToolSearch gate in tool-deferral.ts (surviving-caller
     // branch) routes invocations of this reshape through
     // request-body/tool-deferral-injection.ts.
@@ -196,6 +204,7 @@ describe("@comis/agent -- architecture invariants", () => {
       "request-body/types.ts",     // JSDoc reference on the deferred-tools config option
       "anthropic-extractor.ts",    // cache-detection/ extractor module
       "stub-filter-injector.ts",   // JSDoc cross-reference to the payload reshape
+      "tool-deferral.ts",          // deferred-tools instruction names both discovery tools (260520-e8z-01)
     ];
     const offenders = result.matches.filter(
       (m) => !ALLOWED_FILES.some((allowed) => m.endsWith(allowed)),
@@ -204,7 +213,8 @@ describe("@comis/agent -- architecture invariants", () => {
       offenders,
       "tool_search_tool_regex literal must not appear outside the allowlist " +
         "(request-body/tool-deferral-injection.ts, request-body/types.ts, " +
-        "cache-detection/anthropic-extractor.ts, stub-filter-injector.ts)",
+        "cache-detection/anthropic-extractor.ts, stub-filter-injector.ts, " +
+        "tool-deferral.ts)",
     ).toEqual([]);
     expect(result.checkedFiles, "sanity: helper walked at least one production source file").toBeGreaterThan(0);
   });

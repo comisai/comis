@@ -138,11 +138,16 @@ export function clearDiscoveryTracker(sessionKey: string): void {
  * active session discovery trackers. Called when an MCP server disconnects or
  * is manually removed.
  *
- * @param serverName - The MCP server name (without `mcp:` prefix)
+ * The canonical runtime MCP tool-name format is
+ * `mcp__<serverName>--<toolSuffix>` (e.g. `mcp__yfinance--get_stock_price`).
+ * Pass the bare server name (no prefix, no separator) -- the
+ * `mcp__<serverName>--` prefix is built internally.
+ *
+ * @param serverName - The bare MCP server name (e.g. `"yfinance"`)
  * @returns Total count of removed entries across all session trackers
  */
 export function cleanupServerFromAllTrackers(serverName: string): number {
-  const prefix = `mcp:${serverName}/`;
+  const prefix = `mcp__${serverName}--`;
   let removed = 0;
 
   for (const tracker of sessionTrackers.values()) {

@@ -175,7 +175,9 @@ describe("wireMcpDisconnectCleanup", () => {
   it("on disconnected, cleans matching tools from all trackers", () => {
     const key = uniqueKey("disconnect");
     const tracker = getOrCreateDiscoveryTracker(key, true);
-    tracker.markDiscovered(["mcp:testserver/tool_a", "mcp:testserver/tool_b", "bash"]);
+    // 260520-e8z-01: inputs use the canonical `mcp__<server>--<tool>` runtime
+    // format that `cleanupServerFromAllTrackers` actually matches.
+    tracker.markDiscovered(["mcp__testserver--tool_a", "mcp__testserver--tool_b", "bash"]);
 
     // Capture handlers
     const handlers: Record<string, Function> = {};
@@ -194,8 +196,8 @@ describe("wireMcpDisconnectCleanup", () => {
       timestamp: Date.now(),
     });
 
-    expect(tracker.isDiscovered("mcp:testserver/tool_a")).toBe(false);
-    expect(tracker.isDiscovered("mcp:testserver/tool_b")).toBe(false);
+    expect(tracker.isDiscovered("mcp__testserver--tool_a")).toBe(false);
+    expect(tracker.isDiscovered("mcp__testserver--tool_b")).toBe(false);
     expect(tracker.isDiscovered("bash")).toBe(true);
 
     clearDiscoveryTracker(key);

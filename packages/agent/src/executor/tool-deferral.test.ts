@@ -2298,6 +2298,12 @@ describe("discover_tools -- co-discovery", () => {
 
 // ---------------------------------------------------------------------------
 // Suite 20: applyToolDeferral - provider-aware MCP deferral
+//
+// Post 260520-e8z-01 flip: MCP tools are ACTIVE BY DEFAULT for every
+// providerFamily. The pre-flip "Anthropic/Google defer, others do not"
+// asymmetry is gone -- both branches now match. Operator-driven deferral
+// (via `alwaysDefer`) and the small-model rule are the only remaining
+// MCP-deferral sources.
 // ---------------------------------------------------------------------------
 
 describe("applyToolDeferral - provider-aware MCP deferral", () => {
@@ -2359,7 +2365,7 @@ describe("applyToolDeferral - provider-aware MCP deferral", () => {
     expect(result.activeTools.map(t => t.name)).toContain("mcp__xai--tool_b");
   });
 
-  it("DOES defer MCP tools when providerFamily is 'anthropic'", () => {
+  it("keeps MCP tools active by default when providerFamily is 'anthropic' (post 260520-e8z-01)", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
@@ -2374,11 +2380,16 @@ describe("applyToolDeferral - provider-aware MCP deferral", () => {
 
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
 
-    expect(result.deferredNames).toContain("mcp__yfinance--get_price");
-    expect(result.deferredNames).toContain("mcp:small_tool");
+    // Post-flip: Anthropic matches every other provider -- MCP tools are
+    // active unless the operator explicitly defers them via `alwaysDefer`
+    // (covered by Suite 4b) or the small-model rule fires.
+    expect(result.deferredNames).not.toContain("mcp__yfinance--get_price");
+    expect(result.deferredNames).not.toContain("mcp:small_tool");
+    expect(result.activeTools.map(t => t.name)).toContain("mcp__yfinance--get_price");
+    expect(result.activeTools.map(t => t.name)).toContain("mcp:small_tool");
   });
 
-  it("DOES defer MCP tools when providerFamily is 'google'", () => {
+  it("keeps MCP tools active by default when providerFamily is 'google' (post 260520-e8z-01)", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
@@ -2393,8 +2404,10 @@ describe("applyToolDeferral - provider-aware MCP deferral", () => {
 
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
 
-    expect(result.deferredNames).toContain("mcp__srv--tool_a");
-    expect(result.deferredNames).toContain("mcp:tool_b");
+    expect(result.deferredNames).not.toContain("mcp__srv--tool_a");
+    expect(result.deferredNames).not.toContain("mcp:tool_b");
+    expect(result.activeTools.map(t => t.name)).toContain("mcp__srv--tool_a");
+    expect(result.activeTools.map(t => t.name)).toContain("mcp:tool_b");
   });
 
   it("non-MCP deferral rules unaffected by providerFamily (privileged tools)", () => {

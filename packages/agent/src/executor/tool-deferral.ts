@@ -259,14 +259,19 @@ export function resolveToolDescription(tool: ToolDefinition): string {
  * Lists deferred tool names and descriptions so the LLM knows what's
  * available behind a discovery mechanism.
  *
- * The instruction line is mechanism-neutral: it tells the model these
- * tools are available but not loaded, and points it at "the discovery
- * mechanism available in your active toolspace" without naming a specific
- * tool. Provider-specific payload reshaping (stripping the client-side
- * discovery tool and appending the server-side tool-search regex tool for
- * Anthropic Sonnet/Opus 4.x) lives entirely in `request-body-injector.ts`
- * and is gated by `supportsToolSearch(modelId)`. This separation is
- * enforced by architecture-grep tests.
+ * The instruction line names BOTH discovery tools concretely:
+ *   - `tool_search_tool_regex` -- Anthropic Sonnet/Opus 4.x server-side path
+ *     (the payload reshape in `request-body-injector.ts` gated by
+ *     `supportsToolSearch(modelId)` swaps the client-side tool out for this
+ *     server-side one).
+ *   - `discover_tools` -- everything else (the client-side path
+ *     constructed by {@link createDiscoverTool}).
+ *
+ * The pre-flip "discovery mechanism available in your active toolspace"
+ * wording was empirically too vague: across three sub-agent sessions in
+ * production we observed zero `server_tool_use` blocks invoking the
+ * Anthropic regex tool. Naming the tool explicitly gives the model a
+ * concrete next step.
  *
  * @param entries - Deferred tool entries (remaining after discovery re-inclusion)
  * @returns XML block string, or empty string when no entries
@@ -305,8 +310,10 @@ export function buildDeferredToolsContext(entries: DeferredToolEntry[]): string 
 
   const instruction =
     "These tools are connected but not currently loaded into your active context. " +
-    "To use one, invoke the discovery mechanism available in your active toolspace, " +
-    "then call the loaded tool with the appropriate arguments.";
+    "To use one, call `tool_search_tool_regex` (Anthropic Sonnet/Opus 4.x) or " +
+    "`discover_tools` (other models) with a regex matching the tool name " +
+    "(e.g. `mcp__yfinance--get_stock_price` or `.*stock.*`), then invoke the " +
+    "loaded tool with the appropriate arguments.";
 
   return [
     "<deferred-tools>",
@@ -363,20 +370,24 @@ export function applyToolDeferral(
     }
   }
 
-  // MCP tools deferred by default (only for providers with mid-turn injection)
-  // Providers without mid-turn injection (OpenAI, xAI, etc.) get MCP tools from the start,
-  // because sub-agents only call execute() once and there is no "next execution" for
-  // discovered tools to appear in.
-  const skipMcpDeferral = deferralContext.providerFamily !== "anthropic"
-    && deferralContext.providerFamily !== "google";
-  if (!skipMcpDeferral) {
-    for (const t of tools) {
-      if ((t.name.startsWith("mcp:") || t.name.startsWith("mcp__"))
-          && !deferralContext.recentlyUsedToolNames.has(t.name)) {
-        deferredSet.add(t.name);
-      }
-    }
-  }
+  // MCP tools are ACTIVE BY DEFAULT for providers that support mid-turn tool
+  // injection (`anthropic`, `google`). Empirically, the model rarely invokes
+  // the server-side discovery tool (`tool_search_tool_regex`) and falls back
+  // to `exec`/`web_fetch` -- deferral here paid a 0-discovery cost for no
+  // benefit. Token cost of keeping ~20 MCP tools active is ~3-5k at cache-read
+  // rates (~$0.005/turn), orders of magnitude cheaper than a single failed
+  // sub-agent run.
+  //
+  // Operators who DO want MCP deferral opt in via
+  // `config.deferredTools.alwaysDefer`. The small-model rule below still
+  // catches MCP tools when modelTier is `"small"` (aggressive deferral for
+  // narrow context windows). Providers without mid-turn injection (OpenAI,
+  // xAI, etc.) were already exempt from MCP deferral and remain so -- the
+  // flip means the Anthropic/Google branch now matches their behavior.
+  //
+  // No MCP-deferral pass runs here. This block is intentionally left as a
+  // comment-only architectural slot so a future budget-pressure rule can
+  // reintroduce conditional MCP deferral if telemetry justifies it.
 
   // Small model aggressive deferral
   if (deferralContext.modelTier === "small") {
