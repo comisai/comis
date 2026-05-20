@@ -101,6 +101,15 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/## MCP Output Directory/);
   });
 
+  // MCP install guidance — routes the LLM to mcp_manage first instead of letting
+  // it hallucinate a gateway.patch schema for integrations.mcp.servers entries.
+  // Closes the source of hallucinated MCP installs surfaced in log review (260520-wcf).
+  it("gateway guide documents the mcp_manage path for MCP installs", () => {
+    expect(TOOL_GUIDES.gateway).toMatch(/mcp_manage/);
+    expect(TOOL_GUIDES.gateway).toMatch(/## Installing an MCP server/);
+    expect(TOOL_GUIDES.gateway).toMatch(/transport/);
+  });
+
   // Sandbox-forbidden-paths hint -- preventive JIT guide that teaches the agent
   // the rule on first exec use, before sandbox-exec EPERMs trigger the
   // tool-retry-breaker redirect. Paired with the runtime redirect in
