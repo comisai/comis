@@ -98,10 +98,6 @@ import {
   emitBootstrapConfigObserveRecords,
 } from "./stages/foundation-helpers.js";
 import {
-  resolveConfigAuditLogPath,
-  getDefaultConfigAuditConfinedBase,
-} from "@comis/observability";
-import {
   restoreApprovalState,
   setupMcpManager,
   wirePostAgentsCleanup,
@@ -320,26 +316,8 @@ async function stageFoundation(input: {
   const configPaths = (rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS)
     .filter((p) => existsSync(p));
   const bootResult = _bootstrap({ configPaths, env: mergedEnv });
-  if (!bootResult.ok) {
-    throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
-  }
-
-  // OBS-REVIEW-03: emit one `config.observe` audit record per resolved
-  // configPath. Best-effort — Promise.allSettled() in the helper
-  // absorbs per-path append failures so the JSONL log can't block
-  // daemon startup. Audit-log is a forensics aid, not a correctness
-  // gate (matches the write-side last-known-good + config.patch
-  // hook pattern).
-  const auditLogPath = resolveConfigAuditLogPath();
-  const auditConfinedBase = getDefaultConfigAuditConfinedBase(auditLogPath);
-  await emitBootstrapConfigObserveRecords({
-    configPaths,
-    auditLogPath,
-    ...(auditConfinedBase !== undefined
-      ? { confinedBaseDir: auditConfinedBase }
-      : {}),
-  });
-
+  if (!bootResult.ok) throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
+  await emitBootstrapConfigObserveRecords({ configPaths }); // OBS-REVIEW-03
   // Container via const+resolve-then-spread.
   const initialContainer = bootResult.value;
   const refResult = resolveConfigSecretRefs(

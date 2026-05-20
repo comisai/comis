@@ -24,6 +24,8 @@ import { createConfigGitManager, safePath } from "@comis/core";
 import {
   appendConfigObserveAuditRecord,
   createConfigObserveAuditRecord,
+  resolveConfigAuditLogPath,
+  getDefaultConfigAuditConfinedBase,
 } from "@comis/observability";
 import type { SecretStorePort } from "@comis/core";
 import { ok, err } from "@comis/shared";
@@ -246,9 +248,19 @@ export function wireConfigGitManager(deps: {
 export interface EmitBootstrapConfigObserveRecordsParams {
   /** The list of resolved config paths the daemon read at boot. */
   readonly configPaths: readonly string[];
-  /** Path of the audit-log file (typically resolved via `resolveConfigAuditLogPath`). */
-  readonly auditLogPath: string;
-  /** Optional confinement base forwarded to the underlying appender. */
+  /**
+   * Optional override for the audit-log path. Production callers omit
+   * this and let the helper resolve it via `resolveConfigAuditLogPath`
+   * (which honors `COMIS_CONFIG_AUDIT_LOG`). Tests pass an explicit
+   * path so they don't write into the real `~/.comis/`.
+   */
+  readonly auditLogPath?: string;
+  /**
+   * Optional override for the confinement base. Production callers
+   * omit this and let the helper compute it via
+   * `getDefaultConfigAuditConfinedBase`. Tests pass an explicit base
+   * tied to the test's tmp dir.
+   */
   readonly confinedBaseDir?: string;
 }
 
@@ -270,16 +282,20 @@ export async function emitBootstrapConfigObserveRecords(
 ): Promise<void> {
   if (params.configPaths.length === 0) return;
 
+  const auditLogPath = params.auditLogPath ?? resolveConfigAuditLogPath();
+  const confinedBaseDir =
+    params.confinedBaseDir ?? getDefaultConfigAuditConfinedBase(auditLogPath);
+
   const appendPromises = params.configPaths.map(async (cfgPath) => {
     const record = createConfigObserveAuditRecord({
       filePath: cfgPath,
       callerSource: "daemon-bootstrap",
     });
     return appendConfigObserveAuditRecord({
-      filePath: params.auditLogPath,
+      filePath: auditLogPath,
       record,
-      ...(params.confinedBaseDir !== undefined
-        ? { confinedBaseDir: params.confinedBaseDir }
+      ...(confinedBaseDir !== undefined
+        ? { confinedBaseDir }
         : {}),
     });
   });
