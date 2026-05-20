@@ -32,6 +32,7 @@ import { ok, err } from "@comis/shared";
 import { createSqliteSecretStore, type setupSecrets as _setupSecretsImpl } from "@comis/memory";
 import type { setupLogging } from "../wiring/index.js";
 import type { createExecGit } from "../config/exec-git.js";
+import type { ConfigFileObservation } from "../config/read-config-file-observation.js";
 import { existsSync, readFileSync, mkdirSync, cpSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -237,17 +238,30 @@ export function wireConfigGitManager(deps: {
 }
 
 // ---------------------------------------------------------------------------
-// OBS-REVIEW-03: emit config.observe records at daemon bootstrap config-read
-// path. RED STUB — the GREEN implementation will dispatch into
-// @comis/observability's `createConfigObserveAuditRecord` +
-// `appendConfigObserveAuditRecord` for each resolved configPath, with
-// Promise.allSettled() so a single append failure cannot abort daemon boot.
+// OBS-REVIEW-03 + 260520-uh0: emit config.observe records at daemon bootstrap
+// config-read path. Each record carries the full design-§9.2 forensics shape
+// (file-stat + LKG + backup + recovery). Dispatch model: `Promise.allSettled`
+// so a single append failure cannot abort daemon boot.
 // ---------------------------------------------------------------------------
 
 /** Parameters for `emitBootstrapConfigObserveRecords`. */
 export interface EmitBootstrapConfigObserveRecordsParams {
-  /** The list of resolved config paths the daemon read at boot. */
-  readonly configPaths: readonly string[];
+  /**
+   * §9.2 file-state observations, one per *requested* config path
+   * (NOT one per existing path — missing paths produce `exists:false`
+   * records). Built by the daemon's `readConfigFileObservation`
+   * aggregator BEFORE the `existsSync` filter at the call site.
+   */
+  readonly observations: readonly ConfigFileObservation[];
+  /**
+   * Per-path validity bit. The daemon-bootstrap caller builds this
+   * from the monolithic `bootResult.ok`: every path in a failed boot
+   * gets `valid:false`; in a successful boot every path gets
+   * `valid:true`. Per-file Zod-error granularity is intentionally out
+   * of scope (the boot result is monolithic across all configPaths).
+   * Missing entries default to `true` (defensive).
+   */
+  readonly validityByPath: ReadonlyMap<string, boolean>;
   /**
    * Optional override for the audit-log path. Production callers omit
    * this and let the helper resolve it via `resolveConfigAuditLogPath`
@@ -265,31 +279,44 @@ export interface EmitBootstrapConfigObserveRecordsParams {
 }
 
 /**
- * Emit one `event: "config.observe"` audit-log record per resolved
- * configPath entry at daemon bootstrap. Closes OBS-REVIEW-03.
+ * Emit one `event: "config.observe"` audit-log record per observation
+ * (one per *requested* config path, including missing ones). Each
+ * record carries the design-§9.2 forensics shape projected from the
+ * observation cluster (file-stat block + LKG triple + backup triple)
+ * plus the per-path validity bit.
  *
  * Dispatch model: `Promise.allSettled` over per-path appends so a
  * single failure (audit log unwritable, dir permission, ENOSPC) does
  * not propagate and abort daemon startup. The audit log is a
  * forensics aid, not a correctness gate.
  *
- * No-op when `configPaths` is empty — the daemon may legitimately
+ * No-op when `observations` is empty — the daemon may legitimately
  * bootstrap with no config files when the operator hasn't seeded
  * any (the build of `AppConfig` falls back to schema defaults).
  */
 export async function emitBootstrapConfigObserveRecords(
   params: EmitBootstrapConfigObserveRecordsParams,
 ): Promise<void> {
-  if (params.configPaths.length === 0) return;
+  if (params.observations.length === 0) return;
 
   const auditLogPath = params.auditLogPath ?? resolveConfigAuditLogPath();
   const confinedBaseDir =
     params.confinedBaseDir ?? getDefaultConfigAuditConfinedBase(auditLogPath);
 
-  const appendPromises = params.configPaths.map(async (cfgPath) => {
+  const appendPromises = params.observations.map(async (obs) => {
+    // Default-true validity when the map omits a path — defensive: a
+    // missing entry shouldn't cascade into `valid:false`.
+    const valid = params.validityByPath.get(obs.configPath) ?? true;
     const record = createConfigObserveAuditRecord({
-      filePath: cfgPath,
+      filePath: obs.configPath,
       callerSource: "daemon-bootstrap",
+      observation: {
+        exists: obs.exists,
+        snapshot: obs.snapshot,
+        lkg: obs.lkg,
+        backup: obs.backup,
+      },
+      valid,
     });
     return appendConfigObserveAuditRecord({
       filePath: auditLogPath,

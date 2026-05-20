@@ -20,6 +20,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { emitBootstrapConfigObserveRecords } from "./stages/foundation-helpers.js";
+import { readConfigFileObservation } from "./config/read-config-file-observation.js";
 import { ConfigObserveAuditRecordSchema } from "@comis/observability";
 
 let tmpDir: string;
@@ -33,7 +34,7 @@ afterEach(() => {
 });
 
 describe("emitBootstrapConfigObserveRecords — daemon bootstrap config.observe wiring", () => {
-  it("appends exactly one config.observe record per resolved configPath entry", async () => {
+  it("appends exactly one config.observe record per observation, carrying the full §9.2 shape", async () => {
     // Seed two config files at known paths.
     const cfgA = path.join(tmpDir, "config-a.yaml");
     const cfgB = path.join(tmpDir, "config-b.yaml");
@@ -41,9 +42,18 @@ describe("emitBootstrapConfigObserveRecords — daemon bootstrap config.observe 
     fs.writeFileSync(cfgB, "logging:\n  level: debug\n", { mode: 0o600 });
 
     const auditLogPath = path.join(tmpDir, "logs", "config-audit.jsonl");
+    const observations = [
+      readConfigFileObservation(cfgA),
+      readConfigFileObservation(cfgB),
+    ];
+    const validityByPath = new Map([
+      [cfgA, true],
+      [cfgB, true],
+    ]);
 
     await emitBootstrapConfigObserveRecords({
-      configPaths: [cfgA, cfgB],
+      observations,
+      validityByPath,
       auditLogPath,
       confinedBaseDir: tmpDir,
     });
@@ -54,11 +64,63 @@ describe("emitBootstrapConfigObserveRecords — daemon bootstrap config.observe 
     for (const line of lines) {
       const parsed = ConfigObserveAuditRecordSchema.parse(JSON.parse(line));
       expect(parsed.event).toBe("config.observe");
+      expect(parsed.phase).toBe("read");
       expect(parsed.callerSource).toBe("daemon-bootstrap");
+      expect(parsed.exists).toBe(true);
+      expect(parsed.valid).toBe(true);
+      // File-stat block populated from disk via readConfigFileObservation.
+      expect(parsed.hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(parsed.bytes).toBeGreaterThan(0);
+      expect(parsed.dev).not.toBeNull();
+      expect(parsed.ino).not.toBeNull();
     }
     const observedPaths = lines.map((l) => JSON.parse(l).configPath);
     expect(observedPaths).toContain(cfgA);
     expect(observedPaths).toContain(cfgB);
+  });
+
+  it("emits exists:false records for configured-but-missing paths (no existsSync filter at the call site)", async () => {
+    const missing = path.join(tmpDir, "not-on-disk.yaml");
+    const auditLogPath = path.join(tmpDir, "logs", "config-audit.jsonl");
+
+    const observations = [readConfigFileObservation(missing)];
+    const validityByPath = new Map([[missing, true]]);
+
+    await emitBootstrapConfigObserveRecords({
+      observations,
+      validityByPath,
+      auditLogPath,
+      confinedBaseDir: tmpDir,
+    });
+
+    const raw = fs.readFileSync(auditLogPath, "utf-8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    expect(lines.length).toBe(1);
+    const parsed = ConfigObserveAuditRecordSchema.parse(JSON.parse(lines[0]!));
+    expect(parsed.exists).toBe(false);
+    expect(parsed.hash).toBeNull();
+    expect(parsed.bytes).toBeNull();
+    expect(parsed.dev).toBeNull();
+  });
+
+  it("propagates validity:false when the boot result reports a malformed config", async () => {
+    const cfg = path.join(tmpDir, "config.yaml");
+    fs.writeFileSync(cfg, "k: v\n", { mode: 0o600 });
+    const auditLogPath = path.join(tmpDir, "logs", "config-audit.jsonl");
+
+    await emitBootstrapConfigObserveRecords({
+      observations: [readConfigFileObservation(cfg)],
+      validityByPath: new Map([[cfg, false]]),
+      auditLogPath,
+      confinedBaseDir: tmpDir,
+    });
+
+    const raw = fs.readFileSync(auditLogPath, "utf-8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    const parsed = ConfigObserveAuditRecordSchema.parse(JSON.parse(lines[0]!));
+    expect(parsed.valid).toBe(false);
+    // exists is independent of validity — the file IS on disk.
+    expect(parsed.exists).toBe(true);
   });
 
   it("does NOT throw when a single observe-append fails — non-fatal at boot", async () => {
@@ -76,17 +138,19 @@ describe("emitBootstrapConfigObserveRecords — daemon bootstrap config.observe 
     // Must not throw — audit-log failures at boot are non-fatal.
     await expect(
       emitBootstrapConfigObserveRecords({
-        configPaths: [cfg],
+        observations: [readConfigFileObservation(cfg)],
+        validityByPath: new Map([[cfg, true]]),
         auditLogPath,
         confinedBaseDir: tmpDir,
       }),
     ).resolves.toBeUndefined();
   });
 
-  it("handles an empty configPaths array gracefully (no audit-log lines, no throw)", async () => {
+  it("handles an empty observations array gracefully (no audit-log lines, no throw)", async () => {
     const auditLogPath = path.join(tmpDir, "logs", "config-audit.jsonl");
     await emitBootstrapConfigObserveRecords({
-      configPaths: [],
+      observations: [],
+      validityByPath: new Map(),
       auditLogPath,
       confinedBaseDir: tmpDir,
     });

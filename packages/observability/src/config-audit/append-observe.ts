@@ -47,6 +47,44 @@ import {
   rotateConfigAuditLogIfNeeded,
 } from "./append.js";
 import type { ConfigObserveAuditRecord } from "./types.js";
+import type { FileSnapshot } from "../shared/file-snapshot.js";
+
+/**
+ * Optional design-§9.2 observation cluster.
+ *
+ * The daemon-side `readConfigFileObservation` aggregator (in
+ * `@comis/daemon/src/config/read-config-file-observation.ts`) builds this
+ * cluster from disk; non-bootstrap callers (e.g. `comis config show`) can
+ * omit it entirely. When omitted, every file-state / LKG / backup field
+ * on the record stays at its null default (matching the `exists:false`
+ * shape).
+ *
+ * Note: observability is the substrate; the policy of which siblings to
+ * consult lives in `@comis/daemon`. This package consumes the cluster
+ * without knowing how the aggregator built it.
+ */
+export interface ObserveObservation {
+  readonly exists: boolean;
+  readonly snapshot: FileSnapshot | null;
+  readonly lkg: FileSnapshot | null;
+  readonly backup: FileSnapshot | null;
+}
+
+/**
+ * Optional design-§9.2 recovery state cluster.
+ *
+ * Populated by callers that own a restore flow (`--restore-last-good`,
+ * future `--restore-backup`). Default (when undefined) is the
+ * "no recovery" shape: `restoredFromBackup:false`, all paths/codes
+ * `null`.
+ */
+export interface ObserveRecovery {
+  readonly clobberedPath: string | null;
+  readonly restoredFromBackup: boolean;
+  readonly restoredBackupPath: string | null;
+  readonly restoreErrorCode: string | null;
+  readonly restoreErrorMessage: string | null;
+}
 
 /** Input to `createConfigObserveAuditRecord`. */
 export interface CreateObserveRecordParams {
@@ -54,6 +92,25 @@ export interface CreateObserveRecordParams {
   readonly filePath: string;
   /** Caller-source identifier (e.g. "daemon-bootstrap", "cli-config-show"). */
   readonly callerSource: string;
+  /**
+   * §9.2 file-state observation. When omitted, defaults to the
+   * `exists:false` / all-null shape — the caller doesn't know whether
+   * the file exists or what its hash is.
+   */
+  readonly observation?: ObserveObservation;
+  /**
+   * §9.2 validity bit. Default `true` — non-bootstrap callers (e.g.
+   * `comis config show`) are read-only and have no Zod-validation
+   * outcome to report; the daemon-bootstrap caller passes `false` when
+   * `bootResult.ok === false`.
+   */
+  readonly valid?: boolean;
+  /**
+   * §9.2 recovery state. Default `{restoredFromBackup:false,
+   * clobberedPath:null, restoredBackupPath:null, restoreErrorCode:null,
+   * restoreErrorMessage:null}`.
+   */
+  readonly recovery?: ObserveRecovery;
 }
 
 /** Input to `appendConfigObserveAuditRecord`. */
@@ -105,11 +162,16 @@ export function createConfigObserveAuditRecord(
 
   const suspicious = detectSuspicious({ argv, execArgv });
 
-  // §9.2 defaults — Task 2 ships zero-knowledge nulls so the schema
-  // shape parses. Task 3 wires the daemon-side `readConfigFileObservation`
-  // aggregator that populates the file-state / LKG / backup / recovery
-  // groups from disk; until that lands, every field below stays at its
-  // null default (matches the `exists:false` shape).
+  // §9.2 observation projection — when the caller passed an
+  // observation cluster, project the snapshots onto the record fields;
+  // otherwise fall through to the null defaults.
+  const obs = params.observation;
+  const snap = obs?.snapshot ?? null;
+  const lkg = obs?.lkg ?? null;
+  const bak = obs?.backup ?? null;
+  const rec = params.recovery;
+  const valid = params.valid ?? true;
+
   return {
     traceSchema: "comis-config-audit",
     schemaVersion: 1,
@@ -128,33 +190,33 @@ export function createConfigObserveAuditRecord(
     execArgv,
     watchMode: false,
 
-    // §9.2 file-state — null defaults; Task 3 populates from disk.
-    exists: false,
-    valid: true,
-    hash: null,
-    bytes: null,
-    mtimeMs: null,
-    ctimeMs: null,
-    dev: null,
-    ino: null,
-    mode: null,
-    nlink: null,
-    uid: null,
-    gid: null,
-    // §9.2 LKG triple — null defaults; Task 3 populates from sibling.
-    lastKnownGoodHash: null,
-    lastKnownGoodBytes: null,
-    lastKnownGoodMtimeMs: null,
-    // §9.2 backup triple — null defaults; Task 3 populates from sibling.
-    backupHash: null,
-    backupBytes: null,
-    backupMtimeMs: null,
-    // §9.2 recovery state — null defaults; Task 3 populates from caller.
-    clobberedPath: null,
-    restoredFromBackup: false,
-    restoredBackupPath: null,
-    restoreErrorCode: null,
-    restoreErrorMessage: null,
+    // §9.2 file-state — projected from the observation cluster's snapshot.
+    exists: obs?.exists ?? false,
+    valid,
+    hash: snap?.hash ?? null,
+    bytes: snap?.bytes ?? null,
+    mtimeMs: snap?.mtimeMs ?? null,
+    ctimeMs: snap?.ctimeMs ?? null,
+    dev: snap?.dev ?? null,
+    ino: snap?.ino ?? null,
+    mode: snap?.mode ?? null,
+    nlink: snap?.nlink ?? null,
+    uid: snap?.uid ?? null,
+    gid: snap?.gid ?? null,
+    // §9.2 LKG triple — design narrows FileSnapshot to {hash, bytes, mtimeMs}.
+    lastKnownGoodHash: lkg?.hash ?? null,
+    lastKnownGoodBytes: lkg?.bytes ?? null,
+    lastKnownGoodMtimeMs: lkg?.mtimeMs ?? null,
+    // §9.2 backup triple — same narrowing.
+    backupHash: bak?.hash ?? null,
+    backupBytes: bak?.bytes ?? null,
+    backupMtimeMs: bak?.mtimeMs ?? null,
+    // §9.2 recovery state — defaults to "no recovery" shape.
+    clobberedPath: rec?.clobberedPath ?? null,
+    restoredFromBackup: rec?.restoredFromBackup ?? false,
+    restoredBackupPath: rec?.restoredBackupPath ?? null,
+    restoreErrorCode: rec?.restoreErrorCode ?? null,
+    restoreErrorMessage: rec?.restoreErrorMessage ?? null,
 
     suspicious,
   };

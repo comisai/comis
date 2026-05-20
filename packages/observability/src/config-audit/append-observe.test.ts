@@ -93,6 +93,112 @@ describe("createConfigObserveAuditRecord — record shape", () => {
   });
 });
 
+describe("createConfigObserveAuditRecord — §9.2 observation + valid + recovery", () => {
+  it("projects the observation cluster onto the file-state / LKG / backup blocks", () => {
+    const cfgPath = path.join(tmpDir, "config.yaml");
+    fs.writeFileSync(cfgPath, "k: v\n", { mode: 0o600 });
+
+    const snapshot = {
+      hash: "0".repeat(64),
+      bytes: 4,
+      mtimeMs: 1_779_148_800_000,
+      ctimeMs: 1_779_148_800_000,
+      dev: "64768",
+      ino: "999999",
+      mode: 0o600,
+      nlink: 1,
+      uid: 1000,
+      gid: 1000,
+    };
+    const lkgSnap = {
+      ...snapshot,
+      hash: "1".repeat(64),
+      bytes: 8,
+    };
+    const bakSnap = {
+      ...snapshot,
+      hash: "2".repeat(64),
+      bytes: 12,
+    };
+
+    const record = createConfigObserveAuditRecord({
+      filePath: cfgPath,
+      callerSource: "daemon-bootstrap",
+      observation: {
+        exists: true,
+        snapshot,
+        lkg: lkgSnap,
+        backup: bakSnap,
+      },
+      valid: false,
+    });
+
+    const parsed = ConfigObserveAuditRecordSchema.parse(record);
+    expect(parsed.exists).toBe(true);
+    expect(parsed.valid).toBe(false);
+    expect(parsed.hash).toBe("0".repeat(64));
+    expect(parsed.bytes).toBe(4);
+    expect(parsed.dev).toBe("64768");
+    expect(parsed.ino).toBe("999999");
+    expect(parsed.mode).toBe(0o600);
+    // LKG triple — narrowed to {hash, bytes, mtimeMs}.
+    expect(parsed.lastKnownGoodHash).toBe("1".repeat(64));
+    expect(parsed.lastKnownGoodBytes).toBe(8);
+    // Backup triple — narrowed to {hash, bytes, mtimeMs}.
+    expect(parsed.backupHash).toBe("2".repeat(64));
+    expect(parsed.backupBytes).toBe(12);
+  });
+
+  it("defaults to the no-recovery shape when recovery param is omitted", () => {
+    const cfgPath = path.join(tmpDir, "config.yaml");
+    fs.writeFileSync(cfgPath, "k: v\n", { mode: 0o600 });
+
+    const record = createConfigObserveAuditRecord({
+      filePath: cfgPath,
+      callerSource: "daemon-bootstrap",
+    });
+
+    const parsed = ConfigObserveAuditRecordSchema.parse(record);
+    expect(parsed.clobberedPath).toBeNull();
+    expect(parsed.restoredFromBackup).toBe(false);
+    expect(parsed.restoredBackupPath).toBeNull();
+    expect(parsed.restoreErrorCode).toBeNull();
+    expect(parsed.restoreErrorMessage).toBeNull();
+  });
+
+  it("defaults `valid` to true when omitted (non-bootstrap read-only callers)", () => {
+    const cfgPath = path.join(tmpDir, "config.yaml");
+    fs.writeFileSync(cfgPath, "k: v\n", { mode: 0o600 });
+    const record = createConfigObserveAuditRecord({
+      filePath: cfgPath,
+      callerSource: "cli-config-show",
+    });
+    expect(record.valid).toBe(true);
+  });
+
+  it("propagates an explicit recovery cluster onto the record", () => {
+    const cfgPath = path.join(tmpDir, "config.yaml");
+    fs.writeFileSync(cfgPath, "k: v\n", { mode: 0o600 });
+    const record = createConfigObserveAuditRecord({
+      filePath: cfgPath,
+      callerSource: "daemon-bootstrap",
+      recovery: {
+        clobberedPath: "/path/to/clobbered.yaml",
+        restoredFromBackup: true,
+        restoredBackupPath: "/path/to/restored.bak.yaml",
+        restoreErrorCode: "ENOENT",
+        restoreErrorMessage: "no such file",
+      },
+    });
+    const parsed = ConfigObserveAuditRecordSchema.parse(record);
+    expect(parsed.clobberedPath).toBe("/path/to/clobbered.yaml");
+    expect(parsed.restoredFromBackup).toBe(true);
+    expect(parsed.restoredBackupPath).toBe("/path/to/restored.bak.yaml");
+    expect(parsed.restoreErrorCode).toBe("ENOENT");
+    expect(parsed.restoreErrorMessage).toBe("no such file");
+  });
+});
+
 describe("appendConfigObserveAuditRecord — disk persistence", () => {
   it("appends a single JSONL line that round-trips through ConfigObserveAuditRecordSchema", async () => {
     const cfgPath = path.join(tmpDir, "config.yaml");

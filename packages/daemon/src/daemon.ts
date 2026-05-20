@@ -97,6 +97,7 @@ import {
   wireConfigGitManager,
   emitBootstrapConfigObserveRecords,
 } from "./stages/foundation-helpers.js";
+import { readConfigFileObservation } from "./config/read-config-file-observation.js";
 import {
   restoreApprovalState,
   setupMcpManager,
@@ -313,11 +314,27 @@ async function stageFoundation(input: {
   // 1. Bootstrap core container. Fix A (log-review): under VITEST=true, refuse to silently read ~/.comis/config.yaml when COMIS_CONFIG_PATHS is unset.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
   const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
-  const configPaths = (rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS)
-    .filter((p) => existsSync(p));
+  const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
+  // Build observations BEFORE the existsSync filter so configured-but-
+  // missing paths produce `exists:false` records (design §9.2 forensics
+  // requirement — operators triaging boot need to know a path was
+  // configured but absent).
+  const observations = requestedConfigPaths.map((p) => readConfigFileObservation(p));
+  const configPaths = requestedConfigPaths.filter((p) => existsSync(p));
   const bootResult = _bootstrap({ configPaths, env: mergedEnv });
+  // Build coarse per-path validity from the monolithic boot result.
+  // Per-file Zod-error granularity is intentionally out of scope here;
+  // one validity bit per boot is the §9.2 invariant (every path in a
+  // failed boot gets valid:false; in a successful boot every path
+  // gets valid:true).
+  const validityByPath = new Map(
+    requestedConfigPaths.map((p) => [p, bootResult.ok] as const),
+  );
+  // Emit observe records BEFORE the throw on !bootResult.ok so
+  // malformed configs still produce an audit trail. The forensics
+  // record is precisely what's wanted when boot fails.
+  await emitBootstrapConfigObserveRecords({ observations, validityByPath });
   if (!bootResult.ok) throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
-  await emitBootstrapConfigObserveRecords({ configPaths }); // OBS-REVIEW-03
   // Container via const+resolve-then-spread.
   const initialContainer = bootResult.value;
   const refResult = resolveConfigSecretRefs(

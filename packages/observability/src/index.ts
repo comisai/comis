@@ -260,6 +260,8 @@ export type {
   CreateObserveRecordParams,
   AppendObserveRecordParams,
   AppendObserveResult,
+  ObserveObservation,
+  ObserveRecovery,
 } from "./config-audit/append-observe.js";
 
 export { scrubConfigAuditLog, ScrubConfigAuditError } from "./config-audit/scrub.js";
