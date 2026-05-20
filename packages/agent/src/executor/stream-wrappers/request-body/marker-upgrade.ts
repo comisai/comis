@@ -18,6 +18,27 @@
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { ComisLogger } from "@comis/core";
 
+/** Named-args input for `upgradeSdkMarkers`. */
+export interface UpgradeSdkMarkersParams {
+  result: Record<string, unknown>;
+  modelId: string;
+  sessionKey: string | undefined;
+  resolvedRetention: CacheRetention | undefined;
+  needsCacheBreakpoints: boolean;
+  effectiveSkipCacheWrite: boolean;
+  /**
+   * 1-indexed turn number within the current agent session (turn 1 =
+   * first model call after session start). Used to gate the 5m → 1h
+   * promotion: first-turn writes that get evicted server-side would
+   * otherwise pay the 1h premium for nothing.
+   *
+   * When undefined (caller has no counter wired), the gate is skipped
+   * to preserve pre-260520-wcf behavior — promotion fires as before.
+   */
+  callCount?: number;
+  logger: ComisLogger;
+}
+
 /** Upgrade `type: "ephemeral"` markers without an explicit TTL to ttl: "1h". */
 function upgradeMarkers(blocks: Array<Record<string, unknown>>): void {
   for (const block of blocks) {
@@ -30,19 +51,44 @@ function upgradeMarkers(blocks: Array<Record<string, unknown>>): void {
 
 /**
  * Upgrade SDK auto-placed 5m markers to 1h when retention is long.
- * Runs only when `needsCacheBreakpoints && resolvedRetention === "long" && !effectiveSkipCacheWrite`.
+ *
+ * Runs only when:
+ *   - `needsCacheBreakpoints && resolvedRetention === "long" && !effectiveSkipCacheWrite`
+ *   - AND `callCount === undefined || callCount >= 2`.
+ *
+ * The callCount gate (260520-wcf) prevents paying the 1h premium on
+ * first-turn writes that may be evicted server-side before a second
+ * turn even fires. When the caller does not supply callCount, the
+ * gate is skipped (pre-260520-wcf behavior preserved).
+ *
  * Mutates `result.system` and `result.tools` in place.
  */
-export function upgradeSdkMarkers(
-  result: Record<string, unknown>,
-  modelId: string,
-  sessionKey: string | undefined,
-  resolvedRetention: CacheRetention | undefined,
-  needsCacheBreakpoints: boolean,
-  effectiveSkipCacheWrite: boolean,
-  logger: ComisLogger,
-): void {
+export function upgradeSdkMarkers(params: UpgradeSdkMarkersParams): void {
+  const {
+    result,
+    modelId,
+    sessionKey,
+    resolvedRetention,
+    needsCacheBreakpoints,
+    effectiveSkipCacheWrite,
+    callCount,
+    logger,
+  } = params;
+
   if (!needsCacheBreakpoints || resolvedRetention !== "long" || effectiveSkipCacheWrite) return;
+
+  // 260520-wcf gate: promote only from turn 2 onward.
+  // First-turn writes that get evicted server-side would otherwise pay
+  // the 1h premium for nothing. The gate is skipped when callCount is
+  // undefined to preserve behavior for callers that have not been
+  // updated yet.
+  if (callCount !== undefined && callCount < 2) {
+    logger.debug(
+      { modelId, sessionKey, callCount },
+      "SDK-UPGRADE: skipped 1h promotion on first-turn write (callCount<2)",
+    );
+    return;
+  }
 
   // Upgrade system blocks (always follow resolvedRetention)
   if (Array.isArray(result.system)) {
@@ -60,7 +106,7 @@ export function upgradeSdkMarkers(
   // zone and should remain at 5m.
 
   logger.debug(
-    { modelId, sessionKey },
+    { modelId, sessionKey, callCount },
     "SDK-UPGRADE: Upgraded SDK 5m auto-markers to 1h for long retention",
   );
 }

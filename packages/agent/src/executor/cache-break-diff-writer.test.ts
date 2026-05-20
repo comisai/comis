@@ -710,4 +710,76 @@ describe("cache-break-diff-writer", () => {
       expect(content.attribution.cacheControlChanged).toBe(false);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // breakpointPressureRatio (260520-wcf): fraction of the SDK's 4-breakpoint
+  // ceiling consumed at break time. Clamped to [0, 1].
+  // ---------------------------------------------------------------------------
+  describe("breakpointPressureRatio in serialized diff records", () => {
+    it("emits breakpointPressureRatio equal to breakpointBudget.total divided by 4", () => {
+      const logger = createMockLogger();
+      const handler = createCacheBreakDiffWriter({
+        outputDir: "/tmp/test-cache-breaks",
+        logger,
+      });
+
+      handler(makeCacheBreakEvent({
+        breakpointBudget: { total: 2, system: 1, tool: 0, message: 1, sdkAuto: 0 },
+      }));
+
+      const jsonCall = mockWriteFileSync.mock.calls.find(c => (c[0] as string).endsWith(".json"));
+      expect(jsonCall).toBeDefined();
+      const content = JSON.parse(jsonCall![1] as string);
+      expect(content.breakpointPressureRatio).toBe(0.5);
+    });
+
+    it("clamps breakpointPressureRatio to 1 when total exceeds the 4-breakpoint ceiling", () => {
+      const logger = createMockLogger();
+      const handler = createCacheBreakDiffWriter({
+        outputDir: "/tmp/test-cache-breaks",
+        logger,
+      });
+
+      handler(makeCacheBreakEvent({
+        breakpointBudget: { total: 6, system: 1, tool: 2, message: 3, sdkAuto: 0 },
+      }));
+
+      const jsonCall = mockWriteFileSync.mock.calls.find(c => (c[0] as string).endsWith(".json"));
+      expect(jsonCall).toBeDefined();
+      const content = JSON.parse(jsonCall![1] as string);
+      expect(content.breakpointPressureRatio).toBe(1);
+    });
+
+    it("clamps breakpointPressureRatio to 0 when total is negative for defense-in-depth", () => {
+      const logger = createMockLogger();
+      const handler = createCacheBreakDiffWriter({
+        outputDir: "/tmp/test-cache-breaks",
+        logger,
+      });
+
+      handler(makeCacheBreakEvent({
+        breakpointBudget: { total: -1, system: 0, tool: 0, message: 0, sdkAuto: 0 },
+      }));
+
+      const jsonCall = mockWriteFileSync.mock.calls.find(c => (c[0] as string).endsWith(".json"));
+      expect(jsonCall).toBeDefined();
+      const content = JSON.parse(jsonCall![1] as string);
+      expect(content.breakpointPressureRatio).toBe(0);
+    });
+
+    it("omits breakpointPressureRatio when breakpointBudget is absent so the field stays meaningful", () => {
+      const logger = createMockLogger();
+      const handler = createCacheBreakDiffWriter({
+        outputDir: "/tmp/test-cache-breaks",
+        logger,
+      });
+
+      handler(makeCacheBreakEvent()); // default fixture has no breakpointBudget
+
+      const jsonCall = mockWriteFileSync.mock.calls.find(c => (c[0] as string).endsWith(".json"));
+      expect(jsonCall).toBeDefined();
+      const content = JSON.parse(jsonCall![1] as string);
+      expect(content).not.toHaveProperty("breakpointPressureRatio");
+    });
+  });
 });

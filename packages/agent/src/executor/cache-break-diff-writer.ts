@@ -71,6 +71,14 @@ export interface CacheBreakDiffPayload {
     message: number;
     sdkAuto: number;
   };
+  /**
+   * Breakpoint pressure as a fraction of the SDK's 4-breakpoint ceiling.
+   * Computed by the writer from `breakpointBudget.total / 4` and clamped
+   * to [0, 1]. Surfaced in the diff record so dashboards can pivot on
+   * pressure without re-deriving from raw markers. Omitted when
+   * `breakpointBudget` is absent.
+   */
+  breakpointPressureRatio?: number;
   /** Model ID for per-model cost attribution. Populated by pi-event-bridge.ts. */
   model?: string;
 }
@@ -189,6 +197,17 @@ export function createCacheBreakDiffWriter(
         effortValue: event.effortValue,
         // Breakpoint budget context
         ...(event.breakpointBudget && { breakpointBudget: event.breakpointBudget }),
+        // Breakpoint pressure ratio (260520-wcf): fraction of the SDK's
+        // 4-breakpoint ceiling consumed at the time of the cache break.
+        // Clamped to [0, 1] — values > 1 indicate accounting drift, < 0
+        // is impossible but locked in for defense in depth. Emitted only
+        // when breakpointBudget is present so the field stays meaningful.
+        ...(event.breakpointBudget && {
+          breakpointPressureRatio: Math.max(
+            0,
+            Math.min(1, event.breakpointBudget.total / 4),
+          ),
+        }),
         // Cost attribution
         estimatedCostUsd: estimatedCostUsd === null
           ? null

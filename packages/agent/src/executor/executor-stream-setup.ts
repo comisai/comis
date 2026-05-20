@@ -427,6 +427,13 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
           ttlSplit.cacheWrite5mTokens = estimate.cacheWrite5mTokens;
           ttlSplit.cacheWrite1hTokens = estimate.cacheWrite1hTokens;
         },
+        // Per-session call counter — read directly from the cache-break
+        // detector's existing per-session state. `upgradeSdkMarkers`
+        // gates 5m → 1h promotion on callCount >= 2 so first-turn writes
+        // that may be evicted server-side don't pay the 1h premium.
+        // The getter runs AFTER `onPayloadForCacheDetection` increments
+        // the counter for this turn, so the gate sees the correct value.
+        getCallCount: () => cacheBreakDetector.getCallCount(formattedKey),
       },
       deps.logger,
     ),
