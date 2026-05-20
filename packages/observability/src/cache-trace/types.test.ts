@@ -27,7 +27,7 @@ describe("CacheTraceEvent — type ⇄ schema sync invariant", () => {
     expectTypeOf<z.infer<typeof CacheTraceEventSchema>>().toEqualTypeOf<CacheTraceEvent>();
   });
 
-  it("schema accepts a minimal valid event", () => {
+  it("schema accepts a minimal valid event (with traceId)", () => {
     const ev: CacheTraceEvent = CacheTraceEventSchema.parse({
       traceSchema: "comis-cache-trace",
       schemaVersion: 1,
@@ -36,8 +36,10 @@ describe("CacheTraceEvent — type ⇄ schema sync invariant", () => {
       seq: 0,
       agentId: "a",
       sessionId: "s",
+      traceId: "trace-1",
     });
     expect(ev.stage).toBe("session:start");
+    expect(ev.traceId).toBe("trace-1");
   });
 
   it("schema rejects an unknown stage", () => {
@@ -50,8 +52,64 @@ describe("CacheTraceEvent — type ⇄ schema sync invariant", () => {
         seq: 0,
         agentId: "a",
         sessionId: "s",
+        traceId: "trace-1",
       }),
     ).toThrow();
+  });
+
+  it("schema rejects an event missing the required `traceId` field (design §7.2)", () => {
+    const r = CacheTraceEventSchema.safeParse({
+      traceSchema: "comis-cache-trace",
+      schemaVersion: 1,
+      stage: "session:start",
+      ts: "2026-05-19T00:00:00.000Z",
+      seq: 0,
+      agentId: "a",
+      sessionId: "s",
+      // traceId intentionally omitted
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(r.error.issues[0]!.path).toEqual(["traceId"]);
+    }
+  });
+
+  it("schema accepts the 5 §7.2 optional envelope fields when present", () => {
+    const ev = CacheTraceEventSchema.parse({
+      traceSchema: "comis-cache-trace",
+      schemaVersion: 1,
+      stage: "stream:context",
+      ts: "2026-05-19T00:00:00.000Z",
+      seq: 0,
+      agentId: "a",
+      sessionId: "s",
+      traceId: "trace-1",
+      runId: "run-1",
+      sessionKey: "key-1",
+      tenantId: "tenant-1",
+      workspaceDir: "/work",
+      modelApi: "messages",
+    });
+    expect(ev.runId).toBe("run-1");
+    expect(ev.sessionKey).toBe("key-1");
+    expect(ev.tenantId).toBe("tenant-1");
+    expect(ev.workspaceDir).toBe("/work");
+    expect(ev.modelApi).toBe("messages");
+  });
+
+  it("schema accepts modelApi as null per design §7.2", () => {
+    const ev = CacheTraceEventSchema.parse({
+      traceSchema: "comis-cache-trace",
+      schemaVersion: 1,
+      stage: "session:start",
+      ts: "2026-05-19T00:00:00.000Z",
+      seq: 0,
+      agentId: "a",
+      sessionId: "s",
+      traceId: "trace-1",
+      modelApi: null,
+    });
+    expect(ev.modelApi).toBeNull();
   });
 
   it("schema accepts session:after with cacheReadInputTokens + cacheCreationInputTokens", () => {
@@ -63,6 +121,7 @@ describe("CacheTraceEvent — type ⇄ schema sync invariant", () => {
       seq: 1,
       agentId: "a",
       sessionId: "s",
+      traceId: "trace-1",
       cacheReadInputTokens: 1234,
       cacheCreationInputTokens: 56,
     });

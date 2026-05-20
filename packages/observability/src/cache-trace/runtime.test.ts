@@ -34,6 +34,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { runWithContext } from "@comis/core";
+
 import { createCacheTrace } from "./runtime.js";
 import type { CacheTraceEvent } from "./types.js";
 
@@ -248,6 +250,116 @@ describe("createCacheTrace -- token attribution to session:after", () => {
     const ev = lines[0]!;
     expect(ev.cacheReadInputTokens).toBeUndefined();
     expect(ev.cacheCreationInputTokens).toBeUndefined();
+  });
+});
+
+describe("createCacheTrace -- §7.2 envelope: traceId + contextual fields", () => {
+  it("traceId_falls_back_to_sessionId_when_no_AsyncLocalStorage_context", async () => {
+    const trace = makeTrace({});
+    expect(trace).not.toBeNull();
+    trace!.recordStage("session:start", {});
+    await trace!.flush();
+
+    const lines = readLines(trace!.filePath);
+    expect(lines).toHaveLength(1);
+    // No RequestContext in scope — traceId falls back to sessionId.
+    expect(lines[0]!.traceId).toBe("sid-1");
+  });
+
+  it("traceId_resolves_from_AsyncLocalStorage_RequestContext_when_present", async () => {
+    const filePath = join(tmpDir, "ctx.jsonl");
+    const trace = createCacheTrace({
+      enabled: true,
+      filePath,
+      includeMessages: true,
+      includePrompt: true,
+      includeSystem: true,
+      agentId: "agent-1",
+      sessionId: "sid-2",
+    });
+    expect(trace).not.toBeNull();
+
+    // RequestContextSchema requires `traceId: z.guid()` so we use a
+    // valid UUID literal. The bound value flows through the schema's
+    // strict-object parse at runWithContext call sites in production
+    // — but `runWithContext` itself accepts a `RequestContext`
+    // (already-parsed) so we hand-build one matching the shape.
+    const validTraceId = "11111111-1111-4111-8111-111111111111";
+    await runWithContext(
+      {
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: "sk",
+        traceId: validTraceId,
+        startedAt: 1,
+        trustLevel: "admin",
+      },
+      async () => {
+        trace!.recordStage("session:start", {});
+        await trace!.flush();
+      },
+    );
+
+    const lines = readLines(filePath);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.traceId).toBe(validTraceId);
+    // sessionId is unchanged — traceId is its own correlation key.
+    expect(lines[0]!.sessionId).toBe("sid-2");
+  });
+
+  it("envelope_cluster_fields_appear_on_every_event_verbatim", async () => {
+    const filePath = join(tmpDir, "envelope.jsonl");
+    const trace = createCacheTrace({
+      enabled: true,
+      filePath,
+      includeMessages: true,
+      includePrompt: true,
+      includeSystem: true,
+      agentId: "agent-1",
+      sessionId: "sid-env",
+      envelope: {
+        runId: "run-42",
+        sessionKey: "key-42",
+        tenantId: "tenant-42",
+        workspaceDir: "/workspace/42",
+        modelApi: "messages",
+      },
+    });
+    expect(trace).not.toBeNull();
+    trace!.recordStage("stream:context", {});
+    trace!.recordStage("session:after", {});
+    await trace!.flush();
+
+    const lines = readLines(filePath);
+    expect(lines).toHaveLength(2);
+    for (const ev of lines) {
+      expect(ev.runId).toBe("run-42");
+      expect(ev.sessionKey).toBe("key-42");
+      expect(ev.tenantId).toBe("tenant-42");
+      expect(ev.workspaceDir).toBe("/workspace/42");
+      expect(ev.modelApi).toBe("messages");
+    }
+  });
+
+  it("envelope_modelApi_may_be_null_per_design_72", async () => {
+    const filePath = join(tmpDir, "modelapi-null.jsonl");
+    const trace = createCacheTrace({
+      enabled: true,
+      filePath,
+      includeMessages: true,
+      includePrompt: true,
+      includeSystem: true,
+      agentId: "agent-1",
+      sessionId: "sid-null",
+      envelope: { modelApi: null },
+    });
+    expect(trace).not.toBeNull();
+    trace!.recordStage("session:start", {});
+    await trace!.flush();
+
+    const lines = readLines(filePath);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.modelApi).toBeNull();
   });
 });
 

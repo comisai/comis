@@ -691,6 +691,14 @@ async function runSessionLocked(
         deps.cacheTraceConfig.filePath === undefined
           ? safePath(os.homedir(), ".comis")
           : undefined;
+      // §7.2 envelope cluster — wire the contextual fields reachable
+      // from this site without widening the Deps interface. `runId`
+      // and `modelApi` are intentionally OMITTED: neither is threaded
+      // into the executor's scope today (runId has no producer; the
+      // pi-ai Model interface does not expose an `api` discriminator).
+      // A follow-up plan can widen Deps when those values become
+      // available; the optional cluster contract is "wire what's
+      // reachable, omit cleanly otherwise".
       cacheTrace = createCacheTrace({
         enabled: true,
         ...(deps.cacheTraceConfig.filePath !== undefined
@@ -703,6 +711,13 @@ async function runSessionLocked(
         sessionId: formattedKey,
         provider: resolvedModel?.provider ?? config.provider,
         modelId: resolvedModel?.id ?? config.model,
+        envelope: {
+          sessionKey: formattedKey,
+          ...(deps.tenantId !== undefined ? { tenantId: deps.tenantId } : {}),
+          ...(deps.workspaceDir !== undefined
+            ? { workspaceDir: deps.workspaceDir }
+            : {}),
+        },
         ...(cacheTraceConfinedBase !== undefined
           ? { confinedBaseDir: cacheTraceConfinedBase }
           : {}),

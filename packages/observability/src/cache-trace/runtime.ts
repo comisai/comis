@@ -28,7 +28,7 @@
  * @module
  */
 
-import { systemDateFrom, systemGetEnv, systemNowMs } from "@comis/core";
+import { systemDateFrom, systemGetEnv, systemNowMs, tryGetContext } from "@comis/core";
 
 import {
   getQueuedFileWriter,
@@ -85,6 +85,25 @@ export interface CacheTraceInit {
   readonly provider?: string;
   /** Model id (e.g. "claude-3-opus"). Optional metadata for downstream replay tools. */
   readonly modelId?: string;
+  /**
+   * §7.2 envelope cluster — the 5 contextual fields that ride on every
+   * cache-trace event when the executor wires them through. Clustering
+   * (rather than 5 top-level optional fields) follows the precedent of
+   * `TrajectoryRecorderInit.model` and keeps `CacheTraceInit` under the
+   * 12-optional-field architecture threshold (`optional-field-bloat`).
+   *
+   * Every event of the recorder carries these fields verbatim (the
+   * envelope is per-event, not per-stage). `modelApi` is `string | null`
+   * because design §7.2 explicitly allows null for the "no API
+   * discriminator" case (Anthropic provider without a sub-API split).
+   */
+  readonly envelope?: {
+    readonly runId?: string;
+    readonly sessionKey?: string;
+    readonly tenantId?: string;
+    readonly workspaceDir?: string;
+    readonly modelApi?: string | null;
+  };
   /**
    * Opt-in real-path confinement base forwarded to the underlying
    * queued writer. Daemon wiring passes `path.join(os.homedir(), ".comis")`
@@ -336,6 +355,10 @@ function buildEvent(input: BuildEventInput): CacheTraceEvent {
   // in @comis/core/runtime — direct `new Date(...)` is forbidden by the
   // globals architecture test.
   const ts = systemDateFrom(systemNowMs()).toISOString();
+  // traceId — the canonical correlation key (§1.4). Auto-derived from
+  // the AsyncLocalStorage RequestContext when present, falling back to
+  // sessionId. The runtime mirror of trajectory's resolveTraceId.
+  const traceId = resolveTraceId(input.init.sessionId);
   const envelope: Record<string, unknown> = {
     traceSchema: "comis-cache-trace",
     schemaVersion: 1,
@@ -344,9 +367,17 @@ function buildEvent(input: BuildEventInput): CacheTraceEvent {
     seq: input.seq,
     agentId: input.init.agentId,
     sessionId: input.init.sessionId,
+    traceId,
   };
   if (input.init.provider !== undefined) envelope.provider = input.init.provider;
   if (input.init.modelId !== undefined) envelope.modelId = input.init.modelId;
+  // §7.2 envelope fields — lift each from the cluster when defined.
+  const env = input.init.envelope;
+  if (env?.runId !== undefined) envelope.runId = env.runId;
+  if (env?.sessionKey !== undefined) envelope.sessionKey = env.sessionKey;
+  if (env?.tenantId !== undefined) envelope.tenantId = env.tenantId;
+  if (env?.workspaceDir !== undefined) envelope.workspaceDir = env.workspaceDir;
+  if (env?.modelApi !== undefined) envelope.modelApi = env.modelApi;
   for (const [k, v] of Object.entries(input.payload)) {
     if (v !== undefined) envelope[k] = v;
   }
@@ -354,6 +385,23 @@ function buildEvent(input: BuildEventInput): CacheTraceEvent {
     envelope[k] = v;
   }
   return envelope as CacheTraceEvent;
+}
+
+/**
+ * Resolve the canonical correlation key for the event envelope.
+ *
+ * When the AsyncLocalStorage RequestContext is in scope (set by
+ * `runWithContext` at channel/gateway/scheduler boundaries), use its
+ * `traceId`. Otherwise fall back to `sessionId` so the event always
+ * carries a non-empty correlation key. Mirrors trajectory's
+ * `resolveTraceId` at `trajectory/runtime.ts:365-371` verbatim.
+ */
+function resolveTraceId(sessionId: string): string {
+  const ctx = tryGetContext();
+  if (ctx !== undefined && typeof ctx.traceId === "string" && ctx.traceId.length > 0) {
+    return ctx.traceId;
+  }
+  return sessionId;
 }
 
 function encodeLine(evt: CacheTraceEvent): string {

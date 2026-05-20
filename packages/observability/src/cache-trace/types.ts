@@ -66,14 +66,23 @@ export type CacheTraceStage = (typeof CACHE_TRACE_STAGES)[number];
  * Cache-trace event — one record per JSONL line.
  *
  * Required envelope fields: `traceSchema`, `schemaVersion`, `stage`,
- * `ts`, `seq`, `agentId`, `sessionId`. Optional metadata fields cover
- * the per-stage payload variants (most stages carry a subset).
+ * `ts`, `seq`, `agentId`, `sessionId`, `traceId`. `traceId` is the
+ * canonical correlation key (mirrors design §1.4 "canonical correlation
+ * triple") — every cache-trace event ships with one so downstream
+ * replay/diff/analysis tools can join across multiple JSONL streams
+ * (trajectory, cache-trace, audit log) by traceId.
+ *
+ * The 5 optional envelope fields (`runId`, `sessionKey`, `tenantId`,
+ * `workspaceDir`, `modelApi`) complete design §7.2 envelope conformance
+ * — present when the executor passes them through, omitted otherwise.
+ * Each is `string | undefined` except `modelApi` which is
+ * `string | null | undefined` (the design explicitly allows null for
+ * the "no model API discriminator" case).
  *
  * The token-attribution fields (`cacheReadInputTokens`,
- * `cacheCreationInputTokens`) are physically only available on
- * `session:after` stages — the values come from the
- * `observability:token_usage` event payload which fires *after* the
- * model response. Earlier stages omit them.
+ * `cacheCreationInputTokens`) attach to `session:after` (aggregated
+ * across the session via the EventBus bridge) AND to `model:after`
+ * (per-call snapshot from the StreamFn return value).
  *
  * `data` carries control-plane sentinel data (used by
  * `cache_trace.write_failures` to surface queued-writer rejection
@@ -87,6 +96,16 @@ export const CacheTraceEventSchema = z.object({
   seq: z.number().int().nonnegative(),
   agentId: z.string(),
   sessionId: z.string(),
+  // §7.2 canonical correlation key — required. Auto-derived from the
+  // AsyncLocalStorage RequestContext when present, falling back to
+  // sessionId.
+  traceId: z.string(),
+  // §7.2 envelope fields — optional; the executor wires what's reachable.
+  runId: z.string().optional(),
+  sessionKey: z.string().optional(),
+  tenantId: z.string().optional(),
+  workspaceDir: z.string().optional(),
+  modelApi: z.string().nullable().optional(),
   provider: z.string().optional(),
   modelId: z.string().optional(),
   // Message / system payloads (gated by includeMessages / includeSystem).
@@ -97,7 +116,9 @@ export const CacheTraceEventSchema = z.object({
   messagesDigest: z.string().optional(),
   system: z.unknown().optional(),
   systemDigest: z.string().optional(),
-  // Token attribution (attached to session:after only).
+  // Token attribution. `session:after` aggregates across the session via
+  // the EventBus bridge stash; `model:after` carries the per-call snapshot
+  // from the StreamFn return value's usage block.
   cacheReadInputTokens: z.number().int().nonnegative().optional(),
   cacheCreationInputTokens: z.number().int().nonnegative().optional(),
   // Sentinel data (cache_trace.write_failures only).
