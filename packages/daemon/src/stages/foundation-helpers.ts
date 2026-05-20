@@ -7,6 +7,8 @@
  *   - seedBundledSkillCreator
  *   - bootstrapSecretsAndEnv
  *   - wireConfigGitManager
+ *   - emitBootstrapConfigObserveRecords (OBS-REVIEW-03 fix —
+ *     daemon-bootstrap config.observe wiring)
  *   - scrubProcessEnv + SENSITIVE_PREFIXES + SENSITIVE_EXACT_KEYS
  *     (co-located with bootstrapSecretsAndEnv to avoid an import cycle —
  *     bootstrapSecretsAndEnv is the sole caller; the scrub helper is internal
@@ -226,4 +228,34 @@ export function wireConfigGitManager(deps: {
       }
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// OBS-REVIEW-03: emit config.observe records at daemon bootstrap config-read
+// path. RED STUB — the GREEN implementation will dispatch into
+// @comis/observability's `createConfigObserveAuditRecord` +
+// `appendConfigObserveAuditRecord` for each resolved configPath, with
+// Promise.allSettled() so a single append failure cannot abort daemon boot.
+// ---------------------------------------------------------------------------
+
+/** Parameters for `emitBootstrapConfigObserveRecords`. */
+export interface EmitBootstrapConfigObserveRecordsParams {
+  /** The list of resolved config paths the daemon read at boot. */
+  readonly configPaths: readonly string[];
+  /** Path of the audit-log file (typically resolved via `resolveConfigAuditLogPath`). */
+  readonly auditLogPath: string;
+  /** Optional confinement base forwarded to the underlying appender. */
+  readonly confinedBaseDir?: string;
+}
+
+/**
+ * RED STUB — throws by design. GREEN implementation lands in the
+ * follow-up commit (see `daemon-config-observe.test.ts`).
+ */
+export async function emitBootstrapConfigObserveRecords(
+  _params: EmitBootstrapConfigObserveRecordsParams,
+): Promise<void> {
+  throw new Error(
+    "emitBootstrapConfigObserveRecords: not implemented yet (RED stub)",
+  );
 }
