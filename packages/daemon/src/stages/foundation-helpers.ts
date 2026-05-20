@@ -21,6 +21,10 @@
  */
 
 import { createConfigGitManager, safePath } from "@comis/core";
+import {
+  appendConfigObserveAuditRecord,
+  createConfigObserveAuditRecord,
+} from "@comis/observability";
 import type { SecretStorePort } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { createSqliteSecretStore, type setupSecrets as _setupSecretsImpl } from "@comis/memory";
@@ -249,13 +253,39 @@ export interface EmitBootstrapConfigObserveRecordsParams {
 }
 
 /**
- * RED STUB — throws by design. GREEN implementation lands in the
- * follow-up commit (see `daemon-config-observe.test.ts`).
+ * Emit one `event: "config.observe"` audit-log record per resolved
+ * configPath entry at daemon bootstrap. Closes OBS-REVIEW-03.
+ *
+ * Dispatch model: `Promise.allSettled` over per-path appends so a
+ * single failure (audit log unwritable, dir permission, ENOSPC) does
+ * not propagate and abort daemon startup. The audit log is a
+ * forensics aid, not a correctness gate.
+ *
+ * No-op when `configPaths` is empty — the daemon may legitimately
+ * bootstrap with no config files when the operator hasn't seeded
+ * any (the build of `AppConfig` falls back to schema defaults).
  */
 export async function emitBootstrapConfigObserveRecords(
-  _params: EmitBootstrapConfigObserveRecordsParams,
+  params: EmitBootstrapConfigObserveRecordsParams,
 ): Promise<void> {
-  throw new Error(
-    "emitBootstrapConfigObserveRecords: not implemented yet (RED stub)",
-  );
+  if (params.configPaths.length === 0) return;
+
+  const appendPromises = params.configPaths.map(async (cfgPath) => {
+    const record = createConfigObserveAuditRecord({
+      filePath: cfgPath,
+      callerSource: "daemon-bootstrap",
+    });
+    return appendConfigObserveAuditRecord({
+      filePath: params.auditLogPath,
+      record,
+      ...(params.confinedBaseDir !== undefined
+        ? { confinedBaseDir: params.confinedBaseDir }
+        : {}),
+    });
+  });
+
+  // Settle all appends — failures are recorded in the returned
+  // results but never thrown back at the caller. Audit failures at
+  // boot are non-fatal.
+  await Promise.allSettled(appendPromises);
 }
