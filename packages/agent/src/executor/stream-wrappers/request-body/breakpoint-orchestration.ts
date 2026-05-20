@@ -201,6 +201,39 @@ export function runCacheBreakpointPhase(
     }
   }
 
+  // Fix E (log-review): turns carrying a large stable untrusted block
+  // (e.g., link-understanding output ~32KB) need a 1h cache anchor —
+  // the default 5m TTL gets evicted under Anthropic capacity pressure
+  // and the entire ~32KB re-uploads on every turn. Scan the last few
+  // user messages for the UNTRUSTED_ marker; place (or upgrade) a
+  // cache_control entry to { type: "ephemeral", ttl: "1h" } on that
+  // message's last block. Skip when no slot is available — don't
+  // blow the breakpoint budget.
+  if (slotsAvailable > 0 && !effectiveSkipCacheWrite && Array.isArray(result.messages)) {
+    const msgs = result.messages as Array<Record<string, unknown>>;
+    for (let i = msgs.length - 1; i >= 0 && i >= msgs.length - 3; i--) {
+      const msg = msgs[i]!;
+      if (msg.role !== "user") continue;
+      const content = Array.isArray(msg.content) ? msg.content as Array<Record<string, unknown>> : [];
+      const hasUntrusted = content.some((b) => typeof b.text === "string" && (b.text as string).includes("<<<UNTRUSTED_"));
+      if (!hasUntrusted) continue;
+      // Place (or upgrade) cache_control to 1h on the last block of this message.
+      const lastBlock = content[content.length - 1];
+      const alreadyPlaced = lastBlock != null && lastBlock.cache_control != null;
+      if (!alreadyPlaced) {
+        addCacheControlToLastBlock(msg, "long");
+        slotsAvailable--;
+      } else {
+        (lastBlock as Record<string, unknown>).cache_control = { type: "ephemeral", ttl: "1h" };
+      }
+      logger.debug(
+        { messageIndex: i, modelId: model.id, sessionKey: config.sessionKey },
+        "E-FIX: 1h cache anchor placed on user message carrying UNTRUSTED_ block",
+      );
+      break;
+    }
+  }
+
   // During eviction cooldown, limit to 1 breakpoint (recent zone) at "short" retention.
   const evictionCooldown = config.getEvictionCooldown?.();
   const inCooldown = evictionCooldown != null && evictionCooldown.turnsRemaining > 0;

@@ -350,6 +350,60 @@ describe("createPiEventBridge", () => {
       expect(endEmit).toBeDefined();
     });
 
+    // Fix D2 (log-review): errorKind on tool:executed when isError was true from the start.
+    it("Fix D2: isError=true with [invalid_value] errorText emits errorKind=validation", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      // extractErrorText (bridge-event-handlers.ts) reads `obj.message`
+      // or `obj.error` from the result. The `[invalid_value]` prefix
+      // routes through classifyToolError → "validation".
+      const result = { message: "[invalid_value] x must be > 0" };
+      listener(makeToolExecutionEndEvent("validator_tool", "tc-d2a", true, result) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const endEmit = calls.find(
+        (c) => c[0] === "tool:executed" && c[1].toolName === "validator_tool",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].success).toBe(false);
+      expect(endEmit![1].errorKind).toBe("validation");
+    });
+
+    it("Fix D2: isError=true with generic errorText emits errorKind=dependency", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      const result = { message: "Network unreachable: connection refused" };
+      listener(makeToolExecutionEndEvent("flaky_tool", "tc-d2b", true, result) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const endEmit = calls.find(
+        (c) => c[0] === "tool:executed" && c[1].toolName === "flaky_tool",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].success).toBe(false);
+      expect(endEmit![1].errorKind).toBe("dependency");
+    });
+
+    it("Fix D2: isError=true on an MCP-namespaced tool with timeout text emits errorKind=timeout", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      // MCP-namespaced tool names follow `mcp__<server>--<tool>` (see
+      // packages/shared/src/mcp-tool-name.ts). The bridge calls
+      // extractMcpServerName to attribute the failure; when
+      // classifyMcpErrorType detects "timed out" / "timeout" substrings,
+      // the Fix D2 mapping resolves to ErrorKind "timeout".
+      const result = { message: "mcp tool error: request timed out after 30s" };
+      listener(makeToolExecutionEndEvent("mcp__example--search", "tc-d2c", true, result) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const endEmit = calls.find(
+        (c) => c[0] === "tool:executed" && c[1].toolName === "mcp__example--search",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].success).toBe(false);
+      expect(endEmit![1].errorKind).toBe("timeout");
+    });
+
     it("emits tool:executed with success=false when result has non-zero exitCode", () => {
       const { listener } = createPiEventBridge(deps);
 

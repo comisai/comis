@@ -28,11 +28,17 @@ import type { ComisLogger } from "@comis/core";
 /**
  * Outcome of the config-write attempt, derived in the calling
  * handler from `(wroteFile, writeError)`.
+ *
+ * Fix D1 (log-review): `rejected` carries an optional `message` so
+ * the validator's rejection reason can be threaded through to the
+ * persisted `errorMessage` field on ConfigWriteAuditRecord. Pre-fix
+ * `rejected` swallowed the reason — operators saw "result: rejected"
+ * but had to grep daemon logs separately for the validator text.
  */
 export type ConfigAuditOutcome =
   | { kind: "rename" }
   | { kind: "failed"; code?: string; message?: string }
-  | { kind: "rejected" };
+  | { kind: "rejected"; message?: string };
 
 /**
  * Build the audit-record base for the in-flight config.patch RPC.
@@ -84,7 +90,13 @@ export function appendConfigAuditWithOutcome(
                 errorMessage: outcome.message,
               }),
             }
-          : ({ result: "rejected" as const });
+          // Fix D1 (log-review): thread rejection message into errorMessage.
+          : ({
+              result: "rejected" as const,
+              ...(outcome.message !== undefined && {
+                errorMessage: outcome.message,
+              }),
+            });
     const record = finalizeConfigWriteAuditRecord(base, finalizeParams);
     const auditLogPath = resolveConfigAuditLogPath();
     const auditConfinedBase = getDefaultConfigAuditConfinedBase(auditLogPath);

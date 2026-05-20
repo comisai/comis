@@ -45,6 +45,20 @@ import type { ExecutionPlan } from "../planner/types.js";
 import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { extractMcpServerName } from "@comis/shared";
 import { classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
+
+/**
+ * Fix D2 (log-review): classify a tool failure's errorKind when the SDK
+ * reported `isError: true` from the start (i.e., `toolSuccess === false`
+ * BEFORE the exitCode branch flips it). Pre-fix this branch left
+ * `toolErrorKind` undefined and the `tool:executed` event payload
+ * lacked `errorKind` for the most common failure path. Heuristic:
+ *  - errorText starting with `[invalid_value]` / `[validation]` → validation
+ *  - otherwise → dependency (external tool / MCP server returned an error)
+ */
+function classifyToolError(_toolName: string, errorText: string | undefined): ErrorKind {
+  if (errorText && /^\[(invalid_value|validation)\]/.test(errorText)) return "validation";
+  return "dependency";
+}
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
 import { checkStepLimit, emitStepLimitAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
@@ -422,6 +436,26 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const mcpServer = extractMcpServerName(endEvent.toolName);
           if (!toolSuccess) {
             errorText = extractErrorText(endEvent.result);
+            // Fix D2 (log-review): when toolSuccess was already false from
+            // the SDK's isError flag (not flipped by an exitCode check),
+            // toolErrorKind is still undefined here. Classify it so the
+            // downstream tool:executed event carries an actionable
+            // errorKind for trajectory + alerting consumers. For MCP
+            // tools, mirror the dedicated MCP classifier into the closed
+            // ErrorKind union (timeout → timeout, connection/transport →
+            // dependency, everything else → classifyToolError fallback).
+            if (toolErrorKind === undefined) {
+              if (mcpServer !== undefined) {
+                const mcpKind = classifyMcpErrorType(errorText);
+                toolErrorKind = mcpKind === "timeout"
+                  ? "timeout"
+                  : (mcpKind === "connection" || mcpKind === "transport")
+                    ? "dependency"
+                    : classifyToolError(endEvent.toolName, errorText);
+              } else {
+                toolErrorKind = classifyToolError(endEvent.toolName, errorText);
+              }
+            }
             m.failedToolCount++;
             if (!m.failedToolNames.includes(endEvent.toolName)) {
               m.failedToolNames.push(endEvent.toolName);
