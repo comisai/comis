@@ -32,7 +32,13 @@ describe("setupRpcBridge", () => {
     return mod.setupRpcBridge;
   }
 
-  it("returns rpcCall and wireDispatch functions", async () => {
+  // 15s timeout: the first dynamic `await import("./setup-gateway-rpc.js")`
+  // in the test suite pays the full one-time cost of loading the SUT +
+  // transitive deps (@comis/observability, @comis/core, @comis/agent,
+  // @comis/skills, etc.) under vitest's transformer. Subsequent tests in
+  // the file reuse the cached module so they run in ms. The 5s default
+  // is too tight under parallel-test-pool load.
+  it("returns rpcCall and wireDispatch functions", { timeout: 15000 }, async () => {
     const setupRpcBridge = await getSetupRpcBridge();
     const result = setupRpcBridge({ gatewayLogger: createMockLogger() as any });
 
