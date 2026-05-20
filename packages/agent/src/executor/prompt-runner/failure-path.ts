@@ -259,6 +259,12 @@ function emitTimeoutGhostCost(
     sessionKey: formatSessionKey(sessionKey),
     savedVsUncached: 0,
     cacheEligible: getCacheProviderInfo(config.provider, effectiveModelId).cacheEligible,
+    // 260520-wcf: synthetic timeout event — no real cache write occurred,
+    // so warmupTurn and pendingCacheInvestmentUsd are both 0/false. The
+    // schema requires both fields to be present so consumers can pivot
+    // without conditional checks.
+    warmupTurn: false,
+    pendingCacheInvestmentUsd: 0,
   });
 
   // Include ghost cost estimate in result for bridge accumulation

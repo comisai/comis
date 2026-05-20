@@ -2553,6 +2553,103 @@ describe("createPiEventBridge", () => {
         expect(total).toBe(1);
       });
     });
+
+    // ---------------------------------------------------------------------
+    // 260520-wcf: warmupTurn + pendingCacheInvestmentUsd on the
+    // observability:token_usage event payload. Identifies first-cache-write
+    // turns so dashboards can keep "cache savings rate is -91%" off
+    // regression alerts.
+    // ---------------------------------------------------------------------
+    describe("260520-wcf warmupTurn and pendingCacheInvestmentUsd on token_usage payload", () => {
+      it("flags warmupTurn=true when cacheReadTokens is 0 and cacheWriteTokens is positive on the first cache-write turn", async () => {
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        // cacheReadTokens=0 + cacheWriteTokens=20_000 — classic warmup-turn shape.
+        listener(makeCacheTurnEnd({ cacheRead: 0, cacheWrite: 20_000 }) as any);
+
+        const emitCall = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(emitCall).toBeDefined();
+        expect(emitCall![1].warmupTurn).toBe(true);
+        expect(emitCall![1].pendingCacheInvestmentUsd).toBeGreaterThan(0);
+        // Math preserved: the underlying savedVsUncached stays negative
+        // even though the warmup-turn signal flips to true. The two
+        // numbers must always be opposite-signed magnitudes of the
+        // same value (the deferred investment).
+        expect(emitCall![1].savedVsUncached).toBeLessThan(0);
+        expect(emitCall![1].pendingCacheInvestmentUsd).toBeCloseTo(
+          -emitCall![1].savedVsUncached,
+          10,
+        );
+      });
+
+      it("flags warmupTurn=false on subsequent turns with cache reads and zero investment", async () => {
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        // cacheReadTokens=10_000 + cacheWriteTokens=5_000 — normal mid-session turn.
+        listener(makeCacheTurnEnd({ cacheRead: 10_000, cacheWrite: 5_000 }) as any);
+
+        const emitCall = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(emitCall).toBeDefined();
+        expect(emitCall![1].warmupTurn).toBe(false);
+        expect(emitCall![1].pendingCacheInvestmentUsd).toBe(0);
+      });
+
+      it("flags warmupTurn=false when no cache writes occur even with zero cache reads", async () => {
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        // cacheReadTokens=0 + cacheWriteTokens=0 — cold session with no
+        // caching activity (e.g. caching disabled, error path).
+        listener(makeCacheTurnEnd({ cacheRead: 0, cacheWrite: 0 }) as any);
+
+        const emitCall = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(emitCall).toBeDefined();
+        expect(emitCall![1].warmupTurn).toBe(false);
+        expect(emitCall![1].pendingCacheInvestmentUsd).toBe(0);
+      });
+
+      it("accumulates warmupTurnCount and totalPendingCacheInvestmentUsd into bridge metrics for the Execution complete log payload", async () => {
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener, getResult } = createPiEventBridge(deps);
+
+        // Two warmup turns followed by one normal turn.
+        listener(makeCacheTurnEnd({ cacheRead: 0, cacheWrite: 20_000 }) as any);
+        listener(makeCacheTurnEnd({ cacheRead: 0, cacheWrite: 15_000 }) as any);
+        listener(makeCacheTurnEnd({ cacheRead: 10_000, cacheWrite: 5_000 }) as any);
+
+        const result = getResult();
+        expect(result.warmupTurnCount).toBe(2);
+        expect(result.totalPendingCacheInvestmentUsd).toBeGreaterThan(0);
+      });
+    });
   });
 
   // -------------------------------------------------------------------------

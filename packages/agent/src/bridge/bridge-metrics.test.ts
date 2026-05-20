@@ -27,6 +27,9 @@ describe("bridge-metrics shape regression guard", () => {
     expect(m.hashAssertionMismatches).toBe(0);
     expect(m.signatureScrubs).toBe(0);
     expect(m.signatureScrubsToolCallsAffected).toBe(0);
+    // 260520-wcf warmup-turn counters
+    expect(m.warmupTurnCount).toBe(0);
+    expect(m.totalPendingCacheInvestmentUsd).toBe(0);
   });
 
   it("buildBridgeResult builds a stable shape from a fresh metrics state", () => {
@@ -49,5 +52,9 @@ describe("bridge-metrics shape regression guard", () => {
     expect(r.hashAssertionMismatches).toBe(0);
     expect(r.signatureScrubs).toBe(0);
     expect(r.signatureScrubsToolCallsAffected).toBe(0);
+    // 260520-wcf warmup-turn counters surfaced unconditionally so the
+    // "Execution complete" bookend log has a stable shape.
+    expect(r.warmupTurnCount).toBe(0);
+    expect(r.totalPendingCacheInvestmentUsd).toBe(0);
   });
 });

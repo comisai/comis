@@ -149,6 +149,20 @@ export interface BridgeMetricsState {
    * resolution).
    */
   drainInflightByKey: Map<string, Promise<void>>;
+
+  /**
+   * 260520-wcf: warmup-turn accounting. Counts turns flagged as
+   * `warmupTurn` (cacheReadTokens === 0 && cacheWriteTokens > 0) and
+   * accumulates the positive-signed `pendingCacheInvestmentUsd` (the
+   * deferred cost of the first cache write that has not yet been
+   * recouped by a subsequent cached read).
+   *
+   * Surfaced on the "Execution complete" bookend log so dashboards can
+   * pivot on first-turn investment vs ongoing cache spend without
+   * having to recompute from token_usage events.
+   */
+  warmupTurnCount: number;
+  totalPendingCacheInvestmentUsd: number;
 }
 
 /**
@@ -204,6 +218,9 @@ export function createBridgeMetrics(): BridgeMetricsState {
     signatureScrubsToolCallsAffected: 0,
     // per-composite-key drain inflight gate.
     drainInflightByKey: new Map<string, Promise<void>>(),
+    // 260520-wcf warmup-turn counters
+    warmupTurnCount: 0,
+    totalPendingCacheInvestmentUsd: 0,
   };
 }
 
@@ -241,6 +258,9 @@ export function buildBridgeResult(
   hashAssertionMismatches?: number;
   signatureScrubs?: number;
   signatureScrubsToolCallsAffected?: number;
+  // 260520-wcf: warmup-turn counters for the "Execution complete" bookend.
+  warmupTurnCount?: number;
+  totalPendingCacheInvestmentUsd?: number;
 } {
   return {
     tokensUsed: {
@@ -289,5 +309,9 @@ export function buildBridgeResult(
     hashAssertionMismatches: metrics.hashAssertionMismatches,
     signatureScrubs: metrics.signatureScrubs,
     signatureScrubsToolCallsAffected: metrics.signatureScrubsToolCallsAffected,
+    // 260520-wcf warmup-turn counters (always populated — `0` is a meaningful
+    // "no warmup turns this execute" signal).
+    warmupTurnCount: metrics.warmupTurnCount,
+    totalPendingCacheInvestmentUsd: metrics.totalPendingCacheInvestmentUsd,
   };
 }

@@ -1048,6 +1048,24 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Accumulate cache savings across turns
             m.totalCacheSaved += savedVsUncached;
 
+            // 260520-wcf: warmup-turn signal. Identifies the first
+            // cache-write turn in a session (writes-without-prior-reads).
+            // Per-call cache math is correct, but reporting cacheSavedUsd
+            // as a negative dollar value on this turn is misleading
+            // because the "loss" is a deferred investment recouped by
+            // subsequent cached reads, not a cost regression. The
+            // positive-signed `pendingCacheInvestmentUsd` is the
+            // dashboard-friendly framing of the same magnitude; the
+            // original `savedVsUncached` keeps its negative value (math
+            // preserved).
+            const warmupTurn = cacheReadTokens === 0 && cacheWriteTokens > 0;
+            const pendingCacheInvestmentUsd =
+              warmupTurn && savedVsUncached < 0 ? -savedVsUncached : 0;
+            if (warmupTurn) {
+              m.warmupTurnCount += 1;
+              m.totalPendingCacheInvestmentUsd += pendingCacheInvestmentUsd;
+            }
+
             // Record per-turn cache savings for cost gate evaluation.
             if (deps.onTurnCacheSavings) {
               deps.onTurnCacheSavings(savedVsUncached);
@@ -1123,6 +1141,11 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               cacheEligible: getCacheProviderInfo(deps.provider, deps.getCurrentModel?.() ?? deps.model).cacheEligible,
               responseId,
               cacheCreation: effectiveCacheCreation,
+              // 260520-wcf: warmup-turn flag + deferred investment
+              // dollar value. Both included unconditionally so consumers
+              // can pivot/filter without conditional schemas.
+              warmupTurn,
+              pendingCacheInvestmentUsd,
               ...costCorrectionField,
             });
 
