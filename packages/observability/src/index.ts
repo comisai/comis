@@ -55,6 +55,12 @@ export { stableStringify } from "./shared/stable-stringify.js";
 
 export { safeJsonStringify } from "./shared/safe-json-stringify.js";
 
+// File-snapshot helper — sha256 + POSIX stat in one pass. Used by the
+// daemon's read-side audit producer (`readConfigFileObservation`) and
+// any other consumer that needs the design-§9.2 file-state block.
+export { readFileSnapshot } from "./shared/file-snapshot.js";
+export type { FileSnapshot } from "./shared/file-snapshot.js";
+
 // Symlink-safe file primitives. The three error sentinels and the option /
 // success / error type aliases form the public contract that downstream
 // writers (queued-file-writer, config-audit/append, config-audit/scrub) all
