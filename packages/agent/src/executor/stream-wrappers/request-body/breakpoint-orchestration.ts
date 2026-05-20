@@ -35,6 +35,7 @@ import {
   resolveCacheRetention,
 } from "./cache-breakpoints.js";
 import { injectToolDeferral } from "./tool-deferral-injection.js";
+import { enforceMonotonicTtlOrdering } from "./monotonic-ttl.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
 
 /**
@@ -367,6 +368,14 @@ export function runCacheBreakpointPhase(
       "W7: Cache breakpoint budget exhausted -- no message breakpoints placed on mature conversation",
     );
   }
+
+  // Safety-net sweep: enforce Anthropic's monotonic non-increasing TTL
+  // invariant across tools->system->messages payload order. No-op when
+  // layout is already monotonic; load-bearing defense even when Fix 2
+  // (Fix-E-aware retention) correctly coordinates the source placement.
+  // Logs WARN with errorKind:"internal" if any upgrade fires — that
+  // indicates an upstream placement bug.
+  enforceMonotonicTtlOrdering(result, logger);
 
   return resolvedRetention;
 }
