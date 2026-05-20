@@ -83,10 +83,17 @@ export async function setupDeliveryQueue(deps: {
   let drainInterval: ReturnType<typeof setInterval> | undefined;
   // Single-tick gate: in-flight Promise prevents overlapping ticks.
   let draining: Promise<void> | null = null;
+  // Fix B (log-review): transition-gate state for the empty-drain log.
+  // Pre-fix, every recurring tick on an empty queue emitted
+  // "Delivery queue drain: no pending entries" — dominated debug logs at
+  // one line per drainIntervalMs (5–10s). The gate logs ONCE when the
+  // queue transitions to empty; subsequent empty ticks are silent. Start
+  // `true` so the first empty-after-startup tick still produces a line.
+  let lastDrainHadPending = true;
 
   // Inner helper: one drain pass. Reused by startup drain AND each recurring tick.
   const runOneDrainPass = async (): Promise<void> => {
-    await drainDeliveryQueue({
+    const passResult = await drainDeliveryQueue({
       deliveryQueue,
       channelAdapters,
       eventBus,
@@ -94,6 +101,12 @@ export async function setupDeliveryQueue(deps: {
       drainBudgetMs: queueConfig.drainBudgetMs,
       defaultMaxAttempts: queueConfig.defaultMaxAttempts,
     });
+    if (passResult.hadEntries) {
+      lastDrainHadPending = true;
+    } else if (lastDrainHadPending) {
+      logger.debug("Delivery queue drain: transitioned to empty");
+      lastDrainHadPending = false;
+    }
   };
 
   // 2. Startup drain + recurring drain timer + prune timer (deferred until channelAdapters populated)
@@ -177,7 +190,7 @@ export async function drainDeliveryQueue(deps: {
   logger: ComisLogger;
   drainBudgetMs: number;
   defaultMaxAttempts: number;
-}): Promise<void> {
+}): Promise<{ hadEntries: boolean }> {
   const { deliveryQueue, channelAdapters, eventBus, logger, drainBudgetMs, defaultMaxAttempts } = deps;
   const drainStart = systemNowMs();
   const deadline = drainStart + drainBudgetMs;
@@ -188,13 +201,17 @@ export async function drainDeliveryQueue(deps: {
       { err: pendingResult.error, hint: "Could not fetch pending entries for drain cycle", errorKind: "internal" as const },
       "Delivery queue drain: failed to fetch pending entries",
     );
-    return;
+    // Treat as "no entries observed" — runOneDrainPass uses this to gate
+    // the transition log; a fetch failure does NOT count as "had pending".
+    return { hadEntries: false };
   }
 
   const entries = pendingResult.value;
   if (entries.length === 0) {
-    logger.debug("Delivery queue drain: no pending entries");
-    return;
+    // Fix B (log-review): the noisy "no pending entries" log moved up to
+    // runOneDrainPass as a transition-gated emit. Direct callers (the
+    // row-selection-invariant unit test) just observe the return value.
+    return { hadEntries: false };
   }
 
   let attempted = 0;
@@ -272,6 +289,8 @@ export async function drainDeliveryQueue(deps: {
     { entriesAttempted: attempted, entriesDelivered: delivered, entriesFailed: failed, durationMs },
     "Delivery queue drained",
   );
+
+  return { hadEntries: true };
 }
 
 // ===========================================================================

@@ -144,7 +144,12 @@ export function normalizeToolSchemasForProvider(
       );
       schema = result.schema;
       if (result.strippedKeywords.length > 0) {
-        logger?.debug(
+        // Fix B (log-review): demoted debug → trace. Fires per tool per
+        // request — dominated debug-mode logs at one-per-tool-per-turn
+        // cadence (~30 lines/turn on agents with 30+ tools registered).
+        // The stripped-keyword set is deterministic per (provider, tool)
+        // pair; if an operator needs the detail, trace recovers it.
+        logger?.trace(
           {
             toolName: tool.name,
             provider: ctx.provider,

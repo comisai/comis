@@ -401,10 +401,16 @@ describe("normalizeToolSchemasForProvider", () => {
     });
   });
 
-  describe("Debug logging", () => {
-    it("calls logger.debug when keywords are stripped", () => {
+  describe("Trace logging (Fix B — log-review demotion)", () => {
+    // Pre-fix this log was debug-level, firing per-tool-per-request and
+    // dominating debug logs. Post-fix it's trace-level — recoverable when
+    // an operator needs it, silent during routine debug-mode operation.
+
+    it("calls logger.trace (NOT .debug) when keywords are stripped", () => {
       const debugFn = vi.fn();
+      const traceFn = vi.fn();
       const mockLogger = {
+        trace: traceFn,
         debug: debugFn,
         info: vi.fn(),
         warn: vi.fn(),
@@ -424,17 +430,20 @@ describe("normalizeToolSchemasForProvider", () => {
         modelId: "claude-sonnet-4-20250514",
       });
 
-      expect(debugFn).toHaveBeenCalledOnce();
-      const logArg = debugFn.mock.calls[0][0] as Record<string, unknown>;
+      expect(traceFn).toHaveBeenCalledOnce();
+      // Critical: the keywords-stripped emit MUST NOT pollute debug-mode logs.
+      expect(debugFn).not.toHaveBeenCalled();
+      const logArg = traceFn.mock.calls[0][0] as Record<string, unknown>;
       expect(logArg.toolName).toBe("logged_tool");
       expect(logArg.provider).toBe("anthropic");
       expect(logArg.stripped).toEqual(expect.arrayContaining(["format", "minLength"]));
     });
 
-    it("does not call logger.debug when no keywords are stripped", () => {
-      const debugFn = vi.fn();
+    it("does not call logger.trace when no keywords are stripped", () => {
+      const traceFn = vi.fn();
       const mockLogger = {
-        debug: debugFn,
+        trace: traceFn,
+        debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
@@ -453,7 +462,7 @@ describe("normalizeToolSchemasForProvider", () => {
         modelId: "claude-sonnet-4-20250514",
       });
 
-      expect(debugFn).not.toHaveBeenCalled();
+      expect(traceFn).not.toHaveBeenCalled();
     });
   });
 });

@@ -7,6 +7,8 @@
  * factory; the route needs the logger type for its deps).
  */
 export interface GatewayLogger {
+  trace(msg: string): void;
+  trace(obj: Record<string, unknown>, msg: string): void;
   debug(msg: string): void;
   debug(obj: Record<string, unknown>, msg: string): void;
   info(msg: string): void;

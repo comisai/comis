@@ -458,7 +458,10 @@ describe("createWsHandler", () => {
     );
   });
 
-  it("onClose with normal close (1000) logs at DEBUG level", () => {
+  it("Fix B (log-review): onClose with normal close (1000) logs at TRACE level (not debug)", () => {
+    // Pre-fix this was DEBUG, firing on every CLI tick (75s) and
+    // dominating debug-mode logs. Post-fix it's TRACE — recoverable
+    // when an operator opts in, silent during routine debug runs.
     const deps = createHandlerDeps();
     const events = createWsHandler(deps, TEST_CTX);
     const ws = createMockWs();
@@ -470,12 +473,17 @@ describe("createWsHandler", () => {
     );
 
     expect(manager.size).toBe(0);
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(logger.trace).toHaveBeenCalledWith(
       expect.objectContaining({
         closeCode: 1000,
         closeType: "normal",
       }),
       expect.stringContaining("WebSocket disconnected"),
     );
+    // Critical: the normal-close emit MUST NOT pollute debug-mode logs.
+    const debugCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => typeof c[1] === "string" && (c[1] as string).includes("WebSocket disconnected"),
+    );
+    expect(debugCalls.length).toBe(0);
   });
 });

@@ -47,6 +47,7 @@ import {
   systemGetEnv,
 } from "@comis/core";
 import type { RpcHandler } from "./types.js";
+import { PreconditionError, ValidationError } from "./errors.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -90,11 +91,13 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
       const sessionKey = rawParams._callerSessionKey as string;
       const conversationId = deps.resolveConversationId(sessionKey);
       if (!conversationId) {
-        throw new Error("No active DAG conversation for this session");
+        // PreconditionError → dispatcher classifies as warn/precondition.
+        // Caller-state mismatch, not an internal failure.
+        throw new PreconditionError("No active DAG conversation for this session");
       }
 
       const queryRaw = rawParams.query as string | undefined;
-      if (!queryRaw) throw new Error("Missing required parameter: query");
+      if (!queryRaw) throw new ValidationError("Missing required parameter: query");
 
       const userParams = stripInternalFields(rawParams);
       const params = ContextSearchContract.request.parse(userParams);
@@ -150,7 +153,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
     // -----------------------------------------------------------------------
     [ContextInspectContract.method]: async (rawParams) => {
       const idRaw = rawParams.id as string | undefined;
-      if (!idRaw) throw new Error("Missing required parameter: id");
+      if (!idRaw) throw new ValidationError("Missing required parameter: id");
 
       const userParams = stripInternalFields(rawParams);
       const params = ContextInspectContract.request.parse(userParams);
@@ -216,7 +219,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
         return result;
       }
 
-      throw new Error(`Unknown ID prefix. Expected 'sum_' or 'file_', got: ${id.slice(0, 10)}`);
+      throw new ValidationError(`Unknown ID prefix. Expected 'sum_' or 'file_', got: ${id.slice(0, 10)}`);
     },
 
     // -----------------------------------------------------------------------
@@ -227,19 +230,22 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
       const sessionKey = rawParams._callerSessionKey as string;
       const conversationId = deps.resolveConversationId(sessionKey);
       if (!conversationId) {
-        throw new Error("No active DAG conversation for this session");
+        // PreconditionError → dispatcher classifies as warn/precondition.
+        throw new PreconditionError("No active DAG conversation for this session");
       }
 
       // Quota check: count all grants today (crash-resilient)
       const todayCount = deps.store.countGrantsToday(sessionKey);
       if (todayCount >= deps.config.maxRecallsPerDay) {
-        throw new Error(
+        // Quota exhaustion is a caller-state precondition violation, not a
+        // bug or input-shape failure — warn-level via PreconditionError.
+        throw new PreconditionError(
           `Daily recall quota exceeded (${deps.config.maxRecallsPerDay}/day). Try ctx_search or ctx_inspect instead.`,
         );
       }
 
       const promptRaw = rawParams.prompt as string | undefined;
-      if (!promptRaw) throw new Error("Missing required parameter: prompt");
+      if (!promptRaw) throw new ValidationError("Missing required parameter: prompt");
 
       const userParams = stripInternalFields(rawParams);
       const params = ContextRecallContract.request.parse(userParams);

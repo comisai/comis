@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { createContextStore, type ContextStore } from "@comis/memory";
 import { createContextHandlers, type ContextHandlerDeps } from "./context-handlers.js";
+import { PreconditionError, ValidationError } from "./errors.js";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -194,6 +195,20 @@ describe("context.search handler", () => {
     ).rejects.toThrow("No active DAG conversation for this session");
   });
 
+  it("Fix C: missing-conversation throws PreconditionError (severity gate, not plain Error)", async () => {
+    // The dispatcher's instanceof check classifies this as warn/precondition;
+    // a plain Error would have escalated to error/internal pre-fix.
+    const deps = makeDeps();
+    const handlers = createContextHandlers(deps);
+
+    await expect(
+      handlers["context.search"]!({
+        _callerSessionKey: "unknown-session",
+        query: "test",
+      }),
+    ).rejects.toBeInstanceOf(PreconditionError);
+  });
+
   it("truncates content to 500 chars", async () => {
     const longContent = "x".repeat(1000) + " searchable";
     store.insertMessage({
@@ -353,6 +368,18 @@ describe("context.inspect handler", () => {
     await expect(
       handlers["context.inspect"]!({ id: "unknown_prefix_123" }),
     ).rejects.toThrow("Unknown ID prefix. Expected 'sum_' or 'file_', got: unknown_pr");
+  });
+
+  it("Fix C: unknown-prefix throws ValidationError (severity gate, not plain Error)", async () => {
+    // Regression for the ~/.comis/logs/ "context.inspect id=abc-123" case:
+    // the dispatcher classifies ValidationError as warn/validation, not
+    // error/internal — alerting stays meaningful.
+    const deps = makeDeps();
+    const handlers = createContextHandlers(deps);
+
+    await expect(
+      handlers["context.inspect"]!({ id: "abc-123" }),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 
   it("non-existent summary ID returns error", async () => {
@@ -531,6 +558,18 @@ describe("context.recall handler", () => {
         prompt: "test",
       }),
     ).rejects.toThrow("No active DAG conversation for this session");
+  });
+
+  it("Fix C: recall missing-conversation throws PreconditionError (severity gate)", async () => {
+    const deps = makeDeps();
+    const handlers = createContextHandlers(deps);
+
+    await expect(
+      handlers["context.recall"]!({
+        _callerSessionKey: "unknown-session",
+        prompt: "test",
+      }),
+    ).rejects.toBeInstanceOf(PreconditionError);
   });
 });
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { classifyRpcError } from "./rpc-dispatch.js";
+import { PreconditionError, ValidationError } from "./errors.js";
 
 // ---------------------------------------------------------------------------
 // Mock all 16 handler factory imports so createRpcDispatch can be tested
@@ -172,47 +173,54 @@ vi.mock("./provider-handlers.js", () => ({
 // ---------------------------------------------------------------------------
 
 describe("classifyRpcError", () => {
-  it("classifies 'immutable' as config error", () => {
-    const result = classifyRpcError("This path is immutable and cannot be changed");
+  it("classifies 'immutable' as config error (warn level)", () => {
+    const result = classifyRpcError(new Error("This path is immutable and cannot be changed"));
     expect(result.errorKind).toBe("config");
     expect(result.hint).toBeTruthy();
     expect(result.hint.length).toBeGreaterThan(0);
+    expect(result.level).toBe("warn");
   });
 
-  it("classifies 'Admin access required' as auth error", () => {
-    const result = classifyRpcError("Admin access required for this operation");
+  it("classifies 'Admin access required' as auth error (warn level)", () => {
+    const result = classifyRpcError(new Error("Admin access required for this operation"));
     expect(result.errorKind).toBe("auth");
     expect(result.hint).toBeTruthy();
+    expect(result.level).toBe("warn");
   });
 
-  it("classifies 'Unknown RPC method' as validation error", () => {
-    const result = classifyRpcError("Unknown RPC method: foo.bar");
+  it("classifies 'Unknown RPC method' as validation error (warn level)", () => {
+    const result = classifyRpcError(new Error("Unknown RPC method: foo.bar"));
     expect(result.errorKind).toBe("validation");
     expect(result.hint).toContain("method name");
+    expect(result.level).toBe("warn");
   });
 
-  it("classifies 'not found' as validation error", () => {
-    const result = classifyRpcError("Job not found: job-123");
+  it("classifies 'not found' as validation error (warn level)", () => {
+    const result = classifyRpcError(new Error("Job not found: job-123"));
     expect(result.errorKind).toBe("validation");
     expect(result.hint).toContain("does not exist");
+    expect(result.level).toBe("warn");
   });
 
-  it("classifies 'validation failed' as validation error", () => {
-    const result = classifyRpcError("Parameter validation failed: name is required");
+  it("classifies 'validation failed' as validation error (warn level)", () => {
+    const result = classifyRpcError(new Error("Parameter validation failed: name is required"));
     expect(result.errorKind).toBe("validation");
     expect(result.hint).toContain("parameter");
+    expect(result.level).toBe("warn");
   });
 
-  it("classifies 'Invalid input' as validation error", () => {
-    const result = classifyRpcError("Invalid input for schedule_every_ms");
+  it("classifies 'Invalid input' as validation error (warn level)", () => {
+    const result = classifyRpcError(new Error("Invalid input for schedule_every_ms"));
     expect(result.errorKind).toBe("validation");
     expect(result.hint).toContain("parameter");
+    expect(result.level).toBe("warn");
   });
 
-  it("classifies unmatched messages as internal error", () => {
-    const result = classifyRpcError("Something unexpected went wrong");
+  it("classifies unmatched messages as internal error (error level)", () => {
+    const result = classifyRpcError(new Error("Something unexpected went wrong"));
     expect(result.errorKind).toBe("internal");
     expect(result.hint).toBeTruthy();
+    expect(result.level).toBe("error");
   });
 
   it("returns actionable hints for all error types", () => {
@@ -225,9 +233,35 @@ describe("classifyRpcError", () => {
       "random error",
     ];
     for (const msg of messages) {
-      const result = classifyRpcError(msg);
+      const result = classifyRpcError(new Error(msg));
       expect(result.hint.length).toBeGreaterThan(10);
     }
+  });
+
+  // ---------------------------------------------------------------------
+  // Fix C (log-review): typed RPC error classes
+  // ---------------------------------------------------------------------
+
+  it("classifies PreconditionError as precondition error (warn level)", () => {
+    const result = classifyRpcError(new PreconditionError("No active DAG conversation for this session"));
+    expect(result.errorKind).toBe("precondition");
+    expect(result.level).toBe("warn");
+    expect(result.hint).toBeTruthy();
+  });
+
+  it("classifies ValidationError as validation error (warn level)", () => {
+    const result = classifyRpcError(new ValidationError("Unknown ID prefix. Expected 'sum_' or 'file_', got: abc-123"));
+    expect(result.errorKind).toBe("validation");
+    expect(result.level).toBe("warn");
+    expect(result.hint).toBeTruthy();
+  });
+
+  it("typed-class check beats message-pattern match (PreconditionError wins over substring 'not found')", () => {
+    // A PreconditionError whose message happens to contain the legacy
+    // "not found" substring still routes through the typed-class branch.
+    const result = classifyRpcError(new PreconditionError("Grant not found: grant_abc"));
+    expect(result.errorKind).toBe("precondition");
+    expect(result.level).toBe("warn");
   });
 });
 
@@ -296,7 +330,7 @@ describe("createRpcDispatch", () => {
     await expect(dispatch("cron.add", {})).rejects.toThrow("Scheduler not available");
   });
 
-  it("logs handler errors through Pino at ERROR level", async () => {
+  it("logs unmatched handler errors through Pino at ERROR level", async () => {
     const { createCronHandlers } = await import("./cron-handlers.js");
     (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       "cron.add": vi.fn(async () => {
@@ -314,7 +348,78 @@ describe("createRpcDispatch", () => {
     expect(msg).toBe("JSON-RPC method error");
     expect(logObj.method).toBe("cron.add");
     expect(logObj.hint).toBeTruthy();
-    expect(logObj.errorKind).toBeTruthy();
+    expect(logObj.errorKind).toBe("internal");
+    // Fix C: params now joins the payload so operator debugging doesn't
+    // need a separate grep against the request log.
+    expect("params" in logObj).toBe(true);
+  });
+
+  // -----------------------------------------------------------------------
+  // Fix C (log-review): severity-aware dispatcher
+  // -----------------------------------------------------------------------
+
+  it("PreconditionError → logger.warn (NOT .error), errorKind=precondition, params on payload", async () => {
+    const { createCronHandlers } = await import("./cron-handlers.js");
+    (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "cron.add": vi.fn(async () => {
+        throw new PreconditionError("No active DAG conversation for this session");
+      }),
+    });
+
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(mockDeps);
+
+    await expect(dispatch("cron.add", { spec: "rate(5 minutes)" })).rejects.toThrow();
+
+    expect(mockLogger.error).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+    const [logObj, msg] = mockLogger.warn.mock.calls[0]!;
+    expect(msg).toBe("JSON-RPC method error");
+    expect(logObj.errorKind).toBe("precondition");
+    expect(logObj.method).toBe("cron.add");
+    expect(logObj.params).toEqual({ spec: "rate(5 minutes)" });
+  });
+
+  it("ValidationError → logger.warn, errorKind=validation, params payload includes the offending id", async () => {
+    const { createCronHandlers } = await import("./cron-handlers.js");
+    (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "cron.add": vi.fn(async () => {
+        throw new ValidationError("Unknown ID prefix. Expected 'sum_' or 'file_', got: abc-123");
+      }),
+    });
+
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(mockDeps);
+
+    // Regression for the ~/.comis/logs/ "context.expand id=abc-123" case:
+    // params MUST appear on the same log payload so an operator does not
+    // have to cross-reference a separate request log to find the input.
+    await expect(dispatch("cron.add", { id: "abc-123" })).rejects.toThrow();
+
+    expect(mockLogger.error).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+    const [logObj] = mockLogger.warn.mock.calls[0]!;
+    expect(logObj.errorKind).toBe("validation");
+    expect(logObj.params).toEqual({ id: "abc-123" });
+  });
+
+  it("generic Error → logger.error, errorKind=internal (default for unmatched)", async () => {
+    const { createCronHandlers } = await import("./cron-handlers.js");
+    (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "cron.add": vi.fn(async () => {
+        throw new Error("Database connection lost mid-write");
+      }),
+    });
+
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(mockDeps);
+
+    await expect(dispatch("cron.add", {})).rejects.toThrow();
+
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+    expect(mockLogger.error).toHaveBeenCalledTimes(1);
+    const [logObj] = mockLogger.error.mock.calls[0]!;
+    expect(logObj.errorKind).toBe("internal");
   });
 
   it("merges handlers from all 16 factory modules", async () => {

@@ -6,8 +6,14 @@ import { systemNowMs, systemSetTimeout, systemSetInterval, systemClearInterval }
 
 /**
  * Logger interface for WebSocket handler (minimal pino-compatible).
+ *
+ * `trace` is included so Fix B (log-review) can demote routine
+ * connect/disconnect lines from debug → trace without losing the
+ * recoverable detail.
  */
 export interface WsLogger {
+  trace(msg: string): void;
+  trace(obj: Record<string, unknown>, msg: string): void;
   debug(msg: string): void;
   debug(obj: Record<string, unknown>, msg: string): void;
   info(msg: string): void;
@@ -242,7 +248,11 @@ export function createWsHandler(deps: WsHandlerDeps, rpcContext: RpcContext): WS
   return {
     onOpen(_evt: Event, ws: WSContext) {
       connections.add(connectionId, rpcContext.clientId, ws);
-      logger.debug(
+      // Fix B (log-review): demoted from debug → trace. Connect/disconnect
+      // pairs dominated debug-mode logs (one pair per CLI tick at 75s
+      // intervals); the underlying transport state is observable from
+      // activeConnections in heartbeat lines.
+      logger.trace(
         { connectionId, clientId: rpcContext.clientId, activeConnections: connections.size },
         `WebSocket connected: ${rpcContext.clientId}`,
       );
@@ -384,7 +394,10 @@ export function createWsHandler(deps: WsHandlerDeps, rpcContext: RpcContext): WS
       const connectionDurationMs = conn ? systemNowMs() - conn.connectedAt : undefined;
       connections.remove(connectionId);
       const isAbnormal = evt.code !== 1000 && evt.code !== 1001 && evt.code !== 1005;
-      const logFn = isAbnormal ? logger.info.bind(logger) : logger.debug.bind(logger);
+      // Fix B (log-review): normal-close demoted from debug → trace
+      // (paired with the onOpen demotion above). Abnormal closes remain
+      // info-level — those are the operator-relevant transitions.
+      const logFn = isAbnormal ? logger.info.bind(logger) : logger.trace.bind(logger);
       logFn(
         {
           connectionId,
