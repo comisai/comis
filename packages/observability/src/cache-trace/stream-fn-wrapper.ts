@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: pi-ai StreamFn boundary — re-throws synchronous next() exception (contract violation) after recording model:after audit trail; the executor catches the throw at the streamFn invocation site.
 /**
  * `buildCacheTraceWrapper` — StreamFn wrapper factory.
  *

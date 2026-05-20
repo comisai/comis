@@ -32,7 +32,7 @@ import { ok, err } from "@comis/shared";
 import { createSqliteSecretStore, type setupSecrets as _setupSecretsImpl } from "@comis/memory";
 import type { setupLogging } from "../wiring/index.js";
 import type { createExecGit } from "../config/exec-git.js";
-import type { ConfigFileObservation } from "../config/read-config-file-observation.js";
+import { readConfigFileObservation, type ConfigFileObservation } from "../config/read-config-file-observation.js";
 import { existsSync, readFileSync, mkdirSync, cpSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -276,6 +276,45 @@ export interface EmitBootstrapConfigObserveRecordsParams {
    * tied to the test's tmp dir.
    */
   readonly confinedBaseDir?: string;
+}
+
+/**
+ * Aggregate the bootstrap config-read step: build §9.2 observations
+ * for every requested path (BEFORE the existsSync filter), filter
+ * existing paths for the actual bootstrap call, run `_bootstrap`,
+ * build the coarse per-path validity map, and emit the
+ * `event:config.observe` audit records — all in one call.
+ *
+ * Returns the bootstrap result and the existing config-paths array so
+ * the caller can continue with secret-ref resolution / container
+ * construction. Observe-record emission happens BEFORE the caller
+ * throws on `bootResult.ok === false` (the forensics record is
+ * precisely what's wanted when boot fails).
+ */
+export async function runConfigBootstrapAndEmitObserve<TBoot>(params: {
+  readonly requestedConfigPaths: readonly string[];
+  readonly mergedEnv: Record<string, string | undefined>;
+  readonly bootstrap: (input: {
+    configPaths: string[];
+    env: Record<string, string | undefined>;
+  }) => { ok: true; value: TBoot } | { ok: false; error: { message: string } };
+}): Promise<{
+  configPaths: string[];
+  bootResult: { ok: true; value: TBoot } | { ok: false; error: { message: string } };
+}> {
+  const observations = params.requestedConfigPaths.map((p) =>
+    readConfigFileObservation(p),
+  );
+  const configPaths = params.requestedConfigPaths.filter((p) => existsSync(p));
+  const bootResult = params.bootstrap({
+    configPaths,
+    env: params.mergedEnv,
+  });
+  const validityByPath = new Map(
+    params.requestedConfigPaths.map((p) => [p, bootResult.ok] as const),
+  );
+  await emitBootstrapConfigObserveRecords({ observations, validityByPath });
+  return { configPaths, bootResult };
 }
 
 /**
