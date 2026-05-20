@@ -30,6 +30,8 @@ describe("bridge-metrics shape regression guard", () => {
     // 260520-wcf warmup-turn counters
     expect(m.warmupTurnCount).toBe(0);
     expect(m.totalPendingCacheInvestmentUsd).toBe(0);
+    // 260521-0bn cumulative cost-correction delta
+    expect(m.totalCostCorrectionDeltaUsd).toBe(0);
   });
 
   it("buildBridgeResult builds a stable shape from a fresh metrics state", () => {
@@ -56,5 +58,14 @@ describe("bridge-metrics shape regression guard", () => {
     // "Execution complete" bookend log has a stable shape.
     expect(r.warmupTurnCount).toBe(0);
     expect(r.totalPendingCacheInvestmentUsd).toBe(0);
+    // 260521-0bn cumulative cost-correction delta surfaced unconditionally.
+    expect(r.totalCostCorrectionDeltaUsd).toBe(0);
+  });
+
+  it("buildBridgeResult projects totalCostCorrectionDeltaUsd from metrics state (260521-0bn)", () => {
+    const m = createBridgeMetrics();
+    m.totalCostCorrectionDeltaUsd = 0.00042;
+    const r = buildBridgeResult(m, 1);
+    expect(r.totalCostCorrectionDeltaUsd).toBe(0.00042);
   });
 });

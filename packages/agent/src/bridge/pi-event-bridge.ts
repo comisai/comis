@@ -997,6 +997,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Accumulate corrected cost
             m.totalCost += cost.total;
 
+            // 260521-0bn: accumulate per-turn cost-correction delta (>0
+            // only — matches the 260520-wcf invariant that negative
+            // correction is suppressed; see costCorrectionField gate at
+            // line ~1106). Surfaced via buildBridgeResult on the
+            // "Execution complete" log.
+            if (costCorrectionDelta > 0) {
+              m.totalCostCorrectionDeltaUsd += costCorrectionDelta;
+            }
+
             // 260520-wcf: per-call DEBUG cost-correction log removed. The
             // costCorrection breadcrumb now rides on the
             // observability:token_usage event payload below — operators

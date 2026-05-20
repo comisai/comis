@@ -2649,6 +2649,54 @@ describe("createPiEventBridge", () => {
         expect(result.warmupTurnCount).toBe(2);
         expect(result.totalPendingCacheInvestmentUsd).toBeGreaterThan(0);
       });
+
+      // 260521-0bn: cumulative cost-correction delta accumulator.
+      it("accumulates totalCostCorrectionDeltaUsd across multiple turns (260521-0bn)", () => {
+        const ttlSplit = { cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 };
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+          ttlSplit,
+        });
+        const { listener, getResult } = createPiEventBridge(deps);
+
+        // Turn 1: 10_000 1h tokens → delta1 = 10_000 * (cacheWrite1h - cacheWrite5m)
+        ttlSplit.cacheWrite5mTokens = 500;
+        ttlSplit.cacheWrite1hTokens = 10_000;
+        listener(makeCacheTurnEnd({ cacheRead: 20_000, cacheWrite: 10_500 }) as any);
+
+        // Turn 2: 5_000 1h tokens → delta2 = 5_000 * (cacheWrite1h - cacheWrite5m)
+        ttlSplit.cacheWrite5mTokens = 300;
+        ttlSplit.cacheWrite1hTokens = 5_000;
+        listener(makeCacheTurnEnd({ cacheRead: 30_000, cacheWrite: 5_300 }) as any);
+
+        const expectedDelta1 = 10_000 * (0.000006 - 0.00000375);
+        const expectedDelta2 = 5_000 * (0.000006 - 0.00000375);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- getResult inline return type omits new field; access via index typing
+        const result = getResult() as any;
+        expect(result.totalCostCorrectionDeltaUsd).toBeCloseTo(
+          expectedDelta1 + expectedDelta2,
+          8,
+        );
+      });
+
+      it("does NOT accumulate totalCostCorrectionDeltaUsd when ttlSplit has no 1h tokens (260521-0bn)", () => {
+        const ttlSplit = { cacheWrite5mTokens: 10_000, cacheWrite1hTokens: 0 };
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+          ttlSplit,
+        });
+        const { listener, getResult } = createPiEventBridge(deps);
+
+        listener(makeCacheTurnEnd({ cacheRead: 5_000, cacheWrite: 10_000 }) as any);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- getResult inline return type omits new field; access via index typing
+        const result = getResult() as any;
+        // delta = 0 → accumulator stays at 0 (the > 0 gate suppresses it).
+        expect(result.totalCostCorrectionDeltaUsd).toBe(0);
+      });
     });
   });
 

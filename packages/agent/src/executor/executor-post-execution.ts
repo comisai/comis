@@ -103,6 +103,10 @@ export interface PostExecutionBridgeResult {
   warmupTurnCount?: number;
   /** 260520-wcf: positive-signed sum of pending cache investment across warmup turns (USD). */
   totalPendingCacheInvestmentUsd?: number;
+  /** 260521-0bn: cumulative SDK→corrected cost delta across all turns (USD).
+   *  Conditionally emitted on the Execution-complete log when > 0 — mirrors
+   *  the per-event `costCorrection` breadcrumb gate in pi-event-bridge.ts. */
+  totalCostCorrectionDeltaUsd?: number;
 }
 
 /** Bridge interface used by post-execution. */
@@ -574,6 +578,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // would otherwise dominate).
       warmupTurn: (bridgeResult.warmupTurnCount ?? 0) > 0,
       pendingCacheInvestmentUsd: bridgeResult.totalPendingCacheInvestmentUsd ?? 0,
+      // 260521-0bn: cumulative SDK→corrected cost delta this execute.
+      // Conditional emit — turns with no correction omit the field
+      // entirely (matches the per-event `costCorrectionField` gate at
+      // pi-event-bridge.ts:1106 — avoids zero-value log noise).
+      ...((bridgeResult.totalCostCorrectionDeltaUsd ?? 0) > 0 && {
+        costCorrectionDeltaUsd: bridgeResult.totalCostCorrectionDeltaUsd,
+      }),
       // Session-cumulative cost fields (alongside per-turn costUsd/cacheSavedUsd)
       sessionCostUsd: bridgeResult.sessionCostUsd ?? 0,
       sessionCacheSavedUsd: bridgeResult.sessionCacheSavedUsd ?? 0,
