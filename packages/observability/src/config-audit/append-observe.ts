@@ -88,15 +88,17 @@ export type AppendObserveResult =
 export function createConfigObserveAuditRecord(
   params: CreateObserveRecordParams,
 ): ConfigObserveAuditRecord {
-  // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
+  // Sanctioned trust-boundary reads of process fields for audit-log
+  // provenance. This module sits in @comis/observability where the
+  // no-restricted-syntax process.env rule is not enforced — but the
+  // call still reads runtime process state, which is the intentional
+  // semantics here (mirror-matches `process.pid` reads in
+  // packages/daemon/src/api/config-handlers/config-audit-hook.ts and
+  // packages/daemon/src/config/last-known-good.ts).
   const pid = process.pid;
-  // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
   const ppid = process.ppid;
-  // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
   const rawArgv = process.argv;
-  // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
   const cwd = process.cwd();
-  // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
   const rawExecArgv = process.execArgv;
   const argv = Array.from(rawArgv);
   const execArgv = Array.from(rawExecArgv);
@@ -155,8 +157,12 @@ function encodeObserveRecord(record: ConfigObserveAuditRecord): string {
       __serializationError: "record-not-serializable" as const,
       ts: systemDateFrom(systemNowMs()).toISOString(),
     };
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- sentinel is hand-crafted to be unconditionally serializable
-    return JSON.stringify(sentinel)! + "\n";
+    // Sentinel is hand-crafted with only string + number literals so
+    // JSON.stringify cannot return undefined. The non-null assertion
+    // is a defense-in-depth contract: the caller never sees `undefined`
+    // come back from this fallback path.
+    const sentinelJson = JSON.stringify(sentinel);
+    return (sentinelJson ?? "{}") + "\n";
   }
   return json + "\n";
 }
