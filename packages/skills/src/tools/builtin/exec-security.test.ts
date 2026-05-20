@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   extractHeredoc,
+  extractDashCArg,
   sanitizeCommandInput,
   validateExecCommand,
   validateCommand,
@@ -1692,5 +1693,40 @@ describe("extractHeredoc", () => {
     it("returns null for simple commands", () => {
       expect(extractHeredoc("ls -la", undefined)).toBeNull();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 260520-wcf: extractDashCArg rewrites `<interp> -c "<multiline>"` to the
+// stdin form so multi-line bodies stop tripping Gate 0's newline guard.
+// ---------------------------------------------------------------------------
+describe("extractDashCArg", () => {
+  it("rewrites python3 -c with embedded newline to stdin form using python3 -", () => {
+    const result = extractDashCArg('python3 -c "import os\nprint(1)"', undefined);
+    expect(result).toEqual({ command: "python3 -", input: "import os\nprint(1)" });
+  });
+
+  it("does not rewrite when the -c body has no newline so single-line commands pass through", () => {
+    const result = extractDashCArg('python3 -c "print(1)"', undefined);
+    expect(result).toBeNull();
+  });
+
+  it("does not rewrite when caller already supplied input so caller stdin is preserved", () => {
+    const result = extractDashCArg(
+      'python3 -c "import os\nprint(1)"',
+      "preset stdin body",
+    );
+    expect(result).toBeNull();
+  });
+
+  it("does not rewrite when the interpreter is not in the allowed interpreter set", () => {
+    // awk takes -f / programmatic args but is not in the stdin-form set.
+    const result = extractDashCArg('awk -c "BEGIN{print 1}\nEND{}"', undefined);
+    expect(result).toBeNull();
+  });
+
+  it("handles single-quoted body identically to double-quoted body for multiline scripts", () => {
+    const result = extractDashCArg("python3 -c 'import os\nprint(1)'", undefined);
+    expect(result).toEqual({ command: "python3 -", input: "import os\nprint(1)" });
   });
 });

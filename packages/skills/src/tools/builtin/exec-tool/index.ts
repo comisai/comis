@@ -25,7 +25,7 @@ import {
   readNumberParam,
   readBooleanParam,
 } from "../../../platform-tools/tool-helpers.js";
-import { extractHeredoc, validateExecCommand } from "../exec-security/index.js";
+import { extractHeredoc, extractDashCArg, validateExecCommand } from "../exec-security/index.js";
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, ExecParams, type ExecToolDeps } from "./exec-types.js";
 import {
   resolveCwd,
@@ -94,6 +94,12 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
         // Auto-extract heredoc patterns before security validation.
         const heredoc = extractHeredoc(command, input ?? undefined);
         if (heredoc) { command = heredoc.command; input = heredoc.input; }
+        // Auto-rewrite `<interp> -c "<multiline body>"` to the stdin
+        // form. Runs AFTER extractHeredoc so a `python3 - <<'PY'` heredoc
+        // continues to take precedence (a command with BOTH forms is
+        // malformed and falls through to Gate-0).
+        const dashC = extractDashCArg(command, input ?? undefined);
+        if (dashC) { command = dashC.command; input = dashC.input; }
         // Validate command and env through security pipeline
         const validationError = validateExecCommand(command, userEnv);
         if (validationError) {
