@@ -31,20 +31,26 @@ describe("cleanupServerFromAllTrackers", () => {
     clearDiscoveryTracker(keyB);
   });
 
-  it("removes matching mcp:serverName/* entries from all session trackers", () => {
+  it("removes matching `mcp__serverName--*` entries from all session trackers", () => {
+    // 260520-e8z-01: the runtime MCP tool name format is `mcp__<server>--<tool>`
+    // (e.g. `mcp__yfinance--get_stock_price`). Pre-flip,
+    // `cleanupServerFromAllTrackers` searched for the dead `mcp:<server>/`
+    // prefix, which never matched a real tool name. After the fix the
+    // function uses `mcp__<server>--` so real disconnect events actually
+    // clean up the trackers.
     const trackerA = getOrCreateDiscoveryTracker(keyA, true);
     const trackerB = getOrCreateDiscoveryTracker(keyB, true);
 
     trackerA.markDiscovered([
-      "mcp:ctx7/tool_a",
-      "mcp:ctx7/tool_b",
-      "mcp:other/tool_c",
+      "mcp__ctx7--tool_a",
+      "mcp__ctx7--tool_b",
+      "mcp__other--tool_c",
       "bash",
     ]);
     trackerB.markDiscovered([
-      "mcp:ctx7/tool_a",
-      "mcp:ctx7/tool_b",
-      "mcp:other/tool_c",
+      "mcp__ctx7--tool_a",
+      "mcp__ctx7--tool_b",
+      "mcp__other--tool_c",
       "bash",
     ]);
 
@@ -54,15 +60,15 @@ describe("cleanupServerFromAllTrackers", () => {
     expect(removed).toBe(4);
 
     // ctx7 tools gone from both
-    expect(trackerA.isDiscovered("mcp:ctx7/tool_a")).toBe(false);
-    expect(trackerA.isDiscovered("mcp:ctx7/tool_b")).toBe(false);
-    expect(trackerB.isDiscovered("mcp:ctx7/tool_a")).toBe(false);
-    expect(trackerB.isDiscovered("mcp:ctx7/tool_b")).toBe(false);
+    expect(trackerA.isDiscovered("mcp__ctx7--tool_a")).toBe(false);
+    expect(trackerA.isDiscovered("mcp__ctx7--tool_b")).toBe(false);
+    expect(trackerB.isDiscovered("mcp__ctx7--tool_a")).toBe(false);
+    expect(trackerB.isDiscovered("mcp__ctx7--tool_b")).toBe(false);
 
     // Other tools still present
-    expect(trackerA.isDiscovered("mcp:other/tool_c")).toBe(true);
+    expect(trackerA.isDiscovered("mcp__other--tool_c")).toBe(true);
     expect(trackerA.isDiscovered("bash")).toBe(true);
-    expect(trackerB.isDiscovered("mcp:other/tool_c")).toBe(true);
+    expect(trackerB.isDiscovered("mcp__other--tool_c")).toBe(true);
     expect(trackerB.isDiscovered("bash")).toBe(true);
   });
 

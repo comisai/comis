@@ -208,11 +208,19 @@ describe("applyToolDeferral - rule-based deferral", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 4: applyToolDeferral - unconditional MCP deferral
+// Suite 4: applyToolDeferral -- MCP active by default for Anthropic/Google
+//
+// Contract flip (260520-e8z-01): MCP tools (`mcp__*`, `mcp:*` prefixes) are
+// ACTIVE BY DEFAULT for providers that support mid-turn tool injection
+// (`anthropic`, `google`). Empirically the model rarely invokes the
+// server-side discovery tool and falls back to `exec`/`web_fetch`, so
+// deferral pays a 0-discovery cost for no benefit. Operators who DO want
+// MCP deferral opt in via `config.deferredTools.alwaysDefer`. The
+// small-model rule (modelTier === "small") continues to defer MCP tools.
 // ---------------------------------------------------------------------------
 
-describe("applyToolDeferral - unconditional MCP deferral", () => {
-  it("defers all MCP tools unconditionally regardless of context window", () => {
+describe("applyToolDeferral -- MCP active by default for Anthropic/Google", () => {
+  it("keeps all MCP tools active by default for Anthropic regardless of context window", () => {
     const logger = createMockLogger();
 
     const tools: ToolDefinition[] = [
@@ -226,17 +234,21 @@ describe("applyToolDeferral - unconditional MCP deferral", () => {
     const ctx = makeContext({
       trustLevel: "admin",
       toolNames: tools.map(t => t.name),
+      providerFamily: "anthropic",
     });
 
+    // Small contextWindow value used pre-flip to "force" a budget check is
+    // now irrelevant. MCP tools stay active for Anthropic by default.
     const result = applyToolDeferral(tools, 32_000, ctx, logger);
 
-    expect(result.deferredCount).toBe(50);
+    const activeNames = result.activeTools.map(t => t.name);
     for (let i = 0; i < 50; i++) {
-      expect(result.deferredNames).toContain(`mcp:tool_${i}`);
+      expect(activeNames).toContain(`mcp:tool_${i}`);
+      expect(result.deferredNames).not.toContain(`mcp:tool_${i}`);
     }
   });
 
-  it("defers even a single small MCP tool unconditionally", () => {
+  it("keeps even a single MCP tool active by default for Anthropic", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read", 50, 30),
@@ -246,16 +258,17 @@ describe("applyToolDeferral - unconditional MCP deferral", () => {
     const ctx = makeContext({
       trustLevel: "admin",
       toolNames: tools.map(t => t.name),
+      providerFamily: "anthropic",
     });
 
-    // Large context window -- MCP tools still deferred unconditionally
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
 
-    expect(result.deferredCount).toBe(1);
-    expect(result.deferredNames).toContain("mcp:small_tool");
+    const activeNames = result.activeTools.map(t => t.name);
+    expect(activeNames).toContain("mcp:small_tool");
+    expect(result.deferredNames).not.toContain("mcp:small_tool");
   });
 
-  it("defers mcp__ prefixed tools unconditionally", () => {
+  it("keeps mcp__ prefixed tools active by default for Anthropic", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read", 50, 30),
@@ -266,16 +279,23 @@ describe("applyToolDeferral - unconditional MCP deferral", () => {
     const ctx = makeContext({
       trustLevel: "admin",
       toolNames: tools.map(t => t.name),
+      providerFamily: "anthropic",
     });
 
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
 
-    expect(result.deferredCount).toBe(2);
-    expect(result.deferredNames).toContain("mcp__yfinance--get_price");
-    expect(result.deferredNames).toContain("mcp__yfinance--get_history");
+    const activeNames = result.activeTools.map(t => t.name);
+    expect(activeNames).toContain("mcp__yfinance--get_price");
+    expect(activeNames).toContain("mcp__yfinance--get_history");
+    expect(result.deferredNames).not.toContain("mcp__yfinance--get_price");
+    expect(result.deferredNames).not.toContain("mcp__yfinance--get_history");
   });
 
-  it("exempts recently-used MCP tools from deferral", () => {
+  it("keeps recently-used MCP tools active alongside all other MCP tools (Anthropic default)", () => {
+    // After the flip, MCP tools are active for Anthropic regardless of
+    // recent-use status. This test preserves the original case structure
+    // but inverts the contract: ALL `mcp:*` tools land in activeTools, not
+    // just the recently-used ones.
     const logger = createMockLogger();
 
     const tools: ToolDefinition[] = [makeTool("read", 50, 30)];
@@ -287,39 +307,190 @@ describe("applyToolDeferral - unconditional MCP deferral", () => {
       trustLevel: "admin",
       recentlyUsedToolNames: new Set(["mcp:tool_5", "mcp:tool_10"]),
       toolNames: tools.map(t => t.name),
+      providerFamily: "anthropic",
     });
 
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
 
-    expect(result.deferredNames).not.toContain("mcp:tool_5");
-    expect(result.deferredNames).not.toContain("mcp:tool_10");
-    expect(result.deferredCount).toBe(48);
+    const activeNames = result.activeTools.map(t => t.name);
+    // Recently-used MCP tools remain active...
+    expect(activeNames).toContain("mcp:tool_5");
+    expect(activeNames).toContain("mcp:tool_10");
+    // ...and so do every other MCP tool.
+    for (let i = 0; i < 50; i++) {
+      expect(activeNames).toContain(`mcp:tool_${i}`);
+    }
+    expect(result.deferredCount).toBe(0);
   });
 
-  it("defers MCP tools even when total tokens are far below any threshold", () => {
-    // Single tiny MCP tool -- old budget check would never trigger
+  it("MCP tool is active and discoverTool is null when nothing else is deferred (Anthropic default)", () => {
+    // Single tiny MCP tool -- post-flip there is NOTHING to defer, so
+    // discoverTool is null. Pre-flip this would have produced a discoverTool
+    // with the single MCP tool deferred behind it.
     const tools = [makeTool("mcp__tiny--tool", 10, 10)];
-    const ctx = makeContext();
+    const ctx = makeContext({ providerFamily: "anthropic" });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
-    expect(result.deferredNames).toContain("mcp__tiny--tool");
-    expect(result.activeTools).toHaveLength(0);
-    expect(result.discoverTool).not.toBeNull();
+    expect(result.deferredNames).not.toContain("mcp__tiny--tool");
+    expect(result.activeTools.map(t => t.name)).toEqual(["mcp__tiny--tool"]);
+    expect(result.discoverTool).toBeNull();
   });
 
-  it("does not defer non-MCP tools in MCP-deferral pass", () => {
+  it("non-MCP tools stay active and MCP tool also stays active (no MCP-deferral pass for Anthropic)", () => {
     const tools = [
       makeTool("read"),
       makeTool("web_search"),
       makeTool("custom_tool"),
-      makeTool("mcp__srv--deferred"),
+      makeTool("mcp__srv--was_deferred"),
     ];
-    const ctx = makeContext();
+    const ctx = makeContext({ providerFamily: "anthropic" });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
-    // Only MCP tool is deferred by the MCP-deferral pass
-    expect(result.deferredNames).toEqual(["mcp__srv--deferred"]);
-    expect(result.activeTools.map(t => t.name)).toEqual(expect.arrayContaining(["read", "web_search", "custom_tool"]));
+    // Post-flip: every tool is active. The MCP-deferral pass is a no-op
+    // for Anthropic/Google.
+    expect(result.deferredNames).toEqual([]);
+    expect(result.activeTools.map(t => t.name)).toEqual(
+      expect.arrayContaining(["read", "web_search", "custom_tool", "mcp__srv--was_deferred"]),
+    );
+    expect(result.discoverTool).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 4b: applyToolDeferral -- MCP active by default (new contract details)
+//
+// Covers items (1)-(5) from the 260520-e8z-01 plan:
+//   1. anthropic + large + no alwaysDefer -> MCP active
+//   2. google   + large + no alwaysDefer -> MCP active
+//   3. alwaysDefer is the operator opt-in for selective deferral
+//   4. modelTier "small" still defers MCP (small-model rule unchanged)
+//   5. recently-used MCP tool exemption survives under the small-model rule
+// ---------------------------------------------------------------------------
+
+describe("applyToolDeferral -- MCP active by default", () => {
+  it("keeps every mcp__yfinance--* tool active for Anthropic / large / no alwaysDefer", () => {
+    // Item (1): the canonical happy path the plan flips.
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("mcp__yfinance--get_stock_price"),
+      makeTool("mcp__yfinance--get_stock_summary"),
+      makeTool("mcp__yfinance--get_financials"),
+    ];
+    const ctx = makeContext({
+      providerFamily: "anthropic",
+      modelTier: "large",
+      toolNames: tools.map(t => t.name),
+    });
+
+    const result = applyToolDeferral(tools, 200_000, ctx, logger);
+
+    const activeNames = result.activeTools.map(t => t.name);
+    for (const name of ["mcp__yfinance--get_stock_price", "mcp__yfinance--get_stock_summary", "mcp__yfinance--get_financials"]) {
+      expect(activeNames).toContain(name);
+      expect(result.deferredNames).not.toContain(name);
+    }
+  });
+
+  it("keeps every mcp__yfinance--* tool active for Google / large / no alwaysDefer", () => {
+    // Item (2): same contract, providerFamily === "google".
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("mcp__yfinance--get_stock_price"),
+      makeTool("mcp__yfinance--get_stock_summary"),
+      makeTool("mcp__yfinance--get_financials"),
+    ];
+    const ctx = makeContext({
+      providerFamily: "google",
+      modelTier: "large",
+      toolNames: tools.map(t => t.name),
+    });
+
+    const result = applyToolDeferral(tools, 200_000, ctx, logger);
+
+    const activeNames = result.activeTools.map(t => t.name);
+    for (const name of ["mcp__yfinance--get_stock_price", "mcp__yfinance--get_stock_summary", "mcp__yfinance--get_financials"]) {
+      expect(activeNames).toContain(name);
+      expect(result.deferredNames).not.toContain(name);
+    }
+  });
+
+  it("alwaysDefer is the operator opt-in for selective MCP deferral", () => {
+    // Item (3): only the listed tool is deferred; siblings stay active.
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("mcp__yfinance--get_stock_price"),
+      makeTool("mcp__yfinance--get_stock_summary"),
+      makeTool("mcp__yfinance--get_financials"),
+    ];
+    const ctx = makeContext({
+      providerFamily: "anthropic",
+      modelTier: "large",
+      toolNames: tools.map(t => t.name),
+      alwaysDefer: ["mcp__yfinance--get_stock_price"],
+    });
+
+    const result = applyToolDeferral(tools, 200_000, ctx, logger);
+
+    // Only the explicitly-listed tool is deferred.
+    expect(result.deferredNames).toEqual(["mcp__yfinance--get_stock_price"]);
+
+    // Siblings stay active.
+    const activeNames = result.activeTools.map(t => t.name);
+    expect(activeNames).toContain("mcp__yfinance--get_stock_summary");
+    expect(activeNames).toContain("mcp__yfinance--get_financials");
+    expect(activeNames).not.toContain("mcp__yfinance--get_stock_price");
+  });
+
+  it("modelTier 'small' still defers MCP tools (small-model rule survives the flip)", () => {
+    // Item (4): the small-model rule is the SECOND deferral source for MCP
+    // tools (after alwaysDefer). It pins the rule order: small-model runs
+    // after the now-no-op MCP block.
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),                              // CORE -- stays active
+      makeTool("mcp__yfinance--get_stock_price"),    // not core -- deferred by small-model rule
+    ];
+    const ctx = makeContext({
+      providerFamily: "anthropic",
+      modelTier: "small",
+      toolNames: tools.map(t => t.name),
+    });
+
+    const result = applyToolDeferral(tools, 200_000, ctx, logger);
+
+    expect(result.deferredNames).toContain("mcp__yfinance--get_stock_price");
+    // CORE tools remain active.
+    expect(result.activeTools.map(t => t.name)).toContain("read");
+  });
+
+  it("recently-used MCP tool exemption still applies under the small-model rule", () => {
+    // Item (5): with modelTier "small" + recentlyUsedToolNames containing
+    // an MCP tool, that tool stays active. The recently-used exemption is
+    // meaningful here -- without it, small-model would defer.
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("mcp__yfinance--get_stock_price"),
+      makeTool("mcp__yfinance--get_stock_summary"),
+    ];
+    const ctx = makeContext({
+      providerFamily: "anthropic",
+      modelTier: "small",
+      recentlyUsedToolNames: new Set(["mcp__yfinance--get_stock_price"]),
+      toolNames: tools.map(t => t.name),
+    });
+
+    const result = applyToolDeferral(tools, 200_000, ctx, logger);
+
+    // Recently-used MCP tool stays active.
+    expect(result.activeTools.map(t => t.name)).toContain("mcp__yfinance--get_stock_price");
+    expect(result.deferredNames).not.toContain("mcp__yfinance--get_stock_price");
+
+    // The non-recently-used sibling is still deferred by the small-model rule.
+    expect(result.deferredNames).toContain("mcp__yfinance--get_stock_summary");
   });
 });
 
@@ -1791,20 +1962,26 @@ describe("buildDeferredToolsContext", () => {
     expect(output).toContain("[beta] (2 tools): t2, t3");
   });
 
-  it("includes the mechanism-neutral instruction line for MCP-only listings", () => {
+  it("instruction names both discovery tools for MCP-only listings", () => {
+    // Contract flip (260520-e8z-01): the deferred-tools instruction now names
+    // BOTH `tool_search_tool_regex` (Anthropic Sonnet/Opus 4.x server-side
+    // path) and `discover_tools` (everything else / client-side path), so the
+    // model has a concrete next step instead of a vague pointer.
     const entries: DeferredToolEntry[] = [
       { name: "mcp__srv--tool", description: "desc", original: makeTool("mcp__srv--tool") },
     ];
 
     const output = buildDeferredToolsContext(entries);
-    expect(output).toContain("invoke the discovery mechanism available in your active toolspace");
+    expect(output).toContain("tool_search_tool_regex");
+    expect(output).toContain("discover_tools");
+    expect(output).not.toContain("discovery mechanism available in your active toolspace");
   });
 
   // -------------------------------------------------------------------------
-  // mechanism-neutral instruction line
+  // named-discovery-tool instruction line
   // -------------------------------------------------------------------------
 
-  it("emits the mechanism-neutral instruction line (snapshot + behavior pair)", () => {
+  it("emits the named-discovery-tool instruction line (snapshot + behavior pair)", () => {
     const entries: DeferredToolEntry[] = [
       { name: "toolA", description: "descA", original: makeTool("toolA") },
     ];
@@ -1816,7 +1993,7 @@ describe("buildDeferredToolsContext", () => {
     expect(output).toMatchInlineSnapshot(`
       "<deferred-tools>
       The following tools are available but not loaded.
-      These tools are connected but not currently loaded into your active context. To use one, invoke the discovery mechanism available in your active toolspace, then call the loaded tool with the appropriate arguments.
+      These tools are connected but not currently loaded into your active context. To use one, call \`tool_search_tool_regex\` (Anthropic Sonnet/Opus 4.x) or \`discover_tools\` (other models) with a regex matching the tool name (e.g. \`mcp__yfinance--get_stock_price\` or \`.*stock.*\`), then invoke the loaded tool with the appropriate arguments.
 
       toolA -- descA
       </deferred-tools>"
@@ -1825,17 +2002,14 @@ describe("buildDeferredToolsContext", () => {
     // Behavior assertions: snapshot-as-substitute is an anti-pattern; explicit
     // semantic assertions catch drift even if a future dev runs `vitest -u`
     // without thinking.
-    const expectedInstruction =
-      "These tools are connected but not currently loaded into your active context. " +
-      "To use one, invoke the discovery mechanism available in your active toolspace, " +
-      "then call the loaded tool with the appropriate arguments.";
-    expect(output).toContain(expectedInstruction);
+    expect(output).toContain("tool_search_tool_regex");
+    expect(output).toContain("discover_tools");
     expect(output).toContain("<deferred-tools>");
     expect(output).toContain("</deferred-tools>");
     expect(output).toContain("toolA -- descA");
   });
 
-  it("instruction line contains no provider-specific or yfinance references", () => {
+  it("instruction line names both discovery mechanisms and preserves the deferred listing", () => {
     const entries: DeferredToolEntry[] = [
       { name: "agents_manage", description: "Manage agents", original: makeTool("agents_manage") },
       { name: "mcp__finance-data--get_price", description: "Get stock price", original: makeTool("mcp__finance-data--get_price") },
@@ -1848,18 +2022,12 @@ describe("buildDeferredToolsContext", () => {
     expect(output).toContain("agents_manage -- Manage agents");
     expect(output).toContain("[finance-data] (1 tools): get_price");
 
-    // Forbidden literals: an architecture-grep test enforces this at package
-    // scope; this test enforces it at the prompt-output level -- defense in
-    // depth.
-    expect(output).not.toContain("discover_tools");
-    expect(output).not.toContain("tool_search_tool_regex");
-    expect(output).not.toContain("yfinance");
-    // Old useToolSearch=true variant text -- must NOT appear.
-    expect(output).not.toContain("Call them directly");
-    expect(output).not.toContain("auto-load");
-    // Old useToolSearch=false variant text -- must NOT appear.
-    expect(output).not.toContain("Call discover_tools to search by keyword");
-    expect(output).not.toContain("search by keyword or server name");
+    // Both discovery tools are named (the contract flip).
+    expect(output).toContain("tool_search_tool_regex");
+    expect(output).toContain("discover_tools");
+
+    // The vague pre-flip phrase must be gone.
+    expect(output).not.toContain("discovery mechanism available in your active toolspace");
   });
 
   it("empty entries return empty string (single-arg signature)", () => {
@@ -1867,6 +2035,45 @@ describe("buildDeferredToolsContext", () => {
     // No second arg is passed; the type system enforces this at call sites
     // (executor-tool-assembly.ts updated in lockstep).
     expect(buildDeferredToolsContext([])).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 17c: buildDeferredToolsContext -- instruction names the discovery tool
+//
+// Items (6) and (7) from the 260520-e8z-01 plan: the deferred-tools
+// instruction must name `tool_search_tool_regex` AND `discover_tools` so the
+// model has a concrete tool to call instead of "the discovery mechanism
+// available in your active toolspace".
+// ---------------------------------------------------------------------------
+
+describe("buildDeferredToolsContext -- instruction names the discovery tool", () => {
+  it("output contains both `tool_search_tool_regex` and `discover_tools` and NOT the vague pointer", () => {
+    // Item (6): the rendered XML block names both discovery tools and the
+    // vague pre-flip phrase must not appear.
+    const entries: DeferredToolEntry[] = [
+      { name: "mcp__yfinance--get_stock_price", description: "Get stock price", original: makeTool("mcp__yfinance--get_stock_price") },
+    ];
+
+    const output = buildDeferredToolsContext(entries);
+
+    expect(output).toContain("tool_search_tool_regex");
+    expect(output).toContain("discover_tools");
+    expect(output).not.toContain("discovery mechanism available in your active toolspace");
+  });
+
+  it("output is non-empty and contains `<deferred-tools>` and `</deferred-tools>` (single-block smoke test)", () => {
+    // Item (7): smoke test that the template hasn't accidentally broken --
+    // the block is non-empty and well-formed.
+    const entries: DeferredToolEntry[] = [
+      { name: "mcp__yfinance--get_stock_price", description: "Get stock price", original: makeTool("mcp__yfinance--get_stock_price") },
+    ];
+
+    const output = buildDeferredToolsContext(entries);
+
+    expect(output.length).toBeGreaterThan(0);
+    expect(output).toContain("<deferred-tools>");
+    expect(output).toContain("</deferred-tools>");
   });
 });
 
