@@ -347,7 +347,7 @@ export function registerSessionsCommand(program: Command): void {
  * @param sessionId - Session identifier (for the header).
  * @param report    - Loose-shaped SystemPromptReport record.
  */
-function renderSystemPromptReport(sessionId: string, report: Record<string, unknown>): void {
+export function renderSystemPromptReport(sessionId: string, report: Record<string, unknown>): void {
   // Header
   console.log(chalk.bold(`System prompt — session ${sessionId}`));
   console.log("");
