@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
-import { WORKSPACE_FILE_NAMES } from "./templates.js";
+import { DEFAULT_TEMPLATES, WORKSPACE_FILE_NAMES } from "./templates.js";
 import {
   ensureWorkspace,
   getWorkspaceStatus,
@@ -41,16 +41,19 @@ describe("workspace-manager", () => {
       }
     });
 
-    it("does not overwrite existing files", async () => {
+    it("does not overwrite user-owned files", async () => {
+      // Renamed 2026-05-20: SOUL.md is now platform-owned and gets refreshed by
+      // ensureWorkspace; user-owned IDENTITY.md is the correct surface for the
+      // "preserve existing content" assertion.
       const dir = await makeTempDir();
       await fs.mkdir(dir, { recursive: true });
 
-      const customContent = "# My Custom Soul\n\nThis is mine.";
-      await fs.writeFile(path.join(dir, "SOUL.md"), customContent, "utf-8");
+      const customContent = "# My Custom Identity\n\nThis is mine.";
+      await fs.writeFile(path.join(dir, "IDENTITY.md"), customContent, "utf-8");
 
       await ensureWorkspace({ dir });
 
-      const content = await fs.readFile(path.join(dir, "SOUL.md"), "utf-8");
+      const content = await fs.readFile(path.join(dir, "IDENTITY.md"), "utf-8");
       expect(content).toBe(customContent);
     });
 
@@ -245,12 +248,16 @@ describe("workspace-manager", () => {
         }
       });
 
-      it("skips tracker registration for pre-existing files (writeIfMissing returned false)", async () => {
+      it("skips tracker registration for pre-existing user-owned files (writeIfMissing returned false)", async () => {
+        // Renamed/retargeted 2026-05-20: this test originally pre-created SOUL.md
+        // (now platform-owned) and asserted ensureWorkspace did not touch it.
+        // SOUL.md is now refreshed-when-stale, so we use IDENTITY.md (user-owned)
+        // to exercise the same "pre-existing file is not re-registered" path.
         const dir = await makeTempDir();
         await fs.mkdir(dir, { recursive: true });
-        // Pre-create SOUL.md with custom content; ensureWorkspace must NOT
+        // Pre-create IDENTITY.md with custom content; ensureWorkspace must NOT
         // register it in the tracker because it didn't write it.
-        await fs.writeFile(path.join(dir, "SOUL.md"), "# Pre-existing\n", "utf-8");
+        await fs.writeFile(path.join(dir, "IDENTITY.md"), "# Pre-existing\n", "utf-8");
 
         const calls: string[] = [];
         const tracker = {
@@ -261,10 +268,10 @@ describe("workspace-manager", () => {
 
         await ensureWorkspace({ dir, tracker });
 
-        // SOUL.md should NOT appear in the recorded paths -- only files that
+        // IDENTITY.md should NOT appear in the recorded paths -- only files that
         // were actually written during this call.
-        const soulPath = path.join(dir, "SOUL.md");
-        expect(calls).not.toContain(soulPath);
+        const identityPath = path.join(dir, "IDENTITY.md");
+        expect(calls).not.toContain(identityPath);
         // But the other 8 template files should have been registered.
         expect(calls).toHaveLength(WORKSPACE_FILE_NAMES.length - 1);
       });
@@ -285,6 +292,78 @@ describe("workspace-manager", () => {
 
         expect(calls).toEqual([]);
       });
+    });
+  });
+
+  describe("refreshPlatformFiles (content-hash refresh)", () => {
+    // 2026-05-20 lineage: the prior `wx`-only seed flow let stale pre-fix
+    // templates persist forever, so an installed agent's inherited workspace
+    // kept promising a pre-warmed venv that no code provisioned. These tests
+    // lock the architectural contract — platform-owned files heal on the next
+    // ensureWorkspace call; user-owned files and cleared BOOTSTRAP.md are
+    // preserved.
+
+    it("drifted AGENTS.md is refreshed to canonical on next ensureWorkspace", async () => {
+      const dir = await makeTempDir();
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, "AGENTS.md"), "# Stale platform content\n", "utf-8");
+
+      await ensureWorkspace({ dir });
+
+      const content = await fs.readFile(path.join(dir, "AGENTS.md"), "utf-8");
+      expect(content).toBe(DEFAULT_TEMPLATES["AGENTS.md"]);
+    });
+
+    it("user-edited IDENTITY.md is preserved (never refreshed)", async () => {
+      const dir = await makeTempDir();
+      await ensureWorkspace({ dir });
+      await fs.writeFile(path.join(dir, "IDENTITY.md"), "# My custom identity\n", "utf-8");
+
+      await ensureWorkspace({ dir });
+
+      const content = await fs.readFile(path.join(dir, "IDENTITY.md"), "utf-8");
+      expect(content).toBe("# My custom identity\n");
+    });
+
+    it("empty BOOTSTRAP.md (post-onboarding cleared state) is preserved", async () => {
+      const dir = await makeTempDir();
+      await ensureWorkspace({ dir });
+      // Truncate to empty -- simulates the `write` tool clearing it after onboarding.
+      await fs.writeFile(path.join(dir, "BOOTSTRAP.md"), "", "utf-8");
+
+      await ensureWorkspace({ dir });
+
+      const content = await fs.readFile(path.join(dir, "BOOTSTRAP.md"), "utf-8");
+      expect(content).toBe("");
+    });
+
+    it("non-empty stale BOOTSTRAP.md is refreshed to canonical (stale-seed install heals)", async () => {
+      const dir = await makeTempDir();
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(
+        path.join(dir, "BOOTSTRAP.md"),
+        "# Stale seed content from v1.0.37\n",
+        "utf-8",
+      );
+
+      await ensureWorkspace({ dir });
+
+      const content = await fs.readFile(path.join(dir, "BOOTSTRAP.md"), "utf-8");
+      expect(content).toBe(DEFAULT_TEMPLATES["BOOTSTRAP.md"]);
+    });
+
+    it("file already at canonical hash is not rewritten (idempotency, no-op mtime)", async () => {
+      const dir = await makeTempDir();
+      await ensureWorkspace({ dir });
+      const initialStat = await fs.stat(path.join(dir, "AGENTS.md"));
+      const initialMtime = initialStat.mtimeMs;
+
+      // Pause so a spurious rewrite would produce a measurably different mtime.
+      await new Promise((r) => setTimeout(r, 10));
+      await ensureWorkspace({ dir });
+
+      const secondStat = await fs.stat(path.join(dir, "AGENTS.md"));
+      expect(secondStat.mtimeMs).toBe(initialMtime);
     });
   });
 

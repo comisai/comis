@@ -4,7 +4,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 
-import { DEFAULT_TEMPLATES } from "./templates.js";
+import {
+  DEFAULT_TEMPLATES,
+  PLATFORM_OWNED_FILES,
+  USER_OWNED_FILES,
+  WORKSPACE_FILE_NAMES,
+} from "./templates.js";
 
 // ---------------------------------------------------------------------------
 // Prose invariants for the workspace AGENTS.md template.
@@ -32,6 +37,23 @@ describe("DEFAULT_TEMPLATES workspace prose invariants", () => {
   it("AGENTS.md template must still document per-project venv convention so other guidance holds", () => {
     const agentsMd = DEFAULT_TEMPLATES["AGENTS.md"];
     expect(agentsMd).toContain("projects/<name>/.venv");
+  });
+
+  it("PLATFORM_OWNED_FILES union USER_OWNED_FILES equals WORKSPACE_FILE_NAMES (exhaustive partition)", () => {
+    const union = [...PLATFORM_OWNED_FILES, ...USER_OWNED_FILES].slice().sort();
+    const all = [...WORKSPACE_FILE_NAMES].slice().sort();
+    expect(union).toEqual(all);
+  });
+
+  it("PLATFORM_OWNED_FILES intersect USER_OWNED_FILES is empty (disjoint partition)", () => {
+    const platform = new Set<string>(PLATFORM_OWNED_FILES);
+    for (const name of USER_OWNED_FILES) {
+      expect(platform.has(name)).toBe(false);
+    }
+    const user = new Set<string>(USER_OWNED_FILES);
+    for (const name of PLATFORM_OWNED_FILES) {
+      expect(user.has(name)).toBe(false);
+    }
   });
 
   it("core templates.ts and agent templates.ts remain byte-identical duplicates after the edit", () => {

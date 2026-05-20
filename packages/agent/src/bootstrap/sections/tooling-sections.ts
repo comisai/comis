@@ -100,10 +100,10 @@ export function buildToolCallStyleSection(
       "- **Tool-first principle.** When this turn includes a `Capabilities` context and the task can be satisfied by a connected tool or available skill, prefer that capability over installing a Python or Node package. Use installs only for capabilities not covered by active tools, deferred tools, or visible prompt skills.",
     );
     guidelines.push(
-      "- **Python projects:** Always create a virtualenv per project (`python3 -m venv .venv`). "
-      + "Install packages into the project venv (`source .venv/bin/activate && pip install ...`). "
-      + "Never use `--break-system-packages` — it pollutes the system Python. "
-      + "Each project directory should have its own `.venv`.",
+      "- **Python projects:** Create a project virtualenv with `python3 -m venv .venv`, then call "
+      + "`.venv/bin/python3` and `.venv/bin/pip install <pkgs>` directly. "
+      + "Do not source the venv activate script — the exec sandbox blocks shell-source. "
+      + "Never use `--break-system-packages`. Each project gets its own `.venv`.",
     );
   }
 

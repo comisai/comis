@@ -20,6 +20,25 @@ export const WORKSPACE_FILE_NAMES = [
 
 export type WorkspaceFileName = (typeof WORKSPACE_FILE_NAMES)[number];
 
+/**
+ * Platform-owned workspace files — content-hash-refreshed by `ensureWorkspace`
+ * on every invocation when the on-disk sha256 differs from `DEFAULT_TEMPLATES`.
+ *
+ * 2026-05-20 lineage: the prior `wx`-only seed flow let stale pre-fix templates
+ * persist forever, so a sub-agent's inherited workspace kept promising a
+ * pre-warmed venv that no code provisioned. These three files declare themselves
+ * read-only platform contract in their own prose — this partition makes that
+ * contract real.
+ */
+export const PLATFORM_OWNED_FILES = ["SOUL.md", "AGENTS.md", "BOOTSTRAP.md"] as const;
+
+/**
+ * User-owned workspace files — first-write-wins via `writeIfMissing`'s `wx`
+ * flag; never overwritten by `ensureWorkspace` once present on disk. The agent
+ * fills these in during onboarding and continues editing them across sessions.
+ */
+export const USER_OWNED_FILES = ["IDENTITY.md", "USER.md", "ROLE.md", "TOOLS.md", "HEARTBEAT.md", "BOOT.md"] as const;
+
 /** Marker for template-only workspace files (used by isTemplateOnly detection). */
 export const TEMPLATE_MARKER = "<!-- COMIS-TEMPLATE -->";
 
