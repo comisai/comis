@@ -19,6 +19,7 @@
 
 import { existsSync, readFileSync, copyFileSync, chmodSync } from "node:fs";
 import { dirname, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import { safePath } from "@comis/core";
 import {
   createConfigWriteAuditRecordBase,
@@ -73,6 +74,8 @@ function withAuditHook(params: {
       // eslint-disable-next-line no-restricted-syntax -- execArgv via process.execArgv (sanctioned audit-log provenance)
       execArgv: process.execArgv,
       watchMode: false,
+      // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary entryScript via import.meta.url for audit-log provenance (matches surrounding pattern)
+      entryScript: fileURLToPath(import.meta.url),
     });
   } catch {
     // Couldn't even build the base — run the write anyway.

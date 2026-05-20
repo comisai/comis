@@ -111,6 +111,15 @@ export interface CreateObserveRecordParams {
    * restoreErrorMessage:null}`.
    */
   readonly recovery?: ObserveRecovery;
+  /**
+   * 260521-0bn: Caller's own module path (typically `fileURLToPath(import.meta.url)`)
+   * — forwarded into `detectSuspicious` so the observe-side audit
+   * record's `suspicious` flag set parity-matches the write-side
+   * (which already accepts `entryScript` via `createConfigWriteAuditRecordBase`
+   * as of 260520-wcf). When omitted, `detectSuspicious` falls back to its
+   * argv/execArgv-only heuristic (existing behavior).
+   */
+  readonly entryScript?: string;
 }
 
 /** Input to `appendConfigObserveAuditRecord`. */
@@ -160,7 +169,11 @@ export function createConfigObserveAuditRecord(
   const argv = Array.from(rawArgv);
   const execArgv = Array.from(rawExecArgv);
 
-  const suspicious = detectSuspicious({ argv, execArgv });
+  const suspicious = detectSuspicious({
+    argv,
+    execArgv,
+    ...(params.entryScript !== undefined ? { entryScript: params.entryScript } : {}),
+  });
 
   // §9.2 observation projection — when the caller passed an
   // observation cluster, project the snapshots onto the record fields;

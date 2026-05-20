@@ -356,6 +356,7 @@ export async function emitBootstrapConfigObserveRecords(
         backup: obs.backup,
       },
       valid,
+      entryScript: fileURLToPath(import.meta.url),
     });
     return appendConfigObserveAuditRecord({
       filePath: auditLogPath,

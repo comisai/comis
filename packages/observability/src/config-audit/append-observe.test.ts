@@ -93,6 +93,33 @@ describe("createConfigObserveAuditRecord — record shape", () => {
   });
 });
 
+describe("createConfigObserveAuditRecord — entryScript threading (260521-0bn)", () => {
+  it("forwards entryScript into the suspicious heuristic so daemon.js path clears non-comis-argv under pm2", () => {
+    // Cannot inject argv directly into createConfigObserveAuditRecord — it
+    // reads process.argv internally. Instead assert the surface contract:
+    // passing entryScript MUST NOT throw and the resulting record's
+    // `suspicious` shape stays well-formed. The actual non-comis-argv
+    // clearing is asserted in suspicious.test.ts (existing 260520-wcf
+    // coverage) where the heuristic is exercised directly.
+    const record = createConfigObserveAuditRecord({
+      filePath: "/example/.comis/config.yaml",
+      callerSource: "daemon-bootstrap",
+      entryScript: "/example/dist/daemon.js",
+    });
+    expect(record.event).toBe("config.observe");
+    expect(Array.isArray(record.suspicious)).toBe(true);
+  });
+
+  it("omits entryScript when undefined — preserves existing (pre-260521-0bn) behavior", () => {
+    const record = createConfigObserveAuditRecord({
+      filePath: "/example/.comis/config.yaml",
+      callerSource: "daemon-bootstrap",
+    });
+    expect(record.event).toBe("config.observe");
+    expect(Array.isArray(record.suspicious)).toBe(true);
+  });
+});
+
 describe("createConfigObserveAuditRecord — §9.2 observation + valid + recovery", () => {
   it("projects the observation cluster onto the file-state / LKG / backup blocks", () => {
     const cfgPath = path.join(tmpDir, "config.yaml");
