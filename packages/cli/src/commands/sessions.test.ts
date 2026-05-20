@@ -1,14 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the sessions CLI command registration.
+ * Tests for the sessions CLI command registration AND the
+ * `comis sessions report show` rendering path.
  *
- * Verifies that the sessions command is registered with list, inspect,
- * and delete subcommands, each having the expected options and arguments.
+ * Two test blocks below:
+ *
+ *   - `registerSessionsCommand` / `formatRelativeTime` — verify the
+ *     subcommand wiring (list / inspect / delete / report show / list).
+ *
+ *   - `renderSystemPromptReport — Tools/Skills lines never render
+ *     'undefined entries'` — OBS-REVIEW-02 fix coverage. Any non-array
+ *     `entries` value must render an honest `?` instead of the
+ *     misleading literal `undefined`.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Command } from "commander";
-import { registerSessionsCommand, formatRelativeTime } from "./sessions.js";
+import {
+  registerSessionsCommand,
+  formatRelativeTime,
+  renderSystemPromptReport,
+} from "./sessions.js";
 
 describe("registerSessionsCommand", () => {
   it("registers the sessions command with list, inspect, and delete subcommands", () => {
@@ -128,5 +140,119 @@ describe("formatRelativeTime", () => {
   it("returns 'just now' for future timestamps", () => {
     const result = formatRelativeTime(Date.now() + 10_000);
     expect(result).toBe("just now");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OBS-REVIEW-02: `comis sessions report show` Tools/Skills lines must
+// never render the literal "undefined entries". The old code used a
+// truthy-check (`tools?.entries`) that fired for any non-null shape,
+// then evaluated `.length` which is `undefined` for non-array values.
+// The fix uses `Array.isArray(...)`. Defensive-shape: when entries is
+// truthy but not an array, surface a literal `?` rather than crash or
+// render `undefined`.
+// ---------------------------------------------------------------------------
+
+function captureConsole(): { output: string[]; restore: () => void } {
+  const output: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((...args) => {
+    output.push(args.map(String).join(" "));
+  });
+  return { output, restore: () => spy.mockRestore() };
+}
+
+function makeReport(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    agentId: "test-agent",
+    provider: "anthropic",
+    model: "claude-opus-4-5",
+    source: "test",
+    generatedAt: 1_716_000_000_000,
+    systemPrompt: {
+      chars: 100,
+      sha256: "abc1234567890def1234567890def1234567890",
+      projectContextChars: 50,
+    },
+    tools: { entries: [], totalSchemaChars: 0 },
+    skills: { entries: [], promptChars: 0 },
+    injectedWorkspaceFiles: [],
+    ...overrides,
+  };
+}
+
+describe("renderSystemPromptReport — Tools/Skills lines never render 'undefined entries'", () => {
+  it("renders Tools  2 entries / 70624 schema chars when tools.entries is a 2-element array", () => {
+    const cap = captureConsole();
+    try {
+      const report = makeReport({
+        tools: {
+          entries: [
+            { name: "tool-a", callable: true, schemaChars: 100 },
+            { name: "tool-b", callable: true, schemaChars: 200 },
+          ],
+          totalSchemaChars: 70624,
+        },
+      });
+      renderSystemPromptReport("session-1", report);
+      const combined = cap.output.join("\n");
+      expect(combined).toMatch(/Tools.*2 entries.*\/.*70624 schema chars/);
+      expect(combined).not.toContain("undefined entries");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("renders Skills  1 entries / N chars when skills.entries is a 1-element array", () => {
+    const cap = captureConsole();
+    try {
+      const report = makeReport({
+        skills: {
+          entries: [{ id: "skill-a" }],
+          promptChars: 1234,
+        },
+      });
+      renderSystemPromptReport("session-1", report);
+      const combined = cap.output.join("\n");
+      expect(combined).toMatch(/Skills.*1 entries.*\/.*1234 chars/);
+      expect(combined).not.toContain("undefined entries");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("renders a literal '?' (not 'undefined') when tools.entries is a non-array (defensive shape)", () => {
+    const cap = captureConsole();
+    try {
+      // The runtime sample that surfaced this bug had `tools.entries`
+      // present but truthy-without-being-an-array (the 70624 schema
+      // chars + "undefined entries" rendering came from a non-array
+      // shape that satisfied the truthy guard). Inject a number.
+      const report = makeReport({
+        tools: { entries: 2 as unknown as never, totalSchemaChars: 100 },
+      });
+      renderSystemPromptReport("session-1", report);
+      const combined = cap.output.join("\n");
+      // The output should NEVER contain the literal "undefined entries".
+      expect(combined).not.toContain("undefined entries");
+      // Surface a `?` so the operator knows the shape is malformed but
+      // the totalSchemaChars value is still preserved.
+      expect(combined).toMatch(/Tools.*\?\s+entries.*\/.*100 schema chars/);
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("renders Tools  - when the tools block is undefined", () => {
+    const cap = captureConsole();
+    try {
+      const report = makeReport({ tools: undefined });
+      renderSystemPromptReport("session-1", report);
+      const combined = cap.output.join("\n");
+      expect(combined).not.toContain("undefined entries");
+      // The renderKeyValue table renders the dash literal in the Tools row.
+      expect(combined).toMatch(/Tools[^\n]*\s-\s/);
+    } finally {
+      cap.restore();
+    }
   });
 });

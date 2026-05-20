@@ -347,7 +347,7 @@ export function registerSessionsCommand(program: Command): void {
  * @param sessionId - Session identifier (for the header).
  * @param report    - Loose-shaped SystemPromptReport record.
  */
-function renderSystemPromptReport(sessionId: string, report: Record<string, unknown>): void {
+export function renderSystemPromptReport(sessionId: string, report: Record<string, unknown>): void {
   // Header
   console.log(chalk.bold(`System prompt — session ${sessionId}`));
   console.log("");
@@ -378,14 +378,24 @@ function renderSystemPromptReport(sessionId: string, report: Record<string, unkn
     [chalk.bold("System chars"), String(sp?.chars ?? "-")],
     [chalk.bold("Project context chars"), String(sp?.projectContextChars ?? "-")],
     [chalk.bold("SHA-256"), sp?.sha256 ? String(sp.sha256).slice(0, 16) + "..." : "-"],
+    // OBS-REVIEW-02: use Array.isArray guard, not a truthy check. The
+    // schema invariant says `entries` is an array; if it isn't, the data
+    // is malformed and `?` is the honest signal (we know the shape is
+    // wrong but we know the totalSchemaChars/promptChars value). The
+    // truthy-check we replaced rendered the literal "undefined entries"
+    // for non-array truthy values.
     [chalk.bold("Tools"),
-      tools?.entries
+      Array.isArray(tools?.entries)
         ? `${tools.entries.length} entries / ${tools.totalSchemaChars ?? "-"} schema chars`
-        : "-"],
+        : (tools !== undefined
+            ? `? entries / ${tools.totalSchemaChars ?? "-"} schema chars`
+            : "-")],
     [chalk.bold("Skills"),
-      skills?.entries
+      Array.isArray(skills?.entries)
         ? `${skills.entries.length} entries / ${skills.promptChars ?? "-"} chars`
-        : "-"],
+        : (skills !== undefined
+            ? `? entries / ${skills.promptChars ?? "-"} chars`
+            : "-")],
   ];
   renderKeyValue(summaryPairs);
 

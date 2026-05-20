@@ -95,6 +95,7 @@ import {
   seedBundledSkillCreator,
   bootstrapSecretsAndEnv,
   wireConfigGitManager,
+  emitBootstrapConfigObserveRecords,
 } from "./stages/foundation-helpers.js";
 import {
   restoreApprovalState,
@@ -315,9 +316,8 @@ async function stageFoundation(input: {
   const configPaths = (rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS)
     .filter((p) => existsSync(p));
   const bootResult = _bootstrap({ configPaths, env: mergedEnv });
-  if (!bootResult.ok) {
-    throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
-  }
+  if (!bootResult.ok) throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
+  await emitBootstrapConfigObserveRecords({ configPaths }); // OBS-REVIEW-03
   // Container via const+resolve-then-spread.
   const initialContainer = bootResult.value;
   const refResult = resolveConfigSecretRefs(

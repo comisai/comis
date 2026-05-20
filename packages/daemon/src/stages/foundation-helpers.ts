@@ -7,6 +7,8 @@
  *   - seedBundledSkillCreator
  *   - bootstrapSecretsAndEnv
  *   - wireConfigGitManager
+ *   - emitBootstrapConfigObserveRecords (OBS-REVIEW-03 fix —
+ *     daemon-bootstrap config.observe wiring)
  *   - scrubProcessEnv + SENSITIVE_PREFIXES + SENSITIVE_EXACT_KEYS
  *     (co-located with bootstrapSecretsAndEnv to avoid an import cycle —
  *     bootstrapSecretsAndEnv is the sole caller; the scrub helper is internal
@@ -19,6 +21,12 @@
  */
 
 import { createConfigGitManager, safePath } from "@comis/core";
+import {
+  appendConfigObserveAuditRecord,
+  createConfigObserveAuditRecord,
+  resolveConfigAuditLogPath,
+  getDefaultConfigAuditConfinedBase,
+} from "@comis/observability";
 import type { SecretStorePort } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { createSqliteSecretStore, type setupSecrets as _setupSecretsImpl } from "@comis/memory";
@@ -226,4 +234,74 @@ export function wireConfigGitManager(deps: {
       }
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// OBS-REVIEW-03: emit config.observe records at daemon bootstrap config-read
+// path. RED STUB — the GREEN implementation will dispatch into
+// @comis/observability's `createConfigObserveAuditRecord` +
+// `appendConfigObserveAuditRecord` for each resolved configPath, with
+// Promise.allSettled() so a single append failure cannot abort daemon boot.
+// ---------------------------------------------------------------------------
+
+/** Parameters for `emitBootstrapConfigObserveRecords`. */
+export interface EmitBootstrapConfigObserveRecordsParams {
+  /** The list of resolved config paths the daemon read at boot. */
+  readonly configPaths: readonly string[];
+  /**
+   * Optional override for the audit-log path. Production callers omit
+   * this and let the helper resolve it via `resolveConfigAuditLogPath`
+   * (which honors `COMIS_CONFIG_AUDIT_LOG`). Tests pass an explicit
+   * path so they don't write into the real `~/.comis/`.
+   */
+  readonly auditLogPath?: string;
+  /**
+   * Optional override for the confinement base. Production callers
+   * omit this and let the helper compute it via
+   * `getDefaultConfigAuditConfinedBase`. Tests pass an explicit base
+   * tied to the test's tmp dir.
+   */
+  readonly confinedBaseDir?: string;
+}
+
+/**
+ * Emit one `event: "config.observe"` audit-log record per resolved
+ * configPath entry at daemon bootstrap. Closes OBS-REVIEW-03.
+ *
+ * Dispatch model: `Promise.allSettled` over per-path appends so a
+ * single failure (audit log unwritable, dir permission, ENOSPC) does
+ * not propagate and abort daemon startup. The audit log is a
+ * forensics aid, not a correctness gate.
+ *
+ * No-op when `configPaths` is empty — the daemon may legitimately
+ * bootstrap with no config files when the operator hasn't seeded
+ * any (the build of `AppConfig` falls back to schema defaults).
+ */
+export async function emitBootstrapConfigObserveRecords(
+  params: EmitBootstrapConfigObserveRecordsParams,
+): Promise<void> {
+  if (params.configPaths.length === 0) return;
+
+  const auditLogPath = params.auditLogPath ?? resolveConfigAuditLogPath();
+  const confinedBaseDir =
+    params.confinedBaseDir ?? getDefaultConfigAuditConfinedBase(auditLogPath);
+
+  const appendPromises = params.configPaths.map(async (cfgPath) => {
+    const record = createConfigObserveAuditRecord({
+      filePath: cfgPath,
+      callerSource: "daemon-bootstrap",
+    });
+    return appendConfigObserveAuditRecord({
+      filePath: auditLogPath,
+      record,
+      ...(confinedBaseDir !== undefined
+        ? { confinedBaseDir }
+        : {}),
+    });
+  });
+
+  // Settle all appends — failures are recorded in the returned
+  // results but never thrown back at the caller. Audit failures at
+  // boot are non-fatal.
+  await Promise.allSettled(appendPromises);
 }

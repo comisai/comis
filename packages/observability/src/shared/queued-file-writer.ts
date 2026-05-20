@@ -34,7 +34,7 @@
  * @module
  */
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, lstatSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { appendRegularFile } from "./fs-safe.js";
@@ -151,6 +151,28 @@ function ensureParentDir(state: InternalState): Promise<void> {
       // If mkdir fails the subsequent appendRegularFile will surface the
       // real error — don't reject here so the queue keeps draining and
       // the per-write failure handler logs it.
+    }
+    // Defensive chmod for the existing-dir case: pino-roll / pi-mono /
+    // other non-observability creators leave artifact parent dirs at
+    // 0o755 (default umask). mkdirSync's `mode` arg is silently ignored
+    // when the dir already exists (recursive EEXIST), so we need a
+    // post-mkdir re-assertion of the §1.4 0o700 invariant.
+    //
+    // GATED on a non-symlink lstat to preserve the confused-deputy
+    // invariant. NEVER mutate a symlinked dir — its target could be
+    // operator-owned shared state outside our trust boundary. The
+    // lstat-isSymbolicLink check is the closing of the hole that the
+    // prior unconditional chmod would have opened (see config-audit/
+    // append.ts ensureParentDir header for the original TOCTOU
+    // discussion).
+    try {
+      const st = lstatSync(dir);
+      if (!st.isSymbolicLink()) {
+        chmodSync(dir, 0o700);
+      }
+    } catch {
+      // Dir doesn't exist or chmod failed — the subsequent
+      // appendRegularFile call will surface the underlying error.
     }
     resolveDir();
   });

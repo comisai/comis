@@ -250,15 +250,20 @@ describe("config-audit/append", () => {
 });
 
 // ---------------------------------------------------------------------------
-// chmod TOCTOU fix — ensureParentDir must NOT chmod a pre-existing parent
-// directory. The mkdir-with-mode-0o700 branch is the only place the parent's
-// mode is touched; the file itself is locked to 0o600 via fchmodSync inside
-// appendRegularFile.
+// Defensive 0o700 chmod on existing parent dir (OBS-REVIEW-01 fix).
+//
+// Non-observability subsystems (pino-roll, pi-mono) may create the parent
+// dir FIRST under default umask (0o755). mkdir's `mode` arg is silently
+// ignored when the dir already exists (recursive EEXIST). The fix:
+// defensively chmod to 0o700 after the mkdir attempt, gated on a
+// non-symlink lstat to preserve the §1.4 confused-deputy invariant
+// (the chmod-target must be a real directory, not a symlink to
+// operator-owned shared state outside our trust boundary).
 // ---------------------------------------------------------------------------
-describe("ensureParentDir — chmod TOCTOU fix", () => {
-  it("does NOT chmod a pre-existing parent directory", async () => {
+describe("ensureParentDir — defensive 0o700 chmod on existing parent dir", () => {
+  it("chmods a pre-existing 0o755 parent dir to 0o700 on first append", async () => {
     // Create parent with intentionally-different mode (0o755) so we can
-    // detect any chmod call back to 0o700.
+    // detect the defensive chmod fires.
     const auditDir = path.join(tmpDir, "config-audit");
     fs.mkdirSync(auditDir, { recursive: true });
     // umask may mask out group/other write bits — re-chmod explicitly so
@@ -271,15 +276,34 @@ describe("ensureParentDir — chmod TOCTOU fix", () => {
     expect(result.ok).toBe(true);
 
     const modeAfter = fs.statSync(auditDir).mode & 0o777;
-    // The existing-parent chmod-else branch is removed, so the
-    // pre-existing 0o755 mode is preserved.
-    expect(modeAfter).toBe(0o755);
+    // The defensive chmod fires after the EEXIST mkdir attempt.
+    expect(modeAfter).toBe(0o700);
   });
 
-  it("still creates the parent with 0o700 when it does NOT exist (regression guard)", async () => {
+  it("does NOT chmod a symlinked parent dir (confused-deputy guard via lstat)", async () => {
+    // Real dir is at 0o755 — that's operator-owned shared state OUTSIDE
+    // our trust boundary. The lstat-isSymbolicLink gate must short-circuit
+    // the defensive chmod so the real-dir mode is preserved.
+    const realDir = path.join(tmpDir, "real-config-audit");
+    const linkDir = path.join(tmpDir, "evil-link");
+    fs.mkdirSync(realDir);
+    fs.chmodSync(realDir, 0o755);
+    fs.symlinkSync(realDir, linkDir);
+
+    const filePath = path.join(linkDir, "config-audit.jsonl");
+    // The actual append may or may not succeed (the symlink-rejection
+    // inside appendRegularFile fires) — what matters is the real dir's
+    // mode is unchanged.
+    await appendConfigAuditRecord({ filePath, record: makeBaseRecord() });
+
+    // Real-dir mode preserved at 0o755 — confused-deputy guard held.
+    expect(fs.statSync(realDir).mode & 0o777).toBe(0o755);
+  });
+
+  it("still creates a fresh parent with 0o700 when it does NOT exist (regression guard)", async () => {
     // The "fresh create" case stays at 0o700 because the
-    // `mkdirSync({mode: 0o700})` branch keeps that responsibility
-    // after the chmod-else branch is removed.
+    // `mkdirSync({mode: 0o700})` branch creates it at that mode and the
+    // defensive chmod re-asserts the invariant.
     const auditDir = path.join(tmpDir, "fresh-audit");
     expect(fs.existsSync(auditDir)).toBe(false);
 

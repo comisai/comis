@@ -231,6 +231,8 @@ export {
   DEFAULT_KEEP_ROTATED,
   ConfigAuditAppendError,
   getDefaultConfigAuditConfinedBase,
+  ensureConfigAuditParentDir,
+  rotateConfigAuditLogIfNeeded,
 } from "./config-audit/append.js";
 export type {
   ConfigWriteAuditRecordBase,
@@ -238,6 +240,21 @@ export type {
   FinalizeParams,
   AppendConfigAuditParams,
 } from "./config-audit/append.js";
+
+// config.observe writer (OBS-REVIEW-03 fix) — read-side counterpart
+// to the write-side helpers above. The daemon's bootstrap config-read
+// path dispatches into `appendConfigObserveAuditRecord` so each
+// resolved configPath produces one `event: "config.observe"` JSONL
+// record on every boot.
+export {
+  createConfigObserveAuditRecord,
+  appendConfigObserveAuditRecord,
+} from "./config-audit/append-observe.js";
+export type {
+  CreateObserveRecordParams,
+  AppendObserveRecordParams,
+  AppendObserveResult,
+} from "./config-audit/append-observe.js";
 
 export { scrubConfigAuditLog, ScrubConfigAuditError } from "./config-audit/scrub.js";
 export type { ScrubResult, ScrubParams } from "./config-audit/scrub.js";

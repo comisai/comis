@@ -296,7 +296,12 @@ export function finalizeConfigWriteAuditRecord(
  * After this returns, the main path no longer exists — the next
  * `appendRegularFile` call will create it under `0o600`.
  */
-function rotateAuditLogIfNeeded(
+/**
+ * Exported so the observe-side writer (`append-observe.ts`) can share
+ * the same rotation strategy. The semantics are identical to the
+ * original private helper.
+ */
+export function rotateConfigAuditLogIfNeeded(
   filePath: string,
   appendBytes: number,
   rotateAtBytes: number,
@@ -467,31 +472,56 @@ function encodeRecord(record: ConfigWriteAuditRecord): string {
 }
 
 /**
- * Ensure the parent dir exists with mode 0o700 (fresh-create only).
+ * Ensure the parent dir exists with mode 0o700, including for the
+ * existing-parent case (OBS-REVIEW-01 fix).
  *
- * The prior implementation also `chmodSync(dir, 0o700)`'d a
- * pre-existing parent before the symlink check inside
- * `appendRegularFile` ran. The chmod-target is only `0o700` (no
- * privilege escalation), but the side-effect on a possibly-symlinked
- * target is a confused-deputy violation (TOCTOU window). The fix
- * deletes that else-branch outright:
+ * Two cases:
  *
- *   - Fresh-create case: `mkdirSync({recursive: true, mode: 0o700})`
- *     keeps creating the dir with the correct mode.
- *   - Existing-parent case: leave the operator's mode untouched. The
- *     **file** itself is still locked to `0o600` by the defensive
- *     `fchmodSync(fd, 0o600)` inside `appendRegularFile` (fs-safe.ts
- *     step 3). Per-record file-mode invariant is preserved.
+ *   - Fresh-create: `mkdirSync({recursive: true, mode: 0o700})` creates
+ *     the dir at the correct mode.
+ *
+ *   - Existing-parent: `mkdirSync`'s `mode` arg is silently ignored
+ *     when the dir already exists (recursive EEXIST). pino-roll /
+ *     pi-mono and other non-observability creators may create the
+ *     parent first under default umask (0o755), violating the §1.4
+ *     0o700 invariant. We defensively chmod to 0o700.
+ *
+ * The defensive chmod is GATED on a non-symlink `lstat`. NEVER mutate
+ * a symlinked dir — its target could be operator-owned shared state
+ * outside our trust boundary. This closes the confused-deputy hole
+ * that an unconditional chmod-else-branch would open, while still
+ * restoring the §1.4 0o700 invariant for real-dir parents created by
+ * other subsystems.
+ *
+ * The **file** itself is independently locked to `0o600` by the
+ * defensive `fchmodSync(fd, 0o600)` inside `appendRegularFile`
+ * (fs-safe.ts step 3) — per-record file-mode invariant is preserved
+ * regardless of the parent's pre-existing mode.
  */
-function ensureParentDir(filePath: string): void {
+/**
+ * Exported so the observe-side writer (`append-observe.ts`) can share
+ * the same parent-dir invariants without duplicating the chmod-gate
+ * code. The semantics are identical to the original private helper —
+ * see header above.
+ */
+export function ensureConfigAuditParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   } catch (err) {
-    // EEXIST is the existing-dir case — we no longer chmod it. Any
-    // other error propagates so callers can report (e.g., EACCES,
-    // ENOSPC).
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
+  // Defensive chmod for the EEXIST case — design §1.4 invariant.
+  // Gated on a non-symlink lstat to preserve confused-deputy safety
+  // (never chmod a symlinked dir; its target may be shared state).
+  try {
+    const st = fs.lstatSync(dir);
+    if (!st.isSymbolicLink()) {
+      fs.chmodSync(dir, 0o700);
+    }
+  } catch {
+    // Stat or chmod failed — the subsequent appendRegularFile call
+    // will surface the underlying error if it matters.
   }
 }
 
@@ -522,8 +552,8 @@ function appendConfigAuditRecordSyncImpl(
   const encoded = encodeRecord(params.record);
   const bytes = Buffer.byteLength(encoded, "utf8");
 
-  ensureParentDir(params.filePath);
-  rotateAuditLogIfNeeded(params.filePath, bytes, rotateAtBytes, keepRotated);
+  ensureConfigAuditParentDir(params.filePath);
+  rotateConfigAuditLogIfNeeded(params.filePath, bytes, rotateAtBytes, keepRotated);
 
   const appendResult = appendRegularFile({
     path: params.filePath,
