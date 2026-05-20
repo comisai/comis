@@ -206,6 +206,21 @@ export interface AgentEvents {
       shortTtl: number;
       longTtl: number;
     };
+    /**
+     * Cost-correction breadcrumb (260520-wcf). When the pi-ai SDK
+     * underprices 1h cache writes at the 5m rate, the bridge surfaces
+     * the correction here as a forensics aid for operators querying
+     * token_usage events. `delta` is signed (`corrected - sdkRaw`),
+     * `sdkRaw` is the SDK-reported total before correction, `corrected`
+     * is the post-correction total ultimately recorded by the
+     * costTracker. The field is OMITTED when delta === 0 — the absence
+     * is the "no correction was needed" signal, not a zero delta.
+     */
+    costCorrection?: {
+      delta: number;
+      sdkRaw: number;
+      corrected: number;
+    };
   };
 
   /** Cache break detected: prompt cache invalidation with attribution.

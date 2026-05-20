@@ -71,6 +71,33 @@ import {
 } from "./thinking-block-hash-invariant.js";
 
 // ---------------------------------------------------------------------------
+// Module-level one-shot latches
+// ---------------------------------------------------------------------------
+
+/**
+ * One-shot latch (260520-wcf) gating the SDK-breakdown notice. The notice
+ * states that pi-ai does NOT expose `usage.cacheCreation.{shortTtl,longTtl}`
+ * and that Comis estimates the per-TTL split via marker counting. Prior to
+ * 260520-wcf the bridge logged this fact at DEBUG on every turn that wrote
+ * cache tokens, stacking thousands of identical lines under normal load.
+ *
+ * The notice now fires exactly once per daemon process (at the first
+ * `createPiEventBridge` construction) at INFO. The flag is module-scoped
+ * so multiple bridge constructions across the daemon's lifetime share it.
+ */
+let _sdkBreakdownNoticeEmitted = false;
+
+/**
+ * Test-only hook to reset the one-shot SDK-breakdown notice flag. Used
+ * by pi-event-bridge.test.ts to assert "fires exactly once" across
+ * multiple bridge constructions within a single test. NOT a public API —
+ * production code MUST NOT call this.
+ */
+export function __resetSdkBreakdownNoticeForTest(): void {
+  _sdkBreakdownNoticeEmitted = false;
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -257,6 +284,22 @@ export interface PiEventBridgeResult {
 export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResult {
   // Internal accumulation state (managed by bridge-metrics module)
   const m = createBridgeMetrics();
+
+  // 260520-wcf one-shot SDK-breakdown notice. Fires exactly once per
+  // daemon process — the latch is module-scoped so multiple bridge
+  // constructions (per-execution / test harnesses) share it. The notice
+  // is INFO because it's a one-time operator-relevant fact, not a
+  // recurring DEBUG signal.
+  if (!_sdkBreakdownNoticeEmitted) {
+    _sdkBreakdownNoticeEmitted = true;
+    deps.logger.info(
+      {
+        errorKind: "dependency" as const,
+        hint: "pi-ai SDK does not expose usage.cacheCreation per-TTL breakdown; Comis estimates the 5m/1h split via marker counting. Estimate accuracy may drift if cache-write composition skews from the marker-count assumption.",
+      },
+      "pi-ai SDK does not expose cacheCreation per-TTL breakdown; Comis estimates via marker counting",
+    );
+  }
 
   const listener = (event: AgentSessionEvent): void => {
     try {
@@ -911,19 +954,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               ? { shortTtl: (rawUsage.cacheCreation as any).shortTtl ?? 0, longTtl: (rawUsage.cacheCreation as any).longTtl ?? 0 }
               : undefined;
 
-            if (cacheWriteTokens > 0) {
-              deps.logger.debug({
-                cacheWriteTokens,
-                // Whether the pi-ai SDK exposes the per-TTL cache_creation breakdown
-                // (usage.cacheCreation.shortTtl/longTtl). Expected: false -- pi-ai does
-                // not surface this field. Per-TTL split is only visible on the Anthropic
-                // dashboard. This does NOT mean cache writes are failing; cacheWriteTokens
-                // above confirms writes are happening normally.
-                sdkTtlBreakdownAvailable: cacheCreation !== undefined,
-                shortTtl: cacheCreation?.shortTtl,
-                longTtl: cacheCreation?.longTtl,
-              }, "Cache write TTL breakdown (pi-ai SDK does not expose per-TTL split; see Anthropic dashboard)");
-            }
+            // 260520-wcf: per-call DEBUG breakdown log removed. The fact
+            // that pi-ai does not expose the per-TTL split is now stated
+            // once at construction time via the module-level
+            // _sdkBreakdownNoticeEmitted latch above. cacheCreation
+            // (when present) still flows downstream into the
+            // observability:token_usage event payload below.
 
             // Record usage in budget guard (token-based, not cost-based -- stays before correction)
             deps.budgetGuard.recordUsage(usage.totalTokens);
@@ -961,16 +997,13 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Accumulate corrected cost
             m.totalCost += cost.total;
 
-            if (costCorrectionDelta > 0) {
-              deps.logger.debug({
-                costCorrectionDelta,
-                sdkCostTotal: sdkCost.total,
-                correctedCostTotal: cost.total,
-                cacheWrite1hTokens: deps.ttlSplit!.cacheWrite1hTokens,
-                rate5m: pricing.cacheWrite,
-                rate1h: pricing.cacheWrite1h,
-              }, "Cost correction applied: SDK underpriced 1h cache writes at 5m rate");
-            }
+            // 260520-wcf: per-call DEBUG cost-correction log removed. The
+            // costCorrection breadcrumb now rides on the
+            // observability:token_usage event payload below — operators
+            // already query that event for cost forensics, so moving the
+            // signal there preserves observability without inflating
+            // DEBUG volume. The field is included only when delta !== 0;
+            // a turn with no correction emits nothing extra.
 
             // Record in cost tracker (uses corrected cost)
             deps.costTracker.record(
@@ -1048,6 +1081,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             );
 
             // Emit observability event
+            // 260520-wcf: include costCorrection breadcrumb when the SDK
+            // total was bumped to cover 1h-rate underpricing. Omitted
+            // when delta === 0 — operators can filter on
+            // `costCorrection != null` to surface only corrected turns.
+            const costCorrectionField =
+              costCorrectionDelta !== 0
+                ? {
+                    costCorrection: {
+                      delta: cost.total - sdkCost.total, // = costCorrectionDelta when > 0
+                      sdkRaw: sdkCost.total,
+                      corrected: cost.total,
+                    },
+                  }
+                : {};
             deps.eventBus.emit("observability:token_usage", {
               timestamp: systemNowMs(),
               traceId: deps.executionId,
@@ -1076,6 +1123,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               cacheEligible: getCacheProviderInfo(deps.provider, deps.getCurrentModel?.() ?? deps.model).cacheEligible,
               responseId,
               cacheCreation: effectiveCacheCreation,
+              ...costCorrectionField,
             });
 
             // Safety: check budget after recording (delegated to bridge-safety-controls)

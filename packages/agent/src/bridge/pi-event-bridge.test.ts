@@ -2434,6 +2434,125 @@ describe("createPiEventBridge", () => {
       expect(ttlSplit.cacheWrite1hTokens).toBe(norm1h);
       expect(ttlSplit.cacheWrite5mTokens).toBe(norm5m);
     });
+
+    // ---------------------------------------------------------------------
+    // 260520-wcf: cost-correction surfacing migrates from per-call DEBUG
+    // logs to the observability:token_usage event payload, and the
+    // per-call "Cache write TTL breakdown" DEBUG line is replaced by a
+    // one-shot INFO notice fired once per daemon process.
+    // ---------------------------------------------------------------------
+    describe("260520-wcf cost-correction event payload + one-shot SDK notice", () => {
+      it("does not emit the per-call cost-correction DEBUG log when delta is non-zero anymore", async () => {
+        const ttlSplit = { cacheWrite5mTokens: 858, cacheWrite1hTokens: 23400 };
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+          ttlSplit,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        listener(makeCacheTurnEnd({ cacheRead: 50000, cacheWrite: 24258 }) as any);
+
+        const debugCalls = (deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls;
+        const hasCorrectionLog = debugCalls.some((args) =>
+          typeof args[1] === "string" &&
+          /Cost correction applied/i.test(args[1] as string),
+        );
+        expect(hasCorrectionLog).toBe(false);
+      });
+
+      it("does not emit the per-call Cache write TTL breakdown DEBUG log anymore", async () => {
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        listener(makeCacheTurnEnd({ cacheRead: 50000, cacheWrite: 10000 }) as any);
+
+        const debugCalls = (deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls;
+        const hasBreakdownLog = debugCalls.some((args) =>
+          typeof args[1] === "string" &&
+          /Cache write TTL breakdown/i.test(args[1] as string),
+        );
+        expect(hasBreakdownLog).toBe(false);
+      });
+
+      it("emits costCorrection in the observability token_usage payload when the SDK total was bumped for 1h underpricing", async () => {
+        const ttlSplit = { cacheWrite5mTokens: 858, cacheWrite1hTokens: 23400 };
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+          ttlSplit,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        const event = makeCacheTurnEnd({ cacheRead: 50000, cacheWrite: 24258 });
+        listener(event as any);
+
+        const emitCall = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(emitCall).toBeDefined();
+
+        const expectedDelta = 23400 * (0.000006 - 0.00000375);
+        const sdkRaw = event.message.usage.cost.total;
+        expect(emitCall![1].costCorrection).toBeDefined();
+        expect(emitCall![1].costCorrection.delta).toBeCloseTo(expectedDelta, 8);
+        expect(emitCall![1].costCorrection.sdkRaw).toBeCloseTo(sdkRaw, 8);
+        expect(emitCall![1].costCorrection.corrected).toBeCloseTo(sdkRaw + expectedDelta, 8);
+      });
+
+      it("omits costCorrection from the observability token_usage payload when no correction is needed", async () => {
+        // ttlSplit absent so the bridge takes the SDK-passthrough path
+        // and costCorrectionDelta stays 0.
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        listener(makeCacheTurnEnd({ cacheRead: 5000, cacheWrite: 1000 }) as any);
+
+        const emitCall = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(emitCall).toBeDefined();
+        expect(emitCall![1]).not.toHaveProperty("costCorrection");
+      });
+
+      it("emits the SDK-breakdown INFO notice exactly once across multiple bridge constructions in the same process", async () => {
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+
+        const deps1 = createMockDeps({});
+        const deps2 = createMockDeps({});
+        createPiEventBridge(deps1);
+        createPiEventBridge(deps2);
+
+        const infoCalls1 = (deps1.logger.info as ReturnType<typeof vi.fn>).mock.calls
+          .filter((args) =>
+            typeof args[1] === "string" &&
+            /pi-ai SDK does not expose cacheCreation per-TTL breakdown/i.test(args[1] as string),
+          );
+        const infoCalls2 = (deps2.logger.info as ReturnType<typeof vi.fn>).mock.calls
+          .filter((args) =>
+            typeof args[1] === "string" &&
+            /pi-ai SDK does not expose cacheCreation per-TTL breakdown/i.test(args[1] as string),
+          );
+
+        const total = infoCalls1.length + infoCalls2.length;
+        expect(total).toBe(1);
+      });
+    });
   });
 
   // -------------------------------------------------------------------------
