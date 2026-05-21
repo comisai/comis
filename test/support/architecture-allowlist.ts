@@ -474,12 +474,6 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   },
   // ----- channels package (8 files; telegram-adapter.ts split) -----
   {
-    file: "packages/channels/src/discord/discord-resolver.ts",
-    lineRanges: [[62, 62]],
-    reason: "@allow-throw boundary: media-resolver throw inside fromPromise(); converted to Result.err by ssrfFetcher boundary adapter.",
-    removedIn: "permanent",
-  },
-  {
     file: "packages/channels/src/imessage/imessage-resolver.ts",
     lineRanges: [[59, 59], [75, 75], [83, 83]],
     reason: "@allow-throw boundary: media-resolver throws inside fromPromise(); converted to Result.err.",
@@ -495,12 +489,6 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     file: "packages/channels/src/signal/signal-client.ts",
     lineRanges: [[95, 95], [261, 261]],
     reason: "@allow-throw boundary: signal-client SDK boundary throws; caught by adapter try/catch chain converting to inbound-pipeline errors.",
-    removedIn: "permanent",
-  },
-  {
-    file: "packages/channels/src/signal/signal-resolver.ts",
-    lineRanges: [[62, 62]],
-    reason: "@allow-throw boundary: media-resolver throws inside fromPromise(); converted to Result.err.",
     removedIn: "permanent",
   },
   {

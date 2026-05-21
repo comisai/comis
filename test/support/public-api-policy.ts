@@ -178,9 +178,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DebounceBufferDeps",
       "createFollowupTrigger",
       "FollowupTriggerDeps",
-      "createPriorityScheduler",
-      "PrioritySchedulerDeps",
-      "LaneStats",
       "loadWorkspaceBootstrapFiles",
       "truncateFileContent",
       "filterBootstrapFilesForSubAgent",
@@ -891,8 +888,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OverflowConfigSchema",
       "DebounceBufferConfigSchema",
       "FollowupConfigSchema",
-      "PriorityLaneConfigSchema",
-      "LaneAssignmentConfigSchema",
       "StreamingConfigSchema",
       "PerChannelStreamingConfigSchema",
       "TypingModeSchema",
@@ -1626,7 +1621,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SILENT_PREFIX",
       "VisibleDeliveryKind",
       "VisibleDeliveryRecord",
-      "parseSanitizedMcpToolName",
     ])],
     // @comis/skills: baseline orphans tracked here.
     ["@comis/skills", new Set<string>([
