@@ -526,7 +526,10 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).not.toThrow();
   });
 
-  it("env.set: response accepts both storage variants", () => {
+  it("env.set: response accepts the encrypted storage variant", () => {
+    // Phase 52 Plan 04 (BC-REM-12 sub-C) narrowed storage from
+    // z.enum(["encrypted", "envfile"]) to z.literal("encrypted") —
+    // the .env-file fallback is gone (see env-handlers.ts).
     expect(() =>
       EnvSetContract.response.parse({
         set: true,
@@ -535,6 +538,9 @@ describe("config + env + gateway-infrastructure contracts", () => {
         restarting: true,
       }),
     ).not.toThrow();
+  });
+
+  it("env.set: response rejects the legacy envfile storage variant (BC-REM-12 sub-C)", () => {
     expect(() =>
       EnvSetContract.response.parse({
         set: true,
@@ -542,7 +548,7 @@ describe("config + env + gateway-infrastructure contracts", () => {
         storage: "envfile",
         restarting: true,
       }),
-    ).not.toThrow();
+    ).toThrow();
   });
 
   it("env.set: response rejects an unknown storage value", () => {
