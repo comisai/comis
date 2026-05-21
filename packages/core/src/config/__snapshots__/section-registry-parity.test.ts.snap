@@ -6262,6 +6262,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sendP
 exports[`section-registry parity > field-metadata view > getFieldMetadata("streaming") 1`] = `
 "[
   {
+    "default": 100,
+    "immutable": false,
+    "path": "streaming.defaultChunkMinChars",
+    "type": "integer"
+  },
+  {
     "default": "paragraph",
     "immutable": false,
     "path": "streaming.defaultChunkMode",
@@ -6364,6 +6370,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("strea
     "type": "string"
   },
   {
+    "default": 3,
+    "immutable": false,
+    "path": "streaming.defaultTypingCircuitBreakerThreshold",
+    "type": "integer"
+  },
+  {
     "default": "thinking",
     "immutable": false,
     "path": "streaming.defaultTypingMode",
@@ -6373,6 +6385,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("strea
     "default": 6000,
     "immutable": false,
     "path": "streaming.defaultTypingRefreshMs",
+    "type": "integer"
+  },
+  {
+    "default": 60000,
+    "immutable": false,
+    "path": "streaming.defaultTypingTtlMs",
     "type": "integer"
   },
   {
@@ -12280,6 +12298,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "defaultChunkMinChars": 100,
       "defaultChunkMode": "paragraph",
       "defaultCoalescer": {
         "adaptiveIdle": false,
@@ -12297,8 +12316,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       },
       "defaultReplyMode": "first",
       "defaultTableMode": "code",
+      "defaultTypingCircuitBreakerThreshold": 3,
       "defaultTypingMode": "thinking",
       "defaultTypingRefreshMs": 6000,
+      "defaultTypingTtlMs": 60000,
       "defaultUseMarkdownIR": true,
       "enabled": true,
       "perChannel": {}
@@ -12306,6 +12327,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "streaming",
     "type": "object"
+  },
+  {
+    "default": 100,
+    "immutable": false,
+    "path": "streaming.defaultChunkMinChars",
+    "type": "integer"
   },
   {
     "default": "paragraph",
@@ -12410,6 +12437,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
+    "default": 3,
+    "immutable": false,
+    "path": "streaming.defaultTypingCircuitBreakerThreshold",
+    "type": "integer"
+  },
+  {
     "default": "thinking",
     "immutable": false,
     "path": "streaming.defaultTypingMode",
@@ -12419,6 +12452,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": 6000,
     "immutable": false,
     "path": "streaming.defaultTypingRefreshMs",
+    "type": "integer"
+  },
+  {
+    "default": 60000,
+    "immutable": false,
+    "path": "streaming.defaultTypingTtlMs",
     "type": "integer"
   },
   {
@@ -31136,6 +31175,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "streaming": {
       "additionalProperties": false,
       "default": {
+        "defaultChunkMinChars": 100,
         "defaultChunkMode": "paragraph",
         "defaultCoalescer": {
           "adaptiveIdle": false,
@@ -31153,13 +31193,21 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         },
         "defaultReplyMode": "first",
         "defaultTableMode": "code",
+        "defaultTypingCircuitBreakerThreshold": 3,
         "defaultTypingMode": "thinking",
         "defaultTypingRefreshMs": 6000,
+        "defaultTypingTtlMs": 60000,
         "defaultUseMarkdownIR": true,
         "enabled": true,
         "perChannel": {}
       },
       "properties": {
+        "defaultChunkMinChars": {
+          "default": 100,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "defaultChunkMode": {
           "default": "paragraph",
           "enum": [
@@ -31292,6 +31340,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "string"
         },
+        "defaultTypingCircuitBreakerThreshold": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
         "defaultTypingMode": {
           "default": "thinking",
           "enum": [
@@ -31304,6 +31358,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         },
         "defaultTypingRefreshMs": {
           "default": 6000,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "defaultTypingTtlMs": {
+          "default": 60000,
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
@@ -31554,10 +31614,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "required": [
         "enabled",
         "defaultChunkMode",
+        "defaultChunkMinChars",
         "defaultDeliveryTiming",
         "defaultCoalescer",
         "defaultTypingMode",
         "defaultTypingRefreshMs",
+        "defaultTypingCircuitBreakerThreshold",
+        "defaultTypingTtlMs",
         "defaultTableMode",
         "defaultUseMarkdownIR",
         "defaultReplyMode",

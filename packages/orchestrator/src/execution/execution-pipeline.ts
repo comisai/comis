@@ -16,6 +16,7 @@
 import { randomUUID } from "node:crypto";
 import type { ChannelPort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryQueuePort, DeliveryService } from "@comis/core";
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
+import { PerChannelStreamingConfigSchema } from "@comis/core";
 import type { SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
 import type { SendMessageOptions } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
@@ -143,38 +144,40 @@ export function resolveStreamingConfig(
   channelType: string,
   streamingConfig?: StreamingConfig,
 ): PerChannelStreamingConfig {
-  const global = streamingConfig;
-  if (!global) {
-    return {
-      enabled: true,
-      chunkMode: "paragraph",
-      chunkMinChars: 100,
-      deliveryTiming: { mode: "natural", minMs: 800, maxMs: 2500, jitterMs: 200, firstBlockDelayMs: 0 },
-      coalescer: { minChars: 0, maxChars: 500, idleMs: 1500, codeBlockPolicy: "standalone", adaptiveIdle: false },
-      typingMode: "thinking",
-      typingRefreshMs: 6000,
-      typingCircuitBreakerThreshold: 3,
-      typingTtlMs: 60000,
-      useMarkdownIR: true,
-      tableMode: "code",
-      replyMode: "first",
-    };
+  // No global streaming config provided — return the per-channel schema defaults.
+  // (Schema is the SSOT per AGENTS.md §6.4; no inline literals.)
+  //
+  // Documented deviation (CRIT-05): ROADMAP Phase 50 Success Criterion #3 and
+  // REQUIREMENTS.md both phrase the fix as "routes through
+  // `StreamingConfigSchema.parse({})` and `PerChannelStreamingConfigSchema.parse({})`".
+  // The `StreamingConfigSchema.parse({})` lane is satisfied at AppConfig parse
+  // time (operator YAML → AppConfig in packages/core/src/config); inside this
+  // resolver we only use `PerChannelStreamingConfigSchema.parse({})` because
+  // the resolver's return type is `PerChannelStreamingConfig`, not
+  // `StreamingConfig` (see RESEARCH Anti-Pattern §3).
+  if (!streamingConfig) {
+    return PerChannelStreamingConfigSchema.parse({});
   }
-  const perChannel = global.perChannel[channelType];
+
+  // Per-channel override wins over globals.
+  const perChannel = streamingConfig.perChannel[channelType];
   if (perChannel) return perChannel;
+
+  // No per-channel override — merge schema defaults with global default* fields.
   return {
-    enabled: global.enabled,
-    chunkMode: global.defaultChunkMode,
-    chunkMinChars: 100,
-    deliveryTiming: global.defaultDeliveryTiming,
-    coalescer: global.defaultCoalescer,
-    typingMode: global.defaultTypingMode,
-    typingRefreshMs: global.defaultTypingRefreshMs,
-    typingCircuitBreakerThreshold: 3,
-    typingTtlMs: 60000,
-    useMarkdownIR: global.defaultUseMarkdownIR ?? true,
-    tableMode: global.defaultTableMode ?? "code",
-    replyMode: global.defaultReplyMode ?? "first",
+    ...PerChannelStreamingConfigSchema.parse({}),
+    enabled: streamingConfig.enabled,
+    chunkMode: streamingConfig.defaultChunkMode,
+    chunkMinChars: streamingConfig.defaultChunkMinChars,                                  // CRIT-05
+    deliveryTiming: streamingConfig.defaultDeliveryTiming,
+    coalescer: streamingConfig.defaultCoalescer,
+    typingMode: streamingConfig.defaultTypingMode,
+    typingRefreshMs: streamingConfig.defaultTypingRefreshMs,
+    typingCircuitBreakerThreshold: streamingConfig.defaultTypingCircuitBreakerThreshold,  // CRIT-05
+    typingTtlMs: streamingConfig.defaultTypingTtlMs,                                      // CRIT-05
+    useMarkdownIR: streamingConfig.defaultUseMarkdownIR,
+    tableMode: streamingConfig.defaultTableMode,
+    replyMode: streamingConfig.defaultReplyMode,
   };
 }
 

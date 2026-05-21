@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChannelPort, NormalizedMessage, SessionKey, DeliveryService } from "@comis/core";
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
+import { StreamingConfigSchema, PerChannelStreamingConfigSchema } from "@comis/core";
 import type { AgentExecutor } from "@comis/agent";
 // Queue types live in orchestrator. Relative paths used because orchestrator
 // cannot import its own published name.
@@ -265,10 +266,13 @@ describe("resolveStreamingConfig", () => {
     const streamingConfig: StreamingConfig = {
       enabled: false,
       defaultChunkMode: "newline",
+      defaultChunkMinChars: 100,
       defaultDeliveryTiming: { mode: "custom", minMs: 500, maxMs: 1500, jitterMs: 200, firstBlockDelayMs: 0 },
       defaultCoalescer: { minChars: 0, maxChars: 500, idleMs: 1500, codeBlockPolicy: "standalone", adaptiveIdle: false },
       defaultTypingMode: "message",
       defaultTypingRefreshMs: 4000,
+      defaultTypingCircuitBreakerThreshold: 3,
+      defaultTypingTtlMs: 60000,
       defaultUseMarkdownIR: true,
       defaultTableMode: "split",
       defaultReplyMode: "first",
@@ -288,6 +292,92 @@ describe("resolveStreamingConfig", () => {
       useMarkdownIR: true,
       tableMode: "split",
       replyMode: "first",
+    });
+  });
+});
+
+describe("resolveStreamingConfig + StreamingConfigSchema defaults (CRIT-05)", () => {
+  describe("schema-level defaults (Pitfall 5: schema invariant)", () => {
+    it("StreamingConfigSchema.parse({}) returns defaultChunkMinChars === 100", () => {
+      const config = StreamingConfigSchema.parse({});
+      expect(config.defaultChunkMinChars).toBe(100);
+    });
+
+    it("StreamingConfigSchema.parse({}) returns defaultTypingCircuitBreakerThreshold === 3", () => {
+      const config = StreamingConfigSchema.parse({});
+      expect(config.defaultTypingCircuitBreakerThreshold).toBe(3);
+    });
+
+    it("StreamingConfigSchema.parse({}) returns defaultTypingTtlMs === 60000", () => {
+      const config = StreamingConfigSchema.parse({});
+      expect(config.defaultTypingTtlMs).toBe(60000);
+    });
+  });
+
+  describe("default branch — no global streaming config provided", () => {
+    it("resolveStreamingConfig('telegram', undefined).chunkMinChars === 100", () => {
+      const resolved = resolveStreamingConfig("telegram", undefined);
+      expect(resolved.chunkMinChars).toBe(100);
+    });
+
+    it("resolveStreamingConfig('telegram', undefined).typingCircuitBreakerThreshold === 3", () => {
+      const resolved = resolveStreamingConfig("telegram", undefined);
+      expect(resolved.typingCircuitBreakerThreshold).toBe(3);
+    });
+
+    it("resolveStreamingConfig('telegram', undefined).typingTtlMs === 60000", () => {
+      const resolved = resolveStreamingConfig("telegram", undefined);
+      expect(resolved.typingTtlMs).toBe(60000);
+    });
+  });
+
+  describe("global branch — YAML defaultChunkMinChars: 50 propagates through resolver (Pitfall 5: runtime invariant)", () => {
+    it("defaultChunkMinChars: 50 propagates to chunkMinChars on resolved per-channel", () => {
+      const config = StreamingConfigSchema.parse({
+        defaultChunkMinChars: 50,
+      });
+      const resolved = resolveStreamingConfig("telegram", config);
+      expect(resolved.chunkMinChars).toBe(50);
+    });
+
+    it("defaultTypingCircuitBreakerThreshold: 5 propagates", () => {
+      const config = StreamingConfigSchema.parse({
+        defaultTypingCircuitBreakerThreshold: 5,
+      });
+      const resolved = resolveStreamingConfig("telegram", config);
+      expect(resolved.typingCircuitBreakerThreshold).toBe(5);
+    });
+
+    it("defaultTypingTtlMs: 90000 propagates", () => {
+      const config = StreamingConfigSchema.parse({
+        defaultTypingTtlMs: 90000,
+      });
+      const resolved = resolveStreamingConfig("telegram", config);
+      expect(resolved.typingTtlMs).toBe(90000);
+    });
+  });
+
+  describe("per-channel override branch — regression coverage", () => {
+    it("per-channel override wins over global defaults for chunkMinChars", () => {
+      const config = StreamingConfigSchema.parse({
+        defaultChunkMinChars: 50,
+        perChannel: {
+          telegram: PerChannelStreamingConfigSchema.parse({ chunkMinChars: 25 }),
+        },
+      });
+      const resolved = resolveStreamingConfig("telegram", config);
+      expect(resolved.chunkMinChars).toBe(25);
+    });
+
+    it("per-channel override wins over global defaults for typingCircuitBreakerThreshold", () => {
+      const config = StreamingConfigSchema.parse({
+        defaultTypingCircuitBreakerThreshold: 5,
+        perChannel: {
+          telegram: PerChannelStreamingConfigSchema.parse({ typingCircuitBreakerThreshold: 10 }),
+        },
+      });
+      const resolved = resolveStreamingConfig("telegram", config);
+      expect(resolved.typingCircuitBreakerThreshold).toBe(10);
     });
   });
 });
