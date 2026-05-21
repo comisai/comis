@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -126,6 +126,10 @@ export interface ChannelsDeps {
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
   embeddingQueue?: { enqueue(id: string, content: string): void };
+  /** Optional callback for suspicious-content detection (CRIT-01). Forwarded from the
+   *  daemon's AgentsHandle.onSuspiciousContent into buildMediaPipeline so media
+   *  handlers fire the callback when wrapExternalContent detects injection patterns. */
+  onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /** Queue configuration for per-session serialization. When enabled, creates a CommandQueue for the ChannelManager. */
   queueConfig?: QueueConfig;
   /** Delivery queue for crash-safe persistence */
@@ -239,6 +243,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     memoryAdapter: deps.memoryAdapter,
     tenantId: deps.tenantId,
     embeddingQueue: deps.embeddingQueue,
+    onSuspiciousContent: deps.onSuspiciousContent,
   });
 
   // Register cron-delivery event listeners (scheduler:job_result + scheduler:job_suspended).

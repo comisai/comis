@@ -10,6 +10,7 @@
  */
 
 import type { Attachment, ImageAnalysisPort } from "@comis/core";
+import { wrapExternalContent, type WrapExternalContentOptions } from "@comis/core";
 import type { Result } from "@comis/shared";
 import type { MediaProcessorLogger } from "./media-preprocessor.js";
 import { resolveMediaAttachment } from "./media-handler-factory.js";
@@ -21,6 +22,8 @@ export interface ImageHandlerDeps {
   readonly visionAvailable?: boolean;
   readonly sanitizeImage?: (buffer: Buffer, mimeType: string) => Promise<Result<{ buffer: Buffer; mimeType: string; width: number; height: number; originalBytes: number; sanitizedBytes: number }, string>>;
   readonly logger: MediaProcessorLogger;
+  /** Optional callback for suspicious content detection. */
+  readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
 }
 
 /** Result produced by image processing. */
@@ -99,8 +102,12 @@ export async function processImageAttachment(
     if (result.ok) {
       deps.logger.info({ url: att.url }, "Image attachment analyzed");
       deps.logger.debug?.({ url: att.url, mimeType: att.mimeType, reason: "vision" }, "Image attachment analyzed");
+      const wrapped = wrapExternalContent(
+        `[Image analysis]: ${result.value}`,
+        { source: "vision", onSuspiciousContent: deps.onSuspiciousContent },
+      );
       return {
-        textPrefix: `[Image analysis]: ${result.value}`,
+        textPrefix: wrapped,
         analysis: { attachmentUrl: att.url, description: result.value },
       };
     } else {

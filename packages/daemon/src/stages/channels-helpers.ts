@@ -63,6 +63,7 @@ export function buildChannelManagerDeps(deps: {
     activeRunRegistry, sessionResolver, rpcCall, extractFromConversation,
     continuationTracker, approvalGate,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
+    onSuspiciousContent,
   } = agents;
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
@@ -78,6 +79,7 @@ export function buildChannelManagerDeps(deps: {
     workspaceDirs, defaultWorkspaceDir, memoryAdapter,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
+    onSuspiciousContent,
     activeRunRegistry, sessionResolver, rpcCall,
     onTaskExtraction: extractFromConversation,
     onMessageReceived: (msg, channelType) => {

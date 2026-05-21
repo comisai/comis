@@ -9,6 +9,7 @@
  */
 
 import type { Attachment } from "@comis/core";
+import { wrapExternalContent, type WrapExternalContentOptions } from "@comis/core";
 import type { Result } from "@comis/shared";
 import type { MediaProcessorLogger } from "./media-preprocessor.js";
 import { resolveMediaAttachment } from "./media-handler-factory.js";
@@ -23,6 +24,8 @@ export interface VideoHandlerDeps {
   readonly resolveAttachment: (attachment: Attachment) => Promise<Buffer | null>;
   readonly maxVideoDescriptionChars?: number;
   readonly logger: MediaProcessorLogger;
+  /** Optional callback for suspicious content detection. */
+  readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
 }
 
 /** Result produced by video processing. */
@@ -65,8 +68,12 @@ export async function processVideoAttachment(
         : result.value.text;
       deps.logger.info({ url: att.url, provider: result.value.provider }, "Video attachment described");
       deps.logger.debug?.({ url: att.url, mimeType: att.mimeType, reason: "video-described", provider: result.value.provider, model: result.value.model }, "Video attachment described");
+      const wrapped = wrapExternalContent(
+        `[Video description]: ${description}`,
+        { source: "video_description", onSuspiciousContent: deps.onSuspiciousContent },
+      );
       return {
-        textPrefix: `[Video description]: ${description}`,
+        textPrefix: wrapped,
         videoDescription: { attachmentUrl: att.url, description },
       };
     } else {
