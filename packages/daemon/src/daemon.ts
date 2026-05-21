@@ -748,7 +748,7 @@ async function stageChannels(input: {
   const inboundMessageIdResolverRef: { ref?: InboundMessageIdResolver } = {};
 
   // 6.6.8. Channels (lifted from main()'s setupChannels; deps via helper)
-  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, channelCapabilities, commandQueue, deliveryService } = await setupChannels(
+  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, channelCapabilities, commandQueue, deliveryService, approvalNotifier } = await setupChannels(
     buildChannelManagerDeps({ agents: handle, toolAssemblerRef, inboundMessageIdResolverRef, sessionTrackerRef }),
   );
   channelPluginsRef.ref = channelPlugins;
@@ -758,7 +758,12 @@ async function stageChannels(input: {
     return createInboundMessageIdResolver({ metaKeyByChannel });
   })();
   inboundMessageIdResolverRef.ref = inboundMessageIdResolver;
-  await wirePostChannelsLifecycle({
+  // CRIT-03: wirePostChannelsLifecycle now returns outputRetentionHandle so
+  // the composition root can route .shutdown() through ShutdownDeps. The
+  // eventBus.on("system:shutdown", ...) subscribers previously here are
+  // deleted in channels-helpers.ts; shutdownDeliveryQueue + shutdownMirror
+  // remain reachable via handle (they were always in AgentsHandle).
+  const { outputRetentionHandle } = await wirePostChannelsLifecycle({
     adaptersByType,
     channelAdaptersRef: handle.channelAdaptersRef,
     drainAndStartDeliveryPrune: handle.drainAndStartDeliveryPrune,
@@ -785,13 +790,18 @@ async function stageChannels(input: {
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
     maxBackgroundHops: bgConfigForRunner.maxBackgroundHops, logger: daemonLogger,
   });
-  container.eventBus.on("system:shutdown", () => { void bgCompletionRunnerContext.runner.shutdown(); });
+  // CRIT-03: eventBus.on("system:shutdown", () =>
+  //   bgCompletionRunnerContext.runner.shutdown()) deleted — runner.shutdown
+  // is threaded directly into setupShutdown via
+  // ShutdownDeps.bgCompletionRunnerShutdown.
   // 6.6.8.0.3. Recover background tasks NOW (after the runner is subscribed)
   backgroundTaskManager.recoverOnStartup();
 
   // Channel health monitor (start + stop produced by helper).
   const { monitor: channelHealthMonitor, stop: stopChannelHealthMonitor } = setupChannelHealthMonitor({ adaptersByType, daemonLogger, container });
-  container.eventBus.on("system:shutdown", () => { stopChannelHealthMonitor?.(); });
+  // CRIT-03: eventBus.on("system:shutdown", () => stopChannelHealthMonitor?.())
+  // deleted — stopChannelHealthMonitor is threaded directly into setupShutdown
+  // via ShutdownDeps.stopChannelHealthMonitor.
   setupChannelHealthLogging({ eventBus: container.eventBus, logger: daemonLogger });
 
   // 6.6.8.4.1. Sandbox + image generation providers (helper)
@@ -801,7 +811,10 @@ async function stageChannels(input: {
 
   // 6.6.8.5. Tools + message preprocessing
   const getCapabilityPortForAgent = createCapabilityPortResolver(toolCapabilityPorts, defaultAgentId);
-  const { assembleToolsForAgent, preprocessMessageText } = setupTools({
+  // CRIT-03: shutdownBackgroundProcesses returned from setupTools — the
+  // previous eventBus.on("system:shutdown", ...) inline closure is now a
+  // hoisted function threaded through ShutdownDeps.
+  const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir,
     dataDir: container.config.dataDir || ".",
     secretManager: container.secretManager, platformSecretNames: container.platformSecretNames,
@@ -814,8 +827,11 @@ async function stageChannels(input: {
   toolAssemblerRef.ref = assembleToolsForAgent;
 
   // 6.6.9. Cross-session sender + sub-agent runner
+  // CRIT-03: proxyTypingCleanup returned from setupCrossSession — replaces
+  // the eventBus.on("system:shutdown", ...) subscriber inside
+  // registerProxyTypingListeners that silently no-op'd in production.
   const gatewaySendRef: { ref?: (channelId: string, text: string) => boolean } = {};
-  const { crossSessionSender, subAgentRunner, sendToChannel, announceToParent, deadLetterQueue, announcementBatcher } = setupCrossSession({
+  const { crossSessionSender, subAgentRunner, sendToChannel, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
     activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
@@ -872,6 +888,9 @@ async function stageChannels(input: {
     heartbeatRunner, duplicateDetector, perAgentRunner, wakeCoalescer,
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
     suspendedAgents, modelCatalog, channelConfig, promptTimeoutTimestamps,
+    // CRIT-03: teardown handles surfaced for ShutdownDeps wiring.
+    shutdownBackgroundProcesses, proxyTypingCleanup, approvalNotifier,
+    outputRetentionHandle,
   };
 }
 
@@ -1087,6 +1106,10 @@ async function stageShutdown(input: {
     sessionStoreBridge, shutdownRef, gatewayHandle,
     activeExecutions, getActiveConnectionCount,
     trajectoryRegistry,
+    // CRIT-03: 9 new teardown handles surfaced through ChannelsHandle.
+    shutdownBackgroundProcesses, proxyTypingCleanup, approvalNotifier,
+    outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
+    bgCompletionRunnerContext, stopChannelHealthMonitor, mcpClientManager,
   } = gateway;
   void _execs; void _suspended;
   // Override-derived locals -- only consumed by setupShutdown below.
@@ -1114,6 +1137,18 @@ async function stageShutdown(input: {
     obsPersistence,  // drain write buffers before db.close
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
+    // CRIT-03: 9 new teardown fields (8 production subscribers + setup-tools
+    // split into background-processes + mcp-client-manager per RESEARCH Open
+    // Question #2 RESOLVED). Each was previously a silent no-op subscriber.
+    shutdownBackgroundProcesses,
+    mcpClientManagerDisconnectAll: () => mcpClientManager.disconnectAll(),
+    bgCompletionRunnerShutdown: () => bgCompletionRunnerContext.runner.shutdown(),
+    proxyTypingCleanup,
+    approvalNotifierStop: approvalNotifier ? () => approvalNotifier.stop() : undefined,
+    shutdownDeliveryQueue,
+    shutdownDeliveryMirror: shutdownMirror,
+    outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,
+    stopChannelHealthMonitor: stopChannelHealthMonitor ?? undefined,
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:

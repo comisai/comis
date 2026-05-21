@@ -249,27 +249,29 @@ export async function wirePostChannelsLifecycle(deps: {
   container: AgentsHandle["container"];
   defaultWorkspaceDir: string;
   outputRetentionConfig: AgentsHandle["container"]["config"]["outputRetention"];
-}): Promise<void> {
-  const { adaptersByType, channelAdaptersRef, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    startMirrorPrune, shutdownMirror, daemonLogger, container, defaultWorkspaceDir,
+}): Promise<{ outputRetentionHandle?: ReturnType<typeof setupOutputRetention> }> {
+  const { adaptersByType, channelAdaptersRef, drainAndStartDeliveryPrune,
+    startMirrorPrune, daemonLogger, container, defaultWorkspaceDir,
     outputRetentionConfig } = deps;
   for (const [type, adapter] of adaptersByType) channelAdaptersRef.set(type, adapter);
   await drainAndStartDeliveryPrune();
-  container.eventBus.on("system:shutdown", () => { shutdownDeliveryQueue(); });
+  // CRIT-03: eventBus.on("system:shutdown", ...) subscribers deleted —
+  // shutdownDeliveryQueue, shutdownMirror, and outputRetentionHandle.shutdown
+  // are surfaced through AgentsHandle / wirePostChannelsLifecycle return
+  // shape so the composition root invokes them directly via ShutdownDeps.
   startMirrorPrune();
-  container.eventBus.on("system:shutdown", () => { shutdownMirror(); });
   setupDeliveryQueueLogging({ eventBus: container.eventBus, logger: daemonLogger });
   if (defaultWorkspaceDir) {
     const outputRetentionHandle = setupOutputRetention({
       config: outputRetentionConfig, workspaceDir: defaultWorkspaceDir, logger: daemonLogger,
     });
-    container.eventBus.on("system:shutdown", () => { outputRetentionHandle.shutdown(); });
-  } else {
-    daemonLogger.debug(
-      { hint: "No defaultWorkspaceDir; output retention housekeeper skipped" },
-      "Output retention: skipped (no default workspace)",
-    );
+    return { outputRetentionHandle };
   }
+  daemonLogger.debug(
+    { hint: "No defaultWorkspaceDir; output retention housekeeper skipped" },
+    "Output retention: skipped (no default workspace)",
+  );
+  return {};
 }
 
 /**

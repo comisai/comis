@@ -550,10 +550,10 @@ export async function buildAndStartChannelManager(
     approvalNotifier.start();
     channelsLogger.debug("Approval notifier started");
 
-    // Clean up notifier on shutdown
-    container.eventBus.on("system:shutdown", () => {
-      approvalNotifier?.stop();
-    });
+    // CRIT-03: eventBus.on("system:shutdown", () => approvalNotifier?.stop())
+    // subscriber deleted. The notifier handle is already in the return shape;
+    // the composition root invokes its .stop() directly via
+    // ShutdownDeps.approvalNotifierStop.
   }
 
   return { channelManager, lifecycleReactors, approvalNotifier, commandQueue };
