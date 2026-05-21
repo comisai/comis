@@ -75,10 +75,7 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "skill:executed",
   "skill:rejected",
   "skill:registry_reset",
-  "skill:created",
-  "skill:updated",
   "skill:failed",
-  "skills:reloaded",
 
   // -------------------------------------------------------------------
   // Security / safety — fed by separate alerting paths; trajectory

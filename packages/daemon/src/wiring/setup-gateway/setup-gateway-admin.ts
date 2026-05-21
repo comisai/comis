@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { formatSessionKey, safePath, systemDateFrom } from "@comis/core";
 import type { AppConfig, AppContainer, SessionKey } from "@comis/core";
-import type { RpcCall } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import { createGreetingGenerator, type GreetingGenerator, type CostTracker } from "@comis/agent";
 import { createCommandHandler, type CommandHandlerDeps } from "@comis/orchestrator";
 import { suppressError } from "@comis/shared";

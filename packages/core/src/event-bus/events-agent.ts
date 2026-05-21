@@ -39,29 +39,6 @@ export interface AgentEvents {
     timestamp: number;
   };
 
-  /** Skills reloaded after file watcher detected changes */
-  "skills:reloaded": {
-    agentId: string;
-    skillCount: number;
-    timestamp: number;
-  };
-
-  /** Skill created via skills_manage create action */
-  "skill:created": {
-    skillName: string;
-    scope: "local" | "shared";
-    agentId: string;
-    timestamp: number;
-  };
-
-  /** Skill updated via skills_manage update action */
-  "skill:updated": {
-    skillName: string;
-    scope: "local" | "shared";
-    agentId: string;
-    timestamp: number;
-  };
-
   /** Skill operation failed at runtime — distinct from skill:rejected which is security scan */
   "skill:failed": {
     skillName: string;

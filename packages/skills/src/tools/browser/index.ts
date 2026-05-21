@@ -33,9 +33,5 @@ export {
 export { decorateProfile } from "./profile-decoration.js";
 export { waitForDownload, listDownloads } from "./downloads.js";
 export type { DownloadResult, DownloadWaitOptions } from "./downloads.js";
-export { smartWait } from "./smart-waits.js";
-export type { WaitOptions } from "./smart-waits.js";
 export { resizeViewport, setDevice } from "./viewport.js";
 export type { DevicePreset } from "./viewport.js";
-export { normalizeScreenshot } from "./screenshot-normalizer.js";
-export type { NormalizeOptions, NormalizedScreenshot } from "./screenshot-normalizer.js";

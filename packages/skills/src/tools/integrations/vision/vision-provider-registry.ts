@@ -3,8 +3,8 @@
  * Vision provider registry: Auto-discovers and registers vision providers
  * based on available API keys and configuration.
  *
- * Wraps existing multimodal analyzers (Anthropic, OpenAI) as VisionProvider
- * instances, and uses the native Gemini adapter for Google.
+ * Hosts the Anthropic + OpenAI vision factories (HTTP backends inlined below)
+ * and uses the native Gemini adapter for Google.
  *
  * @module
  */
@@ -15,11 +15,21 @@ import type {
   VisionResult,
   VisionConfig,
   SecretManager,
+  ImageAnalysisOptions,
 } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { createMultimodalAnalyzer } from "../multimodal-analyzer.js";
 import { createGeminiVisionProvider } from "./gemini-vision-adapter.js";
+
+// ---------------------------------------------------------------------------
+// File-private constants
+// ---------------------------------------------------------------------------
+
+const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929";
+const DEFAULT_OPENAI_MODEL = "gpt-4o";
+const DEFAULT_MAX_FILE_SIZE_MB = 20;
+const ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
+const OPENAI_BASE_URL = "https://api.openai.com/v1";
 
 /**
  * Fallback image provider order when auto-selecting.
@@ -37,42 +47,244 @@ export interface VisionRegistryDeps {
   readonly config: VisionConfig;
 }
 
+// ---------------------------------------------------------------------------
+// File-private validation (size, empty-buffer, empty-prompt guards)
+// ---------------------------------------------------------------------------
+
+function validateImageInput(image: Buffer, prompt: string): Result<void, Error> {
+  const fileSizeMb = image.byteLength / (1024 * 1024);
+  if (fileSizeMb > DEFAULT_MAX_FILE_SIZE_MB) {
+    return err(
+      new Error(
+        `Image file size ${fileSizeMb.toFixed(1)}MB exceeds limit of ${DEFAULT_MAX_FILE_SIZE_MB}MB`,
+      ),
+    );
+  }
+  if (image.byteLength === 0) {
+    return err(new Error("Image buffer is empty"));
+  }
+  if (!prompt.trim()) {
+    return err(new Error("Analysis prompt is empty"));
+  }
+  return ok(undefined);
+}
+
+// ---------------------------------------------------------------------------
+// File-private backend HTTP callers
+// ---------------------------------------------------------------------------
+
 /**
- * Wrap an existing multimodal analyzer as a VisionProvider.
- *
- * The analyzer implements ImageAnalysisPort (returns string).
- * We adapt it to VisionProvider (returns VisionResult).
+ * Send image analysis request to Anthropic Messages API.
  */
-function wrapAnalyzerAsProvider(
-  id: string,
+async function analyzeWithAnthropic(
+  image: Buffer,
+  prompt: string,
+  options: ImageAnalysisOptions,
+  config: {
+    apiKey: string;
+    model: string;
+    baseUrl: string;
+    maxTokens: number;
+  },
+): Promise<Result<string, Error>> {
+  const base64 = image.toString("base64");
+
+  const response = await fetch(`${config.baseUrl}/messages`, {
+    method: "POST",
+    headers: {
+      "x-api-key": config.apiKey,
+      "content-type": "application/json",
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: config.maxTokens,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: options.mimeType,
+                data: base64,
+              },
+            },
+            {
+              type: "text",
+              text: prompt,
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    return err(new Error(`Anthropic API error (${response.status}): ${body}`));
+  }
+
+  const data = (await response.json()) as {
+    content: Array<{ type: string; text?: string }>;
+  };
+
+  const textBlock = data.content.find((c) => c.type === "text");
+  if (!textBlock?.text) {
+    return err(new Error("Anthropic response contained no text content"));
+  }
+
+  return ok(textBlock.text);
+}
+
+/**
+ * Send image analysis request to OpenAI Chat Completions API.
+ */
+async function analyzeWithOpenAI(
+  image: Buffer,
+  prompt: string,
+  options: ImageAnalysisOptions,
+  config: {
+    apiKey: string;
+    model: string;
+    baseUrl: string;
+    maxTokens: number;
+  },
+): Promise<Result<string, Error>> {
+  const base64 = image.toString("base64");
+  const dataUrl = `data:${options.mimeType};base64,${base64}`;
+
+  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: config.maxTokens,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: { url: dataUrl },
+            },
+            {
+              type: "text",
+              text: prompt,
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    return err(new Error(`OpenAI API error (${response.status}): ${body}`));
+  }
+
+  const data = (await response.json()) as {
+    choices: Array<{ message: { content: string | null } }>;
+  };
+
+  const content = data.choices[0]?.message.content;
+  if (!content) {
+    return err(new Error("OpenAI response contained no content"));
+  }
+
+  return ok(content);
+}
+
+// ---------------------------------------------------------------------------
+// Public factories (Anthropic + OpenAI vision providers; HTTP backends inlined above)
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a VisionProvider backed by Anthropic Messages API (Claude).
+ *
+ * @param apiKey - Anthropic API key.
+ * @param model - Optional model override (default: `claude-sonnet-4-5-20250929`).
+ */
+export function createAnthropicVisionProvider(
   apiKey: string,
   model?: string,
 ): VisionProvider {
-  const analyzer = createMultimodalAnalyzer({
-    apiKey,
-    provider: id as "anthropic" | "openai",
-    model,
-  });
+  const resolvedModel = model ?? DEFAULT_ANTHROPIC_MODEL;
 
   return {
-    id,
+    id: "anthropic",
     capabilities: ["image"],
 
     async describeImage(req: VisionRequest): Promise<Result<VisionResult, Error>> {
-      const result = await analyzer.analyze(req.image, req.prompt, {
-        mimeType: req.mimeType,
-        maxTokens: req.maxTokens,
-      });
+      const validation = validateImageInput(req.image, req.prompt);
+      if (!validation.ok) return err(validation.error);
 
-      if (!result.ok) {
-        return err(result.error);
+      const maxTokens = req.maxTokens ?? 1024;
+
+      try {
+        const result = await analyzeWithAnthropic(
+          req.image,
+          req.prompt,
+          { mimeType: req.mimeType, maxTokens: req.maxTokens },
+          {
+            apiKey,
+            model: resolvedModel,
+            baseUrl: ANTHROPIC_BASE_URL,
+            maxTokens,
+          },
+        );
+        if (!result.ok) return err(result.error);
+        return ok({ text: result.value, provider: "anthropic", model: resolvedModel });
+      } catch (error: unknown) {
+        return err(error instanceof Error ? error : new Error(String(error)));
       }
+    },
+  };
+}
 
-      return ok({
-        text: result.value,
-        provider: id,
-        model: model ?? (id === "anthropic" ? "claude-sonnet-4-5-20250929" : "gpt-4o"),
-      });
+/**
+ * Create a VisionProvider backed by OpenAI Chat Completions API (GPT-4o).
+ *
+ * @param apiKey - OpenAI API key.
+ * @param model - Optional model override (default: `gpt-4o`).
+ */
+export function createOpenAIVisionProvider(
+  apiKey: string,
+  model?: string,
+): VisionProvider {
+  const resolvedModel = model ?? DEFAULT_OPENAI_MODEL;
+
+  return {
+    id: "openai",
+    capabilities: ["image"],
+
+    async describeImage(req: VisionRequest): Promise<Result<VisionResult, Error>> {
+      const validation = validateImageInput(req.image, req.prompt);
+      if (!validation.ok) return err(validation.error);
+
+      const maxTokens = req.maxTokens ?? 1024;
+
+      try {
+        const result = await analyzeWithOpenAI(
+          req.image,
+          req.prompt,
+          { mimeType: req.mimeType, maxTokens: req.maxTokens },
+          {
+            apiKey,
+            model: resolvedModel,
+            baseUrl: OPENAI_BASE_URL,
+            maxTokens,
+          },
+        );
+        if (!result.ok) return err(result.error);
+        return ok({ text: result.value, provider: "openai", model: resolvedModel });
+      } catch (error: unknown) {
+        return err(error instanceof Error ? error : new Error(String(error)));
+      }
     },
   };
 }
@@ -100,7 +312,7 @@ export function createVisionProviderRegistry(
   if (providerSet.has("anthropic")) {
     const key = secretManager.get("ANTHROPIC_API_KEY");
     if (key) {
-      registry.set("anthropic", wrapAnalyzerAsProvider("anthropic", key));
+      registry.set("anthropic", createAnthropicVisionProvider(key));
     }
   }
 
@@ -108,7 +320,7 @@ export function createVisionProviderRegistry(
   if (providerSet.has("openai")) {
     const key = secretManager.get("OPENAI_API_KEY");
     if (key) {
-      registry.set("openai", wrapAnalyzerAsProvider("openai", key));
+      registry.set("openai", createOpenAIVisionProvider(key));
     }
   }
 

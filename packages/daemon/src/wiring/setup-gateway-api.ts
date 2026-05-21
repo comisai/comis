@@ -24,7 +24,7 @@
  */
 
 import { API_CONTRACTS_ORDERED, type AppContainer } from "@comis/core";
-import type { RpcCall } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import type { DynamicMethodRouter } from "@comis/gateway";
 
 // ---------------------------------------------------------------------------

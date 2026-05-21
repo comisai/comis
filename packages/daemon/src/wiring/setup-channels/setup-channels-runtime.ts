@@ -34,12 +34,12 @@ import {
   resolveOutputFormat,
   parseOutboundMedia,
   type SsrfGuardedFetcher,
-  type RpcCall,
   type LinkRunner,
   type AudioConverter,
   type MediaTempManager,
   type MediaSemaphore,
 } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import type { TTSPort, QueueConfig } from "@comis/core";
 import type { ChannelCapabilityInfo } from "../setup-channels-adapters.js";
 import type { ExecutionLogEntry } from "@comis/scheduler";

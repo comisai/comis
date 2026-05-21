@@ -821,7 +821,6 @@ describe("skills.create handler", () => {
     });
     expect(result.ok).toBe(true);
     expect(fs.existsSync(join(wsDir, "skills", "new-skill", "SKILL.md"))).toBe(true);
-    expect(eventBus.emit).toHaveBeenCalledWith("skill:created", expect.objectContaining({ skillName: "new-skill" }));
     expect(reg.init).toHaveBeenCalled();
   });
 
@@ -970,7 +969,6 @@ describe("skills.update handler", () => {
     expect(result.ok).toBe(true);
     const content = fs.readFileSync(join(skillDir, "SKILL.md"), "utf-8");
     expect(content).toContain("NEW BODY");
-    expect(eventBus.emit).toHaveBeenCalledWith("skill:updated", expect.objectContaining({ skillName: "update-me" }));
     expect(reg.init).toHaveBeenCalled();
   });
 

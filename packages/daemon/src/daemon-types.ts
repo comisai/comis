@@ -24,7 +24,8 @@ import type {
   HeartbeatRunner,
   CronScheduler,
 } from "@comis/scheduler";
-import type { BrowserService, RpcCall, SandboxProvider, ImageGenRateLimiter } from "@comis/skills";
+import type { BrowserService, SandboxProvider, ImageGenRateLimiter } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import type { LatencyRecorder } from "./observability/latency-recorder.js";
 import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";

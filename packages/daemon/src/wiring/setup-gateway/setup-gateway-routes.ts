@@ -22,7 +22,7 @@ import { systemDateFrom } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, CostTracker } from "@comis/agent";
 import type { MemoryApi, SqliteMemoryAdapter, createEmbeddingQueue, createSessionStore } from "@comis/memory";
-import type { RpcCall } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";

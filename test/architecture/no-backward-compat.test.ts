@@ -127,7 +127,6 @@ const BC_REM_02_PATH_TAIL_ALLOWLIST: readonly string[] = [
   "packages/skills/src/tools/builtin/exec-tool/exec-types.ts", // doc-string: "Backward compatibility is NOT preserved" — POLICY citation
   "packages/skills/src/tools/builtin/exec-tool/index.ts", // doc-string: "Backward compat NOT preserved (memory feedback_no_backward_compat)" — POLICY citation
   "packages/skills/src/tools/builtin/process-tool.ts", // doc-string: "Backward compatibility is NOT preserved" + "backward compat with the prior positional ..." — POLICY citations
-  "packages/skills/src/platform-tools/tools/browser-tool.ts", // RpcCall-or-deps-object signature; doc-comment describing the two-shape acceptance — out of current deletion scope
   "packages/skills/src/platform-tools/tools/agents-manage-tool.ts", // doc-string: "default-logger compat shim (per feedback_no_backward_compat.md)" — POLICY citation
   "packages/web/src/router.ts", // route-aliases-for-backward-compatibility — out of current deletion scope (web router consolidation tracked separately)
   "packages/web/src/utils/health-status.ts", // LEGACY_ALIASES channel-health map — out of current deletion scope (channel-status canonicalization tracked separately)

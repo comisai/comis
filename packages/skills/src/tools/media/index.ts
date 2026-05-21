@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Media processing module -- image operations, MIME detection,
- * file validation, media storage, audio metadata, and shared constants.
+ * Media processing module -- MIME detection, FFmpeg detection, audio
+ * conversion, media temp/semaphore, SSRF-guarded fetch, composite resolver,
+ * media persistence, and shared constants.
  *
  * @module
  */
@@ -16,15 +17,6 @@ export {
 } from "./constants.js";
 export type { MediaKind } from "./constants.js";
 
-// Image processing
-export { createImageProcessor } from "./image-ops.js";
-export type {
-  ImageProcessor,
-  ImageProcessorDeps,
-  ResizeOptions,
-  ImageMetadata,
-} from "./image-ops.js";
-
 // MIME detection
 export {
   detectMime,
@@ -33,26 +25,6 @@ export {
   normalizeHeaderMime,
   isGenericMime,
 } from "./mime-detection.js";
-
-// File validation
-export { createFileValidator } from "./file-validator.js";
-export type {
-  FileValidator,
-  FileValidatorDeps,
-  ValidationResult,
-} from "./file-validator.js";
-
-// Media store
-export { createMediaStore } from "./media-store.js";
-export type {
-  MediaStore,
-  MediaStoreDeps,
-  SavedMedia,
-} from "./media-store.js";
-
-// Audio metadata
-export { extractAudioMetadata } from "./audio-tags.js";
-export type { AudioMetadata } from "./audio-tags.js";
 
 // FFmpeg detection
 export { detectFfmpeg } from "./ffmpeg-detect.js";
