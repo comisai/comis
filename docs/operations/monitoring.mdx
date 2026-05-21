@@ -23,7 +23,7 @@ curl http://localhost:4766/health
 # {"status":"ok","timestamp":"2026-04-25T10:00:00.000Z"}
 ```
 
-It is unauthenticated (used by orchestrators) and returns `200` with `status: "ok"` once the daemon has finished its bootstrap sequence. The Docker `HEALTHCHECK`, the systemd `Type=notify` ready signal, and the `comis daemon start` wait-loop all check this endpoint.
+It is unauthenticated (used by orchestrators) and returns `200` with `status: "ok"` once the daemon has finished its bootstrap sequence. The Docker `HEALTHCHECK` and the `comis daemon start` wait-loop both check this endpoint.
 
 ## The `comis health` CLI
 
@@ -62,7 +62,7 @@ Comis checks five different health sources via the heartbeat. Each source can be
   <Accordion title="System Resources">
     Monitors CPU and memory usage and alerts when utilization is consistently high.
 
-    **Why it matters:** High CPU or memory usage can slow down agent responses and cause the watchdog to skip pings (which may trigger an unnecessary restart).
+    **Why it matters:** High CPU or memory usage can slow down agent responses, causing the event loop to lag and degrading user-facing latency.
 
     **Default behavior:** Alerts at 85% CPU and 90% memory usage.
 
@@ -172,7 +172,7 @@ monitoring:
 
 <CardGroup cols={2}>
   <Card title="Daemon" icon="server" href="/operations/daemon">
-    Daemon lifecycle and watchdog
+    Daemon lifecycle and recovery
   </Card>
   <Card title="Scheduler" icon="clock" href="/operations/scheduler">
     Heartbeat intervals and quiet hours

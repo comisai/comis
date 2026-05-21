@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { DeviceIdentity, TimerPort } from "@comis/core";
+import type { TimerPort } from "@comis/core";
 import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
 import type { ApprovalGate } from "@comis/core";
 import type { ChannelHealthMonitor } from "@comis/channels";
@@ -35,7 +35,6 @@ import type { ChannelActivityTracker } from "./observability/channel-activity-tr
 import type { DeliveryTracer } from "./observability/delivery-tracer.js";
 import type { ShutdownHandle } from "./process/graceful-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
-import type { WatchdogHandle } from "./health/watchdog.js";
 
 import type {
   bootstrap,
@@ -65,7 +64,6 @@ import type { createTokenTracker } from "./observability/token-tracker.js";
 import type { createLatencyRecorder } from "./observability/latency-recorder.js";
 import type { createProcessMonitor } from "./process/process-monitor.js";
 import type { registerGracefulShutdown } from "./process/graceful-shutdown.js";
-import type { startWatchdog } from "./health/watchdog.js";
 import type { setupMedia } from "./wiring/setup-media.js";
 import type {
   setupLogging,
@@ -128,7 +126,6 @@ export interface DaemonInstance {
   readonly latencyRecorder: LatencyRecorder;
   readonly processMonitor: ProcessMonitor;
   readonly shutdownHandle: ShutdownHandle;
-  readonly watchdogHandle: WatchdogHandle;
   readonly cronSchedulers: Map<string, CronScheduler>;
   readonly resetSchedulers: Map<string, SessionResetScheduler>;
   readonly browserServices: Map<string, BrowserService>;
@@ -156,7 +153,6 @@ export interface DaemonInstance {
    */
   readonly backgroundTaskManager: BackgroundTaskManager;
   readonly rpcCall: RpcCall;
-  readonly deviceIdentity?: DeviceIdentity;
   readonly diagnosticCollector: DiagnosticCollector;
   readonly billingEstimator: BillingEstimator;
   readonly channelActivityTracker: ChannelActivityTracker;
@@ -199,8 +195,6 @@ export interface DaemonOverrides {
   createProcessMonitor?: typeof createProcessMonitor;
   /** Override registerGracefulShutdown. */
   registerGracefulShutdown?: typeof registerGracefulShutdown;
-  /** Override startWatchdog. */
-  startWatchdog?: typeof startWatchdog;
   /** Override createGatewayServer. */
   createGatewayServer?: typeof createGatewayServer;
   /** Override setupMedia for test isolation (avoids ffmpeg/ffprobe spawns). */
@@ -276,10 +270,8 @@ export interface FoundationHandle {
   channelActivityTracker: ReturnType<typeof setupObservability>["channelActivityTracker"];
   deliveryTracer: ReturnType<typeof setupObservability>["deliveryTracer"];
   contextPipelineCollector: ReturnType<typeof createContextPipelineCollector>;
-  // Process (3 fields)
+  // Process (1 field)
   processMonitor: ReturnType<typeof setupHealth>["processMonitor"];
-  watchdogHandle: ReturnType<typeof setupHealth>["watchdogHandle"];
-  deviceIdentity: ReturnType<typeof setupHealth>["deviceIdentity"];
   // Memory + embedding (~11 fields)
   disposeEmbedding: Awaited<ReturnType<typeof setupMemory>>["disposeEmbedding"];
   cachedPort: Awaited<ReturnType<typeof setupMemory>>["cachedPort"];
