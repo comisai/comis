@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -62,7 +62,7 @@ describe("createRestartContinuationTracker", () => {
     tracker.track(makeRecord({ channelId: "chat-2" }));
 
     const filePath = join(tmpDir, "continuations.json");
-    const count = tracker.capture(filePath, 60_000);
+    const count = tracker.capture(filePath, 60_000, tmpDir);
 
     expect(count).toBe(2);
     expect(existsSync(filePath)).toBe(true);
@@ -83,7 +83,7 @@ describe("createRestartContinuationTracker", () => {
 
     // Capture with 0ms window — nothing is recent
     const filePath = join(tmpDir, "continuations.json");
-    const count = tracker.capture(filePath, 0);
+    const count = tracker.capture(filePath, 0, tmpDir);
 
     expect(count).toBe(0);
     expect(existsSync(filePath)).toBe(false);
@@ -92,7 +92,7 @@ describe("createRestartContinuationTracker", () => {
   it("capture returns 0 and skips file when no records", () => {
     const tracker = createRestartContinuationTracker();
     const filePath = join(tmpDir, "empty.json");
-    const count = tracker.capture(filePath, 60_000);
+    const count = tracker.capture(filePath, 60_000, tmpDir);
 
     expect(count).toBe(0);
     expect(existsSync(filePath)).toBe(false);
@@ -106,7 +106,7 @@ describe("createRestartContinuationTracker", () => {
     tracker.track(makeRecord({ channelId: "chat-1", userId: "u1" }));
 
     const filePath = join(tmpDir, "dedup.json");
-    const count = tracker.capture(filePath, 60_000);
+    const count = tracker.capture(filePath, 60_000, tmpDir);
 
     expect(count).toBe(1);
   });
@@ -118,7 +118,7 @@ describe("createRestartContinuationTracker", () => {
     tracker.track(makeRecord({ channelId: "chat-1", userId: "u1", peerId: "peer-b" }));
 
     const filePath = join(tmpDir, "peers.json");
-    const count = tracker.capture(filePath, 60_000);
+    const count = tracker.capture(filePath, 60_000, tmpDir);
 
     expect(count).toBe(2);
   });
@@ -134,7 +134,7 @@ describe("createRestartContinuationTracker", () => {
     tracker.track(makeRecord({ channelId: "no-meta", userId: "u-nm" })); // chatType omitted
 
     const filePath = join(tmpDir, "round-trip.json");
-    const wrote = tracker.capture(filePath, 60_000);
+    const wrote = tracker.capture(filePath, 60_000, tmpDir);
     expect(wrote).toBe(3);
 
     const logger = makeMockLogger();
@@ -330,3 +330,35 @@ describe("buildMcpStatusLine", () => {
     expect(line.match(/\[MCP Status\]/g)!.length).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 48 OBS-HARD-03: Mode-invariant tests (tmpdir-scoped, real fs).
+//
+// Per Plan 48-05 D-03, the migrated writer must produce artifacts at
+// mode `0o600`. Restart-continuation writes a single JSON file via the
+// fs-safe substrate; the parent dir is the operator's `dataDir`
+// (already `0o700` from the daemon's bootstrap). This test asserts the
+// file-mode invariant on the artifact this writer creates.
+// ---------------------------------------------------------------------------
+
+describe("restart-continuation honors §1.4 mode invariants", () => {
+  let baseDir: string;
+
+  beforeEach(() => {
+    baseDir = mkdtempSync(join(tmpdir(), "comis-restart-cont-mode-"));
+  });
+
+  afterEach(() => {
+    rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  it("writes_continuation_file_with_mode_0o600", () => {
+    const tracker = createRestartContinuationTracker();
+    tracker.track(makeRecord({ channelId: "mode-check" }));
+    const filePath = join(baseDir, "restart-continuations.json");
+    const count = tracker.capture(filePath, 60_000, baseDir);
+    expect(count).toBe(1);
+    expect(statSync(filePath).mode & 0o777).toBe(0o600);
+  });
+});
+

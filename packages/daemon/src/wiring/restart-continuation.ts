@@ -7,8 +7,9 @@
  * @module
  */
 
-import { writeFileSync, readFileSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, unlinkSync, existsSync } from "node:fs";
 import { systemNowMs } from "@comis/core";
+import { writeRegularFile } from "@comis/observability";
 import type { ComisLogger } from "@comis/infra";
 import type { McpConnection } from "@comis/skills";
 
@@ -45,8 +46,27 @@ export interface RestartContinuationTracker {
   track(record: ContinuationRecord): void;
   /** Check if a session has been active since the tracker was created. */
   isTracked(record: Pick<ContinuationRecord, "channelType" | "channelId" | "userId" | "peerId">): boolean;
-  /** Write recent records to disk. Returns the count written. */
-  capture(filePath: string, recentWindowMs: number): number;
+  /**
+   * Write recent records to disk. Returns the count written.
+   *
+   * @param filePath - Target file (typically `safePath(dataDir, "restart-continuations.json")`).
+   * @param recentWindowMs - Sessions older than this are skipped.
+   * @param confinedBaseDir - Confinement base for the fs-safe substrate.
+   *   Required (Phase 48 OBS-HARD-03): the resolved real path of
+   *   `filePath` must stay inside the operator's data root so writes
+   *   cannot escape `~/.comis/` via an ancestor-symlink swap. Pass
+   *   `dataDir` from the caller's closure.
+   * @param logger - Optional logger for WARN on substrate Result.err
+   *   (parent-symlink rejected, confinement-escape, etc.). Preserves
+   *   the existing best-effort write contract — a failure does not
+   *   block daemon shutdown.
+   */
+  capture(
+    filePath: string,
+    recentWindowMs: number,
+    confinedBaseDir: string,
+    logger?: ComisLogger,
+  ): number;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,13 +93,35 @@ export function createRestartContinuationTracker(): RestartContinuationTracker {
       return records.has(makeKey(record as ContinuationRecord));
     },
 
-    capture(filePath, recentWindowMs) {
+    capture(filePath, recentWindowMs, confinedBaseDir, logger) {
       const now = systemNowMs();
       const recent = Array.from(records.values()).filter(
         (r) => now - r.timestamp < recentWindowMs,
       );
       if (recent.length === 0) return 0;
-      writeFileSync(filePath, JSON.stringify(recent, null, 2), "utf-8");
+      // OBS-HARD-03: route through the fs-safe substrate so the
+      // restart-continuation hand-off file lands at mode `0o600` per
+      // §1.4. Failure is non-fatal: log + return 0 so daemon shutdown
+      // continues (best-effort write contract preserved — see PLAN
+      // 48-05 Task 2 + RESEARCH.md §"Sibling-Writer Migration Map"
+      // row 3).
+      const result = writeRegularFile({
+        path: filePath,
+        content: JSON.stringify(recent, null, 2),
+        confinedBaseDir,
+      });
+      if (!result.ok) {
+        logger?.warn(
+          {
+            err: result.error,
+            filePath,
+            hint: "Restart-continuation hand-off write failed; daemon restart will lose this session window",
+            errorKind: "resource" as const,
+          },
+          "Restart continuation write rejected by fs-safe substrate",
+        );
+        return 0;
+      }
       return recent.length;
     },
   };
