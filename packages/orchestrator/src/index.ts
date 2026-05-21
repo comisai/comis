@@ -55,13 +55,12 @@ export type { MessageRouter, RoutableMessage } from "./routing/message-router.js
 
 // Queue.
 // Per-session command serialization, debounce buffering, follow-up triggering,
-// priority scheduling, and overflow / coalescer utilities.
+// and overflow / coalescer utilities.
 // Named (not `export *`) to keep the public surface auditable.
 export {
   createCommandQueue,
   createDebounceBuffer,
   createFollowupTrigger,
-  createPriorityScheduler,
   applyOverflowPolicy,
   coalesceMessages,
 } from "./queue/index.js";
@@ -75,9 +74,6 @@ export type {
   DebounceBufferDeps,
   FollowupTrigger,
   FollowupTriggerDeps,
-  PriorityScheduler,
-  PrioritySchedulerDeps,
-  LaneStats,
 } from "./queue/index.js";
 
 // Session key builder. Builds scoped session keys for DM/group routing

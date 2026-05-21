@@ -173,7 +173,7 @@ export { createRagRetriever, formatMemorySection } from "./rag/rag-retriever.js"
 export type { RagRetriever, RagRetrieverDeps } from "./rag/rag-retriever.js";
 
 // Queue symbols live in @comis/orchestrator:
-// createCommandQueue, CommandQueue, DebounceBuffer, FollowupTrigger, PriorityScheduler,
+// createCommandQueue, CommandQueue, DebounceBuffer, FollowupTrigger,
 // coalesceMessages, applyOverflowPolicy, SessionLane, and all related *Deps / *Stats types
 // live at packages/orchestrator/src/queue/ and re-export from @comis/orchestrator.
 
