@@ -4,10 +4,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMcpHandlers } from "./mcp-handlers.js";
-import type { McpClientManager, McpConnection, McpToolDefinition } from "@comis/skills";
-import type { ComisLogger } from "@comis/infra";
-import { createSecretManager } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -33,6 +29,29 @@ vi.mock("@comis/skills", async (importOriginal) => {
     createMcpClientManager: mockCreateMcpClientManager,
   };
 });
+
+// Phase 47-02: mock the persistence + audit-log helpers so unit tests don't
+// hit the real filesystem. Existing tests don't inject persistDeps so they
+// never reach these mocks; the new mcp.connect/disconnect persistence tests
+// below assert directly on the mocked call args.
+vi.mock("./shared/persist-to-config.js", () => ({
+  persistToConfig: vi.fn().mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } }),
+}));
+vi.mock("../config/audit-hook.js", () => ({
+  buildConfigAuditBase: vi.fn().mockReturnValue({ /* opaque audit base stub */ }),
+  appendConfigAuditWithOutcome: vi.fn(),
+}));
+
+import { createMcpHandlers } from "./mcp-handlers.js";
+import { persistToConfig } from "./shared/persist-to-config.js";
+import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "../config/audit-hook.js";
+import type { McpClientManager, McpConnection, McpToolDefinition } from "@comis/skills";
+import type { ComisLogger } from "@comis/infra";
+import { createSecretManager } from "@comis/core";
+
+const mockPersistToConfig = vi.mocked(persistToConfig);
+const mockBuildConfigAuditBase = vi.mocked(buildConfigAuditBase);
+const mockAppendConfigAuditWithOutcome = vi.mocked(appendConfigAuditWithOutcome);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -590,6 +609,267 @@ describe("MCP RPC Handlers", () => {
       ).rejects.toThrow(/references env vars A, B, C \(\+1 more\)/);
 
       expect(manager.connect).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 47-02: persistence + audit-log integration (R1, R2, R4, R6, R7, R8,
+  // D-02, D-04). Sibling plan 47-04 owns the full coverage matrix — these
+  // tests are the minimum surface 47-02 ships to prove the wiring is correct.
+  // -------------------------------------------------------------------------
+
+  function makePersistDeps(servers: Array<{ name: string; transport: string; command?: string; args?: string[]; enabled?: boolean }> = []) {
+    return {
+      persistDeps: {
+        container: {
+          config: { integrations: { mcp: { servers } } },
+          eventBus: { emit: vi.fn() },
+        },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/default-config.yaml"],
+        logger: makeLogger(),
+      } as any,
+      container: {
+        config: { integrations: { mcp: { servers } } },
+      } as any,
+    };
+  }
+
+  beforeEach(() => {
+    mockPersistToConfig.mockClear();
+    mockPersistToConfig.mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } } as never);
+    mockBuildConfigAuditBase.mockClear();
+    mockBuildConfigAuditBase.mockReturnValue({} as any);
+    mockAppendConfigAuditWithOutcome.mockClear();
+  });
+
+  describe("mcp.connect persistence (Phase 47-02)", () => {
+    it("calls persistToConfig with skipRestart:true and mcp.connect actionType after a successful manager.connect", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [makeTool("price")])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+        args: ["yfinance-mcp-ts"],
+      });
+
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      const [callDeps, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callDeps).toBe(persistDeps);
+      expect(callOpts.skipRestart).toBe(true);
+      expect(callOpts.actionType).toBe("mcp.connect");
+      expect(callOpts.entityId).toBe("yfinance");
+      expect(callOpts.patch.integrations.mcp.servers).toEqual([
+        expect.objectContaining({
+          name: "yfinance",
+          transport: "stdio",
+          command: "npx",
+          args: ["yfinance-mcp-ts"],
+          enabled: true,
+        }),
+      ]);
+    });
+
+    it("does NOT call persistToConfig when manager.connect returns err (R4 spawn-failure isolation)", async () => {
+      (manager.connect as any).mockResolvedValue(err(new Error("spawn ENOENT")));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "badmcp",
+          transport: "stdio",
+          command: "nope",
+        }),
+      ).rejects.toThrow("Failed to connect");
+
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
+    it("returns persistence:'skipped' when persistDeps is not wired (existing-test invariant)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("x", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+      const result = await handlers["mcp.connect"]({
+        server_name: "x",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      expect(result.persistence).toBe("skipped");
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
+    it("returns persistence:'persisted' and emits an audit JSONL record on persist success (R8 + D-04)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      expect(result.persistence).toBe("persisted");
+      expect(result.warning).toBeUndefined();
+      expect(mockBuildConfigAuditBase).toHaveBeenCalledWith(expect.any(String), "mcp.connect");
+      expect(mockAppendConfigAuditWithOutcome).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "rename" }),
+        expect.anything(),
+      );
+    });
+
+    it("preserves unresolved env-ref literals in the persisted patch (R5)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ywithenv", [])));
+      const sm = createSecretManager({ YFINANCE_PROXY_LIST: "secret-value-not-in-yaml" });
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ywithenv",
+        transport: "stdio",
+        command: "npx",
+        env: { PROXY: "${YFINANCE_PROXY_LIST}" },
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers[0].env.PROXY).toBe("${YFINANCE_PROXY_LIST}");
+    });
+
+    it("filters existing same-name entry and appends new one (R6 overwrite)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", args: ["v1"], enabled: true },
+        { name: "other", transport: "stdio", command: "npx", args: ["other"], enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+        args: ["v2", "--verbose"],
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      const servers = callOpts.patch.integrations.mcp.servers;
+      expect(servers).toHaveLength(2);
+      expect(servers[0]).toEqual(expect.objectContaining({ name: "other" }));
+      expect(servers[1]).toEqual(expect.objectContaining({
+        name: "yfinance",
+        args: ["v2", "--verbose"],
+      }));
+    });
+  });
+
+  describe("mcp.disconnect persistence (Phase 47-02)", () => {
+    it("calls persistToConfig with the filtered array on a successful disconnect (R2 + R7)", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+        { name: "other", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.disconnect"]({ server_name: "yfinance" }) as any;
+
+      expect(result.status).toBe("disconnected");
+      expect(result.persistence).toBe("persisted");
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.skipRestart).toBe(true);
+      expect(callOpts.actionType).toBe("mcp.disconnect");
+      expect(callOpts.entityId).toBe("yfinance");
+      expect(callOpts.patch.integrations.mcp.servers).toEqual([
+        expect.objectContaining({ name: "other" }),
+      ]);
+    });
+
+    it("does NOT call persistToConfig when runtime has no such server (D-01 fail-loud preserved)", async () => {
+      (manager.getConnection as any).mockReturnValue(undefined);
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await expect(
+        handlers["mcp.disconnect"]({ server_name: "nonexistent" }),
+      ).rejects.toThrow('MCP server not found: "nonexistent"');
+
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("mcp.reconnect override-rejection (Phase 47-02 D-02)", () => {
+    it("throws [reconnect_with_overrides_not_allowed] when override params are supplied AND a stored connection exists", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+      await expect(
+        handlers["mcp.reconnect"]({
+          server_name: "yfinance",
+          transport: "stdio",
+        }),
+      ).rejects.toThrow(/\[reconnect_with_overrides_not_allowed\].*disconnect then connect/);
+
+      // The override guard fires BEFORE manager.reconnect.
+      expect(manager.reconnect).not.toHaveBeenCalled();
+    });
+
+    it("does NOT throw the override error when override params are supplied but NO stored connection exists (existing fallback-reconnect path)", async () => {
+      (manager.getConnection as any).mockReturnValue(undefined);
+      (manager.reconnect as any).mockResolvedValue(err(new Error("MCP server \"x\" has no stored config -- use connect() instead")));
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("x", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+      // Override params + no stored connection → falls through to legacy
+      // fallback-reconnect-as-connect path; does NOT throw the override error.
+      const result = await handlers["mcp.reconnect"]({
+        server_name: "x",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      expect(result.status).toBe("connected");
     });
   });
 });
