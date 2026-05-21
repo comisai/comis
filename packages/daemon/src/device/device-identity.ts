@@ -10,10 +10,11 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 
-import { ok, tryCatch } from "@comis/shared";
+import { ok, err, tryCatch } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import { safePath } from "@comis/core";
 import type { DeviceIdentity, DeviceIdentityPort } from "@comis/core";
+import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 
 /**
  * Compute the SHA-256 fingerprint of an Ed25519 public key.
@@ -70,25 +71,37 @@ export function loadOrCreateDeviceIdentity(
   // Generate new identity
   const identity = generateIdentity();
 
-  // Create directory (recursive)
-  const mkdirResult = tryCatch(() =>
-    fs.mkdirSync(identityDir, { recursive: true }),
-  );
-  if (!mkdirResult.ok) return mkdirResult;
-
-  // Atomic write: temp file -> chmod -> rename
-  const tmpPath = filePath + `.tmp.${crypto.randomBytes(4).toString("hex")}`;
-  const writeResult = tryCatch(() => {
-    const json = JSON.stringify(identity, null, 2);
-    fs.writeFileSync(tmpPath, json, "utf-8");
-    fs.chmodSync(tmpPath, 0o600);
-    fs.renameSync(tmpPath, filePath);
+  // Create identity directory at mode 0o700 per design §1.4. Migrated to
+  // `ensureContainedDir` (Phase 48 OBS-HARD-03); the outer `tryCatch`
+  // wrapper is removed — the substrate already returns Result, so wrapping
+  // it added a redundant Result-wrapping layer.
+  const mkdirResult = ensureContainedDir({
+    dir: identityDir,
+    mode: 0o700,
+    confinedBaseDir: stateDir,
   });
+  if (!mkdirResult.ok) return err(mkdirResult.error);
 
+  // Atomic write: substrate-routed tmp write -> rename. The substrate's
+  // `fchmod(fd, 0o600)` inside `writeRegularFile` replaces the explicit
+  // `chmodSync(tmpPath, 0o600)` step; the rename remains a separate
+  // primitive (atomic-replace semantics are out of scope for the
+  // substrate, which is a single-file primitive).
+  const tmpPath = filePath + `.tmp.${crypto.randomBytes(4).toString("hex")}`;
+  const json = JSON.stringify(identity, null, 2);
+  const writeResult = writeRegularFile({
+    path: tmpPath,
+    content: json,
+    confinedBaseDir: stateDir,
+  });
   if (!writeResult.ok) {
-    // Clean up temp file on failure
     tryCatch(() => fs.unlinkSync(tmpPath));
-    return writeResult;
+    return err(writeResult.error);
+  }
+  const renameResult = tryCatch(() => fs.renameSync(tmpPath, filePath));
+  if (!renameResult.ok) {
+    tryCatch(() => fs.unlinkSync(tmpPath));
+    return err(renameResult.error);
   }
 
   return ok(identity);

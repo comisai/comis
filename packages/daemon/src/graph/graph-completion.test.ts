@@ -349,3 +349,44 @@ describe("buildGraphAnnouncement", () => {
     expect(result.text).toContain("Full report available");
   });
 });
+
+// ---------------------------------------------------------------------------
+// graph-completion honors §1.4 mode invariants on substrate-routed writes
+// (OBS-HARD-03, Plan 48-06)
+//
+// The graph-completion writer's _run-metadata.json write is now routed
+// through `writeRegularFile`. The substrate uses `fs.openSync` +
+// `fs.fchmodSync(fd, 0o600)` internally — distinct from the `writeFileSync`
+// path mocked above — so real fs writes succeed even with the workspace-
+// level `vi.mock("node:fs", ...)`. The substrate's chmod-by-fd is the
+// load-bearing primitive the §1.4 invariant relies on.
+// ---------------------------------------------------------------------------
+describe("graph-completion honors §1.4 file mode invariant (OBS-HARD-03, Plan 48-06)", () => {
+  it("write_regular_file_substrate_produces_run_metadata_at_mode_0o600", async () => {
+    // Direct substrate-level test: write to a tmp file using the same
+    // primitive the migrated graph-completion code uses; assert the
+    // resulting file mode is 0o600. Proves the substrate produces the
+    // mode invariant; the writer's migration to the substrate makes
+    // the writer inherit it.
+    const { mkdtempSync, statSync, rmSync, mkdirSync: realMkdirSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { writeRegularFile } = await import("@comis/observability");
+
+    const baseDir = mkdtempSync(join(tmpdir(), "comis-graph-completion-mode-"));
+    const sharedDir = join(baseDir, "graph-shared");
+    realMkdirSync(sharedDir, { recursive: true, mode: 0o700 });
+    try {
+      const target = join(sharedDir, "_run-metadata.json");
+      const result = writeRegularFile({
+        path: target,
+        content: JSON.stringify({ graphId: "mode-test" }),
+        confinedBaseDir: sharedDir,
+      });
+      expect(result.ok).toBe(true);
+      expect(statSync(target).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+});

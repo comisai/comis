@@ -18,7 +18,7 @@ import {
   systemClearTimeout,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
-import { writeFileSync } from "node:fs";
+import { writeRegularFile } from "@comis/observability";
 import { gatedSpawn } from "./graph-concurrency.js";
 import { resolveFileReferenceOutput, persistArtifacts } from "./graph-node-lifecycle.js";
 import type {
@@ -137,10 +137,10 @@ export function handleDriverTurnCompleted(
         "Driver node partial completion recovered",
       );
 
-      // Persist partial output to shared dir
+      // Persist partial output via fs-safe substrate (Phase 48 OBS-HARD-03).
       if (gs.sharedDir) {
         try {
-          writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), partialOutput, "utf8");
+          void writeRegularFile({ path: safePath(gs.sharedDir, `${nodeId}-output.md`), content: partialOutput, confinedBaseDir: gs.sharedDir });
         } catch { /* best-effort */ }
       }
 
@@ -323,10 +323,10 @@ export function handleDriverTimeout(
       "Driver node timeout partial completion recovered",
     );
 
-    // Persist partial output to shared dir
+    // Persist partial output via fs-safe substrate (timeout-recovery, Phase 48).
     if (gs.sharedDir) {
       try {
-        writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), partialOutput, "utf8");
+        void writeRegularFile({ path: safePath(gs.sharedDir, `${nodeId}-output.md`), content: partialOutput, confinedBaseDir: gs.sharedDir });
       } catch { /* best-effort */ }
     }
 
@@ -688,10 +688,10 @@ export function executeDriverAction(
       persistArtifacts(deps, gs, nodeId, action.artifacts);
       const output = action.output;
 
-      // Persist output to shared dir
+      // Persist output via fs-safe substrate (complete-action, Phase 48).
       if (gs.sharedDir && output) {
         try {
-          writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), output, "utf8");
+          void writeRegularFile({ path: safePath(gs.sharedDir, `${nodeId}-output.md`), content: output, confinedBaseDir: gs.sharedDir });
         } catch { /* best-effort */ }
       }
 
