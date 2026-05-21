@@ -46,13 +46,22 @@ export type ConfigAuditOutcome =
  * Build the audit-record base for the in-flight config.patch RPC.
  * Returns `undefined` when the base construction itself fails (e.g.,
  * stat permission issues on the target path) — audit is best-effort.
+ *
+ * @param localPath - Absolute path of the local override config file.
+ * @param callerSource - The ConfigWriteSource tag for the JSONL record's
+ *   `source` field. Defaults to `"config-patch-rpc"` so existing call
+ *   sites in `config-write.ts` keep working unchanged. Phase 47 passes
+ *   `"mcp.connect"` / `"mcp.disconnect"` from mcp-handlers so the audit
+ *   trail can distinguish MCP-driven writes from generic config.patch
+ *   writes (R8).
  */
 export function buildConfigAuditBase(
   localPath: string,
+  callerSource: string = "config-patch-rpc",
 ): ConfigWriteAuditRecordBase | undefined {
   try {
     return createConfigWriteAuditRecordBase({
-      source: "config-patch-rpc",
+      source: callerSource,
       configPath: localPath,
       // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
       pid: process.pid,
