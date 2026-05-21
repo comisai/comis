@@ -286,6 +286,11 @@ export interface WorkspaceApiDeps {
   eventBus?: AppContainer["eventBus"];
   /** mcp-handlers reads deps.secretManager?.has for env-ref validation. */
   secretManager?: import("@comis/core").SecretManager;
+  /** mcp-handlers reads deps.persistDeps for YAML writes via persistMcpServers.
+   *  Same shape as ChannelsApiDeps.persistDeps / AgentsApiDeps.persistDeps /
+   *  OrchestratorApiDeps.persistDeps so the ApiDispatchDeps multi-extends
+   *  remains well-formed. */
+  persistDeps?: PersistToConfigDeps;
 }
 
 /**
