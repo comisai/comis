@@ -73,19 +73,19 @@ export const TOOL_PROFILES: Record<string, string[]> = {
   "cron-minimal": [
     "web_search",
     "message",
-    "read_file",
-    "write_file",
-    "list_dir",
+    "read",
+    "write",
+    "ls",
     "memory_store",
     "memory_search",
     "cron",
-    "discover",
+    "discover_tools",
   ],
   "heartbeat-minimal": [
     "message",
     "memory_store",
     "memory_search",
-    "discover",
+    "discover_tools",
   ],
   full: [], // empty = all tools allowed
 };
