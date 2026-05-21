@@ -39,7 +39,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { ok, err, type Result } from "@comis/shared";
-import { appendRegularFile } from "../shared/fs-safe.js";
+import { appendRegularFile, ensureContainedDir } from "../shared/fs-safe.js";
 import { safePath, systemDateFrom, systemNowMs } from "@comis/core";
 
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
@@ -482,56 +482,40 @@ function encodeRecord(record: ConfigWriteAuditRecord): string {
 
 /**
  * Ensure the parent dir exists with mode 0o700, including for the
- * existing-parent case (OBS-REVIEW-01 fix).
+ * existing-parent case (OBS-REVIEW-01 fix; Phase 48 OBS-HARD-01
+ * substrate migration).
  *
- * Two cases:
+ * Delegates to the shared `ensureContainedDir` substrate, which owns
+ * the canonical `mkdir + lstat-gated chmod` pattern with
+ * confused-deputy safety:
  *
- *   - Fresh-create: `mkdirSync({recursive: true, mode: 0o700})` creates
- *     the dir at the correct mode.
+ *   - Fresh-create: dir created at the specified mode.
  *
  *   - Existing-parent: `mkdirSync`'s `mode` arg is silently ignored
- *     when the dir already exists (recursive EEXIST). pino-roll /
- *     pi-mono and other non-observability creators may create the
- *     parent first under default umask (0o755), violating the §1.4
- *     0o700 invariant. We defensively chmod to 0o700.
- *
- * The defensive chmod is GATED on a non-symlink `lstat`. NEVER mutate
- * a symlinked dir — its target could be operator-owned shared state
- * outside our trust boundary. This closes the confused-deputy hole
- * that an unconditional chmod-else-branch would open, while still
- * restoring the §1.4 0o700 invariant for real-dir parents created by
- * other subsystems.
+ *     on recursive EEXIST; the substrate's defensive chmod restores
+ *     the §1.4 0o700 invariant, gated on a non-symlink `lstat`
+ *     (never chmod a symlinked dir — target may be shared state).
  *
  * The **file** itself is independently locked to `0o600` by the
  * defensive `fchmodSync(fd, 0o600)` inside `appendRegularFile`
  * (fs-safe.ts step 3) — per-record file-mode invariant is preserved
  * regardless of the parent's pre-existing mode.
- */
-/**
- * Exported so the observe-side writer (`append-observe.ts`) can share
- * the same parent-dir invariants without duplicating the chmod-gate
- * code. The semantics are identical to the original private helper —
- * see header above.
+ *
+ * The exported sync void signature is preserved for back-compat with
+ * the observe-side writer (`append-observe.ts`) which calls it
+ * directly. The substrate's Result is discarded because the existing
+ * contract is best-effort — the subsequent `appendRegularFile` call
+ * surfaces real errors via its own Result.err branch.
  */
 export function ensureConfigAuditParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
-  try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-  }
-  // Defensive chmod for the EEXIST case — design §1.4 invariant.
-  // Gated on a non-symlink lstat to preserve confused-deputy safety
-  // (never chmod a symlinked dir; its target may be shared state).
-  try {
-    const st = fs.lstatSync(dir);
-    if (!st.isSymbolicLink()) {
-      fs.chmodSync(dir, 0o700);
-    }
-  } catch {
-    // Stat or chmod failed — the subsequent appendRegularFile call
-    // will surface the underlying error if it matters.
-  }
+  // Delegate to the shared `ensureContainedDir` substrate (Phase 48
+  // OBS-HARD-01). The substrate owns the mkdir + lstat-gated chmod
+  // pattern with confused-deputy safety. Result is intentionally
+  // discarded — preserves the existing best-effort contract; the
+  // subsequent appendRegularFile call surfaces real errors via its
+  // own Result.err branch.
+  ensureContainedDir({ dir, mode: 0o700 });
 }
 
 /**
