@@ -4441,6 +4441,17 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "items": {
             "type": "string"
           }
+        },
+        "persistence": {
+          "type": "string",
+          "enum": [
+            "persisted",
+            "runtime_only",
+            "skipped"
+          ]
+        },
+        "warning": {
+          "type": "string"
         }
       },
       "required": [
@@ -4480,6 +4491,17 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "status": {
           "type": "string",
           "const": "disconnected"
+        },
+        "persistence": {
+          "type": "string",
+          "enum": [
+            "persisted",
+            "runtime_only",
+            "skipped"
+          ]
+        },
+        "warning": {
+          "type": "string"
         }
       },
       "required": [

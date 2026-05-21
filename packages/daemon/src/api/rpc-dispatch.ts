@@ -258,6 +258,17 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // agent/provider handlers above. When undefined the validator becomes
       // a no-op.
       secretManager: deps.container?.secretManager,
+      // Phase 47: thread persistDeps so mcp.connect/disconnect can route
+      // through persistToConfig. Mirrors the heartbeat-handlers wiring at
+      // :280-290. When deps.container is missing (test harnesses) persist
+      // is short-circuited to persistence:"skipped" per D-04.
+      persistDeps: deps.container ? {
+        container: deps.container,
+        configPaths: deps.configPaths,
+        defaultConfigPaths: deps.defaultConfigPaths,
+        configGitManager: deps.configGitManager,
+        logger: deps.logger,
+      } : undefined,
     }),
     // daemon-handlers consumes DaemonApiDeps; spread `...deps` so the
     // cluster slice's required `logger` is present alongside the
