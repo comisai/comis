@@ -111,6 +111,35 @@ export interface ShutdownDeps {
    * Constructed in setupAgents and surfaced on AgentsResult.
    */
   trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
+  // ---------------------------------------------------------------------
+  // Lifted teardowns (CRIT-03 / EVENT-CLEAN-01)
+  // Previously these ran via container.eventBus.on("system:shutdown", …)
+  // subscribers, but no production emitter existed — they silently
+  // no-op'd in production. They are now direct fields invoked by this
+  // composition root.
+  //
+  // 8 production subscribers expand to 9 fields because setup-tools.ts's
+  // single closure splits into background-processes + mcp-client-manager
+  // (RESEARCH Open Question #2 RESOLVED).
+  // ---------------------------------------------------------------------
+  /** Drain per-agent background-process registries (from setupTools). */
+  shutdownBackgroundProcesses?: () => Promise<void>;
+  /** Disconnect MCP clients. */
+  mcpClientManagerDisconnectAll?: () => Promise<void>;
+  /** Drain background completion runner. */
+  bgCompletionRunnerShutdown?: () => Promise<void>;
+  /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
+  proxyTypingCleanup?: () => void;
+  /** Stop the approval notifier (from setup-channels-runtime). */
+  approvalNotifierStop?: () => void;
+  /** Stop the delivery queue (from setupDeliveryQueue). */
+  shutdownDeliveryQueue?: () => void;
+  /** Stop the delivery mirror (from setupDeliveryMirror). */
+  shutdownDeliveryMirror?: () => void;
+  /** Stop the output retention housekeeper (from setupOutputRetention). */
+  outputRetentionShutdown?: () => void;
+  /** Stop the channel health monitor (from setupChannelHealthMonitor). */
+  stopChannelHealthMonitor?: () => void;
 }
 
 /** All services produced by the shutdown setup phase. */
@@ -201,6 +230,16 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     obsPersistence,
     geminiCacheManager,
     trajectoryRegistry,
+    // CRIT-03: 9 new teardown handles lifted from system:shutdown subscribers.
+    shutdownBackgroundProcesses,
+    mcpClientManagerDisconnectAll,
+    bgCompletionRunnerShutdown,
+    proxyTypingCleanup,
+    approvalNotifierStop,
+    shutdownDeliveryQueue,
+    shutdownDeliveryMirror,
+    outputRetentionShutdown,
+    stopChannelHealthMonitor,
   } = deps;
 
   const shutdownHandle = _registerGracefulShutdown({
@@ -263,6 +302,18 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           await subAgentRunner.shutdown();
           daemonLogger.info({ component: "sub-agent-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "sub-agent-runner", daemonLogger);
+      }
+
+      // CRIT-03: Drain background-completion-runner before stopping
+      // subsystems it might enqueue into. Previously this ran inside an
+      // eventBus.on("system:shutdown", ...) subscriber in daemon.ts that
+      // silently no-op'd in production.
+      if (bgCompletionRunnerShutdown) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await bgCompletionRunnerShutdown();
+          daemonLogger.info({ component: "background-completion-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "background-completion-runner", daemonLogger);
       }
 
       // Drain session-scoped trajectory recorders. Each open session's
@@ -431,6 +482,35 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "channel-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "channel-manager", daemonLogger);
       }
+      // CRIT-03: Stop proxy typing controllers + sweep timer. Previously
+      // hosted in a system:shutdown subscriber inside
+      // registerProxyTypingListeners that silently no-op'd in production.
+      if (proxyTypingCleanup) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(() => {
+          proxyTypingCleanup();
+          daemonLogger.info({ component: "proxy-typing", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "proxy-typing", daemonLogger);
+      }
+      // CRIT-03: Stop the approval notifier — replaces the
+      // system:shutdown subscriber that previously called
+      // approvalNotifier?.stop() in setup-channels-runtime.ts.
+      if (approvalNotifierStop) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(() => {
+          approvalNotifierStop();
+          daemonLogger.info({ component: "approval-notifier", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "approval-notifier", daemonLogger);
+      }
+      // CRIT-03: Stop the channel health monitor — replaces the
+      // system:shutdown subscriber in daemon.ts.
+      if (stopChannelHealthMonitor) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(() => {
+          stopChannelHealthMonitor();
+          daemonLogger.info({ component: "channel-health-monitor", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "channel-health-monitor", daemonLogger);
+      }
       if (heartbeatRunner) {
         const stopMs = systemNowMs();
         await withStepTimeout(() => {
@@ -452,6 +532,31 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "wake-coalescer", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "wake-coalescer", daemonLogger);
       }
+      // CRIT-03: Drain the delivery queue, delivery mirror, and output
+      // retention housekeeper. Each replaces a system:shutdown subscriber
+      // previously installed in channels-helpers.ts:258 / :260 / :266 that
+      // silently no-op'd in production.
+      if (shutdownDeliveryQueue) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(() => {
+          shutdownDeliveryQueue();
+          daemonLogger.info({ component: "delivery-queue", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "delivery-queue", daemonLogger);
+      }
+      if (shutdownDeliveryMirror) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(() => {
+          shutdownDeliveryMirror();
+          daemonLogger.info({ component: "delivery-mirror", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "delivery-mirror", daemonLogger);
+      }
+      if (outputRetentionShutdown) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(() => {
+          outputRetentionShutdown();
+          daemonLogger.info({ component: "output-retention", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "output-retention", daemonLogger);
+      }
       // Dispose all active Gemini caches on shutdown
       if (geminiCacheManager) {
         const stopMs = systemNowMs();
@@ -466,6 +571,27 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           mediaTempManager.stopCleanupInterval();
           daemonLogger.info({ component: "media-temp-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "media-temp-manager", daemonLogger);
+      }
+      // CRIT-03: Drain per-agent background-process registries + disconnect
+      // MCP servers. Previously these ran inside a single
+      // eventBus.on("system:shutdown", ...) closure in setup-tools.ts; per
+      // RESEARCH Open Question #2 (RESOLVED) they are now two independent
+      // ShutdownDeps fields. Background processes go before
+      // obs-persistence because subprocess cleanup may emit observability
+      // events into the still-running write buffer.
+      if (shutdownBackgroundProcesses) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await shutdownBackgroundProcesses();
+          daemonLogger.info({ component: "background-processes", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "background-processes", daemonLogger);
+      }
+      if (mcpClientManagerDisconnectAll) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await mcpClientManagerDisconnectAll();
+          daemonLogger.info({ component: "mcp-client-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "mcp-client-manager", daemonLogger);
       }
       // Drain observability write buffers BEFORE collector dispose and db.close
       if (obsPersistence) {

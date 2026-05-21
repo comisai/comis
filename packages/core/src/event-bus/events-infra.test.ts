@@ -380,22 +380,13 @@ describe("InfraEvents payload structure", () => {
     expect(received.activeHandles).toBe(42);
   });
 
-  it("system:shutdown delivers reason and graceful", () => {
-    const bus = new TypedEventBus();
-    const handler = vi.fn();
-    const payload: EventMap["system:shutdown"] = {
-      reason: "SIGTERM",
-      graceful: true,
-    };
-
-    bus.on("system:shutdown", handler);
-    bus.emit("system:shutdown", payload);
-
-    expect(handler).toHaveBeenCalledWith(payload);
-    const received = handler.mock.calls[0]![0] as EventMap["system:shutdown"];
-    expect(received.reason).toBe("SIGTERM");
-    expect(received.graceful).toBe(true);
-  });
+  // CRIT-03 / EVENT-CLEAN-01: the "system:shutdown" event was deleted from
+  // InfraEvents in Phase 50 Plan 01 — it had 8 production subscribers and
+  // zero production emitters, so every teardown silently no-op'd until
+  // systemd KillMode reaped the process. The teardown wiring now flows
+  // directly through setupShutdown's ShutdownDeps (see
+  // packages/daemon/src/wiring/setup-shutdown.ts). The payload-shape test
+  // that used to live here was deleted with the event declaration.
 
   it("system:error delivers Error instance and source string", () => {
     const bus = new TypedEventBus();

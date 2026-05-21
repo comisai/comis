@@ -40,19 +40,24 @@ export interface ProxyTypingListenerDeps {
 }
 
 /**
- * Register the proxy typing event handlers on the daemon event bus. Three
+ * Register the proxy typing event handlers on the daemon event bus. Two
  * listeners are attached:
  *   1. `typing:proxy_start` — create TypingController for parent channel
  *      (no-op when the platform lacks typing support or the runId is already
  *      tracked).
  *   2. `typing:proxy_stop` — stop the controller and remove the entry.
- *   3. `system:shutdown` — stop every active controller + clear the TTL
- *      sweep timer.
  *
  * Additionally schedules a TTL sweep timer that stops any controller older
  * than 5 minutes (mirrors the sub-agent watchdog timeout).
+ *
+ * Returns a cleanup function the composition root (daemon.ts →
+ * setupShutdown) invokes on graceful shutdown via
+ * ShutdownDeps.proxyTypingCleanup (CRIT-03). The cleanup function clears
+ * the TTL sweep timer and stops every active proxy controller. Previously
+ * this lived in an eventBus.on("system:shutdown", ...) subscriber that
+ * silently no-op'd in production.
  */
-export function registerProxyTypingListeners(deps: ProxyTypingListenerDeps): void {
+export function registerProxyTypingListeners(deps: ProxyTypingListenerDeps): () => void {
   const { container, adaptersByType, logger } = deps;
 
   const proxyControllers = new Map<string, {
@@ -126,12 +131,19 @@ export function registerProxyTypingListeners(deps: ProxyTypingListenerDeps): voi
   }, PROXY_SWEEP_INTERVAL_MS);
   proxySweepTimer.unref(); // Do not prevent process exit
 
-  // Shutdown cleanup — stop all proxy controllers and clear sweep timer
-  container.eventBus.on("system:shutdown", () => {
+  // CRIT-03: Shutdown cleanup function — stops all proxy controllers and
+  // clears the TTL sweep timer. Previously invoked via eventBus.on(
+  // "system:shutdown", ...) which silently no-op'd in production because
+  // no production code emitted the event. Now returned directly to the
+  // composition root for setupShutdown to invoke through
+  // ShutdownDeps.proxyTypingCleanup.
+  function proxyTypingCleanup(): void {
     systemClearInterval(proxySweepTimer);
     for (const [, entry] of proxyControllers) {
       entry.controller.stop();
     }
     proxyControllers.clear();
-  });
+  }
+
+  return proxyTypingCleanup;
 }

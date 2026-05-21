@@ -121,7 +121,10 @@ describe("EventMap composition", () => {
     const _msgKey: keyof EventMap = "message:received" satisfies keyof MessagingEvents;
     const _agentKey: keyof EventMap = "tool:executed" satisfies keyof AgentEvents;
     const _chanKey: keyof EventMap = "queue:enqueued" satisfies keyof ChannelEvents;
-    const _infraKey: keyof EventMap = "system:shutdown" satisfies keyof InfraEvents;
+    // CRIT-03 / EVENT-CLEAN-01: "system:shutdown" was removed from
+    // InfraEvents in Phase 50 Plan 01. "system:error" is the next surviving
+    // infra-event of the same lifecycle category.
+    const _infraKey: keyof EventMap = "system:error" satisfies keyof InfraEvents;
 
     expect(true).toBe(true); // type-level test passes if it compiles
   });

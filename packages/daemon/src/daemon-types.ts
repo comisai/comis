@@ -83,6 +83,7 @@ import type {
   setupRpcBridge,
   setupDeliveryQueue,
   setupDeliveryMirror,
+  setupOutputRetention,
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
@@ -442,6 +443,22 @@ export interface ChannelsHandle extends AgentsHandle {
   modelCatalog: ReturnType<typeof createModelCatalog>;
   channelConfig: Record<string, { enabled: boolean }>;
   promptTimeoutTimestamps: number[];
+  // ---------------------------------------------------------------------
+  // CRIT-03: Teardown handles surfaced from stageChannels for ShutdownDeps
+  // wiring. Each was previously hosted inside
+  // container.eventBus.on("system:shutdown", ...) subscribers that
+  // silently no-op'd in production because no production code emits the
+  // system:shutdown event. Threaded through here so stageShutdown invokes
+  // them directly.
+  // ---------------------------------------------------------------------
+  /** Drain per-agent background-process registries (from setupTools). */
+  shutdownBackgroundProcesses: ReturnType<typeof setupTools>["shutdownBackgroundProcesses"];
+  /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
+  proxyTypingCleanup: ReturnType<typeof setupCrossSession>["proxyTypingCleanup"];
+  /** Approval notifier handle (from setupChannels). Undefined when no channel adapters initialized. */
+  approvalNotifier: Awaited<ReturnType<typeof setupChannels>>["approvalNotifier"];
+  /** Output retention housekeeper handle (from setupOutputRetention). Undefined when defaultWorkspaceDir is empty. */
+  outputRetentionHandle: ReturnType<typeof setupOutputRetention> | undefined;
 }
 
 /**

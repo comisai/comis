@@ -179,6 +179,14 @@ export interface ToolsResult {
   ) => Promise<Awaited<ReturnType<typeof assembleToolPipeline>>>;
   /** Preprocess message text through the link understanding pipeline. */
   preprocessMessageText: (text: string) => Promise<string>;
+  /**
+   * Drain per-agent background-process registries on shutdown. Returned from
+   * setupTools so the composition root (daemon.ts → setupShutdown) can
+   * invoke teardown directly via ShutdownDeps.shutdownBackgroundProcesses
+   * (CRIT-03). Replaces the previous eventBus.on("system:shutdown", ...)
+   * subscriber that silently no-op'd in production.
+   */
+  shutdownBackgroundProcesses: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -702,8 +710,18 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     }, `Tool audit: ${event.toolName}${event.description ? ` (${event.description})` : ""} ${event.success ? "succeeded" : "failed"} (${Math.round(event.durationMs)}ms)${paramsPreview}`);
   });
 
-  // Cleanup all background processes on system shutdown
-  eventBus.on("system:shutdown", async () => {
+  // CRIT-03: Drain per-agent background-process registries on shutdown.
+  // Previously this lived inside an eventBus.on("system:shutdown", ...)
+  // subscriber, but the event had zero production emitters — the cleanup
+  // silently no-op'd in production. The closure is now returned to the
+  // composition root (daemon.ts → setupShutdown) and invoked directly via
+  // ShutdownDeps.shutdownBackgroundProcesses.
+  //
+  // Per RESEARCH Open Question #2 (RESOLVED), the original single closure
+  // splits into two ShutdownDeps fields: this function (background-processes)
+  // and mcpClientManagerDisconnectAll (bound at daemon.ts directly off the
+  // mcpClientManager handle).
+  async function shutdownBackgroundProcesses(): Promise<void> {
     let totalKilled = 0;
     for (const [agentId, registry] of processRegistries) {
       const cleanedCount = await registry.cleanup();
@@ -716,11 +734,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       skillsLogger.info({ totalKilled }, "All background processes cleaned up");
     }
     processRegistries.clear();
+  }
 
-    // Disconnect MCP servers on shutdown
-    await mcpClientManager.disconnectAll();
-    skillsLogger.info("MCP servers disconnected on shutdown");
-  });
-
-  return { assembleToolsForAgent, preprocessMessageText };
+  return { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses };
 }
