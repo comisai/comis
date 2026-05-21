@@ -1359,11 +1359,31 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "WorkspaceFiles",
       "WorkspaceStatus",
     ])],
-    // @comis/daemon: baseline orphans tracked here.
-    // createTracingLogger + TracingLoggerOptions are consumed by the
-    // residency-test daemon harness via DYNAMIC require("@comis/daemon"),
-    // which the public-export-consumers AST walker does not track (it only
-    // sees static `import` and re-export `export from` declarations).
+    // @comis/daemon: baseline orphans tracked here. All four
+    // value-side root re-exports (createAnnouncementDeadLetterQueue,
+    // createContextHandlers, createAgentHandlers, createTracingLogger)
+    // DO have real test consumers — they are tracked here only because
+    // the public-export-consumers AST walker excludes `test/**` and
+    // ignores dynamic `require("@comis/daemon")` patterns (it walks
+    // only static `import`/`export from` declarations outside the
+    // package). Per Phase 52 Plan 04 (BC-REM-12 sub-A) Path B disposition:
+    // each surviving re-export has a documented test caller; no further
+    // deletion is safe without retargeting those consumers.
+    //
+    // Consumer audit (2026-05-21, Phase 52 Plan 04):
+    //   - createAnnouncementDeadLetterQueue / AnnouncementDeadLetterQueue / DeadLetterEntry
+    //     → test/integration/resilience-e2e-dead-letter.test.ts:22 (static import)
+    //   - createContextHandlers / ContextHandlerDeps
+    //     → test/integration/context-dag-integration.test.ts:52-53 (static import)
+    //   - createAgentHandlers / AgentHandlerDeps
+    //     → test/integration/oauth-multi-account.test.ts:80,580 (static import +
+    //       direct factory call — drives the agents.update RPC handler against a
+    //       shared agents map mirroring the daemon-runtime container.config.agents
+    //       pattern at daemon.ts:594/634)
+    //   - createTracingLogger / TracingLoggerOptions
+    //     → test/support/daemon-harness.ts:434-442 (DYNAMIC require("@comis/daemon"),
+    //       threads LoggerOptions.disableRedaction through to the daemon's
+    //       production logger for the residency integration test)
     ["@comis/daemon", new Set<string>([
       "main",
       "DaemonInstance",
