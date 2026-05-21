@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, statSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ShutdownDeps } from "./setup-shutdown.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
@@ -619,4 +622,93 @@ describe("setupShutdown", () => {
       "Shutdown step timed out or failed, continuing",
     );
   }, 15_000);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 48 OBS-HARD-03: Mode-invariant tests (tmpdir-scoped, real fs).
+//
+// Per Plan 48-05 D-03, the two writeFileSync sites in setup-shutdown
+// (restart-approvals.json + restart-approval-cache.json) MUST produce
+// files at mode `0o600` post-migration. These tests drive the actual
+// onShutdown callback against a real tmpdir with a `dataDir`,
+// asserting both artifacts land at the §1.4 invariant.
+// ---------------------------------------------------------------------------
+
+describe("setup-shutdown honors §1.4 mode invariants", () => {
+  let baseDir: string;
+  let capturedOnShutdownLocal: (() => Promise<void>) | null = null;
+  let processOnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    capturedOnShutdownLocal = null;
+    baseDir = mkdtempSync(join(tmpdir(), "comis-setup-shutdown-mode-"));
+    processOnSpy = vi.spyOn(process, "on").mockImplementation(() => process);
+  });
+
+  afterEach(() => {
+    processOnSpy.mockRestore();
+    rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  async function getSetupShutdown() {
+    const mod = await import("./setup-shutdown.js");
+    return mod.setupShutdown;
+  }
+
+  function buildDeps(): ShutdownDeps {
+    const mockShutdownHandle = {
+      isShuttingDown: false,
+      trigger: vi.fn(async () => {}),
+    };
+    const approvalGate = {
+      serializePending: vi.fn(() => [{ id: "ap-1", status: "pending" }]),
+      serializeApprovalCache: vi.fn(() => [{ id: "cache-1", until: 0 }]),
+      dispose: vi.fn(),
+    } as any;
+    return {
+      logger: createMockLogger() as any,
+      daemonLogger: createMockLogger() as any,
+      processMonitor: { start: vi.fn(), stop: vi.fn() } as any,
+      container: { shutdown: vi.fn(async () => {}) } as any,
+      exitFn: vi.fn(),
+      _registerGracefulShutdown: vi.fn((opts: any) => {
+        capturedOnShutdownLocal = opts.onShutdown;
+        return mockShutdownHandle;
+      }),
+      subAgentRunner: { shutdown: vi.fn(async () => {}) },
+      cronSchedulers: new Map(),
+      resetSchedulers: new Map(),
+      browserServices: new Map(),
+      tokenTracker: {
+        getAll: vi.fn(() => []),
+      } as any,
+      startupTimestamp: Date.now() - 10_000,
+      diagnosticCollector: { dispose: vi.fn() } as any,
+      channelActivityTracker: { dispose: vi.fn() } as any,
+      deliveryTracer: { dispose: vi.fn() } as any,
+      db: { close: vi.fn(), pragma: vi.fn() },
+      dataDir: baseDir,
+      approvalGate,
+    };
+  }
+
+  it("writes_restart_approvals_with_mode_0o600", async () => {
+    const deps = buildDeps();
+    const setupShutdown = await getSetupShutdown();
+    setupShutdown(deps);
+    await capturedOnShutdownLocal!();
+
+    const filePath = join(baseDir, "restart-approvals.json");
+    expect(statSync(filePath).mode & 0o777).toBe(0o600);
+  });
+
+  it("writes_restart_approval_cache_with_mode_0o600", async () => {
+    const deps = buildDeps();
+    const setupShutdown = await getSetupShutdown();
+    setupShutdown(deps);
+    await capturedOnShutdownLocal!();
+
+    const filePath = join(baseDir, "restart-approval-cache.json");
+    expect(statSync(filePath).mode & 0o777).toBe(0o600);
+  });
 });
