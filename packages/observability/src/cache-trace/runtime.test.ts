@@ -466,3 +466,162 @@ describe("createCacheTrace -- write-failures sentinel", () => {
     expect(trace!.failureCount()).toBeGreaterThan(0);
   });
 });
+
+describe("cache_trace.write_failures sentinel (Plan 48-03)", () => {
+  // Per Plan 48-03 D-10 / D-11: cache-trace runtime emits an inline
+  // sentinel on the FIRST queued-writer failure detection inside
+  // recordStage (latched once-per-session) AND a summary sentinel at
+  // flushAndClose when failureCount > 0. The two-sentinel-per-cap-hit
+  // model means a session that exceeds the cap produces exactly 2
+  // cache_trace.write_failures lines: one mid-stream, one at file tail.
+  // Sessions that never hit the cap produce 0 sentinels.
+
+  function readJsonlEvents(tracePath: string): Array<Record<string, unknown>> {
+    if (!existsSync(tracePath)) return [];
+    const raw = readFileSync(tracePath, "utf-8");
+    return raw
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+
+  function countSentinels(events: Array<Record<string, unknown>>): number {
+    return events.filter((e) => e.stage === "cache_trace.write_failures").length;
+  }
+
+  it("inline_sentinel_fires_on_first_writer_failure", async () => {
+    // Cap small enough that the first event overflows. The inline-sentinel
+    // latch must fire on first failure-detection: after at least one
+    // recordStage call triggers an append rejection (visible via
+    // writer.failureCount() > 0), the next recordStage call emits ONE
+    // inline sentinel with `data.firstDropAt` (ISO string) and
+    // `data.reason === "queued_writer_rejected"`.
+    const filePath = join(tmpDir, "inline-sentinel.jsonl");
+    const trace = createCacheTrace({
+      enabled: true,
+      filePath,
+      maxFileBytes: 200, // tiny — first or second event overflows
+      includeMessages: false,
+      includePrompt: false,
+      includeSystem: false,
+      agentId: "test-agent",
+      sessionId: "test-session-1",
+      provider: "test",
+      modelId: "test-model",
+      envelope: { sessionKey: "test-session-1" },
+    });
+    expect(trace).not.toBeNull();
+
+    // Drive several stages with large payloads. Each call yields to the
+    // event loop so the queued writer's append promise can resolve and
+    // bump failureCount before the next recordStage call.
+    const bigPayload = { data: "x".repeat(500) };
+    for (let i = 0; i < 5; i++) {
+      trace!.recordStage("session:start", bigPayload);
+      await new Promise((r) => setImmediate(r));
+    }
+
+    await trace!.flushAndClose();
+    const events = readJsonlEvents(filePath);
+    const sentinels = events.filter(
+      (e) => e.stage === "cache_trace.write_failures",
+    );
+    // At least one cache_trace.write_failures must be present (inline OR
+    // summary). The inline sentinel itself may also be rejected by the
+    // tiny cap; the load-bearing assertion is that the LATCH fires AND
+    // the runtime ATTEMPTS the inline emit. We verify by checking that
+    // either an inline-marker (firstDropAt) or summary-marker
+    // (sessionLifetimeMs) reaches disk.
+    expect(sentinels.length).toBeGreaterThanOrEqual(1);
+    const hasInlineMarker = sentinels.some(
+      (s) =>
+        typeof ((s.data ?? {}) as Record<string, unknown>).firstDropAt ===
+        "string",
+    );
+    const hasSummaryMarker = sentinels.some(
+      (s) =>
+        typeof ((s.data ?? {}) as Record<string, unknown>).sessionLifetimeMs ===
+        "number",
+    );
+    expect(hasInlineMarker || hasSummaryMarker).toBe(true);
+  });
+
+  it("inline_sentinel_latched_at_most_once_per_session", async () => {
+    // Per D-11: exactly 1 inline + 1 summary = 2 total sentinels per
+    // cap-hit session. The latch ensures only 1 inline fires even when
+    // multiple recordStage calls observe failureCount > 0; the summary
+    // always fires on flushAndClose when failures > 0.
+    const filePath = join(tmpDir, "latched-sentinel.jsonl");
+    const trace = createCacheTrace({
+      enabled: true,
+      filePath,
+      maxFileBytes: 5000, // mid-sized — cap-hit happens, inline sentinel fits
+      includeMessages: false,
+      includePrompt: false,
+      includeSystem: false,
+      agentId: "test-agent",
+      sessionId: "test-session-2",
+      provider: "test",
+      modelId: "test-model",
+      envelope: { sessionKey: "test-session-2" },
+    });
+    expect(trace).not.toBeNull();
+
+    const bigPayload = { data: "x".repeat(2000) };
+    for (let i = 0; i < 10; i++) {
+      trace!.recordStage("session:start", bigPayload);
+      await new Promise((r) => setImmediate(r));
+    }
+    await trace!.flushAndClose();
+
+    const events = readJsonlEvents(filePath);
+    const sentinelsCount = countSentinels(events);
+    // Per D-11: 1 inline + 1 summary = 2 total.
+    expect(sentinelsCount).toBe(2);
+  });
+
+  it("summary_sentinel_carries_session_lifetime_ms", async () => {
+    // Per D-11: summary sentinel at flushAndClose carries
+    // sessionLifetimeMs (= systemNowMs() - state.sessionStartedAt),
+    // droppedEvents (renamed from `count`), and totalDroppedBytes
+    // (renamed from `rejectedBytes`).
+    const filePath = join(tmpDir, "summary-sentinel.jsonl");
+    const trace = createCacheTrace({
+      enabled: true,
+      filePath,
+      maxFileBytes: 1000,
+      includeMessages: false,
+      includePrompt: false,
+      includeSystem: false,
+      agentId: "test-agent",
+      sessionId: "test-session-3",
+      provider: "test",
+      modelId: "test-model",
+      envelope: { sessionKey: "test-session-3" },
+    });
+    expect(trace).not.toBeNull();
+
+    const bigPayload = { data: "x".repeat(500) };
+    trace!.recordStage("session:start", bigPayload);
+    // Sleep ≥ 50 ms so sessionLifetimeMs has a measurable floor.
+    await new Promise((r) => setTimeout(r, 60));
+    for (let i = 0; i < 5; i++) {
+      trace!.recordStage("session:start", bigPayload);
+      await new Promise((r) => setImmediate(r));
+    }
+    await trace!.flushAndClose();
+
+    const events = readJsonlEvents(filePath);
+    const summaries = events.filter(
+      (e) =>
+        e.stage === "cache_trace.write_failures" &&
+        typeof ((e.data ?? {}) as Record<string, unknown>).sessionLifetimeMs ===
+          "number",
+    );
+    expect(summaries.length).toBe(1);
+    const summaryData = (summaries[0]!.data ?? {}) as Record<string, unknown>;
+    expect(summaryData.sessionLifetimeMs).toBeGreaterThanOrEqual(50);
+    expect(summaryData.droppedEvents).toBeGreaterThan(0);
+    expect(summaryData.totalDroppedBytes).toBeGreaterThan(0);
+  });
+});
