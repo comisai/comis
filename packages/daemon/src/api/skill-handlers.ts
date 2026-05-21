@@ -686,15 +686,12 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill file write failed: ${writeResult.error.message}`);
       }
 
-      // Re-discover
+      // Re-discover (triggers emitSkillAudit -> audit:event lifecycle capture)
       if (scope === "shared" && deps.skillRegistries) {
         for (const registry of deps.skillRegistries.values()) registry.init();
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-
-      // Emit skill:created event
-      deps.eventBus?.emit("skill:created", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: systemNowMs() });
 
       const result = { ok: true as const, path: skillDir, name: params.name };
       if (IS_DEV) SkillsCreateContract.response.parse(result);
@@ -782,14 +779,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill file write failed: ${writeResult.error.message}`);
       }
 
-      // Re-discover
+      // Re-discover (triggers emitSkillAudit -> audit:event lifecycle capture)
       if (scope === "shared" && deps.skillRegistries) {
         for (const reg of deps.skillRegistries.values()) reg.init();
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
 
-      deps.eventBus?.emit("skill:updated", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: systemNowMs() });
       const result = { ok: true as const, name: params.name };
       if (IS_DEV) SkillsUpdateContract.response.parse(result);
       return result;

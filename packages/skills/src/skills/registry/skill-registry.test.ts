@@ -1455,7 +1455,7 @@ describe("startWatching", () => {
     expect(handle).toHaveProperty("close");
   });
 
-  it("onReload callback triggers re-init and emits skills:reloaded", async () => {
+  it("onReload callback triggers re-init and emits skill:registry_reset", async () => {
     const { createSkillWatcher: mockCreateWatcher } = await import("./skill-watcher.js");
     vi.mocked(mockCreateWatcher).mockClear();
 
@@ -1483,16 +1483,8 @@ describe("startWatching", () => {
     // Invoke the onReload callback (simulates watcher firing)
     capturedOnReload!();
 
-    // Verify skills:reloaded event was emitted
-    const reloadedEvent = eventBus.events.find((e) => e.name === "skills:reloaded");
-    expect(reloadedEvent).toBeDefined();
-    expect(reloadedEvent!.payload).toMatchObject({
-      agentId: "test-agent",
-      skillCount: expect.any(Number),
-      timestamp: expect.any(Number),
-    });
-
-    // Verify registry_reset event was also emitted (from doInit)
+    // Verify skill:registry_reset event was emitted (from doInit). The per-skill
+    // reload lifecycle is captured by audit:event emissions via emitSkillAudit.
     const resetEvent = eventBus.events.find((e) => e.name === "skill:registry_reset");
     expect(resetEvent).toBeDefined();
   });
