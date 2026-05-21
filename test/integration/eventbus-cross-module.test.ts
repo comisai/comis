@@ -261,12 +261,12 @@ gateway:
         expect(typeof container.eventBus.setMaxListeners).toBe("function");
 
         // Verify the bus is functional: register handler, emit, verify called
-        let shutdownCalled = false;
-        container.eventBus.on("system:shutdown", () => {
-          shutdownCalled = true;
+        let errorHandled = false;
+        container.eventBus.on("system:error", () => {
+          errorHandled = true;
         });
-        container.eventBus.emit("system:shutdown", { reason: "test", graceful: true });
-        expect(shutdownCalled).toBe(true);
+        container.eventBus.emit("system:error", { error: new Error("test"), source: "test" });
+        expect(errorHandled).toBe(true);
       } finally {
         container.shutdown();
       }
@@ -319,19 +319,19 @@ gateway:
       const container = result.value;
 
       // Register handlers for two different events
-      container.eventBus.on("system:shutdown", () => {});
       container.eventBus.on("system:error", () => {});
+      container.eventBus.on("plugin:registered", () => {});
 
       // Verify listenerCount > 0 for both events
-      expect(container.eventBus.listenerCount("system:shutdown")).toBeGreaterThan(0);
       expect(container.eventBus.listenerCount("system:error")).toBeGreaterThan(0);
+      expect(container.eventBus.listenerCount("plugin:registered")).toBeGreaterThan(0);
 
       // Call shutdown()
       await container.shutdown();
 
       // Verify listenerCount dropped to 0 for both events
-      expect(container.eventBus.listenerCount("system:shutdown")).toBe(0);
       expect(container.eventBus.listenerCount("system:error")).toBe(0);
+      expect(container.eventBus.listenerCount("plugin:registered")).toBe(0);
     });
   });
 });
