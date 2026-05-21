@@ -697,6 +697,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SessionData",
       "SessionListEntry",
       "SessionDetailedEntry",
+      // DeviceIdentityPort surface (core/src/ports/device-identity.ts). The
+      // daemon-side adapter + factories (`createDeviceIdentityAdapter`,
+      // `createDevicePairing`, `loadOrCreateDeviceIdentity`) were deleted in
+      // Phase 52 Plan 01 (DEAD-MOD-01) because no consumer ever read
+      // `DaemonInstance.deviceIdentity`. The port surface remains on
+      // @comis/core's public barrel until Phase 51 PORT-TRIM-07 deletes
+      // the port file itself; until then these 4 types are intentional
+      // planned-orphans (mirrors the SessionStorePort pattern above).
+      // removedIn: "phase-51"
+      "DeviceIdentity",
+      "DeviceIdentityPort",
+      "PairingRequest",
+      "PairedDevice",
       // Master-key file helpers extracted from CLI's `secrets init` body
       // into core/src/security/master-key.ts. The three names are surfaced
       // on @comis/core's public barrel without a consumer until the CLI
