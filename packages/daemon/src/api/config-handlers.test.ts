@@ -945,36 +945,38 @@ describe("config.patch env var reference validation", () => {
     tempConfig.cleanup();
   });
 
-  // Regression: the enabled:false + missing ${FINNHUB_API_KEY} payload MUST
-  // PASS. The env-substitution skip on disabled servers makes this pattern
-  // harmless at bootstrap; this layer must preserve the placeholder-for-later
-  // workflow.
-  it("accepts enabled:false MCP server with missing ${VAR} (placeholder pattern)", async () => {
+  // Phase 47 R9: gateway-patch on integrations.mcp.servers is now REJECTED
+  // before the env-ref validator runs. The env-validator logic itself is
+  // unchanged and still exercised by persistToConfig at the AppConfigSchema
+  // safeParse boundary (Plan 47-02). The tests below assert that the R9
+  // guard supersedes the env-validator pathway for the gateway-patch
+  // surface — the env-validator's behaviors are covered by unit tests on
+  // `findUnresolvedEnvRefs` + the persistMcpServers integration tests.
+
+  it("R9: gateway-patch on integrations.mcp.servers is rejected before the env-ref validator (enabled:false placeholder)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
-    const result = await handlers["config.patch"]!({
-      section: "integrations",
-      key: "mcp.servers",
-      value: [
-        {
-          name: "finnhub",
-          transport: "stdio",
-          command: "uvx",
-          args: ["mcp-finnhub"],
-          env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
-          enabled: false,
-        },
-      ],
-      _trustLevel: "admin",
-    });
-
-    expect(result).toMatchObject({ patched: true });
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [
+          {
+            name: "finnhub",
+            transport: "stdio",
+            command: "uvx",
+            args: ["mcp-finnhub"],
+            env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+            enabled: false,
+          },
+        ],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // enabled:true with a missing ref is rejected with the structured
-  // [invalid_value] error containing all 3 recovery options.
-  it("rejects enabled:true MCP server with missing ${VAR}", async () => {
+  it("R9: gateway-patch on integrations.mcp.servers is rejected before the env-ref validator (enabled:true missing ref)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -994,9 +996,13 @@ describe("config.patch env var reference validation", () => {
         ],
         _trustLevel: "admin",
       }),
-    ).rejects.toThrow(/\[invalid_value\] enabled MCP server "finnhub" references env var FINNHUB_API_KEY/);
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
 
-    // Spot-check the 3 recovery options are all present in the error message
+  it("R9: gateway-patch on integrations.mcp.servers is rejected even when the secret resolves", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, { FINNHUB_API_KEY: "abc123" });
+    const handlers = createConfigHandlers(deps);
+
     await expect(
       handlers["config.patch"]!({
         section: "integrations",
@@ -1006,42 +1012,17 @@ describe("config.patch env var reference validation", () => {
             name: "finnhub",
             transport: "stdio",
             command: "uvx",
+            args: ["mcp-finnhub"],
             env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
             enabled: true,
           },
         ],
         _trustLevel: "admin",
       }),
-    ).rejects.toThrow(/secrets_manage.*Drop the env block.*Set enabled:false/s);
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // Same payload as the rejection case, but with the secret present → passes.
-  it("accepts enabled:true MCP server when ${VAR} resolves", async () => {
-    const deps = makeDepsWithEnv(tempConfig.configPath, { FINNHUB_API_KEY: "abc123" });
-    const handlers = createConfigHandlers(deps);
-
-    const result = await handlers["config.patch"]!({
-      section: "integrations",
-      key: "mcp.servers",
-      value: [
-        {
-          name: "finnhub",
-          transport: "stdio",
-          command: "uvx",
-          args: ["mcp-finnhub"],
-          env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
-          enabled: true,
-        },
-      ],
-      _trustLevel: "admin",
-    });
-
-    expect(result).toMatchObject({ patched: true });
-  });
-
-  // Multi-server: 2nd enabled server has the unresolved ref. Error names the
-  // FAILING server (finnhub), not just the first server in the list.
-  it("first-fail semantics name the actually-failing server", async () => {
+  it("R9: gateway-patch on integrations.mcp.servers is rejected for multi-server payloads (route to mcp_manage)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1068,12 +1049,10 @@ describe("config.patch env var reference validation", () => {
         ],
         _trustLevel: "admin",
       }),
-    ).rejects.toThrow(/enabled MCP server "finnhub"/);
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // 3+ missing vars on a single server: error lists 3 alphabetically sorted
-  // names plus (+1 more) when there's a 4th.
-  it("caps display at 3 names with (+N more) overflow", async () => {
+  it("R9: gateway-patch on integrations.mcp.servers is rejected for many-missing-vars payloads", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1097,10 +1076,10 @@ describe("config.patch env var reference validation", () => {
         ],
         _trustLevel: "admin",
       }),
-    ).rejects.toThrow(/references env vars A, B, C \(\+1 more\)/);
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // Non-MCP patch: validator skipped entirely.
+  // Non-MCP patch: R9 + env-validator both skipped entirely.
   it("skips validator entirely for non-MCP patches", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
@@ -1116,23 +1095,21 @@ describe("config.patch env var reference validation", () => {
     expect(result).toMatchObject({ patched: true });
   });
 
-  // Empty servers array passes the validator (no entries to scan). The only
-  // mutable subpath under integrations.mcp is `servers` (per
-  // MUTABLE_CONFIG_OVERRIDES); other keys are immutable and rejected before
-  // reaching the env-ref validator. So the realistic "no-op" shape for the
-  // gate is an empty servers list — the loop body never runs.
-  it("no-ops when servers array is empty", async () => {
+  // Empty servers array — even this no-op shape is rejected by R9. The
+  // single-writer invariant treats integrations.mcp.servers as fully managed
+  // by mcp_manage, no exceptions for "vacuous" payloads.
+  it("R9: rejects even an empty servers-array patch (no carve-out for no-op shapes)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
-    const result = await handlers["config.patch"]!({
-      section: "integrations",
-      key: "mcp.servers",
-      value: [],
-      _trustLevel: "admin",
-    });
-
-    expect(result).toMatchObject({ patched: true });
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 });
 
@@ -1739,99 +1716,64 @@ describe("config.patch type coercion", () => {
   });
 
   // -------------------------------------------------------------------------
-  // config.patch preserves z.record(string,string) env values on
-  // integrations.mcp.servers (the MAX_REQUESTS_PER_HOUR="20" cascade bug).
+  // Phase 47 R9: config.patch on integrations.mcp.servers is REJECTED — the
+  // z.record(string,string) env + headers preservation behavior is now
+  // exercised on the persistToConfig writer path (covered by Plan 47-02's
+  // mcp-handlers tests). The coerceConfigValue + AppConfigSchema.safeParse
+  // logic that originally enforced the preservation invariant is unchanged
+  // and still runs inside persistToConfig.
   // -------------------------------------------------------------------------
-  it("config.patch preserves z.record(string,string) env values on integrations.mcp.servers", async () => {
+  it("R9: config.patch on integrations.mcp.servers is rejected (env z.record preservation moves to persistMcpServers)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, { GEMINI_API_KEY: "test-gemini-key" });
     const handlers = createConfigHandlers(deps);
 
-    const result = await handlers["config.patch"]!({
-      section: "integrations",
-      key: "mcp.servers",
-      value: [
-        {
-          name: "gemini-image",
-          transport: "stdio",
-          command: "npx",
-          args: ["-y", "@jimothy-snicket/gemini-image-mcp"],
-          env: {
-            GEMINI_API_KEY: "${GEMINI_API_KEY}",
-            MAX_REQUESTS_PER_HOUR: "20",
-            MAX_COST_PER_HOUR: "5",
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [
+          {
+            name: "gemini-image",
+            transport: "stdio",
+            command: "npx",
+            args: ["-y", "@jimothy-snicket/gemini-image-mcp"],
+            env: {
+              GEMINI_API_KEY: "${GEMINI_API_KEY}",
+              MAX_REQUESTS_PER_HOUR: "20",
+              MAX_COST_PER_HOUR: "5",
+            },
+            enabled: true,
           },
-          enabled: true,
-        },
-      ],
-      _trustLevel: "admin",
-    });
-
-    expect(result).toHaveProperty("patched", true);
-
-    const { parse: parseYaml } = await import("yaml");
-    const raw = readFileSync(tempConfig.configPath, "utf-8");
-    const parsed = parseYaml(raw) as Record<string, unknown>;
-    const integrations = parsed.integrations as Record<string, unknown>;
-    const mcp = integrations.mcp as Record<string, unknown>;
-    const servers = mcp.servers as Array<Record<string, unknown>>;
-    const env = servers[0]!.env as Record<string, unknown>;
-
-    // MAX_REQUESTS_PER_HOUR must survive as the string "20", not number 20.
-    expect(env.MAX_REQUESTS_PER_HOUR).toBe("20");
-    expect(typeof env.MAX_REQUESTS_PER_HOUR).toBe("string");
-    expect(env.MAX_COST_PER_HOUR).toBe("5");
-    expect(typeof env.MAX_COST_PER_HOUR).toBe("string");
-    // env-var reference preserved verbatim.
-    expect(env.GEMINI_API_KEY).toBe("${GEMINI_API_KEY}");
-    // Real booleans in the source stay real booleans (no coercion needed).
-    expect(servers[0]!.enabled).toBe(true);
-    // ZodString name field preserved.
-    expect(servers[0]!.name).toBe("gemini-image");
+        ],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // -------------------------------------------------------------------------
-  // config.patch preserves z.record(string,string) headers values.
-  // -------------------------------------------------------------------------
-  it("config.patch preserves z.record(string,string) headers values on integrations.mcp.servers", async () => {
+  it("R9: config.patch on integrations.mcp.servers is rejected (headers z.record preservation moves to persistMcpServers)", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
 
-    const result = await handlers["config.patch"]!({
-      section: "integrations",
-      key: "mcp.servers",
-      value: [
-        {
-          name: "remote-mcp",
-          transport: "http",
-          url: "https://example.com/mcp",
-          headers: {
-            "X-Rate-Limit": "42",
-            "X-Retry-Count": "3",
-            Authorization: "Bearer abc",
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [
+          {
+            name: "remote-mcp",
+            transport: "http",
+            url: "https://example.com/mcp",
+            headers: {
+              "X-Rate-Limit": "42",
+              "X-Retry-Count": "3",
+              Authorization: "Bearer abc",
+            },
+            enabled: true,
           },
-          enabled: true,
-        },
-      ],
-      _trustLevel: "admin",
-    });
-
-    expect(result).toHaveProperty("patched", true);
-
-    const { parse: parseYaml } = await import("yaml");
-    const raw = readFileSync(tempConfig.configPath, "utf-8");
-    const parsed = parseYaml(raw) as Record<string, unknown>;
-    const integrations = parsed.integrations as Record<string, unknown>;
-    const mcp = integrations.mcp as Record<string, unknown>;
-    const servers = mcp.servers as Array<Record<string, unknown>>;
-    const headers = servers[0]!.headers as Record<string, unknown>;
-
-    // Numeric-looking strings must survive as strings.
-    expect(headers["X-Rate-Limit"]).toBe("42");
-    expect(typeof headers["X-Rate-Limit"]).toBe("string");
-    expect(headers["X-Retry-Count"]).toBe("3");
-    expect(typeof headers["X-Retry-Count"]).toBe("string");
-    // Non-numeric string (sanity check).
-    expect(headers.Authorization).toBe("Bearer abc");
+        ],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
   // -------------------------------------------------------------------------
@@ -2189,5 +2131,210 @@ describe("config.patch credential guard", () => {
         _trustLevel: "admin",
       }),
     ).rejects.toThrow(/Cannot set agent provider to "openai-codex"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 47 R9: gateway-patch single-writer guard for integrations.mcp.servers
+//
+// The mcp_manage RPC (mcp.connect / mcp.disconnect) is the canonical writer of
+// integrations.mcp.servers via persistToConfig. Direct gateway(action:"patch")
+// against any path under that prefix is rejected at the handler entry — BEFORE
+// the rate-limit consume and BEFORE the Zod contract.parse — so:
+//   1. admins probing the boundary do not burn their 5-per-60s budget,
+//   2. the LLM-visible error message contains a routing hint (mcp_manage),
+//   3. the existing handler flow runs unchanged for every other section/key.
+//
+// The guard mirrors the immutable-paths precedent at config-write.ts:144-152.
+// It does NOT remove the MUTABLE_CONFIG_OVERRIDES entry for
+// integrations.mcp.servers at immutable-keys.ts:38 — persistToConfig (in
+// mcp-handlers from Plan 47-02) needs that override entry to write through.
+// ---------------------------------------------------------------------------
+
+describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+  let tempConfig: ReturnType<typeof createTempConfig>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    tempConfig = createTempConfig();
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    tempConfig.cleanup();
+  });
+
+  // R9 Test 1: path-format (legacy dot-notation).
+  it("rejects gateway-patch with path: 'integrations.mcp.servers' and routes the caller to mcp_manage", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    const callPromise = handlers["config.patch"]!({
+      path: "integrations.mcp.servers",
+      value: [{ name: "foo", transport: "stdio", command: "echo" }],
+      _trustLevel: "admin",
+    });
+
+    // Error message must surface ALL of: the path, mcp_manage, connect, disconnect.
+    await expect(callPromise).rejects.toThrow(/integrations\.mcp\.servers/);
+    await expect(
+      handlers["config.patch"]!({
+        path: "integrations.mcp.servers",
+        value: [{ name: "foo", transport: "stdio", command: "echo" }],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/mcp_manage/);
+    await expect(
+      handlers["config.patch"]!({
+        path: "integrations.mcp.servers",
+        value: [{ name: "foo", transport: "stdio", command: "echo" }],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/connect/);
+    await expect(
+      handlers["config.patch"]!({
+        path: "integrations.mcp.servers",
+        value: [{ name: "foo", transport: "stdio", command: "echo" }],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/disconnect/);
+
+    // No daemon restart was scheduled — guard fires before the write pipeline.
+    vi.advanceTimersByTime(200);
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  // R9 Test 2: section/key format (canonical wire shape).
+  it("rejects gateway-patch with section/key shape ('integrations' / 'mcp.servers')", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [{ name: "foo", transport: "stdio", command: "echo" }],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
+
+  // R9 Test 3: sub-path (e.g., toggling enabled on a single server entry).
+  it("rejects gateway-patch on sub-paths like 'mcp.servers.0.enabled'", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers.0.enabled",
+        value: false,
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
+
+  // R9 Test 4: error precedence — guard fires BEFORE the rate-limit consume.
+  // Strategy: invoke the R9-rejected handler 10 times (more than the 5/min
+  // budget), then verify that 5 legitimate patches still succeed. If the
+  // guard burned tokens, the 5th legitimate patch would be rate-limited.
+  it("guard does NOT consume rate-limit tokens (admins can probe without burning budget)", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    // Hammer the guard 10 times — far more than the 5/60s bucket would tolerate.
+    for (let i = 0; i < 10; i++) {
+      await expect(
+        handlers["config.patch"]!({
+          section: "integrations",
+          key: "mcp.servers",
+          value: [{ name: `probe-${i}`, transport: "stdio", command: "echo" }],
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/mcp_manage/);
+    }
+
+    // Now 5 legitimate non-MCP patches must still all succeed (rate-limit
+    // budget was not consumed by the rejected probes).
+    for (let i = 0; i < 5; i++) {
+      const result = await handlers["config.patch"]!({
+        section: "logLevel",
+        value: "debug",
+        _trustLevel: "admin",
+      });
+      expect(result).toMatchObject({ patched: true });
+    }
+  });
+
+  // R9 Test 5: non-match on sibling integrations path (github).
+  // The guard prefix-matches "integrations.mcp.servers" — sibling paths like
+  // "integrations.github" must fall through to the existing handler flow.
+  // integrations.github isn't itself mutable so the patch ultimately fails
+  // for unrelated reasons — but it must NOT be rejected with the R9 message.
+  it("does NOT over-match: a sibling integrations.* path is not blocked by R9", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "github",
+        value: { token: "x" },
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow();
+
+    // Inspect the actual thrown message — it must NOT mention "mcp_manage"
+    // (i.e., the existing handler flow rejected it for its own reasons, not R9).
+    let err: unknown;
+    try {
+      await handlers["config.patch"]!({
+        section: "integrations",
+        key: "github",
+        value: { token: "x" },
+        _trustLevel: "admin",
+      });
+    } catch (e) {
+      err = e;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    expect(msg).not.toMatch(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
+
+  // R9 Test 6: non-match on unrelated top-level section.
+  it("does NOT over-match: an unrelated top-level section is not blocked by R9", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    // logLevel is a top-level mutable scalar — the existing handler flow
+    // must reach the write pipeline (returns patched: true).
+    const result = await handlers["config.patch"]!({
+      section: "logLevel",
+      value: "debug",
+      _trustLevel: "admin",
+    });
+    expect(result).toMatchObject({ patched: true });
+  });
+
+  // R9 Test 7: admin-trust precedence — the existing trustLevel check at
+  // config-write.ts:74-76 must STILL fire FIRST for non-admin callers, even
+  // when the patch targets integrations.mcp.servers. Order is:
+  //   trust-check → R9 routing-redirect → rate-limit → contract.parse → ...
+  it("admin-trust check fires before R9 (non-admin callers get 'Admin access required')", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [{ name: "foo", transport: "stdio", command: "echo" }],
+        _trustLevel: "user", // non-admin
+      }),
+    ).rejects.toThrow(/Admin access required for config modification/);
   });
 });
