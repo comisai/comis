@@ -374,6 +374,9 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           const captured = continuationTracker.capture(
             safePath(dataDir, "restart-continuations.json"),
             5 * 60_000, // sessions active in last 5 minutes
+            // OBS-HARD-03: confinement base for the fs-safe substrate.
+            dataDir,
+            daemonLogger,
           );
           if (captured > 0) {
             daemonLogger.info({ component: "restart-continuation", captured, durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Active sessions captured for restart");
