@@ -326,6 +326,38 @@ describe("skills.upload handler", () => {
     expect(reg1.init).toHaveBeenCalled();
     expect(reg2.init).toHaveBeenCalled();
   });
+
+  it("skills_upload_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
+    // OBS-HARD-03 / T-48-24b: route through @comis/observability/shared/fs-safe.ts
+    // so the §1.4 confidentiality invariant (dir 0o700, file 0o600) is enforced on
+    // every skill artifact written by skills.upload — including nested-parent dirs.
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.upload"]!({
+      name: "mode-skill",
+      scope: "local",
+      files: [
+        { path: "SKILL.md", content: "---\nname: mode-skill\n---\nBody" },
+        { path: "nested/extra.md", content: "nested content" },
+      ],
+      _agentId: "agent-a",
+    });
+    const skillDir = join(wsDir, "skills", "mode-skill");
+    const skillFile = join(skillDir, "SKILL.md");
+    const nestedDir = join(skillDir, "nested");
+    const nestedFile = join(nestedDir, "extra.md");
+    expect(fs.statSync(skillDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(nestedDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(nestedFile).mode & 0o777).toBe(0o600);
+  });
 });
 
 // ---------------------------------------------------------------------------

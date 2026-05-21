@@ -55,6 +55,7 @@ import {
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
+import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { createLogger } from "@comis/infra";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
@@ -259,8 +260,33 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill directory already exists: ${params.name}`);
       }
 
-      // Create skill directory
-      mkdirSync(skillDir, { recursive: true });
+      // OBS-HARD-03: route skill-folder dir creation + per-file writes
+      // through the shared fs-safe substrate so every artifact honors
+      // the §1.4 `0o700`/`0o600` invariant. `confinedBaseDir` is the
+      // scope-resolved `skillsBaseDir` (either `dataDir/skills` for
+      // shared or `wsDir/skills` for local) — the operation-specific
+      // confinement bound that already exists on disk by construction.
+      // Result.err propagates to the gateway via thrown Error (file
+      // header @allow-throw notes that all throws here are caught +
+      // converted to JSON-RPC error responses by rpc-dispatch.ts).
+      const skillDirResult = ensureContainedDir({
+        dir: skillDir,
+        mode: 0o700,
+        confinedBaseDir: skillsBaseDir,
+      });
+      if (!skillDirResult.ok) {
+        logger.warn(
+          {
+            err: skillDirResult.error,
+            skillName: params.name,
+            agentId: callingAgentId,
+            hint: "Skill directory creation rejected by fs-safe substrate; check parent dir mode / symlink",
+            errorKind: "resource" as const,
+          },
+          "Skill upload dir creation failed",
+        );
+        throw new Error(`Skill directory creation failed: ${skillDirResult.error.message}`);
+      }
 
       // Write each file
       for (const file of params.files) {
@@ -270,9 +296,43 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         // Ensure parent directory exists for nested files
         const parentDir = filePath.substring(0, filePath.lastIndexOf("/"));
         if (parentDir && !existsSync(parentDir)) {
-          mkdirSync(parentDir, { recursive: true });
+          const parentDirResult = ensureContainedDir({
+            dir: parentDir,
+            mode: 0o700,
+            confinedBaseDir: skillsBaseDir,
+          });
+          if (!parentDirResult.ok) {
+            logger.warn(
+              {
+                err: parentDirResult.error,
+                skillName: params.name,
+                agentId: callingAgentId,
+                hint: "Nested parent dir creation rejected by fs-safe substrate",
+                errorKind: "resource" as const,
+              },
+              "Skill upload nested parent dir creation failed",
+            );
+            throw new Error(`Skill nested parent dir creation failed: ${parentDirResult.error.message}`);
+          }
         }
-        writeFileSync(filePath, file.content, "utf-8");
+        const writeResult = writeRegularFile({
+          path: filePath,
+          content: file.content,
+          confinedBaseDir: skillsBaseDir,
+        });
+        if (!writeResult.ok) {
+          logger.warn(
+            {
+              err: writeResult.error,
+              skillName: params.name,
+              agentId: callingAgentId,
+              hint: "Skill file write rejected by fs-safe substrate",
+              errorKind: "resource" as const,
+            },
+            "Skill upload file write failed",
+          );
+          throw new Error(`Skill file write failed: ${writeResult.error.message}`);
+        }
       }
 
       // Scope-aware re-discovery
