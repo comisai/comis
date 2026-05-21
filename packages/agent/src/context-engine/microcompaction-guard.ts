@@ -91,7 +91,7 @@ function saveToDisk(
   // returns the (now-empty) diskPath, and the inline reference's "Full
   // content saved at:" line will point at a path the read tool will
   // fail to load. That is no worse than the pre-migration semantics
-  // (where mkdirSync/writeFileSync failures threw and were swallowed
+  // (where the bare fs.mkdir+write failures threw and were swallowed
   // by the SDK's appendMessage caller).
   ensureContainedDir({ dir: dirname(diskPath), mode: 0o700, confinedBaseDir: dataDir });
 
