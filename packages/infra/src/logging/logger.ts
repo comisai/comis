@@ -29,8 +29,12 @@ const maskToken = _edgeKeeping.maskToken;
  *
  * Uses Pino's fast-redact under the hood (compiled once, amortized O(1)).
  * Covers common credential field names at any nesting depth up to 4 levels.
+ *
+ * Exported (test affordance) so the end-to-end Pino redaction tests in
+ * `logger.test.ts` can exercise the production path list directly — keeps
+ * the test honest about what is actually wired into the factory.
  */
-const DEFAULT_REDACT_PATHS: string[] = [
+export const DEFAULT_REDACT_PATHS: string[] = [
   // Top-level
   "apiKey",
   "token",
