@@ -524,8 +524,15 @@ export interface InfraEvents {
   // System lifecycle events
   // -------------------------------------------------------------------------
 
-  /** System is shutting down */
-  "system:shutdown": { reason: string; graceful: boolean };
+  // CRIT-03 / EVENT-CLEAN-01: the "system:shutdown" event-bus event was
+  // deleted from this map in Phase 50 Plan 01. Its 8 production subscribers
+  // (across daemon.ts, channels-helpers.ts, setup-tools.ts,
+  // setup-channels-runtime.ts, setup-cross-session-events.ts) had ZERO
+  // production emitters — every teardown silently no-op'd in production
+  // until the systemd KillMode reaped the process. Teardowns now flow
+  // directly through setupShutdown's ShutdownDeps (no event-bus indirection).
+  // approval-gate.ts:156 + :339 retain the literal "system:shutdown" string
+  // as a denial-reason sentinel — that string is NOT this event.
 
   /** Unhandled error from a system component */
   "system:error": { error: Error; source: string };
