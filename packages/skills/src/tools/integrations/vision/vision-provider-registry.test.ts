@@ -194,7 +194,7 @@ describe("selectVisionProvider", () => {
 });
 
 // ---------------------------------------------------------------------------
-// createAnthropicVisionProvider — inlined factory (post-multimodal-analyzer)
+// createAnthropicVisionProvider — inlined Anthropic Messages API factory
 // ---------------------------------------------------------------------------
 
 describe("createAnthropicVisionProvider", () => {
@@ -365,7 +365,7 @@ describe("createAnthropicVisionProvider", () => {
 });
 
 // ---------------------------------------------------------------------------
-// createOpenAIVisionProvider — inlined factory (post-multimodal-analyzer)
+// createOpenAIVisionProvider — inlined OpenAI Chat Completions API factory
 // ---------------------------------------------------------------------------
 
 describe("createOpenAIVisionProvider", () => {
