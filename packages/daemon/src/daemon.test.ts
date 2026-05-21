@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { LatencyRecorder } from "./observability/latency-recorder.js";
 import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";
-import type { ShutdownHandle } from "./process/graceful-shutdown.js";
+import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
 import { main, type DaemonOverrides, hardenDataDirPermissions, runPreflightDoctor, applyInspectDefaultsForLogging } from "./daemon.js";
 import type { MediaResult } from "./wiring/setup-media.js";
@@ -291,10 +291,6 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
       callOrder.push("createProcessMonitor");
       return processMonitor;
     }),
-    registerGracefulShutdown: vi.fn().mockImplementation(() => {
-      callOrder.push("registerGracefulShutdown");
-      return shutdownHandle;
-    }),
     createGatewayServer: vi.fn().mockImplementation(() => {
       callOrder.push("createGatewayServer");
       return gatewayHandle;
@@ -345,7 +341,6 @@ describe("daemon main()", () => {
       "createTokenTracker",
       "createLatencyRecorder",
       "createProcessMonitor",
-      "registerGracefulShutdown",
     ]);
   });
 
@@ -365,7 +360,6 @@ describe("daemon main()", () => {
       "createLatencyRecorder",
       "createProcessMonitor",
       "createGatewayServer",
-      "registerGracefulShutdown",
     ]);
   });
 
@@ -381,7 +375,15 @@ describe("daemon main()", () => {
     expect(instance.tokenTracker).toBe(mocks.tokenTracker);
     expect(instance.latencyRecorder).toBe(mocks.latencyRecorder);
     expect(instance.processMonitor).toBe(mocks.processMonitor);
-    expect(instance.shutdownHandle).toBe(mocks.shutdownHandle);
+    // Post-52-03 (DUP-CONS-03): shutdownHandle is constructed inline by
+    // setupShutdown rather than injected via the `_registerGracefulShutdown`
+    // factory seam. Assert the shape (the integration tests cover behavior).
+    expect(instance.shutdownHandle).toBeDefined();
+    expect(typeof instance.shutdownHandle.trigger).toBe("function");
+    expect(typeof instance.shutdownHandle.dispose).toBe("function");
+    // Dispose the handle so the spy-registered signal listeners don't leak
+    // between tests.
+    instance.shutdownHandle.dispose();
   });
 
   it("returns gatewayHandle when gateway is enabled", async () => {
@@ -405,32 +407,13 @@ describe("daemon main()", () => {
     expect(overrides.createGatewayServer).not.toHaveBeenCalled();
   });
 
-  it("passes onShutdown callback when gateway is enabled", async () => {
-    const { overrides } = buildOverrides({
-      enabled: true,
-      tokens: [{ id: "test", secret: "s3cret", scopes: ["rpc"] }],
-    });
-
-    await main(overrides);
-
-    expect(overrides.registerGracefulShutdown).toHaveBeenCalledWith(
-      expect.objectContaining({
-        onShutdown: expect.any(Function),
-      }),
-    );
-  });
-
-  it("always passes onShutdown for db cleanup even when gateway is disabled", async () => {
-    const { overrides } = buildOverrides();
-
-    await main(overrides);
-
-    expect(overrides.registerGracefulShutdown).toHaveBeenCalledWith(
-      expect.objectContaining({
-        onShutdown: expect.any(Function),
-      }),
-    );
-  });
+  // Phase 52-03 (DUP-CONS-03): the `_registerGracefulShutdown` factory seam
+  // is gone, so the "passes onShutdown callback" assertions that previously
+  // inspected the factory call are obsolete here. Coverage moves to:
+  //   - packages/daemon/src/wiring/setup-shutdown.test.ts (per-component
+  //     teardown invocation)
+  //   - test/integration/daemon-shutdown*.test.ts (real-signal trigger end-
+  //     to-end)
 
   it("starts process monitor after creation", async () => {
     const { overrides, mocks } = buildOverrides();
@@ -521,32 +504,13 @@ describe("daemon main()", () => {
     await expect(main(overrides)).rejects.toThrow("Bootstrap failed: Config file not found");
   });
 
-  it("passes container to graceful shutdown", async () => {
-    const { overrides, mocks } = buildOverrides();
-
-    await main(overrides);
-
-    expect(overrides.registerGracefulShutdown).toHaveBeenCalledWith(
-      expect.objectContaining({
-        container: mocks.container,
-        processMonitor: mocks.processMonitor,
-      }),
-    );
-  });
-
-  it("passes exit override to graceful shutdown", async () => {
-    const { overrides } = buildOverrides();
-    const mockExit = vi.fn();
-    overrides.exit = mockExit;
-
-    await main(overrides);
-
-    expect(overrides.registerGracefulShutdown).toHaveBeenCalledWith(
-      expect.objectContaining({
-        exit: mockExit,
-      }),
-    );
-  });
+  // Phase 52-03 (DUP-CONS-03): the two assertions previously here checked
+  // `overrides.registerGracefulShutdown.toHaveBeenCalledWith(...)` to verify
+  // that container/processMonitor/exit flowed through the factory seam. After
+  // inlining, the seam is gone and the same wiring is exercised by:
+  //   - setup-shutdown.test.ts ("returns shutdownHandle from setupShutdown",
+  //     "executes ordered teardown in correct sequence")
+  //   - test/integration/daemon-shutdown.test.ts (real SIGTERM end-to-end)
 
   // -------------------------------------------------------------------------
   // Boot-time PROVIDER_OVERRIDES staleness validator

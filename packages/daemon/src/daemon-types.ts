@@ -33,7 +33,7 @@ import type { DiagnosticCollector } from "./observability/diagnostic-collector.j
 import type { BillingEstimator } from "./observability/billing-estimator.js";
 import type { ChannelActivityTracker } from "./observability/channel-activity-tracker.js";
 import type { DeliveryTracer } from "./observability/delivery-tracer.js";
-import type { ShutdownHandle } from "./process/graceful-shutdown.js";
+import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
 
 import type {
@@ -63,7 +63,6 @@ import type { createLogLevelManager } from "./observability/log-infra.js";
 import type { createTokenTracker } from "./observability/token-tracker.js";
 import type { createLatencyRecorder } from "./observability/latency-recorder.js";
 import type { createProcessMonitor } from "./process/process-monitor.js";
-import type { registerGracefulShutdown } from "./process/graceful-shutdown.js";
 import type { setupMedia } from "./wiring/setup-media.js";
 import type {
   setupLogging,
@@ -193,8 +192,6 @@ export interface DaemonOverrides {
   createLatencyRecorder?: typeof createLatencyRecorder;
   /** Override createProcessMonitor. */
   createProcessMonitor?: typeof createProcessMonitor;
-  /** Override registerGracefulShutdown. */
-  registerGracefulShutdown?: typeof registerGracefulShutdown;
   /** Override createGatewayServer. */
   createGatewayServer?: typeof createGatewayServer;
   /** Override setupMedia for test isolation (avoids ffmpeg/ffprobe spawns). */

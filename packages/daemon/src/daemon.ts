@@ -76,7 +76,6 @@ import { createLogLevelManager } from "./observability/log-infra.js";
 import { createTokenTracker } from "./observability/token-tracker.js";
 import { createTracingLogger } from "./observability/trace-logger.js";
 import { setupChannelHealthLogging } from "./observability/channel-health-logger.js";
-import { registerGracefulShutdown } from "./process/graceful-shutdown.js";
 import { createProcessMonitor } from "./process/process-monitor.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, chmodSync, statSync, mkdirSync } from "node:fs";
@@ -1112,11 +1111,12 @@ async function stageShutdown(input: {
   void _execs; void _suspended;
   // Override-derived locals -- only consumed by setupShutdown below.
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
-  const _registerGracefulShutdown = overrides.registerGracefulShutdown ?? registerGracefulShutdown;
 
-  // 8. Graceful shutdown
+  // 8. Graceful shutdown (Phase 52-03: signal-handler registration +
+  //    teardown ordering both owned by setupShutdown; the previous
+  //    `_registerGracefulShutdown` factory seam is gone).
   const { shutdownHandle } = setupShutdown({
-    logger, daemonLogger, processMonitor, container, exitFn, _registerGracefulShutdown,
+    logger, daemonLogger, processMonitor, container, exitFn,
     tokenTracker, startupTimestamp: startupStartMs,
     activeExecutions, graphCoordinator, subAgentRunner, cronSchedulers, resetSchedulers,
     browserServices, channelManager, heartbeatRunner, perAgentRunner, wakeCoalescer, gatewayHandle,
