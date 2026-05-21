@@ -83,6 +83,7 @@ import type {
   setupRpcBridge,
   setupDeliveryQueue,
   setupDeliveryMirror,
+  setupOutputRetention,
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
@@ -95,7 +96,6 @@ import type { ObsPersistenceResult } from "./observability/obs-persistence-wirin
 import type { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js";
 import type { createExecGit } from "./config/exec-git.js";
 import type { InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
-import type { wirePostChannelsLifecycle } from "./stages/channels-helpers.js";
 import type { SecretStorePort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -458,7 +458,7 @@ export interface ChannelsHandle extends AgentsHandle {
   /** Approval notifier handle (from setupChannels). Undefined when no channel adapters initialized. */
   approvalNotifier: Awaited<ReturnType<typeof setupChannels>>["approvalNotifier"];
   /** Output retention housekeeper handle (from setupOutputRetention). Undefined when defaultWorkspaceDir is empty. */
-  outputRetentionHandle: Awaited<ReturnType<typeof wirePostChannelsLifecycle>>["outputRetentionHandle"];
+  outputRetentionHandle: ReturnType<typeof setupOutputRetention> | undefined;
 }
 
 /**

@@ -37,7 +37,7 @@ describe("TypedEventBus", () => {
     expect(handler).toHaveBeenCalledWith(firstPayload);
   });
 
-  it("off removes handler", () => {
+  it("off removes the registered handler so subsequent emits do not invoke it", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
 

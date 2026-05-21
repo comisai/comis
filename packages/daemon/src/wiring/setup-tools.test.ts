@@ -701,10 +701,16 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 11. system:shutdown cleans up process registries
+  // 11. shutdownBackgroundProcesses drains per-agent process registries
+  //
+  // CRIT-03 / EVENT-CLEAN-01: setupTools used to subscribe to
+  // eventBus.on("system:shutdown", ...) for cleanup; that subscriber
+  // silently no-op'd in production because no production code emits the
+  // event. ToolsResult.shutdownBackgroundProcesses now exposes the same
+  // cleanup as a directly-invoked function called from setupShutdown.
   // -------------------------------------------------------------------------
 
-  it("cleans up process registries on system:shutdown", async () => {
+  it("shutdownBackgroundProcesses drains per-agent process registries when invoked", async () => {
     const eventBus = createMockEventBus();
     const deps = createMinimalDeps({
       eventBus: eventBus as any,
@@ -721,7 +727,7 @@ describe("setupTools", () => {
     });
 
     const setupTools = await getSetupTools();
-    const { assembleToolsForAgent } = setupTools(deps);
+    const { assembleToolsForAgent, shutdownBackgroundProcesses } = setupTools(deps);
 
     // Assemble tools to create a process registry
     await assembleToolsForAgent("agent-1");
@@ -734,11 +740,8 @@ describe("setupTools", () => {
       registryMock.cleanup.mockResolvedValue(2);
     }
 
-    // Trigger shutdown
-    await eventBus.emit("system:shutdown", { reason: "test", graceful: true });
-
-    // Wait for async handler
-    await new Promise(resolve => setTimeout(resolve, 10));
+    // Trigger the cleanup directly (replaces the deleted event-bus subscriber).
+    await shutdownBackgroundProcesses();
 
     if (registryMock) {
       expect(registryMock.cleanup).toHaveBeenCalled();
@@ -746,10 +749,24 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 12. system:shutdown disconnects MCP
+  // 12. MCP servers disconnect at composition root, not via event bus
+  //
+  // CRIT-03 / EVENT-CLEAN-01: the old eventBus.on("system:shutdown", ...)
+  // subscriber bundled mcpClientManager.disconnectAll into the same closure
+  // as the per-agent process-registry drain. That single closure is now
+  // split into two ShutdownDeps fields (RESEARCH Open Question #2 RESOLVED):
+  // setupTools.shutdownBackgroundProcesses (drain registries) and the
+  // composition root binding mcpClientManagerDisconnectAll directly off the
+  // mcpClientManager handle (daemon.ts wires
+  // mcpClientManager.disconnectAll.bind into ShutdownDeps).
+  //
+  // setupTools NO LONGER calls disconnectAll itself; the responsibility
+  // moved to daemon.ts. This test asserts the boundary: setupTools does
+  // NOT invoke mcpClientManager.disconnectAll at any point during its own
+  // lifecycle (including the new shutdownBackgroundProcesses path).
   // -------------------------------------------------------------------------
 
-  it("disconnects MCP servers on system:shutdown", async () => {
+  it("setupTools does not invoke mcpClientManager.disconnectAll itself (boundary owned by daemon.ts composition root)", async () => {
     const eventBus = createMockEventBus();
     const mcpClientManager = {
       getTools: vi.fn(() => []),
@@ -767,15 +784,12 @@ describe("setupTools", () => {
     });
 
     const setupTools = await getSetupTools();
-    setupTools(deps);
+    const { shutdownBackgroundProcesses } = setupTools(deps);
+    await shutdownBackgroundProcesses();
 
-    // Trigger shutdown
-    await eventBus.emit("system:shutdown", { reason: "test", graceful: true });
-
-    // Wait for async handler
-    await new Promise(resolve => setTimeout(resolve, 10));
-
-    expect(mcpClientManager.disconnectAll).toHaveBeenCalled();
+    // The composition root (daemon.ts) — not setupTools — is responsible
+    // for binding mcpClientManager.disconnectAll into ShutdownDeps.
+    expect(mcpClientManager.disconnectAll).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
