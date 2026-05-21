@@ -216,6 +216,13 @@ export interface PiExecutorDeps {
   cacheTraceConfig?: {
     readonly enabled?: boolean;
     readonly filePath?: string;
+    /**
+     * Per-file byte cap for cache-trace JSONL. Defaults to the runtime's
+     * fallback constant when undefined (50 MB after Plan 48-03 lands; 10 MB
+     * until then — but in normal operation the schema default of 50 MB
+     * always wins, so the transient mismatch is moot).
+     */
+    readonly maxFileBytes?: number;
     readonly includeMessages?: boolean;
     readonly includePrompt?: boolean;
     readonly includeSystem?: boolean;

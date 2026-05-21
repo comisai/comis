@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 
 import { DiagnosticsConfigSchema } from "./schema-diagnostics.js";
+import { AppConfigSchema } from "./schema.js";
 
 describe("DiagnosticsConfigSchema — parse semantics", () => {
   it("empty parse populates all four subsection defaults", () => {
@@ -261,5 +262,49 @@ describe("DiagnosticsConfigSchema.cacheTrace — fields and defaults", () => {
     if (result.success) {
       expect(result.data.cacheTrace.filePath).toBe("/var/log/comis/cache-trace.jsonl");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cacheTrace.maxFileBytes — operator-knob field (OBS-HARD-04 / Plan 48-02)
+// ---------------------------------------------------------------------------
+//
+// Phase 48 Plan 48-02 introduces `diagnostics.cacheTrace.maxFileBytes` as an
+// operator-tunable file cap for the cache-trace JSONL artifact. Default is
+// 50 MB — parity with `trajectory.maxFileBytes` so both diagnostics writers
+// share a single mental model. Plan 48-03 follows up by flipping the
+// runtime fallback constant (10 MB → 50 MB) inside `runtime.ts` and wiring
+// the sentinel state machine that depends on the cap; this plan ships only
+// the schema field + the pi-executor wiring.
+
+describe("cacheTrace.maxFileBytes config field", () => {
+  it("default_is_50_mb_when_unset", () => {
+    const result = AppConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error("unreachable");
+    expect(result.data.diagnostics.cacheTrace.maxFileBytes).toBe(50 * 1024 * 1024);
+  });
+
+  it("override_persists_through_parse", () => {
+    const result = AppConfigSchema.safeParse({
+      diagnostics: { cacheTrace: { maxFileBytes: 100000 } },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error("unreachable");
+    expect(result.data.diagnostics.cacheTrace.maxFileBytes).toBe(100000);
+  });
+
+  it("negative_value_rejected_by_zod", () => {
+    const result = AppConfigSchema.safeParse({
+      diagnostics: { cacheTrace: { maxFileBytes: -1 } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("non_integer_value_rejected_by_zod", () => {
+    const result = AppConfigSchema.safeParse({
+      diagnostics: { cacheTrace: { maxFileBytes: 1.5 } },
+    });
+    expect(result.success).toBe(false);
   });
 });
