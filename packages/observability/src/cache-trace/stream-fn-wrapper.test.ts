@@ -226,3 +226,44 @@ describe("buildCacheTraceWrapper", () => {
     expect(preCall!.systemDigest).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+describe("buildCacheTraceWrapper emits model:before stage (Plan 48-07)", () => {
+  it("wrapper_emits_model_before_stage_with_provider_and_modelid", async () => {
+    const filePath = join(tmpDir, "trace.jsonl");
+    const trace = makeTrace({ includeMessages: true, filePath });
+    const wrap = buildCacheTraceWrapper(trace);
+
+    const next: StreamFn = ((..._args: unknown[]) =>
+      ({ usage: { cacheRead: 0, cacheWrite: 0 } }) as unknown as ReturnType<StreamFn>) as StreamFn;
+    const wrapped = wrap(next);
+    wrapped(
+      fakeModel() as Parameters<StreamFn>[0],
+      fakeContext() as Parameters<StreamFn>[1],
+    );
+
+    await trace.flush();
+    const lines = readLines(filePath);
+
+    const stages = lines.map((l) => l.stage);
+    expect(stages).toContain("model:before");
+
+    // model:before must precede stream:context (and stream:context must
+    // precede model:after) — verified via the monotonic seq counter.
+    const modelBefore = lines.find((l) => l.stage === "model:before");
+    const streamContext = lines.find((l) => l.stage === "stream:context");
+    const modelAfter = lines.find((l) => l.stage === "model:after");
+    expect(modelBefore).toBeDefined();
+    expect(streamContext).toBeDefined();
+    expect(modelAfter).toBeDefined();
+    expect(modelBefore!.seq).toBeLessThan(streamContext!.seq);
+    expect(streamContext!.seq).toBeLessThan(modelAfter!.seq);
+
+    // Payload carries provider + modelId from the model arg.
+    expect(modelBefore!.provider).toBe("anthropic");
+    expect(modelBefore!.modelId).toBe("claude-3-opus");
+    // Digests propagate from preCallPayload (the same digests carried by
+    // stream:context).
+    expect(modelBefore!.messagesDigest).toBe(streamContext!.messagesDigest);
+    expect(modelBefore!.systemDigest).toBe(streamContext!.systemDigest);
+  });
+});
