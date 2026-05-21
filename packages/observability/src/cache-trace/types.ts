@@ -35,28 +35,36 @@ import { z } from "zod";
  * Closed enum of cache-trace stages.
  *
  * Order: lifecycle-relevant (session.* → prompt → model → context → tool
- * → session.after → control-plane sentinel). Append-only — insertion
- * order is part of the SemVer contract for v1.
+ * → session.after → control-plane sentinel).
+ * v1 shape established 2026-05-19; design §7.2 rewritten 2026-05-21 to match shipped code; append-only rule applies from 2026-05-21 forward.
  *
  * The trailing `cache_trace.write_failures` is a control-plane sentinel
- * (not an application stage) emitted only by `flushAndClose` when the
- * underlying queued writer reports per-line append failures. Mirrors
- * trajectory's `trace.truncated` + `trace.write_failures` precedent
- * (both inside `TRAJECTORY_EVENT_TYPES`).
+ * (not an application stage) emitted by the runtime on first queued
+ * writer rejection (inline, Plan 48-03 D-10) AND by `flushAndClose`
+ * (summary, D-11) when the underlying queued writer reports per-line
+ * append failures. Mirrors trajectory's `trace.truncated` +
+ * `trace.write_failures` precedent (both inside `TRAJECTORY_EVENT_TYPES`).
+ *
+ * Per-stage inline `// emitted by …` comments document the producer
+ * call site for each stage. Adding a new stage requires (1) appending
+ * to this literal, (2) writing the producer wiring, and (3) updating
+ * the inline comment with the producer location — the comments are
+ * load-bearing documentation for the architecture tests (see
+ * `cache-trace-stages-known.test.ts`, Plan 48 OBS-HARD-11) that walk
+ * `recordStage(<literal>, …)` call sites and enforce the closed union.
  */
 export const CACHE_TRACE_STAGES = [
-  "session:start",
-  "session:end",
-  "prompt:before",
-  "prompt:after",
-  "model:before",
-  "model:after",
-  "stream:context",
-  "tool:before",
-  "tool:after",
-  "session:after",
-  // Control-plane sentinel: queued writer rejected lines at flushAndClose.
-  "cache_trace.write_failures",
+  "session:start",   // emitted by event-bus-bridge from session:started
+  "session:end",     // emitted by event-bus-bridge from session:ended
+  "prompt:before",   // emitted by event-bus-bridge from prompt:submitted (digest-cache pre-state read)
+  "prompt:after",    // emitted by event-bus-bridge from prompt:submitted (digest-cache post-state read)
+  "model:before",    // emitted by buildCacheTraceWrapper just before stream-fn delegation (stream-fn-wrapper.ts)
+  "model:after",     // emitted by buildCacheTraceWrapper post-call (stream-fn-wrapper.ts)
+  "stream:context",  // emitted by buildCacheTraceWrapper pre-call (stream-fn-wrapper.ts)
+  "tool:before",     // emitted by event-bus-bridge from tool:started
+  "tool:after",      // emitted by event-bus-bridge from tool:executed
+  "session:after",   // emitted by pi-executor at turn end + terminal emit in flushAndClose
+  "cache_trace.write_failures",  // control-plane sentinel — inline (Plan 48-03 D-10) + flushAndClose summary (D-11)
 ] as const;
 
 /** Closed string union of cache-trace stage names. */

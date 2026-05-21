@@ -466,3 +466,177 @@ describe("createCacheTrace -- write-failures sentinel", () => {
     expect(trace!.failureCount()).toBeGreaterThan(0);
   });
 });
+
+describe("cache_trace.write_failures sentinel (Plan 48-03)", () => {
+  // Per Plan 48-03 D-10 / D-11: cache-trace runtime emits an inline
+  // sentinel on the FIRST queued-writer failure detection inside
+  // recordStage (latched once-per-session) AND a summary sentinel at
+  // flushAndClose when failureCount > 0. The two-sentinel-per-cap-hit
+  // model means a session that exceeds the cap produces exactly 2
+  // cache_trace.write_failures lines: one mid-stream, one at file tail.
+  // Sessions that never hit the cap produce 0 sentinels.
+
+  function readJsonlEvents(tracePath: string): Array<Record<string, unknown>> {
+    if (!existsSync(tracePath)) return [];
+    const raw = readFileSync(tracePath, "utf-8");
+    return raw
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+
+  function countSentinels(events: Array<Record<string, unknown>>): number {
+    return events.filter((e) => e.stage === "cache_trace.write_failures").length;
+  }
+
+  it("inline_sentinel_fires_on_first_writer_failure", async () => {
+    // The inline-sentinel latch must fire on first failure-detection:
+    // after at least one recordStage call triggers an append rejection
+    // (visible via writer.failureCount() > 0), the next recordStage
+    // call emits ONE inline sentinel with `data.firstDropAt` (ISO
+    // string) and `data.reason === "queued_writer_rejected"`.
+    //
+    // Cap calibration (matches latched test): 8 KB cap + 4 KB payload
+    // produces 1 successful user event + N rejected user events; both
+    // inline and summary sentinels land on disk in the remaining cap.
+    const filePath = join(tmpDir, "inline-sentinel.jsonl");
+    const trace = createCacheTrace({
+      enabled: true,
+      filePath,
+      maxFileBytes: 8000,
+      includeMessages: false,
+      includePrompt: false,
+      includeSystem: false,
+      agentId: "test-agent",
+      sessionId: "test-session-1",
+      provider: "test",
+      modelId: "test-model",
+      envelope: { sessionKey: "test-session-1" },
+    });
+    expect(trace).not.toBeNull();
+
+    // Drive several stages with large payloads. Each call yields to the
+    // event loop so the queued writer's append promise can resolve and
+    // bump failureCount before the next recordStage call.
+    const bigPayload = { data: "x".repeat(4000) };
+    for (let i = 0; i < 5; i++) {
+      trace!.recordStage("session:start", bigPayload);
+      await new Promise((r) => setImmediate(r));
+    }
+
+    await trace!.flushAndClose();
+    const events = readJsonlEvents(filePath);
+    const sentinels = events.filter(
+      (e) => e.stage === "cache_trace.write_failures",
+    );
+    // At least one cache_trace.write_failures must be present (inline OR
+    // summary). Verify the inline sentinel landed with its `firstDropAt`
+    // marker.
+    expect(sentinels.length).toBeGreaterThanOrEqual(1);
+    const hasInlineMarker = sentinels.some(
+      (s) =>
+        typeof ((s.data ?? {}) as Record<string, unknown>).firstDropAt ===
+        "string",
+    );
+    expect(hasInlineMarker).toBe(true);
+  });
+
+  it("inline_sentinel_latched_at_most_once_per_session", async () => {
+    // Per D-11: exactly 1 inline + 1 summary = 2 total sentinels per
+    // cap-hit session. The latch ensures only 1 inline fires even when
+    // multiple recordStage calls observe failureCount > 0; the summary
+    // always fires on flushAndClose when failures > 0.
+    //
+    // Cap calibration: each encoded event is ~400 bytes envelope + the
+    // sanitized `data` payload size. With a 4 KB payload, the encoded
+    // event is ~4500 bytes. With cap = 8000:
+    //   - first event (~4500 bytes) lands; cap remaining ~3500
+    //   - second event (~4500 bytes) is rejected by appendRegularFile
+    //     (would exceed cap); failureCount climbs
+    //   - inline sentinel (~400 bytes) lands in the ~3500 free space
+    //     after the FIRST recordStage call that sees failureCount > 0
+    //   - subsequent recordStage calls do NOT re-emit inline (latch
+    //     holds)
+    //   - flushAndClose emits terminal session:after (~400 bytes) and
+    //     summary sentinel (~430 bytes); both fit in remaining cap
+    // Net on disk: 1 user event + 1 inline sentinel + 1 terminal
+    // session:after + 1 summary sentinel = 2 cache_trace.write_failures
+    // lines.
+    const filePath = join(tmpDir, "latched-sentinel.jsonl");
+    const trace = createCacheTrace({
+      enabled: true,
+      filePath,
+      maxFileBytes: 8000,
+      includeMessages: false,
+      includePrompt: false,
+      includeSystem: false,
+      agentId: "test-agent",
+      sessionId: "test-session-2",
+      provider: "test",
+      modelId: "test-model",
+      envelope: { sessionKey: "test-session-2" },
+    });
+    expect(trace).not.toBeNull();
+
+    const bigPayload = { data: "x".repeat(4000) };
+    for (let i = 0; i < 10; i++) {
+      trace!.recordStage("session:start", bigPayload);
+      await new Promise((r) => setImmediate(r));
+    }
+    await trace!.flushAndClose();
+
+    const events = readJsonlEvents(filePath);
+    const sentinelsCount = countSentinels(events);
+    // Per D-11: 1 inline + 1 summary = 2 total.
+    expect(sentinelsCount).toBe(2);
+  });
+
+  it("summary_sentinel_carries_session_lifetime_ms", async () => {
+    // Per D-11: summary sentinel at flushAndClose carries
+    // sessionLifetimeMs (= systemNowMs() - state.sessionStartedAt),
+    // droppedEvents (renamed from `count`), and totalDroppedBytes
+    // (renamed from `rejectedBytes`).
+    //
+    // Cap calibration: 8 KB cap + 4 KB payload mirrors the other
+    // sentinel tests so the summary sentinel has room to land after
+    // user-event rejections accumulate.
+    const filePath = join(tmpDir, "summary-sentinel.jsonl");
+    const trace = createCacheTrace({
+      enabled: true,
+      filePath,
+      maxFileBytes: 8000,
+      includeMessages: false,
+      includePrompt: false,
+      includeSystem: false,
+      agentId: "test-agent",
+      sessionId: "test-session-3",
+      provider: "test",
+      modelId: "test-model",
+      envelope: { sessionKey: "test-session-3" },
+    });
+    expect(trace).not.toBeNull();
+
+    const bigPayload = { data: "x".repeat(4000) };
+    trace!.recordStage("session:start", bigPayload);
+    // Sleep ≥ 50 ms so sessionLifetimeMs has a measurable floor.
+    await new Promise((r) => setTimeout(r, 60));
+    for (let i = 0; i < 5; i++) {
+      trace!.recordStage("session:start", bigPayload);
+      await new Promise((r) => setImmediate(r));
+    }
+    await trace!.flushAndClose();
+
+    const events = readJsonlEvents(filePath);
+    const summaries = events.filter(
+      (e) =>
+        e.stage === "cache_trace.write_failures" &&
+        typeof ((e.data ?? {}) as Record<string, unknown>).sessionLifetimeMs ===
+          "number",
+    );
+    expect(summaries.length).toBe(1);
+    const summaryData = (summaries[0]!.data ?? {}) as Record<string, unknown>;
+    expect(summaryData.sessionLifetimeMs).toBeGreaterThanOrEqual(50);
+    expect(summaryData.droppedEvents).toBeGreaterThan(0);
+    expect(summaryData.totalDroppedBytes).toBeGreaterThan(0);
+  });
+});
