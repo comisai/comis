@@ -76,6 +76,30 @@ export function bindConfigWriteHandlers(
         throw new Error("Admin access required for config modification");
       }
 
+      // Phase 47 (R9): Single-writer guard — integrations.mcp.servers is
+      // managed by mcp_manage. Fire before rate-limit consume + contract.parse
+      // so error precedence is: trust-check → routing-redirect → rate-limit.
+      // Mirrors immutable-paths precedent at :144-152 + section-registry
+      // redirect at section-registry.ts:322-348. The MUTABLE_CONFIG_OVERRIDES
+      // entry at immutable-keys.ts:38 STAYS so persistToConfig itself can
+      // still write — only the gateway-patch route is closed.
+      // The path derivation duplicates the post-guard `rawPath → section/key`
+      // extraction (necessary: R9 fires BEFORE the bespoke section-validation
+      // that throws "Missing required parameter section"). Block-scoped to
+      // avoid name collisions with the post-guard declarations.
+      {
+        const rawPath = typeof rawParams.path === "string" ? rawParams.path : undefined;
+        const rawSection = (rawParams.section ?? (rawPath ? rawPath.split(".")[0] : undefined)) as string | undefined;
+        const rawKey = (rawParams.key ?? (rawPath && rawPath.includes(".") ? rawPath.slice(rawPath.indexOf(".") + 1) : undefined)) as string | undefined;
+        const fullPath = rawKey ? `${rawSection}.${rawKey}` : rawSection ?? "";
+        if (fullPath === "integrations.mcp.servers" || fullPath.startsWith("integrations.mcp.servers.")) {
+          throw new Error(
+            "integrations.mcp.servers is managed by mcp_manage. " +
+            "Use mcp_manage(action:'connect'|'disconnect') instead."
+          );
+        }
+      }
+
       // Rate limit check (BEFORE contract.request.parse for fail-fast).
       const bucket = patchBucket.tryConsume();
       if (!bucket.allowed) {
