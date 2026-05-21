@@ -872,4 +872,343 @@ describe("MCP RPC Handlers", () => {
       expect(result.status).toBe("connected");
     });
   });
+
+  // ===========================================================================
+  // Phase 47-04: per-acceptance-criterion R-tag unit tests
+  //
+  // 47-02 added the baseline persistence test scaffolding (39 tests total);
+  // 47-04 extends it with the explicit per-R-tag tests called out in SPEC.md
+  // and the per-field D-02 loop. Net new behavioral coverage delivered here:
+  //
+  //   - R2 sole-entry (disconnect of the only entry leaves `[]`, not undefined)
+  //   - R7 SPEC skipRestart explicitly asserted on both connect AND disconnect
+  //   - D-02 per-field loop (command, args, url, headers, env in addition to
+  //     the existing transport assertion)
+  //   - D-02 happy-path: reconnect with NO override fields does not fire guard
+  //   - D-04 runtime_only outcome: persist err → response has warning
+  //   - D-04 disconnect happy-path explicitly returns persistence:'persisted'
+  //   - R8 failed-audit branch: appendConfigAuditWithOutcome called with
+  //     {kind:'failed', message} when persistToConfig returns err
+  //
+  // Existing 47-02 tests already cover R1, R4, R5, R6, D-04 skipped + persisted,
+  // D-01 fail-loud. These re-tag-only assertions are intentionally separated
+  // into their own describe blocks so the SPEC's R-tag → test mapping is
+  // unambiguous and the verifier can trace each acceptance criterion to a
+  // distinct `it(...)` line.
+  // ===========================================================================
+
+  describe("Phase 47-04 R2 sole-entry — disconnect of the only entry leaves []", () => {
+    it("persists an empty array (NOT undefined) when removing the sole entry", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", args: [], enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.disconnect"]({ server_name: "yfinance" });
+
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      // The slot key remains; the array value is the empty literal.
+      expect(callOpts.patch.integrations.mcp.servers).toEqual([]);
+      expect(callOpts.patch.integrations.mcp.servers).not.toBeUndefined();
+    });
+  });
+
+  describe("Phase 47-04 R7 SPEC — skipRestart:true on both connect and disconnect persists", () => {
+    it("connect passes skipRestart:true to persistToConfig", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.skipRestart).toBe(true);
+    });
+
+    it("disconnect passes skipRestart:true to persistToConfig", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.disconnect"]({ server_name: "yfinance" });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.skipRestart).toBe(true);
+    });
+  });
+
+  describe("Phase 47-04 D-02 per-field — reconnect-override-rejection fires for every override field independently", () => {
+    // Plan 47-02 covered the `transport` override; 47-04 adds explicit coverage
+    // for command, args, url, headers, env so every D-02 override surface is
+    // pinned to a regression-safe assertion.
+    const overrideFields: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+      ["command", { command: "node" }],
+      ["args", { args: ["new"] }],
+      ["url", { url: "http://example.com/sse" }],
+      ["headers", { headers: { "X-New": "1" } }],
+      ["env", { env: { NEW: "1" } }],
+    ];
+
+    for (const [fieldName, overrideParams] of overrideFields) {
+      it(`throws [reconnect_with_overrides_not_allowed] when ${fieldName} provided + stored config exists`, async () => {
+        (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+        const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+        await expect(
+          handlers["mcp.reconnect"]({ server_name: "yfinance", ...overrideParams } as any),
+        ).rejects.toThrow(/\[reconnect_with_overrides_not_allowed\][\s\S]*disconnect then connect/);
+
+        // Guard fires BEFORE manager.reconnect for every field.
+        expect(manager.reconnect).not.toHaveBeenCalled();
+      });
+    }
+
+    it("does NOT throw the override error when NO override fields are passed (reconnect happy path)", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      (manager.reconnect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+      await expect(handlers["mcp.reconnect"]({ server_name: "yfinance" })).resolves.toBeDefined();
+
+      // Guard does NOT fire; manager.reconnect runs.
+      expect(manager.reconnect).toHaveBeenCalledWith("yfinance");
+    });
+  });
+
+  describe("Phase 47-04 D-04 runtime_only — persist err surfaces warning in response", () => {
+    it("returns persistence:'runtime_only' + warning when persistToConfig returns err on connect", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "EACCES: write failed" } as never);
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      expect(result.persistence).toBe("runtime_only");
+      expect(result.warning).toBe("EACCES: write failed");
+    });
+
+    it("returns persistence:'runtime_only' + warning when persistToConfig returns err on disconnect", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "ENOSPC: out of disk" } as never);
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.disconnect"]({ server_name: "yfinance" }) as any;
+
+      expect(result.persistence).toBe("runtime_only");
+      expect(result.warning).toBe("ENOSPC: out of disk");
+    });
+
+    it("disconnect happy path explicitly returns persistence:'persisted' (D-04 disconnect mirror)", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.disconnect"]({ server_name: "yfinance" }) as any;
+
+      expect(result).toMatchObject({
+        name: "yfinance",
+        status: "disconnected",
+        persistence: "persisted",
+      });
+      expect(result.warning).toBeUndefined();
+    });
+  });
+
+  describe("Phase 47-04 R8 — failed audit JSONL on persistToConfig err", () => {
+    it("calls appendConfigAuditWithOutcome with {kind:'failed', message} when persist fails on connect", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "EACCES: write failed" } as never);
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(mockAppendConfigAuditWithOutcome).toHaveBeenCalledOnce();
+      const [, outcomeArg] = mockAppendConfigAuditWithOutcome.mock.calls[0] as any;
+      expect(outcomeArg).toEqual({ kind: "failed", message: "EACCES: write failed" });
+    });
+
+    it("calls appendConfigAuditWithOutcome with {kind:'failed', message} when persist fails on disconnect", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "ENOSPC: out of disk" } as never);
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.disconnect"]({ server_name: "yfinance" });
+
+      expect(mockAppendConfigAuditWithOutcome).toHaveBeenCalledOnce();
+      const [, outcomeArg] = mockAppendConfigAuditWithOutcome.mock.calls[0] as any;
+      expect(outcomeArg).toEqual({ kind: "failed", message: "ENOSPC: out of disk" });
+    });
+
+    it("calls buildConfigAuditBase with callerSource='mcp.disconnect' on disconnect", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.disconnect"]({ server_name: "yfinance" });
+
+      expect(mockBuildConfigAuditBase).toHaveBeenCalledWith(expect.any(String), "mcp.disconnect");
+    });
+  });
+});
+
+// ===========================================================================
+// Phase 47-04 R9 cross-test — gateway-patch single-writer guard
+//
+// R9 is delivered as the `integrations.mcp.servers is managed by mcp_manage`
+// throw in config-write.ts (47-03). The full positive-and-negative coverage
+// lives in packages/daemon/src/api/config-handlers.test.ts:2154+ (5 tests).
+// This describe block adds a focused mcp-handlers-resident cross-test that
+// asserts the guard fires from the same factory consumers use in production,
+// keeping the SPEC R9 acceptance traceable to a test in the file collocated
+// with the mcp_manage writer surface.
+// ===========================================================================
+
+describe("Phase 47-04 R9 — gateway-patch single-writer guard (cross-test from mcp-handlers test file)", () => {
+  it("rejects config.patch against integrations.mcp.servers and routes the caller to mcp_manage", async () => {
+    // Lazy-load the SUT here so the file-top vi.mock for persist-to-config does
+    // not interfere — config-write.ts imports persist-to-config too, but the
+    // guard fires BEFORE that import is exercised (trust-check → R9 guard →
+    // rate-limit → persist). The mock is therefore a non-issue.
+    const { bindConfigWriteHandlers } = await import("./config-handlers/config-write.js");
+
+    // Minimal handler deps. The guard fires BEFORE deps.container, configPaths,
+    // or the patch bucket are touched, so the test-double can be minimal.
+    const handlers = bindConfigWriteHandlers(
+      {
+        container: { config: {} },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/test-default.yaml"],
+        logger: makeLogger(),
+      } as any,
+      // PatchBucket double: never consume (`tryConsume` always returns allowed)
+      // — the guard is supposed to fire BEFORE this point is reached.
+      { tryConsume: () => ({ allowed: true, retryAfterMs: 0 }) } as any,
+    );
+
+    // Path-format variant (legacy).
+    await expect(
+      handlers["config.patch"]!({
+        path: "integrations.mcp.servers",
+        value: [{ name: "foo", transport: "stdio", command: "echo" }],
+        _trustLevel: "admin",
+      } as any),
+    ).rejects.toThrow(/mcp_manage/);
+  });
+
+  it("rejects sub-paths under integrations.mcp.servers (section/key shape)", async () => {
+    const { bindConfigWriteHandlers } = await import("./config-handlers/config-write.js");
+    const handlers = bindConfigWriteHandlers(
+      {
+        container: { config: {} },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/test-default.yaml"],
+        logger: makeLogger(),
+      } as any,
+      { tryConsume: () => ({ allowed: true, retryAfterMs: 0 }) } as any,
+    );
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers.0.enabled",
+        value: false,
+        _trustLevel: "admin",
+      } as any),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
+
+  it("admin-trust check takes precedence over R9 (non-admin trust gets the trust error, not the R9 redirect)", async () => {
+    const { bindConfigWriteHandlers } = await import("./config-handlers/config-write.js");
+    const handlers = bindConfigWriteHandlers(
+      {
+        container: { config: {} },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/test-default.yaml"],
+        logger: makeLogger(),
+      } as any,
+      { tryConsume: () => ({ allowed: true, retryAfterMs: 0 }) } as any,
+    );
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [],
+        _trustLevel: "user",
+      } as any),
+    ).rejects.toThrow(/Admin access required/);
+  });
 });
