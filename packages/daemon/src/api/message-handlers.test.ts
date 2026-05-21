@@ -65,6 +65,13 @@ function createMockDeps(workspaceDir: string): MessageHandlerDeps {
     workspaceDirs: new Map([["agent-1", workspaceDir]]),
     defaultWorkspaceDir: workspaceDir,
     defaultAgentId: "agent-1",
+    // channelPlugins is REQUIRED on ChannelsApiDeps. Default to an empty
+    // Map; per-test overrides (capability guard suite) replace this with
+    // a populated Map. Empty Map maps `assertCapability` to the
+    // "unknown channel type → skip" branch (`plugins.get() === undefined`),
+    // matching prior behavior of message.send / fetch / etc. in tests that
+    // don't exercise the plugin gate.
+    channelPlugins: new Map<string, ChannelPluginPort>(),
     logger: {
       debug: vi.fn(),
       info: vi.fn(),
@@ -440,16 +447,6 @@ describe("capability guard", () => {
     deps.channelPlugins = new Map([["telegram", createMockPlugin({ fetchHistory: true })]]);
     const handlers = createMessageHandlers(deps);
 
-    const result = await handlers["message.fetch"]({ channel_type: "telegram", channel_id: "123" });
-    expect(result).toEqual({ messages: [], channelId: "123" });
-  });
-
-  it("falls through when channelPlugins is undefined (backward compat)", async () => {
-    const deps = createMockDeps(workspaceDir);
-    // channelPlugins is not set — default undefined
-    const handlers = createMessageHandlers(deps);
-
-    // fetchMessages mock returns ok([]), so this succeeds despite Telegram not supporting fetch
     const result = await handlers["message.fetch"]({ channel_type: "telegram", channel_id: "123" });
     expect(result).toEqual({ messages: [], channelId: "123" });
   });

@@ -232,87 +232,23 @@ describe("env.set handler", () => {
   });
 
   // -----------------------------------------------------------------------
-  // .env file backend (legacy mode)
+  // SecretStore mandatory (BC-REM-12 sub-C — legacy .env-file fallback gone)
   // -----------------------------------------------------------------------
+  //
+  // Pre-Phase 52 Plan 04 this section tested the legacy `else { writeToEnvFile(...) }`
+  // fallback (`storage: "envfile"`). The pinning tests for `.env file backend` were
+  // deleted alongside the production code per PATTERNS.md §"Track 8" rule
+  // (delete dead branch + pinning test in same atomic commit). The new
+  // contract: when `secretStore` is undefined, env.set throws the same
+  // actionable error message as secrets-handlers.ts:196.
 
-  describe(".env file backend", () => {
-    let temp: ReturnType<typeof createTempEnvDir>;
+  it("rejects env.set when secretStore is undefined (BC-REM-12 sub-C)", async () => {
+    const deps = makeDeps({ secretStore: undefined });
+    const handlers = createEnvHandlers(deps);
 
-    beforeEach(() => {
-      temp = createTempEnvDir();
-    });
-
-    afterEach(() => {
-      temp.cleanup();
-    });
-
-    it("writes to .env file when no secret store", async () => {
-      const deps = makeDeps({ envFilePath: temp.envPath });
-      const handlers = createEnvHandlers(deps);
-
-      const result = await handlers["env.set"]!({ key: "MY_KEY", value: "my-value", _trustLevel: "admin" });
-
-      expect(result).toEqual(
-        expect.objectContaining({ set: true, key: "MY_KEY", storage: "envfile", restarting: true }),
-      );
-
-      const content = readFileSync(temp.envPath, "utf-8");
-      expect(content).toContain("MY_KEY=my-value");
-    });
-
-    it("sets .env file to 0o600 permissions", async () => {
-      const deps = makeDeps({ envFilePath: temp.envPath });
-      const handlers = createEnvHandlers(deps);
-
-      await handlers["env.set"]!({ key: "MY_KEY", value: "secret", _trustLevel: "admin" });
-
-      const stat = statSync(temp.envPath);
-      expect(stat.mode & 0o777).toBe(0o600);
-    });
-
-    it("appends to existing .env without duplicating", async () => {
-      writeFileSync(temp.envPath, "EXISTING_KEY=old-value\n", "utf-8");
-      const deps = makeDeps({ envFilePath: temp.envPath });
-      const handlers = createEnvHandlers(deps);
-
-      // Add a new key
-      await handlers["env.set"]!({ key: "NEW_KEY", value: "new-value", _trustLevel: "admin" });
-
-      const content = readFileSync(temp.envPath, "utf-8");
-      expect(content).toContain("EXISTING_KEY=old-value");
-      expect(content).toContain("NEW_KEY=new-value");
-    });
-
-    it("replaces existing key value without duplicating lines", async () => {
-      writeFileSync(temp.envPath, "MY_KEY=old-value\nOTHER=keep\n", "utf-8");
-      const deps = makeDeps({ envFilePath: temp.envPath });
-      const handlers = createEnvHandlers(deps);
-
-      await handlers["env.set"]!({ key: "MY_KEY", value: "new-value", _trustLevel: "admin" });
-
-      const content = readFileSync(temp.envPath, "utf-8");
-      // Should have exactly one MY_KEY line with new value
-      const myKeyLines = content.split("\n").filter((l: string) => l.startsWith("MY_KEY="));
-      expect(myKeyLines).toHaveLength(1);
-      expect(myKeyLines[0]).toBe("MY_KEY=new-value");
-      // Other keys preserved
-      expect(content).toContain("OTHER=keep");
-    });
-
-    it("creates .env file if it does not exist", async () => {
-      const newEnvPath = join(temp.dir, "new-dir", ".env");
-      // Do NOT create the directory -- let the file write handle it.
-      // Actually env-handlers writes to the path directly so the dir must exist.
-      mkdirSync(join(temp.dir, "new-dir"), { recursive: true });
-
-      const deps = makeDeps({ envFilePath: newEnvPath });
-      const handlers = createEnvHandlers(deps);
-
-      await handlers["env.set"]!({ key: "BRAND_NEW", value: "fresh", _trustLevel: "admin" });
-
-      const content = readFileSync(newEnvPath, "utf-8");
-      expect(content).toContain("BRAND_NEW=fresh");
-    });
+    await expect(
+      handlers["env.set"]!({ key: "MY_KEY", value: "my-value", _trustLevel: "admin" }),
+    ).rejects.toThrow("Encrypted secrets store not configured");
   });
 
   // -----------------------------------------------------------------------

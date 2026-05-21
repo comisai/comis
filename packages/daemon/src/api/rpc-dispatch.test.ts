@@ -173,73 +173,31 @@ vi.mock("./provider-handlers.js", () => ({
 // ---------------------------------------------------------------------------
 
 describe("classifyRpcError", () => {
-  it("classifies 'immutable' as config error (warn level)", () => {
-    const result = classifyRpcError(new Error("This path is immutable and cannot be changed"));
-    expect(result.errorKind).toBe("config");
-    expect(result.hint).toBeTruthy();
-    expect(result.hint.length).toBeGreaterThan(0);
-    expect(result.level).toBe("warn");
-  });
+  // Per Phase 52 Plan 04 (BC-REM-12 sub-E), the 5 substring-match
+  // fallbacks (`errMsg.includes("immutable") | "Admin access required" |
+  // "Unknown RPC method" | "not found" | "validation failed" | "Invalid input"`)
+  // were deleted alongside their pinning tests per PATTERNS.md §"Track 8"
+  // rule. Handlers still throwing bare `Error("Admin access required" | ...)`
+  // now classify as `internal`/`error` until they migrate to typed errors
+  // (deferred: see 52-04-SUMMARY.md§"Deferred — typed-error migration").
 
-  it("classifies 'Admin access required' as auth error (warn level)", () => {
-    const result = classifyRpcError(new Error("Admin access required for this operation"));
-    expect(result.errorKind).toBe("auth");
-    expect(result.hint).toBeTruthy();
-    expect(result.level).toBe("warn");
-  });
-
-  it("classifies 'Unknown RPC method' as validation error (warn level)", () => {
-    const result = classifyRpcError(new Error("Unknown RPC method: foo.bar"));
-    expect(result.errorKind).toBe("validation");
-    expect(result.hint).toContain("method name");
-    expect(result.level).toBe("warn");
-  });
-
-  it("classifies 'not found' as validation error (warn level)", () => {
-    const result = classifyRpcError(new Error("Job not found: job-123"));
-    expect(result.errorKind).toBe("validation");
-    expect(result.hint).toContain("does not exist");
-    expect(result.level).toBe("warn");
-  });
-
-  it("classifies 'validation failed' as validation error (warn level)", () => {
-    const result = classifyRpcError(new Error("Parameter validation failed: name is required"));
-    expect(result.errorKind).toBe("validation");
-    expect(result.hint).toContain("parameter");
-    expect(result.level).toBe("warn");
-  });
-
-  it("classifies 'Invalid input' as validation error (warn level)", () => {
-    const result = classifyRpcError(new Error("Invalid input for schedule_every_ms"));
-    expect(result.errorKind).toBe("validation");
-    expect(result.hint).toContain("parameter");
-    expect(result.level).toBe("warn");
-  });
-
-  it("classifies unmatched messages as internal error (error level)", () => {
+  it("classifies bare Error with any message as internal error (error level)", () => {
+    // Post-BC-REM-12-sub-E: only typed errors short-circuit to warn. Bare
+    // `new Error(...)` always lands at the typed-classifier's default.
     const result = classifyRpcError(new Error("Something unexpected went wrong"));
     expect(result.errorKind).toBe("internal");
     expect(result.hint).toBeTruthy();
     expect(result.level).toBe("error");
   });
 
-  it("returns actionable hints for all error types", () => {
-    const messages = [
-      "immutable config",
-      "Admin access required",
-      "Unknown RPC method: x",
-      "not found",
-      "validation failed",
-      "random error",
-    ];
-    for (const msg of messages) {
-      const result = classifyRpcError(new Error(msg));
-      expect(result.hint.length).toBeGreaterThan(10);
-    }
+  it("classifies non-Error throws (string, undefined) as internal error", () => {
+    expect(classifyRpcError("string thrown").errorKind).toBe("internal");
+    expect(classifyRpcError(undefined).errorKind).toBe("internal");
+    expect(classifyRpcError({ random: "object" }).errorKind).toBe("internal");
   });
 
   // ---------------------------------------------------------------------
-  // Fix C (log-review): typed RPC error classes
+  // Typed RPC error classes (only path to warn-level classification)
   // ---------------------------------------------------------------------
 
   it("classifies PreconditionError as precondition error (warn level)", () => {
@@ -256,9 +214,11 @@ describe("classifyRpcError", () => {
     expect(result.hint).toBeTruthy();
   });
 
-  it("typed-class check beats message-pattern match (PreconditionError wins over substring 'not found')", () => {
+  it("typed-class check fully replaces message-pattern match (PreconditionError carrying legacy substring still routes via typed branch)", () => {
     // A PreconditionError whose message happens to contain the legacy
     // "not found" substring still routes through the typed-class branch.
+    // This invariant survives the substring-fallback deletion because
+    // the typed `instanceof` checks always run.
     const result = classifyRpcError(new PreconditionError("Grant not found: grant_abc"));
     expect(result.errorKind).toBe("precondition");
     expect(result.level).toBe("warn");

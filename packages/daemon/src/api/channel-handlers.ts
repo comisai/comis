@@ -122,7 +122,7 @@ export function createChannelHandlers(deps: ChannelHandlerDeps): Record<string, 
       const userParams = stripInternalFields(rawParams);
       ChannelsCapabilitiesContract.request.parse(userParams);
 
-      const plugin = deps.channelPlugins?.get(channelType);
+      const plugin = deps.channelPlugins.get(channelType);
       if (!plugin) throw new Error(`Channel type not found: ${channelType}`);
       const result = { channelType, features: plugin.capabilities.features };
       if (IS_DEV) ChannelsCapabilitiesContract.response.parse(result);

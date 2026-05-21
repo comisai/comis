@@ -1922,9 +1922,6 @@
               }
             }
           ]
-        },
-        "path": {
-          "type": "string"
         }
       },
       "required": [
@@ -3149,10 +3146,7 @@
         },
         "storage": {
           "type": "string",
-          "enum": [
-            "encrypted",
-            "envfile"
-          ]
+          "const": "encrypted"
         },
         "restarting": {
           "type": "boolean",

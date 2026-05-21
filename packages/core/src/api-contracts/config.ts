@@ -306,7 +306,6 @@ export const ConfigPatchContract = defineContract({
     section: z.string().optional(),
     key: z.string().optional(),
     value: ConfigValueSchema,
-    path: z.string().optional(),
   }),
   response: z.object({
     patched: z.literal(true),
@@ -552,7 +551,10 @@ export const EnvSetContract = defineContract({
   response: z.object({
     set: z.literal(true),
     key: z.string(),
-    storage: z.enum(["encrypted", "envfile"]),
+    // After Phase 52 Plan 04 (BC-REM-12 sub-C) the only storage backend
+    // is the encrypted SecretStorePort. The legacy "envfile" mode was
+    // removed alongside the .env-file fallback in env-handlers.ts.
+    storage: z.literal("encrypted"),
     restarting: z.literal(true),
   }),
   scopes: ["admin"] as const,

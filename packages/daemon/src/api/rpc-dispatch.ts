@@ -74,29 +74,26 @@ import { createProviderHandlers } from "./provider-handlers.js";
  * checks against `PreconditionError` / `ValidationError` resolve. Returns
  * an ErrorKind, an actionable hint, AND a `level` (`"warn" | "error"`)
  * that the dispatcher uses to pick `logger.warn` vs `logger.error`. The
- * goal is to keep operator alerts meaningful: caller mistakes (preconditions,
- * validation, auth, config) are warn-level; only true internal failures
- * escalate to error.
+ * goal is to keep operator alerts meaningful: caller mistakes
+ * (preconditions, validation) are warn-level via typed-class throws;
+ * unmatched cases fall through to `error/internal`.
  *
- * Order: typed-class checks (Fix C) run BEFORE message-pattern checks so
- * a class that happens to carry a message matching a legacy substring
- * still routes through the typed-class branch.
+ * Per Phase 52 Plan 04 (BC-REM-12 sub-E), the legacy
+ * message-pattern (substring-match) fallbacks were deleted. Handlers
+ * that still `throw new Error("Admin access required" | "immutable" | ...)`
+ * will now classify as `internal`/`error` until they are migrated to
+ * `throw new PreconditionError(...)` / `throw new ValidationError(...)`.
+ * Phase 52 Plan 04 audit found N=76 such handlers in packages/daemon/src/api/;
+ * the typed-error migration is deferred to a follow-on phase (see
+ * 52-04-SUMMARY.md§"Deferred — typed-error migration"). The deletion
+ * is intentional per AGENTS.md §2.9 — keeping the substring fallbacks
+ * was the BC shim; the migration is incremental hardening.
  */
 export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: string; level: "warn" | "error" } {
-  // Typed errors (Fix C): instanceof check beats string matching.
+  // Typed errors: instanceof checks. Add new typed classes here as
+  // handlers migrate; do NOT re-introduce substring-match fallbacks.
   if (err instanceof PreconditionError) return { errorKind: "precondition", hint: "Caller precondition not met; check resource state before retry", level: "warn" };
   if (err instanceof ValidationError) return { errorKind: "validation", hint: "Check parameter types and values against the schema", level: "warn" };
-
-  // Legacy message-pattern fallbacks for handlers that haven't been
-  // converted to typed errors yet. Caller-error classes (validation,
-  // auth, config) get warn-level so they don't pollute ERROR alerting;
-  // only the unmatched `internal` case escalates.
-  const errMsg = err instanceof Error ? err.message : String(err);
-  if (errMsg.includes("immutable")) return { errorKind: "config", hint: "This config path requires daemon restart to change", level: "warn" };
-  if (errMsg.includes("Admin access required")) return { errorKind: "auth", hint: "Use an admin-level token for this operation", level: "warn" };
-  if (errMsg.includes("Unknown RPC method")) return { errorKind: "validation", hint: "Check method name spelling and registered methods", level: "warn" };
-  if (errMsg.includes("not found")) return { errorKind: "validation", hint: "The requested resource does not exist", level: "warn" };
-  if (errMsg.includes("validation failed") || errMsg.includes("Invalid input")) return { errorKind: "validation", hint: "Check parameter types and values against the schema", level: "warn" };
   return { errorKind: "internal", hint: "Check the RPC method handler and its dependencies", level: "error" };
 }
 

@@ -91,8 +91,8 @@ type InboundMessageIdResolver = NonNullable<MessageHandlerDeps["inboundMessageId
 
 // ---------------------------------------------------------------------------
 // Capability guard — maps RPC methods to ChannelCapability feature flags.
-// When channelPlugins is provided, unsupported actions are rejected before
-// reaching the adapter, saving a tool call and producing a clear error.
+// Unsupported actions are rejected before reaching the adapter, saving a
+// tool call and producing a clear error.
 // ---------------------------------------------------------------------------
 
 /** Map from RPC method name to the ChannelCapability.features key it requires. */
@@ -106,15 +106,15 @@ const ACTION_CAPABILITY_MAP: Record<string, string> = {
 
 /**
  * Throw early if the channel does not support the requested action.
- * Gracefully skips the check when channelPlugins is not provided (backward
- * compat) or when the channel type has no registered plugin (unknown channel).
+ * Skip the check when the channel type has no registered plugin (unknown
+ * channel adapter). `plugins` is always supplied by the production
+ * composition root (setup-channels-adapters.ts wires ≥9 plugin entries).
  */
 function assertCapability(
   method: string,
   channelType: string,
-  plugins: Map<string, ChannelPluginPort> | undefined,
+  plugins: Map<string, ChannelPluginPort>,
 ): void {
-  if (!plugins) return;
   const featureKey = ACTION_CAPABILITY_MAP[method];
   if (!featureKey) return;
   const plugin = plugins.get(channelType);
