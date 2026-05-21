@@ -4319,6 +4319,17 @@
           "items": {
             "type": "string"
           }
+        },
+        "persistence": {
+          "type": "string",
+          "enum": [
+            "persisted",
+            "runtime_only",
+            "skipped"
+          ]
+        },
+        "warning": {
+          "type": "string"
         }
       },
       "required": [
@@ -4358,6 +4369,17 @@
         "status": {
           "type": "string",
           "const": "disconnected"
+        },
+        "persistence": {
+          "type": "string",
+          "enum": [
+            "persisted",
+            "runtime_only",
+            "skipped"
+          ]
+        },
+        "warning": {
+          "type": "string"
         }
       },
       "required": [
