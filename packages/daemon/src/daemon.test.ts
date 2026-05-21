@@ -3,7 +3,6 @@ import { PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type Gate
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { ComisLogger } from "@comis/infra";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { WatchdogHandle } from "./health/watchdog.js";
 import type { LatencyRecorder } from "./observability/latency-recorder.js";
 import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";
@@ -228,12 +227,6 @@ function createMockShutdownHandle(): ShutdownHandle {
   };
 }
 
-function createMockWatchdogHandle(): WatchdogHandle {
-  return {
-    stop: vi.fn(),
-  };
-}
-
 function createMockGatewayHandle(): GatewayServerHandle {
   return {
     app: { route: vi.fn(), use: vi.fn() } as unknown as GatewayServerHandle["app"],
@@ -270,7 +263,6 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
   const latencyRecorder = createMockLatencyRecorder();
   const processMonitor = createMockProcessMonitor();
   const shutdownHandle = createMockShutdownHandle();
-  const watchdogHandle = createMockWatchdogHandle();
   const gatewayHandle = createMockGatewayHandle();
 
   const overrides: DaemonOverrides = {
@@ -303,10 +295,6 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
       callOrder.push("registerGracefulShutdown");
       return shutdownHandle;
     }),
-    startWatchdog: vi.fn().mockImplementation(() => {
-      callOrder.push("startWatchdog");
-      return watchdogHandle;
-    }),
     createGatewayServer: vi.fn().mockImplementation(() => {
       callOrder.push("createGatewayServer");
       return gatewayHandle;
@@ -325,7 +313,6 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
       latencyRecorder,
       processMonitor,
       shutdownHandle,
-      watchdogHandle,
       gatewayHandle,
     },
   };
@@ -358,7 +345,6 @@ describe("daemon main()", () => {
       "createTokenTracker",
       "createLatencyRecorder",
       "createProcessMonitor",
-      "startWatchdog",
       "registerGracefulShutdown",
     ]);
   });
@@ -378,7 +364,6 @@ describe("daemon main()", () => {
       "createTokenTracker",
       "createLatencyRecorder",
       "createProcessMonitor",
-      "startWatchdog",
       "createGatewayServer",
       "registerGracefulShutdown",
     ]);
@@ -397,7 +382,6 @@ describe("daemon main()", () => {
     expect(instance.latencyRecorder).toBe(mocks.latencyRecorder);
     expect(instance.processMonitor).toBe(mocks.processMonitor);
     expect(instance.shutdownHandle).toBe(mocks.shutdownHandle);
-    expect(instance.watchdogHandle).toBe(mocks.watchdogHandle);
   });
 
   it("returns gatewayHandle when gateway is enabled", async () => {
@@ -545,18 +529,6 @@ describe("daemon main()", () => {
     expect(overrides.registerGracefulShutdown).toHaveBeenCalledWith(
       expect.objectContaining({
         container: mocks.container,
-        processMonitor: mocks.processMonitor,
-      }),
-    );
-  });
-
-  it("passes process monitor to watchdog for health gating", async () => {
-    const { overrides, mocks } = buildOverrides();
-
-    await main(overrides);
-
-    expect(overrides.startWatchdog).toHaveBeenCalledWith(
-      expect.objectContaining({
         processMonitor: mocks.processMonitor,
       }),
     );

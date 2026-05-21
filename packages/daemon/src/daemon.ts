@@ -78,7 +78,6 @@ import { createTracingLogger } from "./observability/trace-logger.js";
 import { setupChannelHealthLogging } from "./observability/channel-health-logger.js";
 import { registerGracefulShutdown } from "./process/graceful-shutdown.js";
 import { createProcessMonitor } from "./process/process-monitor.js";
-import { startWatchdog } from "./health/watchdog.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, chmodSync, statSync, mkdirSync } from "node:fs";
 import { createExecGit } from "./config/exec-git.js";
@@ -268,7 +267,7 @@ export async function runPreflightDoctor(
  *   - bootstrap (core container) + config-secret-ref resolution
  *   - config git versioning
  *   - logging + observability + context-pipeline collector
- *   - health (process monitor + watchdog + device identity)
+ *   - health (process monitor)
  *   - memory + embedding + observability-persistence
  *   - context store + active-run registry + session resolver
  *   - canary fallback + injection rate limiter
@@ -292,7 +291,6 @@ async function stageFoundation(input: {
   const _createTokenTracker = overrides.createTokenTracker ?? createTokenTracker;
   const _createLatencyRecorder = overrides.createLatencyRecorder ?? createLatencyRecorder;
   const _createProcessMonitor = overrides.createProcessMonitor ?? createProcessMonitor;
-  const _startWatchdog = overrides.startWatchdog ?? startWatchdog;
 
   // 0. Resolve data directory, then load secrets from <dataDir>/.env.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager is initialized
@@ -367,9 +365,9 @@ async function stageFoundation(input: {
     logger: logLevelManager.getLogger("context-pipeline"),
   });
 
-  // 5-6. Health / process
-  const { processMonitor, watchdogHandle, deviceIdentity } = setupHealth({
-    container, logger, daemonLogger, _createProcessMonitor, _startWatchdog,
+  // 5. Health / process
+  const { processMonitor } = setupHealth({
+    container, logger, daemonLogger, _createProcessMonitor,
   });
 
   // 6.5. Memory + embedding
@@ -465,7 +463,7 @@ async function stageFoundation(input: {
     tokenTracker, latencyRecorder, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
     contextPipelineCollector,
-    processMonitor, watchdogHandle, deviceIdentity,
+    processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
     embeddingCircuitBreakerState, maintenanceTick,
@@ -1087,7 +1085,7 @@ async function stageShutdown(input: {
   const {
     container, dataDir, configPaths,
     logger, logLevelManager, daemonLogger, daemonVersion,
-    tokenTracker, latencyRecorder, processMonitor, watchdogHandle, deviceIdentity,
+    tokenTracker, latencyRecorder, processMonitor,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
     contextPipelineCollector, backgroundIndexingPromise, db,
     disposeEmbedding, cachedPort, maintenanceTick, obsPersistence,
@@ -1188,7 +1186,7 @@ async function stageShutdown(input: {
 
   return {
     container, logger, logLevelManager, tokenTracker, latencyRecorder,
-    processMonitor, shutdownHandle, watchdogHandle, cronSchedulers, resetSchedulers,
+    processMonitor, shutdownHandle, cronSchedulers, resetSchedulers,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
     // Expose the delivery-queue-side adapter map and the queue port itself so
     // integration tests can register adapters that the recurring drainer sees
@@ -1199,7 +1197,7 @@ async function stageShutdown(input: {
     // synthetic tasks and call complete()/fail() to drive the completion
     // runner pipeline without requiring a live LLM call.
     backgroundTaskManager,
-    rpcCall, deviceIdentity, diagnosticCollector, billingEstimator,
+    rpcCall, diagnosticCollector, billingEstimator,
     channelActivityTracker, deliveryTracer, approvalGate, channelHealthMonitor, sessionStoreBridge,
   };
 }

@@ -20,7 +20,6 @@ import type { HeartbeatRunner, CronScheduler, createExecutionTracker } from "@co
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { BrowserService, RpcCall, LinkRunner } from "@comis/skills";
 import type { ChannelManager } from "@comis/orchestrator";
-import type { DeviceIdentity } from "@comis/core";
 
 import type { LogLevelManager } from "../observability/log-infra.js";
 import type { TokenTracker } from "../observability/token-tracker.js";
@@ -30,7 +29,6 @@ import type { BillingEstimator } from "../observability/billing-estimator.js";
 import type { ChannelActivityTracker } from "../observability/channel-activity-tracker.js";
 import type { DeliveryTracer } from "../observability/delivery-tracer.js";
 import type { ProcessMonitor } from "../process/process-monitor.js";
-import type { WatchdogHandle } from "../health/watchdog.js";
 import type { ShutdownHandle } from "../process/graceful-shutdown.js";
 import type { createCrossSessionSender } from "@comis/orchestrator";
 import type { createSubAgentRunner } from "@comis/agent";
@@ -93,10 +91,6 @@ export interface DaemonContext {
 
   /** System resource monitoring (CPU, memory, event loop). */
   processMonitor: ProcessMonitor;
-  /** Systemd watchdog health gating handle. */
-  watchdogHandle: WatchdogHandle;
-  /** Device identity for pairing (optional -- warn on failure). */
-  deviceIdentity?: DeviceIdentity;
 
   // -- Memory / Embedding ----------------------------------------------------
 

@@ -53,8 +53,6 @@ describe("DaemonContext", () => {
       "deliveryTracer",
       // Process
       "processMonitor",
-      "watchdogHandle",
-      "deviceIdentity",
       // Memory
       "embeddingPort",
       "cachedPort",
