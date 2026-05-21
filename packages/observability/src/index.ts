@@ -67,9 +67,14 @@ export type { FileSnapshot } from "./shared/file-snapshot.js";
 // writers (queued-file-writer, config-audit/append, config-audit/scrub) all
 // rely on at their try-catch boundaries. Out-of-package consumers should
 // `import { appendRegularFile } from "@comis/observability"`.
+//
+// `ensureContainedDir` (Phase 48 OBS-HARD-01) is the third public helper —
+// it owns the `mkdir + lstat-gated chmod` pattern that the migration
+// sweep in Plans 48-05/48-06 routes 10 sibling writers through.
 export {
   appendRegularFile,
   writeRegularFile,
+  ensureContainedDir,
   SymlinkParentRejected,
   PathEscapesConfinementError,
   FileSizeLimitExceeded,
@@ -81,6 +86,9 @@ export type {
   WriteRegularFileOptions,
   WriteRegularFileSuccess,
   WriteRegularFileError,
+  EnsureContainedDirOptions,
+  EnsureContainedDirSuccess,
+  EnsureContainedDirError,
 } from "./shared/fs-safe.js";
 
 // ---------------------------------------------------------------------------

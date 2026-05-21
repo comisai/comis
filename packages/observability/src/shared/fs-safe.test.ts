@@ -1,12 +1,37 @@
 // SPDX-License-Identifier: Apache-2.0
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+
+// `chmodSyncThrowsEperm` is a hoisted toggle: when true, the mocked
+// `fs.chmodSync` throws an EPERM error. This is the only portable way
+// to exercise the chmod-EPERM-non-fatal branch in `ensureContainedDir`
+// under ESM (vi.spyOn cannot redefine non-configurable namespace
+// properties on `node:fs`). Default false → real chmod runs everywhere
+// else in this file (existing tests rely on real chmod behavior).
+const { chmodSyncThrowsEperm } = vi.hoisted(() => ({
+  chmodSyncThrowsEperm: { value: false },
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...real,
+    chmodSync: (...args: Parameters<typeof real.chmodSync>) => {
+      if (chmodSyncThrowsEperm.value) {
+        throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+      }
+      return real.chmodSync(...args);
+    },
+  };
+});
+
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, it, expect } from "vitest";
 
 import {
   appendRegularFile,
   writeRegularFile,
+  ensureContainedDir,
   SymlinkParentRejected,
   FileSizeLimitExceeded,
   PathEscapesConfinementError,
@@ -464,6 +489,139 @@ describe("writeRegularFile — confined-base-dir ancestor escape rejection", () 
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toBeInstanceOf(PathEscapesConfinementError);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ensureContainedDir — shared substrate primitive (OBS-HARD-01)
+//
+// The helper unifies the open-coded `mkdir + lstat-gated chmod` pattern
+// duplicated in `queued-file-writer.ts:ensureParentDir` and
+// `config-audit/append.ts:ensureConfigAuditParentDir`. It provides:
+//
+//   1. Fresh-create branch — `mkdirSync(dir, {recursive:true, mode})` and
+//      the dir exists at the specified mode.
+//   2. EEXIST-default-umask branch — pre-existing dir at 0o755 (e.g.,
+//      pino-roll-created) gets chmod'd to the specified mode.
+//   3. EEXIST-symlink-rejected branch — refuses to chmod a symlinked
+//      dir (confused-deputy invariant); returns SymlinkParentRejected.
+//   4. chmod-EPERM-non-fatal branch — chmod failure (not-owned-by-user,
+//      etc.) is logged-by-caller, not surfaced as Result.err (best-effort
+//      contract).
+//   5. Confinement-base passes — when `confinedBaseDir` is supplied,
+//      `realpathSync(dir)` must stay inside `realpathSync(confinedBaseDir)`.
+//   6. Confinement-base rejects ancestor symlink — ancestor symlink that
+//      escapes the base rejects with PathEscapesConfinementError.
+// ---------------------------------------------------------------------------
+describe("ensureContainedDir", () => {
+  let baseDir: string;
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "comis-fs-safe-ensure-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  it("fresh_create_at_specified_mode_succeeds_with_created_true", () => {
+    const target = path.join(baseDir, "fresh");
+    const result = ensureContainedDir({ dir: target, mode: 0o700 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.value.created).toBe(true);
+    expect(fs.statSync(target).mode & 0o777).toBe(0o700);
+  });
+
+  it("eexist_default_umask_dir_gets_chmod_to_specified_mode", () => {
+    const target = path.join(baseDir, "preexisting");
+    // Pre-create with looser mode (mimics pino-roll / pi-mono creating
+    // a parent dir before our writer touches it).
+    fs.mkdirSync(target, { recursive: true, mode: 0o755 });
+    // Force-clear umask drift so the pre-state is deterministic.
+    fs.chmodSync(target, 0o755);
+    expect(fs.statSync(target).mode & 0o777).toBe(0o755);
+
+    const result = ensureContainedDir({ dir: target, mode: 0o700 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.value.created).toBe(false);
+    expect(fs.statSync(target).mode & 0o777).toBe(0o700);
+  });
+
+  it("eexist_symlink_parent_rejected_with_typed_error_and_target_mode_untouched", () => {
+    const sibling = path.join(baseDir, "sibling");
+    fs.mkdirSync(sibling, { recursive: true, mode: 0o700 });
+    fs.chmodSync(sibling, 0o755);
+    const siblingModeBefore = fs.statSync(sibling).mode & 0o777;
+
+    const linkPath = path.join(baseDir, "link");
+    fs.symlinkSync(sibling, linkPath, "dir");
+
+    const result = ensureContainedDir({ dir: linkPath, mode: 0o700 });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toBeInstanceOf(SymlinkParentRejected);
+    expect((result.error as SymlinkParentRejected).code).toBe(
+      "SYMLINK_PARENT_REJECTED",
+    );
+    // Confused-deputy invariant: the symlink target's mode is untouched.
+    expect(fs.statSync(sibling).mode & 0o777).toBe(siblingModeBefore);
+  });
+
+  it("chmod_eperm_non_fatal_returns_ok_created_false", () => {
+    const target = path.join(baseDir, "preexisting-eperm");
+    fs.mkdirSync(target, { recursive: true, mode: 0o755 });
+    fs.chmodSync(target, 0o755);
+
+    // Toggle the hoisted mock so the next fs.chmodSync call throws EPERM.
+    chmodSyncThrowsEperm.value = true;
+    try {
+      const result = ensureContainedDir({ dir: target, mode: 0o700 });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("unreachable");
+      expect(result.value.created).toBe(false);
+      // Mode bits stay at the pre-state because chmod threw — proves
+      // we actually exercised the EPERM branch and didn't fall through.
+      expect(fs.statSync(target).mode & 0o777).toBe(0o755);
+    } finally {
+      chmodSyncThrowsEperm.value = false;
+    }
+  });
+
+  it("confinement_base_passes_when_realpath_inside_base", () => {
+    const target = path.join(baseDir, "sub");
+    const result = ensureContainedDir({
+      dir: target,
+      mode: 0o700,
+      confinedBaseDir: baseDir,
+    });
+    expect(result.ok).toBe(true);
+    expect(fs.statSync(target).mode & 0o777).toBe(0o700);
+  });
+
+  it("confinement_base_rejects_when_ancestor_symlink_escapes_base", () => {
+    // Create a sibling dir outside `baseDir`, then a symlink inside
+    // `baseDir` pointing to it. mkdir through the symlink will succeed
+    // and the kernel will create `<other>/sub`, but the realpath check
+    // MUST reject it because `<other>` is outside `confinedBaseDir`.
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), "comis-fs-safe-other-"));
+    try {
+      const escape = path.join(baseDir, "escape");
+      fs.symlinkSync(other, escape, "dir");
+      const target = path.join(escape, "sub");
+
+      const result = ensureContainedDir({
+        dir: target,
+        mode: 0o700,
+        confinedBaseDir: baseDir,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.error).toBeInstanceOf(PathEscapesConfinementError);
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
     }
   });
 });
