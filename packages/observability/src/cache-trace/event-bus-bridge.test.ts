@@ -2,14 +2,24 @@
 /**
  * Cache-trace EventBus bridge behavior tests.
  *
- * Two cases:
- *   - subscribes_and_unsubscribes_cleanly (no listener leaks)
+ * Coverage:
+ *   - subscribes_and_unsubscribes_cleanly (no listener leaks; token-stash event)
  *   - attaches_token_counts_to_next_session_after_emit (the round-trip
  *     from bus → setLatestTokenUsage → recordStage("session:after"))
  *
+ * Plan 48-07 multi-event mapping additions:
+ *   - subscribes_to_session_started_and_emits_session_start_stage
+ *   - subscribes_to_session_ended_and_emits_session_end_stage
+ *   - twin_emits_prompt_before_and_prompt_after_from_single_prompt_submitted
+ *   - second_prompt_submitted_emits_prompt_before_with_previous_digests
+ *   - subscribes_to_tool_started_and_emits_tool_before_stage
+ *   - subscribes_to_tool_executed_and_emits_tool_after_stage
+ *   - preserves_token_stash_side_effect_for_observability_token_usage
+ *   - unsubscribe_removes_all_listeners_no_leak
+ *
  * @module
  */
-import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   mkdtempSync,
   readFileSync,
@@ -23,7 +33,7 @@ import { TypedEventBus } from "@comis/core";
 
 import { createCacheTrace, type CacheTrace } from "./runtime.js";
 import { attachCacheTraceToEventBus } from "./event-bus-bridge.js";
-import type { CacheTraceEvent } from "./types.js";
+import type { CacheTraceEvent, CacheTraceStage } from "./types.js";
 
 let tmpDir: string;
 
@@ -56,6 +66,33 @@ function makeTrace(filePath: string): CacheTrace {
   });
   if (trace === null) throw new Error("makeTrace: createCacheTrace returned null");
   return trace;
+}
+
+/**
+ * Build a fake CacheTrace whose `recordStage` + `setLatestTokenUsage` are
+ * vitest spies. Plan 48-07's multi-event tests assert directly on the
+ * spy calls (no disk round-trip), which is faster + lets us inspect the
+ * raw payloads without sanitization side-effects.
+ */
+function makeFakeTrace(
+  spies: {
+    recordStage?: ReturnType<typeof vi.fn>;
+    setLatestTokenUsage?: ReturnType<typeof vi.fn>;
+  } = {},
+): CacheTrace {
+  const recordStage = spies.recordStage ?? vi.fn(() => "queued" as const);
+  const setLatestTokenUsage = spies.setLatestTokenUsage ?? vi.fn();
+  return {
+    filePath: "/tmp/fake.jsonl",
+    includeMessages: true,
+    includePrompt: true,
+    includeSystem: true,
+    recordStage: recordStage as unknown as CacheTrace["recordStage"],
+    setLatestTokenUsage: setLatestTokenUsage as unknown as CacheTrace["setLatestTokenUsage"],
+    flush: async () => undefined,
+    flushAndClose: async () => undefined,
+    failureCount: () => 0,
+  };
 }
 
 describe("attachCacheTraceToEventBus", () => {
@@ -127,5 +164,272 @@ describe("attachCacheTraceToEventBus", () => {
     expect(lines[0]!.cacheCreationInputTokens).toBe(42);
 
     unsubscribe();
+  });
+});
+
+describe("attachCacheTraceToEventBus multi-event mapping (Plan 48-07)", () => {
+  // Each test builds a fake trace with a recordStage spy + fresh bus.
+
+  it("subscribes_to_session_started_and_emits_session_start_stage", () => {
+    const recordStageSpy = vi.fn(() => "queued" as const);
+    const trace = makeFakeTrace({ recordStage: recordStageSpy });
+    const bus = new TypedEventBus();
+    const unsubscribe = attachCacheTraceToEventBus(trace, bus);
+
+    bus.emit("session:started", {
+      agentId: "agent-1",
+      sessionKey: "sk-1",
+      traceId: "trace-1",
+      channelType: "discord",
+      channelId: "test-channel",
+      timestamp: Date.now(),
+    });
+
+    expect(recordStageSpy).toHaveBeenCalledWith(
+      "session:start",
+      expect.objectContaining({
+        channelType: "discord",
+        channelId: "test-channel",
+      }),
+    );
+    unsubscribe();
+  });
+
+  it("subscribes_to_session_ended_and_emits_session_end_stage", () => {
+    const recordStageSpy = vi.fn(() => "queued" as const);
+    const trace = makeFakeTrace({ recordStage: recordStageSpy });
+    const bus = new TypedEventBus();
+    const unsubscribe = attachCacheTraceToEventBus(trace, bus);
+
+    bus.emit("session:ended", {
+      agentId: "agent-1",
+      sessionKey: "sk-1",
+      traceId: "trace-1",
+      totalTurns: 3,
+      totalInputTokens: 500,
+      totalOutputTokens: 200,
+      durationMs: 12345,
+      exitReason: "completed",
+      timestamp: Date.now(),
+    });
+
+    const stages = recordStageSpy.mock.calls.map((c) => c[0] as CacheTraceStage);
+    expect(stages).toContain("session:end");
+    unsubscribe();
+  });
+
+  it("twin_emits_prompt_before_and_prompt_after_from_single_prompt_submitted", () => {
+    const recordStageSpy = vi.fn(() => "queued" as const);
+    const trace = makeFakeTrace({ recordStage: recordStageSpy });
+    const bus = new TypedEventBus();
+    const unsubscribe = attachCacheTraceToEventBus(trace, bus);
+
+    bus.emit("prompt:submitted", {
+      agentId: "test-agent",
+      sessionKey: "test-session",
+      traceId: "trace-1",
+      promptChars: 100,
+      provider: "test",
+      modelId: "test-model",
+      messageCount: 1,
+      systemDigest: "sysDigestA",
+      messagesDigest: "msgDigestA",
+      timestamp: Date.now(),
+    });
+
+    // The bridge must emit BOTH prompt:before AND prompt:after stages on
+    // a single event.
+    const stages = recordStageSpy.mock.calls.map((c) => c[0] as CacheTraceStage);
+    expect(stages).toContain("prompt:before");
+    expect(stages).toContain("prompt:after");
+
+    // prompt:before for the first prompt has no prior digests — payload
+    // should omit messagesDigest + systemDigest.
+    const beforeCall = recordStageSpy.mock.calls.find((c) => c[0] === "prompt:before");
+    expect(beforeCall).toBeDefined();
+    const beforePayload = beforeCall![1] as Record<string, unknown>;
+    expect(beforePayload.messagesDigest).toBeUndefined();
+    expect(beforePayload.systemDigest).toBeUndefined();
+
+    // prompt:after carries the new digests.
+    const afterCall = recordStageSpy.mock.calls.find((c) => c[0] === "prompt:after");
+    expect(afterCall).toBeDefined();
+    const afterPayload = afterCall![1] as Record<string, unknown>;
+    expect(afterPayload.messagesDigest).toBe("msgDigestA");
+    expect(afterPayload.systemDigest).toBe("sysDigestA");
+
+    unsubscribe();
+  });
+
+  it("second_prompt_submitted_emits_prompt_before_with_previous_digests", () => {
+    const recordStageSpy = vi.fn(() => "queued" as const);
+    const trace = makeFakeTrace({ recordStage: recordStageSpy });
+    const bus = new TypedEventBus();
+    const unsubscribe = attachCacheTraceToEventBus(trace, bus);
+
+    // First prompt — populates digest cache state.
+    bus.emit("prompt:submitted", {
+      agentId: "a",
+      sessionKey: "s",
+      traceId: "t",
+      promptChars: 100,
+      provider: "p",
+      modelId: "m",
+      messageCount: 1,
+      systemDigest: "sys1",
+      messagesDigest: "msg1",
+      timestamp: Date.now(),
+    });
+    recordStageSpy.mockClear();
+
+    // Second prompt — prompt:before now carries the previous digests.
+    bus.emit("prompt:submitted", {
+      agentId: "a",
+      sessionKey: "s",
+      traceId: "t",
+      promptChars: 200,
+      provider: "p",
+      modelId: "m",
+      messageCount: 2,
+      systemDigest: "sys2",
+      messagesDigest: "msg2",
+      timestamp: Date.now(),
+    });
+
+    const beforeCall = recordStageSpy.mock.calls.find((c) => c[0] === "prompt:before");
+    expect(beforeCall).toBeDefined();
+    const beforePayload = beforeCall![1] as Record<string, unknown>;
+    expect(beforePayload.messagesDigest).toBe("msg1");
+    expect(beforePayload.systemDigest).toBe("sys1");
+
+    const afterCall = recordStageSpy.mock.calls.find((c) => c[0] === "prompt:after");
+    expect(afterCall).toBeDefined();
+    const afterPayload = afterCall![1] as Record<string, unknown>;
+    expect(afterPayload.messagesDigest).toBe("msg2");
+    expect(afterPayload.systemDigest).toBe("sys2");
+
+    unsubscribe();
+  });
+
+  it("subscribes_to_tool_started_and_emits_tool_before_stage", () => {
+    const recordStageSpy = vi.fn(() => "queued" as const);
+    const trace = makeFakeTrace({ recordStage: recordStageSpy });
+    const bus = new TypedEventBus();
+    const unsubscribe = attachCacheTraceToEventBus(trace, bus);
+
+    bus.emit("tool:started", {
+      toolName: "TestTool",
+      toolCallId: "call-1",
+      timestamp: Date.now(),
+    });
+
+    expect(recordStageSpy).toHaveBeenCalledWith(
+      "tool:before",
+      expect.objectContaining({
+        toolName: "TestTool",
+        toolCallId: "call-1",
+      }),
+    );
+    unsubscribe();
+  });
+
+  it("subscribes_to_tool_executed_and_emits_tool_after_stage", () => {
+    const recordStageSpy = vi.fn(() => "queued" as const);
+    const trace = makeFakeTrace({ recordStage: recordStageSpy });
+    const bus = new TypedEventBus();
+    const unsubscribe = attachCacheTraceToEventBus(trace, bus);
+
+    bus.emit("tool:executed", {
+      toolName: "TestTool",
+      toolCallId: "call-1",
+      durationMs: 42,
+      success: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recordStageSpy).toHaveBeenCalledWith(
+      "tool:after",
+      expect.objectContaining({
+        toolName: "TestTool",
+        durationMs: 42,
+      }),
+    );
+    unsubscribe();
+  });
+
+  it("preserves_token_stash_side_effect_for_observability_token_usage", () => {
+    const recordStageSpy = vi.fn(() => "queued" as const);
+    const setLatestTokenUsageSpy = vi.fn();
+    const trace = makeFakeTrace({
+      recordStage: recordStageSpy,
+      setLatestTokenUsage: setLatestTokenUsageSpy,
+    });
+    const bus = new TypedEventBus();
+    const unsubscribe = attachCacheTraceToEventBus(trace, bus);
+
+    bus.emit("observability:token_usage", {
+      timestamp: Date.now(),
+      traceId: "trace-1",
+      agentId: "agent-1",
+      channelId: "channel-1",
+      executionId: "exec-1",
+      provider: "anthropic",
+      model: "claude-3-opus",
+      tokens: { prompt: 100, completion: 50, total: 150 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 250,
+      cacheReadTokens: 100,
+      cacheWriteTokens: 50,
+      sessionKey: "sid-1",
+      savedVsUncached: 0,
+      cacheEligible: true,
+    });
+
+    expect(setLatestTokenUsageSpy).toHaveBeenCalledWith({
+      cacheReadTokens: 100,
+      cacheWriteTokens: 50,
+    });
+    // observability:token_usage MUST NOT translate to a recordStage call —
+    // it's a side-effect-only handler (not in the mapping table).
+    const stages = recordStageSpy.mock.calls.map((c) => c[0] as string);
+    expect(stages).not.toContain("observability:token_usage");
+    unsubscribe();
+  });
+
+  it("unsubscribe_removes_all_listeners_no_leak", () => {
+    const trace = makeFakeTrace();
+    const bus = new TypedEventBus();
+
+    const before =
+      bus.listenerCount("prompt:submitted") +
+      bus.listenerCount("session:started") +
+      bus.listenerCount("session:ended") +
+      bus.listenerCount("tool:started") +
+      bus.listenerCount("tool:executed") +
+      bus.listenerCount("observability:token_usage");
+    expect(before).toBe(0);
+
+    const unsubscribe = attachCacheTraceToEventBus(trace, bus);
+
+    const during =
+      bus.listenerCount("prompt:submitted") +
+      bus.listenerCount("session:started") +
+      bus.listenerCount("session:ended") +
+      bus.listenerCount("tool:started") +
+      bus.listenerCount("tool:executed") +
+      bus.listenerCount("observability:token_usage");
+    // 1 token-stash + 1 prompt twin-emit + 4 mapping-table entries = 6
+    expect(during).toBe(6);
+
+    unsubscribe();
+
+    const after =
+      bus.listenerCount("prompt:submitted") +
+      bus.listenerCount("session:started") +
+      bus.listenerCount("session:ended") +
+      bus.listenerCount("tool:started") +
+      bus.listenerCount("tool:executed") +
+      bus.listenerCount("observability:token_usage");
+    expect(after).toBe(0);
   });
 });
