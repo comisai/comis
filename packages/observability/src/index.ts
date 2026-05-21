@@ -42,6 +42,7 @@ export type {
 export {
   sanitizeDiagnosticPayload,
   isCredentialFieldName,
+  CREDENTIAL_KEYS,
 } from "./shared/sanitize-diagnostic-payload.js";
 
 export {
