@@ -20,7 +20,8 @@
  * @module
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { writeRegularFile } from "@comis/observability";
 
 // ---------------------------------------------------------------------------
 // API key pattern detection
@@ -270,7 +271,22 @@ export function sanitizeSessionSecrets(sessionPath: string): number {
   }
 
   if (totalChanged > 0) {
-    writeFileSync(sessionPath, lines.join("\n"), "utf-8");
+    // Route through @comis/observability fs-safe substrate so the
+    // rewritten session JSONL lands at mode 0o600 (design §1.4
+    // confidentiality invariant). `confinedBaseDir` is intentionally
+    // omitted — the caller (`comis-session-manager.ts`) holds the
+    // session write-lock and constructs `sessionPath` via
+    // `sessionKeyToPath` + the SDK's `sessionBaseDir`, so the
+    // ancestor-symlink defense lives at that boundary; this writer
+    // remains a leaf consumer.
+    //
+    // Substrate Result.err is intentionally discarded: the pre-migration
+    // contract was best-effort — the bare write call's throw was swallowed
+    // by the outer try/finally in `comis-session-manager.withWriteLock`,
+    // matching the existing semantics. The next reader still observes
+    // the unredacted on-disk state if the rewrite fails, but the inner
+    // `finally` semantics around the JSONL write lock are preserved.
+    writeRegularFile({ path: sessionPath, content: lines.join("\n") });
   }
 
   return totalChanged;
