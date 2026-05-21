@@ -2044,9 +2044,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               }
             }
           ]
-        },
-        "path": {
-          "type": "string"
         }
       },
       "required": [
@@ -3271,10 +3268,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "storage": {
           "type": "string",
-          "enum": [
-            "encrypted",
-            "envfile"
-          ]
+          "const": "encrypted"
         },
         "restarting": {
           "type": "boolean",
