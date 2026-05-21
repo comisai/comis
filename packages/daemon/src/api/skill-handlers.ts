@@ -789,9 +789,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         deps.skillRegistries.get(callingAgentId)?.init();
       }
 
-      // Emit skill:updated event
       deps.eventBus?.emit("skill:updated", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: systemNowMs() });
-
       const result = { ok: true as const, name: params.name };
       if (IS_DEV) SkillsUpdateContract.response.parse(result);
       return result;
