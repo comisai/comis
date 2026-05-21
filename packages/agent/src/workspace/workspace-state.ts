@@ -61,6 +61,7 @@ export async function writeWorkspaceState(
   const existing = await readWorkspaceState(workspaceDir);
   const merged = { ...existing, ...updates, version: 1 as const };
   const statePath = safePath(workspaceDir, STATE_FILENAME);
+  // fs-safe-allowed: workspaceDir is operator-configured per-agent workspace, not ~/.comis/ directly
   await fs.writeFile(statePath, JSON.stringify(merged, null, 2) + "\n", "utf-8");
 }
 

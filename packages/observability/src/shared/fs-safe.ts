@@ -476,3 +476,167 @@ export function writeRegularFile(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// ensureContainedDir — shared substrate primitive for parent-dir creation
+// + defensive chmod (OBS-HARD-01, Phase 48).
+//
+// Replaces the open-coded `mkdir + lstat-gated chmod` pattern duplicated
+// across `queued-file-writer.ts:ensureParentDir` and
+// `config-audit/append.ts:ensureConfigAuditParentDir`. The migration
+// sweep in Phase 48 Plans 48-05/48-06 routes ~10 sibling writers through
+// this helper so every artifact-dir under `~/.comis/` honors the §1.4
+// `0o700` invariant via ONE canonical primitive.
+// ---------------------------------------------------------------------------
+
+/** Options for `ensureContainedDir`. */
+export interface EnsureContainedDirOptions {
+  /** Absolute directory path to create / restore mode on. */
+  readonly dir: string;
+  /**
+   * Directory mode to set on create and re-assert on EEXIST (typically
+   * `0o700` for the §1.4 confidentiality invariant).
+   */
+  readonly mode: number;
+  /**
+   * Opt-in real-path confinement base. When supplied, after the dir
+   * exists the helper asserts `fs.realpathSync(dir)` stays inside
+   * `fs.realpathSync(confinedBaseDir)` — closes the ancestor-symlink
+   * escape that the per-step lstat does NOT catch (lstat only inspects
+   * the immediate target; an attacker controlling a grandparent or any
+   * higher ancestor can pre-stage a symlink there).
+   *
+   * Observability callers pass `~/.comis/`; non-observability callers
+   * (daemon scratchpads, etc.) may legitimately omit it.
+   */
+  readonly confinedBaseDir?: string;
+}
+
+/** Result payload on success — distinguishes fresh-create vs EEXIST. */
+export interface EnsureContainedDirSuccess {
+  /**
+   * `true` when this call created the directory (it did not exist
+   * pre-call); `false` when the dir already existed (the defensive
+   * chmod ran to restore the §1.4 mode invariant).
+   */
+  readonly created: boolean;
+}
+
+export type EnsureContainedDirError =
+  | SymlinkParentRejected
+  | PathEscapesConfinementError
+  | Error;
+
+/**
+ * Create directory `dir` with mode `mode` (recursive), defensively
+ * re-assert mode when the dir already exists, reject if the dir is
+ * itself a symlink (confused-deputy guard), optionally confine the
+ * resolved real path inside `confinedBaseDir`.
+ *
+ * Steps:
+ *   1. `lstatSync(dir)` — probe pre-existence (drives the `created`
+ *      flag in the success result; ENOENT => fresh-create branch).
+ *   2. `mkdirSync(dir, { recursive: true, mode })` — fresh-create at
+ *      mode. EEXIST is swallowed (existing dir is the common path
+ *      when a sibling writer pre-created the parent under default
+ *      umask). Other fs errors (ENOENT root, ENOTDIR collision,
+ *      EACCES, etc.) propagate as Result.err.
+ *   3. `lstatSync(dir)` — re-stat post-mkdir. If the dir is itself
+ *      a symbolic link, return `SymlinkParentRejected` — the symlink
+ *      target is NOT chmod'd (confused-deputy invariant: target may
+ *      be operator-owned state outside our trust boundary).
+ *   4. `chmodSync(dir, mode)` — defensive re-assertion. `mkdirSync`'s
+ *      `mode` arg is silently ignored on recursive EEXIST, so we need
+ *      a post-mkdir chmod to restore the mode invariant for dirs that
+ *      a non-observability creator (pino-roll, pi-mono, default umask)
+ *      already created at `0o755`. **chmod failure (EPERM, etc.) is
+ *      non-fatal** — the contract is best-effort; the subsequent
+ *      `appendRegularFile`/`writeRegularFile` call surfaces real
+ *      errors via `Result.err`.
+ *   5. If `confinedBaseDir !== undefined`: `assertConfinedPath(dir,
+ *      confinedBaseDir)` runs and the rejection is returned as
+ *      Result.err. Reuses the existing internal helper so the
+ *      ancestor-realpath check is identical to `appendRegularFile`
+ *      step 1b and `writeRegularFile` step 1b.
+ *
+ * The helper is intentionally synchronous (matches the open-coded
+ * pattern at `queued-file-writer.ts:144-180` which already runs sync
+ * inside a Promise chain).
+ *
+ * @param options - target dir, mode, optional confinement base
+ * @returns Result with `{ created }` on success, or one of the
+ *   sentinel errors on failure.
+ */
+export function ensureContainedDir(
+  options: EnsureContainedDirOptions,
+): Result<EnsureContainedDirSuccess, EnsureContainedDirError> {
+  const { dir, mode, confinedBaseDir } = options;
+
+  // Step 1: probe pre-existence. ENOENT → fresh-create branch
+  // (`created: true` in the success result). Other errors propagate
+  // via the mkdir attempt below.
+  let preExisted = true;
+  try {
+    fs.lstatSync(dir);
+  } catch (lstatErr) {
+    const code = (lstatErr as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      preExisted = false;
+    }
+    // Other errors (EACCES on the parent, ENOTDIR mid-path, etc.) are
+    // surfaced via the mkdir attempt's error path below.
+  }
+
+  // Step 2: fresh-create attempt. EEXIST is the common path; ignore it
+  // so the post-mkdir lstat + chmod steps run for the pre-existing
+  // case. Other mkdir errors are real failures — surface as Result.err.
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode });
+  } catch (mkdirErr) {
+    const code = (mkdirErr as NodeJS.ErrnoException).code;
+    if (code !== "EEXIST") {
+      return err(mkdirErr instanceof Error ? mkdirErr : new Error(String(mkdirErr)));
+    }
+  }
+
+  // Step 3: lstat + symlink-parent rejection. NEVER chmod a symlinked
+  // dir — its target could be operator-owned shared state outside
+  // our trust boundary (confused-deputy invariant).
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(dir);
+  } catch (statErr) {
+    // Dir somehow vanished between mkdir + lstat (TOCTOU, NFS quirks,
+    // etc.) — surface as Result.err so the caller can decide.
+    return err(statErr instanceof Error ? statErr : new Error(String(statErr)));
+  }
+  if (st.isSymbolicLink()) {
+    return err(new SymlinkParentRejected(dir));
+  }
+
+  // Step 4: defensive chmod. NON-FATAL on failure (EPERM on
+  // not-owned-by-current-user dirs is the documented case; the
+  // contract is "best-effort defensive chmod" — downstream
+  // appendRegularFile / writeRegularFile surfaces real errors).
+  try {
+    fs.chmodSync(dir, mode);
+  } catch {
+    // Best-effort — chmod failure is logged-by-caller, not Result.err.
+  }
+
+  // Step 5: opt-in confinement-base check. Mirrors the same gate used
+  // in appendRegularFile step 1b / writeRegularFile step 1b. Reuses
+  // the existing `assertConfinedPath` helper. Wrapped in try/catch
+  // because the helper may throw on unexpected fs errors (per its
+  // @allow-throw header comment).
+  if (confinedBaseDir !== undefined) {
+    try {
+      const rejection = assertConfinedPath(dir, confinedBaseDir);
+      if (rejection !== undefined) return err(rejection);
+    } catch (e) {
+      return err(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
+  return ok({ created: !preExisted });
+}

@@ -3,13 +3,19 @@
 /**
  * File-based persistence for background tasks.
  *
- * Uses synchronous file I/O (writeFileSync, readFileSync) to ensure
- * task state is persisted before returning placeholder to caller.
+ * Uses synchronous file I/O via the `@comis/observability` fs-safe
+ * substrate to ensure task state is persisted before returning a
+ * placeholder to the caller. Every write goes through `writeRegularFile`
+ * (file mode `0o600`) and every dir creation goes through
+ * `ensureContainedDir` (dir mode `0o700`), honoring the design §1.4
+ * mode invariants. `dataDir` is threaded as the `confinedBaseDir`
+ * ancestor-symlink defense.
  *
  * @module
  */
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, unlinkSync, existsSync } from "node:fs";
 import { safePath, systemNowMs } from "@comis/core";
+import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import type { BackgroundTask, PersistedTaskState } from "./background-task-types.js";
 
 /** Directory name under data dir for background task state files. */
@@ -41,14 +47,23 @@ function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedT
 /**
  * Persist a task to disk synchronously.
  *
- * Writes to `dataDir/{agentId}/{taskId}.json`.
+ * Writes to `dataDir/{agentId}/{taskId}.json`. Routes through the
+ * `@comis/observability` fs-safe substrate so the parent dir lands at
+ * `0o700` and the file at `0o600` (design §1.4 invariants). `dataDir`
+ * is passed as `confinedBaseDir` for the ancestor-symlink defense.
+ *
+ * Result errors are intentionally swallowed — this writer's existing
+ * contract is best-effort persistence: a failure to persist must not
+ * propagate to the caller (which already returned a placeholder to the
+ * agent). The subsequent recovery scan will simply miss this task,
+ * matching the pre-migration semantics.
  */
 export function persistTaskSync(dataDir: string, task: BackgroundTask | PersistedTaskState): void {
   const agentDir = safePath(dataDir, task.origin.agentId);
-  mkdirSync(agentDir, { recursive: true });
+  ensureContainedDir({ dir: agentDir, mode: 0o700, confinedBaseDir: dataDir });
   const filePath = safePath(agentDir, `${task.id}.json`);
   const state: PersistedTaskState = "_promise" in task ? toPersistedState(task as BackgroundTask) : task;
-  writeFileSync(filePath, JSON.stringify(state, null, 2), "utf-8");
+  writeRegularFile({ path: filePath, content: JSON.stringify(state, null, 2), confinedBaseDir: dataDir });
 }
 
 /**
@@ -124,7 +139,7 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
           task.status = "failed";
           task.error = "Daemon restarted while task was running";
           task.completedAt = systemNowMs();
-          writeFileSync(filePath, JSON.stringify(task, null, 2), "utf-8");
+          writeRegularFile({ path: filePath, content: JSON.stringify(task, null, 2), confinedBaseDir: dataDir });
         }
         recovered.push(task);
       } catch {

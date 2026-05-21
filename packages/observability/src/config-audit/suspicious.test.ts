@@ -90,4 +90,49 @@ describe("config-audit/suspicious", () => {
       ]),
     );
   });
+
+  // entryScript carve-out for the non-comis-argv heuristic. Closes
+  // the pm2 false-positive surfaced in log review (260520-wcf):
+  // `node ProcessContainerFork.js` is a legitimate pm2-supervised
+  // daemon launch but argv[0..1] does NOT contain "comis", so the
+  // heuristic was flagging every config-audit record. Caller now
+  // passes the resolved entry-script path so the substring search
+  // sees `/srv/example.com/comis/.../daemon.js` and the flag clears.
+  it("does not flag non-comis-argv when entryScript points at the daemon", () => {
+    const flags = detectSuspicious({
+      argv: [
+        "/usr/local/bin/node",
+        "/home/user_a/.pm2/node_modules/pm2/lib/ProcessContainerFork.js",
+      ],
+      execArgv: [],
+      entryScript: "/srv/example.com/comis/packages/daemon/dist/daemon.js",
+    });
+    expect(flags).not.toContain("non-comis-argv");
+  });
+
+  it("still flags non-comis-argv when entryScript is omitted", () => {
+    // Locks in existing behavior for callers that have not been updated
+    // to pass entryScript. The heuristic must not silently flip to a
+    // permissive default just because the optional field was added.
+    const flags = detectSuspicious({
+      argv: [
+        "/usr/local/bin/node",
+        "/home/user_a/.pm2/node_modules/pm2/lib/ProcessContainerFork.js",
+      ],
+      execArgv: [],
+    });
+    expect(flags).toContain("non-comis-argv");
+  });
+
+  it("still flags non-comis-argv when neither argv nor entryScript contain comis", () => {
+    const flags = detectSuspicious({
+      argv: [
+        "/usr/local/bin/node",
+        "/home/user_a/.pm2/node_modules/pm2/lib/ProcessContainerFork.js",
+      ],
+      execArgv: [],
+      entryScript: "/usr/local/bin/some-other-tool",
+    });
+    expect(flags).toContain("non-comis-argv");
+  });
 });

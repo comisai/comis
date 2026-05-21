@@ -145,3 +145,50 @@ describe("McpServerEntrySchema", () => {
     }
   });
 });
+
+describe("McpServerEntrySchema transport inference", () => {
+  // Case 1: Claude-Desktop-style stdio config (the smoking-gun case from
+  //         the production log: yfinance MCP via Telegram).
+  it("infers transport='stdio' when command is provided and transport is omitted", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "yfinance",
+      command: "npx",
+      args: ["yfinance-mcp-ts"],
+    });
+    expect(result.transport).toBe("stdio");
+    expect(result.command).toBe("npx");
+    expect(result.args).toEqual(["yfinance-mcp-ts"]);
+  });
+
+  // Case 2: URL-only HTTP server config.
+  it("infers transport='http' when url is provided and transport is omitted", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "ctx7",
+      url: "https://ctx7.example.com",
+    });
+    expect(result.transport).toBe("http");
+    expect(result.url).toBe("https://ctx7.example.com");
+  });
+
+  // Case 3: Explicit transport always wins over inference.
+  it("preserves explicit transport='sse' even when url is provided", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "ctx7",
+      url: "https://x.example.com",
+      transport: "sse",
+    });
+    expect(result.transport).toBe("sse");
+  });
+
+  // Case 4: No inferable source — schema rejects. (NOTE: This case
+  // already throws under the current schema because `transport` is
+  // required-no-default; it will continue throwing after Task 2
+  // because the preprocess returns the entry unchanged and the
+  // enum validator then surfaces the error. The test pins the
+  // behavior at both ends of the refactor.)
+  it("rejects when transport, command, and url are all missing", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({ name: "broken" }),
+    ).toThrow();
+  });
+});

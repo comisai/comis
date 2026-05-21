@@ -326,6 +326,38 @@ describe("skills.upload handler", () => {
     expect(reg1.init).toHaveBeenCalled();
     expect(reg2.init).toHaveBeenCalled();
   });
+
+  it("skills_upload_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
+    // OBS-HARD-03 / T-48-24b: route through @comis/observability/shared/fs-safe.ts
+    // so the §1.4 confidentiality invariant (dir 0o700, file 0o600) is enforced on
+    // every skill artifact written by skills.upload — including nested-parent dirs.
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.upload"]!({
+      name: "mode-skill",
+      scope: "local",
+      files: [
+        { path: "SKILL.md", content: "---\nname: mode-skill\n---\nBody" },
+        { path: "nested/extra.md", content: "nested content" },
+      ],
+      _agentId: "agent-a",
+    });
+    const skillDir = join(wsDir, "skills", "mode-skill");
+    const skillFile = join(skillDir, "SKILL.md");
+    const nestedDir = join(skillDir, "nested");
+    const nestedFile = join(nestedDir, "extra.md");
+    expect(fs.statSync(skillDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(nestedDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(nestedFile).mode & 0o777).toBe(0o600);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -514,6 +546,53 @@ describe("skills.import handler", () => {
     expect(fs.existsSync(join(wsDir, "skills", "my-skill", "SKILL.md"))).toBe(true);
     expect(fs.existsSync(join(wsDir, "skills", "my-skill", "sub", "deep.md"))).toBe(true);
     expect(reg.init).toHaveBeenCalled();
+  });
+
+  it("skills_import_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
+    // OBS-HARD-03 / T-48-24b: imported skill artifacts honor §1.4 modes
+    // (dir 0o700, file 0o600) — including nested-parent dirs created
+    // by the in-loop ensureContainedDir for sub-folders.
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.includes("contents/skills/mode-skill?")) {
+        return new Response(
+          JSON.stringify([
+            { name: "SKILL.md", type: "file", download_url: "https://dl/SKILL.md", path: "skills/mode-skill/SKILL.md" },
+            { name: "sub", type: "dir", download_url: null, path: "skills/mode-skill/sub" },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (u.includes("contents/skills/mode-skill/sub?")) {
+        return new Response(
+          JSON.stringify([{ name: "deep.md", type: "file", download_url: "https://dl/deep.md", path: "skills/mode-skill/sub/deep.md" }]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("body content", { status: 200 });
+    });
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.import"]!({
+      url: "https://github.com/owner/repo/tree/main/skills/mode-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+    const skillDir = join(wsDir, "skills", "mode-skill");
+    const skillFile = join(skillDir, "SKILL.md");
+    const nestedDir = join(skillDir, "sub");
+    const nestedFile = join(nestedDir, "deep.md");
+    expect(fs.statSync(skillDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(nestedDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(nestedFile).mode & 0o777).toBe(0o600);
   });
 });
 
@@ -745,6 +824,31 @@ describe("skills.create handler", () => {
     expect(eventBus.emit).toHaveBeenCalledWith("skill:created", expect.objectContaining({ skillName: "new-skill" }));
     expect(reg.init).toHaveBeenCalled();
   });
+
+  it("skills_create_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
+    // OBS-HARD-03 / T-48-24b: skills.create routes its mkdir + SKILL.md
+    // writeFile through the fs-safe substrate so the new skill artifact
+    // honors the §1.4 confidentiality invariant (dir 0o700, file 0o600).
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.create"]!({
+      name: "mode-skill",
+      scope: "local",
+      content: "---\nname: mode-skill\ndescription: test skill\n---\nBody",
+      _agentId: "agent-a",
+    });
+    const skillDir = join(wsDir, "skills", "mode-skill");
+    const skillFile = join(skillDir, "SKILL.md");
+    expect(fs.statSync(skillDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -868,5 +972,34 @@ describe("skills.update handler", () => {
     expect(content).toContain("NEW BODY");
     expect(eventBus.emit).toHaveBeenCalledWith("skill:updated", expect.objectContaining({ skillName: "update-me" }));
     expect(reg.init).toHaveBeenCalled();
+  });
+
+  it("skills_update_writes_skill_file_at_0o600_via_fs_safe_substrate", async () => {
+    // OBS-HARD-03 / T-48-24b: skills.update routes its SKILL.md
+    // overwrite through writeRegularFile so the resulting file mode is
+    // `0o600` — and writeRegularFile's unlink-before-open + defensive
+    // fchmod path defensively corrects legacy artifacts written at a
+    // wider mode by pre-Phase 48 code.
+    const wsDir = join(tmpRoot, "ws");
+    const skillDir = join(wsDir, "skills", "mode-update");
+    fs.mkdirSync(skillDir, { recursive: true });
+    // Pre-seed a legacy SKILL.md at the wider 0o644 mode (the pre-Phase 48 default).
+    fs.writeFileSync(join(skillDir, "SKILL.md"), "LEGACY", "utf-8");
+    fs.chmodSync(join(skillDir, "SKILL.md"), 0o644);
+    const reg = makeRegistry([{ name: "mode-update", location: skillDir }]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.update"]!({
+      name: "mode-update",
+      content: "---\nname: mode-update\n---\nNEW BODY",
+      _agentId: "agent-a",
+    });
+    const skillFile = join(skillDir, "SKILL.md");
+    // The legacy 0o644 file is replaced; the new file is 0o600.
+    expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
   });
 });

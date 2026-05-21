@@ -52,6 +52,7 @@ import {
 import { runPrefixStabilityDiagnostic } from "./prefix-stability.js";
 import { runCacheBreakpointPhase } from "./breakpoint-orchestration.js";
 import { maybePromoteBreakpoints } from "./cache-breakpoints.js";
+import { enforceMonotonicTtlOrdering } from "./monotonic-ttl.js";
 import { trackRecentZoneCadence } from "./cadence-tracking.js";
 import { upgradeSdkMarkers } from "./marker-upgrade.js";
 import { placeSkipCacheWriteMarker } from "./skip-cache-write-marker.js";
@@ -280,6 +281,12 @@ export function createRequestBodyInjector(
                   { promoted: promotedCount, threshold: promotionThreshold, modelId: model.id },
                   "Message breakpoints promoted to 1h TTL",
                 );
+                // Promotion may have produced an out-of-order layout (some
+                // markers now 1h, earlier ones still 5m). Re-run the safety
+                // net so any stray 5m-before-1h gets upgraded before the
+                // request leaves the wrapper. The sweep is a no-op when the
+                // promoted layout happens to remain monotonic.
+                enforceMonotonicTtlOrdering(result, logger);
               }
             }
           }
@@ -319,15 +326,22 @@ export function createRequestBodyInjector(
           trackRecentZoneCadence(config, logger);
 
           // Upgrade SDK auto-placed 5m markers to 1h when retention is long.
-          upgradeSdkMarkers(
+          // callCount comes from the cache-break detector (incremented by
+          // onPayloadForCacheDetection above) so the gate sees the
+          // post-increment value for THIS turn. The 260520-wcf gate
+          // suppresses promotion when callCount < 2 to avoid paying the
+          // 1h premium on first-turn writes that may be evicted server-side.
+          const callCountForUpgrade = config.getCallCount?.();
+          upgradeSdkMarkers({
             result,
-            model.id,
-            config.sessionKey,
+            modelId: model.id,
+            sessionKey: config.sessionKey,
             resolvedRetention,
             needsCacheBreakpoints,
             effectiveSkipCacheWrite,
+            ...(callCountForUpgrade !== undefined && { callCount: callCountForUpgrade }),
             logger,
-          );
+          });
 
           // skipCacheWrite places marker at shared-prefix point instead of stripping all.
           placeSkipCacheWriteMarker(

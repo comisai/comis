@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: workspace-manager re-raise of non-EEXIST fs errors (line 101); consumed by daemon bootstrap (daemon.ts catch boundary).
+// @allow-throw: workspace-manager re-raise of non-EEXIST fs errors (line 101); refreshPlatformFiles propagates fs.rename errors (atomic-write boundary). Consumed by daemon bootstrap (daemon.ts catch boundary).
 import { safePath, systemNowMs } from "@comis/core";
 import { execFile as execFileCb } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { promisify } from "node:util";
-import { DEFAULT_TEMPLATES, WORKSPACE_FILE_NAMES, type WorkspaceFileName } from "./templates.js";
+import {
+  DEFAULT_TEMPLATES,
+  PLATFORM_OWNED_FILES,
+  WORKSPACE_FILE_NAMES,
+  type WorkspaceFileName,
+} from "./templates.js";
 import { readWorkspaceState, writeWorkspaceState, isIdentityFilled } from "./workspace-state.js";
 import type { WorkspaceState } from "./workspace-state.js";
 
@@ -95,11 +101,107 @@ export interface WorkspaceStatus {
  */
 async function writeIfMissing(filePath: string, content: string): Promise<boolean> {
   try {
+    // fs-safe-allowed: workspace dir is operator-configured per-agent workspace, not ~/.comis/ directly; needs `wx` exclusive-create flag the substrate doesn't expose
     await fs.writeFile(filePath, content, { encoding: "utf-8", flag: "wx" });
     return true;
   } catch (err) {
     if ((err as { code?: string }).code === "EEXIST") return false;
     throw err;
+  }
+}
+
+/** Compute the lowercase hex sha256 of a string (Node builtin -- no new deps). */
+function sha256Hex(input: string): string {
+  return createHash("sha256").update(input, "utf-8").digest("hex");
+}
+
+/**
+ * Content-hash-refresh every platform-owned workspace file (SOUL.md, AGENTS.md,
+ * BOOTSTRAP.md) whose on-disk sha256 differs from the canonical template.
+ *
+ * SILENT BY DESIGN: this helper does NOT take a logger parameter. The existing
+ * `ensureWorkspace` signature is called from CLI wizard + daemon bootstrap and
+ * does not thread a logger; adding one is invasive. When a `tracker` is
+ * supplied, the post-rename `tracker.recordRead` call is sufficient observability
+ * for the session-aware path (the tracker is consumed by `write` tools).
+ *
+ * 2026-05-20 lineage: prior to this helper, `ensureWorkspace` only wrote files
+ * with the `wx` (exclusive-create) flag. Every existing install kept its
+ * pre-fix template forever, including the false-promise venv prose in AGENTS.md
+ * that triggered the 06:18-06:25 sub-agent exec cascade. The codebase's own
+ * AGENTS.md prose declares "This file is read-only" -- this helper makes that
+ * contract real for the three platform-owned files.
+ *
+ * Per-file logic:
+ * - Skip silently on ENOENT (first-write path is handled by `writeIfMissing`).
+ * - BOOTSTRAP.md empty-guard: skip when the file is empty (.length === 0).
+ *   This preserves the post-onboarding cleared state -- the agent clears
+ *   BOOTSTRAP.md via the `write` tool once onboarding completes, and we must
+ *   not resurrect it. Strict `.length === 0` (not `.trim().length === 0`)
+ *   because a single trailing newline is meaningful agent intent.
+ * - sha256 match -> skip (idempotent fast path; no write, no tracker call).
+ * - Otherwise: atomic write via `.tmp` sibling + fs.rename (crash-safe).
+ *   On successful rename, re-register in the tracker if provided.
+ *
+ * Atomic write: write canonical to `<name>.tmp`, then `fs.rename` to `<name>`.
+ * Rename on POSIX is atomic; a crash mid-write cannot corrupt the target. On
+ * rename failure, the error propagates (same `@allow-throw` boundary as
+ * `writeIfMissing`).
+ */
+async function refreshPlatformFiles(
+  dir: string,
+  tracker?: WorkspaceSeedTracker,
+): Promise<void> {
+  for (const name of PLATFORM_OWNED_FILES) {
+    const filePath = safePath(dir, name);
+    let onDiskContent: string;
+    try {
+      onDiskContent = await fs.readFile(filePath, "utf-8");
+    } catch (err) {
+      if ((err as { code?: string }).code === "ENOENT") {
+        // First-write path: writeIfMissing handles seeding. Refresh is a no-op.
+        continue;
+      }
+      throw err;
+    }
+
+    // BOOTSTRAP.md empty-guard: preserve the post-onboarding cleared state.
+    // 2026-05-20 lineage: the agent clears BOOTSTRAP.md via `write` once
+    // onboarding completes; resurrecting it would re-run onboarding on the
+    // next ensureWorkspace call.
+    if (name === "BOOTSTRAP.md" && onDiskContent.length === 0) {
+      continue;
+    }
+
+    const canonical = DEFAULT_TEMPLATES[name];
+    if (sha256Hex(onDiskContent) === sha256Hex(canonical)) {
+      // Idempotent fast path: file already canonical. No write, no tracker.
+      continue;
+    }
+
+    // Atomic write: write to .tmp sibling, then rename onto the target.
+    // POSIX rename is atomic; a crash mid-write cannot corrupt the target.
+    const tmpPath = safePath(dir, `${name}.tmp`);
+    // fs-safe-allowed: workspace dir is operator-configured per-agent workspace, not ~/.comis/ directly; refreshPlatformFiles atomic-write pattern requires explicit `w` flag
+    await fs.writeFile(tmpPath, canonical, { encoding: "utf-8", flag: "w" });
+    await fs.rename(tmpPath, filePath);
+
+    if (tracker) {
+      try {
+        const stat = await fs.stat(filePath);
+        tracker.recordRead(
+          filePath,
+          stat.mtimeMs,
+          0,
+          undefined,
+          Buffer.from(canonical, "utf-8"),
+        );
+      } catch {
+        // stat failure is non-fatal -- same pattern as writeIfMissing's
+        // tracker-registration block (caller will need to read before
+        // overwriting, but the file itself is healthy on disk).
+      }
+    }
   }
 }
 
@@ -137,11 +239,13 @@ async function ensureGitRepo(dir: string): Promise<void> {
 export async function ensureWorkspace(options: EnsureWorkspaceOptions): Promise<WorkspaceFiles> {
   const { dir, ensureBootstrapFiles = true, initGit = true, tracker } = options;
 
+  // fs-safe-allowed: workspace dir is operator-configured per-agent workspace, not ~/.comis/ directly
   await fs.mkdir(dir, { recursive: true });
 
   // Structural directories -- created unconditionally (like the root dir itself).
   // .cache/ and .comis-tmp/ are created by the sandbox, not here.
   for (const subdir of WORKSPACE_SUBDIRS) {
+    // fs-safe-allowed: workspace subdir under operator-configured workspace dir; not ~/.comis/ directly
     await fs.mkdir(safePath(dir, subdir), { recursive: true });
   }
 
@@ -175,6 +279,13 @@ export async function ensureWorkspace(options: EnsureWorkspaceOptions): Promise<
     if (bootstrapNewlyWritten) {
       await writeWorkspaceState(dir, { bootstrapSeededAt: systemNowMs() });
     }
+
+    // Heal stale platform-owned files (SOUL.md, AGENTS.md, non-empty stale
+    // BOOTSTRAP.md) whose on-disk sha256 differs from the canonical template.
+    // No-op on first-run (writeIfMissing just seeded them at canonical hash).
+    // 2026-05-20: closes the architectural gap where wx-only seeding let stale
+    // pre-fix templates persist forever.
+    await refreshPlatformFiles(dir, tracker);
   }
 
   if (initGit) {

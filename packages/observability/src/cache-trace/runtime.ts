@@ -11,9 +11,12 @@
  *     (`traceSchema`, `schemaVersion`, `seq`, `ts`, etc.) is identical.
  *   - Single file path (resolved via `resolveCacheTraceFilePath`)
  *     rather than per-session JSONL.
- *   - 10 MB per-file cap (smaller than trajectory's 50 MB because
- *     cache-trace events accumulate across many sessions in one
- *     long-lived file — bounded to limit DoS exposure).
+ *   - 50 MB per-file cap (parity with trajectory; Plan 48-03 raised
+ *     this from 10 MB so the runtime fallback matches the schema
+ *     default introduced by Plan 48-02). Cache-trace events accumulate
+ *     across many sessions in one long-lived file — the cap bounds DoS
+ *     exposure and is paired with the proactive inline + summary
+ *     `cache_trace.write_failures` sentinel pair (D-10 + D-11).
  *   - `setLatestTokenUsage` + `attachToEventBus` (see
  *     `event-bus-bridge.ts`): the EventBus bridge subscribes to
  *     `observability:token_usage` (the only event that physically
@@ -28,7 +31,7 @@
  * @module
  */
 
-import { systemDateFrom, systemGetEnv, systemNowMs } from "@comis/core";
+import { systemDateFrom, systemGetEnv, systemNowMs, tryGetContext } from "@comis/core";
 
 import {
   getQueuedFileWriter,
@@ -36,6 +39,7 @@ import {
 } from "../shared/queued-file-writer.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
+import type { PayloadBoundsOverrides } from "../shared/bounded-payload.js";
 
 import { resolveCacheTraceFilePath } from "./paths.js";
 import type { CacheTraceEvent, CacheTraceStage } from "./types.js";
@@ -44,7 +48,15 @@ import type { CacheTraceEvent, CacheTraceStage } from "./types.js";
 // Constants (defaults — overridable per init)
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+// Plan 48-03 flip (per checker BLOCKER 1 — co-located here with sentinel
+// state-machine work to keep all runtime.ts edits in one plan): the
+// fallback default is raised 10 MB → 50 MB so it matches the schema
+// default from Plan 48-02 (CacheTraceConfigSchemaInner.maxFileBytes).
+// In normal operation the schema default always wins via
+// `init.maxFileBytes`; this fallback only applies when callers omit the
+// option, but the agreement removes the "where does the actual cap come
+// from?" investigation if an operator hits the issue.
+const DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024;
 const DEFAULT_MAX_QUEUED_BYTES = 4 * 1024 * 1024;
 
 // Module-level writer registry — keyed by file path. Multiple recorders
@@ -86,13 +98,32 @@ export interface CacheTraceInit {
   /** Model id (e.g. "claude-3-opus"). Optional metadata for downstream replay tools. */
   readonly modelId?: string;
   /**
+   * §7.2 envelope cluster — the 5 contextual fields that ride on every
+   * cache-trace event when the executor wires them through. Clustering
+   * (rather than 5 top-level optional fields) follows the precedent of
+   * `TrajectoryRecorderInit.model` and keeps `CacheTraceInit` under the
+   * 12-optional-field architecture threshold (`optional-field-bloat`).
+   *
+   * Every event of the recorder carries these fields verbatim (the
+   * envelope is per-event, not per-stage). `modelApi` is `string | null`
+   * because design §7.2 explicitly allows null for the "no API
+   * discriminator" case (Anthropic provider without a sub-API split).
+   */
+  readonly envelope?: {
+    readonly runId?: string;
+    readonly sessionKey?: string;
+    readonly tenantId?: string;
+    readonly workspaceDir?: string;
+    readonly modelApi?: string | null;
+  };
+  /**
    * Opt-in real-path confinement base forwarded to the underlying
    * queued writer. Daemon wiring passes `path.join(os.homedir(), ".comis")`
    * so an ancestor-symlink escape is rejected before the open() call.
    * Tests omit it (the option is opt-in for back-compat).
    */
   readonly confinedBaseDir?: string;
-  /** Per-file byte cap. Default 10 MB. */
+  /** Per-file byte cap. Default 50 MB (Plan 48-03 raised from 10 MB to match schema default). */
   readonly maxFileBytes?: number;
   /** Per-writer queued byte cap. Default 4 MB. */
   readonly maxQueuedBytes?: number;
@@ -178,16 +209,31 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
   // Per-recorder mutable state. The writer chassis is shared across
   // recorders for the same path, but seq accounting + latest-token-usage
   // is per-recorder (matches trajectory's pattern).
+  //
+  // Plan 48-03 D-10/D-11 extensions:
+  //   - `writeFailureSentinelEmitted`: once-per-session latch for the
+  //     inline `cache_trace.write_failures` emit inside recordStage.
+  //     The latch flips true on the first detection of
+  //     `writer.failureCount() > 0` so subsequent recordStage calls do
+  //     NOT re-emit the inline sentinel (the summary sentinel at
+  //     flushAndClose carries the final tally).
+  //   - `sessionStartedAt`: captured at recorder construction so the
+  //     summary sentinel can report `sessionLifetimeMs = systemNowMs() -
+  //     state.sessionStartedAt`.
   const state: {
     seq: number;
     closed: boolean;
     latestTokenUsage:
       | { cacheReadTokens?: number; cacheWriteTokens?: number }
       | undefined;
+    writeFailureSentinelEmitted: boolean;
+    sessionStartedAt: number;
   } = {
     seq: 0,
     closed: false,
     latestTokenUsage: undefined,
+    writeFailureSentinelEmitted: false,
+    sessionStartedAt: systemNowMs(),
   };
 
   const recorder: CacheTrace = {
@@ -202,27 +248,82 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
     ): "queued" | "dropped" {
       if (state.closed) return "dropped";
 
+      // 0. Plan 48-03 D-10: inline `cache_trace.write_failures` sentinel.
+      //    The queued writer surfaces per-line append failures
+      //    asynchronously (the failure lands inside the writer's
+      //    promise chain, not inside the recordStage call site). We
+      //    cannot observe the failure synchronously after writer.write
+      //    returns "queued"; instead, on every recordStage call we
+      //    check `writer.failureCount()` and — if it's > 0 AND we have
+      //    not yet emitted the inline sentinel — emit ONE sentinel
+      //    BEFORE processing the new event. The latch
+      //    `state.writeFailureSentinelEmitted` collapses subsequent
+      //    failure detections into the summary sentinel at
+      //    flushAndClose (D-11) so we never flood the file with
+      //    per-failure sentinels.
+      //
+      //    The emit is best-effort: when the cap is fully exhausted
+      //    the sentinel write itself will be rejected by
+      //    appendRegularFile. The latch still flips true so we do not
+      //    spin-emit on every subsequent recordStage; the summary
+      //    sentinel at flushAndClose carries the final tally.
+      const writerFailureCount = writer.failureCount();
+      if (!state.writeFailureSentinelEmitted && writerFailureCount > 0) {
+        state.writeFailureSentinelEmitted = true;
+        const inlineSentinel = buildEvent({
+          stage: "cache_trace.write_failures",
+          seq: state.seq,
+          init,
+          payload: {},
+          extras: {
+            data: {
+              firstDropAt: systemDateFrom(systemNowMs()).toISOString(),
+              droppedEvents: writerFailureCount,
+              droppedBytes: writer.rejectedBytes(),
+              reason: "queued_writer_rejected",
+            },
+          },
+        });
+        const inlineLine = encodeLine(inlineSentinel);
+        // Best-effort emit — return value intentionally ignored. When
+        // the underlying cap is exhausted, this write fails too;
+        // `writer.failureCount()` continues to surface the truth and
+        // the summary sentinel at flushAndClose captures the final
+        // tally regardless.
+        writer.write(inlineLine);
+        state.seq += 1;
+      }
+
       // 1. Sanitize the payload through the canonical pipeline.
       //    sanitizeForPersistence applies credential redaction +
       //    diagnostic-payload sanitization + bounded-payload limiter.
-      const sanitized = sanitizeForPersistence(payload) as Record<string, unknown>;
+      //
+      //    260520-wcf: derive per-key exemption overrides from the
+      //    operator-set includeSystem / includeMessages flags. When the
+      //    operator opts in, the corresponding payload slot can carry
+      //    full SDK content even if it exceeds 32 KB (otherwise the
+      //    limiter would silently replace it with a sentinel and defeat
+      //    the opt-in). Exemption applies to both the string and array
+      //    shapes because the wrapper populates `messages` as an array
+      //    and `system` as a string OR an array of blocks depending on
+      //    provider.
+      const exempt = new Set<string>();
+      if (init.includeSystem) exempt.add("system");
+      if (init.includeMessages) exempt.add("messages");
+      const overrides: PayloadBoundsOverrides | undefined =
+        exempt.size > 0
+          ? { stringFieldExempt: exempt, arrayFieldExempt: exempt }
+          : undefined;
+      const sanitized = sanitizeForPersistence(payload, overrides) as Record<string, unknown>;
 
       // 2. Splat token attribution onto `session:after`. Only
-      //    session:after carries the token counts (the values do not
-      //    physically exist before observability:token_usage fires).
+      //    session:after carries the token counts via the bus stash
+      //    (the values do not physically exist before
+      //    observability:token_usage fires). Shared with flushAndClose's
+      //    terminal emit via the buildTokenSplat helper.
       const tokenSplat =
-        stage === "session:after" && state.latestTokenUsage !== undefined
-          ? {
-              ...(state.latestTokenUsage.cacheReadTokens !== undefined
-                ? { cacheReadInputTokens: state.latestTokenUsage.cacheReadTokens }
-                : {}),
-              ...(state.latestTokenUsage.cacheWriteTokens !== undefined
-                ? {
-                    cacheCreationInputTokens:
-                      state.latestTokenUsage.cacheWriteTokens,
-                  }
-                : {}),
-            }
+        stage === "session:after"
+          ? buildTokenSplat(state.latestTokenUsage)
           : {};
 
       // Clear stash after consuming (one-shot — the next session:after
@@ -267,12 +368,57 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
 
     async flushAndClose(): Promise<void> {
       if (state.closed) return;
+
+      // 1. Drain the latest token-usage stash as the terminal
+      //    session:after. The terminal emit is UNCONDITIONAL — the
+      //    absence of token data does not skip it. Every session
+      //    terminates with exactly one session:after event on disk.
+      //    This makes the lifecycle contract explicit and removes the
+      //    "did the executor remember to emit session:after?" question
+      //    from callers.
+      const terminalSplat = buildTokenSplat(state.latestTokenUsage);
+      state.latestTokenUsage = undefined;
+      const terminalEvent = buildEvent({
+        stage: "session:after",
+        seq: state.seq,
+        init,
+        payload: {},
+        extras: terminalSplat,
+      });
+      const terminalLine = encodeLine(terminalEvent);
+      const terminalResult = writer.write(terminalLine);
+      if (terminalResult === "queued") {
+        state.seq += 1;
+      }
+
+      // 2. Mark closed AFTER the terminal emit so the idempotent
+      //    early-return at the top of the method prevents a second
+      //    terminal emit on re-entry.
       state.closed = true;
       await writer.flush();
 
-      // Emit the cache_trace.write_failures sentinel when the underlying
-      // queued writer reports per-line append failures. Mirrors
-      // trajectory's trace.write_failures pattern.
+      // 3. Plan 48-03 D-11: summary `cache_trace.write_failures`
+      //    sentinel. Fires at flushAndClose when the underlying queued
+      //    writer reports per-line append failures. Carries the final
+      //    tally + session lifetime so post-mortem readers know:
+      //      - how many events were dropped (`droppedEvents`)
+      //      - cumulative dropped bytes (`totalDroppedBytes`)
+      //      - how long the session ran (`sessionLifetimeMs`)
+      //      - the last underlying error message (`lastError`)
+      //    Field renames vs prior shape:
+      //      `count`         → `droppedEvents`         (naming parity
+      //                                                 with the inline
+      //                                                 sentinel D-10)
+      //      `rejectedBytes` → `totalDroppedBytes`     (signals "final
+      //                                                 cumulative" vs
+      //                                                 the inline
+      //                                                 snapshot field
+      //                                                 `droppedBytes`)
+      //    Per AGENTS.md §2.9, the rename ships without aliases; no
+      //    live external consumer pins the prior field shape.
+      //    Two-sentinel-per-cap-hit-session model (D-10 + D-11):
+      //      sessions that hit the cap → exactly 1 inline + 1 summary
+      //      sessions that never hit the cap → 0 sentinels
       const failureCount = writer.failureCount();
       if (failureCount > 0) {
         const lastError = writer.lastError();
@@ -284,8 +430,9 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
           extras: {
             data: {
               reason: "queued_writer_rejected",
-              count: failureCount,
-              rejectedBytes: writer.rejectedBytes(),
+              droppedEvents: failureCount,
+              totalDroppedBytes: writer.rejectedBytes(),
+              sessionLifetimeMs: systemNowMs() - state.sessionStartedAt,
               lastError: lastError?.message ?? null,
             },
           },
@@ -296,6 +443,7 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
         // session lifetime) this write will also fail; failureCount
         // continues to surface the truth even when nothing lands.
         writer.write(line);
+        state.seq += 1;
       }
 
       await writer.flushAndClose();
@@ -312,6 +460,28 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Project a stashed token-usage record onto the cache-trace event
+ * extras. Used by both the explicit `recordStage("session:after", …)`
+ * call path and the terminal emit in `flushAndClose`. Returns `{}` when
+ * the stash is empty — callers can splat the result unconditionally.
+ */
+function buildTokenSplat(
+  latestTokenUsage:
+    | { cacheReadTokens?: number; cacheWriteTokens?: number }
+    | undefined,
+): Record<string, unknown> {
+  if (latestTokenUsage === undefined) return {};
+  const splat: Record<string, unknown> = {};
+  if (latestTokenUsage.cacheReadTokens !== undefined) {
+    splat.cacheReadInputTokens = latestTokenUsage.cacheReadTokens;
+  }
+  if (latestTokenUsage.cacheWriteTokens !== undefined) {
+    splat.cacheCreationInputTokens = latestTokenUsage.cacheWriteTokens;
+  }
+  return splat;
+}
 
 function isDisabledByEnv(): boolean {
   // systemGetEnv goes through the sanctioned-root helper in
@@ -336,6 +506,10 @@ function buildEvent(input: BuildEventInput): CacheTraceEvent {
   // in @comis/core/runtime — direct `new Date(...)` is forbidden by the
   // globals architecture test.
   const ts = systemDateFrom(systemNowMs()).toISOString();
+  // traceId — the canonical correlation key (§1.4). Auto-derived from
+  // the AsyncLocalStorage RequestContext when present, falling back to
+  // sessionId. The runtime mirror of trajectory's resolveTraceId.
+  const traceId = resolveTraceId(input.init.sessionId);
   const envelope: Record<string, unknown> = {
     traceSchema: "comis-cache-trace",
     schemaVersion: 1,
@@ -344,9 +518,17 @@ function buildEvent(input: BuildEventInput): CacheTraceEvent {
     seq: input.seq,
     agentId: input.init.agentId,
     sessionId: input.init.sessionId,
+    traceId,
   };
   if (input.init.provider !== undefined) envelope.provider = input.init.provider;
   if (input.init.modelId !== undefined) envelope.modelId = input.init.modelId;
+  // §7.2 envelope fields — lift each from the cluster when defined.
+  const env = input.init.envelope;
+  if (env?.runId !== undefined) envelope.runId = env.runId;
+  if (env?.sessionKey !== undefined) envelope.sessionKey = env.sessionKey;
+  if (env?.tenantId !== undefined) envelope.tenantId = env.tenantId;
+  if (env?.workspaceDir !== undefined) envelope.workspaceDir = env.workspaceDir;
+  if (env?.modelApi !== undefined) envelope.modelApi = env.modelApi;
   for (const [k, v] of Object.entries(input.payload)) {
     if (v !== undefined) envelope[k] = v;
   }
@@ -354,6 +536,23 @@ function buildEvent(input: BuildEventInput): CacheTraceEvent {
     envelope[k] = v;
   }
   return envelope as CacheTraceEvent;
+}
+
+/**
+ * Resolve the canonical correlation key for the event envelope.
+ *
+ * When the AsyncLocalStorage RequestContext is in scope (set by
+ * `runWithContext` at channel/gateway/scheduler boundaries), use its
+ * `traceId`. Otherwise fall back to `sessionId` so the event always
+ * carries a non-empty correlation key. Mirrors trajectory's
+ * `resolveTraceId` at `trajectory/runtime.ts:365-371` verbatim.
+ */
+function resolveTraceId(sessionId: string): string {
+  const ctx = tryGetContext();
+  if (ctx !== undefined && typeof ctx.traceId === "string" && ctx.traceId.length > 0) {
+    return ctx.traceId;
+  }
+  return sessionId;
 }
 
 function encodeLine(evt: CacheTraceEvent): string {

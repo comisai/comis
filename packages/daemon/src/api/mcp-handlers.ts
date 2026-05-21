@@ -142,13 +142,14 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     [McpConnectContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod guards — produce legacy "Missing required
-      // parameter: ..." UX (server_name + transport). The contract's
-      // `.min(1)` + enum gating is defense-in-depth.
+      // Bespoke pre-Zod guard — produces the legacy "Missing required
+      // parameter: server_name" UX. The contract's `.min(1)` + enum
+      // gating is defense-in-depth. Transport inference is handled
+      // at the schema layer (McpServerEntrySchema z.preprocess) on
+      // the config-load path; on the RPC path it is inlined at the
+      // mcp_manage tool layer for LLM UX.
       const nameRaw = rawParams.server_name as string | undefined;
-      const transportRaw = rawParams.transport as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
-      if (!transportRaw) throw new Error("Missing required parameter: transport");
 
       // Strip dispatcher-injected _X internals BEFORE contract parse —
       // never let internals flow into Zod parsing. The parsed `params` provides

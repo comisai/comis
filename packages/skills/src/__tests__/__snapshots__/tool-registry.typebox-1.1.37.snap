@@ -1382,7 +1382,7 @@
           "type": "string"
         },
         "transport": {
-          "description": "Transport type: \"stdio\", \"sse\", or \"http\". Required for connect. Use \"http\" for Streamable HTTP servers, \"sse\" for legacy SSE servers.",
+          "description": "Transport: 'stdio' (default when 'command' is provided), 'sse', or 'http' (default when 'url' is provided). Override only when both command and url are set, or to force a specific transport.",
           "type": "string"
         },
         "url": {

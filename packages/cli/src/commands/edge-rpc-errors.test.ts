@@ -516,3 +516,75 @@ describe("null/empty RPC response handling", () => {
     expect(output).toContain("No memory statistics available");
   });
 });
+
+// ---------------------------------------------------------------------------
+// withClient VITEST guard (Fix A — log-review test isolation)
+//
+// Under VITEST=true, withClient() must refuse to open a real WebSocket
+// connection unless COMIS_CLI_E2E=true. The previous regression let CLI
+// tests silently open ws://localhost:4766 every 75s for the duration of
+// the `pnpm test` run, leaving connection-refused noise in the user's
+// ~/.comis/logs/. This test asserts the guard fires before createRpcClient
+// is reached.
+// ---------------------------------------------------------------------------
+
+describe("withClient VITEST guard", () => {
+  it("withClient refuses real socket under VITEST without COMIS_CLI_E2E", async () => {
+    // Bypass the file-level vi.mock("../client/rpc-client.js") so we
+    // exercise the REAL withClient, not the mocked one. The guard runs
+    // synchronously before any WebSocket is opened, so we never actually
+    // attempt a connection.
+    const actual = await vi.importActual<typeof import("../client/rpc-client.js")>(
+      "../client/rpc-client.js",
+    );
+
+    // Sanity: VITEST is set automatically by vitest; assert it before
+    // checking the guard so a future change to that environment surfaces
+    // here instead of the test silently passing.
+    expect(process.env["VITEST"]).toBe("true");
+
+    // Ensure the E2E opt-out is NOT set.
+    const prevE2E = process.env["COMIS_CLI_E2E"];
+    delete process.env["COMIS_CLI_E2E"];
+
+    try {
+      await expect(
+        actual.withClient(async () => "should never run"),
+      ).rejects.toThrow(/refusing real WebSocket/i);
+    } finally {
+      if (prevE2E !== undefined) process.env["COMIS_CLI_E2E"] = prevE2E;
+    }
+  });
+
+  it("withClient permits real socket attempt when COMIS_CLI_E2E=true (guard bypassed)", async () => {
+    // When the opt-out is set, the guard MUST NOT fire — the call falls
+    // through to the real WebSocket open. Whether the connect succeeds or
+    // fails depends on the local environment; we only assert the guard
+    // message is absent.
+    const actual = await vi.importActual<typeof import("../client/rpc-client.js")>(
+      "../client/rpc-client.js",
+    );
+
+    const prevE2E = process.env["COMIS_CLI_E2E"];
+    process.env["COMIS_CLI_E2E"] = "true";
+
+    try {
+      let captured: unknown = undefined;
+      try {
+        await actual.withClient(async () => "ok");
+      } catch (e) {
+        captured = e;
+      }
+      // The guard message MUST be absent. (The call may resolve or reject
+      // with a connect error, depending on whether a daemon happens to be
+      // listening on the resolved URL — both outcomes prove the guard did
+      // not fire.)
+      if (captured instanceof Error) {
+        expect(captured.message).not.toMatch(/refusing real WebSocket/i);
+      }
+    } finally {
+      if (prevE2E === undefined) delete process.env["COMIS_CLI_E2E"];
+      else process.env["COMIS_CLI_E2E"] = prevE2E;
+    }
+  });
+});

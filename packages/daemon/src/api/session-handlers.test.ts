@@ -1144,4 +1144,128 @@ describe("createSessionHandlers - session management", () => {
       expect(response.results).toHaveLength(3);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // session.spawn (Task wkj — rephrased timeout note + dedup propagation)
+  // -------------------------------------------------------------------------
+
+  describe("session.spawn", () => {
+    function makeSpawnDeps(overrides?: Partial<SessionHandlerDeps>): SessionHandlerDeps {
+      // Rich subAgentRunner stub: returns a stable runId AND simulates the run
+      // remaining "running" past the waitTimeoutMs window so the sync-wait
+      // timeout branch of the handler is exercised.
+      const subAgentRunner = {
+        spawn: vi.fn().mockReturnValue("test-run-id-001"),
+        getRunStatus: vi.fn().mockReturnValue({
+          runId: "test-run-id-001",
+          status: "running",
+          agentId: "default",
+          task: "any",
+          sessionKey: "",
+          startedAt: 0,
+          depth: 0,
+        }),
+        lastSpawnDedupInfo: vi.fn(() => undefined),
+      } as never;
+      // Tight waitTimeoutMs so the test doesn't actually wait long.
+      const securityConfig = { agentToAgent: { enabled: true, waitTimeoutMs: 10 } };
+      return makeDeps({ subAgentRunner, securityConfig, ...overrides });
+    }
+
+    it("sync-wait timeout returns inProgress with background_running noteType", async () => {
+      const deps = makeSpawnDeps();
+      const handlers = createSessionHandlers(deps);
+
+      const response = (await handlers["session.spawn"]!({
+        task: "T",
+        _agentId: "default",
+        _callerSessionKey: "K",
+        _callerChannelType: "telegram",
+        _callerChannelId: "123",
+      })) as Record<string, unknown>;
+
+      expect(response.runId).toBe("test-run-id-001");
+      expect(response.async).toBe(true);
+      expect(response.inProgress).toBe(true);
+      expect(response.noteType).toBe("background_running");
+      expect(typeof response.note).toBe("string");
+      expect(response.note as string).toContain("running in background");
+      expect(response.note as string).toContain("DO NOT spawn another sub-agent for the same task");
+      expect(response.note as string).toContain("test-run-id-001");
+    });
+
+    it("legacy timeout note string no longer appears in spawn response", async () => {
+      const deps = makeSpawnDeps();
+      const handlers = createSessionHandlers(deps);
+
+      const response = await handlers["session.spawn"]!({
+        task: "T",
+        _agentId: "default",
+        _callerSessionKey: "K",
+        _callerChannelType: "telegram",
+        _callerChannelId: "123",
+      });
+
+      expect(JSON.stringify(response).includes("Spawn timed out, check run_status later")).toBe(false);
+    });
+
+    it("response includes deduped and existingRunId when spawn deduped against in-flight run", async () => {
+      const subAgentRunner = {
+        spawn: vi.fn().mockReturnValue("test-run-id-001"),
+        getRunStatus: vi.fn().mockReturnValue({
+          runId: "test-run-id-001",
+          status: "running",
+          agentId: "default",
+          task: "any",
+          sessionKey: "",
+          startedAt: 0,
+          depth: 0,
+        }),
+        lastSpawnDedupInfo: vi.fn(() => ({
+          deduped: true as const,
+          existingRunId: "run-zzz-existing",
+          ageMs: 1234,
+        })),
+      } as never;
+      const deps = makeDeps({
+        subAgentRunner,
+        securityConfig: { agentToAgent: { enabled: true, waitTimeoutMs: 10 } },
+      });
+      const handlers = createSessionHandlers(deps);
+
+      const response = (await handlers["session.spawn"]!({
+        task: "T",
+        _agentId: "default",
+        _callerSessionKey: "K",
+        _callerChannelType: "telegram",
+        _callerChannelId: "123",
+      })) as Record<string, unknown>;
+
+      expect(response.deduped).toBe(true);
+      expect(response.existingRunId).toBe("run-zzz-existing");
+      expect(response.dedupAgeMs).toBe(1234);
+      // The dedup signal is additive — still has the new in-progress note.
+      expect(response.inProgress).toBe(true);
+      expect(response.noteType).toBe("background_running");
+      expect(response.note as string).toContain("running in background");
+    });
+
+    it("response omits deduped fields when no dedup hit occurred for this spawn", async () => {
+      const deps = makeSpawnDeps();
+      const handlers = createSessionHandlers(deps);
+
+      const response = (await handlers["session.spawn"]!({
+        task: "T",
+        _agentId: "default",
+        _callerSessionKey: "K",
+        _callerChannelType: "telegram",
+        _callerChannelId: "123",
+      })) as Record<string, unknown>;
+
+      expect("deduped" in response).toBe(false);
+      expect("existingRunId" in response).toBe(false);
+      expect(response.inProgress).toBe(true);
+      expect(response.noteType).toBe("background_running");
+    });
+  });
 });

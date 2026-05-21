@@ -14,6 +14,8 @@
  * @module
  */
 
+import { fileURLToPath } from "node:url";
+
 import { suppressError } from "@comis/shared";
 import {
   createConfigWriteAuditRecordBase,
@@ -28,23 +30,38 @@ import type { ComisLogger } from "@comis/core";
 /**
  * Outcome of the config-write attempt, derived in the calling
  * handler from `(wroteFile, writeError)`.
+ *
+ * Fix D1 (log-review): `rejected` carries an optional `message` so
+ * the validator's rejection reason can be threaded through to the
+ * persisted `errorMessage` field on ConfigWriteAuditRecord. Pre-fix
+ * `rejected` swallowed the reason — operators saw "result: rejected"
+ * but had to grep daemon logs separately for the validator text.
  */
 export type ConfigAuditOutcome =
   | { kind: "rename" }
   | { kind: "failed"; code?: string; message?: string }
-  | { kind: "rejected" };
+  | { kind: "rejected"; message?: string };
 
 /**
  * Build the audit-record base for the in-flight config.patch RPC.
  * Returns `undefined` when the base construction itself fails (e.g.,
  * stat permission issues on the target path) — audit is best-effort.
+ *
+ * @param localPath - Absolute path of the local override config file.
+ * @param callerSource - The ConfigWriteSource tag for the JSONL record's
+ *   `source` field. Defaults to `"config-patch-rpc"` so existing call
+ *   sites in `config-write.ts` keep working unchanged. Phase 47 passes
+ *   `"mcp.connect"` / `"mcp.disconnect"` from mcp-handlers so the audit
+ *   trail can distinguish MCP-driven writes from generic config.patch
+ *   writes (R8).
  */
 export function buildConfigAuditBase(
   localPath: string,
+  callerSource: string = "config-patch-rpc",
 ): ConfigWriteAuditRecordBase | undefined {
   try {
     return createConfigWriteAuditRecordBase({
-      source: "config-patch-rpc",
+      source: callerSource,
       configPath: localPath,
       // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
       pid: process.pid,
@@ -57,6 +74,11 @@ export function buildConfigAuditBase(
       // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read for audit-log provenance
       execArgv: process.execArgv,
       watchMode: false,
+      // Resolved entry script for the non-comis-argv heuristic — pm2
+      // and systemd-indirect launches present `node ProcessContainerFork.js`
+      // in argv[0..1] without the literal "comis", so the heuristic
+      // would false-positive without this hint.
+      entryScript: fileURLToPath(import.meta.url),
     });
   } catch {
     return undefined;
@@ -84,7 +106,13 @@ export function appendConfigAuditWithOutcome(
                 errorMessage: outcome.message,
               }),
             }
-          : ({ result: "rejected" as const });
+          // Fix D1 (log-review): thread rejection message into errorMessage.
+          : ({
+              result: "rejected" as const,
+              ...(outcome.message !== undefined && {
+                errorMessage: outcome.message,
+              }),
+            });
     const record = finalizeConfigWriteAuditRecord(base, finalizeParams);
     const auditLogPath = resolveConfigAuditLogPath();
     const auditConfinedBase = getDefaultConfigAuditConfinedBase(auditLogPath);

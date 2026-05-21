@@ -232,3 +232,43 @@ describe("buildSessionEndMetadata", () => {
     expect(stripped).toMatch(/buildSessionEndMetadata\([\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 260521-0bn FOLLOWUP-260521-0bn-02: costCorrectionDeltaUsd on Execution-complete
+//
+// Regression contract: the Execution-complete log payload conditionally
+// includes `costCorrectionDeltaUsd` when `bridgeResult.totalCostCorrectionDeltaUsd
+// > 0`. Turns with no SDK correction omit the field entirely. The conditional
+// spread mirrors the per-event `costCorrectionField` gate in pi-event-bridge.ts.
+//
+// Strategy: source-grep on the production module (same pattern as the
+// surrounding describes). The full `logger.info({...}, "Execution complete")`
+// payload is built deep inside postExecution(), which requires 30+ deps;
+// asserting the conditional spread shape via source-grep is the
+// proportional check.
+// ---------------------------------------------------------------------------
+describe("Execution-complete log — costCorrectionDeltaUsd (260521-0bn)", () => {
+  function readPostExec(): string {
+    return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+  }
+
+  it("payload contains a conditional spread guarded by totalCostCorrectionDeltaUsd > 0", () => {
+    const src = readPostExec();
+    // Strip comments so the gate cannot be self-invalidated by a commented-out spread.
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    // The spread shape: ...((bridgeResult.totalCostCorrectionDeltaUsd ?? 0) > 0 && { costCorrectionDeltaUsd: ... })
+    expect(stripped).toMatch(
+      /\.\.\.\(\(bridgeResult\.totalCostCorrectionDeltaUsd\s*\?\?\s*0\)\s*>\s*0\s*&&\s*\{\s*costCorrectionDeltaUsd:/,
+    );
+  });
+
+  it("PostExecutionBridgeResult interface declares totalCostCorrectionDeltaUsd?: number", () => {
+    const src = readPostExec();
+    // The optional field must be typed `number` so consumers see a coherent shape.
+    expect(src).toMatch(/totalCostCorrectionDeltaUsd\?:\s*number/);
+  });
+});

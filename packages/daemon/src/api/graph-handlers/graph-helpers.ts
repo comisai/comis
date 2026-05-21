@@ -82,6 +82,8 @@ export function transformNodes(rawNodes: unknown[]): unknown[] {
       dependsOn: node.depends_on ?? node.dependsOn,
       timeoutMs: node.timeout_ms ?? node.timeoutMs,
       maxSteps: node.max_steps ?? node.maxSteps,
+      ...(node.mcp_servers ?? node.mcpServers
+        ? { mcpServers: node.mcp_servers ?? node.mcpServers } : {}),
       ...(node.barrier_mode ?? node.barrierMode
         ? { barrierMode: node.barrier_mode ?? node.barrierMode } : {}),
       ...(node.retries !== undefined ? { retries: node.retries } : {}),

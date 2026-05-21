@@ -36,6 +36,7 @@ export {
 export type {
   BoundedPayloadReason,
   BoundedSentinel,
+  PayloadBoundsOverrides,
 } from "./shared/bounded-payload.js";
 
 export {
@@ -55,14 +56,25 @@ export { stableStringify } from "./shared/stable-stringify.js";
 
 export { safeJsonStringify } from "./shared/safe-json-stringify.js";
 
+// File-snapshot helper — sha256 + POSIX stat in one pass. Used by the
+// daemon's read-side audit producer (`readConfigFileObservation`) and
+// any other consumer that needs the design-§9.2 file-state block.
+export { readFileSnapshot } from "./shared/file-snapshot.js";
+export type { FileSnapshot } from "./shared/file-snapshot.js";
+
 // Symlink-safe file primitives. The three error sentinels and the option /
 // success / error type aliases form the public contract that downstream
 // writers (queued-file-writer, config-audit/append, config-audit/scrub) all
 // rely on at their try-catch boundaries. Out-of-package consumers should
 // `import { appendRegularFile } from "@comis/observability"`.
+//
+// `ensureContainedDir` (Phase 48 OBS-HARD-01) is the third public helper —
+// it owns the `mkdir + lstat-gated chmod` pattern that the migration
+// sweep in Plans 48-05/48-06 routes 10 sibling writers through.
 export {
   appendRegularFile,
   writeRegularFile,
+  ensureContainedDir,
   SymlinkParentRejected,
   PathEscapesConfinementError,
   FileSizeLimitExceeded,
@@ -74,6 +86,9 @@ export type {
   WriteRegularFileOptions,
   WriteRegularFileSuccess,
   WriteRegularFileError,
+  EnsureContainedDirOptions,
+  EnsureContainedDirSuccess,
+  EnsureContainedDirError,
 } from "./shared/fs-safe.js";
 
 // ---------------------------------------------------------------------------
@@ -116,6 +131,7 @@ export {
 } from "./trajectory/types.js";
 export type {
   TrajectoryEvent,
+  TrajectoryEventSource,
   TrajectoryEventType,
   TrajectoryRecorder,
   TrajectoryRecorderBudgets,
@@ -128,6 +144,9 @@ export {
   resolveTrajectoryPointerOpenFlags,
 } from "./trajectory/paths.js";
 
+export { writeTrajectoryPointerFileBestEffort } from "./trajectory/pointer-file.js";
+export type { WriteTrajectoryPointerFileParams } from "./trajectory/pointer-file.js";
+
 export { createTrajectoryRecorder } from "./trajectory/runtime.js";
 
 export {
@@ -135,6 +154,12 @@ export {
   TRAJECTORY_BRIDGE_MAPPING,
 } from "./trajectory/event-bus-bridge.js";
 export type { TrajectoryBridgedEventName } from "./trajectory/event-bus-bridge.js";
+
+export { createSessionTrajectoryHandleRegistry } from "./trajectory/session-registry.js";
+export type {
+  SessionTrajectoryHandleRegistry,
+  SessionTrajectoryFilter,
+} from "./trajectory/session-registry.js";
 
 // ---------------------------------------------------------------------------
 // SystemPromptReport surface.
@@ -177,7 +202,11 @@ export type { CacheTrace, CacheTraceInit } from "./cache-trace/runtime.js";
 export { buildCacheTraceWrapper } from "./cache-trace/stream-fn-wrapper.js";
 export type { StreamFnWrapper as CacheTraceStreamFnWrapper } from "./cache-trace/stream-fn-wrapper.js";
 
-export { attachCacheTraceToEventBus } from "./cache-trace/event-bus-bridge.js";
+export {
+  attachCacheTraceToEventBus,
+  CACHE_TRACE_BRIDGE_MAPPING,
+} from "./cache-trace/event-bus-bridge.js";
+export type { CacheTraceBridgedEventName } from "./cache-trace/event-bus-bridge.js";
 
 // ---------------------------------------------------------------------------
 // Config-audit surface.
@@ -221,6 +250,8 @@ export {
   DEFAULT_KEEP_ROTATED,
   ConfigAuditAppendError,
   getDefaultConfigAuditConfinedBase,
+  ensureConfigAuditParentDir,
+  rotateConfigAuditLogIfNeeded,
 } from "./config-audit/append.js";
 export type {
   ConfigWriteAuditRecordBase,
@@ -228,6 +259,23 @@ export type {
   FinalizeParams,
   AppendConfigAuditParams,
 } from "./config-audit/append.js";
+
+// config.observe writer (OBS-REVIEW-03 fix) — read-side counterpart
+// to the write-side helpers above. The daemon's bootstrap config-read
+// path dispatches into `appendConfigObserveAuditRecord` so each
+// resolved configPath produces one `event: "config.observe"` JSONL
+// record on every boot.
+export {
+  createConfigObserveAuditRecord,
+  appendConfigObserveAuditRecord,
+} from "./config-audit/append-observe.js";
+export type {
+  CreateObserveRecordParams,
+  AppendObserveRecordParams,
+  AppendObserveResult,
+  ObserveObservation,
+  ObserveRecovery,
+} from "./config-audit/append-observe.js";
 
 export { scrubConfigAuditLog, ScrubConfigAuditError } from "./config-audit/scrub.js";
 export type { ScrubResult, ScrubParams } from "./config-audit/scrub.js";

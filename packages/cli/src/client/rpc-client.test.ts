@@ -597,6 +597,11 @@ describe("withClient", () => {
     delete process.env["COMIS_GATEWAY_URL"];
     delete process.env["COMIS_GATEWAY_TOKEN"];
     delete process.env["COMIS_INSECURE"];
+    // Fix A guard bypass: these tests exercise withClient's config /
+    // transport-construction paths via a mocked `ws` module — the
+    // WebSocket is fake, so opting into the E2E lane is the correct
+    // signal to the VITEST=true guard.
+    process.env["COMIS_CLI_E2E"] = "true";
     mockedExistsSync.mockReset();
     mockedReadFileSync.mockReset();
   });
@@ -605,6 +610,7 @@ describe("withClient", () => {
     delete process.env["COMIS_GATEWAY_URL"];
     delete process.env["COMIS_GATEWAY_TOKEN"];
     delete process.env["COMIS_INSECURE"];
+    delete process.env["COMIS_CLI_E2E"];
   });
 
   describe("config file resolution", () => {

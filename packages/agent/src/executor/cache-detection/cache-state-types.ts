@@ -171,6 +171,17 @@ export interface CacheBreakDetector {
   aliasSession(compactionKey: string, parentKey: string): void;
   cleanupSession(sessionKey: string): void;
   reset(): void;
+  /**
+   * Read the current call count for a session (1-indexed turn number
+   * within the current agent session — turn 1 = first model call after
+   * session start). Returns undefined when the session has no detector
+   * state yet (cold start before the first recordPromptState).
+   *
+   * Used by the request-body factory to gate first-turn-only optimizations
+   * (e.g., 5m → 1h marker promotion) on real evidence the session will
+   * see a follow-up turn.
+   */
+  getCallCount(sessionKey: string): number | undefined;
 }
 
 /** Options for createCacheBreakDetector. */

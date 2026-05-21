@@ -236,6 +236,7 @@ export async function persistToConfig(
     // 5. Atomic write: create parent dir, write to temp file, rename
     const localDir = dirname(configPath);
     if (!existsSync(localDir)) {
+      // fs-safe-allowed: localDir is parent of operator-supplied configPath; not ~/.comis/ directly
       mkdirSync(localDir, { recursive: true });
     }
     const tmpPath = configPath + ".tmp";

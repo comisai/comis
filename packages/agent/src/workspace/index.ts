@@ -14,7 +14,12 @@ export type {
 } from "./workspace-manager.js";
 export { resolveWorkspaceDir } from "./workspace-resolver.js";
 export { resolveDataEnv } from "./data-env.js";
-export { WORKSPACE_FILE_NAMES, DEFAULT_TEMPLATES } from "./templates.js";
+export {
+  WORKSPACE_FILE_NAMES,
+  DEFAULT_TEMPLATES,
+  PLATFORM_OWNED_FILES,
+  USER_OWNED_FILES,
+} from "./templates.js";
 export type { WorkspaceFileName } from "./templates.js";
 export { isHeartbeatContentEffectivelyEmpty } from "./heartbeat-file.js";
 export { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "./boot-file.js";

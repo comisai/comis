@@ -55,6 +55,7 @@ import { safeJsonStringify } from "../shared/safe-json-stringify.js";
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
 
 import { resolveTrajectoryFilePath } from "./paths.js";
+import { writeTrajectoryPointerFileBestEffort } from "./pointer-file.js";
 import type {
   TrajectoryEvent,
   TrajectoryEventType,
@@ -131,6 +132,19 @@ export function createTrajectoryRecorder(
       : {}),
   });
 
+  // Best-effort pointer-file sidecar at `<sessionFile>.trajectory-path.json`
+  // (design §6.1 + §2.3). Only emit when the recorder was constructed
+  // alongside a per-session JSONL file — the env / cwd fallback paths
+  // have no session file to anchor the pointer to. Errors are swallowed
+  // by the helper; a missing pointer MUST NOT block trajectory writes.
+  if (init.sessionFile !== undefined) {
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile: init.sessionFile,
+      sessionId: init.sessionId,
+      runtimeFile: filePath,
+    });
+  }
+
   // Mutable per-recorder state. Each recorder owns its own seq counter
   // and write-byte accumulator (the writer chassis is shared across
   // recorders for the same path, but the seq/byte accounting is local).
@@ -143,16 +157,25 @@ export function createTrajectoryRecorder(
 
   const recorder: TrajectoryRecorder = {
     filePath,
-    recordEvent(type: TrajectoryEventType, data: unknown, parentEntryId?: string): "queued" | "dropped" {
+    recordEvent(
+      type: TrajectoryEventType,
+      data?: Record<string, unknown>,
+      parentEntryId?: string,
+    ): "queued" | "dropped" {
       if (state.closed) return "dropped";
 
-      // 1. Sanitize payload through the canonical pipeline.
-      const sanitized = sanitizeForPersistence(data);
+      // 1. Sanitize payload through the canonical pipeline. The
+      //    sanitizer preserves top-level object shape (returns either
+      //    the bounded object graph or a sentinel-shaped object); the
+      //    cast is the type-boundary point.
+      const sanitized = sanitizeForPersistence(data) as
+        | Record<string, unknown>
+        | undefined;
 
       // 2. Build the envelope.
       const evt = buildEvent({
         type,
-        sanitized,
+        ...(sanitized !== undefined ? { sanitized } : {}),
         init,
         seq: state.seq + 1,
         ...(parentEntryId !== undefined ? { parentEntryId } : {}),
@@ -283,7 +306,13 @@ interface BuildEventInput {
   readonly type: TrajectoryEventType;
   readonly init: TrajectoryRecorderInit;
   readonly seq: number;
-  readonly sanitized: unknown;
+  /**
+   * Sanitized payload. The recorder always hands `sanitizeForPersistence`
+   * output through here; `sanitizeForPersistence` returns object-shaped
+   * values (or undefined when input was undefined), matching the envelope
+   * `data?: Record<string, unknown>` contract from design §6.2.
+   */
+  readonly sanitized?: Record<string, unknown>;
   readonly parentEntryId?: string;
 }
 
@@ -292,6 +321,11 @@ function buildEvent(input: BuildEventInput): TrajectoryEvent {
   const envelope: Mutable<TrajectoryEvent> = {
     traceSchema: "comis-trajectory",
     schemaVersion: 1,
+    // All recorder-driven emits are runtime-sourced. The other two
+    // values ("transcript", "export") are reserved for future
+    // post-processors and are NOT used by the live recorder
+    // (design §6.2 + §1.4).
+    source: "runtime",
     type: input.type,
     // systemDateFrom + systemNowMs goes through the sanctioned-root
     // helpers in @comis/core/runtime — direct `new Date(...)` is
@@ -302,12 +336,29 @@ function buildEvent(input: BuildEventInput): TrajectoryEvent {
     sessionId: input.init.sessionId,
     traceId,
     entryId: randomUUID(),
-    data: input.sanitized,
   };
+  // Conditional spread for genuinely-optional envelope fields so they
+  // don't serialize as `undefined` when omitted. Matches the convention
+  // already used for tenantId/sessionKey/runId.
   if (input.init.tenantId !== undefined) envelope.tenantId = input.init.tenantId;
   if (input.init.sessionKey !== undefined) envelope.sessionKey = input.init.sessionKey;
   if (input.init.runId !== undefined) envelope.runId = input.init.runId;
+  if (input.init.workspaceDir !== undefined) envelope.workspaceDir = input.init.workspaceDir;
+  // provider/modelId/modelApi live in the `model` cluster on
+  // TrajectoryRecorderInit (see types.ts) so the interface stays under
+  // the ≤12-optional-fields architecture invariant. Lift each onto the
+  // envelope when defined.
+  if (input.init.model?.provider !== undefined) {
+    envelope.provider = input.init.model.provider;
+  }
+  if (input.init.model?.modelId !== undefined) {
+    envelope.modelId = input.init.model.modelId;
+  }
+  if (input.init.model?.modelApi !== undefined) {
+    envelope.modelApi = input.init.model.modelApi;
+  }
   if (input.parentEntryId !== undefined) envelope.parentEntryId = input.parentEntryId;
+  if (input.sanitized !== undefined) envelope.data = input.sanitized;
   return envelope as TrajectoryEvent;
 }
 

@@ -350,6 +350,60 @@ describe("createPiEventBridge", () => {
       expect(endEmit).toBeDefined();
     });
 
+    // Fix D2 (log-review): errorKind on tool:executed when isError was true from the start.
+    it("Fix D2: isError=true with [invalid_value] errorText emits errorKind=validation", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      // extractErrorText (bridge-event-handlers.ts) reads `obj.message`
+      // or `obj.error` from the result. The `[invalid_value]` prefix
+      // routes through classifyToolError → "validation".
+      const result = { message: "[invalid_value] x must be > 0" };
+      listener(makeToolExecutionEndEvent("validator_tool", "tc-d2a", true, result) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const endEmit = calls.find(
+        (c) => c[0] === "tool:executed" && c[1].toolName === "validator_tool",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].success).toBe(false);
+      expect(endEmit![1].errorKind).toBe("validation");
+    });
+
+    it("Fix D2: isError=true with generic errorText emits errorKind=dependency", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      const result = { message: "Network unreachable: connection refused" };
+      listener(makeToolExecutionEndEvent("flaky_tool", "tc-d2b", true, result) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const endEmit = calls.find(
+        (c) => c[0] === "tool:executed" && c[1].toolName === "flaky_tool",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].success).toBe(false);
+      expect(endEmit![1].errorKind).toBe("dependency");
+    });
+
+    it("Fix D2: isError=true on an MCP-namespaced tool with timeout text emits errorKind=timeout", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      // MCP-namespaced tool names follow `mcp__<server>--<tool>` (see
+      // packages/shared/src/mcp-tool-name.ts). The bridge calls
+      // extractMcpServerName to attribute the failure; when
+      // classifyMcpErrorType detects "timed out" / "timeout" substrings,
+      // the Fix D2 mapping resolves to ErrorKind "timeout".
+      const result = { message: "mcp tool error: request timed out after 30s" };
+      listener(makeToolExecutionEndEvent("mcp__example--search", "tc-d2c", true, result) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const endEmit = calls.find(
+        (c) => c[0] === "tool:executed" && c[1].toolName === "mcp__example--search",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].success).toBe(false);
+      expect(endEmit![1].errorKind).toBe("timeout");
+    });
+
     it("emits tool:executed with success=false when result has non-zero exitCode", () => {
       const { listener } = createPiEventBridge(deps);
 
@@ -2380,6 +2434,270 @@ describe("createPiEventBridge", () => {
       expect(ttlSplit.cacheWrite1hTokens).toBe(norm1h);
       expect(ttlSplit.cacheWrite5mTokens).toBe(norm5m);
     });
+
+    // ---------------------------------------------------------------------
+    // 260520-wcf: cost-correction surfacing migrates from per-call DEBUG
+    // logs to the observability:token_usage event payload, and the
+    // per-call "Cache write TTL breakdown" DEBUG line is replaced by a
+    // one-shot INFO notice fired once per daemon process.
+    // ---------------------------------------------------------------------
+    describe("260520-wcf cost-correction event payload + one-shot SDK notice", () => {
+      it("does not emit the per-call cost-correction DEBUG log when delta is non-zero anymore", async () => {
+        const ttlSplit = { cacheWrite5mTokens: 858, cacheWrite1hTokens: 23400 };
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+          ttlSplit,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        listener(makeCacheTurnEnd({ cacheRead: 50000, cacheWrite: 24258 }) as any);
+
+        const debugCalls = (deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls;
+        const hasCorrectionLog = debugCalls.some((args) =>
+          typeof args[1] === "string" &&
+          /Cost correction applied/i.test(args[1] as string),
+        );
+        expect(hasCorrectionLog).toBe(false);
+      });
+
+      it("does not emit the per-call Cache write TTL breakdown DEBUG log anymore", async () => {
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        listener(makeCacheTurnEnd({ cacheRead: 50000, cacheWrite: 10000 }) as any);
+
+        const debugCalls = (deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls;
+        const hasBreakdownLog = debugCalls.some((args) =>
+          typeof args[1] === "string" &&
+          /Cache write TTL breakdown/i.test(args[1] as string),
+        );
+        expect(hasBreakdownLog).toBe(false);
+      });
+
+      it("emits costCorrection in the observability token_usage payload when the SDK total was bumped for 1h underpricing", async () => {
+        const ttlSplit = { cacheWrite5mTokens: 858, cacheWrite1hTokens: 23400 };
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+          ttlSplit,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        const event = makeCacheTurnEnd({ cacheRead: 50000, cacheWrite: 24258 });
+        listener(event as any);
+
+        const emitCall = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(emitCall).toBeDefined();
+
+        const expectedDelta = 23400 * (0.000006 - 0.00000375);
+        const sdkRaw = event.message.usage.cost.total;
+        expect(emitCall![1].costCorrection).toBeDefined();
+        expect(emitCall![1].costCorrection.delta).toBeCloseTo(expectedDelta, 8);
+        expect(emitCall![1].costCorrection.sdkRaw).toBeCloseTo(sdkRaw, 8);
+        expect(emitCall![1].costCorrection.corrected).toBeCloseTo(sdkRaw + expectedDelta, 8);
+      });
+
+      it("omits costCorrection from the observability token_usage payload when no correction is needed", async () => {
+        // ttlSplit absent so the bridge takes the SDK-passthrough path
+        // and costCorrectionDelta stays 0.
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        listener(makeCacheTurnEnd({ cacheRead: 5000, cacheWrite: 1000 }) as any);
+
+        const emitCall = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(emitCall).toBeDefined();
+        expect(emitCall![1]).not.toHaveProperty("costCorrection");
+      });
+
+      it("emits the SDK-breakdown INFO notice exactly once across multiple bridge constructions in the same process", async () => {
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+
+        const deps1 = createMockDeps({});
+        const deps2 = createMockDeps({});
+        createPiEventBridge(deps1);
+        createPiEventBridge(deps2);
+
+        const infoCalls1 = (deps1.logger.info as ReturnType<typeof vi.fn>).mock.calls
+          .filter((args) =>
+            typeof args[1] === "string" &&
+            /pi-ai SDK does not expose cacheCreation per-TTL breakdown/i.test(args[1] as string),
+          );
+        const infoCalls2 = (deps2.logger.info as ReturnType<typeof vi.fn>).mock.calls
+          .filter((args) =>
+            typeof args[1] === "string" &&
+            /pi-ai SDK does not expose cacheCreation per-TTL breakdown/i.test(args[1] as string),
+          );
+
+        const total = infoCalls1.length + infoCalls2.length;
+        expect(total).toBe(1);
+      });
+    });
+
+    // ---------------------------------------------------------------------
+    // 260520-wcf: warmupTurn + pendingCacheInvestmentUsd on the
+    // observability:token_usage event payload. Identifies first-cache-write
+    // turns so dashboards can keep "cache savings rate is -91%" off
+    // regression alerts.
+    // ---------------------------------------------------------------------
+    describe("260520-wcf warmupTurn and pendingCacheInvestmentUsd on token_usage payload", () => {
+      it("flags warmupTurn=true when cacheReadTokens is 0 and cacheWriteTokens is positive on the first cache-write turn", async () => {
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        // cacheReadTokens=0 + cacheWriteTokens=20_000 — classic warmup-turn shape.
+        listener(makeCacheTurnEnd({ cacheRead: 0, cacheWrite: 20_000 }) as any);
+
+        const emitCall = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(emitCall).toBeDefined();
+        expect(emitCall![1].warmupTurn).toBe(true);
+        expect(emitCall![1].pendingCacheInvestmentUsd).toBeGreaterThan(0);
+        // Math preserved: the underlying savedVsUncached stays negative
+        // even though the warmup-turn signal flips to true. The two
+        // numbers must always be opposite-signed magnitudes of the
+        // same value (the deferred investment).
+        expect(emitCall![1].savedVsUncached).toBeLessThan(0);
+        expect(emitCall![1].pendingCacheInvestmentUsd).toBeCloseTo(
+          -emitCall![1].savedVsUncached,
+          10,
+        );
+      });
+
+      it("flags warmupTurn=false on subsequent turns with cache reads and zero investment", async () => {
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        // cacheReadTokens=10_000 + cacheWriteTokens=5_000 — normal mid-session turn.
+        listener(makeCacheTurnEnd({ cacheRead: 10_000, cacheWrite: 5_000 }) as any);
+
+        const emitCall = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(emitCall).toBeDefined();
+        expect(emitCall![1].warmupTurn).toBe(false);
+        expect(emitCall![1].pendingCacheInvestmentUsd).toBe(0);
+      });
+
+      it("flags warmupTurn=false when no cache writes occur even with zero cache reads", async () => {
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener } = createPiEventBridge(deps);
+
+        // cacheReadTokens=0 + cacheWriteTokens=0 — cold session with no
+        // caching activity (e.g. caching disabled, error path).
+        listener(makeCacheTurnEnd({ cacheRead: 0, cacheWrite: 0 }) as any);
+
+        const emitCall = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(emitCall).toBeDefined();
+        expect(emitCall![1].warmupTurn).toBe(false);
+        expect(emitCall![1].pendingCacheInvestmentUsd).toBe(0);
+      });
+
+      it("accumulates warmupTurnCount and totalPendingCacheInvestmentUsd into bridge metrics for the Execution complete log payload", async () => {
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+        });
+        const mod = await import("./pi-event-bridge.js");
+        mod.__resetSdkBreakdownNoticeForTest();
+        const { listener, getResult } = createPiEventBridge(deps);
+
+        // Two warmup turns followed by one normal turn.
+        listener(makeCacheTurnEnd({ cacheRead: 0, cacheWrite: 20_000 }) as any);
+        listener(makeCacheTurnEnd({ cacheRead: 0, cacheWrite: 15_000 }) as any);
+        listener(makeCacheTurnEnd({ cacheRead: 10_000, cacheWrite: 5_000 }) as any);
+
+        const result = getResult();
+        expect(result.warmupTurnCount).toBe(2);
+        expect(result.totalPendingCacheInvestmentUsd).toBeGreaterThan(0);
+      });
+
+      // 260521-0bn: cumulative cost-correction delta accumulator.
+      it("accumulates totalCostCorrectionDeltaUsd across multiple turns (260521-0bn)", () => {
+        const ttlSplit = { cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 };
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+          ttlSplit,
+        });
+        const { listener, getResult } = createPiEventBridge(deps);
+
+        // Turn 1: 10_000 1h tokens → delta1 = 10_000 * (cacheWrite1h - cacheWrite5m)
+        ttlSplit.cacheWrite5mTokens = 500;
+        ttlSplit.cacheWrite1hTokens = 10_000;
+        listener(makeCacheTurnEnd({ cacheRead: 20_000, cacheWrite: 10_500 }) as any);
+
+        // Turn 2: 5_000 1h tokens → delta2 = 5_000 * (cacheWrite1h - cacheWrite5m)
+        ttlSplit.cacheWrite5mTokens = 300;
+        ttlSplit.cacheWrite1hTokens = 5_000;
+        listener(makeCacheTurnEnd({ cacheRead: 30_000, cacheWrite: 5_300 }) as any);
+
+        const expectedDelta1 = 10_000 * (0.000006 - 0.00000375);
+        const expectedDelta2 = 5_000 * (0.000006 - 0.00000375);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- getResult inline return type omits new field; access via index typing
+        const result = getResult() as any;
+        expect(result.totalCostCorrectionDeltaUsd).toBeCloseTo(
+          expectedDelta1 + expectedDelta2,
+          8,
+        );
+      });
+
+      it("does NOT accumulate totalCostCorrectionDeltaUsd when ttlSplit has no 1h tokens (260521-0bn)", () => {
+        const ttlSplit = { cacheWrite5mTokens: 10_000, cacheWrite1hTokens: 0 };
+        deps = createMockDeps({
+          provider: "anthropic",
+          model: SONNET_MODEL,
+          ttlSplit,
+        });
+        const { listener, getResult } = createPiEventBridge(deps);
+
+        listener(makeCacheTurnEnd({ cacheRead: 5_000, cacheWrite: 10_000 }) as any);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- getResult inline return type omits new field; access via index typing
+        const result = getResult() as any;
+        // delta = 0 → accumulator stays at 0 (the > 0 gate suppresses it).
+        expect(result.totalCostCorrectionDeltaUsd).toBe(0);
+      });
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -4200,7 +4518,10 @@ describe("session and tool-timeout lifecycle events", () => {
   }
 
 
-  it("emits session:started on pi-mono agent_start with channelType from ALS context", () => {
+  it("emits session:started on pi-mono agent_start with channelType from ALS context (legacy path: no trajectoryRegistry)", () => {
+    // Legacy callers (tests, embedded harnesses) omit trajectoryRegistry
+    // from PiEventBridgeDeps. The bridge falls through to the legacy
+    // unconditional emit so behavior matches the pre-tlx baseline.
     const deps = createMockDeps();
     const { listener } = createPiEventBridge(deps);
 
@@ -4218,11 +4539,14 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(typeof payload.timestamp).toBe("number");
   });
 
-  it("emits session:ended on pi-mono agent_end with totalTurns, token totals, durationMs, exitReason", () => {
+  it("agent_end_does_not_emit_session_ended (Gap F — moved to ComisSessionManager.destroySession per design §6.4)", () => {
+    // Per design §6.4 the mapping table makes session.ended fire on
+    // "(session) ended" — a session-destroy semantic, NOT a per-turn
+    // agent_end. The bridge case is now a trajectory no-op; per-turn
+    // duration metrics live on observability:token_usage (→ model.completed).
     const deps = createMockDeps();
     const { listener } = createPiEventBridge(deps);
 
-    // Run a minimal session: agent_start -> turn_end -> agent_end.
     listener({ type: "agent_start" } as any);
     listener({
       type: "turn_end",
@@ -4242,15 +4566,47 @@ describe("session and tool-timeout lifecycle events", () => {
 
     const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
     const endCalls = emit.mock.calls.filter((c) => c[0] === "session:ended");
-    expect(endCalls).toHaveLength(1);
-    const payload = endCalls[0][1];
-    expect(payload.agentId).toBe("test-agent");
-    expect(payload.totalTurns).toBe(1);
-    expect(payload.totalInputTokens).toBe(100);
-    expect(payload.totalOutputTokens).toBe(50);
-    expect(typeof payload.durationMs).toBe("number");
-    expect(payload.durationMs).toBeGreaterThanOrEqual(0);
-    expect(payload.exitReason).toBe("end_turn");
+    expect(endCalls).toHaveLength(0);
+  });
+
+  it("agent_start_emits_session_started_only_once_per_bridge_when_trajectoryRegistry_present (Gap F)", () => {
+    // With the registry-backed latch, the bridge suppresses per-turn
+    // session:started re-emits. The first agent_start fires; subsequent
+    // ones consult the latch and short-circuit.
+    let marked = false;
+    const fakeRegistry = {
+      hasSessionStartedBeenEmitted: (_: string): boolean => marked,
+      markSessionStarted: (_: string): void => { marked = true; },
+      getOrCreate: vi.fn(),
+      close: vi.fn(),
+      closeAll: vi.fn(),
+    } as any;
+    const deps = createMockDeps({ trajectoryRegistry: fakeRegistry });
+    const { listener } = createPiEventBridge(deps);
+
+    listener({ type: "agent_start" } as any);
+    listener({ type: "agent_start" } as any);
+    listener({ type: "agent_start" } as any);
+
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    const startCalls = emit.mock.calls.filter((c) => c[0] === "session:started");
+    expect(startCalls).toHaveLength(1);
+  });
+
+  it("agent_start_falls_back_to_unconditional_emit_when_trajectoryRegistry_absent (legacy path)", () => {
+    // Legacy callers (tests, embedded use) get the pre-tlx behavior so
+    // existing harnesses keep working. The registry-backed latch is the
+    // production path; without it, every agent_start emits.
+    const deps = createMockDeps(); // no trajectoryRegistry
+    const { listener } = createPiEventBridge(deps);
+
+    listener({ type: "agent_start" } as any);
+    listener({ type: "agent_start" } as any);
+
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    const startCalls = emit.mock.calls.filter((c) => c[0] === "session:started");
+    // 2 emits — legacy unconditional behavior preserved.
+    expect(startCalls).toHaveLength(2);
   });
 
   it("emits tool:timeout alongside tool:executed when toolErrorKind is 'timeout' (shares toolCallId)", () => {
@@ -4284,8 +4640,16 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(stripped).toMatch(/case\s+"agent_start"\s*:\s*\{[\s\S]*?eventBus\.emit\("session:started"/m);
   });
 
-  it("structural: session:ended emit appears in the agent_end switch case", async () => {
+  it("structural: session:ended emit no longer appears in the agent_end switch case (Gap F — design §6.4)", async () => {
+    // Negative structural check: agent_end is now a trajectory no-op.
+    // session.ended fires from ComisSessionManager.destroySession (the
+    // semantic "session is over" boundary).
     const stripped = await readBridgeSource();
-    expect(stripped).toMatch(/case\s+"agent_end"\s*:\s*\{[\s\S]*?eventBus\.emit\("session:ended"/m);
+    // Find the agent_end case body up to the next case/default/}.
+    const m = stripped.match(/case\s+"agent_end"\s*:\s*\{([\s\S]*?)break;\s*\}/);
+    expect(m, "agent_end case must exist").not.toBeNull();
+    const body = m![1];
+    // The body MUST NOT emit session:ended.
+    expect(body).not.toMatch(/eventBus\.emit\("session:ended"/);
   });
 });

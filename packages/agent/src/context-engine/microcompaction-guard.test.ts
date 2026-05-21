@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { installMicrocompactionGuard, getInlineThreshold } from "./microcompaction-guard.js";
@@ -82,7 +82,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("passes through small tool results unmodified (under 8K threshold)", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const smallResult = createToolResult("bash", 4000);
     sm.appendMessage(smallResult);
@@ -98,7 +98,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("offloads tool results exceeding the default 8K threshold to disk", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const largeResult = createToolResult("bash", 10_000, "call-large");
     sm.appendMessage(largeResult);
@@ -125,7 +125,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("offloads MCP tool results exceeding the 15K threshold", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // 16K exceeds MCP threshold of 15K
     const mcpResult = createToolResult("mcp__github_list_issues", 16_000, "call-mcp");
@@ -140,7 +140,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("does NOT offload read tool results under the 15K threshold", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // 12K is under read tool threshold of 15K
     const readResult = createToolResult("read", 12_000, "call-read");
@@ -157,7 +157,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("truncates tool results exceeding 100K hard cap before offloading", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const hugeResult = createToolResult("bash", 150_000, "call-huge");
     sm.appendMessage(hugeResult);
@@ -182,7 +182,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("writes raw text content to disk (not JSON envelope)", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const result = createToolResult("bash", 10_000, "call-structure");
     sm.appendMessage(result);
@@ -210,7 +210,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("passes non-toolResult messages through unmodified", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const userMessage = {
       role: "user" as const,
@@ -226,7 +226,7 @@ describe("installMicrocompactionGuard", () => {
   it("fires onOffloaded callback when tool result is offloaded to disk", () => {
     const sm = createMockSessionManager(tempDir);
     const onOffloaded = vi.fn();
-    installMicrocompactionGuard(sm as any, tempDir, logger, onOffloaded);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger, onOffloaded);
 
     const largeResult = createToolResult("bash", 10_000, "call-offloaded");
     sm.appendMessage(largeResult);
@@ -238,7 +238,7 @@ describe("installMicrocompactionGuard", () => {
   it("fires onOffloaded callback when tool result exceeds hard cap", () => {
     const sm = createMockSessionManager(tempDir);
     const onOffloaded = vi.fn();
-    installMicrocompactionGuard(sm as any, tempDir, logger, onOffloaded);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger, onOffloaded);
 
     const hugeResult = createToolResult("bash", 150_000, "call-hardcap");
     sm.appendMessage(hugeResult);
@@ -249,7 +249,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("mutates original message content in-place for pipeline visibility (threshold path)", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const largeResult = createToolResult("bash", 10_000, "call-pipeline");
     const originalContent = largeResult.content; // hold reference to original array
@@ -263,7 +263,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("mutates original message content in-place for pipeline visibility (hard cap path)", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const hugeResult = createToolResult("bash", 150_000, "call-pipeline-hardcap");
     const originalContent = hugeResult.content; // hold reference to original array
@@ -278,7 +278,7 @@ describe("installMicrocompactionGuard", () => {
   it("does not fire onOffloaded for under-threshold tool results", () => {
     const sm = createMockSessionManager(tempDir);
     const onOffloaded = vi.fn();
-    installMicrocompactionGuard(sm as any, tempDir, logger, onOffloaded);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger, onOffloaded);
 
     const smallResult = createToolResult("bash", 4000);
     sm.appendMessage(smallResult);
@@ -288,7 +288,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("includes disk path in the inline reference for file_read recovery", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const result = createToolResult("bash", 10_000, "call-pathcheck");
     sm.appendMessage(result);
@@ -306,7 +306,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("shows exec-based recovery hint for large offloaded results (>= 15K chars)", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // 20K chars for an MCP tool (threshold 15K, so it gets offloaded)
     const result = createToolResult("mcp__yfinance_get_data", 20_000, "call-exec-hint");
@@ -329,7 +329,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("shows read-tool recovery hint for smaller offloaded results (< 15K chars)", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // 10K chars for bash tool (threshold 8K, so it gets offloaded, but 10K < 15K)
     const result = createToolResult("bash", 10_000, "call-read-hint");
@@ -346,7 +346,7 @@ describe("installMicrocompactionGuard", () => {
 
   it("exec hint includes actual disk path in the python example", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const result = createToolResult("mcp__github_list_issues", 20_000, "call-path-in-exec");
     sm.appendMessage(result);
@@ -379,7 +379,7 @@ describe("content preview in offloaded tool results", () => {
 
   it("includes head preview section with first PREVIEW_HEAD_CHARS of content", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // Content must exceed 8K threshold to trigger offload
     const content = "A".repeat(PREVIEW_HEAD_CHARS) + "B".repeat(8000);
@@ -396,7 +396,7 @@ describe("content preview in offloaded tool results", () => {
 
   it("includes tail preview section with last PREVIEW_TAIL_CHARS of content", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // Content must exceed 8K threshold to trigger offload
     const content = "A".repeat(PREVIEW_HEAD_CHARS) + "B".repeat(7000) + "C".repeat(PREVIEW_TAIL_CHARS);
@@ -413,7 +413,7 @@ describe("content preview in offloaded tool results", () => {
 
   it("includes hasMore=true indicator in offloaded reference", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const result = createToolResult("bash", 10_000, "call-hasmore");
     sm.appendMessage(result);
@@ -426,7 +426,7 @@ describe("content preview in offloaded tool results", () => {
 
   it("omits tail section when content fits within head+tail chars (no overlap)", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // Use MCP tool with 15K threshold. Content of 1800 chars is below default
     // 8K threshold, so use a large-enough content that exceeds MCP threshold
@@ -459,7 +459,7 @@ describe("content preview in offloaded tool results", () => {
 
   it("concatenates multi-block content before head/tail extraction", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // Create multi-block content totaling 10000 chars (exceeds 8K threshold)
     const result: ReturnType<typeof createToolResult> = {
@@ -486,7 +486,7 @@ describe("content preview in offloaded tool results", () => {
 
   it("places recovery instruction before head preview for LLM visibility", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const result = createToolResult("bash", 10_000, "call-order");
     sm.appendMessage(result);
@@ -503,7 +503,7 @@ describe("content preview in offloaded tool results", () => {
 
   it("no longer produces old format with 'The agent's analysis'", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const result = createToolResult("bash", 10_000, "call-old-fmt");
     sm.appendMessage(result);
@@ -516,7 +516,7 @@ describe("content preview in offloaded tool results", () => {
 
   it("preserves [Tool result offloaded to disk: prefix for isAlreadyOffloaded compatibility", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const result = createToolResult("bash", 10_000, "call-prefix");
     sm.appendMessage(result);
@@ -529,7 +529,7 @@ describe("content preview in offloaded tool results", () => {
 
   it("hard-cap path also uses new preview format with hasMore=true", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const hugeResult = createToolResult("bash", 150_000, "call-hardcap-preview");
     sm.appendMessage(hugeResult);
@@ -588,7 +588,7 @@ describe("recovery read exemption", () => {
 
   it("skips offloading for recovery reads from tool-results/ directory", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // 20K chars -- above the 15K read threshold, should normally be offloaded
     const recoveryPath = join(tempDir, "tool-results", "call-original.json");
@@ -610,7 +610,7 @@ describe("recovery read exemption", () => {
 
   it("still offloads recovery reads exceeding the hard cap (100K)", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const recoveryPath = join(tempDir, "tool-results", "call-big.json");
     const result = createReadToolResult(150_000, recoveryPath);
@@ -626,7 +626,7 @@ describe("recovery read exemption", () => {
 
   it("still offloads normal read results from non-tool-results paths", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // 20K chars from a normal path -- should still be offloaded
     const normalPath = "/home/user/project/src/big-file.ts";
@@ -640,7 +640,7 @@ describe("recovery read exemption", () => {
 
   it("still offloads read results without details (no crash on undefined)", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // Use the standard createToolResult helper which has no details
     const result = createToolResult("read", 20_000, "call-no-details");
@@ -665,7 +665,7 @@ describe("recovery read exemption", () => {
 
   it("normalizes toolResult with empty content array and isError:false", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     const emptyResult = {
       role: "toolResult" as const,
@@ -705,7 +705,7 @@ describe("recovery read exemption", () => {
 
   it("normalizes toolResult with missing content field (undefined)", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // Shape produced by the original auto-background bug: SDK built a
     // toolResult message with content:undefined because the wrapper
@@ -730,7 +730,7 @@ describe("recovery read exemption", () => {
 
   it("does NOT normalize toolResult with empty content when isError:true", () => {
     const sm = createMockSessionManager(tempDir);
-    installMicrocompactionGuard(sm as any, tempDir, logger);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     // Error paths may legitimately arrive with an empty content array if the
     // SDK short-circuited before producing an error message. Preserve the
@@ -771,5 +771,44 @@ describe("getInlineThreshold", () => {
   it("returns 8K for standard tools", () => {
     expect(getInlineThreshold("bash")).toBe(MAX_INLINE_TOOL_RESULT_CHARS);
     expect(getInlineThreshold("memory_search")).toBe(MAX_INLINE_TOOL_RESULT_CHARS);
+  });
+
+});
+
+describe("microcompaction-guard honors design §1.4 file/dir mode invariants", () => {
+  let tempDir: string;
+  let logger: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "microcompaction-mode-"));
+    logger = createMockLogger();
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("creates the tool-results parent directory with mode 0o700 on offload", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    const largeResult = createToolResult("bash", 10_000, "mode-dir");
+    sm.appendMessage(largeResult);
+
+    const dirPath = join(tempDir, "tool-results");
+    expect(existsSync(dirPath)).toBe(true);
+    expect(statSync(dirPath).mode & 0o777).toBe(0o700);
+  });
+
+  it("writes offloaded tool-result files with mode 0o600", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    const largeResult = createToolResult("bash", 10_000, "mode-file");
+    sm.appendMessage(largeResult);
+
+    const diskPath = join(tempDir, "tool-results", "mode-file.json");
+    expect(existsSync(diskPath)).toBe(true);
+    expect(statSync(diskPath).mode & 0o777).toBe(0o600);
   });
 });

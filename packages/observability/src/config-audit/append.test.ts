@@ -36,31 +36,48 @@ function makeBaseRecord(overrides: Partial<ConfigWriteAuditRecord> = {}): Config
   const base: ConfigWriteAuditRecord = {
     traceSchema: "comis-config-audit",
     schemaVersion: 1,
-    phase: "write",
-    source: "config-patch-rpc",
+    ts: "2026-05-19T03:00:00.000Z",
+    source: "config-io",
+    event: "config.write",
+    result: "rename",
+
     configPath: "/home/test/.comis/config.yaml",
+    callerSource: "config-patch-rpc",
     pid: 12345,
     ppid: 1,
     argv: ["node", "daemon.js"],
     cwd: "/home/test",
     execArgv: [],
     watchMode: false,
+    watchSession: null,
+    watchCommand: null,
+
     existsBefore: true,
     previousHash:
       "0000000000000000000000000000000000000000000000000000000000000000",
-    previousBytes: 128,
-    previousStat: { dev: 64768, ino: 1, mode: 0o600, nlink: 1, uid: 1000, gid: 1000 },
-    hasMetaBefore: true,
     nextHash:
       "1111111111111111111111111111111111111111111111111111111111111111",
+    previousBytes: 128,
     nextBytes: 196,
-    nextStat: { dev: 64768, ino: 1, mode: 0o600, nlink: 1, uid: 1000, gid: 1000 },
-    hasMetaAfter: true,
+
+    previousDev: "64768",
+    nextDev: "64768",
+    previousIno: "1",
+    nextIno: "1",
+    previousMode: 0o600,
+    nextMode: 0o600,
+    previousNlink: 1,
+    nextNlink: 1,
+    previousUid: 1000,
+    nextUid: 1000,
+    previousGid: 1000,
+    nextGid: 1000,
+
     changedPathCount: 1,
-    result: "rename",
+    hasMetaBefore: true,
+    hasMetaAfter: true,
+
     suspicious: [],
-    ts: "2026-05-19T03:00:00.000Z",
-    tsMs: 1_779_148_800_000,
   };
   return { ...base, ...overrides };
 }
@@ -76,7 +93,8 @@ describe("config-audit/append", () => {
     const content = fs.readFileSync(filePath, "utf-8");
     expect(content.endsWith("\n")).toBe(true);
     const parsed = ConfigWriteAuditRecordSchema.parse(JSON.parse(content.trim()));
-    expect(parsed.source).toBe("config-patch-rpc");
+    expect(parsed.source).toBe("config-io");
+    expect(parsed.callerSource).toBe("config-patch-rpc");
     expect(parsed.pid).toBe(12345);
   });
 
@@ -185,7 +203,8 @@ describe("config-audit/append", () => {
 
     const contentSync = fs.readFileSync(filePathSync, "utf-8");
     const parsedSync = JSON.parse(contentSync.trim());
-    expect(parsedSync.source).toBe("config-patch-rpc");
+    expect(parsedSync.source).toBe("config-io");
+    expect(parsedSync.callerSource).toBe("config-patch-rpc");
 
     // Sync write should not have async-related artefacts.
     void filePathAsync;
@@ -207,7 +226,7 @@ describe("config-audit/append", () => {
       watchMode: false,
     });
 
-    expect(base.source).toBe("config-patch-rpc");
+    expect(base.callerSource).toBe("config-patch-rpc");
     expect(base.existsBefore).toBe(true);
     expect(base.previousBytes).toBeGreaterThan(0);
     expect(typeof base.previousHash).toBe("string");
@@ -231,15 +250,20 @@ describe("config-audit/append", () => {
 });
 
 // ---------------------------------------------------------------------------
-// chmod TOCTOU fix — ensureParentDir must NOT chmod a pre-existing parent
-// directory. The mkdir-with-mode-0o700 branch is the only place the parent's
-// mode is touched; the file itself is locked to 0o600 via fchmodSync inside
-// appendRegularFile.
+// Defensive 0o700 chmod on existing parent dir (OBS-REVIEW-01 fix).
+//
+// Non-observability subsystems (pino-roll, pi-mono) may create the parent
+// dir FIRST under default umask (0o755). mkdir's `mode` arg is silently
+// ignored when the dir already exists (recursive EEXIST). The fix:
+// defensively chmod to 0o700 after the mkdir attempt, gated on a
+// non-symlink lstat to preserve the §1.4 confused-deputy invariant
+// (the chmod-target must be a real directory, not a symlink to
+// operator-owned shared state outside our trust boundary).
 // ---------------------------------------------------------------------------
-describe("ensureParentDir — chmod TOCTOU fix", () => {
-  it("does NOT chmod a pre-existing parent directory", async () => {
+describe("ensureParentDir — defensive 0o700 chmod on existing parent dir", () => {
+  it("chmods a pre-existing 0o755 parent dir to 0o700 on first append", async () => {
     // Create parent with intentionally-different mode (0o755) so we can
-    // detect any chmod call back to 0o700.
+    // detect the defensive chmod fires.
     const auditDir = path.join(tmpDir, "config-audit");
     fs.mkdirSync(auditDir, { recursive: true });
     // umask may mask out group/other write bits — re-chmod explicitly so
@@ -252,15 +276,34 @@ describe("ensureParentDir — chmod TOCTOU fix", () => {
     expect(result.ok).toBe(true);
 
     const modeAfter = fs.statSync(auditDir).mode & 0o777;
-    // The existing-parent chmod-else branch is removed, so the
-    // pre-existing 0o755 mode is preserved.
-    expect(modeAfter).toBe(0o755);
+    // The defensive chmod fires after the EEXIST mkdir attempt.
+    expect(modeAfter).toBe(0o700);
   });
 
-  it("still creates the parent with 0o700 when it does NOT exist (regression guard)", async () => {
+  it("does NOT chmod a symlinked parent dir (confused-deputy guard via lstat)", async () => {
+    // Real dir is at 0o755 — that's operator-owned shared state OUTSIDE
+    // our trust boundary. The lstat-isSymbolicLink gate must short-circuit
+    // the defensive chmod so the real-dir mode is preserved.
+    const realDir = path.join(tmpDir, "real-config-audit");
+    const linkDir = path.join(tmpDir, "evil-link");
+    fs.mkdirSync(realDir);
+    fs.chmodSync(realDir, 0o755);
+    fs.symlinkSync(realDir, linkDir);
+
+    const filePath = path.join(linkDir, "config-audit.jsonl");
+    // The actual append may or may not succeed (the symlink-rejection
+    // inside appendRegularFile fires) — what matters is the real dir's
+    // mode is unchanged.
+    await appendConfigAuditRecord({ filePath, record: makeBaseRecord() });
+
+    // Real-dir mode preserved at 0o755 — confused-deputy guard held.
+    expect(fs.statSync(realDir).mode & 0o777).toBe(0o755);
+  });
+
+  it("still creates a fresh parent with 0o700 when it does NOT exist (regression guard)", async () => {
     // The "fresh create" case stays at 0o700 because the
-    // `mkdirSync({mode: 0o700})` branch keeps that responsibility
-    // after the chmod-else branch is removed.
+    // `mkdirSync({mode: 0o700})` branch creates it at that mode and the
+    // defensive chmod re-asserts the invariant.
     const auditDir = path.join(tmpDir, "fresh-audit");
     expect(fs.existsSync(auditDir)).toBe(false);
 
@@ -312,7 +355,9 @@ describe("encodeRecord — sentinel on serialization failure", () => {
       expect(parsed.traceSchema).toBe("comis-config-audit");
       expect(parsed.schemaVersion).toBe(1);
       expect(parsed.__serializationError).toBe("record-not-serializable");
-      expect(typeof parsed.tsMs).toBe("number");
+      // Design §9.2 uses `ts` (ISO string). `tsMs` was dropped in 260519-rrm.
+      expect(typeof parsed.ts).toBe("string");
+      expect(Number.isFinite(Date.parse(parsed.ts))).toBe(true);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

@@ -20,6 +20,8 @@
  * @module
  */
 
+import { fileURLToPath } from "node:url";
+
 import type { Command } from "commander";
 import chalk from "chalk";
 import {
@@ -63,6 +65,10 @@ export function buildCliSyncToolingAuditBase(
       // eslint-disable-next-line no-restricted-syntax -- CLI trust-boundary read of process.* for audit-log provenance
       execArgv: process.execArgv,
       watchMode: false,
+      // Kept uniform with the daemon hook so the non-comis-argv
+      // heuristic stays consistent across both write sites even though
+      // CLI argv typically already contains "comis".
+      entryScript: fileURLToPath(import.meta.url),
     });
   } catch {
     return undefined;
@@ -227,11 +233,26 @@ export function registerConfigAuditCommand(configCmd: Command): void {
 }
 
 /**
- * Pretty-print one config-audit record.
+ * Pretty-print one config-audit record (design §9.2).
+ *
+ * Header columns: `ts  callerSource  result`. `callerSource` is the
+ * call-site provenance (e.g., `last-known-good-save`, `config-patch-rpc`,
+ * `cli-sync-tooling`) — that's what operators want to see when triaging.
+ * The design §9.2 `source` field is the fixed literal `"config-io"` for
+ * every write, so it's omitted from the header.
  */
 function renderConfigAuditRecord(r: Record<string, unknown>): void {
   const ts = typeof r.ts === "string" ? r.ts : "(no-ts)";
-  const source = typeof r.source === "string" ? r.source : "?";
+  // Prefer the design §9.2 `callerSource`; fall back to legacy `source`
+  // when reading a pre-260519-rrm record (the daemon scrubber is the
+  // documented path to migrate those; this fallback keeps a transitional
+  // log readable until scrub runs).
+  const callerSource =
+    typeof r.callerSource === "string"
+      ? r.callerSource
+      : typeof r.source === "string"
+        ? r.source
+        : "?";
   const result = typeof r.result === "string" ? r.result : "?";
   const pid = typeof r.pid === "number" ? r.pid : "?";
   const ppid = typeof r.ppid === "number" ? r.ppid : "?";
@@ -242,7 +263,7 @@ function renderConfigAuditRecord(r: Record<string, unknown>): void {
   const suspicious = Array.isArray(r.suspicious) ? r.suspicious : [];
   const argv = Array.isArray(r.argv) ? r.argv : [];
 
-  const header = chalk.bold(`${ts}  ${source}  ${result}`);
+  const header = chalk.bold(`${ts}  ${callerSource}  ${result}`);
   console.log(header);
   console.log(
     `  pid=${pid} ppid=${ppid} configPath=${configPath}`,

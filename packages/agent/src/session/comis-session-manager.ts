@@ -17,11 +17,12 @@
  */
 
 import { SessionManager as SdkSessionManager } from "@earendil-works/pi-coding-agent";
-import { formatSessionKey, safePath, systemNowDate, type SessionKey } from "@comis/core";
-import type { ComisLogger, FileLockPort } from "@comis/core";
+import { formatSessionKey, safePath, systemNowDate, systemNowMs, type SessionKey } from "@comis/core";
+import type { ComisLogger, FileLockPort, TypedEventBus } from "@comis/core";
+import { ensureContainedDir, writeRegularFile, type SessionTrajectoryHandleRegistry } from "@comis/observability";
 import { suppressError, type Result } from "@comis/shared";
-import { mkdir, unlink, rm, rmdir } from "node:fs/promises";
-import { existsSync, writeFileSync, readFileSync } from "node:fs";
+import { unlink, rm, rmdir } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { sessionKeyToPath } from "./session-key-mapper.js";
 import { withSessionLock } from "./session-write-lock.js";
@@ -54,6 +55,30 @@ export interface ComisSessionManagerDeps {
    * directory'. The public Result API is unchanged either way.
    */
   logger?: ComisLogger;
+  /**
+   * Optional TypedEventBus. When provided, `destroySession` emits a
+   * `session:ended` event with `exitReason: "destroyed"` BEFORE unlinking
+   * the JSONL transcript (design §6.4 mapping table — `session.ended`
+   * fires on session-destroy, NOT per-turn). When omitted (legacy / test
+   * harnesses, ephemeral sub-agent path), the emit step is a silent no-op
+   * and `destroySession` still unlinks the file as before.
+   *
+   * Production wiring: daemon's setup-agents-runtime threads
+   * `container.eventBus` here.
+   */
+  eventBus?: TypedEventBus;
+  /**
+   * Optional session-scoped trajectory recorder registry. When provided,
+   * `destroySession` calls `trajectoryRegistry.close(formattedKey)` AFTER
+   * the `session:ended` emit and BEFORE unlinking the JSONL — the
+   * registry's `flushAndClose` drains the writer's queue tail so the
+   * just-emitted `session.ended` JSONL line lands on disk before the
+   * recorder tears down (design §6.5).
+   *
+   * Production wiring: daemon's setup-agents-runtime threads the
+   * singleton registry from setup-agents-registry here.
+   */
+  trajectoryRegistry?: SessionTrajectoryHandleRegistry;
 }
 
 /**
@@ -183,8 +208,23 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       const sessionKeyStr = formatSessionKey(sessionKey);
 
       return withSessionLock(deps.fileLock, deps.lockDir, sessionKeyStr, async () => {
-        // Ensure the directory tree exists for new sessions
-        await mkdir(dirname(sessionPath), { recursive: true });
+        // Ensure the directory tree exists for new sessions. Migrated to
+        // `ensureContainedDir` (Phase 48 OBS-HARD-03) to honor design §1.4
+        // mode invariant — every artifact dir under ~/.comis/ must be
+        // `0o700`. Result.err is logged at WARN per AGENTS.md §2.1; the
+        // contract is best-effort (SdkSessionManager.open below surfaces
+        // real errors via its own throw path).
+        const dirResult = ensureContainedDir({
+          dir: dirname(sessionPath),
+          mode: 0o700,
+          confinedBaseDir: deps.sessionBaseDir,
+        });
+        if (!dirResult.ok) {
+          deps.logger?.warn(
+            { err: dirResult.error, hint: "Session directory creation failed; SdkSessionManager.open may also fail", errorKind: "resource" as const, submodule: "comis-session-manager" },
+            "Session dir rejected by fs-safe substrate",
+          );
+        }
 
         // SdkSessionManager.open() handles both cases:
         // - Existing file: loads entries from disk, sets flushed=true
@@ -217,6 +257,36 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       const sessionPath = sessionKeyToPath(sessionKey, deps.sessionBaseDir);
       const sessionKeyStr = formatSessionKey(sessionKey);
 
+      // Emit session:ended BEFORE registry close — the bridge translates
+      // the EventBus emit to a recorder.recordEvent call (sync), which
+      // enqueues the JSONL line. trajectoryRegistry.close then runs
+      // flushAndClose which awaits the queue tail, guaranteeing the
+      // session.ended line lands on disk. Design §6.4 mapping:
+      // "(session) ended → session.ended" fires here, NOT on per-turn
+      // agent_end. Counters are zero placeholders — the session manager
+      // doesn't accumulate per-session totals; the `exitReason:"destroyed"`
+      // discriminator distinguishes from a normal end-of-turn close. See
+      // 260519-tlx PLAN §F.4 note for the rationale.
+      if (deps.eventBus !== undefined) {
+        deps.eventBus.emit("session:ended", {
+          agentId: "",
+          sessionKey: sessionKeyStr,
+          traceId: sessionKeyStr,
+          totalTurns: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          durationMs: 0,
+          exitReason: "destroyed",
+          timestamp: systemNowMs(),
+        });
+      }
+      if (deps.trajectoryRegistry !== undefined) {
+        // Best-effort: close() swallows per-entry errors. Awaiting it
+        // ensures the flush-tail completes before the JSONL unlink races
+        // the bridge's recordEvent enqueue.
+        await deps.trajectoryRegistry.close(sessionKeyStr);
+      }
+
       await withSessionLock(deps.fileLock, deps.lockDir, sessionKeyStr, async () => {
         try { await unlink(sessionPath); } catch { /* ENOENT ok */ }
         const sessionDir = dirname(sessionPath);
@@ -247,8 +317,11 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       // refactor switches the suffix or returns a directory), the
       // `replace(/\.jsonl$/, ...)` below would be a no-op and
       // metadataPath would equal sessionPath -- the subsequent
-      // writeFileSync would clobber the JSONL transcript with a JSON
+      // writeRegularFile would clobber the JSONL transcript with a JSON
       // metadata object. Refuse to write rather than risk data loss.
+      // fs-safe-allowed: JSONL transcript clobber-protection; the substrate
+      // call below cannot itself enforce this invariant — the suffix check
+      // is the only barrier between transcript-safe and transcript-clobber.
       if (!sessionPath.endsWith(".jsonl")) {
         return;
       }
@@ -269,7 +342,21 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           ...(metadata.sessionEnd && { sessionEnd: metadata.sessionEnd }),
           lastUpdated: systemNowDate().toISOString(),
         };
-        writeFileSync(metadataPath, JSON.stringify(merged, null, 2) + "\n");
+        // Migrated to `writeRegularFile` (Phase 48 OBS-HARD-03) so the
+        // sentinel metadata file lands at mode `0o600` per design §1.4.
+        // Fire-and-forget contract preserved — Result.err is logged at
+        // WARN but never propagates to the caller.
+        const writeResult = writeRegularFile({
+          path: metadataPath,
+          content: JSON.stringify(merged, null, 2) + "\n",
+          confinedBaseDir: deps.sessionBaseDir,
+        });
+        if (!writeResult.ok) {
+          deps.logger?.warn(
+            { err: writeResult.error, hint: "Session metadata write failed; subsequent /status reads may see stale state", errorKind: "resource" as const, submodule: "comis-session-manager" },
+            "Session metadata write rejected by fs-safe substrate",
+          );
+        }
       } catch {
         // Fire-and-forget: metadata write failure must not affect execution
       }

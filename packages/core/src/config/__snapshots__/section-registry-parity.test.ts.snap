@@ -4025,17 +4025,18 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
 "[
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true
+      "includeSystem": true,
+      "maxFileBytes": 52428800
     },
     "immutable": false,
     "path": "diagnostics.cacheTrace",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": false,
     "path": "diagnostics.cacheTrace.enabled",
     "type": "boolean"
@@ -4062,6 +4063,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
     "immutable": false,
     "path": "diagnostics.cacheTrace.includeSystem",
     "type": "boolean"
+  },
+  {
+    "default": 52428800,
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.maxFileBytes",
+    "type": "integer"
   },
   {
     "default": {
@@ -9218,10 +9225,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "cacheTrace": {
-        "enabled": false,
+        "enabled": true,
         "includeMessages": false,
         "includePrompt": true,
-        "includeSystem": true
+        "includeSystem": true,
+        "maxFileBytes": 52428800
       },
       "configAudit": {
         "enabled": true,
@@ -9240,17 +9248,18 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true
+      "includeSystem": true,
+      "maxFileBytes": 52428800
     },
     "immutable": false,
     "path": "diagnostics.cacheTrace",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": false,
     "path": "diagnostics.cacheTrace.enabled",
     "type": "boolean"
@@ -9277,6 +9286,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "diagnostics.cacheTrace.includeSystem",
     "type": "boolean"
+  },
+  {
+    "default": 52428800,
+    "immutable": false,
+    "path": "diagnostics.cacheTrace.maxFileBytes",
+    "type": "integer"
   },
   {
     "default": {
@@ -18226,10 +18241,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
   "additionalProperties": false,
   "default": {
     "cacheTrace": {
-      "enabled": false,
+      "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true
+      "includeSystem": true,
+      "maxFileBytes": 52428800
     },
     "configAudit": {
       "enabled": true,
@@ -18246,14 +18262,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
     "cacheTrace": {
       "additionalProperties": false,
       "default": {
-        "enabled": false,
+        "enabled": true,
         "includeMessages": false,
         "includePrompt": true,
-        "includeSystem": true
+        "includeSystem": true,
+        "maxFileBytes": 52428800
       },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "filePath": {
@@ -18270,10 +18287,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
         "includeSystem": {
           "default": true,
           "type": "boolean"
+        },
+        "maxFileBytes": {
+          "default": 52428800,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
         }
       },
       "required": [
         "enabled",
+        "maxFileBytes",
         "includeMessages",
         "includePrompt",
         "includeSystem"
@@ -26978,10 +27002,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "additionalProperties": false,
       "default": {
         "cacheTrace": {
-          "enabled": false,
+          "enabled": true,
           "includeMessages": false,
           "includePrompt": true,
-          "includeSystem": true
+          "includeSystem": true,
+          "maxFileBytes": 52428800
         },
         "configAudit": {
           "enabled": true,
@@ -26998,14 +27023,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "cacheTrace": {
           "additionalProperties": false,
           "default": {
-            "enabled": false,
+            "enabled": true,
             "includeMessages": false,
             "includePrompt": true,
-            "includeSystem": true
+            "includeSystem": true,
+            "maxFileBytes": 52428800
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "filePath": {
@@ -27022,10 +27048,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "includeSystem": {
               "default": true,
               "type": "boolean"
+            },
+            "maxFileBytes": {
+              "default": 52428800,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           "required": [
             "enabled",
+            "maxFileBytes",
             "includeMessages",
             "includePrompt",
             "includeSystem"

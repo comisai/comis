@@ -325,6 +325,12 @@ export function createCacheBreakDetector(
     reset(): void {
       sessionDetectorState.clear();
     },
+
+    getCallCount(sessionKey: string): number | undefined {
+      // Direct map read — no upsert. Returns undefined when no state exists
+      // (cold start before the first recordPromptState call).
+      return sessionDetectorState.get(sessionKey)?.currentSnapshot?.callCount;
+    },
   };
 }
 

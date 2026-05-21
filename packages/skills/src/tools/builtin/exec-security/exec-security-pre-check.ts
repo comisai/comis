@@ -223,6 +223,59 @@ export function extractHeredoc(
   return { command: match[1], input: match[3] };
 }
 
+/**
+ * Auto-rewrite `<interp> -c "<multiline body>"` to the stdin form
+ * (`<interp> -` + `input: <body>`) before security validation.
+ *
+ * LLMs frequently send `python3 -c "import x\nprint(1)"` patterns where the
+ * quoted body contains a literal `\n` newline character. Gate 0 correctly
+ * blocks newlines in commands (injection prevention), so the call fails with
+ * `[invalid_value]`. The LLM then retries the same pattern several times.
+ *
+ * This rewrite extracts the body and routes it via stdin (the same
+ * mechanism `extractHeredoc` uses) so the script runs without hitting the
+ * newline gate. The body is preserved verbatim — `\n` is the literal
+ * U+000A character the LLM emitted inside the quotes; we do NOT unescape
+ * `\n` / `\t` (the LLM either meant a real newline or a literal backslash-n,
+ * and the former is the common case that triggers Gate 0).
+ *
+ * Only rewrites when ALL of:
+ *   - the interpreter is in the allowed set (python/python3, node, bash, sh,
+ *     ruby, perl, php) — the same set extractHeredoc accepts;
+ *   - the captured body contains at least one `\n` (single-line `-c` calls
+ *     are not the source of Gate-0 retries and stay untouched);
+ *   - the caller's `input` parameter is undefined (do not clobber caller-
+ *     supplied stdin — that would silently change semantics).
+ *
+ * A command that contains BOTH `-c "..."` AND a heredoc is malformed and
+ * falls through to Gate-0; the caller should use one form or the other.
+ *
+ * Returns null if no rewrite applies.
+ */
+export function extractDashCArg(
+  command: string,
+  input: string | undefined,
+): { command: string; input: string } | null {
+  if (input !== undefined) return null;
+
+  // Anchored at start; trailing whitespace tolerated. Capture groups:
+  //   1: interpreter prefix (incl. trailing whitespace)
+  //   2: opening quote character (single or double)
+  //   3: body — anything until the matching closing quote on the same string
+  const match = command.match(
+    /^((?:python3?|node|bash|sh|ruby|perl|php)\s+)-c\s+(["'])([\s\S]*?)\2\s*$/,
+  );
+  if (!match) return null;
+
+  const interpreter = match[1].trim();
+  const body = match[3];
+
+  // Single-line bodies are not the Gate-0 retry source; leave them.
+  if (!body.includes("\n")) return null;
+
+  return { command: `${interpreter} -`, input: body };
+}
+
 // --------------------------------------------------------------------------
 // Gate 6: IFS injection detection
 // --------------------------------------------------------------------------

@@ -138,4 +138,17 @@ export interface RequestBodyInjectorConfig {
    *  Counts tokens under 5m vs 1h cache_control markers for accurate cost attribution.
    *  The bridge normalizes these estimates against the actual SDK-reported cacheWriteTokens. */
   onTtlSplitEstimate?: (estimate: { cacheWrite5mTokens: number; cacheWrite1hTokens: number }) => void;
+  /**
+   * Getter for the per-session call counter (1-indexed turn number within
+   * the current agent session — turn 1 = first model call after session
+   * start). Returns undefined when the session has no detector state yet
+   * (cold start).
+   *
+   * The factory threads this into `upgradeSdkMarkers` so the 5m → 1h
+   * marker promotion only fires from turn 2 onward; first-turn writes
+   * that get evicted server-side would otherwise pay the 1h premium for
+   * nothing. Wired from the CacheBreakDetector's `getCallCount` getter
+   * in executor-stream-setup.ts.
+   */
+  getCallCount?: () => number | undefined;
 }

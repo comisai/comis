@@ -298,6 +298,72 @@ describe("mcp-domain contracts", () => {
     ).toThrow();
   });
 
+  // ───────────────────────────────────────────────────────────────────────
+  // Phase 47 (D-04): mcp.connect persistence + warning response fields (additive)
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("mcp.connect: response accepts persistence:'persisted' (no warning)", () => {
+    expect(() =>
+      McpConnectContract.response.parse({
+        name: "ctx7",
+        status: "connected",
+        toolCount: 2,
+        tools: ["s"],
+        persistence: "persisted",
+      }),
+    ).not.toThrow();
+  });
+
+  it("mcp.connect: response accepts persistence:'runtime_only' with warning string", () => {
+    expect(() =>
+      McpConnectContract.response.parse({
+        name: "ctx7",
+        status: "connected",
+        toolCount: 2,
+        tools: ["s"],
+        persistence: "runtime_only",
+        warning: "EACCES: write failed",
+      }),
+    ).not.toThrow();
+  });
+
+  it("mcp.connect: response accepts persistence:'skipped' (no warning)", () => {
+    expect(() =>
+      McpConnectContract.response.parse({
+        name: "ctx7",
+        status: "connected",
+        toolCount: 2,
+        tools: ["s"],
+        persistence: "skipped",
+      }),
+    ).not.toThrow();
+  });
+
+  it("mcp.connect: response rejects unknown persistence enum value", () => {
+    expect(() =>
+      McpConnectContract.response.parse({
+        name: "ctx7",
+        status: "connected",
+        toolCount: 2,
+        tools: ["s"],
+        persistence: "bogus",
+      }),
+    ).toThrow();
+  });
+
+  it("mcp.connect: response rejects non-string warning value", () => {
+    expect(() =>
+      McpConnectContract.response.parse({
+        name: "ctx7",
+        status: "connected",
+        toolCount: 2,
+        tools: ["s"],
+        persistence: "runtime_only",
+        warning: 42 as unknown as string,
+      }),
+    ).toThrow();
+  });
+
   // --- mcp.disconnect ------------------------------------------------------
 
   it("mcp.disconnect: request requires server_name", () => {
@@ -335,6 +401,62 @@ describe("mcp-domain contracts", () => {
       McpDisconnectContract.response.parse({
         name: "ctx7",
         status: "connected",
+      }),
+    ).toThrow();
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Phase 47 (D-04): mcp.disconnect persistence + warning response fields (additive)
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("mcp.disconnect: response accepts persistence:'persisted' (no warning)", () => {
+    expect(() =>
+      McpDisconnectContract.response.parse({
+        name: "ctx7",
+        status: "disconnected",
+        persistence: "persisted",
+      }),
+    ).not.toThrow();
+  });
+
+  it("mcp.disconnect: response accepts persistence:'runtime_only' with warning string", () => {
+    expect(() =>
+      McpDisconnectContract.response.parse({
+        name: "ctx7",
+        status: "disconnected",
+        persistence: "runtime_only",
+        warning: "ENOENT: config.yaml missing",
+      }),
+    ).not.toThrow();
+  });
+
+  it("mcp.disconnect: response accepts persistence:'skipped' (no warning)", () => {
+    expect(() =>
+      McpDisconnectContract.response.parse({
+        name: "ctx7",
+        status: "disconnected",
+        persistence: "skipped",
+      }),
+    ).not.toThrow();
+  });
+
+  it("mcp.disconnect: response rejects unknown persistence enum value", () => {
+    expect(() =>
+      McpDisconnectContract.response.parse({
+        name: "ctx7",
+        status: "disconnected",
+        persistence: "bogus",
+      }),
+    ).toThrow();
+  });
+
+  it("mcp.disconnect: response rejects non-string warning value", () => {
+    expect(() =>
+      McpDisconnectContract.response.parse({
+        name: "ctx7",
+        status: "disconnected",
+        persistence: "runtime_only",
+        warning: { msg: "object" } as unknown as string,
       }),
     ).toThrow();
   });

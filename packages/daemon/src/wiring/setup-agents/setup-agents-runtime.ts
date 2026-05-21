@@ -297,6 +297,11 @@ export async function setupSingleAgent(
     // union to the legacy 'locked' | 'error' string. Enables operator
     // triage of EACCES / disk-full vs lock contention.
     logger: agentLogger,
+    // Bus + registry let destroySession emit `session:ended` and drain
+    // the trajectory recorder before unlinking the JSONL (260519-tlx
+    // Gap F, design §6.4).
+    eventBus: container.eventBus,
+    trajectoryRegistry: deps.trajectoryRegistry,
   });
 
   // Clean up stale lock sentinel files from previous daemon runs
@@ -320,6 +325,7 @@ export async function setupSingleAgent(
   // Resolve relative discoveryPaths against dataDir so ./skills -> ~/.comis/skills
   const dataDir = container.config.dataDir || ".";
   const agentSkillsDir = safePath(dir, "skills");  // dir = agent workspace from resolveWorkspaceDir()
+  // fs-safe-allowed: per-agent workspace skills dir (`<agentWorkspace>/skills`); workspace dir is operator-configured, not ~/.comis/ directly
   mkdirSync(agentSkillsDir, { recursive: true });
   const resolvedPaths = skillsConfig.discoveryPaths.map((p: string) =>
     isAbsolute(p) ? p : resolve(dataDir, p),
@@ -524,6 +530,11 @@ export async function setupSingleAgent(
           eventTypes: container.config.diagnostics.trajectory.eventTypes,
         }
       : undefined,
+    // Session-scoped trajectory recorder registry — same instance for
+    // every per-agent executor so a session's recorder spans every
+    // turn (design §6.4 + §6.5 + §6.8). Daemon shutdown drains via
+    // `closeAll()` on the registry surfaced through AgentsResult.
+    trajectoryRegistry: deps.trajectoryRegistry,
     // Forward AppConfig.diagnostics.cacheTrace into the executor. The
     // per-session cache-trace recorder reads this; when omitted or
     // `enabled: false`, the recorder is a no-op.
@@ -534,6 +545,7 @@ export async function setupSingleAgent(
           includeMessages: container.config.diagnostics.cacheTrace.includeMessages,
           includePrompt: container.config.diagnostics.cacheTrace.includePrompt,
           includeSystem: container.config.diagnostics.cacheTrace.includeSystem,
+          maxFileBytes: container.config.diagnostics.cacheTrace.maxFileBytes,
         }
       : undefined,
     geminiCacheManager: deps.geminiCacheManager,  // Gemini cache lifecycle manager

@@ -186,14 +186,18 @@ describe("last-known-good config", () => {
       expect(log.length).toBe(1);
       const record = JSON.parse(log[0]!) as {
         source: string;
+        callerSource: string;
         result: string;
         configPath: string;
-        phase: string;
+        event: string;
       };
-      expect(record.source).toBe("last-known-good-save");
+      // Design §9.2: `source` is the fixed literal "config-io"; the call
+      // site identity lives on `callerSource`.
+      expect(record.source).toBe("config-io");
+      expect(record.callerSource).toBe("last-known-good-save");
       expect(record.result).toBe("rename");
       expect(record.configPath).toBe(result.path);
-      expect(record.phase).toBe("write");
+      expect(record.event).toBe("config.write");
     });
 
     it("writes a config-audit JSONL line for a successful restore", () => {
@@ -209,8 +213,14 @@ describe("last-known-good config", () => {
 
       const log = readFileSync(auditLogPath, "utf-8").trim().split("\n");
       expect(log.length).toBe(1);
-      const record = JSON.parse(log[0]!) as { source: string; result: string };
-      expect(record.source).toBe("last-known-good-restore");
+      const record = JSON.parse(log[0]!) as {
+        source: string;
+        callerSource: string;
+        result: string;
+      };
+      // Design §9.2: `source` is "config-io"; callerSource holds the legacy enum.
+      expect(record.source).toBe("config-io");
+      expect(record.callerSource).toBe("last-known-good-restore");
       expect(record.result).toBe("rename");
     });
   });

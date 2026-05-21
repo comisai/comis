@@ -6260,31 +6260,41 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     );
   });
 
-  it("constructs the recorder after the formattedKey materialization (line 544 region)", async () => {
+  it("resolves the recorder after the formattedKey materialization (registry or legacy fallback)", async () => {
     const src = await readPiExecutorSrc();
     const formattedKeyIdx = src.indexOf(
       "const formattedKey = formatSessionKey(sessionKey)",
     );
-    const recorderConstructIdx = src.indexOf("createTrajectoryRecorder({");
+    // Post-260519-rrm the recorder may come from the registry's
+    // getOrCreate OR the legacy per-turn createTrajectoryRecorder fall-
+    // back path. Either expression appears AFTER formattedKey lands.
+    const registryIdx = src.indexOf(
+      "deps.trajectoryRegistry.getOrCreate(",
+    );
+    const legacyIdx = src.indexOf("createTrajectoryRecorder(trajectoryInit");
     expect(formattedKeyIdx).toBeGreaterThan(0);
-    expect(recorderConstructIdx).toBeGreaterThan(formattedKeyIdx);
+    expect(Math.min(registryIdx, legacyIdx)).toBeGreaterThan(formattedKeyIdx);
   });
 
-  it("attaches the bridge subscription only when the recorder is non-null (disabled state guard)", async () => {
+  it("attaches the bridge subscription only when the recorder is non-null (legacy fallback) or delegates to the registry", async () => {
     const src = await readPiExecutorSrc();
-    // The guard pattern: `if (trajectoryRecorder !== null) { trajectoryUnsubscribe = attachTrajectoryToEventBus(...) }`.
+    // Either: legacy `if (trajectoryRecorder !== null) { ... attachTrajectoryToEventBus }`
+    // (the fall-back path), OR the registry-owned subscription via
+    // `getOrCreate` (the production session-scoped path).
     expect(src).toMatch(
       /if\s*\(\s*trajectoryRecorder\s*!==\s*null\s*\)[\s\S]*?attachTrajectoryToEventBus/m,
     );
+    expect(src).toMatch(/deps\.trajectoryRegistry\.getOrCreate\(/);
   });
 
-  it("cleans up the recorder and bridge subscription in the runner-block finally", async () => {
+  it("legacy fallback path (no registry) still cleans up via the runner-block finally", async () => {
     const src = await readPiExecutorSrc();
-    // The cleanup follows postExecution in the existing finally block:
-    //   try { trajectoryUnsubscribe?.(); }
-    //   if (trajectoryRecorder !== null) await trajectoryRecorder.flushAndClose();
+    // The cleanup follows postExecution in the existing finally block;
+    // the registry path skips this branch (registry owns close()).
     expect(src).toMatch(/trajectoryUnsubscribe\?\.\(\)/);
     expect(src).toMatch(/await\s+trajectoryRecorder\.flushAndClose\(\)/);
+    // Registry-present branch shortcuts the cleanup.
+    expect(src).toMatch(/deps\.trajectoryRegistry\s*===\s*undefined/);
   });
 
   it("forwards deps.trajectoryConfig fields into the recorder init", async () => {
@@ -6292,5 +6302,32 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(src).toMatch(/deps\.trajectoryConfig\?\.enabled/);
     expect(src).toMatch(/deps\.trajectoryConfig\?\.dir/);
     expect(src).toMatch(/deps\.trajectoryConfig\?\.maxFileBytes/);
+  });
+
+  it("trajectory_init_includes_sessionFile_from_sessionAdapter (260519-tlx Gap D2 — pointer sidecar)", async () => {
+    // Per design §6.1, the pointer file <sessionFile>.trajectory-path.json
+    // is written by createTrajectoryRecorder ONLY when init.sessionFile
+    // is provided. The recorder writer is already wired up via 260519-rrm
+    // Task 2 — this site is the missing production caller. Threading
+    // sessionAdapter.getSessionPath(sessionKey) into trajectoryInit makes
+    // the pointer sidecar land on disk for every live session.
+    const src = await readPiExecutorSrc();
+    expect(src).toMatch(/sessionFile:\s*sessionAdapter\.getSessionPath\(sessionKey\)/);
+  });
+
+  it("sessionFile lands inside the trajectoryInit literal (not on the bridge or registry call)", async () => {
+    // Anchor the assertion: the sessionFile field must appear inside the
+    // `const trajectoryInit = { ... };` literal, between agentId and
+    // model. This is the single site that flows into both the registry
+    // path and the legacy fallback (registry.getOrCreate or
+    // createTrajectoryRecorder respectively).
+    const src = await readPiExecutorSrc();
+    const trajectoryInitStart = src.indexOf("const trajectoryInit = {");
+    expect(trajectoryInitStart).toBeGreaterThan(0);
+    // Walk forward to the closing `};` for the literal.
+    const closeIdx = src.indexOf("};", trajectoryInitStart);
+    expect(closeIdx).toBeGreaterThan(trajectoryInitStart);
+    const initLiteral = src.slice(trajectoryInitStart, closeIdx);
+    expect(initLiteral).toMatch(/sessionFile:\s*sessionAdapter\.getSessionPath\(sessionKey\)/);
   });
 });

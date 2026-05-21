@@ -2131,6 +2131,200 @@ describe("createSubAgentRunner", () => {
       expect(run.announceChannelId).toBe("123");
     });
   });
+
+  // -----------------------------------------------------------------------
+  // Hash-dedup at spawn entry (Task wkj — duplicate spawn protection)
+  // -----------------------------------------------------------------------
+  describe("hash-dedup against in-flight runs", () => {
+    it("dedups same caller and task while first run is still in flight", () => {
+      // First spawn never resolves -> first run stays "running" indefinitely
+      vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+
+      const runner = createSubAgentRunner(deps);
+      const runId1 = runner.spawn({
+        task: "fetch AAPL price",
+        agentId: "researcher",
+        callerSessionKey: "tenant:user1:chan1",
+      });
+
+      expect(runner.getRunStatus(runId1)?.status).toBe("running");
+      expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+
+      const runId2 = runner.spawn({
+        task: "fetch AAPL price",
+        agentId: "researcher",
+        callerSessionKey: "tenant:user1:chan1",
+      });
+
+      expect(runId2).toBe(runId1);
+      expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+
+      const dedupInfo = runner.lastSpawnDedupInfo();
+      expect(dedupInfo).toBeDefined();
+      expect(dedupInfo!.deduped).toBe(true);
+      expect(dedupInfo!.existingRunId).toBe(runId1);
+      expect(typeof dedupInfo!.ageMs).toBe("number");
+      expect(dedupInfo!.ageMs).toBeGreaterThanOrEqual(0);
+
+      expect(runner.getRunStatus(runId1)?.status).toBe("running");
+      expect(runner.listRuns()).toHaveLength(1);
+    });
+
+    it("does not dedup spawns with different task strings from same caller", () => {
+      vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+
+      const runner = createSubAgentRunner(deps);
+      const runId1 = runner.spawn({
+        task: "task ONE",
+        agentId: "researcher",
+        callerSessionKey: "tenant:user1:chan1",
+      });
+      const runId2 = runner.spawn({
+        task: "task TWO",
+        agentId: "researcher",
+        callerSessionKey: "tenant:user1:chan1",
+      });
+
+      expect(runId1).not.toBe(runId2);
+      expect(deps.executeAgent).toHaveBeenCalledTimes(2);
+      expect(runner.lastSpawnDedupInfo()).toBeUndefined();
+      expect(runner.listRuns()).toHaveLength(2);
+    });
+
+    it("does not dedup spawns across different caller session keys", () => {
+      vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+
+      const runner = createSubAgentRunner(deps);
+      const runId1 = runner.spawn({
+        task: "T",
+        agentId: "A",
+        callerSessionKey: "tenant:user1:chan1",
+      });
+      const runId2 = runner.spawn({
+        task: "T",
+        agentId: "A",
+        callerSessionKey: "tenant:user2:chan2",
+      });
+
+      expect(runId1).not.toBe(runId2);
+      expect(deps.executeAgent).toHaveBeenCalledTimes(2);
+      expect(runner.lastSpawnDedupInfo()).toBeUndefined();
+    });
+
+    it("does not dedup when callerSessionKey is undefined for top-level spawn", () => {
+      vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+
+      const runner = createSubAgentRunner(deps);
+      const runId1 = runner.spawn({ task: "T", agentId: "A" });
+      const runId2 = runner.spawn({ task: "T", agentId: "A" });
+
+      expect(runId1).not.toBe(runId2);
+      expect(deps.executeAgent).toHaveBeenCalledTimes(2);
+      expect(runner.lastSpawnDedupInfo()).toBeUndefined();
+    });
+
+    it("re-spawning the same task after completion creates a new run not a dedup", async () => {
+      // Default executeAgent mock resolves with a completed result -> first run reaches "completed".
+      const runner = createSubAgentRunner(deps);
+      const runId1 = runner.spawn({
+        task: "T",
+        agentId: "A",
+        callerSessionKey: "K",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getRunStatus(runId1)?.status).toBe("completed");
+
+      const runId2 = runner.spawn({
+        task: "T",
+        agentId: "A",
+        callerSessionKey: "K",
+      });
+
+      expect(runId2).not.toBe(runId1);
+      expect(deps.executeAgent).toHaveBeenCalledTimes(2);
+      expect(runner.lastSpawnDedupInfo()).toBeUndefined();
+    });
+
+    it("dedup index is cleaned up when first run fails leaving the slot fair game", async () => {
+      vi.mocked(deps.executeAgent).mockRejectedValueOnce(new Error("simulated failure"));
+
+      const runner = createSubAgentRunner(deps);
+      const runId1 = runner.spawn({
+        task: "T",
+        agentId: "A",
+        callerSessionKey: "K",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getRunStatus(runId1)?.status).toBe("failed");
+
+      const runId2 = runner.spawn({
+        task: "T",
+        agentId: "A",
+        callerSessionKey: "K",
+      });
+
+      expect(runId2).not.toBe(runId1);
+      expect(runner.lastSpawnDedupInfo()).toBeUndefined();
+    });
+
+    it("graph-marked spawns are not deduped against each other or against session spawns", () => {
+      vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+
+      const runner = createSubAgentRunner(deps);
+      const runId1 = runner.spawn({
+        task: "T",
+        agentId: "A",
+        callerSessionKey: "K",
+        callerType: "graph",
+        graphId: "g-1",
+        nodeId: "n-1",
+      });
+      const runId2 = runner.spawn({
+        task: "T",
+        agentId: "A",
+        callerSessionKey: "K",
+        callerType: "graph",
+        graphId: "g-1",
+        nodeId: "n-2",
+      });
+
+      expect(runId1).not.toBe(runId2);
+      expect(runner.lastSpawnDedupInfo()).toBeUndefined();
+    });
+
+    it("emits debug log line on dedup hit with required fields", () => {
+      deps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+      vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+
+      const runner = createSubAgentRunner(deps);
+      const runId1 = runner.spawn({
+        task: "T",
+        agentId: "A",
+        callerSessionKey: "K",
+      });
+      runner.spawn({
+        task: "T",
+        agentId: "A",
+        callerSessionKey: "K",
+      });
+
+      expect(deps.logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: runId1,
+          existingRunId: runId1,
+          taskLength: 1,
+          callerSessionKey: "K",
+          ageMs: expect.any(Number),
+          hint: "Duplicate spawn deduped against in-flight run",
+        }),
+        expect.stringContaining("Sub-agent spawn deduped"),
+      );
+      expect(deps.logger.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining("dedup"),
+      );
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

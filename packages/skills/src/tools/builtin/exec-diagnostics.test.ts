@@ -258,3 +258,157 @@ describe("matchExecRecoveryHint — Python ModuleNotFoundError matcher", () => {
     expect(a).toBe(b);
   });
 });
+
+// ---------------------------------------------------------------------------
+// matchVenvMissing: workspace-rooted venv binary missing
+//
+// Covers the 2026-05-19 18:09–18:13 Telegram bug where two sub-agents tried
+// `venv/bin/python3` against a workspace whose venv had never been provisioned
+// (template promised a "Pre-warmed Python env" the daemon never built). The
+// matcher surfaces a `RECOVERY HINT: Virtualenv not found at <root>. Create it
+// with: python3 -m venv ...` line so the LLM can self-recover after the
+// FIRST failure instead of cascading through five exec attempts.
+//
+// All `matchVenvMissing` tests go through `matchExecRecoveryHint` (the public
+// registry entry point) — mirrors the existing matchPythonModuleNotFound
+// pattern, no new export needed. The discriminating substring
+// `"Virtualenv not found"` appears only in matchVenvMissing's hint, so we
+// assert on it to confirm the registry dispatched to the right matcher.
+// ---------------------------------------------------------------------------
+
+describe("matchExecRecoveryHint — workspace-rooted venv missing matcher", () => {
+  let cwd: string;
+
+  beforeEach(() => {
+    cwd = uniqDir("comis-venv-test");
+    mkdirSync(cwd, { recursive: true });
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(cwd, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Positive cases — matcher fires with a recovery hint
+  // -------------------------------------------------------------------------
+
+  it("matchVenvMissing fires when stderr says venv/bin/python3 not found and venv root does not exist", () => {
+    const stderr = `${cwd}/venv/bin/python3: No such file or directory\n`;
+    const result = matchExecRecoveryHint({ stderr, exitCode: 127, cwd });
+
+    expect(result).not.toBeNull();
+    expect(result!).toMatch(/^RECOVERY HINT:/);
+    expect(result!).toContain("Virtualenv not found");
+    expect(result!).toContain("python3 -m venv");
+    // Hint should name the venv ROOT, not the binary path.
+    expect(result!).toContain(`${cwd}/venv`);
+    expect(result!).not.toContain("/venv/bin/python3");
+  });
+
+  it("matchVenvMissing fires for missing pip binary with command-not-found stderr", () => {
+    const stderr = `${cwd}/venv/bin/pip: command not found\n`;
+    const result = matchExecRecoveryHint({ stderr, exitCode: 127, cwd });
+
+    expect(result).not.toBeNull();
+    expect(result!).toContain("Virtualenv not found");
+    expect(result!).toContain("python3 -m venv");
+    expect(result!).toContain(`${cwd}/venv`);
+  });
+
+  it("matchVenvMissing fires for nested workspace subdirectory venv path with absolute reference", () => {
+    // Simulate "agent runs from a project subdir but the workspace-root venv
+    // is missing". cwd is the workspace root; stderr references the workspace-
+    // root venv via absolute path.
+    const stderr = `${cwd}/venv/bin/python3: No such file or directory\n`;
+    const result = matchExecRecoveryHint({ stderr, exitCode: 127, cwd });
+
+    expect(result).not.toBeNull();
+    expect(result!).toContain(`${cwd}/venv`);
+  });
+
+  // -------------------------------------------------------------------------
+  // Negative cases — matcher abstains (returns null)
+  // -------------------------------------------------------------------------
+
+  it("matchVenvMissing abstains when the venv binary actually exists on disk (other failure)", () => {
+    // venv DOES exist — the failure is something else (permission, wrong args,
+    // etc.). Matcher must abstain so the LLM sees the real error.
+    mkdirSync(join(cwd, "venv", "bin"), { recursive: true });
+    writeFileSync(join(cwd, "venv", "bin", "python3"), "");
+
+    const stderr = `${cwd}/venv/bin/python3: No such file or directory\n`;
+    const result = matchExecRecoveryHint({ stderr, exitCode: 127, cwd });
+
+    expect(result).toBeNull();
+  });
+
+  it("matchVenvMissing abstains when exit code is zero even if stderr matches the pattern", () => {
+    // Defensive: mirror matchPythonModuleNotFound's exit-0 guard.
+    const stderr = `${cwd}/venv/bin/python3: No such file or directory\n`;
+    const result = matchExecRecoveryHint({ stderr, exitCode: 0, cwd });
+
+    expect(result).toBeNull();
+  });
+
+  it("matchVenvMissing abstains when stderr does not mention a venv binary path at all", () => {
+    const stderr = "bash: foobar: command not found\n";
+    const result = matchExecRecoveryHint({ stderr, exitCode: 127, cwd });
+
+    expect(result).toBeNull();
+  });
+
+  it("matchVenvMissing abstains when matched path is outside cwd (no information disclosure)", () => {
+    // /etc/venv/bin/python3 is well outside cwd — scope guard rejects.
+    const stderr = "/etc/venv/bin/python3: No such file or directory\n";
+    const result = matchExecRecoveryHint({ stderr, exitCode: 127, cwd });
+
+    expect(result).toBeNull();
+  });
+
+  it("matchVenvMissing abstains when stderr is empty regardless of exit code", () => {
+    const result = matchExecRecoveryHint({ stderr: "", exitCode: 127, cwd });
+    expect(result).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Shape / idempotency
+  // -------------------------------------------------------------------------
+
+  it("matchVenvMissing hint has no trailing newline and starts with RECOVERY HINT prefix", () => {
+    const stderr = `${cwd}/venv/bin/python3: No such file or directory\n`;
+    const result = matchExecRecoveryHint({ stderr, exitCode: 127, cwd });
+
+    expect(typeof result).toBe("string");
+    expect(result!.startsWith("RECOVERY HINT: ")).toBe(true);
+    expect(result!.endsWith("\n")).toBe(false);
+  });
+
+  it("matchVenvMissing returns the same hint for the same input on repeat invocation (pure)", () => {
+    const stderr = `${cwd}/venv/bin/python3: No such file or directory\n`;
+    const a = matchExecRecoveryHint({ stderr, exitCode: 127, cwd });
+    const b = matchExecRecoveryHint({ stderr, exitCode: 127, cwd });
+    expect(a).toBe(b);
+  });
+
+  // -------------------------------------------------------------------------
+  // Registry-pipeline integration
+  // -------------------------------------------------------------------------
+
+  it("matchExecRecoveryHint dispatches a venv-missing failure to the new matchVenvMissing matcher", () => {
+    // The discriminating substring `"Virtualenv not found"` appears ONLY in
+    // matchVenvMissing's hint — confirms the registry pipeline wired the new
+    // matcher in correctly (and did not regress matchPythonModuleNotFound's
+    // first-non-null-wins order).
+    const stderr = `${cwd}/venv/bin/python3: No such file or directory\n`;
+    const result = matchExecRecoveryHint({ stderr, exitCode: 127, cwd });
+
+    expect(result).not.toBeNull();
+    expect(result!).toContain("Virtualenv not found");
+    // Must NOT be the Python-module-not-found hint.
+    expect(result!).not.toContain("pyproject.toml");
+  });
+});

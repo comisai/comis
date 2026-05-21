@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { sanitizeSessionSecrets, looksLikeApiKey } from "./sanitize-session-secrets.js";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -488,6 +488,38 @@ describe("sanitizeSessionSecrets", () => {
     const msg = entries[1] as any;
     expect(msg.message.content[0].arguments.apiKey).toBe("[REDACTED]");
     expect(msg.message.content[1].arguments.command).not.toContain("sk-");
+  });
+
+  describe("sanitize-session-secrets honors design §1.4 file-mode invariant", () => {
+    it("rewrites the session JSONL with mode 0o600 when secrets are redacted", () => {
+      const sessionPath = writeJsonl(tmpDir, [
+        { type: "session", version: 1, id: "s1" },
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                name: "gateway",
+                id: "tc-mode",
+                arguments: {
+                  action: "env_set",
+                  env_key: "MODE_TEST_SECRET",
+                  env_value: "a-genuinely-sensitive-value-1234567890",
+                },
+              },
+            ],
+          },
+        },
+      ]);
+
+      const changed = sanitizeSessionSecrets(sessionPath);
+      expect(changed).toBe(1);
+      // The fs-safe substrate writes regular files at mode 0o600 — the
+      // §1.4 confidentiality invariant the migration was tasked to lock in.
+      expect(statSync(sessionPath).mode & 0o777).toBe(0o600);
+    });
   });
 });
 

@@ -575,3 +575,88 @@ describe("assembleTools — discovery-state restore from SpawnPacket on subagent
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// 260521-0bn FOLLOWUP-260521-0bn-03: per-message trust resolution
+//
+// The deferralCtx's `trustLevel` field gates `PRIVILEGED_TOOL_NAMES` (including
+// `mcp_manage`, `agents_manage`, `obs_query`). Previously the context used the
+// GLOBAL `defaultTrustLevel` only, so `senderTrustMap` entries never reached
+// the deferral gate — admin users mapped via `senderTrustMap` had privileged
+// tools deferred. This block asserts the new resolution:
+//
+//   config.elevatedReply.senderTrustMap[msg.senderId]
+//     ?? config.elevatedReply.defaultTrustLevel
+//     ?? "external"
+//
+// Strategy: applyToolDeferral is already mocked at the file top
+// (`mocks.applyToolDeferralMock`). We don't re-test the deferral logic itself
+// (that lives in tool-deferral.ts and already has its own tests). We assert
+// the `deferralCtx.trustLevel` argument that assembleTools passes into the
+// mock — the 3rd positional argument of applyToolDeferral(tools, ctxWin, ctx).
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — per-message trust resolution (260521-0bn FOLLOWUP-260521-0bn-03)", () => {
+  it("senderTrustMap entry for admin user resolves trustLevel=admin (privileged tools cleared)", async () => {
+    await assembleTools(makeParams({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig partial cast
+      config: {
+        provider: "anthropic",
+        contextEngine: { enabled: true },
+        elevatedReply: {
+          defaultTrustLevel: "external",
+          senderTrustMap: { user_a: "admin" },
+        },
+      } as any,
+    }));
+    expect(mocks.applyToolDeferralMock).toHaveBeenCalled();
+    const passedCtx = mocks.applyToolDeferralMock.mock.calls[0][2] as { trustLevel: string };
+    expect(passedCtx.trustLevel).toBe("admin");
+  });
+
+  it("senderId NOT in senderTrustMap falls back to defaultTrustLevel (privileged tools stay deferred)", async () => {
+    await assembleTools(makeParams({
+      // makeMsg() sets senderId="user_a"; senderTrustMap below only maps user_b.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig partial cast
+      config: {
+        provider: "anthropic",
+        contextEngine: { enabled: true },
+        elevatedReply: {
+          defaultTrustLevel: "external",
+          senderTrustMap: { user_b: "admin" },
+        },
+      } as any,
+    }));
+    const passedCtx = mocks.applyToolDeferralMock.mock.calls[0][2] as { trustLevel: string };
+    expect(passedCtx.trustLevel).toBe("external");
+  });
+
+  it("defaultTrustLevel=admin with no senderTrustMap resolves trustLevel=admin for unmapped users", async () => {
+    await assembleTools(makeParams({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig partial cast
+      config: {
+        provider: "anthropic",
+        contextEngine: { enabled: true },
+        elevatedReply: {
+          defaultTrustLevel: "admin",
+          // senderTrustMap omitted entirely
+        },
+      } as any,
+    }));
+    const passedCtx = mocks.applyToolDeferralMock.mock.calls[0][2] as { trustLevel: string };
+    expect(passedCtx.trustLevel).toBe("admin");
+  });
+
+  it("falls through to 'external' when neither senderTrustMap nor defaultTrustLevel is set", async () => {
+    await assembleTools(makeParams({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig partial cast
+      config: {
+        provider: "anthropic",
+        contextEngine: { enabled: true },
+        // elevatedReply omitted entirely
+      } as any,
+    }));
+    const passedCtx = mocks.applyToolDeferralMock.mock.calls[0][2] as { trustLevel: string };
+    expect(passedCtx.trustLevel).toBe("external");
+  });
+});

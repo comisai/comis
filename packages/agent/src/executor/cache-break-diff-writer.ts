@@ -10,9 +10,10 @@
  * @module
  */
 
-import { writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { readdirSync, unlinkSync } from "node:fs";
 import { createPatch } from "diff";
 import { safePath, resolveModelPricing, ZERO_COST, systemDateFrom } from "@comis/core";
+import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 
 const MAX_DIFF_FILES = 50;
 
@@ -71,6 +72,14 @@ export interface CacheBreakDiffPayload {
     message: number;
     sdkAuto: number;
   };
+  /**
+   * Breakpoint pressure as a fraction of the SDK's 4-breakpoint ceiling.
+   * Computed by the writer from `breakpointBudget.total / 4` and clamped
+   * to [0, 1]. Surfaced in the diff record so dashboards can pivot on
+   * pressure without re-deriving from raw markers. Omitted when
+   * `breakpointBudget` is absent.
+   */
+  breakpointPressureRatio?: number;
   /** Model ID for per-model cost attribution. Populated by pi-event-bridge.ts. */
   model?: string;
 }
@@ -78,6 +87,15 @@ export interface CacheBreakDiffPayload {
 export interface CacheBreakDiffWriterConfig {
   /** Directory for diff files (e.g., ~/.comis/cache-breaks) */
   outputDir: string;
+  /**
+   * Confinement base for the cache-breaks directory. Threaded from
+   * `deps.dataDir` (typically `~/.comis/`). Required by the fs-safe
+   * substrate (`ensureContainedDir` / `writeRegularFile` confinement
+   * check) so the resolved real path of every artifact stays inside
+   * the operator's data root — closes the ancestor-symlink escape
+   * that O_NOFOLLOW + parent-`lstat` together do NOT cover.
+   */
+  dataDir: string;
   /** Logger for WARN on I/O errors */
   logger: { warn: (obj: Record<string, unknown>, msg: string) => void };
 }
@@ -119,7 +137,27 @@ export function createCacheBreakDiffWriter(
   return (event: CacheBreakDiffPayload): void => {
     try {
       if (!dirEnsured) {
-        mkdirSync(config.outputDir, { recursive: true });
+        // OBS-HARD-02: route through the shared fs-safe substrate so
+        // `~/.comis/cache-breaks/` honors the §1.4 `0o700` invariant.
+        // Failure is non-fatal — log + skip this event so the detection
+        // flow upstream stays unaffected (existing fault-tolerance
+        // contract: I/O errors are never propagated).
+        const dirResult = ensureContainedDir({
+          dir: config.outputDir,
+          mode: 0o700,
+          confinedBaseDir: config.dataDir,
+        });
+        if (!dirResult.ok) {
+          config.logger.warn(
+            {
+              err: dirResult.error,
+              hint: "Cache-break dir creation rejected by fs-safe substrate; detection flow unaffected, future diffs will retry",
+              errorKind: "resource" as const,
+            },
+            "Cache break diff dir creation failed",
+          );
+          return;
+        }
         dirEnsured = true;
       }
 
@@ -189,6 +227,17 @@ export function createCacheBreakDiffWriter(
         effortValue: event.effortValue,
         // Breakpoint budget context
         ...(event.breakpointBudget && { breakpointBudget: event.breakpointBudget }),
+        // Breakpoint pressure ratio (260520-wcf): fraction of the SDK's
+        // 4-breakpoint ceiling consumed at the time of the cache break.
+        // Clamped to [0, 1] — values > 1 indicate accounting drift, < 0
+        // is impossible but locked in for defense in depth. Emitted only
+        // when breakpointBudget is present so the field stays meaningful.
+        ...(event.breakpointBudget && {
+          breakpointPressureRatio: Math.max(
+            0,
+            Math.min(1, event.breakpointBudget.total / 4),
+          ),
+        }),
         // Cost attribution
         estimatedCostUsd: estimatedCostUsd === null
           ? null
@@ -207,7 +256,26 @@ export function createCacheBreakDiffWriter(
         },
       };
 
-      writeFileSync(filePath, JSON.stringify(diff, null, 2) + "\n");
+      // OBS-HARD-02: route the JSON write through the fs-safe substrate
+      // so each cache-break diff file lands at mode `0o600` per §1.4.
+      // Failure is non-fatal — log + continue to attempt the .diff
+      // sibling so a partial-write at the JSON layer does not block the
+      // unified-diff artifact.
+      const jsonResult = writeRegularFile({
+        path: filePath,
+        content: JSON.stringify(diff, null, 2) + "\n",
+        confinedBaseDir: config.dataDir,
+      });
+      if (!jsonResult.ok) {
+        config.logger.warn(
+          {
+            err: jsonResult.error,
+            hint: "Cache break diff JSON write rejected by fs-safe substrate; detection flow unaffected",
+            errorKind: "resource" as const,
+          },
+          "Cache break diff JSON write failed",
+        );
+      }
 
       // DIFF-CONTENT: Generate unified diff file alongside JSON
       const diffSections: string[] = [];
@@ -275,7 +343,23 @@ export function createCacheBreakDiffWriter(
       if (diffSections.length > 0) {
         const diffFilename = filename.replace(".json", ".diff");
         const diffFilePath = safePath(config.outputDir, diffFilename);
-        writeFileSync(diffFilePath, diffSections.join("\n\n") + "\n");
+        // OBS-HARD-02: route the .diff write through the fs-safe
+        // substrate so the sibling artifact also lands at mode `0o600`.
+        const diffResult = writeRegularFile({
+          path: diffFilePath,
+          content: diffSections.join("\n\n") + "\n",
+          confinedBaseDir: config.dataDir,
+        });
+        if (!diffResult.ok) {
+          config.logger.warn(
+            {
+              err: diffResult.error,
+              hint: "Cache break .diff write rejected by fs-safe substrate; JSON record persisted, .diff sibling missing",
+              errorKind: "resource" as const,
+            },
+            "Cache break .diff write failed",
+          );
+        }
       }
     } catch (err) {
       // Never propagate I/O errors

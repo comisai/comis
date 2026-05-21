@@ -144,6 +144,16 @@ export interface StreamSetupDeps {
   geminiCacheManager?: GeminiCacheManager;
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
+  /**
+   * Confinement base for the `@comis/observability` fs-safe substrate
+   * (typically `~/.comis/`). Threaded into
+   * `installMicrocompactionGuard` so the disk-offload writer can
+   * confine its tool-results dir + file writes inside the operator's
+   * data root — closes the ancestor-symlink escape gap (design §1.4).
+   * Optional: when undefined, the caller falls back to
+   * `safePath(homedir(), ".comis")` (the default daemon data dir).
+   */
+  dataDir?: string;
 }
 
 /** Parameters for the setupStreamWrappers function. */
@@ -268,7 +278,12 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   const blockStabilityTracker = createBlockStabilityTracker();
 
   // Offload oversized tool results to disk before JSONL session write.
-  installMicrocompactionGuard(sm, sm.getSessionDir(), deps.logger, (_toolName) => {
+  // dataDir is threaded as the fs-safe substrate's confinedBaseDir so
+  // the disk-offload writer's mkdir+chmod+open chain rejects any
+  // ancestor-symlink escape (design §1.4). Falls back to ~/.comis/ when
+  // the daemon hasn't explicitly forwarded its dataDir.
+  const microcompactionDataDir = deps.dataDir ?? safePath(homedir(), ".comis");
+  installMicrocompactionGuard(sm, sm.getSessionDir(), microcompactionDataDir, deps.logger, (_toolName) => {
     cacheBreakDetector.notifyContentModification(formattedKey);
   });
 
@@ -427,6 +442,13 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
           ttlSplit.cacheWrite5mTokens = estimate.cacheWrite5mTokens;
           ttlSplit.cacheWrite1hTokens = estimate.cacheWrite1hTokens;
         },
+        // Per-session call counter — read directly from the cache-break
+        // detector's existing per-session state. `upgradeSdkMarkers`
+        // gates 5m → 1h promotion on callCount >= 2 so first-turn writes
+        // that may be evicted server-side don't pay the 1h premium.
+        // The getter runs AFTER `onPayloadForCacheDetection` increments
+        // the counter for this turn, so the gate sees the correct value.
+        getCallCount: () => cacheBreakDetector.getCallCount(formattedKey),
       },
       deps.logger,
     ),
@@ -516,12 +538,17 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     wrappers.push(buildCacheTraceWrapper(cacheTrace));
   }
 
-  // MUST be the last wrapper pushed (innermost). Runs its onPayload FIRST in
-  // the chain so all downstream wrappers operate on stub-free tools. Violating
-  // this ordering would (a) include stub schemas in the Anthropic rendered-tool
-  // cache hash, (b) persist stubs into the Gemini CachedContent entry for its
-  // whole lifetime, and (c) cause deferCount > 0 in the DEFER-TOOL block,
-  // unintentionally flipping Anthropic sessions to server-side tool_search.
+  // MUST be the last wrapper pushed (innermost). In `composeStreamWrappers`'
+  // reduceRight composition, each wrapper's onPayload calls `existingOnPayload`
+  // FIRST and then runs its own logic — so the innermost wrapper's onPayload
+  // runs LAST in the chain. That means the stub-filter strips stubs AFTER
+  // injectToolDeferral has already seen the payload. The defense against
+  // stubs leaking into DEFER-TOOL bookkeeping lives in injectToolDeferral
+  // itself (the DEFERRAL_STUB_MARKER guard, tool-deferral-injection.ts).
+  // This wrapper's job is to keep stubs out of the FINAL wire payload so
+  // they (a) do not consume input tokens, (b) do not enter the Anthropic
+  // rendered-tool cache hash, and (c) do not persist into the Gemini
+  // CachedContent entry for the cache's whole lifetime.
   wrappers.push(
     createStubFilterInjector(
       {

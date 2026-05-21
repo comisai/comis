@@ -582,13 +582,44 @@ async function runSessionLocked(
       deps.trajectoryConfig?.dir === undefined
         ? safePath(os.homedir(), ".comis")
         : undefined;
-    trajectoryRecorder = createTrajectoryRecorder({
+    // Recorder lifecycle:
+    //   - `deps.trajectoryRegistry` present → session-scoped: registry
+    //     owns the recorder + bridge subscription for the session's
+    //     lifetime, this `execute()` call just looks it up (or
+    //     materializes it on the first turn). `flushAndClose` runs in
+    //     the daemon's shutdown chain via `closeAll()`, NOT in this
+    //     execute's finally — that's what fixes design §6.4 + §6.5
+    //     + §6.8 deviations (per-turn seq reset, repeated
+    //     session.started/ended).
+    //   - `deps.trajectoryRegistry` undefined → fall back to per-turn
+    //     construction (legacy path; kept so tests + non-daemon callers
+    //     keep working).
+    const trajectoryInit = {
       agentId: agentId ?? config.name,
       sessionId: formattedKey,
       sessionKey: formattedKey,
       workspaceDir: deps.workspaceDir,
-      provider: resolvedModel?.provider ?? config.provider,
-      modelId: resolvedModel?.id ?? config.model,
+      // Pointer-file sidecar (design §6.1 + §6.2). createTrajectoryRecorder
+      // calls writeTrajectoryPointerFileBestEffort when sessionFile is
+      // set, producing <sessionFile>.trajectory-path.json next to the
+      // per-session JSONL transcript. The pointer is best-effort
+      // (symlinked parents / unwritable dirs no-op silently). 260519-tlx
+      // Gap D2: the registry's first-init-wins contract means the
+      // pointer is written exactly once at recorder creation, which is
+      // the correct moment per design §6.1.
+      // sessionAdapter.getSessionPath is sync + pure (safePath under
+      // the hood) — zero overhead at trajectoryInit construction.
+      sessionFile: sessionAdapter.getSessionPath(sessionKey),
+      // provider + modelId + modelApi live inside the `model` cluster
+      // on TrajectoryRecorderInit (architecture invariant: ≤12 optional
+      // fields per interface). The runtime lifts each cluster field
+      // onto the trajectory envelope when defined (design §6.2).
+      // modelApi is not threaded from this site yet — wire it in when
+      // resolvedModel exposes the API discriminator.
+      model: {
+        provider: resolvedModel?.provider ?? config.provider,
+        modelId: resolvedModel?.id ?? config.model,
+      },
       ...(trajectoryConfinedBase !== undefined
         ? { confinedBaseDir: trajectoryConfinedBase }
         : {}),
@@ -601,28 +632,54 @@ async function runSessionLocked(
       ...(deps.trajectoryConfig?.maxFileBytes !== undefined
         ? { maxRuntimeFileBytes: deps.trajectoryConfig.maxFileBytes }
         : {}),
-    });
-    if (trajectoryRecorder !== null) {
-      // Honor diagnostics.trajectory.eventTypes as a subscription-time
-      // allowlist. When set and non-empty, only the listed EventBus event
-      // names are subscribed-to by the bridge — every other event is
-      // silently dropped. The bridge accepts a
-      // `filter: (eventName) => boolean` predicate that runs ONCE per name
-      // at attach time (not per emit). Default (eventTypes unset or empty)
-      // preserves the prior behavior of subscribing to every mapped event.
-      const eventTypes = deps.trajectoryConfig?.eventTypes;
-      trajectoryUnsubscribe = attachTrajectoryToEventBus({
-        eventBus: deps.eventBus,
-        recorder: trajectoryRecorder,
-        ...(eventTypes && eventTypes.length > 0
-          ? { filter: (n) => eventTypes.includes(n) }
-          : {}),
-      });
+    };
+    const eventTypes = deps.trajectoryConfig?.eventTypes;
+    const eventTypesFilter =
+      eventTypes && eventTypes.length > 0
+        ? (n: string) => eventTypes.includes(n)
+        : undefined;
+
+    if (deps.trajectoryRegistry !== undefined) {
+      // Session-scoped: registry returns the same recorder across turns.
+      // The bridge subscription is owned by the registry — no
+      // `trajectoryUnsubscribe` to track locally; the registry's
+      // `close(formattedKey)` (driven by session-destroy) and
+      // `closeAll()` (daemon shutdown) own the teardown.
+      const { recorder } = deps.trajectoryRegistry.getOrCreate(
+        formattedKey,
+        trajectoryInit,
+        deps.eventBus,
+        eventTypesFilter as
+          | ((n: import("@comis/observability").TrajectoryBridgedEventName) => boolean)
+          | undefined,
+      );
+      trajectoryRecorder = recorder;
+      // trajectoryUnsubscribe stays undefined — registry owns it.
+    } else {
+      // Legacy per-turn path. flushAndClose still runs in this execute's
+      // finally; seq resets between turns and session.started/ended
+      // fires per turn (deviations E + F). Kept for tests and callers
+      // that haven't wired the registry yet.
+      trajectoryRecorder = createTrajectoryRecorder(trajectoryInit);
+      if (trajectoryRecorder !== null) {
+        trajectoryUnsubscribe = attachTrajectoryToEventBus({
+          eventBus: deps.eventBus,
+          recorder: trajectoryRecorder,
+          ...(eventTypesFilter !== undefined
+            ? {
+                filter:
+                  eventTypesFilter as (
+                    n: import("@comis/observability").TrajectoryBridgedEventName,
+                  ) => boolean,
+              }
+            : {}),
+        });
+      }
     }
 
     // Cache-trace recorder lifecycle (mirrors trajectory's).
     // Gated by `deps.cacheTraceConfig.enabled` (forwarded from
-    // AppConfig.diagnostics.cacheTrace by daemon wiring; false by default).
+    // AppConfig.diagnostics.cacheTrace by daemon wiring; on by default).
     // When enabled, instantiate the recorder + subscribe to the live
     // `observability:token_usage` EventBus emit so the next
     // `recordStage("session:after", {...})` carries cacheReadInputTokens +
@@ -634,10 +691,21 @@ async function runSessionLocked(
         deps.cacheTraceConfig.filePath === undefined
           ? safePath(os.homedir(), ".comis")
           : undefined;
+      // §7.2 envelope cluster — wire the contextual fields reachable
+      // from this site without widening the Deps interface. `runId`
+      // and `modelApi` are intentionally OMITTED: neither is threaded
+      // into the executor's scope today (runId has no producer; the
+      // pi-ai Model interface does not expose an `api` discriminator).
+      // A follow-up plan can widen Deps when those values become
+      // available; the optional cluster contract is "wire what's
+      // reachable, omit cleanly otherwise".
       cacheTrace = createCacheTrace({
         enabled: true,
         ...(deps.cacheTraceConfig.filePath !== undefined
           ? { filePath: deps.cacheTraceConfig.filePath }
+          : {}),
+        ...(deps.cacheTraceConfig.maxFileBytes !== undefined
+          ? { maxFileBytes: deps.cacheTraceConfig.maxFileBytes }
           : {}),
         includeMessages: deps.cacheTraceConfig.includeMessages ?? false,
         includePrompt: deps.cacheTraceConfig.includePrompt ?? true,
@@ -646,6 +714,13 @@ async function runSessionLocked(
         sessionId: formattedKey,
         provider: resolvedModel?.provider ?? config.provider,
         modelId: resolvedModel?.id ?? config.model,
+        envelope: {
+          sessionKey: formattedKey,
+          ...(deps.tenantId !== undefined ? { tenantId: deps.tenantId } : {}),
+          ...(deps.workspaceDir !== undefined
+            ? { workspaceDir: deps.workspaceDir }
+            : {}),
+        },
         ...(cacheTraceConfinedBase !== undefined
           ? { confinedBaseDir: cacheTraceConfinedBase }
           : {}),
@@ -1103,6 +1178,11 @@ async function runSessionLocked(
       return live;
     },
     getSessionJsonlPath: () => sessionAdapter.getSessionPath(sessionKey),
+    // Forward the session-scoped registry so the bridge's `agent_start`
+    // case can suppress per-turn `session:started` re-emits (260519-tlx
+    // Gap F, design §6.4). When undefined (non-daemon callers), the
+    // bridge falls back to the legacy unconditional emit.
+    ...(deps.trajectoryRegistry !== undefined ? { trajectoryRegistry: deps.trajectoryRegistry } : {}),
     perExecutionBudgetCap: config.budgets?.perExecution,
     budgetWarningRef,
     toolRetryBreaker,
@@ -1357,20 +1437,27 @@ async function runSessionLocked(
     // Tear down the trajectory recorder + bridge subscription as the very
     // last action of this execute() call. Both are best-effort — a
     // flush/unsubscribe failure must NEVER throw out of finally.
-    try {
-      trajectoryUnsubscribe?.();
-    } catch {
-      // Unsubscribe failure is unreachable in practice (EventEmitter.off
-      // is sync); swallow defensively so this never aborts cleanup.
-    }
-    if (trajectoryRecorder !== null) {
+    //
+    // When `deps.trajectoryRegistry` is present, the registry owns
+    // both the recorder and its bridge subscription. The teardown
+    // here is a no-op — `closeAll()` (daemon shutdown) and `close()`
+    // (session-destroy) are the only paths that flush + unsubscribe.
+    if (deps.trajectoryRegistry === undefined) {
       try {
-        await trajectoryRecorder.flushAndClose();
-      } catch (err) {
-        deps.logger.debug(
-          { err, hint: "trajectory flushAndClose failed; sidecar may be partial", errorKind: "internal" as ErrorKind },
-          "Trajectory recorder flushAndClose failed",
-        );
+        trajectoryUnsubscribe?.();
+      } catch {
+        // Unsubscribe failure is unreachable in practice (EventEmitter.off
+        // is sync); swallow defensively so this never aborts cleanup.
+      }
+      if (trajectoryRecorder !== null) {
+        try {
+          await trajectoryRecorder.flushAndClose();
+        } catch (err) {
+          deps.logger.debug(
+            { err, hint: "trajectory flushAndClose failed; sidecar may be partial", errorKind: "internal" as ErrorKind },
+            "Trajectory recorder flushAndClose failed",
+          );
+        }
       }
     }
 

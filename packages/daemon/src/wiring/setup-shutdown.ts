@@ -13,7 +13,7 @@ import type { HeartbeatRunner, CronScheduler, WakeCoalescer, PerAgentHeartbeatRu
 import type { BrowserService, MediaTempManager } from "@comis/skills";
 import type { SessionResetScheduler } from "@comis/agent";
 import { safePath, systemNowMs, systemSetTimeout, systemClearInterval } from "@comis/core";
-import { writeFileSync } from "node:fs";
+import { writeRegularFile } from "@comis/observability";
 import type { ProcessMonitor } from "../process/process-monitor.js";
 import { registerGracefulShutdown, type ShutdownHandle } from "../process/graceful-shutdown.js";
 import type { RestartContinuationTracker } from "./restart-continuation.js";
@@ -104,6 +104,13 @@ export interface ShutdownDeps {
   contextPipelineCollector?: { dispose(): void };
   /** Gemini CachedContent lifecycle manager for shutdown disposal. */
   geminiCacheManager?: import("@comis/agent").GeminiCacheManager;
+  /**
+   * Session-scoped trajectory recorder registry. Shutdown drains every
+   * open per-session recorder via `closeAll()` — flushes the JSONL tail
+   * and writes the `trace.truncated` sentinel for any dropped events.
+   * Constructed in setupAgents and surfaced on AgentsResult.
+   */
+  trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
 }
 
 /** All services produced by the shutdown setup phase. */
@@ -193,6 +200,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     lifecycleReactors,
     obsPersistence,
     geminiCacheManager,
+    trajectoryRegistry,
   } = deps;
 
   const shutdownHandle = _registerGracefulShutdown({
@@ -257,6 +265,27 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         }, "sub-agent-runner", daemonLogger);
       }
 
+      // Drain session-scoped trajectory recorders. Each open session's
+      // recorder flushes its queue, writes the trace.truncated sentinel
+      // when any events were dropped, and unsubscribes from the EventBus.
+      // Must run AFTER sub-agent-runner shutdown (no more events landing)
+      // and BEFORE the periodic-lock-cleanup teardown (which doesn't
+      // touch the trajectory files).
+      if (trajectoryRegistry) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await trajectoryRegistry.closeAll();
+          daemonLogger.info(
+            {
+              component: "trajectory-registry",
+              durationMs: systemNowMs() - stopMs,
+              shutdownOrder: ++shutdownOrder,
+            },
+            "Component stopped",
+          );
+        }, "trajectory-registry", daemonLogger);
+      }
+
       // Clear periodic lock cleanup timer
       if (lockCleanupTimer) {
         await withStepTimeout(() => {
@@ -273,30 +302,59 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           if (dataDir) {
             const serialized = approvalGate.serializePending();
             if (serialized.length > 0) {
-              writeFileSync(
-                safePath(dataDir, "restart-approvals.json"),
-                JSON.stringify(serialized, null, 2),
-                "utf-8",
-              );
-              daemonLogger.info(
-                { component: "approval-gate", count: serialized.length, shutdownOrder },
-                "Pending approvals serialized for restart",
-              );
+              // OBS-HARD-03: route through the fs-safe substrate so the
+              // restart-approvals hand-off lands at mode `0o600` per
+              // §1.4. Best-effort contract preserved — Result.err is
+              // logged + shutdown continues so a write failure does NOT
+              // block daemon teardown.
+              const result = writeRegularFile({
+                path: safePath(dataDir, "restart-approvals.json"),
+                content: JSON.stringify(serialized, null, 2),
+                confinedBaseDir: dataDir,
+              });
+              if (!result.ok) {
+                daemonLogger.warn(
+                  {
+                    err: result.error,
+                    hint: "Pending approvals serialization rejected by fs-safe substrate; restart will lose pending approvals",
+                    errorKind: "resource" as const,
+                  },
+                  "Pending approvals write failed",
+                );
+              } else {
+                daemonLogger.info(
+                  { component: "approval-gate", count: serialized.length, shutdownOrder },
+                  "Pending approvals serialized for restart",
+                );
+              }
             }
           }
           // Serialize approval cache for restart
           if (dataDir) {
             const cachedApprovals = approvalGate.serializeApprovalCache();
             if (cachedApprovals.length > 0) {
-              writeFileSync(
-                safePath(dataDir, "restart-approval-cache.json"),
-                JSON.stringify(cachedApprovals, null, 2),
-                "utf-8",
-              );
-              daemonLogger.info(
-                { component: "approval-gate", count: cachedApprovals.length, shutdownOrder },
-                "Approval cache serialized for restart",
-              );
+              // OBS-HARD-03: same fs-safe routing for the approval-cache
+              // sentinel; mode `0o600`, best-effort write contract.
+              const result = writeRegularFile({
+                path: safePath(dataDir, "restart-approval-cache.json"),
+                content: JSON.stringify(cachedApprovals, null, 2),
+                confinedBaseDir: dataDir,
+              });
+              if (!result.ok) {
+                daemonLogger.warn(
+                  {
+                    err: result.error,
+                    hint: "Approval cache serialization rejected by fs-safe substrate; restart will lose cached approvals",
+                    errorKind: "resource" as const,
+                  },
+                  "Approval cache write failed",
+                );
+              } else {
+                daemonLogger.info(
+                  { component: "approval-gate", count: cachedApprovals.length, shutdownOrder },
+                  "Approval cache serialized for restart",
+                );
+              }
             }
           }
           approvalGate.dispose();
@@ -345,6 +403,9 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           const captured = continuationTracker.capture(
             safePath(dataDir, "restart-continuations.json"),
             5 * 60_000, // sessions active in last 5 minutes
+            // OBS-HARD-03: confinement base for the fs-safe substrate.
+            dataDir,
+            daemonLogger,
           );
           if (captured > 0) {
             daemonLogger.info({ component: "restart-continuation", captured, durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Active sessions captured for restart");

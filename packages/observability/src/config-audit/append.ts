@@ -39,7 +39,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { ok, err, type Result } from "@comis/shared";
-import { appendRegularFile } from "../shared/fs-safe.js";
+import { appendRegularFile, ensureContainedDir } from "../shared/fs-safe.js";
 import { safePath, systemDateFrom, systemNowMs } from "@comis/core";
 
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
@@ -69,9 +69,15 @@ export const DEFAULT_KEEP_ROTATED = 5;
  * Base shape returned by `createConfigWriteAuditRecordBase`. Carries
  * everything that can be captured BEFORE the write. The "next" half
  * of the record is filled by `finalizeConfigWriteAuditRecord`.
+ *
+ * `callerSource` is the pre-260519-rrm `source` enum value (e.g.,
+ * "last-known-good-save", "config-patch-rpc", "cli-sync-tooling") —
+ * stored under `callerSource` on the persisted record so the design
+ * §9.2 top-level `source` slot is reserved for the fixed literal
+ * `"config-io"`. Caller-site call patterns are unchanged.
  */
 export interface ConfigWriteAuditRecordBase {
-  readonly source: ConfigWriteSource;
+  readonly callerSource: ConfigWriteSource;
   readonly configPath: string;
   readonly pid: number;
   readonly ppid: number;
@@ -79,13 +85,14 @@ export interface ConfigWriteAuditRecordBase {
   readonly cwd: string;
   readonly execArgv: string[];
   readonly watchMode: boolean;
+  readonly watchSession: string | null;
+  readonly watchCommand: string | null;
   readonly existsBefore: boolean;
   readonly previousHash: string | null;
   readonly previousBytes: number | null;
   readonly previousStat: FileStatSnapshot | null;
   readonly hasMetaBefore: boolean;
   readonly suspicious: SuspiciousFlag[];
-  readonly tsMsBase: number;
 }
 
 /** Input to `createConfigWriteAuditRecordBase`. */
@@ -98,18 +105,41 @@ export interface CreateBaseParams {
   readonly cwd: string;
   readonly execArgv: readonly string[];
   readonly watchMode: boolean;
+  /** Optional watch-mode session label (forwarded into the record). */
+  readonly watchSession?: string | null;
+  /** Optional watch-mode command label (forwarded into the record). */
+  readonly watchCommand?: string | null;
+  /**
+   * Optional resolved entry-script path (typically
+   * `fileURLToPath(import.meta.url)`). Forwarded to the
+   * `non-comis-argv` heuristic so pm2 / systemd-indirect launches
+   * do not false-positive when the caller's resolved entry script
+   * contains "comis" but `process.argv[0..1]` does not.
+   */
+  readonly entryScript?: string;
+}
+
+/**
+ * Stringify a POSIX dev/ino value. Both can be `bigint` on some
+ * filesystems (POSIX `st_dev` and `st_ino` can exceed JS safe-integer
+ * range); the design §9.2 contract for these two fields is
+ * `string | null`. Returns `null` when the input is null/undefined.
+ */
+function stringifyPosixId(v: number | bigint | undefined | null): string | null {
+  if (v === undefined || v === null) return null;
+  return typeof v === "bigint" ? v.toString() : String(v);
 }
 
 function snapshotStat(p: string): FileStatSnapshot | null {
   try {
     const s = fs.statSync(p);
     return {
-      dev: s.dev,
-      ino: typeof s.ino === "bigint" ? Number(s.ino) : (s.ino as number),
-      mode: s.mode,
+      dev: stringifyPosixId(s.dev),
+      ino: stringifyPosixId(s.ino),
+      mode: typeof s.mode === "number" ? s.mode : null,
       nlink: typeof s.nlink === "bigint" ? Number(s.nlink) : (s.nlink as number),
-      uid: s.uid,
-      gid: s.gid,
+      uid: typeof s.uid === "number" ? s.uid : null,
+      gid: typeof s.gid === "number" ? s.gid : null,
     };
   } catch {
     return null;
@@ -149,10 +179,11 @@ export function createConfigWriteAuditRecordBase(
   const suspicious = detectSuspicious({
     argv: params.argv,
     execArgv: params.execArgv,
+    ...(params.entryScript !== undefined && { entryScript: params.entryScript }),
   });
 
   return {
-    source: params.source,
+    callerSource: params.source,
     configPath: params.configPath,
     pid: params.pid,
     ppid: params.ppid,
@@ -160,13 +191,14 @@ export function createConfigWriteAuditRecordBase(
     cwd: params.cwd,
     execArgv: Array.from(params.execArgv),
     watchMode: params.watchMode,
+    watchSession: params.watchSession ?? null,
+    watchCommand: params.watchCommand ?? null,
     existsBefore,
     previousHash,
     previousBytes,
     previousStat,
     hasMetaBefore,
     suspicious,
-    tsMsBase: systemNowMs(),
   };
 }
 
@@ -204,29 +236,53 @@ export function finalizeConfigWriteAuditRecord(
   const record: ConfigWriteAuditRecord = {
     traceSchema: "comis-config-audit",
     schemaVersion: 1,
-    phase: "write",
-    source: base.source,
+    ts: systemDateFrom(nowMs).toISOString(),
+    source: "config-io",
+    event: "config.write",
+    result: params.result,
+
+    // Identity / caller provenance.
     configPath: base.configPath,
+    callerSource: base.callerSource,
     pid: base.pid,
     ppid: base.ppid,
     argv: base.argv,
     cwd: base.cwd,
     execArgv: base.execArgv,
     watchMode: base.watchMode,
+    watchSession: base.watchSession,
+    watchCommand: base.watchCommand,
+
+    // File state — hashes + bytes.
     existsBefore: base.existsBefore,
     previousHash: base.previousHash,
-    previousBytes: base.previousBytes,
-    previousStat: base.previousStat,
-    hasMetaBefore: base.hasMetaBefore,
     nextHash,
+    previousBytes: base.previousBytes,
     nextBytes,
-    nextStat,
-    hasMetaAfter,
+
+    // File state — flat POSIX stat fields. snapshotStat already
+    // returns dev/ino as `string | null`; mode/nlink/uid/gid stay
+    // numeric. nlink in particular is a number on every supported
+    // platform, but we still force a null fallback when the stat
+    // snapshot itself failed (existsBefore=false, EACCES, etc.).
+    previousDev: base.previousStat?.dev ?? null,
+    nextDev: nextStat?.dev ?? null,
+    previousIno: base.previousStat?.ino ?? null,
+    nextIno: nextStat?.ino ?? null,
+    previousMode: base.previousStat?.mode ?? null,
+    nextMode: nextStat?.mode ?? null,
+    previousNlink: base.previousStat?.nlink ?? null,
+    nextNlink: nextStat?.nlink ?? null,
+    previousUid: base.previousStat?.uid ?? null,
+    nextUid: nextStat?.uid ?? null,
+    previousGid: base.previousStat?.gid ?? null,
+    nextGid: nextStat?.gid ?? null,
+
     changedPathCount: params.changedPathCount ?? null,
-    result: params.result,
+    hasMetaBefore: base.hasMetaBefore,
+    hasMetaAfter,
+
     suspicious: base.suspicious,
-    ts: systemDateFrom(nowMs).toISOString(),
-    tsMs: nowMs,
   };
   if (params.errorCode !== undefined) record.errorCode = params.errorCode;
   if (params.errorMessage !== undefined)
@@ -249,7 +305,12 @@ export function finalizeConfigWriteAuditRecord(
  * After this returns, the main path no longer exists — the next
  * `appendRegularFile` call will create it under `0o600`.
  */
-function rotateAuditLogIfNeeded(
+/**
+ * Exported so the observe-side writer (`append-observe.ts`) can share
+ * the same rotation strategy. The semantics are identical to the
+ * original private helper.
+ */
+export function rotateConfigAuditLogIfNeeded(
   filePath: string,
   appendBytes: number,
   rotateAtBytes: number,
@@ -372,11 +433,13 @@ function emitSerializationErrorSentinel(): string {
   // Hand-crafted to be unconditionally serializable. JSON.stringify here
   // CANNOT return undefined — the non-null assertion is sound and is the
   // boundary point where the writer guarantees a parseable JSONL line.
+  // Uses `ts` (ISO string) per design §9.2; `tsMs` was dropped in
+  // 260519-rrm deviation G.
   const sentinel = {
     traceSchema: "comis-config-audit" as const,
     schemaVersion: 1 as const,
     __serializationError: "record-not-serializable" as const,
-    tsMs: systemNowMs(),
+    ts: systemDateFrom(systemNowMs()).toISOString(),
   };
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   return JSON.stringify(sentinel)! + "\n";
@@ -418,32 +481,41 @@ function encodeRecord(record: ConfigWriteAuditRecord): string {
 }
 
 /**
- * Ensure the parent dir exists with mode 0o700 (fresh-create only).
+ * Ensure the parent dir exists with mode 0o700, including for the
+ * existing-parent case (OBS-REVIEW-01 fix; Phase 48 OBS-HARD-01
+ * substrate migration).
  *
- * The prior implementation also `chmodSync(dir, 0o700)`'d a
- * pre-existing parent before the symlink check inside
- * `appendRegularFile` ran. The chmod-target is only `0o700` (no
- * privilege escalation), but the side-effect on a possibly-symlinked
- * target is a confused-deputy violation (TOCTOU window). The fix
- * deletes that else-branch outright:
+ * Delegates to the shared `ensureContainedDir` substrate, which owns
+ * the canonical `mkdir + lstat-gated chmod` pattern with
+ * confused-deputy safety:
  *
- *   - Fresh-create case: `mkdirSync({recursive: true, mode: 0o700})`
- *     keeps creating the dir with the correct mode.
- *   - Existing-parent case: leave the operator's mode untouched. The
- *     **file** itself is still locked to `0o600` by the defensive
- *     `fchmodSync(fd, 0o600)` inside `appendRegularFile` (fs-safe.ts
- *     step 3). Per-record file-mode invariant is preserved.
+ *   - Fresh-create: dir created at the specified mode.
+ *
+ *   - Existing-parent: `mkdirSync`'s `mode` arg is silently ignored
+ *     on recursive EEXIST; the substrate's defensive chmod restores
+ *     the §1.4 0o700 invariant, gated on a non-symlink `lstat`
+ *     (never chmod a symlinked dir — target may be shared state).
+ *
+ * The **file** itself is independently locked to `0o600` by the
+ * defensive `fchmodSync(fd, 0o600)` inside `appendRegularFile`
+ * (fs-safe.ts step 3) — per-record file-mode invariant is preserved
+ * regardless of the parent's pre-existing mode.
+ *
+ * The exported sync void signature is preserved for back-compat with
+ * the observe-side writer (`append-observe.ts`) which calls it
+ * directly. The substrate's Result is discarded because the existing
+ * contract is best-effort — the subsequent `appendRegularFile` call
+ * surfaces real errors via its own Result.err branch.
  */
-function ensureParentDir(filePath: string): void {
+export function ensureConfigAuditParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
-  try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  } catch (err) {
-    // EEXIST is the existing-dir case — we no longer chmod it. Any
-    // other error propagates so callers can report (e.g., EACCES,
-    // ENOSPC).
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-  }
+  // Delegate to the shared `ensureContainedDir` substrate (Phase 48
+  // OBS-HARD-01). The substrate owns the mkdir + lstat-gated chmod
+  // pattern with confused-deputy safety. Result is intentionally
+  // discarded — preserves the existing best-effort contract; the
+  // subsequent appendRegularFile call surfaces real errors via its
+  // own Result.err branch.
+  ensureContainedDir({ dir, mode: 0o700 });
 }
 
 /**
@@ -473,8 +545,8 @@ function appendConfigAuditRecordSyncImpl(
   const encoded = encodeRecord(params.record);
   const bytes = Buffer.byteLength(encoded, "utf8");
 
-  ensureParentDir(params.filePath);
-  rotateAuditLogIfNeeded(params.filePath, bytes, rotateAtBytes, keepRotated);
+  ensureConfigAuditParentDir(params.filePath);
+  rotateConfigAuditLogIfNeeded(params.filePath, bytes, rotateAtBytes, keepRotated);
 
   const appendResult = appendRegularFile({
     path: params.filePath,

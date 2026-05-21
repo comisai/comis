@@ -128,9 +128,20 @@ export function bindConfigAuditHandlers(
       const untilMs = parseTimestamp(params.until, now);
 
       const filtered = all.filter((record) => {
-        const tsMs = typeof record.tsMs === "number" ? record.tsMs : 0;
-        if (sinceMs !== undefined && tsMs < sinceMs) return false;
-        if (untilMs !== undefined && tsMs > untilMs) return false;
+        // Time-window filter via `ts` (ISO string). `tsMs` was dropped
+        // in 260519-rrm deviation G — records now carry only `ts` per
+        // design §9.2. Legacy records that still have `tsMs` fall
+        // through to `ts` parsing; the parse of a missing field yields
+        // NaN which both comparisons reject (treat as out-of-window).
+        const tsRaw = record.ts;
+        const tsMs =
+          typeof tsRaw === "string" ? Date.parse(tsRaw) : Number.NaN;
+        if (sinceMs !== undefined) {
+          if (!Number.isFinite(tsMs) || tsMs < sinceMs) return false;
+        }
+        if (untilMs !== undefined) {
+          if (!Number.isFinite(tsMs) || tsMs > untilMs) return false;
+        }
         if (params.suspiciousOnly === true) {
           const susp = record.suspicious;
           if (!Array.isArray(susp) || susp.length === 0) return false;

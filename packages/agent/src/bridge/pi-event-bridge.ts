@@ -25,6 +25,7 @@ import {
   type ModelOperationType,
   type ErrorKind,
 } from "@comis/core";
+import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
 import type { ComisLogger } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { randomUUID } from "node:crypto";
@@ -44,6 +45,20 @@ import type { ExecutionPlan } from "../planner/types.js";
 import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { extractMcpServerName } from "@comis/shared";
 import { classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
+
+/**
+ * Fix D2 (log-review): classify a tool failure's errorKind when the SDK
+ * reported `isError: true` from the start (i.e., `toolSuccess === false`
+ * BEFORE the exitCode branch flips it). Pre-fix this branch left
+ * `toolErrorKind` undefined and the `tool:executed` event payload
+ * lacked `errorKind` for the most common failure path. Heuristic:
+ *  - errorText starting with `[invalid_value]` / `[validation]` → validation
+ *  - otherwise → dependency (external tool / MCP server returned an error)
+ */
+function classifyToolError(_toolName: string, errorText: string | undefined): ErrorKind {
+  if (errorText && /^\[(invalid_value|validation)\]/.test(errorText)) return "validation";
+  return "dependency";
+}
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
 import { checkStepLimit, emitStepLimitAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
@@ -54,6 +69,33 @@ import {
   WIRE_DIFF_HINT_NOT_FOUND,
   type ThinkingBlockHash,
 } from "./thinking-block-hash-invariant.js";
+
+// ---------------------------------------------------------------------------
+// Module-level one-shot latches
+// ---------------------------------------------------------------------------
+
+/**
+ * One-shot latch (260520-wcf) gating the SDK-breakdown notice. The notice
+ * states that pi-ai does NOT expose `usage.cacheCreation.{shortTtl,longTtl}`
+ * and that Comis estimates the per-TTL split via marker counting. Prior to
+ * 260520-wcf the bridge logged this fact at DEBUG on every turn that wrote
+ * cache tokens, stacking thousands of identical lines under normal load.
+ *
+ * The notice now fires exactly once per daemon process (at the first
+ * `createPiEventBridge` construction) at INFO. The flag is module-scoped
+ * so multiple bridge constructions across the daemon's lifetime share it.
+ */
+let _sdkBreakdownNoticeEmitted = false;
+
+/**
+ * Test-only hook to reset the one-shot SDK-breakdown notice flag. Used
+ * by pi-event-bridge.test.ts to assert "fires exactly once" across
+ * multiple bridge constructions within a single test. NOT a public API —
+ * production code MUST NOT call this.
+ */
+export function __resetSdkBreakdownNoticeForTest(): void {
+  _sdkBreakdownNoticeEmitted = false;
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -172,6 +214,18 @@ export interface PiEventBridgeDeps {
    *  restoration hook. Optional — when omitted, the wire-edge diagnostic is
    *  a silent no-op. */
   getSessionJsonlPath?: () => string | null;
+  /**
+   * Session-scoped trajectory registry. When present, the bridge's
+   * `agent_start` case consults `hasSessionStartedBeenEmitted(formattedKey)`
+   * to suppress per-turn `session:started` re-emits (design §6.4 mapping
+   * table — `session.started` fires once per session, NOT per pi-mono
+   * turn). The bridge itself is per-turn; the registry survives every
+   * turn so the latch lives there.
+   *
+   * When omitted (legacy/test callers), the bridge falls back to the
+   * pre-tlx unconditional emit so existing harnesses keep working.
+   */
+  trajectoryRegistry?: SessionTrajectoryHandleRegistry;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -231,6 +285,22 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
   // Internal accumulation state (managed by bridge-metrics module)
   const m = createBridgeMetrics();
 
+  // 260520-wcf one-shot SDK-breakdown notice. Fires exactly once per
+  // daemon process — the latch is module-scoped so multiple bridge
+  // constructions (per-execution / test harnesses) share it. The notice
+  // is INFO because it's a one-time operator-relevant fact, not a
+  // recurring DEBUG signal.
+  if (!_sdkBreakdownNoticeEmitted) {
+    _sdkBreakdownNoticeEmitted = true;
+    deps.logger.info(
+      {
+        errorKind: "dependency" as const,
+        hint: "pi-ai SDK does not expose usage.cacheCreation per-TTL breakdown; Comis estimates the 5m/1h split via marker counting. Estimate accuracy may drift if cache-write composition skews from the marker-count assumption.",
+      },
+      "pi-ai SDK does not expose cacheCreation per-TTL breakdown; Comis estimates via marker counting",
+    );
+  }
+
   const listener = (event: AgentSessionEvent): void => {
     try {
       switch (event.type) {
@@ -272,38 +342,49 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           if (m.agentStartMs === undefined) {
             m.agentStartMs = systemNowMs();
           }
+          // Suppress per-turn re-emits: design §6.4 makes session.started
+          // fire ONCE per session (not per pi-mono turn). The bridge is
+          // per-turn, so consult the session-scoped trajectoryRegistry
+          // latch — it survives across turns and resets only when the
+          // session is destroyed (or the daemon restarts and rebuilds
+          // the registry fresh). When the registry is absent
+          // (legacy/test callers), fall through to the legacy
+          // unconditional emit so existing harnesses keep working.
+          const formattedKey = formatSessionKey(deps.sessionKey);
+          if (deps.trajectoryRegistry?.hasSessionStartedBeenEmitted(formattedKey) === true) {
+            break;
+          }
           // channelType lives on RequestContext (AsyncLocalStorage); fall
           // back to "" when running outside a scope (e.g., direct test
           // invocation). Trajectory consumers tolerate the empty case.
           const channelType = tryGetContext()?.channelType ?? "";
           deps.eventBus.emit("session:started", {
             agentId: deps.agentId,
-            sessionKey: formatSessionKey(deps.sessionKey),
+            sessionKey: formattedKey,
             traceId: deps.executionId,
             channelType,
             channelId: deps.channelId,
             timestamp: systemNowMs(),
           });
+          deps.trajectoryRegistry?.markSessionStarted(formattedKey);
           break;
         }
 
         case "agent_end": {
+          // session:ended is NO LONGER emitted from agent_end (design
+          // §6.4 — "(session) ended" is a session-destroy semantic, not
+          // per-turn). The emit moved to
+          // ComisSessionManager.destroySession. Per-turn duration metrics
+          // are surfaced via observability:token_usage → model.completed,
+          // which already carries durationMs.
+          //
+          // We preserve the m.agentStartMs / m.lastStopReason reads since
+          // other accumulators may rely on these — only the eventBus
+          // emit is removed.
           const startMs = m.agentStartMs ?? systemNowMs();
           const durationMs = systemNowMs() - startMs;
-          // Exit reason: derive from last stopReason (or empty when
-          // pi-mono shut down cleanly without one).
-          const exitReason = m.lastStopReason ?? "end";
-          deps.eventBus.emit("session:ended", {
-            agentId: deps.agentId,
-            sessionKey: formatSessionKey(deps.sessionKey),
-            traceId: deps.executionId,
-            totalTurns: m.turnCount,
-            totalInputTokens: m.totalInputTokens,
-            totalOutputTokens: m.totalOutputTokens,
-            durationMs,
-            exitReason,
-            timestamp: systemNowMs(),
-          });
+          void durationMs;
+          void (m.lastStopReason ?? "end");
           break;
         }
 
@@ -398,6 +479,26 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const mcpServer = extractMcpServerName(endEvent.toolName);
           if (!toolSuccess) {
             errorText = extractErrorText(endEvent.result);
+            // Fix D2 (log-review): when toolSuccess was already false from
+            // the SDK's isError flag (not flipped by an exitCode check),
+            // toolErrorKind is still undefined here. Classify it so the
+            // downstream tool:executed event carries an actionable
+            // errorKind for trajectory + alerting consumers. For MCP
+            // tools, mirror the dedicated MCP classifier into the closed
+            // ErrorKind union (timeout → timeout, connection/transport →
+            // dependency, everything else → classifyToolError fallback).
+            if (toolErrorKind === undefined) {
+              if (mcpServer !== undefined) {
+                const mcpKind = classifyMcpErrorType(errorText);
+                toolErrorKind = mcpKind === "timeout"
+                  ? "timeout"
+                  : (mcpKind === "connection" || mcpKind === "transport")
+                    ? "dependency"
+                    : classifyToolError(endEvent.toolName, errorText);
+              } else {
+                toolErrorKind = classifyToolError(endEvent.toolName, errorText);
+              }
+            }
             m.failedToolCount++;
             if (!m.failedToolNames.includes(endEvent.toolName)) {
               m.failedToolNames.push(endEvent.toolName);
@@ -853,19 +954,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               ? { shortTtl: (rawUsage.cacheCreation as any).shortTtl ?? 0, longTtl: (rawUsage.cacheCreation as any).longTtl ?? 0 }
               : undefined;
 
-            if (cacheWriteTokens > 0) {
-              deps.logger.debug({
-                cacheWriteTokens,
-                // Whether the pi-ai SDK exposes the per-TTL cache_creation breakdown
-                // (usage.cacheCreation.shortTtl/longTtl). Expected: false -- pi-ai does
-                // not surface this field. Per-TTL split is only visible on the Anthropic
-                // dashboard. This does NOT mean cache writes are failing; cacheWriteTokens
-                // above confirms writes are happening normally.
-                sdkTtlBreakdownAvailable: cacheCreation !== undefined,
-                shortTtl: cacheCreation?.shortTtl,
-                longTtl: cacheCreation?.longTtl,
-              }, "Cache write TTL breakdown (pi-ai SDK does not expose per-TTL split; see Anthropic dashboard)");
-            }
+            // 260520-wcf: per-call DEBUG breakdown log removed. The fact
+            // that pi-ai does not expose the per-TTL split is now stated
+            // once at construction time via the module-level
+            // _sdkBreakdownNoticeEmitted latch above. cacheCreation
+            // (when present) still flows downstream into the
+            // observability:token_usage event payload below.
 
             // Record usage in budget guard (token-based, not cost-based -- stays before correction)
             deps.budgetGuard.recordUsage(usage.totalTokens);
@@ -903,16 +997,22 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Accumulate corrected cost
             m.totalCost += cost.total;
 
+            // 260521-0bn: accumulate per-turn cost-correction delta (>0
+            // only — matches the 260520-wcf invariant that negative
+            // correction is suppressed; see costCorrectionField gate at
+            // line ~1106). Surfaced via buildBridgeResult on the
+            // "Execution complete" log.
             if (costCorrectionDelta > 0) {
-              deps.logger.debug({
-                costCorrectionDelta,
-                sdkCostTotal: sdkCost.total,
-                correctedCostTotal: cost.total,
-                cacheWrite1hTokens: deps.ttlSplit!.cacheWrite1hTokens,
-                rate5m: pricing.cacheWrite,
-                rate1h: pricing.cacheWrite1h,
-              }, "Cost correction applied: SDK underpriced 1h cache writes at 5m rate");
+              m.totalCostCorrectionDeltaUsd += costCorrectionDelta;
             }
+
+            // 260520-wcf: per-call DEBUG cost-correction log removed. The
+            // costCorrection breadcrumb now rides on the
+            // observability:token_usage event payload below — operators
+            // already query that event for cost forensics, so moving the
+            // signal there preserves observability without inflating
+            // DEBUG volume. The field is included only when delta !== 0;
+            // a turn with no correction emits nothing extra.
 
             // Record in cost tracker (uses corrected cost)
             deps.costTracker.record(
@@ -957,6 +1057,24 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Accumulate cache savings across turns
             m.totalCacheSaved += savedVsUncached;
 
+            // 260520-wcf: warmup-turn signal. Identifies the first
+            // cache-write turn in a session (writes-without-prior-reads).
+            // Per-call cache math is correct, but reporting cacheSavedUsd
+            // as a negative dollar value on this turn is misleading
+            // because the "loss" is a deferred investment recouped by
+            // subsequent cached reads, not a cost regression. The
+            // positive-signed `pendingCacheInvestmentUsd` is the
+            // dashboard-friendly framing of the same magnitude; the
+            // original `savedVsUncached` keeps its negative value (math
+            // preserved).
+            const warmupTurn = cacheReadTokens === 0 && cacheWriteTokens > 0;
+            const pendingCacheInvestmentUsd =
+              warmupTurn && savedVsUncached < 0 ? -savedVsUncached : 0;
+            if (warmupTurn) {
+              m.warmupTurnCount += 1;
+              m.totalPendingCacheInvestmentUsd += pendingCacheInvestmentUsd;
+            }
+
             // Record per-turn cache savings for cost gate evaluation.
             if (deps.onTurnCacheSavings) {
               deps.onTurnCacheSavings(savedVsUncached);
@@ -990,6 +1108,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             );
 
             // Emit observability event
+            // 260520-wcf: include costCorrection breadcrumb when the SDK
+            // total was bumped to cover 1h-rate underpricing. Omitted
+            // when delta === 0 — operators can filter on
+            // `costCorrection != null` to surface only corrected turns.
+            const costCorrectionField =
+              costCorrectionDelta !== 0
+                ? {
+                    costCorrection: {
+                      delta: cost.total - sdkCost.total, // = costCorrectionDelta when > 0
+                      sdkRaw: sdkCost.total,
+                      corrected: cost.total,
+                    },
+                  }
+                : {};
             deps.eventBus.emit("observability:token_usage", {
               timestamp: systemNowMs(),
               traceId: deps.executionId,
@@ -1018,6 +1150,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               cacheEligible: getCacheProviderInfo(deps.provider, deps.getCurrentModel?.() ?? deps.model).cacheEligible,
               responseId,
               cacheCreation: effectiveCacheCreation,
+              // 260520-wcf: warmup-turn flag + deferred investment
+              // dollar value. Both included unconditionally so consumers
+              // can pivot/filter without conditional schemas.
+              warmupTurn,
+              pendingCacheInvestmentUsd,
+              ...costCorrectionField,
             });
 
             // Safety: check budget after recording (delegated to bridge-safety-controls)

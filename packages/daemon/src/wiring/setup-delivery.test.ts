@@ -642,6 +642,74 @@ describe("setupDeliveryQueue", () => {
       vi.useRealTimers();
     });
 
+    // Fix B (log-review): transition-gated empty-drain log
+    it("Fix B: consecutive empty-drain ticks emit exactly ONE 'transitioned to empty' log line", async () => {
+      vi.useFakeTimers();
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValue(ok([]));
+      const logger = createMockLogger();
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ drainIntervalMs: 50, drainOnStartup: true }),
+        eventBus: createMockEventBus(),
+        logger,
+        channelAdapters: new Map(),
+      });
+
+      await result.drainAndStart();
+      // Advance >= 6 ticks; lastDrainHadPending starts `true`, so the first
+      // empty pass logs once, and all subsequent empty passes are silent.
+      await vi.advanceTimersByTimeAsync(300);
+      await vi.runOnlyPendingTimersAsync();
+
+      const transitionLogs = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => typeof c[0] === "string" && (c[0] as string).includes("transitioned to empty"),
+      );
+      expect(transitionLogs.length).toBe(1);
+
+      result.shutdown();
+      vi.useRealTimers();
+    });
+
+    it("Fix B: non-empty drain followed by empty drain re-emits the transition log", async () => {
+      vi.useFakeTimers();
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
+      const entry = makeEntry({ id: "transition-1", channelType: "telegram" });
+      // Sequence: empty (startup) → non-empty (first tick) → empty (second tick onwards).
+      // The startup empty pass logs ONCE (lastDrainHadPending starts true).
+      // The first non-empty tick flips the gate; the second empty tick logs again.
+      vi.mocked(mockSqliteQueue.pendingEntries)
+        .mockResolvedValueOnce(ok([]))         // startup drain — empty
+        .mockResolvedValueOnce(ok([entry]))    // recurring tick 1 — pending
+        .mockResolvedValue(ok([]));            // ticks 2+ — empty
+
+      const adapter = createMockAdapter("telegram", [{ ok: true, value: "msg-1" }]);
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+      const logger = createMockLogger();
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ drainIntervalMs: 50, drainOnStartup: true }),
+        eventBus: createMockEventBus(),
+        logger,
+        channelAdapters: adapters,
+      });
+
+      await result.drainAndStart();
+      await vi.advanceTimersByTimeAsync(300);
+      await vi.runOnlyPendingTimersAsync();
+
+      const transitionLogs = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => typeof c[0] === "string" && (c[0] as string).includes("transitioned to empty"),
+      );
+      // Two transitions: startup-empty (1st), and after-non-empty-then-empty (2nd).
+      expect(transitionLogs.length).toBe(2);
+
+      result.shutdown();
+      vi.useRealTimers();
+    });
+
     it("does not start recurring timer when queue is disabled", async () => {
       vi.useFakeTimers();
       const result = await setupDeliveryQueue({

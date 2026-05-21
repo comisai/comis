@@ -99,6 +99,14 @@ export interface PostExecutionBridgeResult {
    *  bridge-result shape get a coherent type). */
   signatureScrubs?: number;
   signatureScrubsToolCallsAffected?: number;
+  /** 260520-wcf: number of turns flagged as `warmupTurn` (cacheReadTokens === 0 && cacheWriteTokens > 0). */
+  warmupTurnCount?: number;
+  /** 260520-wcf: positive-signed sum of pending cache investment across warmup turns (USD). */
+  totalPendingCacheInvestmentUsd?: number;
+  /** 260521-0bn: cumulative SDK→corrected cost delta across all turns (USD).
+   *  Conditionally emitted on the Execution-complete log when > 0 — mirrors
+   *  the per-event `costCorrection` breadcrumb gate in pi-event-bridge.ts. */
+  totalCostCorrectionDeltaUsd?: number;
 }
 
 /** Bridge interface used by post-execution. */
@@ -561,6 +569,22 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       comisEstimatedTtlSplit: (bridgeResult.cacheWrite5mTokens ?? 0) > 0 || (bridgeResult.cacheWrite1hTokens ?? 0) > 0,
       costUsd: result.cost.total,
       cacheSavedUsd: result.cost.cacheSaved ?? 0,
+      // 260520-wcf: warmup-turn signal lifted from per-turn token_usage
+      // events. `warmupTurn: true` whenever ANY turn in this execution
+      // was flagged as a first-cache-write turn; the positive-signed
+      // pendingCacheInvestmentUsd is the sum across those turns.
+      // Dashboards filtering on warmupTurn keep first-write executions
+      // out of cost-regression alerts (where the negative savedVsUncached
+      // would otherwise dominate).
+      warmupTurn: (bridgeResult.warmupTurnCount ?? 0) > 0,
+      pendingCacheInvestmentUsd: bridgeResult.totalPendingCacheInvestmentUsd ?? 0,
+      // 260521-0bn: cumulative SDK→corrected cost delta this execute.
+      // Conditional emit — turns with no correction omit the field
+      // entirely (matches the per-event `costCorrectionField` gate at
+      // pi-event-bridge.ts:1106 — avoids zero-value log noise).
+      ...((bridgeResult.totalCostCorrectionDeltaUsd ?? 0) > 0 && {
+        costCorrectionDeltaUsd: bridgeResult.totalCostCorrectionDeltaUsd,
+      }),
       // Session-cumulative cost fields (alongside per-turn costUsd/cacheSavedUsd)
       sessionCostUsd: bridgeResult.sessionCostUsd ?? 0,
       sessionCacheSavedUsd: bridgeResult.sessionCacheSavedUsd ?? 0,

@@ -41,7 +41,16 @@ vi.mock("./graph-prewarm.js", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Module mock for node:fs (captures writeFileSync calls for transcript tests)
+// Module mock for node:fs (captures writeFileSync calls for transcript tests).
+//
+// Phase 48 OBS-HARD-03 migrated the graph-* writers to the fs-safe
+// substrate (`writeRegularFile`), which uses fs.openSync + fs.writeSync +
+// fs.fchmodSync internally rather than fs.writeFileSync. To keep these
+// tests' content-introspection assertions working, we ALSO mock
+// `@comis/observability`'s `writeRegularFile` to push into the same
+// `fsWriteCalls` capture array. Together the two mocks cover both the
+// pre-migration writeFileSync path (any unmigrated call sites) and the
+// post-migration substrate path.
 // ---------------------------------------------------------------------------
 
 const fsWriteCalls: Array<{ path: string; content: string }> = [];
@@ -63,6 +72,26 @@ vi.mock("node:fs", async (importOriginal) => {
       const content = fsMockFiles.get(String(p));
       if (content === undefined) throw new Error(`ENOENT: ${p}`);
       return content;
+    },
+  };
+});
+
+vi.mock("@comis/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/observability")>();
+  return {
+    ...actual,
+    writeRegularFile: (opts: {
+      path: string;
+      content: string | Buffer;
+      confinedBaseDir?: string;
+    }) => {
+      fsWriteCalls.push({
+        path: String(opts.path),
+        content: typeof opts.content === "string"
+          ? opts.content
+          : opts.content.toString("utf8"),
+      });
+      return { ok: true as const, value: { totalBytes: typeof opts.content === "string" ? opts.content.length : opts.content.length } };
     },
   };
 });

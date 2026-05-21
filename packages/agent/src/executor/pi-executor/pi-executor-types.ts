@@ -190,6 +190,22 @@ export interface PiExecutorDeps {
     readonly eventTypes?: ReadonlyArray<string>;
   };
   /**
+   * Optional session-scoped trajectory recorder registry. When provided,
+   * pi-executor delegates recorder lifecycle (lazy-create on first turn,
+   * close on session destroy) to this registry instead of constructing
+   * a fresh recorder per `execute()` call. The registry guarantees the
+   * design §6.4 + §6.5 + §6.8 invariants: monotonic `seq` across all
+   * turns, exactly one `session.started`/`session.ended` per session,
+   * bridge subscription matches recorder lifetime.
+   *
+   * Wired in the daemon composition root via
+   * `createSessionTrajectoryHandleRegistry()` from @comis/observability.
+   * The daemon's shutdown chain MUST call `closeAll()` to drain open
+   * recorders. When `undefined`, the per-turn fallback construction
+   * path lights up — kept for tests + the pre-rrm-260519 lifecycle.
+   */
+  trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
+  /**
    * Cache-trace writer configuration. Forwarded from
    * AppConfig.diagnostics.cacheTrace by daemon wiring. When omitted or
    * `enabled: false`, the per-session cache-trace recorder is a no-op.
@@ -200,6 +216,13 @@ export interface PiExecutorDeps {
   cacheTraceConfig?: {
     readonly enabled?: boolean;
     readonly filePath?: string;
+    /**
+     * Per-file byte cap for cache-trace JSONL. Defaults to the runtime's
+     * fallback constant when undefined (50 MB after Plan 48-03 lands; 10 MB
+     * until then — but in normal operation the schema default of 50 MB
+     * always wins, so the transient mismatch is moot).
+     */
+    readonly maxFileBytes?: number;
     readonly includeMessages?: boolean;
     readonly includePrompt?: boolean;
     readonly includeSystem?: boolean;

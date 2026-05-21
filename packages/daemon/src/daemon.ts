@@ -95,6 +95,7 @@ import {
   seedBundledSkillCreator,
   bootstrapSecretsAndEnv,
   wireConfigGitManager,
+  runConfigBootstrapAndEmitObserve,
 } from "./stages/foundation-helpers.js";
 import {
   restoreApprovalState,
@@ -309,15 +310,12 @@ async function stageFoundation(input: {
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
 
-  // 1. Bootstrap core container
-  // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution
-  const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"];
-  const configPaths = (rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS)
-    .filter((p) => existsSync(p));
-  const bootResult = _bootstrap({ configPaths, env: mergedEnv });
-  if (!bootResult.ok) {
-    throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
-  }
+  // 1. Bootstrap core container. Fix A (log-review): under VITEST=true, refuse to silently read ~/.comis/config.yaml when COMIS_CONFIG_PATHS is unset.
+  // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
+  const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
+  const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
+  const { configPaths, bootResult } = await runConfigBootstrapAndEmitObserve({ requestedConfigPaths, mergedEnv, bootstrap: _bootstrap });
+  if (!bootResult.ok) throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
   // Container via const+resolve-then-spread.
   const initialContainer = bootResult.value;
   const refResult = resolveConfigSecretRefs(
@@ -550,8 +548,8 @@ async function stageAgents(input: {
     oauthCredentialStore,
     // Per-agent live ToolCapabilityPort adapters; daemon.ts threads
     // getCapabilityPortForAgent into setupTools and mutates this map on
-    // hot-add / hot-remove.
-    toolCapabilityPorts,
+    // hot-add / hot-remove. trajectoryRegistry is drained by setupShutdown.
+    toolCapabilityPorts, trajectoryRegistry,
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
@@ -700,7 +698,7 @@ async function stageAgents(input: {
     transcriber, ssrfFetcher, fileExtractor,
     rpcCall, wireDispatch, approvalGate,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    cronWakeCallbackRef,
+    cronWakeCallbackRef, trajectoryRegistry,
   };
 }
 
@@ -1088,6 +1086,7 @@ async function stageShutdown(input: {
     promptTimeoutTimestamps,
     sessionStoreBridge, shutdownRef, gatewayHandle,
     activeExecutions, getActiveConnectionCount,
+    trajectoryRegistry,
   } = gateway;
   void _execs; void _suspended;
   // Override-derived locals -- only consumed by setupShutdown below.
@@ -1114,6 +1113,7 @@ async function stageShutdown(input: {
     lifecycleReactors,  // destroy lifecycle reactors on shutdown
     obsPersistence,  // drain write buffers before db.close
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
+    trajectoryRegistry,  // Drain session-scoped trajectory recorders
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:

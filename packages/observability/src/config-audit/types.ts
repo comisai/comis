@@ -8,25 +8,37 @@
  *   - `ConfigWriteAuditRecord` — every successful or failed config
  *     write goes through this shape. Carries caller provenance
  *     (pid/ppid/argv/cwd/execArgv), watch-mode state, file-state
- *     snapshots (`existsBefore`, `previousHash`, `nextHash`, byte
- *     sizes, stat-tuples), the `changedPathCount` accounting that
+ *     snapshots (existsBefore + previousHash/Bytes + flat stat fields +
+ *     next* mirrors), the `changedPathCount` accounting that
  *     `comis config audit show` surfaces, suspicious heuristics
  *     (see `suspicious.ts`), and optional `errorCode` /
  *     `errorMessage` for failed writes (`result: "failed"` or
  *     `"rejected"`).
  *
  *   - `ConfigObserveAuditRecord` — read-side audit records for
- *     `phase: "read"` events (currently unused by the writer hooks,
- *     but the file format reserves space for it; a future hook may
- *     wire a read-side audit). Same caller-provenance fields plus
- *     a single `source` field naming the read site.
+ *     `event: "config.observe"` events (currently unused by the writer
+ *     hooks, but the file format reserves space for it).
+ *
+ * Both shapes match the design §9.2 record schemas verbatim:
+ *
+ *   - `event` is the discriminant ("config.write" | "config.observe"),
+ *     NOT `phase` (renamed in 260519-rrm deviation G fix).
+ *   - `source` is the fixed literal `"config-io"` per the design table.
+ *     The pre-fix four-value enum (last-known-good-save / restore /
+ *     config-patch-rpc / cli-sync-tooling) is preserved verbatim in
+ *     the new `callerSource: string` field so consumers (CLI audit
+ *     show, downstream forensics) keep the call-site provenance.
+ *   - Stat fields are FLAT (previousDev / previousIno / previousMode /
+ *     previousNlink / previousUid / previousGid plus next* mirrors).
+ *     `dev` and `ino` are `string | null` per design §9.2 — POSIX
+ *     `stat.st_dev` and `st_ino` can exceed JS safe-integer range on
+ *     some filesystems, so they're stringified.
+ *   - `tsMs` is dropped. Filtering by time uses `Date.parse(ts)`.
  *
  * Both shapes carry the `traceSchema:"comis-config-audit"` +
  * `schemaVersion:1` invariant at the top level so a future
  * v2-renaming/restructuring can be parsed alongside v1 records by a
- * single reader. The two shapes share enough structure that the
- * audit log's `config.audit.list` RPC handler returns them as a
- * union; the read side is currently expected to be empty.
+ * single reader.
  *
  * Both TS types AND Zod schemas are exported so contract definitions
  * can reference the schemas directly without re-deriving them
@@ -46,121 +58,164 @@ const SuspiciousFlagSchema = z.enum([
 export type SuspiciousFlag = z.infer<typeof SuspiciousFlagSchema>;
 
 /**
- * Outcome of the config-write attempt.
+ * Outcome of the config-write attempt (design §9.2).
  *
- *   - `rename`   — atomic-write tmp + rename succeeded.
- *   - `rejected` — pre-write validation rejected the patch (e.g.
+ *   - `rename`        — atomic-write tmp + rename succeeded.
+ *   - `copy-fallback` — atomic rename failed; the writer fell back to
+ *     copy + truncate-on-success semantics.
+ *   - `rejected`      — pre-write validation rejected the patch (e.g.
  *     schema fail, immutable-path block).
- *   - `failed`   — write attempted but the OS-level call threw
+ *   - `failed`        — write attempted but the OS-level call threw
  *     (EACCES, ENOSPC, disk-full, etc.); `errorCode` + `errorMessage`
  *     carry the cause.
  */
-const ConfigWriteResultSchema = z.enum(["rename", "rejected", "failed"]);
+const ConfigWriteResultSchema = z.enum([
+  "rename",
+  "copy-fallback",
+  "rejected",
+  "failed",
+]);
 export type ConfigWriteResult = z.infer<typeof ConfigWriteResultSchema>;
 
 /**
- * Source of the config-write call. Identifies which of the three
- * hook sites emitted the record. Values match the literal strings
- * passed by each hook site (see `last-known-good.ts`,
- * `config-write.ts`, `cli/commands/config.ts`).
+ * Caller-provenance source — preserves the pre-260519-rrm four-value
+ * enum (last-known-good-save / -restore, config-patch-rpc,
+ * cli-sync-tooling) as the new `callerSource` field. Kept open
+ * (`z.string()`) so additional call sites can extend without a
+ * schema change; the daemon writes one of the four canonical values
+ * today but the contract is "any non-empty caller identifier".
  */
-const ConfigWriteSourceSchema = z.enum([
-  "last-known-good-save",
-  "last-known-good-restore",
-  "config-patch-rpc",
-  "cli-sync-tooling",
-]);
-export type ConfigWriteSource = z.infer<typeof ConfigWriteSourceSchema>;
-
-/** File-stat snapshot — POSIX fields only; nullable when stat failed. */
-const FileStatSnapshotSchema = z.object({
-  dev: z.number().int().nullable(),
-  ino: z.number().int().nullable(),
-  mode: z.number().int().nullable(),
-  nlink: z.number().int().nullable(),
-  uid: z.number().int().nullable(),
-  gid: z.number().int().nullable(),
-});
-export type FileStatSnapshot = z.infer<typeof FileStatSnapshotSchema>;
+export type ConfigWriteSource = string;
 
 /**
- * Full `ConfigWriteAuditRecord` shape.
+ * File-stat snapshot — POSIX fields with `dev`/`ino` stringified for
+ * JS-safe-integer overflow protection (design §9.2). The internal
+ * `snapshotStat` helper in `append.ts` returns this shape and the
+ * `finalize`/`createBase` helpers flatten it into the record's flat
+ * fields (no nested object on disk). Kept as a plain type interface
+ * (not a Zod schema) because the nested object never lands on disk
+ * post-260519-rrm; the schema isn't reusable as a parser anymore.
+ */
+export interface FileStatSnapshot {
+  readonly dev: string | null;
+  readonly ino: string | null;
+  readonly mode: number | null;
+  readonly nlink: number | null;
+  readonly uid: number | null;
+  readonly gid: number | null;
+}
+
+/**
+ * Full `ConfigWriteAuditRecord` shape (design §9.2).
  *
  * Field groups:
- *   - **Identity** — `traceSchema`, `schemaVersion`, `phase`,
- *     `source`, `configPath`.
+ *   - **Identity** — `traceSchema`, `schemaVersion`, `event`,
+ *     `source`, `callerSource`, `configPath`.
  *   - **Caller provenance** — `pid`, `ppid`, `argv`, `cwd`,
- *     `execArgv`, `watchMode`.
+ *     `execArgv`, `watchMode`, `watchSession`, `watchCommand`.
  *   - **Pre-write state** — `existsBefore`, `previousHash`,
- *     `previousBytes`, `previousStat`, `hasMetaBefore`.
- *   - **Post-write state** — `nextHash`, `nextBytes`, `nextStat`,
- *     `hasMetaAfter`, `changedPathCount`.
+ *     `previousBytes`, `previousDev/Ino/Mode/Nlink/Uid/Gid`,
+ *     `hasMetaBefore`.
+ *   - **Post-write state** — `nextHash`, `nextBytes`,
+ *     `nextDev/Ino/Mode/Nlink/Uid/Gid`, `hasMetaAfter`,
+ *     `changedPathCount`.
  *   - **Outcome** — `result`, optional `errorCode`, `errorMessage`.
  *   - **Heuristics** — `suspicious` array.
- *   - **Timestamps** — `ts` (ISO string), `tsMs` (epoch millis).
+ *   - **Timestamp** — `ts` (ISO string); time-window filters use
+ *     `Date.parse(ts)`. `tsMs` is intentionally absent.
  */
 export const ConfigWriteAuditRecordSchema = z.object({
   traceSchema: z.literal("comis-config-audit"),
   schemaVersion: z.literal(1),
-  phase: z.literal("write"),
+  ts: z.string(),
+  source: z.literal("config-io"),
+  event: z.literal("config.write"),
+  result: ConfigWriteResultSchema,
 
-  // Identity
-  source: ConfigWriteSourceSchema,
+  // Identity / caller provenance.
   configPath: z.string(),
-
-  // Caller provenance
+  callerSource: z.string(),
   pid: z.number().int(),
   ppid: z.number().int(),
   argv: z.array(z.string()),
   cwd: z.string(),
   execArgv: z.array(z.string()),
   watchMode: z.boolean(),
+  watchSession: z.string().nullable(),
+  watchCommand: z.string().nullable(),
 
-  // Pre-write state
+  // File state — hashes + bytes.
   existsBefore: z.boolean(),
   previousHash: z.string().nullable(),
-  previousBytes: z.number().int().nonnegative().nullable(),
-  previousStat: FileStatSnapshotSchema.nullable(),
-  hasMetaBefore: z.boolean(),
-
-  // Post-write state
   nextHash: z.string().nullable(),
+  previousBytes: z.number().int().nonnegative().nullable(),
   nextBytes: z.number().int().nonnegative().nullable(),
-  nextStat: FileStatSnapshotSchema.nullable(),
-  hasMetaAfter: z.boolean(),
+
+  // File state — flat POSIX stat fields. dev/ino stringified.
+  previousDev: z.string().nullable(),
+  nextDev: z.string().nullable(),
+  previousIno: z.string().nullable(),
+  nextIno: z.string().nullable(),
+  previousMode: z.number().int().nullable(),
+  nextMode: z.number().int().nullable(),
+  previousNlink: z.number().int().nullable(),
+  nextNlink: z.number().int().nullable(),
+  previousUid: z.number().int().nullable(),
+  nextUid: z.number().int().nullable(),
+  previousGid: z.number().int().nullable(),
+  nextGid: z.number().int().nullable(),
+
   changedPathCount: z.number().int().nonnegative().nullable(),
+  hasMetaBefore: z.boolean(),
+  hasMetaAfter: z.boolean(),
 
-  // Outcome
-  result: ConfigWriteResultSchema,
-  errorCode: z.string().optional(),
-  errorMessage: z.string().optional(),
-
-  // Heuristics
+  // Heuristics.
   suspicious: z.array(SuspiciousFlagSchema),
 
-  // Timestamps
-  ts: z.string(),
-  tsMs: z.number().int().nonnegative(),
+  // Outcome detail (optional).
+  errorCode: z.string().optional(),
+  errorMessage: z.string().optional(),
 });
 export type ConfigWriteAuditRecord = z.infer<typeof ConfigWriteAuditRecordSchema>;
 
 /**
- * `ConfigObserveAuditRecord` — read-side audit shape. Carries the
- * same caller-provenance + timestamp fields plus a single `source`
- * naming the read site. No file-state snapshots (reads do not change
- * state). Currently unused by writer hooks; reserved for a future
- * read-side audit hook.
+ * `ConfigObserveAuditRecord` — read-side audit shape (design §9.2).
+ *
+ * Matches design §9.2 verbatim. Field groups:
+ *   - **Identity + caller provenance** — `traceSchema`,
+ *     `schemaVersion`, `ts`, `source`, `event`, `phase`, `configPath`,
+ *     `callerSource`, `pid`, `ppid`, `argv`, `cwd`, `execArgv`,
+ *     `watchMode`.
+ *   - **File state** — `exists`, `valid`, `hash`, `bytes`,
+ *     `mtimeMs`, `ctimeMs`, `dev`, `ino`, `mode`, `nlink`, `uid`,
+ *     `gid`. All nullable when `exists:false`.
+ *   - **LKG triple** — `lastKnownGoodHash`, `lastKnownGoodBytes`,
+ *     `lastKnownGoodMtimeMs`. All nullable when no LKG sibling.
+ *   - **Backup triple** — `backupHash`, `backupBytes`,
+ *     `backupMtimeMs`. All nullable when no backup sibling.
+ *   - **Recovery quartet** — `clobberedPath`, `restoredFromBackup`,
+ *     `restoredBackupPath`, `restoreErrorCode`, `restoreErrorMessage`.
+ *     Quintet by count; mismatched names follow design §9.2's
+ *     "recovery state" group.
+ *   - **Heuristics** — `suspicious` array.
+ *
+ * No-BC policy (AGENTS.md §2.9): every §9.2 field is REQUIRED on the
+ * schema. The sole producer (`createConfigObserveAuditRecord` in
+ * `append-observe.ts`) is updated in lock-step to populate them.
+ * On-disk records written by prior versions of the producer will not
+ * re-parse — this is the intentional forward-only contract change.
  */
 export const ConfigObserveAuditRecordSchema = z.object({
   traceSchema: z.literal("comis-config-audit"),
   schemaVersion: z.literal(1),
+  ts: z.string(),
+  source: z.literal("config-io"),
+  event: z.literal("config.observe"),
   phase: z.literal("read"),
 
-  // Identity
-  source: z.string(),
+  // Identity / caller provenance.
   configPath: z.string(),
-
-  // Caller provenance
+  callerSource: z.string(),
   pid: z.number().int(),
   ppid: z.number().int(),
   argv: z.array(z.string()),
@@ -168,11 +223,38 @@ export const ConfigObserveAuditRecordSchema = z.object({
   execArgv: z.array(z.string()),
   watchMode: z.boolean(),
 
-  // Heuristics
-  suspicious: z.array(SuspiciousFlagSchema),
+  // §9.2 file-state — required, nullable when exists:false.
+  exists: z.boolean(),
+  valid: z.boolean(),
+  hash: z.string().nullable(),
+  bytes: z.number().int().nonnegative().nullable(),
+  mtimeMs: z.number().nullable(),
+  ctimeMs: z.number().nullable(),
+  dev: z.string().nullable(),
+  ino: z.string().nullable(),
+  mode: z.number().int().nullable(),
+  nlink: z.number().int().nullable(),
+  uid: z.number().int().nullable(),
+  gid: z.number().int().nullable(),
 
-  // Timestamps
-  ts: z.string(),
-  tsMs: z.number().int().nonnegative(),
+  // §9.2 LKG triple — required, nullable when no LKG sibling.
+  lastKnownGoodHash: z.string().nullable(),
+  lastKnownGoodBytes: z.number().int().nonnegative().nullable(),
+  lastKnownGoodMtimeMs: z.number().nullable(),
+
+  // §9.2 backup triple — required, nullable when no backup sibling.
+  backupHash: z.string().nullable(),
+  backupBytes: z.number().int().nonnegative().nullable(),
+  backupMtimeMs: z.number().nullable(),
+
+  // §9.2 recovery state — required.
+  clobberedPath: z.string().nullable(),
+  restoredFromBackup: z.boolean(),
+  restoredBackupPath: z.string().nullable(),
+  restoreErrorCode: z.string().nullable(),
+  restoreErrorMessage: z.string().nullable(),
+
+  // Heuristics.
+  suspicious: z.array(SuspiciousFlagSchema),
 });
 export type ConfigObserveAuditRecord = z.infer<typeof ConfigObserveAuditRecordSchema>;

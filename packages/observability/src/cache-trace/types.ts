@@ -35,28 +35,36 @@ import { z } from "zod";
  * Closed enum of cache-trace stages.
  *
  * Order: lifecycle-relevant (session.* → prompt → model → context → tool
- * → session.after → control-plane sentinel). Append-only — insertion
- * order is part of the SemVer contract for v1.
+ * → session.after → control-plane sentinel).
+ * v1 shape established 2026-05-19; design §7.2 rewritten 2026-05-21 to match shipped code; append-only rule applies from 2026-05-21 forward.
  *
  * The trailing `cache_trace.write_failures` is a control-plane sentinel
- * (not an application stage) emitted only by `flushAndClose` when the
- * underlying queued writer reports per-line append failures. Mirrors
- * trajectory's `trace.truncated` + `trace.write_failures` precedent
- * (both inside `TRAJECTORY_EVENT_TYPES`).
+ * (not an application stage) emitted by the runtime on first queued
+ * writer rejection (inline, Plan 48-03 D-10) AND by `flushAndClose`
+ * (summary, D-11) when the underlying queued writer reports per-line
+ * append failures. Mirrors trajectory's `trace.truncated` +
+ * `trace.write_failures` precedent (both inside `TRAJECTORY_EVENT_TYPES`).
+ *
+ * Per-stage inline `// emitted by …` comments document the producer
+ * call site for each stage. Adding a new stage requires (1) appending
+ * to this literal, (2) writing the producer wiring, and (3) updating
+ * the inline comment with the producer location — the comments are
+ * load-bearing documentation for the architecture tests (see
+ * `cache-trace-stages-known.test.ts`, Plan 48 OBS-HARD-11) that walk
+ * `recordStage(<literal>, …)` call sites and enforce the closed union.
  */
 export const CACHE_TRACE_STAGES = [
-  "session:start",
-  "session:end",
-  "prompt:before",
-  "prompt:after",
-  "model:before",
-  "model:after",
-  "stream:context",
-  "tool:before",
-  "tool:after",
-  "session:after",
-  // Control-plane sentinel: queued writer rejected lines at flushAndClose.
-  "cache_trace.write_failures",
+  "session:start",   // emitted by event-bus-bridge from session:started
+  "session:end",     // emitted by event-bus-bridge from session:ended
+  "prompt:before",   // emitted by event-bus-bridge from prompt:submitted (digest-cache pre-state read)
+  "prompt:after",    // emitted by event-bus-bridge from prompt:submitted (digest-cache post-state read)
+  "model:before",    // emitted by buildCacheTraceWrapper just before stream-fn delegation (stream-fn-wrapper.ts)
+  "model:after",     // emitted by buildCacheTraceWrapper post-call (stream-fn-wrapper.ts)
+  "stream:context",  // emitted by buildCacheTraceWrapper pre-call (stream-fn-wrapper.ts)
+  "tool:before",     // emitted by event-bus-bridge from tool:started
+  "tool:after",      // emitted by event-bus-bridge from tool:executed
+  "session:after",   // emitted by pi-executor at turn end + terminal emit in flushAndClose
+  "cache_trace.write_failures",  // control-plane sentinel — inline (Plan 48-03 D-10) + flushAndClose summary (D-11)
 ] as const;
 
 /** Closed string union of cache-trace stage names. */
@@ -66,14 +74,23 @@ export type CacheTraceStage = (typeof CACHE_TRACE_STAGES)[number];
  * Cache-trace event — one record per JSONL line.
  *
  * Required envelope fields: `traceSchema`, `schemaVersion`, `stage`,
- * `ts`, `seq`, `agentId`, `sessionId`. Optional metadata fields cover
- * the per-stage payload variants (most stages carry a subset).
+ * `ts`, `seq`, `agentId`, `sessionId`, `traceId`. `traceId` is the
+ * canonical correlation key (mirrors design §1.4 "canonical correlation
+ * triple") — every cache-trace event ships with one so downstream
+ * replay/diff/analysis tools can join across multiple JSONL streams
+ * (trajectory, cache-trace, audit log) by traceId.
+ *
+ * The 5 optional envelope fields (`runId`, `sessionKey`, `tenantId`,
+ * `workspaceDir`, `modelApi`) complete design §7.2 envelope conformance
+ * — present when the executor passes them through, omitted otherwise.
+ * Each is `string | undefined` except `modelApi` which is
+ * `string | null | undefined` (the design explicitly allows null for
+ * the "no model API discriminator" case).
  *
  * The token-attribution fields (`cacheReadInputTokens`,
- * `cacheCreationInputTokens`) are physically only available on
- * `session:after` stages — the values come from the
- * `observability:token_usage` event payload which fires *after* the
- * model response. Earlier stages omit them.
+ * `cacheCreationInputTokens`) attach to `session:after` (aggregated
+ * across the session via the EventBus bridge) AND to `model:after`
+ * (per-call snapshot from the StreamFn return value).
  *
  * `data` carries control-plane sentinel data (used by
  * `cache_trace.write_failures` to surface queued-writer rejection
@@ -87,6 +104,16 @@ export const CacheTraceEventSchema = z.object({
   seq: z.number().int().nonnegative(),
   agentId: z.string(),
   sessionId: z.string(),
+  // §7.2 canonical correlation key — required. Auto-derived from the
+  // AsyncLocalStorage RequestContext when present, falling back to
+  // sessionId.
+  traceId: z.string(),
+  // §7.2 envelope fields — optional; the executor wires what's reachable.
+  runId: z.string().optional(),
+  sessionKey: z.string().optional(),
+  tenantId: z.string().optional(),
+  workspaceDir: z.string().optional(),
+  modelApi: z.string().nullable().optional(),
   provider: z.string().optional(),
   modelId: z.string().optional(),
   // Message / system payloads (gated by includeMessages / includeSystem).
@@ -97,7 +124,9 @@ export const CacheTraceEventSchema = z.object({
   messagesDigest: z.string().optional(),
   system: z.unknown().optional(),
   systemDigest: z.string().optional(),
-  // Token attribution (attached to session:after only).
+  // Token attribution. `session:after` aggregates across the session via
+  // the EventBus bridge stash; `model:after` carries the per-call snapshot
+  // from the StreamFn return value's usage block.
   cacheReadInputTokens: z.number().int().nonnegative().optional(),
   cacheCreationInputTokens: z.number().int().nonnegative().optional(),
   // Sentinel data (cache_trace.write_failures only).

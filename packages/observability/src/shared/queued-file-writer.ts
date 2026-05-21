@@ -11,8 +11,10 @@
  * unbounded memory.
  *
  * Parent directory is created with mode `0o700` via a one-shot
- * `mkdirSync({ recursive: true, mode: 0o700 })` promise (per-writer,
+ * `ensureContainedDir({dir, mode: 0o700, ...})` promise (per-writer,
  * cached after first success — re-runs are no-ops on existing dir).
+ * The shared substrate (`./fs-safe.js`) owns the `mkdir + lstat-gated
+ * chmod` invariant centrally per Phase 48 OBS-HARD-01.
  *
  * The file write itself goes through `appendRegularFile` from
  * `./fs-safe.js`, which guarantees `O_NOFOLLOW`, parent-symlink rejection,
@@ -34,10 +36,9 @@
  * @module
  */
 
-import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { appendRegularFile } from "./fs-safe.js";
+import { appendRegularFile, ensureContainedDir } from "./fs-safe.js";
 
 /** Status returned from `write()`. */
 export type QueuedFileWriteResult = "queued" | "dropped";
@@ -145,13 +146,19 @@ function ensureParentDir(state: InternalState): Promise<void> {
   if (state.mkdirPromise !== undefined) return state.mkdirPromise;
   const dir = dirname(state.path);
   state.mkdirPromise = new Promise<void>((resolveDir) => {
-    try {
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
-    } catch {
-      // If mkdir fails the subsequent appendRegularFile will surface the
-      // real error — don't reject here so the queue keeps draining and
-      // the per-write failure handler logs it.
-    }
+    // Delegate to the shared `ensureContainedDir` substrate (Phase 48
+    // OBS-HARD-01). The substrate owns the mkdir + lstat-gated chmod
+    // pattern with confused-deputy safety + opt-in confinement. Result
+    // is intentionally discarded — preserves the existing best-effort
+    // contract; the subsequent appendRegularFile call surfaces real
+    // errors via state.failureCount / state.lastError.
+    ensureContainedDir({
+      dir,
+      mode: 0o700,
+      ...(state.options.confinedBaseDir !== undefined
+        ? { confinedBaseDir: state.options.confinedBaseDir }
+        : {}),
+    });
     resolveDir();
   });
   return state.mkdirPromise;

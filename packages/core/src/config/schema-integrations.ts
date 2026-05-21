@@ -17,9 +17,44 @@ export const BraveSearchConfigSchema = z.strictObject({
   });
 
 /**
- * MCP (Model Context Protocol) server entry.
+ * Infer the missing transport from `command` (stdio) or `url` (http).
+ * Mirrors the Claude Desktop MCP server config convention where
+ * `transport` is implicit for command-based entries.
+ *
+ * Used as the `z.preprocess` step for `McpServerEntrySchema` so
+ * Claude-Desktop-style config blobs like
+ * `{name, command, args}` and `{name, url}` parse without
+ * requiring an explicit `transport`. Explicit `transport`
+ * always wins.
  */
-export const McpServerEntrySchema = z.strictObject({
+const inferTransport = (input: unknown): unknown => {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    // Let the strictObject validator surface the type error.
+    return input;
+  }
+  const entry = input as Record<string, unknown>;
+  if (typeof entry.transport === "string" && entry.transport.length > 0) {
+    return entry;
+  }
+  if (typeof entry.command === "string" && entry.command.length > 0) {
+    return { ...entry, transport: "stdio" };
+  }
+  if (typeof entry.url === "string" && entry.url.length > 0) {
+    return { ...entry, transport: "http" };
+  }
+  return entry;
+};
+
+/**
+ * MCP (Model Context Protocol) server entry.
+ *
+ * `transport` is inferred from `command` (-> "stdio") or `url`
+ * (-> "http") when omitted, mirroring the Claude Desktop MCP
+ * config convention. Explicit `transport` always wins.
+ */
+export const McpServerEntrySchema = z.preprocess(
+  inferTransport,
+  z.strictObject({
     /** Unique name for this MCP server */
     name: z.string().min(1).regex(/^[a-zA-Z0-9_-]+$/, "MCP server name must be alphanumeric with hyphens/underscores only"),
     /** Transport type: "stdio" for local process, "sse" for legacy SSE servers, "http" for Streamable HTTP */
@@ -40,7 +75,8 @@ export const McpServerEntrySchema = z.strictObject({
     headers: z.record(z.string(), z.string()).optional(),
     /** Maximum concurrent tool calls to this server. Undefined = auto (transport-based default). */
     maxConcurrency: z.number().int().positive().optional(),
-  });
+  }),
+);
 
 /**
  * MCP integration configuration.

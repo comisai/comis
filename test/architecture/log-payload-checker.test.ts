@@ -140,7 +140,7 @@ describe("log-payload-checker -- closed errorKind invariant", () => {
           file: `${v.file}:${v.line}:${v.character}`,
           line: v.line,
           column: v.character,
-          snippet: `errorKind: "${v.literal}" — not in closed union (config|network|auth|validation|timeout|resource|dependency|internal|platform)`,
+          snippet: `errorKind: "${v.literal}" — not in closed union (config|network|auth|validation|precondition|timeout|resource|dependency|internal|platform)`,
         })),
         suggestedFix:
           "Use one of the 9 valid ErrorKind values per AGENTS.md §2.1. If a new kind is genuinely required, the closed union must be extended via design-doc amendment (NOT a feature PR).",

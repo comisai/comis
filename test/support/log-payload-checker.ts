@@ -31,15 +31,19 @@ import { resolve, dirname } from "node:path";
 import * as ts from "typescript";
 
 /**
- * Closed `ErrorKind` union — exactly 9 members per AGENTS.md §2.1. Any
+ * Closed `ErrorKind` union — exactly 10 members per AGENTS.md §2.1. Any
  * literal in `errorKind:` position not in this set is reported as a
- * violation by the walker.
+ * violation by the walker. `precondition` was added by quick-260520-i5b
+ * (log-review Fix C) so RPC handlers can throw `PreconditionError` and
+ * the dispatcher classifies caller-state mismatches at warn-level
+ * (errorKind: "precondition") rather than escalating to error/internal.
  */
 const VALID_ERROR_KINDS: ReadonlySet<string> = new Set([
   "config",
   "network",
   "auth",
   "validation",
+  "precondition",
   "timeout",
   "resource",
   "dependency",
@@ -69,7 +73,11 @@ interface CacheEntry {
  * cache poisoning.
  */
 interface CacheFile {
-  readonly version: 1;
+  // Bumped 1 → 2 when `precondition` joined the closed ErrorKind union
+  // (quick-260520-i5b Fix C). v1 caches contain stale flags for files
+  // that legitimately use the new literal — drop them on read so the
+  // next walker pass recomputes against the updated VALID_ERROR_KINDS.
+  readonly version: 2;
   readonly entries: Record<string, CacheEntry>;
 }
 
@@ -83,15 +91,15 @@ let cache: CacheFile | null = null;
 function loadCache(): CacheFile {
   if (cache) return cache;
   if (!existsSync(CACHE_PATH)) {
-    cache = { version: 1, entries: {} };
+    cache = { version: 2, entries: {} };
     return cache;
   }
   try {
     const raw = JSON.parse(readFileSync(CACHE_PATH, "utf8")) as CacheFile;
-    cache = raw.version === 1 ? raw : { version: 1, entries: {} };
+    cache = raw.version === 2 ? raw : { version: 2, entries: {} };
   } catch {
     // Corrupted JSON or unreadable file — drop cache and recompute.
-    cache = { version: 1, entries: {} };
+    cache = { version: 2, entries: {} };
   }
   return cache;
 }

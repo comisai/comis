@@ -232,3 +232,77 @@ describe("QueuedFileWriter — failure introspection", () => {
     expect(w.rejectedBytes()).toBe(2 + 3 + 4);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Defensive 0o700 chmod on existing parent dir (OBS-REVIEW-01 fix).
+//
+// Non-observability subsystems (pino-roll, pi-mono) create the artifact
+// parent dirs FIRST under default umask (0o755). mkdir's `mode` arg is
+// silently ignored when the dir already exists (recursive EEXIST). The
+// fix: after mkdirSync, defensively chmod the parent to 0o700 — gated
+// on a non-symlink lstat to preserve the §1.4 confused-deputy invariant.
+// ---------------------------------------------------------------------------
+describe("QueuedFileWriter — defensive 0o700 chmod on existing parent dir", () => {
+  it("chmods an existing parent dir from 0o755 to 0o700 on first write through the writer", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "qfw-existing-755-"));
+    const parentDir = path.join(tmpDir, "logs");
+    // Pre-create the parent at 0o755 simulating pino-roll / pi-mono creating
+    // it first under default umask. The chmod is explicit to be deterministic
+    // across umask variations on the test runner.
+    fs.mkdirSync(parentDir, { recursive: true });
+    fs.chmodSync(parentDir, 0o755);
+    expect(fs.statSync(parentDir).mode & 0o777).toBe(0o755);
+
+    const writers = new Map<string, QueuedFileWriter>();
+    const target = path.join(parentDir, "out.jsonl");
+    const w = getQueuedFileWriter(writers, target);
+
+    w.write("hello\n");
+    await w.flush();
+
+    // After the first write, the parent dir must be 0o700 (defensive chmod).
+    expect(fs.statSync(parentDir).mode & 0o777).toBe(0o700);
+  });
+
+  it("does NOT chmod a symlinked parent dir (confused-deputy guard via lstat)", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "qfw-symlink-parent-"));
+    // The symlink target is operator-owned shared state OUTSIDE our trust
+    // boundary — we must never mutate its mode. The lstat-isSymbolicLink
+    // gate is the §1.4 confused-deputy invariant guard.
+    const realDir = path.join(tmpDir, "real");
+    const linkDir = path.join(tmpDir, "evil-link");
+    fs.mkdirSync(realDir);
+    fs.chmodSync(realDir, 0o755);
+    fs.symlinkSync(realDir, linkDir);
+    expect(fs.statSync(realDir).mode & 0o777).toBe(0o755);
+
+    const writers = new Map<string, QueuedFileWriter>();
+    const target = path.join(linkDir, "out.jsonl");
+    const w = getQueuedFileWriter(writers, target);
+
+    w.write("payload\n");
+    await w.flushAndClose();
+
+    // The symlink target's mode MUST NOT have been mutated. The write
+    // itself may or may not succeed (appendRegularFile rejects symlinked
+    // parents) — what matters is that the underlying real dir is untouched.
+    expect(fs.statSync(realDir).mode & 0o777).toBe(0o755);
+  });
+
+  it("creates a fresh parent dir at 0o700 (regression guard — mkdir mode still applies)", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "qfw-fresh-create-"));
+    const parentDir = path.join(tmpDir, "fresh-logs");
+    // Parent does NOT pre-exist — the mkdirSync({mode: 0o700}) branch
+    // creates it at 0o700 directly.
+    expect(fs.existsSync(parentDir)).toBe(false);
+
+    const writers = new Map<string, QueuedFileWriter>();
+    const target = path.join(parentDir, "out.jsonl");
+    const w = getQueuedFileWriter(writers, target);
+
+    w.write("payload\n");
+    await w.flush();
+
+    expect(fs.statSync(parentDir).mode & 0o777).toBe(0o700);
+  });
+});

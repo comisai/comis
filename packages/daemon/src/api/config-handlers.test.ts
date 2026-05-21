@@ -215,12 +215,17 @@ describe("config.patch", () => {
       expect(lines.length).toBeGreaterThanOrEqual(1);
       const record = JSON.parse(lines[lines.length - 1]!) as {
         source: string;
+        callerSource: string;
         result: string;
-        phase: string;
+        event: string;
       };
-      expect(record.source).toBe("config-patch-rpc");
+      // Design §9.2: `source` is the fixed literal "config-io"; legacy
+      // call-site identity ("config-patch-rpc") moves to `callerSource`.
+      // Discriminant is `event`, not `phase`.
+      expect(record.source).toBe("config-io");
+      expect(record.callerSource).toBe("config-patch-rpc");
       expect(record.result).toBe("rename");
-      expect(record.phase).toBe("write");
+      expect(record.event).toBe("config.write");
     });
 
     it("writes a rejected audit record on schema-validation failure", async () => {
@@ -251,6 +256,39 @@ describe("config.patch", () => {
       expect(lines.length).toBeGreaterThanOrEqual(1);
       const record = JSON.parse(lines[lines.length - 1]!) as { result: string };
       expect(record.result).toBe("rejected");
+    });
+
+    it("Fix D1: rejected audit record carries the validator's errorMessage", async () => {
+      // Pre-fix the `rejected` outcome swallowed the rejection reason — the
+      // persisted JSONL line only had `result: "rejected"` with no
+      // errorMessage, so operators had to grep daemon logs to find why a
+      // config.patch failed. Post-fix the validator text rides through to
+      // the JSONL record's errorMessage field.
+      vi.useRealTimers();
+
+      const deps = makeDeps(tempConfig.configPath);
+      const handlers = createConfigHandlers(deps);
+
+      await expect(
+        handlers["config.patch"]!({
+          section: "logLevel",
+          value: "invalid_level",
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow("Config validation failed");
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const fs = await import("node:fs");
+      const lines = fs
+        .readFileSync(auditPath, "utf-8")
+        .trim()
+        .split("\n")
+        .filter((l) => l.length > 0);
+      const record = JSON.parse(lines[lines.length - 1]!) as { result: string; errorMessage?: string };
+      expect(record.result).toBe("rejected");
+      expect(record.errorMessage).toBeTruthy();
+      // The validator's message must surface the validation failure context.
+      expect(record.errorMessage).toMatch(/[Cc]onfig|[Vv]alidation|[Ii]nvalid/);
     });
 
     // The audit append is gated on deps.auditEnabled — when

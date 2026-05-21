@@ -149,6 +149,32 @@ export interface BridgeMetricsState {
    * resolution).
    */
   drainInflightByKey: Map<string, Promise<void>>;
+
+  /**
+   * 260520-wcf: warmup-turn accounting. Counts turns flagged as
+   * `warmupTurn` (cacheReadTokens === 0 && cacheWriteTokens > 0) and
+   * accumulates the positive-signed `pendingCacheInvestmentUsd` (the
+   * deferred cost of the first cache write that has not yet been
+   * recouped by a subsequent cached read).
+   *
+   * Surfaced on the "Execution complete" bookend log so dashboards can
+   * pivot on first-turn investment vs ongoing cache spend without
+   * having to recompute from token_usage events.
+   */
+  warmupTurnCount: number;
+  totalPendingCacheInvestmentUsd: number;
+
+  /**
+   * 260521-0bn: Cumulative SDK→corrected cost delta across all turns (sum
+   * of per-turn `costCorrectionDelta` where > 0; negative correction is
+   * suppressed at the emit site in pi-event-bridge.ts so this counter
+   * is monotonically non-decreasing within an execute). Surfaced on the
+   * "Execution complete" bookend log so dashboards see the magnitude of
+   * SDK underpricing without subscribing to the per-event token_usage
+   * stream (which carries the per-turn `costCorrection` breadcrumb added
+   * in 260520-wcf at pi-event-bridge.ts:1106-1115).
+   */
+  totalCostCorrectionDeltaUsd: number;
 }
 
 /**
@@ -204,6 +230,11 @@ export function createBridgeMetrics(): BridgeMetricsState {
     signatureScrubsToolCallsAffected: 0,
     // per-composite-key drain inflight gate.
     drainInflightByKey: new Map<string, Promise<void>>(),
+    // 260520-wcf warmup-turn counters
+    warmupTurnCount: 0,
+    totalPendingCacheInvestmentUsd: 0,
+    // 260521-0bn: cumulative SDK→corrected cost delta across all turns
+    totalCostCorrectionDeltaUsd: 0,
   };
 }
 
@@ -241,6 +272,11 @@ export function buildBridgeResult(
   hashAssertionMismatches?: number;
   signatureScrubs?: number;
   signatureScrubsToolCallsAffected?: number;
+  // 260520-wcf: warmup-turn counters for the "Execution complete" bookend.
+  warmupTurnCount?: number;
+  totalPendingCacheInvestmentUsd?: number;
+  // 260521-0bn: cumulative cost-correction delta surfaced on Execution-complete log
+  totalCostCorrectionDeltaUsd?: number;
 } {
   return {
     tokensUsed: {
@@ -289,5 +325,13 @@ export function buildBridgeResult(
     hashAssertionMismatches: metrics.hashAssertionMismatches,
     signatureScrubs: metrics.signatureScrubs,
     signatureScrubsToolCallsAffected: metrics.signatureScrubsToolCallsAffected,
+    // 260520-wcf warmup-turn counters (always populated — `0` is a meaningful
+    // "no warmup turns this execute" signal).
+    warmupTurnCount: metrics.warmupTurnCount,
+    totalPendingCacheInvestmentUsd: metrics.totalPendingCacheInvestmentUsd,
+    // 260521-0bn: cumulative cost-correction delta (always populated;
+    // the per-call emit at executor-post-execution gates on > 0 to
+    // avoid logging zeros).
+    totalCostCorrectionDeltaUsd: metrics.totalCostCorrectionDeltaUsd,
   };
 }

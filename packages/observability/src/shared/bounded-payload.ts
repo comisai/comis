@@ -74,13 +74,47 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Top-level entry — bounds `value` against the five canonical limits. */
-export function limitPayloadValue(value: unknown): unknown {
-  const seen = new WeakSet<object>();
-  return walk(value, 0, seen);
+/**
+ * Per-key exemption overrides for the bounded-payload limiter.
+ *
+ * When a child value lives under a parent object key whose name is in
+ * `stringFieldExempt` (for string-typed children) or `arrayFieldExempt`
+ * (for array-typed children), the default 32 KB / 64-item caps are
+ * bypassed for that exact slot. The exemption is on the CONTAINING
+ * field name only — it does not propagate into nested children of the
+ * exempted value.
+ *
+ * Use case (260520-wcf, cache-trace): when the operator opts in to
+ * `includeSystem` / `includeMessages` on the cache-trace runtime, the
+ * `system` / `messages` payload slots must carry full SDK content even
+ * when it exceeds 32 KB. Without exemption the limiter replaced the
+ * payload with the `bounded-payload-field-size-limit` sentinel,
+ * silently defeating the opt-in.
+ *
+ * Both sets are READ-ONLY and OPTIONAL. Default behavior (no overrides
+ * argument) is identical to pre-260520-wcf — every string is capped.
+ */
+export interface PayloadBoundsOverrides {
+  readonly stringFieldExempt?: ReadonlySet<string>;
+  readonly arrayFieldExempt?: ReadonlySet<string>;
 }
 
-function walk(value: unknown, depth: number, seen: WeakSet<object>): unknown {
+/** Top-level entry — bounds `value` against the five canonical limits. */
+export function limitPayloadValue(
+  value: unknown,
+  overrides?: PayloadBoundsOverrides,
+): unknown {
+  const seen = new WeakSet<object>();
+  return walk(value, 0, seen, overrides, undefined);
+}
+
+function walk(
+  value: unknown,
+  depth: number,
+  seen: WeakSet<object>,
+  overrides: PayloadBoundsOverrides | undefined,
+  parentKey: string | undefined,
+): unknown {
   // 1) Depth cap — strictly greater than maxDepth means the path went too deep.
   if (depth > PAYLOAD_BOUNDS.maxDepth) {
     const out: BoundedSentinel = {
@@ -91,6 +125,17 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): unknown {
 
   // 2) String size cap.
   if (typeof value === "string") {
+    // Per-key exemption: when the immediate parent object's key is in
+    // overrides.stringFieldExempt, bypass the 32 KB cap. The exemption
+    // is on the slot, not on the value — nested strings inside an
+    // exempted parent are NOT automatically exempted (cap restored on
+    // descent because parentKey is reset to the child's own key).
+    if (
+      parentKey !== undefined &&
+      overrides?.stringFieldExempt?.has(parentKey) === true
+    ) {
+      return value;
+    }
     if (value.length > PAYLOAD_BOUNDS.maxFieldSizeBytes) {
       const out: BoundedSentinel = {
         __bounded__: BOUNDED_PAYLOAD_REASONS.fieldSizeLimit,
@@ -103,7 +148,11 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): unknown {
 
   // 3) Array length cap.
   if (Array.isArray(value)) {
-    if (value.length > PAYLOAD_BOUNDS.maxArrayLength) {
+    // Per-key exemption for arrays — same semantics as strings.
+    const arrayExempt =
+      parentKey !== undefined &&
+      overrides?.arrayFieldExempt?.has(parentKey) === true;
+    if (!arrayExempt && value.length > PAYLOAD_BOUNDS.maxArrayLength) {
       const out: BoundedSentinel = {
         __bounded__: BOUNDED_PAYLOAD_REASONS.arrayLengthLimit,
         originalLength: value.length,
@@ -117,7 +166,12 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): unknown {
       return out;
     }
     seen.add(value);
-    const mapped = value.map((entry) => walk(entry, depth + 1, seen));
+    // Propagate parentKey UNCHANGED into array elements — the exemption
+    // covers the array slot, not each element (the element key is the
+    // numeric index, which is meaningless to operator-named exemptions).
+    const mapped = value.map((entry) =>
+      walk(entry, depth + 1, seen, overrides, parentKey),
+    );
     seen.delete(value);
     return mapped;
   }
@@ -141,7 +195,10 @@ function walk(value: unknown, depth: number, seen: WeakSet<object>): unknown {
     seen.add(value);
     const out: Record<string, unknown> = {};
     for (const key of keys) {
-      out[key] = walk(value[key], depth + 1, seen);
+      // Pass the property key as parentKey for the child so the
+      // exemption check sees it. Resets at each object boundary — the
+      // exemption never tunnels deeper than one level.
+      out[key] = walk(value[key], depth + 1, seen, overrides, key);
     }
     seen.delete(value);
     return out;

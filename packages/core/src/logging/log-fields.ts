@@ -36,23 +36,29 @@ export function isValidLogLevel(level: string): boolean {
  * Error classification for filtering and alerting.
  *
  * Categories:
- * - `config`      -- Configuration parsing, missing keys, schema violations
- * - `network`     -- TCP/HTTP failures, DNS resolution, connection resets
- * - `auth`        -- Authentication or authorization failures (401/403, bad token)
- * - `validation`  -- Input validation failures (bad request body, invalid params)
- * - `timeout`     -- Operation exceeded deadline (LLM call, HTTP request, DB query)
- * - `resource`    -- Resource exhaustion (OOM, disk full, file descriptor limit)
- * - `dependency`  -- External service unavailable (LLM provider, embedding API)
- * - `internal`    -- Unexpected internal errors (assertion failures, logic bugs)
- * - `platform`    -- Chat platform API errors (Discord, Telegram, Slack rate limits)
+ * - `config`       -- Configuration parsing, missing keys, schema violations
+ * - `network`      -- TCP/HTTP failures, DNS resolution, connection resets
+ * - `auth`         -- Authentication or authorization failures (401/403, bad token)
+ * - `validation`   -- Input validation failures (bad request body, invalid params)
+ * - `precondition` -- Caller violated a precondition (resource not in expected
+ *                     state: e.g., "no active DAG conversation for this session").
+ *                     Distinct from `validation` (which is input-shape failures);
+ *                     classifying these as `warn`-level avoids polluting ERROR
+ *                     alerting with routine caller-state mismatches.
+ * - `timeout`      -- Operation exceeded deadline (LLM call, HTTP request, DB query)
+ * - `resource`     -- Resource exhaustion (OOM, disk full, file descriptor limit)
+ * - `dependency`   -- External service unavailable (LLM provider, embedding API)
+ * - `internal`     -- Unexpected internal errors (assertion failures, logic bugs)
+ * - `platform`     -- Chat platform API errors (Discord, Telegram, Slack rate limits)
  *
- * Closed 9-member union per AGENTS.md §2.1.
+ * Closed 10-member union per AGENTS.md §2.1.
  */
 export type ErrorKind =
   | "config"
   | "network"
   | "auth"
   | "validation"
+  | "precondition"
   | "timeout"
   | "resource"
   | "dependency"

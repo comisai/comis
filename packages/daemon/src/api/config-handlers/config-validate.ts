@@ -24,10 +24,15 @@ import { z } from "zod";
  * Unwrap Zod schema wrappers (Optional / Nullable / Default / Pipe) to get
  * the core schema type. Uses Zod 4.x API exclusively:
  *   - ZodOptional / ZodNullable / ZodDefault → _def.innerType
- *   - ZodPipe → _def.in (Zod 4 replaced Zod 3's ZodEffects + ZodPipeline with
- *     a unified ZodPipe class, returned from both .transform() and .pipe()).
- *     Unwrap the input side so coercion targets the schema BEFORE any
- *     transform.
+ *   - ZodPipe → for `.transform()` / `.pipe()`, unwrap `_def.in` (the
+ *     structural input schema, BEFORE the transform). Zod 4 replaced Zod 3's
+ *     ZodEffects + ZodPipeline with a unified ZodPipe class returned from
+ *     both `.transform()` and `.pipe()`.
+ *     BUT: `z.preprocess(fn, schema)` ALSO produces a ZodPipe, with
+ *     `_def.in = ZodTransform` (the preprocess fn) and `_def.out = schema`
+ *     (the canonical structural schema). For preprocess the structural side
+ *     is the OUTPUT, not the input. We detect this case by checking
+ *     `_def.in instanceof ZodTransform` and unwrap `_def.out` instead.
  *   - .refine() in Zod 4 is a no-op wrapper (returns the same class) — no
  *     handler needed.
  *
@@ -62,7 +67,17 @@ export function unwrapSchema(schema: z.ZodTypeAny | undefined): z.ZodTypeAny | u
       continue;
     }
     if (cur instanceof z.ZodPipe) {
-      const input = (cur as unknown as { _def?: { in?: z.ZodTypeAny } })._def?.in;
+      const def = (cur as unknown as { _def?: { in?: z.ZodTypeAny; out?: z.ZodTypeAny } })._def;
+      const input = def?.in;
+      // z.preprocess(fn, schema) → _def.in is ZodTransform, _def.out is the
+      // canonical structural schema. Pipe/transform → _def.in is the
+      // structural input.
+      if (input instanceof z.ZodTransform) {
+        const output = def?.out;
+        if (!output) break;
+        cur = output;
+        continue;
+      }
       if (!input) break;
       cur = input;
       continue;

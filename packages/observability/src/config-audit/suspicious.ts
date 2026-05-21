@@ -16,9 +16,15 @@
  *      anchors at `/` or `^` to handle both basename and absolute
  *      path forms.
  *
- *   2. `non-comis-argv` — none of the first N argv elements contains
- *      the literal substring `"comis"`. Catches a `node evil.js`
- *      caller that bypassed the comis CLI entirely.
+ *   2. `non-comis-argv` — none of the first N argv elements (and the
+ *      optional `entryScript`) contains the literal substring
+ *      `"comis"`. Catches a `node evil.js` caller that bypassed the
+ *      comis CLI entirely. Under process supervisors (pm2
+ *      `ProcessContainerFork.js`, systemd indirect launches),
+ *      `process.argv[0..1]` does NOT contain `"comis"` even for
+ *      legitimate daemon / CLI launches — callers SHOULD pass the
+ *      resolved entry-script path (typically `fileURLToPath(import.meta.url)`)
+ *      as `entryScript` so this heuristic does not false-positive.
  *
  *   3. `permission-restricted-caller` — `execArgv` contains
  *      `--permission` (Node 20+ permission model). A caller running
@@ -42,6 +48,15 @@ export interface SuspiciousInput {
   readonly argv: readonly string[];
   /** ExecArgv (`process.execArgv`) — Node-level flags. */
   readonly execArgv: readonly string[];
+  /**
+   * Optional entry-script path supplied by the caller (typically
+   * `fileURLToPath(import.meta.url)` resolved at the daemon / CLI
+   * entry point). Included in the `non-comis-argv` heuristic so
+   * pm2 / systemd-indirect launches — where `process.argv[0..1]`
+   * does NOT contain `"comis"` — do not false-positive when the
+   * resolved entry script lives under a path containing `"comis"`.
+   */
+  readonly entryScript?: string;
 }
 
 /**
@@ -68,7 +83,14 @@ export function detectSuspicious(input: SuspiciousInput): SuspiciousFlag[] {
   }
 
   // Heuristic 2: non-comis-argv.
-  const anyHasComis = input.argv.some(
+  // Include the optional entryScript in the substring scan so
+  // pm2 / systemd-indirect launches — where argv[0..1] is
+  // `node ProcessContainerFork.js` — do not false-positive when the
+  // caller-supplied entry script (e.g. fileURLToPath(import.meta.url))
+  // lives under a path containing "comis".
+  const haystack: readonly string[] =
+    input.entryScript !== undefined ? [...input.argv, input.entryScript] : input.argv;
+  const anyHasComis = haystack.some(
     (arg) => typeof arg === "string" && arg.toLowerCase().includes("comis"),
   );
   if (!anyHasComis) {

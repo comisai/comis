@@ -1,23 +1,45 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, statSync, rmSync, readdirSync as realReaddirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CacheBreakEvent } from "./cache-detection/index.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
-// Mock node:fs -- writeFileSync, mkdirSync, readdirSync, unlinkSync
+// Mock the @comis/observability fs-safe substrate so the structural
+// tests (ensureContainedDir-call recorded, file-write recorded, rotation
+// pruning, fault-tolerance contract on EPERM, etc.) keep their existing
+// call-recording shape after the Phase 48 migration. The mocked
+// `ensureContainedDir` and `writeRegularFile` return Result.ok by
+// default; the fault-tolerance test flips them to Result.err to drive
+// the existing logger.warn assertion.
+//
+// `node:fs.readdirSync` + `unlinkSync` (used by `pruneOldestFiles`) are
+// still mocked at the `node:fs` boundary because they are not part of
+// the substrate.
+const mockEnsureContainedDir = vi.fn();
+const mockWriteRegularFile = vi.fn();
+vi.mock("@comis/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/observability")>();
+  return {
+    ...actual,
+    ensureContainedDir: (...args: Parameters<typeof actual.ensureContainedDir>) =>
+      mockEnsureContainedDir(...args),
+    writeRegularFile: (...args: Parameters<typeof actual.writeRegularFile>) =>
+      mockWriteRegularFile(...args),
+  };
+});
+
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
-    writeFileSync: vi.fn(),
-    mkdirSync: vi.fn(),
     readdirSync: vi.fn().mockReturnValue([]),
     unlinkSync: vi.fn(),
   };
 });
 
-import { writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
-const mockWriteFileSync = vi.mocked(writeFileSync);
-const mockMkdirSync = vi.mocked(mkdirSync);
+import { readdirSync, unlinkSync } from "node:fs";
 const mockReaddirSync = vi.mocked(readdirSync);
 const mockUnlinkSync = vi.mocked(unlinkSync);
 
@@ -59,6 +81,24 @@ function makeCacheBreakEvent(overrides: Partial<CacheBreakEvent> = {}): CacheBre
   };
 }
 
+/**
+ * Resolve a substrate-mock call argument list to the `content` field
+ * passed to `writeRegularFile({path, content, confinedBaseDir})`. The
+ * substrate accepts content as `string | Buffer`; the writer always
+ * passes strings (`JSON.stringify(...) + "\n"` or
+ * `diffSections.join("\n\n") + "\n"`), so the as-string narrowing is
+ * safe across every call site under test.
+ */
+function contentOf(call: unknown[]): string {
+  return (call[0] as { content: string }).content;
+}
+
+/**
+ * Resolve the `path` field passed to a substrate write call.
+ */
+function pathOf(call: unknown[]): string {
+  return (call[0] as { path: string }).path;
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -67,9 +107,11 @@ function makeCacheBreakEvent(overrides: Partial<CacheBreakEvent> = {}): CacheBre
 describe("cache-break-diff-writer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset any custom implementations (e.g., from ENOSPC test)
-    mockWriteFileSync.mockImplementation(() => {});
-    mockMkdirSync.mockImplementation(() => undefined as unknown as string);
+    // Default substrate responses: success on both helpers so the
+    // structural tests (write recorded, content shape correct, etc.)
+    // proceed normally.
+    mockEnsureContainedDir.mockReturnValue({ ok: true, value: { created: true } });
+    mockWriteRegularFile.mockReturnValue({ ok: true, value: { totalBytes: 0 } });
     mockReaddirSync.mockReturnValue([]);
     mockUnlinkSync.mockImplementation(() => {});
   });
@@ -78,23 +120,28 @@ describe("cache-break-diff-writer", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
     handler(makeCacheBreakEvent());
 
-    // Directory created with recursive flag
-    expect(mockMkdirSync).toHaveBeenCalledWith("/tmp/test-cache-breaks", { recursive: true });
+    // Directory ensured via the fs-safe substrate at mode 0o700
+    expect(mockEnsureContainedDir).toHaveBeenCalledWith({
+      dir: "/tmp/test-cache-breaks",
+      mode: 0o700,
+      confinedBaseDir: "/tmp",
+    });
 
     // File written exactly once
-    expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+    expect(mockWriteRegularFile).toHaveBeenCalledTimes(1);
 
     // Filename matches expected pattern
-    const filePath = mockWriteFileSync.mock.calls[0]![0] as string;
+    const filePath = pathOf(mockWriteRegularFile.mock.calls[0]!);
     expect(filePath).toMatch(/\/tmp\/test-cache-breaks\/.*_agent-1_tools_changed\.json$/);
 
     // Content is valid JSON
-    const content = mockWriteFileSync.mock.calls[0]![1] as string;
+    const content = contentOf(mockWriteRegularFile.mock.calls[0]!);
     expect(() => JSON.parse(content)).not.toThrow();
   });
 
@@ -102,12 +149,13 @@ describe("cache-break-diff-writer", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
     handler(makeCacheBreakEvent());
 
-    const content = mockWriteFileSync.mock.calls[0]![1] as string;
+    const content = contentOf(mockWriteRegularFile.mock.calls[0]!);
     const diff = JSON.parse(content);
 
     // Core identifiers
@@ -151,6 +199,7 @@ describe("cache-break-diff-writer", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
@@ -162,42 +211,48 @@ describe("cache-break-diff-writer", () => {
     expect(deletedPath).toContain("2026-01-01T00-00-00-000Z_agent_reason.json");
 
     // New file still written
-    expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+    expect(mockWriteRegularFile).toHaveBeenCalledTimes(1);
   });
 
   it("write failures do not affect detection flow", () => {
-    mockWriteFileSync.mockImplementation(() => {
-      throw new Error("ENOSPC");
+    // Substrate returns Result.err for the JSON write — the writer must
+    // log via the fs-safe-specific branch and NOT re-throw.
+    mockWriteRegularFile.mockReturnValue({
+      ok: false,
+      error: new Error("ENOSPC"),
     });
 
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
     // Should NOT throw
     expect(() => handler(makeCacheBreakEvent())).not.toThrow();
 
-    // Logger.warn called with hint and errorKind
-    expect((logger.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    // Logger.warn called with hint and errorKind (the substrate-Result
+    // branch fires before the top-level catch).
+    expect((logger.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
     const warnArgs = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(warnArgs[0]).toHaveProperty("hint");
-    expect(warnArgs[0]).toHaveProperty("errorKind");
+    expect(warnArgs[0]).toHaveProperty("errorKind", "resource");
   });
 
   it("directory is created only once (lazy init)", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
     handler(makeCacheBreakEvent());
     handler(makeCacheBreakEvent());
 
-    // mkdirSync called exactly once despite two handler invocations
-    expect(mockMkdirSync).toHaveBeenCalledTimes(1);
+    // ensureContainedDir called exactly once despite two handler invocations
+    expect(mockEnsureContainedDir).toHaveBeenCalledTimes(1);
   });
 
   // ---------------------------------------------------------------------------
@@ -208,6 +263,7 @@ describe("cache-break-diff-writer", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
@@ -231,11 +287,11 @@ describe("cache-break-diff-writer", () => {
     } as Partial<CacheBreakEvent>));
 
     // Should write both .json and .diff files (2 calls)
-    expect(mockWriteFileSync).toHaveBeenCalledTimes(2);
+    expect(mockWriteRegularFile).toHaveBeenCalledTimes(2);
 
-    const calls = mockWriteFileSync.mock.calls;
-    const jsonCall = calls.find(c => (c[0] as string).endsWith(".json"));
-    const diffCall = calls.find(c => (c[0] as string).endsWith(".diff"));
+    const calls = mockWriteRegularFile.mock.calls;
+    const jsonCall = calls.find((c) => pathOf(c).endsWith(".json"));
+    const diffCall = calls.find((c) => pathOf(c).endsWith(".diff"));
 
     expect(jsonCall).toBeDefined();
     expect(diffCall).toBeDefined();
@@ -245,6 +301,7 @@ describe("cache-break-diff-writer", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
@@ -267,9 +324,9 @@ describe("cache-break-diff-writer", () => {
       currentSystem: "You are a concise assistant.",
     } as Partial<CacheBreakEvent>));
 
-    const calls = mockWriteFileSync.mock.calls;
-    const diffCall = calls.find(c => (c[0] as string).endsWith(".diff"));
-    const content = diffCall![1] as string;
+    const calls = mockWriteRegularFile.mock.calls;
+    const diffCall = calls.find((c) => pathOf(c).endsWith(".diff"));
+    const content = contentOf(diffCall!);
 
     expect(content).toContain("---");
     expect(content).toContain("+++");
@@ -279,6 +336,7 @@ describe("cache-break-diff-writer", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
@@ -301,9 +359,9 @@ describe("cache-break-diff-writer", () => {
       currentSystem: "Line 1\nLine CHANGED\nLine 3",
     } as Partial<CacheBreakEvent>));
 
-    const calls = mockWriteFileSync.mock.calls;
-    const diffCall = calls.find(c => (c[0] as string).endsWith(".diff"));
-    const content = diffCall![1] as string;
+    const calls = mockWriteRegularFile.mock.calls;
+    const diffCall = calls.find((c) => pathOf(c).endsWith(".diff"));
+    const content = contentOf(diffCall!);
 
     // Should contain removed and added lines
     expect(content).toContain("-Line 2");
@@ -314,6 +372,7 @@ describe("cache-break-diff-writer", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
@@ -336,9 +395,9 @@ describe("cache-break-diff-writer", () => {
       currentTools: '[\n  {\n    "name": "bash"\n  },\n  {\n    "name": "new_tool"\n  }\n]',
     } as Partial<CacheBreakEvent>));
 
-    const calls = mockWriteFileSync.mock.calls;
-    const diffCall = calls.find(c => (c[0] as string).endsWith(".diff"));
-    const content = diffCall![1] as string;
+    const calls = mockWriteRegularFile.mock.calls;
+    const diffCall = calls.find((c) => pathOf(c).endsWith(".diff"));
+    const content = contentOf(diffCall!);
 
     expect(content).toContain("new_tool");
     expect(content).toContain("tools");
@@ -348,6 +407,7 @@ describe("cache-break-diff-writer", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
@@ -369,8 +429,8 @@ describe("cache-break-diff-writer", () => {
     }));
 
     // Only .json file written (1 call)
-    expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
-    const filePath = mockWriteFileSync.mock.calls[0]![0] as string;
+    expect(mockWriteRegularFile).toHaveBeenCalledTimes(1);
+    const filePath = pathOf(mockWriteRegularFile.mock.calls[0]!);
     expect(filePath).toMatch(/\.json$/);
   });
 
@@ -378,6 +438,7 @@ describe("cache-break-diff-writer", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
@@ -409,9 +470,9 @@ describe("cache-break-diff-writer", () => {
 
     // After truncation to 50K, content is identical, so no .diff file should be written.
     // Only the .json file should be present, proving truncation is effective.
-    const calls = mockWriteFileSync.mock.calls;
+    const calls = mockWriteRegularFile.mock.calls;
     expect(calls.length).toBe(1); // only .json
-    const filePath = calls[0]![0] as string;
+    const filePath = pathOf(calls[0]!);
     expect(filePath).toMatch(/\.json$/);
   });
 
@@ -428,6 +489,7 @@ describe("cache-break-diff-writer", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",
+      dataDir: "/tmp",
       logger,
     });
 
@@ -482,6 +544,7 @@ describe("cache-break-diff-writer", () => {
       const logger = createMockLogger();
       const handler = createCacheBreakDiffWriter({
         outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
         logger,
       });
 
@@ -506,14 +569,14 @@ describe("cache-break-diff-writer", () => {
         currentTools: '[\n  {\n    "name": "bash",\n    "updated": true\n  }\n]',
       } as Partial<CacheBreakEvent>));
 
-      const calls = mockWriteFileSync.mock.calls;
-      const diffCall = calls.find(c => (c[0] as string).endsWith(".diff"));
+      const calls = mockWriteRegularFile.mock.calls;
+      const diffCall = calls.find((c) => pathOf(c).endsWith(".diff"));
       expect(diffCall).toBeDefined();
-      const content = diffCall![1] as string;
+      const content = contentOf(diffCall!);
 
       // Combined patch should appear FIRST (before per-category patches)
       // The first --- line in the diff output should reference "combined"
-      const firstDashLine = content.split("\n").find(l => l.startsWith("--- "));
+      const firstDashLine = content.split("\n").find((l) => l.startsWith("--- "));
       expect(firstDashLine).toContain("combined");
     });
   });
@@ -527,6 +590,7 @@ describe("cache-break-diff-writer", () => {
       const logger = createMockLogger();
       const handler = createCacheBreakDiffWriter({
         outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
         logger,
       });
 
@@ -554,8 +618,8 @@ describe("cache-break-diff-writer", () => {
       } as Partial<CacheBreakEvent>));
 
       // Should write .json file (content is identical so no diff delta -- but the writer still runs)
-      expect(mockWriteFileSync).toHaveBeenCalled();
-      const jsonCall = mockWriteFileSync.mock.calls.find(c => (c[0] as string).endsWith(".json"));
+      expect(mockWriteRegularFile).toHaveBeenCalled();
+      const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
       expect(jsonCall).toBeDefined();
     });
 
@@ -563,6 +627,7 @@ describe("cache-break-diff-writer", () => {
       const logger = createMockLogger();
       const handler = createCacheBreakDiffWriter({
         outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
         logger,
       });
 
@@ -587,8 +652,8 @@ describe("cache-break-diff-writer", () => {
       } as Partial<CacheBreakEvent>));
 
       // Should write both .json and .diff (content changed between turns)
-      expect(mockWriteFileSync).toHaveBeenCalledTimes(2);
-      const diffCall = mockWriteFileSync.mock.calls.find(c => (c[0] as string).endsWith(".diff"));
+      expect(mockWriteRegularFile).toHaveBeenCalledTimes(2);
+      const diffCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".diff"));
       expect(diffCall).toBeDefined();
     });
 
@@ -596,6 +661,7 @@ describe("cache-break-diff-writer", () => {
       const logger = createMockLogger();
       const handler = createCacheBreakDiffWriter({
         outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
         logger,
       });
 
@@ -609,9 +675,9 @@ describe("cache-break-diff-writer", () => {
         },
       } as any));
 
-      const jsonCall = mockWriteFileSync.mock.calls.find(c => (c[0] as string).endsWith(".json"));
+      const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
       expect(jsonCall).toBeDefined();
-      const content = JSON.parse(jsonCall![1] as string);
+      const content = JSON.parse(contentOf(jsonCall!));
 
       expect(content.breakpointBudget).toBeDefined();
       expect(content.breakpointBudget.total).toBe(4);
@@ -625,15 +691,16 @@ describe("cache-break-diff-writer", () => {
       const logger = createMockLogger();
       const handler = createCacheBreakDiffWriter({
         outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
         logger,
       });
 
       // Default event has no breakpointBudget
       handler(makeCacheBreakEvent());
 
-      const jsonCall = mockWriteFileSync.mock.calls.find(c => (c[0] as string).endsWith(".json"));
+      const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
       expect(jsonCall).toBeDefined();
-      const content = JSON.parse(jsonCall![1] as string);
+      const content = JSON.parse(contentOf(jsonCall!));
 
       expect(content.breakpointBudget).toBeUndefined();
     });
@@ -642,6 +709,7 @@ describe("cache-break-diff-writer", () => {
       const logger = createMockLogger();
       const handler = createCacheBreakDiffWriter({
         outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
         logger,
       });
 
@@ -669,8 +737,8 @@ describe("cache-break-diff-writer", () => {
       } as Partial<CacheBreakEvent>));
 
       // Only .json file written (1 call)
-      expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
-      const filePath = mockWriteFileSync.mock.calls[0]![0] as string;
+      expect(mockWriteRegularFile).toHaveBeenCalledTimes(1);
+      const filePath = pathOf(mockWriteRegularFile.mock.calls[0]!);
       expect(filePath).toMatch(/\.json$/);
     });
 
@@ -678,6 +746,7 @@ describe("cache-break-diff-writer", () => {
       const logger = createMockLogger();
       const handler = createCacheBreakDiffWriter({
         outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
         logger,
       });
 
@@ -700,14 +769,148 @@ describe("cache-break-diff-writer", () => {
         effortValue: '{"type":"enabled","budget_tokens":4096}',
       }));
 
-      const jsonCall = mockWriteFileSync.mock.calls.find(c => (c[0] as string).endsWith(".json"));
+      const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
       expect(jsonCall).toBeDefined();
-      const content = JSON.parse(jsonCall![1] as string);
+      const content = JSON.parse(contentOf(jsonCall!));
 
       // New fields present in JSON output
       expect(content.effortValue).toBe('{"type":"enabled","budget_tokens":4096}');
       expect(content.attribution.effortChanged).toBe(true);
       expect(content.attribution.cacheControlChanged).toBe(false);
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // breakpointPressureRatio (260520-wcf): fraction of the SDK's 4-breakpoint
+  // ceiling consumed at break time. Clamped to [0, 1].
+  // ---------------------------------------------------------------------------
+  describe("breakpointPressureRatio in serialized diff records", () => {
+    it("emits breakpointPressureRatio equal to breakpointBudget.total divided by 4", () => {
+      const logger = createMockLogger();
+      const handler = createCacheBreakDiffWriter({
+        outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
+        logger,
+      });
+
+      handler(makeCacheBreakEvent({
+        breakpointBudget: { total: 2, system: 1, tool: 0, message: 1, sdkAuto: 0 },
+      }));
+
+      const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
+      expect(jsonCall).toBeDefined();
+      const content = JSON.parse(contentOf(jsonCall!));
+      expect(content.breakpointPressureRatio).toBe(0.5);
+    });
+
+    it("clamps breakpointPressureRatio to 1 when total exceeds the 4-breakpoint ceiling", () => {
+      const logger = createMockLogger();
+      const handler = createCacheBreakDiffWriter({
+        outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
+        logger,
+      });
+
+      handler(makeCacheBreakEvent({
+        breakpointBudget: { total: 6, system: 1, tool: 2, message: 3, sdkAuto: 0 },
+      }));
+
+      const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
+      expect(jsonCall).toBeDefined();
+      const content = JSON.parse(contentOf(jsonCall!));
+      expect(content.breakpointPressureRatio).toBe(1);
+    });
+
+    it("clamps breakpointPressureRatio to 0 when total is negative for defense-in-depth", () => {
+      const logger = createMockLogger();
+      const handler = createCacheBreakDiffWriter({
+        outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
+        logger,
+      });
+
+      handler(makeCacheBreakEvent({
+        breakpointBudget: { total: -1, system: 0, tool: 0, message: 0, sdkAuto: 0 },
+      }));
+
+      const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
+      expect(jsonCall).toBeDefined();
+      const content = JSON.parse(contentOf(jsonCall!));
+      expect(content.breakpointPressureRatio).toBe(0);
+    });
+
+    it("omits breakpointPressureRatio when breakpointBudget is absent so the field stays meaningful", () => {
+      const logger = createMockLogger();
+      const handler = createCacheBreakDiffWriter({
+        outputDir: "/tmp/test-cache-breaks",
+        dataDir: "/tmp",
+        logger,
+      });
+
+      handler(makeCacheBreakEvent()); // default fixture has no breakpointBudget
+
+      const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
+      expect(jsonCall).toBeDefined();
+      const content = JSON.parse(contentOf(jsonCall!));
+      expect(content).not.toHaveProperty("breakpointPressureRatio");
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 48 OBS-HARD-02: Mode-invariant tests (tmpdir-scoped, real fs).
+//
+// Per Plan 48-05 D-03, every migrated writer ships a co-located test
+// that drives the real fs-safe substrate end-to-end and asserts the
+// §1.4 dir-mode `0o700` + file-mode `0o600` invariants on every
+// newly-written artifact. These tests route through the SAME mocks as
+// the structural tests above, but the mocks delegate to the REAL
+// substrate implementations (preserving the call-recording surface
+// while exercising real fs). Tests run against a tmpdir scoped per-test.
+// ---------------------------------------------------------------------------
+
+describe("cache-break-diff-writer honors §1.4 mode invariants", () => {
+  let baseDir: string;
+  let outputDir: string;
+
+  beforeEach(async () => {
+    baseDir = mkdtempSync(join(tmpdir(), "comis-cbdw-mode-"));
+    outputDir = join(baseDir, "cache-breaks");
+    // Wire the substrate mocks to delegate to the REAL implementations
+    // (imported once via the original `@comis/observability` module).
+    // This lets these tests bypass the success-stub defaults from the
+    // outer describe's beforeEach and exercise the real fs-safe
+    // primitives end-to-end against the tmpdir scoped above.
+    const real = await vi.importActual<typeof import("@comis/observability")>(
+      "@comis/observability",
+    );
+    mockEnsureContainedDir.mockImplementation(real.ensureContainedDir);
+    mockWriteRegularFile.mockImplementation(real.writeRegularFile);
+    // Allow real readdirSync for pruneOldestFiles (it operates on
+    // outputDir which is real-fs in this test).
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    mockReaddirSync.mockImplementation(realFs.readdirSync as typeof realReaddirSync);
+    mockUnlinkSync.mockImplementation(realFs.unlinkSync);
+  });
+
+  afterEach(() => {
+    rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  it("creates_cache_breaks_dir_with_mode_0o700", () => {
+    const logger = createMockLogger();
+    const handler = createCacheBreakDiffWriter({ outputDir, dataDir: baseDir, logger });
+    handler(makeCacheBreakEvent());
+    expect(statSync(outputDir).mode & 0o777).toBe(0o700);
+  });
+
+  it("writes_json_diff_with_mode_0o600", () => {
+    const logger = createMockLogger();
+    const handler = createCacheBreakDiffWriter({ outputDir, dataDir: baseDir, logger });
+    handler(makeCacheBreakEvent());
+    const jsonFiles = realReaddirSync(outputDir).filter((f) => f.endsWith(".json"));
+    expect(jsonFiles.length).toBeGreaterThanOrEqual(1);
+    const firstFile = join(outputDir, jsonFiles[0]!);
+    expect(statSync(firstFile).mode & 0o777).toBe(0o600);
   });
 });

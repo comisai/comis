@@ -29,6 +29,7 @@ export {
 export {
   sanitizeCommandInput,
   extractHeredoc,
+  extractDashCArg,
   detectShellSubstitutions,
   detectDangerousPipeTargets,
   detectIFSInjection,

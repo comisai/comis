@@ -128,6 +128,11 @@ export function bindConfigWriteHandlers(
         deps.auditEnabled === false ? undefined : buildConfigAuditBase(localPathForAudit);
       let wroteFile = false;
       let writeError: { code?: string; message?: string } | undefined;
+      // Fix D1 (log-review): track the validator's rejection message so
+      // the `finally` block can thread it into the audit outcome. Pre-fix
+      // the message was scoped to the `catch` block and the `rejected`
+      // audit record carried no reason.
+      let rejectionMessage: string | undefined;
 
       try {
         // Check immutable paths.
@@ -246,6 +251,7 @@ export function bindConfigWriteHandlers(
         // Write atomically: write to temp file, then rename
         const localDir = dirname(localPath);
         if (!existsSync(localDir)) {
+          // fs-safe-allowed: localDir is parent of operator-supplied localPath (config-local YAML); not ~/.comis/ directly
           mkdirSync(localDir, { recursive: true });
         }
         const tmpPath = localPath + ".tmp";
@@ -334,6 +340,9 @@ export function bindConfigWriteHandlers(
       } catch (e: unknown) {
         const durationMs = systemNowMs() - startMs;
         const errMsg = e instanceof Error ? e.message : String(e);
+        // Fix D1: surface the rejection reason to the `finally` block so
+        // the audit outcome carries it.
+        rejectionMessage = errMsg;
 
         // Emit audit event on failure
         deps.container.eventBus.emit("audit:event", {
@@ -356,11 +365,13 @@ export function bindConfigWriteHandlers(
         throw e;
       } finally {
         // Emit a JSONL config-audit record alongside the EventBus audit:event.
+        // Fix D1: thread rejectionMessage (set in the catch block) so the
+        // persisted `errorMessage` field carries the validator's rejection text.
         const outcome = wroteFile
           ? ({ kind: "rename" } as const)
           : writeError !== undefined
             ? ({ kind: "failed", ...(writeError.code !== undefined && { code: writeError.code }), ...(writeError.message !== undefined && { message: writeError.message }) } as const)
-            : ({ kind: "rejected" } as const);
+            : ({ kind: "rejected", ...(rejectionMessage !== undefined && { message: rejectionMessage }) } as const);
         appendConfigAuditWithOutcome(auditBase, outcome, deps.logger);
       }
     },

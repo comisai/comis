@@ -34,7 +34,10 @@
  * @module
  */
 
-import { limitPayloadValue } from "../shared/bounded-payload.js";
+import {
+  limitPayloadValue,
+  type PayloadBoundsOverrides,
+} from "../shared/bounded-payload.js";
 import { isCredentialFieldName } from "../shared/sanitize-diagnostic-payload.js";
 import { sanitizeDiagnosticPayload } from "../shared/sanitize-diagnostic-payload.js";
 
@@ -110,14 +113,24 @@ export function redactSecrets<T = unknown>(value: T): unknown {
 /**
  * Canonical "safe to persist to disk" pipeline.
  *
- * `redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value)))`
+ * `redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value, overrides)))`
  *
  * Used by every artifact writer (trajectory, system-prompt-report,
- * config-audit) before writing a diagnostic payload.
+ * config-audit, cache-trace) before writing a diagnostic payload.
+ *
+ * The optional `overrides` argument is forwarded to `limitPayloadValue`
+ * so callers (cache-trace runtime, 260520-wcf) can opt specific payload
+ * slots out of the 32 KB / 64-item caps. See {@link PayloadBoundsOverrides}
+ * for the per-key exemption contract. Default behavior (no overrides) is
+ * identical to pre-260520-wcf.
  *
  * @param value - arbitrary JavaScript value
+ * @param overrides - optional per-key exemption overrides
  * @returns the bounded + sanitized + redacted graph
  */
-export function sanitizeForPersistence(value: unknown): unknown {
-  return redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value)));
+export function sanitizeForPersistence(
+  value: unknown,
+  overrides?: PayloadBoundsOverrides,
+): unknown {
+  return redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value, overrides)));
 }
