@@ -163,4 +163,32 @@ describe("device-identity", () => {
       expect(result.ok).toBe(false);
     });
   });
+
+  describe("device-identity honors §1.4 mode invariants on substrate-routed writes (OBS-HARD-03, Plan 48-06)", () => {
+    it("load_or_create_device_identity_creates_identity_dir_with_mode_0o700", () => {
+      // loadOrCreateDeviceIdentity routes the identity-dir creation
+      // through `ensureContainedDir` (Phase 48 OBS-HARD-03) so the dir
+      // lands at mode `0o700` per design §1.4.
+      const stateDir = makeTmpDir();
+      const result = loadOrCreateDeviceIdentity(stateDir);
+      expect(result.ok).toBe(true);
+      const identityDir = stateDir + "/identity";
+      expect(fs.existsSync(identityDir)).toBe(true);
+      expect(fs.statSync(identityDir).mode & 0o777).toBe(0o700);
+    });
+
+    it("load_or_create_device_identity_writes_device_json_with_mode_0o600", () => {
+      // loadOrCreateDeviceIdentity routes the atomic identity write
+      // through `writeRegularFile` (Phase 48 OBS-HARD-03) so the
+      // post-rename `device.json` lands at mode `0o600` per design §1.4.
+      // Atomic-rename semantics preserved (tmp file is created at
+      // `0o600` by the substrate, then renamed in-place).
+      const stateDir = makeTmpDir();
+      const result = loadOrCreateDeviceIdentity(stateDir);
+      expect(result.ok).toBe(true);
+      const filePath = stateDir + "/identity/device.json";
+      expect(fs.existsSync(filePath)).toBe(true);
+      expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+    });
+  });
 });
