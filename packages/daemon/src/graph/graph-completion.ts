@@ -10,7 +10,7 @@
 
 import { safePath, type SessionKey, systemNowMs, systemDateFrom, systemScheduleTimeout } from "@comis/core";
 import { withTimeout } from "@comis/shared";
-import { writeFileSync } from "node:fs";
+import { writeRegularFile } from "@comis/observability";
 import { ANNOUNCE_PARENT_TIMEOUT_MS } from "@comis/agent";
 import { clearAllTimers } from "./graph-cleanup.js";
 import type {
@@ -602,11 +602,15 @@ export function writeRunMetadata(
       nodes: nodesMap,
     };
 
-    writeFileSync(
-      safePath(gs.sharedDir, "_run-metadata.json"),
-      JSON.stringify(metadata, null, 2),
-      "utf8",
-    );
+    // Persist via fs-safe substrate (Phase 48 OBS-HARD-03); DEBUG on Result.err
+    // preserves existing "non-critical" semantics.
+    const writeResult = writeRegularFile({ path: safePath(gs.sharedDir, "_run-metadata.json"), content: JSON.stringify(metadata, null, 2), confinedBaseDir: gs.sharedDir });
+    if (!writeResult.ok) {
+      deps.logger?.debug(
+        { graphId: gs.graphId, err: writeResult.error, hint: "Run metadata write failed; downstream artifact consumers will see no _run-metadata.json", errorKind: "resource" as const },
+        "Failed to write _run-metadata.json (non-critical)",
+      );
+    }
   } catch (writeErr) {
     deps.logger?.debug(
       { graphId: gs.graphId, err: writeErr },

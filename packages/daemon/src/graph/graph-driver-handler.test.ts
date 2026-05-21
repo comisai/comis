@@ -458,3 +458,41 @@ describe("executeDriverAction passes discoveredDeferredTools for mcpServers node
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// graph-driver-handler honors §1.4 mode invariants on substrate-routed writes
+// (OBS-HARD-03, Plan 48-06)
+//
+// The driver-handler's three `${nodeId}-output.md` write sites
+// (failure-recovery, timeout-recovery, complete-action) are now routed
+// through `writeRegularFile`. The substrate's chmod-by-fd primitive
+// guarantees mode 0o600 regardless of the surrounding error envelope.
+// ---------------------------------------------------------------------------
+describe("graph-driver-handler honors §1.4 file mode invariant (OBS-HARD-03, Plan 48-06)", () => {
+  it("write_regular_file_substrate_produces_node_output_md_at_mode_0o600", async () => {
+    // Direct substrate-level test mirroring the migrated driver-handler
+    // call shape. The substrate's `fs.fchmodSync(fd, 0o600)` runs
+    // independently of the `vi.mock("node:fs", ...)` writeFileSync stub
+    // above, so the real file mode lands at 0o600.
+    const { mkdtempSync, statSync, rmSync, mkdirSync: realMkdirSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { writeRegularFile } = await import("@comis/observability");
+
+    const baseDir = mkdtempSync(join(tmpdir(), "comis-graph-driver-mode-"));
+    const sharedDir = join(baseDir, "graph-shared");
+    realMkdirSync(sharedDir, { recursive: true, mode: 0o700 });
+    try {
+      const target = join(sharedDir, "debate-node-output.md");
+      const result = writeRegularFile({
+        path: target,
+        content: "Partial driver output for mode-invariant test",
+        confinedBaseDir: sharedDir,
+      });
+      expect(result.ok).toBe(true);
+      expect(statSync(target).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+});

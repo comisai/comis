@@ -18,7 +18,8 @@ import {
 } from "@comis/core";
 import { tryCatch } from "@comis/shared";
 import { sanitizeAssistantResponse } from "@comis/agent";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { writeRegularFile } from "@comis/observability";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { interpolateTaskText, buildContextEnvelope } from "./template-interpolation.js";
 import { gatedSpawn } from "./graph-concurrency.js";
 import type {
@@ -599,10 +600,10 @@ export function handleSubAgentCompleted(
 
   gs.nodeOutputs.set(nodeId, output);
 
-  // 5c. Auto-persist full output to shared folder for file-reference overflow
+  // 5c. Auto-persist full output via fs-safe substrate (Phase 48 OBS-HARD-03).
   if (gs.sharedDir && output) {
     try {
-      writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), output, "utf8");
+      void writeRegularFile({ path: safePath(gs.sharedDir, `${nodeId}-output.md`), content: output, confinedBaseDir: gs.sharedDir });
     } catch { /* best-effort, don't block graph progress */ }
   }
 
@@ -777,6 +778,13 @@ export function persistArtifacts(
       );
       continue;
     }
-    writeFileSync(safeResult.value, a.content, "utf8");
+    // Persist via fs-safe substrate (Phase 48 OBS-HARD-03); WARN on Result.err.
+    const writeResult = writeRegularFile({ path: safeResult.value, content: a.content, confinedBaseDir: gs.sharedDir });
+    if (!writeResult.ok) {
+      deps.logger?.warn(
+        { graphId: gs.graphId, nodeId, filename: a.filename, err: writeResult.error, hint: "Driver artifact write failed; downstream consumers will see no file", errorKind: "resource" as const },
+        "Driver artifact write rejected by fs-safe substrate",
+      );
+    }
   }
 }
