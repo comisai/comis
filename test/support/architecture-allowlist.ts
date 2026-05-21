@@ -642,12 +642,6 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/core/src/hooks/plugin-registry.ts",
-    lineRanges: [[109, 109], [116, 116], [123, 123]],
-    reason: "@allow-throw boundary: PluginRegistry registration preconditions; consumed at bootstrap entry (daemon.ts catch boundary).",
-    removedIn: "permanent",
-  },
-  {
     file: "packages/core/src/load-env.ts",
     lineRanges: [[34, 34]],
     reason: "@allow-throw boundary: loadEnv() missing dotenv hard-fail; consumed at daemon bootstrap entry per AGENTS.md §6.2.",
@@ -2030,8 +2024,6 @@ export const testNamingAllowlist: readonly TestNamingAllowlistEntry[] = [
   { file: "packages/core/src/domain/session-key.test.ts", line: 119, kind: "it", text: "rejects null input", reason: "Captured(min-length=18); shrink in follow-on work"},
   { file: "packages/core/src/domain/session-key.test.ts", line: 137, kind: "it", text: "formats basic key", reason: "Captured(min-length=17); shrink in follow-on work"},
   { file: "packages/core/src/event-bus/bus.test.ts", line: 30, kind: "it", text: "off removes handler", reason: "Captured(min-length=19); shrink in follow-on work"},
-  { file: "packages/core/src/hooks/hook-strategies.test.ts", line: 40, kind: "it", text: "rejects wrong types", reason: "Captured(min-length=19); shrink in follow-on work"},
-  { file: "packages/core/src/hooks/integration.test.ts", line: 248, kind: "it", text: "config-driven plugin enablement (schema validation)", reason: "Captured(use-case-shape heuristic miss); shrink in follow-on work"},
   { file: "packages/core/src/logging/console-logger.test.ts", line: 64, kind: "it", text: ".level is settable", reason: "Captured(min-length=18); shrink in follow-on work"},
   { file: "packages/core/src/security/injection-patterns.test.ts", line: 179, kind: "it", text: "strips BOM (U+FEFF)", reason: "Captured(min-length=19); shrink in follow-on work"},
   { file: "packages/core/src/security/injection-patterns.test.ts", line: 206, kind: "test", text: "<!-- normal comment -->", reason: "Captured(use-case-shape heuristic miss); shrink in follow-on work"},

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { HookName, HookHandlerMap } from "./hook-types.js";
-import type { z } from "zod";
 
 /**
  * PluginPort: The hexagonal architecture boundary for plugin extensions.
@@ -42,26 +41,14 @@ export interface PluginPort {
   deactivate?(): Promise<Result<void, Error>>;
 }
 
-/** Definition for a tool registered by a plugin */
-export interface PluginToolDefinition {
-  readonly name: string;
-  readonly description: string;
-  readonly parameters: Record<string, unknown>; // JSON Schema
-  readonly execute: (params: Record<string, unknown>) => Promise<unknown>;
-}
-
-/** Definition for an HTTP route registered by a plugin */
-export interface PluginHttpRoute {
-  readonly method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
-  readonly path: string;
-  readonly handler: (req: unknown) => Promise<unknown>;
-}
-
 /**
  * API exposed to plugins during registration.
  *
- * Provides a type-safe way for plugins to register hook handlers,
- * tools, HTTP routes, and config schemas with optional priority ordering.
+ * Provides a type-safe way for plugins to register hook handlers with
+ * optional priority ordering. `registerHook` is the only surviving
+ * registration entrypoint — tool / HTTP route / config-schema registration
+ * surfaces were removed in Phase 52 (PORT-TRIM-09) as they had zero
+ * in-tree callers.
  */
 export interface PluginRegistryApi {
   /**
@@ -76,15 +63,6 @@ export interface PluginRegistryApi {
     handler: HookHandlerMap[K],
     options?: { priority?: number },
   ): void;
-
-  /** Register a tool that agents can invoke */
-  registerTool(tool: PluginToolDefinition): void;
-
-  /** Register an HTTP route on the gateway */
-  registerHttpRoute(route: PluginHttpRoute): void;
-
-  /** Register a config schema section for plugin-specific configuration */
-  registerConfigSchema(section: string, schema: z.ZodType): void;
 }
 
 /**
