@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { safePath } from "@comis/core";
@@ -218,6 +218,51 @@ describe("background-task-persistence", () => {
 
     it("silently ignores missing files", () => {
       expect(() => removeTaskFile(dataDir, "a1", "nonexistent")).not.toThrow();
+    });
+  });
+
+  describe("background-task-persistence honors design §1.4 file/dir mode invariants", () => {
+    it("creates the per-agent parent directory with mode 0o700 on persistTaskSync", () => {
+      const task: PersistedTaskState = {
+        id: "mode-task-1",
+        toolName: "exec",
+        status: "running",
+        startedAt: 1000,
+        origin: buildOrigin({ agentId: "mode-agent" }),
+      };
+      persistTaskSync(dataDir, task);
+
+      const agentDir = safePath(dataDir, "mode-agent");
+      expect(statSync(agentDir).mode & 0o777).toBe(0o700);
+    });
+
+    it("writes task JSON files with mode 0o600 on persistTaskSync", () => {
+      const task: PersistedTaskState = {
+        id: "mode-task-file",
+        toolName: "exec",
+        status: "running",
+        startedAt: 1000,
+        origin: buildOrigin({ agentId: "mode-agent-file" }),
+      };
+      persistTaskSync(dataDir, task);
+
+      const filePath = safePath(safePath(dataDir, "mode-agent-file"), "mode-task-file.json");
+      expect(statSync(filePath).mode & 0o777).toBe(0o600);
+    });
+
+    it("preserves mode 0o600 after recovery rewrites a running task to failed", () => {
+      const running: PersistedTaskState = {
+        id: "mode-recovery",
+        toolName: "exec",
+        status: "running",
+        startedAt: 1000,
+        origin: buildOrigin({ agentId: "mode-recover-agent" }),
+      };
+      persistTaskSync(dataDir, running);
+      recoverTasks(dataDir);
+
+      const filePath = safePath(safePath(dataDir, "mode-recover-agent"), "mode-recovery.json");
+      expect(statSync(filePath).mode & 0o777).toBe(0o600);
     });
   });
 
