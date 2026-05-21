@@ -102,6 +102,10 @@ export type ExternalContentSource =
   | "web_search"
   | "web_fetch"
   | "document"
+  | "voice_transcription"
+  | "vision"
+  | "video_description"
+  | "mcp_tool"
   | "unknown";
 
 const EXTERNAL_SOURCE_LABELS: Record<ExternalContentSource, string> = {
@@ -112,6 +116,10 @@ const EXTERNAL_SOURCE_LABELS: Record<ExternalContentSource, string> = {
   web_search: "Web Search",
   web_fetch: "Web Fetch",
   document: "Document",
+  voice_transcription: "Voice transcription",
+  vision: "Vision analysis",
+  video_description: "Video description",
+  mcp_tool: "MCP tool result",
   unknown: "External",
 };
 
