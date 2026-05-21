@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Phase 54 — Skills + Channels + Orchestrator Dead-Code Deletion
+
+This release removes ~2,500 prod LOC of verified-dead code across `packages/skills`, `packages/channels`, `packages/orchestrator`, `packages/core`, `packages/shared`, and `packages/web`. All deletions have ZERO production callers (verified via grep against the current source tree); the only behavior-preserving change is inlining `multimodal-analyzer.ts` into 2 thin vision-provider factories.
+
+#### Operator-Facing Changes — BREAKING
+
+**`queue.priorityEnabled`, `queue.priorityLanes`, and `queue.laneAssignment` removed from operator config.** The priority-scheduler subsystem (`packages/orchestrator/src/queue/priority-scheduler.ts`) never instantiated in production — `priorityEnabled` defaulted to `false` and zero daemon code paths constructed the scheduler. The `QueueConfigSchema` is `z.strictObject`; operators with any of these keys in `~/.comis/config.yaml` will hit a Zod `unrecognized_keys` parse error on next daemon start. **Required action: remove these keys from your config before deploying this release.** Example error:
+
+```
+ZodError: Unrecognized key(s) in object: 'priorityEnabled'
+```
+
+Per AGENTS.md §2.9, no migration shim is provided (no `.passthrough()` fallback) — the failure is loud and immediate at startup, matching Comis's design preference for legible Zod errors over silent compat layers.
+
+#### Engineering-Facing Changes
+
+- **`multimodal-analyzer.ts` inlined** into 2 thin VisionProvider factories (`createAnthropicVisionProvider`, `createOpenAIVisionProvider`) inside `vision-provider-registry.ts`. The `ImageAnalysisPort → VisionProvider` adapter hop is gone; each factory directly owns its backend HTTP call. ~216 LOC removed (DEAD-MOD-11).
+- **4 dead media factories deleted**: `createImageProcessor`, `createMediaStore`, `createFileValidator`, `extractAudioMetadata` (~706 LOC, DEAD-MOD-12).
+- **2 dead browser utilities deleted**: `smartWait`, `normalizeScreenshot` (~294 LOC, DEAD-MOD-13).
+- **Discord + Signal MediaResolverPort deleted**: `createDiscordResolver` + `createSignalResolver` (~419 LOC, DEAD-MOD-15). Both factories were exported but never registered in `CompositeResolver`; daemon's media-fetch path uses the SSRF fallback for Discord CDN + signal-cli URLs (unchanged).
+- **Priority-scheduler subsystem deleted** (~1,274 LOC across orchestrator + core + web, DEAD-MOD-04): `priority-scheduler.ts` + test; `command-queue.ts` collapsed to globalGate-only path (17 surgical edits removed `priorityScheduler` / `priorityLane` plumbing); `inbound-route.ts` `assignPriorityLane` helper + if-block deleted; `inbound-pipeline.ts` + `channel-manager.ts` deps slots deleted; `schema-queue.ts` `PriorityLaneConfigSchema` + `LaneAssignmentConfigSchema` + 3 root fields deleted; `agent-queue-editor.ts` "Priority Lanes" section + 2 helpers deleted.
+- **5 dead event-bus events deleted**: `skill:created`, `skill:updated`, `skills:reloaded` (covered by `audit:event` lifecycle capture, EVENT-CLEAN-05); `priority:aged_promotion`, `priority:lane_assigned` (zero production subscribers; emit sites lived in deleted code, EVENT-CLEAN-06).
+- **`parseSanitizedMcpToolName` shared utility deleted** (SPEC-ABS-02) — JSDoc admitted "Future install-detour parser will consume" — that future never materialized. Install-detour code uses its own logic. ~70 LOC removed.
+- **BC-REM-13 closeout**: `browser-tool.ts` `RpcCall`-or-deps-object dual-shape signature narrowed to canonical form; 10 daemon imports of `RpcCall` retargeted from `@comis/skills` to `@comis/skills/platform-tools`; transitional `RpcCall` re-export at `packages/skills/src/skills/index.ts:224` deleted.
+- **Architecture allowlists trimmed**: 2 `rawThrowAllowlist` entries (`discord-resolver.ts`, `signal-resolver.ts`); 6 `public-api-policy` orphan baselines (`createPriorityScheduler`, `PrioritySchedulerDeps`, `LaneStats`, `PriorityLaneConfigSchema`, `LaneAssignmentConfigSchema`, `parseSanitizedMcpToolName`); 1 `BC_REM_02_PATH_TAIL_ALLOWLIST` entry (`browser-tool.ts`).
+
 ### Phase 48 — Observability Stack Hardening: Workstream A Closeout
 
 This release closes three drifts between `design/observability-stack-workstream-a.md` and shipped code (cache-breaks dir-mode invariant, `diagnostics.cacheTrace.enabled` default flip without doc-update, and the §7.2 stage-taxonomy divergence), and adds a build-failing architecture-test layer that prevents future drift.
