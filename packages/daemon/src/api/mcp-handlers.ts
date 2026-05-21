@@ -46,6 +46,17 @@ import {
   stripInternalFields,
   systemGetEnv,
 } from "@comis/core";
+// `McpServerEntry` — the Zod-inferred shape of a persisted MCP server
+// entry (integrations.mcp.servers[i]) — is the canonical type for the
+// persistMcpServers helper's new-array computation. Already re-exported
+// from `@comis/core` (packages/core/src/exports/config.ts:188), so a
+// direct named import is the correct path here (no deep-path subpath).
+import type { McpServerEntry } from "@comis/core";
+import { persistToConfig } from "./shared/persist-to-config.js";
+import {
+  buildConfigAuditBase,
+  appendConfigAuditWithOutcome,
+} from "../config/audit-hook.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -57,6 +68,97 @@ import type { RpcHandler } from "./types.js";
 // approval, skill, notification handlers).
 import type { WorkspaceApiDeps as McpHandlerDeps } from "./types.js";
 export type { McpHandlerDeps };
+
+// ---------------------------------------------------------------------------
+// Phase 47-02: persistMcpServers helper
+// ---------------------------------------------------------------------------
+
+/**
+ * D-04 outcome shape — the persistMcpServers result spliced into
+ * McpConnect/McpDisconnect responses.
+ */
+interface PersistMcpResult {
+  persistence: "persisted" | "runtime_only" | "skipped";
+  warning?: string;
+}
+
+/**
+ * Phase 47: Persist the full integrations.mcp.servers array to config.yaml
+ * + emit one config-audit JSONL record. Idempotent — re-calling with the
+ * same actionType/entityId produces multiple JSONL records but converges
+ * the YAML to the desired state.
+ *
+ * Mirrors the channels.enable persist call (channel-handlers.ts:232-248)
+ * with three deviations:
+ *   1. Full-array patch (deepMerge replaces arrays; caller computes it).
+ *   2. Direct appendConfigAuditWithOutcome call after persistToConfig
+ *      because persistToConfig's audit:event has no JSONL subscriber
+ *      (RESEARCH.md §"R8 Audit JSONL Field-Name Verification").
+ *   3. Returns D-04 outcome for the caller to splice into the response.
+ *
+ * @param deps - Mcp handler deps slice (must contain persistDeps for the
+ *   persist path to fire; otherwise short-circuits to "skipped").
+ * @param servers - The FULL new integrations.mcp.servers array. Caller is
+ *   responsible for the read-current + filter-by-name + append/remove
+ *   computation (deepMerge replaces arrays wholesale).
+ * @param actionType - "mcp.connect" or "mcp.disconnect". Becomes the
+ *   JSONL record's callerSource and the persistToConfig actionType.
+ * @param entityId - The server_name; surfaced in audit:event provenance.
+ * @param ctx - Internal _context bag with optional userId + traceId.
+ */
+async function persistMcpServers(
+  deps: McpHandlerDeps,
+  servers: McpServerEntry[],
+  actionType: "mcp.connect" | "mcp.disconnect",
+  entityId: string,
+  ctx: { userId?: string; traceId?: string } | undefined,
+): Promise<PersistMcpResult> {
+  if (!deps.persistDeps) {
+    return { persistence: "skipped" };
+  }
+
+  // Local config path: LAST entry of configPaths if non-empty, else LAST
+  // of defaultConfigPaths. Mirrors persist-to-config's own resolution.
+  const localPath = deps.persistDeps.configPaths.length > 0
+    ? deps.persistDeps.configPaths[deps.persistDeps.configPaths.length - 1]!
+    : deps.persistDeps.defaultConfigPaths[deps.persistDeps.defaultConfigPaths.length - 1]!;
+
+  // PHASE 1: capture pre-write state (previousHash, stat snapshot).
+  const auditBase = buildConfigAuditBase(localPath, actionType);
+
+  // PHASE 2: write.
+  const persistResult = await persistToConfig(deps.persistDeps, {
+    patch: { integrations: { mcp: { servers } } },
+    skipRestart: true,
+    actionType,
+    entityId,
+    ...(ctx?.userId !== undefined && { actingUser: ctx.userId }),
+    ...(ctx?.traceId !== undefined && { traceId: ctx.traceId }),
+  });
+
+  // PHASE 3: finalize audit JSONL + return outcome.
+  if (persistResult.ok) {
+    appendConfigAuditWithOutcome(auditBase, { kind: "rename" }, deps.persistDeps.logger);
+    return { persistence: "persisted" };
+  } else {
+    appendConfigAuditWithOutcome(
+      auditBase,
+      { kind: "failed", message: persistResult.error },
+      deps.persistDeps.logger,
+    );
+    deps.persistDeps.logger.warn(
+      {
+        method: actionType,
+        entityId,
+        err: persistResult.error,
+        hint: "MCP server runtime-mutated but config.yaml write failed",
+        errorKind: "config" as const,
+      },
+      "MCP config persistence failed",
+    );
+    return { persistence: "runtime_only", warning: persistResult.error };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -189,11 +291,50 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         throw new Error(`Failed to connect MCP server "${params.server_name}": ${result.error.message}`);
       }
 
+      // Phase 47 (R1, R6): compute the full new servers array.
+      // Read-current + filter-by-name + append. deepMerge replaces arrays
+      // wholesale, so we MUST pass the full array, not a partial. The
+      // optional chain on `deps.container` keeps existing test fixtures
+      // green — they construct deps without a container, in which case
+      // the in-memory baseline is treated as empty (and the subsequent
+      // persistMcpServers call short-circuits to "skipped" anyway when
+      // persistDeps is also absent).
+      const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
+      const newEntry: McpServerEntry = {
+        name: params.server_name,
+        transport: params.transport,
+        ...(params.command !== undefined && { command: params.command }),
+        ...(params.args !== undefined && { args: params.args }),
+        ...(params.url !== undefined && { url: params.url }),
+        // Phase 47 (R5): pass params.env (unresolved `${KEY}` references),
+        // NOT the resolved values used for spawn. deepMerge does not
+        // transform string values.
+        ...(params.env !== undefined && { env: params.env }),
+        ...(params.headers !== undefined && { headers: params.headers }),
+        enabled: true,
+      };
+      const newServers: McpServerEntry[] = [
+        ...currentServers.filter((s) => s.name !== params.server_name),
+        newEntry,
+      ];
+
+      // Phase 47 (R1, R8, D-04): persist + audit JSONL + response-augment.
+      const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
+      const persistOutcome = await persistMcpServers(
+        deps,
+        newServers,
+        "mcp.connect",
+        params.server_name,
+        ctx,
+      );
+
       const response = {
         name: result.value.name,
         status: result.value.status,
         toolCount: result.value.tools.length,
         tools: result.value.tools.map((t) => t.name),
+        persistence: persistOutcome.persistence,
+        ...(persistOutcome.warning !== undefined && { warning: persistOutcome.warning }),
       };
       // Dev-mode response validation gate.
       if (systemGetEnv("NODE_ENV") !== "production") {
