@@ -94,6 +94,15 @@ const TrajectoryConfigSchema = z
 const CacheTraceConfigSchemaInner = z.object({
   enabled: z.boolean().default(true),
   filePath: z.string().optional(),
+  /**
+   * Per-file byte cap for the cache-trace JSONL artifact. When the
+   * file reaches this size, additional appends are rejected by
+   * `appendRegularFile` with `FileSizeLimitExceeded`; the cache-trace
+   * runtime emits an inline `cache_trace.write_failures` sentinel at
+   * first rejection (Plan 48-03 D-10) and a summary sentinel at session
+   * `flushAndClose` (D-11). Default 50 MB matches `trajectory.maxFileBytes`.
+   */
+  maxFileBytes: z.number().int().positive().default(50 * 1024 * 1024),
   includeMessages: z.boolean().default(false),
   includePrompt: z.boolean().default(true),
   includeSystem: z.boolean().default(true),

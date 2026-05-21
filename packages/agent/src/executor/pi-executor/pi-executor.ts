@@ -704,6 +704,9 @@ async function runSessionLocked(
         ...(deps.cacheTraceConfig.filePath !== undefined
           ? { filePath: deps.cacheTraceConfig.filePath }
           : {}),
+        ...(deps.cacheTraceConfig.maxFileBytes !== undefined
+          ? { maxFileBytes: deps.cacheTraceConfig.maxFileBytes }
+          : {}),
         includeMessages: deps.cacheTraceConfig.includeMessages ?? false,
         includePrompt: deps.cacheTraceConfig.includePrompt ?? true,
         includeSystem: deps.cacheTraceConfig.includeSystem ?? true,
