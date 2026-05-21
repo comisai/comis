@@ -8,27 +8,23 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
+//
+// Phase 52-03 (DUP-CONS-03): the previous test scaffolding captured the
+// `onShutdown` callback via the `_registerGracefulShutdown` factory seam.
+// After inlining, the seam is gone and tests drive teardown by calling
+// `result.shutdownHandle.trigger("SIGTERM")` directly. The inlined
+// `shutdown(signal)` does processMonitor.stop() → onShutdown() →
+// container.shutdown() → logger.flush() → exitFn(0). Tests provide an
+// `exitFn` mock that simply records the call (no throw).
 // ---------------------------------------------------------------------------
 
-/** Captured onShutdown callback from _registerGracefulShutdown. */
-let capturedOnShutdown: (() => Promise<void>) | null = null;
-
 function createMinimalDeps(overrides: Partial<ShutdownDeps> = {}): ShutdownDeps {
-  const mockShutdownHandle = {
-    isShuttingDown: false,
-    trigger: vi.fn(async () => {}),
-  };
-
   return {
     logger: createMockLogger() as any,
     daemonLogger: createMockLogger() as any,
     processMonitor: { start: vi.fn(), stop: vi.fn() } as any,
     container: { shutdown: vi.fn(async () => {}) } as any,
     exitFn: vi.fn(),
-    _registerGracefulShutdown: vi.fn((opts: any) => {
-      capturedOnShutdown = opts.onShutdown;
-      return mockShutdownHandle;
-    }),
     activeExecutions: undefined,
     subAgentRunner: { shutdown: vi.fn(async () => {}) },
     cronSchedulers: new Map(),
@@ -59,7 +55,6 @@ describe("setupShutdown", () => {
   let processOnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    capturedOnShutdown = null;
     processOnSpy = vi.spyOn(process, "on").mockImplementation(() => process);
   });
 
@@ -106,9 +101,9 @@ describe("setupShutdown", () => {
     const result = setupShutdown(deps);
     expect(result.shutdownHandle).toBeDefined();
 
-    // Invoke the captured onShutdown callback
-    expect(capturedOnShutdown).not.toBeNull();
-    await capturedOnShutdown!();
+    // Drive the inlined shutdown body directly via the public handle
+    // (Phase 52-03: factory seam removed).
+    await result.shutdownHandle.trigger("SIGTERM");
 
     // Verify cost summary logged (use closeTo for floating point)
     const summaryCall = (deps.daemonLogger.info as ReturnType<typeof vi.fn>).mock.calls
@@ -168,10 +163,10 @@ describe("setupShutdown", () => {
     });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
+    const result = setupShutdown(deps);
 
     // Should complete without throwing
-    await expect(capturedOnShutdown!()).resolves.toBeUndefined();
+    await expect(result.shutdownHandle.trigger("SIGTERM")).resolves.toBeUndefined();
 
     // Required components still cleaned up
     expect(deps.subAgentRunner.shutdown).toHaveBeenCalled();
@@ -194,8 +189,8 @@ describe("setupShutdown", () => {
     const deps = createMinimalDeps({ activeExecutions });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     expect(deps.logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -216,8 +211,8 @@ describe("setupShutdown", () => {
     const deps = createMinimalDeps({ approvalGate });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     expect(approvalGate.dispose).toHaveBeenCalled();
 
@@ -243,8 +238,8 @@ describe("setupShutdown", () => {
     const deps = createMinimalDeps({ skillWatcherHandles });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     expect(handle1.close).toHaveBeenCalled();
     expect(handle2.close).toHaveBeenCalled();
@@ -266,8 +261,8 @@ describe("setupShutdown", () => {
     const deps = createMinimalDeps({ backgroundIndexingPromise });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     // The promise should have resolved (50ms < 5000ms timeout)
     expect(resolved).toBe(true);
@@ -287,8 +282,8 @@ describe("setupShutdown", () => {
     const deps = createMinimalDeps({ secretStore, auditAggregator, injectionRateLimiter });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     expect(secretStore.close).toHaveBeenCalled();
     expect(auditAggregator.destroy).toHaveBeenCalled();
@@ -325,12 +320,21 @@ describe("setupShutdown", () => {
     );
     expect(sigusr1Call).toBeDefined();
 
+    // Spy on the inlined trigger so the SIGUSR2 handler invocation is
+    // observable (Phase 52-03: trigger is now the real shutdown fn,
+    // not a vi.fn() returned by the dead factory seam). Override the
+    // implementation to a no-op so the SIGUSR2 handler doesn't run the
+    // full teardown chain during this unit test.
+    const triggerSpy = vi
+      .spyOn(result.shutdownHandle, "trigger")
+      .mockImplementation(async () => {});
+
     // Invoke the handler
     const handler = sigusr1Call![1] as () => void;
     handler();
 
     expect(deps.daemonLogger.info).toHaveBeenCalledWith("SIGUSR2 received, initiating restart");
-    expect(result.shutdownHandle.trigger).toHaveBeenCalledWith("SIGUSR2");
+    expect(triggerSpy).toHaveBeenCalledWith("SIGUSR2");
   });
 
   // -------------------------------------------------------------------------
@@ -400,10 +404,10 @@ describe("setupShutdown", () => {
     });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
+    const result = setupShutdown(deps);
 
     // Should not throw despite browser failure
-    await expect(capturedOnShutdown!()).resolves.toBeUndefined();
+    await expect(result.shutdownHandle.trigger("SIGTERM")).resolves.toBeUndefined();
 
     // Subsequent components still stopped
     expect(channelManager.stopAll).toHaveBeenCalled();
@@ -415,7 +419,7 @@ describe("setupShutdown", () => {
   // 11. Returns shutdownHandle
   // -------------------------------------------------------------------------
 
-  it("returns shutdownHandle from _registerGracefulShutdown", async () => {
+  it("returns a shutdownHandle with trigger and isShuttingDown surface", async () => {
     const deps = createMinimalDeps();
 
     const setupShutdown = await getSetupShutdown();
@@ -444,8 +448,8 @@ describe("setupShutdown", () => {
     });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     // The db.close shutdownOrder should be the highest
     const infoArgs = (deps.daemonLogger.info as ReturnType<typeof vi.fn>).mock.calls
@@ -474,8 +478,8 @@ describe("setupShutdown", () => {
     const deps = createMinimalDeps({ disposeEmbedding } as any);
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     expect(disposeEmbedding).toHaveBeenCalledTimes(1);
     expect(deps.daemonLogger.info).toHaveBeenCalledWith(
@@ -488,8 +492,8 @@ describe("setupShutdown", () => {
     const deps = createMinimalDeps({ disposeEmbedding: undefined } as any);
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     // Should not throw, db.close still called
     expect(deps.db.close).toHaveBeenCalled();
@@ -502,8 +506,8 @@ describe("setupShutdown", () => {
     const deps = createMinimalDeps({ disposeEmbedding, db } as any);
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     const disposeIdx = callOrder.indexOf("dispose");
     const dbCloseIdx = callOrder.indexOf("db.close");
@@ -521,8 +525,8 @@ describe("setupShutdown", () => {
     });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     expect(deps.logger.warn).not.toHaveBeenCalled();
   });
@@ -547,8 +551,8 @@ describe("setupShutdown", () => {
     });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdown!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     // Gateway must be the first component in the call order
     expect(callOrder[0]).toBe("gateway");
@@ -571,10 +575,10 @@ describe("setupShutdown", () => {
     });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
+    const result = setupShutdown(deps);
 
     // Shutdown should complete (not hang) -- the per-step timeout kicks in
-    await capturedOnShutdown!();
+    await result.shutdownHandle.trigger("SIGTERM");
 
     // DB close was still called (proving the sequence continued past the hung step)
     expect(deps.db.close).toHaveBeenCalled();
@@ -604,10 +608,10 @@ describe("setupShutdown", () => {
     });
 
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
+    const result = setupShutdown(deps);
 
     // Shutdown should complete (not hang)
-    await capturedOnShutdown!();
+    await result.shutdownHandle.trigger("SIGTERM");
 
     // Subsequent steps were still called
     expect(subAgentRunner.shutdown).toHaveBeenCalled();
@@ -636,11 +640,9 @@ describe("setupShutdown", () => {
 
 describe("setup-shutdown honors §1.4 mode invariants", () => {
   let baseDir: string;
-  let capturedOnShutdownLocal: (() => Promise<void>) | null = null;
   let processOnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    capturedOnShutdownLocal = null;
     baseDir = mkdtempSync(join(tmpdir(), "comis-setup-shutdown-mode-"));
     processOnSpy = vi.spyOn(process, "on").mockImplementation(() => process);
   });
@@ -656,10 +658,6 @@ describe("setup-shutdown honors §1.4 mode invariants", () => {
   }
 
   function buildDeps(): ShutdownDeps {
-    const mockShutdownHandle = {
-      isShuttingDown: false,
-      trigger: vi.fn(async () => {}),
-    };
     const approvalGate = {
       serializePending: vi.fn(() => [{ id: "ap-1", status: "pending" }]),
       serializeApprovalCache: vi.fn(() => [{ id: "cache-1", until: 0 }]),
@@ -671,10 +669,6 @@ describe("setup-shutdown honors §1.4 mode invariants", () => {
       processMonitor: { start: vi.fn(), stop: vi.fn() } as any,
       container: { shutdown: vi.fn(async () => {}) } as any,
       exitFn: vi.fn(),
-      _registerGracefulShutdown: vi.fn((opts: any) => {
-        capturedOnShutdownLocal = opts.onShutdown;
-        return mockShutdownHandle;
-      }),
       subAgentRunner: { shutdown: vi.fn(async () => {}) },
       cronSchedulers: new Map(),
       resetSchedulers: new Map(),
@@ -695,8 +689,8 @@ describe("setup-shutdown honors §1.4 mode invariants", () => {
   it("writes_restart_approvals_with_mode_0o600", async () => {
     const deps = buildDeps();
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdownLocal!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     const filePath = join(baseDir, "restart-approvals.json");
     expect(statSync(filePath).mode & 0o777).toBe(0o600);
@@ -705,8 +699,8 @@ describe("setup-shutdown honors §1.4 mode invariants", () => {
   it("writes_restart_approval_cache_with_mode_0o600", async () => {
     const deps = buildDeps();
     const setupShutdown = await getSetupShutdown();
-    setupShutdown(deps);
-    await capturedOnShutdownLocal!();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
 
     const filePath = join(baseDir, "restart-approval-cache.json");
     expect(statSync(filePath).mode & 0o777).toBe(0o600);

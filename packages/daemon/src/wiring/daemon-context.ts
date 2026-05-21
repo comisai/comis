@@ -30,7 +30,7 @@ import type { BillingEstimator } from "../observability/billing-estimator.js";
 import type { ChannelActivityTracker } from "../observability/channel-activity-tracker.js";
 import type { DeliveryTracer } from "../observability/delivery-tracer.js";
 import type { ProcessMonitor } from "../process/process-monitor.js";
-import type { ShutdownHandle } from "../process/graceful-shutdown.js";
+import type { ShutdownHandle } from "./setup-shutdown.js";
 import type { createCrossSessionSender } from "@comis/orchestrator";
 import type { createSubAgentRunner } from "@comis/agent";
 
