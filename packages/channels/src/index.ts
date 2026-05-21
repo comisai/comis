@@ -24,10 +24,6 @@ export { validateDiscordToken } from "./discord/credential-validator.js";
 export type { DiscordBotInfo } from "./discord/credential-validator.js";
 export { chunkDiscordText } from "./discord/format-discord.js";
 export type { ChunkDiscordTextOpts } from "./discord/format-discord.js";
-// Discord resolver -- intentional API surface: provides platform-specific
-// pre-download size checks for direct use outside CompositeResolver.
-export { createDiscordResolver } from "./discord/discord-resolver.js";
-export type { DiscordResolverDeps } from "./discord/discord-resolver.js";
 
 // Discord channel narrowing types + helpers. Structural subset of
 // discord.js runtime shape; no module augmentation. Narrowing helpers
@@ -91,10 +87,6 @@ export { validateSignalConnection } from "./signal/credential-validator.js";
 export type { SignalBotInfo } from "./signal/credential-validator.js";
 export { convertIrToSignalTextStyles } from "./signal/signal-format.js";
 export type { SignalTextStyle } from "./signal/signal-format.js";
-// Signal resolver -- intentional API surface: provides platform-specific
-// pre-download size checks for direct use outside CompositeResolver.
-export { createSignalResolver } from "./signal/signal-resolver.js";
-export type { SignalResolverDeps } from "./signal/signal-resolver.js";
 
 // LINE adapter
 export { createLineAdapter } from "./line/line-adapter.js";

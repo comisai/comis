@@ -11,7 +11,7 @@
  * instead of blocking voice send.
  *
  * Uses structural typing for AudioConverter to avoid circular dependency on
- * @comis/skills -- same pattern as telegram-resolver.ts, discord-resolver.ts.
+ * @comis/skills -- same pattern as telegram-resolver.ts.
  *
  * @module
  */
