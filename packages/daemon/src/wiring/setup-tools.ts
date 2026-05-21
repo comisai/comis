@@ -302,6 +302,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       mcpClientManager.callTool.bind(mcpClientManager),
       toolSourceProfiles,
       skillsLogger,
+      onSuspiciousContent,
     );
     return agentMcpTools;
   }
@@ -403,6 +404,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         skillsLogger,
         approvalGate,
         eventBus,
+        onSuspiciousContent,
         imageGenProvider: deps.imageGenProvider,
         backgroundTaskManager: deps.backgroundTaskManager,
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),

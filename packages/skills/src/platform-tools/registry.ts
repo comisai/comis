@@ -30,7 +30,7 @@
  * @module
  */
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { ComisLogger } from "@comis/core";
+import type { ComisLogger, WrapExternalContentOptions } from "@comis/core";
 
 // Import every platform-tool factory function. Local relative paths because
 // the factory files live under `./tools/`.
@@ -109,6 +109,13 @@ export interface PlatformToolBuildContext {
   readonly approvalGate?: unknown;
   /** Typed event bus reference (unused by most descriptors; held for future use). */
   readonly eventBus?: unknown;
+  /**
+   * Optional callback for suspicious content detection. Forwarded by the
+   * daemon (built once per process in `stages/agents-helpers.ts:buildAuditBundle`).
+   * Currently consumed by the MCP bridge via `mcpToolsToAgentTools` and reserved
+   * for future MCP-wrapping platform-tool descriptors.
+   */
+  readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /** `image_generate` tool's conditional predicate signal (truthy when provider wired). */
   readonly imageGenProvider?: unknown;
   /** `background_tasks` tool's conditional predicate signal (truthy when manager wired). */
