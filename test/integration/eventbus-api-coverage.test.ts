@@ -353,10 +353,10 @@ describe("EventMap Payload Coverage", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Domain 6: Queue/Priority (8 events)
+  // Domain 6: Queue (6 events)
   // -------------------------------------------------------------------------
 
-  describe("Domain 6: Queue/Priority", () => {
+  describe("Domain 6: Queue", () => {
     const EVENTS = {
       "queue:enqueued": {
         sessionKey: SESSION_KEY,
@@ -396,20 +396,6 @@ describe("EventMap Payload Coverage", () => {
         channelType: "telegram",
         messageCount: 3,
         trigger: "timer" as const,
-        timestamp: NOW,
-      },
-      "priority:lane_assigned": {
-        sessionKey: SESSION_KEY,
-        channelType: "telegram",
-        lane: "high",
-        reason: "trusted sender",
-        timestamp: NOW,
-      },
-      "priority:aged_promotion": {
-        sessionKey: "tenant:user:ch",
-        fromLane: "low",
-        toLane: "normal",
-        waitTimeMs: 30000,
         timestamp: NOW,
       },
     } satisfies Partial<EventMap>;
