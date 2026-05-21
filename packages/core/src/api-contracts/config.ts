@@ -306,7 +306,6 @@ export const ConfigPatchContract = defineContract({
     section: z.string().optional(),
     key: z.string().optional(),
     value: ConfigValueSchema,
-    path: z.string().optional(),
   }),
   response: z.object({
     patched: z.literal(true),

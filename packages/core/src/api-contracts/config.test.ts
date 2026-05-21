@@ -198,13 +198,19 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).not.toThrow();
   });
 
-  it("config.patch: request accepts the legacy { path, value } shape", () => {
-    expect(() =>
-      ConfigPatchContract.request.parse({
-        path: "agents.default.budget.maxTokens",
-        value: { maxTokens: 100 },
-      }),
-    ).not.toThrow();
+  it("config.patch: request strips the legacy { path, value } shape (path is no longer in the schema, BC-REM-12 sub-B)", () => {
+    // Phase 52 Plan 04 BC-REM-12 sub-B: the legacy `path: "a.b.c"` shape was
+    // removed from both the contract schema and the daemon-side parser. Zod
+    // default "strip unknown keys" mode means the parse does NOT throw on
+    // a legacy `{ path, value }` payload — it succeeds with `path` stripped.
+    // The daemon's bespoke pre-Zod section-required check (config-write.ts:96)
+    // then rejects the call with `Missing required parameter "section"`.
+    const parsed = ConfigPatchContract.request.parse({
+      path: "agents.default.budget.maxTokens",
+      value: { maxTokens: 100 },
+    });
+    expect((parsed as Record<string, unknown>).path).toBeUndefined();
+    expect((parsed as Record<string, unknown>).section).toBeUndefined();
   });
 
   it("config.patch: request accepts a nested value tree (loose record)", () => {
