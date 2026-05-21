@@ -11,5 +11,3 @@ export { createDebounceBuffer } from "./debounce-buffer.js";
 export type { DebounceBuffer, DebounceBufferDeps } from "./debounce-buffer.js";
 export { createFollowupTrigger } from "./followup-trigger.js";
 export type { FollowupTrigger, FollowupTriggerDeps } from "./followup-trigger.js";
-export { createPriorityScheduler } from "./priority-scheduler.js";
-export type { PriorityScheduler, PrioritySchedulerDeps, LaneStats } from "./priority-scheduler.js";

@@ -191,26 +191,8 @@ export interface ChannelEvents {
   };
 
   // -------------------------------------------------------------------------
-  // Priority queue and elevated reply events
+  // Elevated reply events
   // -------------------------------------------------------------------------
-
-  /** Message assigned to a priority lane */
-  "priority:lane_assigned": {
-    sessionKey: SessionKey;
-    channelType: string;
-    lane: string;
-    reason: string;
-    timestamp: number;
-  };
-
-  /** Task promoted from lower lane due to aging */
-  "priority:aged_promotion": {
-    sessionKey: string;
-    fromLane: string;
-    toLane: string;
-    waitTimeMs: number;
-    timestamp: number;
-  };
 
   /** Elevated model route selected based on sender trust */
   "elevated:model_routed": {

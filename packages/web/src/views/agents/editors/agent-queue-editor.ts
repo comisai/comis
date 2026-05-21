@@ -4,8 +4,7 @@
  *
  * Renders: Basic (enabled, maxConcurrentSessions, cleanupIdleMs, defaultMode),
  * Overflow (maxDepth, policy), Debounce Buffer (windowMs, maxBufferedMessages,
- * firstMessageImmediate), Follow-up (maxFollowupRuns, followupOnCompaction),
- * Priority Lanes (priorityEnabled, lanes JSON viewer).
+ * firstMessageImmediate), Follow-up (maxFollowupRuns, followupOnCompaction).
  *
  * Emits `config-change` CustomEvent with { section: "queue", key, value }.
  * Parent shell handles the RPC call (config.patch).
@@ -18,7 +17,6 @@ import {
   renderCheckbox,
 } from "./editor-helpers.js";
 import type { EditorForm } from "./editor-types.js";
-import "../../../components/form/ic-json-editor.js";
 
 /** Detail payload carried by the `config-change` event. */
 export interface ConfigChangeDetail {
@@ -101,10 +99,6 @@ export class IcAgentQueueEditor extends LitElement {
       margin: var(--ic-space-md) 0 var(--ic-space-xs);
     }
 
-    .json-section {
-      margin-top: var(--ic-space-sm);
-    }
-
     @media (max-width: 767px) {
       .field-row {
         grid-template-columns: 1fr;
@@ -180,48 +174,8 @@ export class IcAgentQueueEditor extends LitElement {
         ${renderNumberField(followup as EditorForm, "maxFollowupRuns", "Max Follow-up Runs", (_k, v) => this._onNestedChange("followup", "maxFollowupRuns", v), { placeholder: "3" })}
       </div>
       ${renderCheckbox(followup as EditorForm, "followupOnCompaction", "Follow-up on Compaction", (_k, v) => this._onNestedChange("followup", "followupOnCompaction", v))}
-
-      <hr class="divider" />
-      <div class="section-title">Priority Lanes</div>
-      ${renderCheckbox(form, "priorityEnabled", "Priority Enabled", this._onChange)}
-      <div class="json-section">
-        <ic-json-editor
-          label="Priority Lanes (key-value)"
-          .value=${this._lanesToRecord()}
-          @change=${this._handleLanesChange}
-        ></ic-json-editor>
-      </div>
     `;
   }
-
-  /** Convert lanes array to Record for ic-json-editor display. */
-  private _lanesToRecord(): Record<string, string> {
-    const lanes = this.config.priorityLanes;
-    if (!Array.isArray(lanes)) return {};
-    const record: Record<string, string> = {};
-    for (const lane of lanes) {
-      if (lane && typeof lane === "object") {
-        const l = lane as Record<string, unknown>;
-        const name = String(l.name ?? l.label ?? `lane-${Object.keys(record).length}`);
-        record[name] = JSON.stringify(l);
-      }
-    }
-    return record;
-  }
-
-  /** Convert ic-json-editor Record back to lanes array. */
-  private _handleLanesChange = (e: CustomEvent<Record<string, string>>): void => {
-    const record = e.detail;
-    const lanes: Record<string, unknown>[] = [];
-    for (const [, val] of Object.entries(record)) {
-      try {
-        lanes.push(JSON.parse(val));
-      } catch {
-        // Skip invalid JSON values
-      }
-    }
-    this._emit("priorityLanes", lanes);
-  };
 }
 
 declare global {

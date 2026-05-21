@@ -41,8 +41,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | groupHistoryBuffer | optional | group history injection is disabled | packages/orchestrator/src/channel-manager.ts:120 |
 | followupTrigger | optional | no follow-up runs are triggered | packages/orchestrator/src/channel-manager.ts:122 |
 | followupConfig | optional | defaults used from FollowupTrigger | packages/orchestrator/src/channel-manager.ts:124 |
-| priorityScheduler | optional | single global gate is used | packages/orchestrator/src/channel-manager.ts:126 |
-| queueConfig | optional | default lane assignment used | packages/orchestrator/src/channel-manager.ts:128 |
+| queueConfig | optional | default queue behavior used | packages/orchestrator/src/channel-manager.ts:126 |
 | getElevatedReplyConfig | optional | no elevated routing | packages/orchestrator/src/channel-manager.ts:130 |
 | sessionLabelStore | optional | labels not included in group history output | packages/orchestrator/src/channel-manager.ts:132 |
 | ackReactionConfig | optional | no ack reactions are sent | packages/orchestrator/src/channel-manager.ts:134 |
@@ -79,7 +78,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 - `groupHistoryBuffer`: 8 production usages; daemon never wires it (group-history injection is disabled in production).
 - `loadPromptSkill` / `getUserInvocableSkillNames`: 2 usages each (`inbound-gate.ts:344` `if (... && deps.loadPromptSkill && deps.getUserInvocableSkillNames)`); daemon never wires either, so skill commands pass through as plain text in production.
 - `inFlightSends`: 3 usages; the interface JSDoc documents this as a test-only injection point; the factory creates its own per-instance Set when absent (the production path, `channel-manager.ts:273`).
-- `ackReactionConfig`, `channelRegistry`, `followupConfig`, `followupTrigger`, `getDmScopeConfig`, `greetingGenerator`, `identityResolver`, `priorityScheduler`, `sessionLabelStore`: all follow the same pattern — declared optional, daemon does not wire, absent-mode is the production code path.
+- `ackReactionConfig`, `channelRegistry`, `followupConfig`, `followupTrigger`, `getDmScopeConfig`, `greetingGenerator`, `identityResolver`, `sessionLabelStore`: all follow the same pattern — declared optional, daemon does not wire, absent-mode is the production code path.
 
 ## Summary
 

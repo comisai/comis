@@ -5553,48 +5553,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("queue
     "type": "integer"
   },
   {
-    "default": {
-      "defaultLane": "normal",
-      "dmLane": "high",
-      "followupLane": "normal",
-      "mentionLane": "normal",
-      "scheduledLane": "low"
-    },
-    "immutable": false,
-    "path": "queue.laneAssignment",
-    "type": "object"
-  },
-  {
-    "default": "normal",
-    "immutable": false,
-    "path": "queue.laneAssignment.defaultLane",
-    "type": "string"
-  },
-  {
-    "default": "high",
-    "immutable": false,
-    "path": "queue.laneAssignment.dmLane",
-    "type": "string"
-  },
-  {
-    "default": "normal",
-    "immutable": false,
-    "path": "queue.laneAssignment.followupLane",
-    "type": "string"
-  },
-  {
-    "default": "normal",
-    "immutable": false,
-    "path": "queue.laneAssignment.mentionLane",
-    "type": "string"
-  },
-  {
-    "default": "low",
-    "immutable": false,
-    "path": "queue.laneAssignment.scheduledLane",
-    "type": "string"
-  },
-  {
     "default": 10,
     "immutable": false,
     "path": "queue.maxConcurrentSessions",
@@ -5611,37 +5569,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("queue
     "immutable": false,
     "path": "queue.perChannelDebounce",
     "type": "object"
-  },
-  {
-    "default": false,
-    "immutable": false,
-    "path": "queue.priorityEnabled",
-    "type": "boolean"
-  },
-  {
-    "default": [
-      {
-        "agingPromotionMs": 30000,
-        "concurrency": 3,
-        "name": "high",
-        "priority": 2
-      },
-      {
-        "agingPromotionMs": 60000,
-        "concurrency": 5,
-        "name": "normal",
-        "priority": 1
-      },
-      {
-        "agingPromotionMs": 0,
-        "concurrency": 2,
-        "name": "low",
-        "priority": 0
-      }
-    ],
-    "immutable": false,
-    "path": "queue.priorityLanes",
-    "type": "array"
   }
 ]"
 `;
@@ -11299,37 +11226,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "followupOnCompaction": true,
         "maxFollowupRuns": 3
       },
-      "laneAssignment": {
-        "defaultLane": "normal",
-        "dmLane": "high",
-        "followupLane": "normal",
-        "mentionLane": "normal",
-        "scheduledLane": "low"
-      },
       "maxConcurrentSessions": 10,
       "perChannel": {},
-      "perChannelDebounce": {},
-      "priorityEnabled": false,
-      "priorityLanes": [
-        {
-          "agingPromotionMs": 30000,
-          "concurrency": 3,
-          "name": "high",
-          "priority": 2
-        },
-        {
-          "agingPromotionMs": 60000,
-          "concurrency": 5,
-          "name": "normal",
-          "priority": 1
-        },
-        {
-          "agingPromotionMs": 0,
-          "concurrency": 2,
-          "name": "low",
-          "priority": 0
-        }
-      ]
+      "perChannelDebounce": {}
     },
     "immutable": false,
     "path": "queue",
@@ -11430,48 +11329,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
-    "default": {
-      "defaultLane": "normal",
-      "dmLane": "high",
-      "followupLane": "normal",
-      "mentionLane": "normal",
-      "scheduledLane": "low"
-    },
-    "immutable": false,
-    "path": "queue.laneAssignment",
-    "type": "object"
-  },
-  {
-    "default": "normal",
-    "immutable": false,
-    "path": "queue.laneAssignment.defaultLane",
-    "type": "string"
-  },
-  {
-    "default": "high",
-    "immutable": false,
-    "path": "queue.laneAssignment.dmLane",
-    "type": "string"
-  },
-  {
-    "default": "normal",
-    "immutable": false,
-    "path": "queue.laneAssignment.followupLane",
-    "type": "string"
-  },
-  {
-    "default": "normal",
-    "immutable": false,
-    "path": "queue.laneAssignment.mentionLane",
-    "type": "string"
-  },
-  {
-    "default": "low",
-    "immutable": false,
-    "path": "queue.laneAssignment.scheduledLane",
-    "type": "string"
-  },
-  {
     "default": 10,
     "immutable": false,
     "path": "queue.maxConcurrentSessions",
@@ -11488,37 +11345,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "queue.perChannelDebounce",
     "type": "object"
-  },
-  {
-    "default": false,
-    "immutable": false,
-    "path": "queue.priorityEnabled",
-    "type": "boolean"
-  },
-  {
-    "default": [
-      {
-        "agingPromotionMs": 30000,
-        "concurrency": 3,
-        "name": "high",
-        "priority": 2
-      },
-      {
-        "agingPromotionMs": 60000,
-        "concurrency": 5,
-        "name": "normal",
-        "priority": 1
-      },
-      {
-        "agingPromotionMs": 0,
-        "concurrency": 2,
-        "name": "low",
-        "priority": 0
-      }
-    ],
-    "immutable": false,
-    "path": "queue.priorityLanes",
-    "type": "array"
   },
   {
     "default": {
@@ -29871,37 +29697,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "followupOnCompaction": true,
           "maxFollowupRuns": 3
         },
-        "laneAssignment": {
-          "defaultLane": "normal",
-          "dmLane": "high",
-          "followupLane": "normal",
-          "mentionLane": "normal",
-          "scheduledLane": "low"
-        },
         "maxConcurrentSessions": 10,
         "perChannel": {},
-        "perChannelDebounce": {},
-        "priorityEnabled": false,
-        "priorityLanes": [
-          {
-            "agingPromotionMs": 30000,
-            "concurrency": 3,
-            "name": "high",
-            "priority": 2
-          },
-          {
-            "agingPromotionMs": 60000,
-            "concurrency": 5,
-            "name": "normal",
-            "priority": 1
-          },
-          {
-            "agingPromotionMs": 0,
-            "concurrency": 2,
-            "name": "low",
-            "priority": 0
-          }
-        ]
+        "perChannelDebounce": {}
       },
       "properties": {
         "cleanupIdleMs": {
@@ -30015,51 +29813,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
-        "laneAssignment": {
-          "additionalProperties": false,
-          "default": {
-            "defaultLane": "normal",
-            "dmLane": "high",
-            "followupLane": "normal",
-            "mentionLane": "normal",
-            "scheduledLane": "low"
-          },
-          "properties": {
-            "defaultLane": {
-              "default": "normal",
-              "minLength": 1,
-              "type": "string"
-            },
-            "dmLane": {
-              "default": "high",
-              "minLength": 1,
-              "type": "string"
-            },
-            "followupLane": {
-              "default": "normal",
-              "minLength": 1,
-              "type": "string"
-            },
-            "mentionLane": {
-              "default": "normal",
-              "minLength": 1,
-              "type": "string"
-            },
-            "scheduledLane": {
-              "default": "low",
-              "minLength": 1,
-              "type": "string"
-            }
-          },
-          "required": [
-            "defaultLane",
-            "dmLane",
-            "mentionLane",
-            "followupLane",
-            "scheduledLane"
-          ],
-          "type": "object"
-        },
         "maxConcurrentSessions": {
           "default": 10,
           "exclusiveMinimum": 0,
@@ -30162,67 +29915,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "type": "string"
           },
           "type": "object"
-        },
-        "priorityEnabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "priorityLanes": {
-          "default": [
-            {
-              "agingPromotionMs": 30000,
-              "concurrency": 3,
-              "name": "high",
-              "priority": 2
-            },
-            {
-              "agingPromotionMs": 60000,
-              "concurrency": 5,
-              "name": "normal",
-              "priority": 1
-            },
-            {
-              "agingPromotionMs": 0,
-              "concurrency": 2,
-              "name": "low",
-              "priority": 0
-            }
-          ],
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "agingPromotionMs": {
-                "default": 30000,
-                "maximum": 9007199254740991,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "concurrency": {
-                "default": 3,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "name": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "priority": {
-                "default": 0,
-                "maximum": 9007199254740991,
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "name",
-              "concurrency",
-              "priority",
-              "agingPromotionMs"
-            ],
-            "type": "object"
-          },
-          "type": "array"
         }
       },
       "required": [
@@ -30235,10 +29927,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "perChannel",
         "debounce",
         "perChannelDebounce",
-        "followup",
-        "priorityLanes",
-        "laneAssignment",
-        "priorityEnabled"
+        "followup"
       ],
       "type": "object"
     },

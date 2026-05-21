@@ -82,47 +82,6 @@ export const FollowupConfigSchema = z.strictObject({
 export type FollowupConfig = z.infer<typeof FollowupConfigSchema>;
 
 /**
- * Priority lane configuration for multi-lane queue scheduling.
- *
- * Each lane gets its own PQueue with independent concurrency,
- * enabling DMs, group mentions, and background tasks to have
- * different scheduling priorities.
- */
-export const PriorityLaneConfigSchema = z.strictObject({
-  /** Lane name (e.g., "high", "normal", "low") */
-  name: z.string().min(1),
-  /** Concurrency limit for this lane */
-  concurrency: z.number().int().positive().default(3),
-  /** Scheduling priority (higher number = higher priority) */
-  priority: z.number().int().nonnegative().default(0),
-  /** Age threshold in ms after which tasks emit aging promotion events (0 = disabled) */
-  agingPromotionMs: z.number().int().nonnegative().default(30_000),
-});
-
-export type PriorityLaneConfig = z.infer<typeof PriorityLaneConfigSchema>;
-
-/**
- * Lane assignment rules for routing messages to priority lanes.
- *
- * Maps message characteristics (DM, mention, follow-up, scheduled) to
- * named priority lanes. The lane names must match entries in priorityLanes.
- */
-export const LaneAssignmentConfigSchema = z.strictObject({
-  /** Default lane for messages that don't match any rule */
-  defaultLane: z.string().min(1).default("normal"),
-  /** Lane for DM messages */
-  dmLane: z.string().min(1).default("high"),
-  /** Lane for group mentions */
-  mentionLane: z.string().min(1).default("normal"),
-  /** Lane for follow-up messages */
-  followupLane: z.string().min(1).default("normal"),
-  /** Lane for scheduled/background tasks */
-  scheduledLane: z.string().min(1).default("low"),
-});
-
-export type LaneAssignmentConfig = z.infer<typeof LaneAssignmentConfigSchema>;
-
-/**
  * Root queue configuration schema.
  *
  * Controls the command queue that serializes agent executions per session
@@ -149,16 +108,6 @@ export const QueueConfigSchema = z.strictObject({
     perChannelDebounce: z.record(z.string(), DebounceBufferConfigSchema).default({}),
     /** Follow-up trigger configuration for continuation runs */
     followup: FollowupConfigSchema.default(() => FollowupConfigSchema.parse({})),
-    /** Priority lane definitions. Default: high(3), normal(5), low(2) = total concurrency 10 */
-    priorityLanes: z.array(PriorityLaneConfigSchema).default([
-      { name: "high", concurrency: 3, priority: 2, agingPromotionMs: 30_000 },
-      { name: "normal", concurrency: 5, priority: 1, agingPromotionMs: 60_000 },
-      { name: "low", concurrency: 2, priority: 0, agingPromotionMs: 0 },
-    ]),
-    /** Lane assignment rules */
-    laneAssignment: LaneAssignmentConfigSchema.default(() => LaneAssignmentConfigSchema.parse({})),
-    /** Enable priority lane scheduling (false = single global gate) */
-    priorityEnabled: z.boolean().default(false),
   });
 
 export type QueueConfig = z.infer<typeof QueueConfigSchema>;

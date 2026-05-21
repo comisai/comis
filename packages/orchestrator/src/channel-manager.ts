@@ -26,7 +26,6 @@ import type { SessionLifecycle } from "@comis/agent";
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { DebounceBuffer } from "./queue/debounce-buffer.js";
 import type { FollowupTrigger } from "./queue/followup-trigger.js";
-import type { PriorityScheduler } from "./queue/priority-scheduler.js";
 import type { SessionLabelStore } from "@comis/agent";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
@@ -118,9 +117,7 @@ export interface ChannelManagerDeps {
   followupTrigger?: FollowupTrigger;
   /** Optional follow-up config for depth limits. When absent, defaults used from FollowupTrigger. */
   followupConfig?: { maxFollowupRuns: number };
-  /** Optional priority scheduler for multi-lane queue processing. When absent, single global gate is used. */
-  priorityScheduler?: PriorityScheduler;
-  /** Optional queue config for lane assignment rules and priority scheduling. When absent, default lane assignment used. */
+  /** Optional queue config. When absent, default queue behavior used. */
   queueConfig?: QueueConfig;
   /** Optional callback to get elevated reply config for an agent. When absent, no elevated routing. */
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;

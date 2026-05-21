@@ -109,8 +109,6 @@ export type {
   OverflowConfig,
   DebounceBufferConfig,
   FollowupConfig,
-  PriorityLaneConfig,
-  LaneAssignmentConfig,
 } from "./schema-queue.js";
 export type {
   StreamingConfig,

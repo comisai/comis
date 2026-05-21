@@ -26,7 +26,6 @@ import type {
   PerChannelQueueConfig,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
-import type { PriorityScheduler } from "./priority-scheduler.js";
 import { formatSessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemSetInterval, systemClearInterval } from "@comis/core";
 
 import type { SessionLane } from "./lane.js";
@@ -39,8 +38,6 @@ import { coalesceMessages } from "./coalescer.js";
 export interface CommandQueueDeps {
   readonly eventBus: TypedEventBus;
   readonly config: QueueConfig;
-  /** Optional priority scheduler for multi-lane gate replacement. When provided, tasks are routed through lanes instead of the global gate. */
-  readonly priorityScheduler?: PriorityScheduler;
   /** Optional structured logger for queue lifecycle tracing. */
   readonly logger?: ComisLogger;
 }
@@ -73,7 +70,6 @@ export interface CommandQueue {
     message: NormalizedMessage,
     channelType: string,
     handler: (messages: NormalizedMessage[]) => Promise<void>,
-    priorityLane?: string,
   ): Promise<Result<void, Error>>;
 
   /** Get current queue depth for a session (waiting + in-progress) */
@@ -164,7 +160,6 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
     sessionKey: SessionKey,
     channelType: string,
     handler: (messages: NormalizedMessage[]) => Promise<void>,
-    priorityLane?: string,
   ): void {
     if (lane.pendingMessages.length === 0) return;
 
@@ -183,8 +178,8 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
 
     // Enqueue a single task with the coalesced message
     void executeLaneTask(
-      lane, sessionKey, channelType, priorityLane, systemNowMs(), [coalesced], handler,
-      () => processCollectedMessages(key, lane, sessionKey, channelType, handler, priorityLane),
+      lane, sessionKey, channelType, systemNowMs(), [coalesced], handler,
+      () => processCollectedMessages(key, lane, sessionKey, channelType, handler),
     );
   }
 
@@ -214,11 +209,8 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
   // Start the cleanup sweep immediately
   startCleanupSweep();
 
-  /** Route a task through the PriorityScheduler (if provided) or the globalGate. */
-  function runThroughGate(laneName: string | undefined, task: () => Promise<void>): Promise<void> {
-    if (deps.priorityScheduler) {
-      return deps.priorityScheduler.enqueue(laneName ?? "normal", task);
-    }
+  /** Route a task through the globalGate. */
+  function runThroughGate(task: () => Promise<void>): Promise<void> {
     return globalGate.add(task) as Promise<void>;
   }
 
@@ -231,14 +223,13 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
     lane: SessionLane,
     sessionKey: SessionKey,
     channelType: string,
-    priorityLane: string | undefined,
     enqueuedAt: number,
     messages: NormalizedMessage[],
     handler: (messages: NormalizedMessage[]) => Promise<void>,
     onComplete?: () => void,
   ): Promise<void> {
     return lane.queue.add(() =>
-      runThroughGate(priorityLane, async () => {
+      runThroughGate(async () => {
         const dequeuedAt = systemNowMs();
         eventBus.emit("queue:dequeued", {
           sessionKey,
@@ -266,7 +257,6 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
       message: NormalizedMessage,
       channelType: string,
       handler: (messages: NormalizedMessage[]) => Promise<void>,
-      priorityLane?: string,
     ): Promise<Result<void, Error>> {
       if (isShutdown) {
         return err(new Error("Command queue is shut down"));
@@ -295,7 +285,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
         // followup mode: Each message gets its own execution (default)
         // ---------------------------------------------------------------
         if (mode === "followup") {
-          await executeLaneTask(lane, sessionKey, channelType, priorityLane, enqueuedAt, [message], handler);
+          await executeLaneTask(lane, sessionKey, channelType, enqueuedAt, [message], handler);
           return ok(undefined);
         }
 
@@ -331,7 +321,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
                   debounceTimers.delete(key);
                   // Only process if execution has finished by debounce time
                   if (!lane.isExecuting) {
-                    processCollectedMessages(key, lane, sessionKey, channelType, handler, priorityLane);
+                    processCollectedMessages(key, lane, sessionKey, channelType, handler);
                   }
                   // Otherwise, processCollectedMessages will be called in the
                   // finally block of the currently executing handler.
@@ -344,8 +334,8 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
 
           // Lane is idle — process immediately (no debounce for first message)
           await executeLaneTask(
-            lane, sessionKey, channelType, priorityLane, enqueuedAt, [message], handler,
-            () => processCollectedMessages(key, lane, sessionKey, channelType, handler, priorityLane),
+            lane, sessionKey, channelType, enqueuedAt, [message], handler,
+            () => processCollectedMessages(key, lane, sessionKey, channelType, handler),
           );
           return ok(undefined);
         }
@@ -381,7 +371,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
             // Steer re-execution after abort -- unique logic, not extractable to
             // executeLaneTask (coalesces pending messages inside the gate callback).
             void lane.queue.add(() =>
-              runThroughGate(priorityLane, async () => {
+              runThroughGate(async () => {
                 if (lane.pendingMessages.length === 0) return;
                 const collected = [...lane.pendingMessages];
                 lane.pendingMessages = [];
@@ -405,12 +395,12 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
           }
 
           // Lane is idle — process immediately (like followup)
-          await executeLaneTask(lane, sessionKey, channelType, priorityLane, enqueuedAt, [message], handler);
+          await executeLaneTask(lane, sessionKey, channelType, enqueuedAt, [message], handler);
           return ok(undefined);
         }
 
         // Unknown mode — treat as followup for safety
-        await executeLaneTask(lane, sessionKey, channelType, priorityLane, enqueuedAt, [message], handler);
+        await executeLaneTask(lane, sessionKey, channelType, enqueuedAt, [message], handler);
         return ok(undefined);
       } catch (error: unknown) {
         const wrapped =
@@ -481,8 +471,6 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
 
       for (const lane of lanes.values()) lane.queue.pause();
       globalGate.pause();
-
-      if (deps.priorityScheduler) await deps.priorityScheduler.shutdown();
 
       // Signal abort to all active lanes so in-flight LLM executions can
       // terminate early rather than blocking shutdown indefinitely.

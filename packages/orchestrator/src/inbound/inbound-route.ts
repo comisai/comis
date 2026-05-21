@@ -36,7 +36,6 @@ export type RouteDeps = Pick<
   | "groupHistoryBuffer"
   | "sessionLabelStore"
   | "commandQueue"
-  | "priorityScheduler"
   | "queueConfig"
   | "activeRunRegistry"
   | "sessionResolver"
@@ -59,42 +58,6 @@ export type RouteDeps = Pick<
   | "buildTemplateContext"
   | "getEnforceFinalTag"
 >;
-
-// ---------------------------------------------------------------------------
-// Priority lane assignment
-// ---------------------------------------------------------------------------
-
-import type { LaneAssignmentConfig } from "@comis/core";
-import { isBotMentioned } from "@comis/channels";
-
-/**
- * Determine which priority lane a message should be assigned to.
- *
- * Priority order: follow-up messages -> heartbeat/scheduled -> DMs -> mentioned in group -> default.
- */
-function assignPriorityLane(
-  msg: NormalizedMessage,
-  laneConfig: LaneAssignmentConfig,
-): { lane: string; reason: string } {
-  // Follow-up messages
-  if (msg.metadata?.isFollowup) {
-    return { lane: laneConfig.followupLane, reason: "followup" };
-  }
-  // Heartbeat / scheduled
-  if (msg.metadata?.isHeartbeat) {
-    return { lane: laneConfig.scheduledLane, reason: "heartbeat" };
-  }
-  // DMs
-  if (!isGroupMessage(msg)) {
-    return { lane: laneConfig.dmLane, reason: "dm" };
-  }
-  // Group mention
-  if (isBotMentioned(msg)) {
-    return { lane: laneConfig.mentionLane, reason: "mention" };
-  }
-  // Default
-  return { lane: laneConfig.defaultLane, reason: "default" };
-}
 
 // ---------------------------------------------------------------------------
 // Stage function
@@ -311,25 +274,10 @@ export async function routeInboundMessage(
   // Queue-mediated path: route through CommandQueue for serialization
   // -----------------------------------------------------------------------
   if (deps.commandQueue) {
-    // Determine priority lane
-    let laneName: string | undefined;
-    if (deps.priorityScheduler && deps.queueConfig?.priorityEnabled) {
-      const laneConfig = deps.queueConfig.laneAssignment;
-      const assignment = assignPriorityLane(msg, laneConfig);
-      laneName = assignment.lane;
-      deps.eventBus.emit("priority:lane_assigned", {
-        sessionKey,
-        channelType: adapter.channelType,
-        lane: assignment.lane,
-        reason: assignment.reason,
-        timestamp: systemNowMs(),
-      });
-    }
-
     const enqueueResult = await deps.commandQueue.enqueue(sessionKey, msg, adapter.channelType, async (messages) => {
       const effectiveMsg = messages[0]!;
       await executeAndDeliver(execDeps, adapter, effectiveMsg, originalMsg, executor, sessionKey, agentId, streamCfg, activePacers, sendOverrides, typingLifecycle, directives);
-    }, laneName);
+    });
     if (!enqueueResult.ok) {
       deps.logger.warn({
         err: enqueueResult.error.message,

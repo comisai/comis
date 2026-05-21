@@ -200,8 +200,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "queue:dequeued",
   "queue:enqueued",
   "queue:overflow",
-  "priority:aged_promotion",
-  "priority:lane_assigned",
 
   // -------------------------------------------------------------------
   // Context-engine internals — granular pipeline signals; the

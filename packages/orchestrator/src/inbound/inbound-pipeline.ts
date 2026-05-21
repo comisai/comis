@@ -20,7 +20,6 @@ import type { SessionLifecycle } from "@comis/agent";
 import type { CommandQueue } from "../queue/command-queue.js";
 import type { DebounceBuffer } from "../queue/debounce-buffer.js";
 import type { FollowupTrigger } from "../queue/followup-trigger.js";
-import type { PriorityScheduler } from "../queue/priority-scheduler.js";
 import type { SessionLabelStore } from "@comis/agent";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
@@ -71,7 +70,6 @@ export interface InboundPipelineDeps {
   groupHistoryBuffer?: GroupHistoryBuffer;
   followupTrigger?: FollowupTrigger;
   followupConfig?: { maxFollowupRuns: number };
-  priorityScheduler?: PriorityScheduler;
   queueConfig?: QueueConfig;
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
   sessionLabelStore?: SessionLabelStore;
