@@ -17,8 +17,6 @@ import {
   SessionSpawnContract,
   SessionCompactContract,
   stripInternalFields,
-  systemNowMs,
-  systemSetTimeout,
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
@@ -77,13 +75,18 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
 
       const task = params.task;
       const spawnAgentId = params.agent ?? deps.defaultAgentId;
-      const isAsync = params.async === true;
       const maxSteps = params.max_steps;
 
+      // After Phase 52 Plan 04 (BC-REM-12 sub-D), session.spawn is async-only.
+      // The poll-until-complete branch was deleted (CHANGELOG: callers
+      // passing `async: false` are now treated as async; pre-v2.3 callers
+      // must update to expect the async-running response shape immediately).
+      // Pre-deletion grep gates verified 0 callers in packages/*/src/ or
+      // packages/skills/src/ pass `async: false`.
       deps.logger?.info({
         method: "session.spawn",
         agentId: spawnAgentId,
-        async: isAsync,
+        async: true,
         taskLength: task.length,
       }, "session.spawn request received");
 
@@ -117,53 +120,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const toolGroups = params.tool_groups;
       const includeParentHistory = (params.include_parent_history === "summary" ? "summary" : "none") as "none" | "summary";
 
-      if (isAsync) {
-        // Non-blocking spawn
-        const runId = deps.subAgentRunner.spawn({
-          task,
-          agentId: spawnAgentId,
-          callerSessionKey,
-          callerAgentId: callerAgentIdInternal,
-          announceChannelType: explicitAnnounceType ?? callerChannelType,
-          announceChannelId: explicitAnnounceId ?? callerChannelId,
-          model: params.model,
-          requesterOrigin,
-          max_steps: maxSteps,
-          expected_outputs: expectedOutputs,
-          depth: callerDepth,
-          maxDepth: maxSpawnDepth,
-          artifactRefs,
-          objective,
-          domainKnowledge,
-          toolGroups,
-          includeParentHistory,
-        });
-        // Capture dedup signal from this spawn so the response carries
-        // structured `deduped`/`existingRunId`/`dedupAgeMs` if the runner
-        // short-circuited against an in-flight run.
-        const asyncDedupInfo = deps.subAgentRunner.lastSpawnDedupInfo?.();
-        // Check if spawn was queued rather than immediately started.
-        const spawnStatus = deps.subAgentRunner.getRunStatus(runId);
-        // Either way the run is in-flight from the LLM's perspective — surface
-        // the same `inProgress`/`noteType` signal as the sync-timeout branch.
-        const baseAsyncResponse: Record<string, unknown> = {
-          runId,
-          async: true,
-          inProgress: true,
-          noteType: "background_running",
-        };
-        if (asyncDedupInfo?.deduped) {
-          baseAsyncResponse.deduped = true;
-          baseAsyncResponse.existingRunId = asyncDedupInfo.existingRunId;
-          baseAsyncResponse.dedupAgeMs = asyncDedupInfo.ageMs;
-        }
-        if (spawnStatus?.status === "queued") {
-          return { ...baseAsyncResponse, queued: true };
-        }
-        return baseAsyncResponse;
-      }
-
-      // Synchronous (backward compatible) -- delegate to sub-agent runner but await result
+      // Async (only path): non-blocking spawn.
       const runId = deps.subAgentRunner.spawn({
         task,
         agentId: spawnAgentId,
@@ -183,58 +140,27 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         toolGroups,
         includeParentHistory,
       });
-      // Capture dedup signal BEFORE the poll loop — must not be clobbered by
-      // any subsequent spawn() call on the runner between now and the response.
-      const dedupInfo = deps.subAgentRunner.lastSpawnDedupInfo?.();
-
-      // For sync mode, poll until complete (up to waitTimeoutMs)
-      const timeout = deps.securityConfig.agentToAgent!.waitTimeoutMs;
-      const deadline = systemNowMs() + timeout;
-      let run = deps.subAgentRunner.getRunStatus(runId);
-      while ((run?.status === "running" || run?.status === "queued") && systemNowMs() < deadline) {
-        await new Promise(r => systemSetTimeout(() => r(undefined), 100));
-        run = deps.subAgentRunner.getRunStatus(runId);
-      }
-
-      if (!run || run.status === "running" || run.status === "queued") {
-        // Sub-agent is still in flight after the sync-wait window. The spawn
-        // SUCCEEDED — the result will be delivered automatically when complete.
-        // The previous timeout-flavored note caused LLMs to read this branch
-        // as a failure signal and hedge by spawning a second sub-agent for the
-        // same task (observed 2026-05-19 18:09–18:13). The new note plus
-        // structured `inProgress`/`noteType` fields tell the LLM explicitly
-        // that the spawn succeeded and that re-spawning is forbidden.
-        const response: Record<string, unknown> = {
-          runId,
-          async: true,
-          inProgress: true,
-          noteType: "background_running",
-          note:
-            `Sub-agent is running in background (runId=${runId}). ` +
-            `The result will be delivered automatically via the announcement channel when complete. ` +
-            `DO NOT spawn another sub-agent for the same task — call subagents(action='list') ` +
-            `or session.run_status(run_id='${runId}') to check progress.`,
-        };
-        if (dedupInfo?.deduped) {
-          response.deduped = true;
-          response.existingRunId = dedupInfo.existingRunId;
-          response.dedupAgeMs = dedupInfo.ageMs;
-        }
-        return response;
-      }
-
-      if (run.status === "failed") {
-        throw new Error(`Sub-agent failed: ${run.error}`);
-      }
-
-      return {
-        sessionKey: run.sessionKey,
-        response: run.result?.response,
-        tokensUsed: run.result?.tokensUsed,
-        finishReason: run.result?.finishReason,
-        announced: true, // announce handled by runner
-        taskDescription: task,
+      // Capture dedup signal from this spawn so the response carries
+      // structured `deduped`/`existingRunId`/`dedupAgeMs` if the runner
+      // short-circuited against an in-flight run.
+      const asyncDedupInfo = deps.subAgentRunner.lastSpawnDedupInfo?.();
+      // Check if spawn was queued rather than immediately started.
+      const spawnStatus = deps.subAgentRunner.getRunStatus(runId);
+      const baseAsyncResponse: Record<string, unknown> = {
+        runId,
+        async: true,
+        inProgress: true,
+        noteType: "background_running",
       };
+      if (asyncDedupInfo?.deduped) {
+        baseAsyncResponse.deduped = true;
+        baseAsyncResponse.existingRunId = asyncDedupInfo.existingRunId;
+        baseAsyncResponse.dedupAgeMs = asyncDedupInfo.ageMs;
+      }
+      if (spawnStatus?.status === "queued") {
+        return { ...baseAsyncResponse, queued: true };
+      }
+      return baseAsyncResponse;
     },
 
     [SessionCompactContract.method]: async (rawParams) => {
