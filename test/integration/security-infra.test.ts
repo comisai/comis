@@ -119,7 +119,7 @@ describe("SEC-INF-03: SSRF Guard URL Validation", () => {
 describe("SEC-INF-04: Plugin Registry Security Model", () => {
   it("emits plugin:registered event on TypedEventBus with correct pluginId and hookCount", () => {
     const eventBus = new TypedEventBus();
-    const registry = createPluginRegistry({ eventBus });
+    const registry = createPluginRegistry();
 
     let receivedEvent: {
       pluginId: string;

@@ -2,8 +2,6 @@
 import { describe, it, expect } from "vitest";
 import { ok } from "@comis/shared";
 import type { PluginPort, PluginRegistryApi } from "../ports/plugin.js";
-import type { EventMap } from "../event-bus/events.js";
-import { TypedEventBus } from "../event-bus/index.js";
 import { PluginsConfigSchema } from "../config/schema-plugins.js";
 import { createPluginRegistry } from "./plugin-registry.js";
 import { createHookRunner } from "./hook-runner.js";
@@ -21,25 +19,13 @@ function createTestPlugin(overrides: Partial<PluginPort> & { id: string }): Plug
 
 describe("Hook System Integration", () => {
   it("full plugin lifecycle: register -> hook -> deactivate", async () => {
-    // 1. Create a TypedEventBus instance
-    const eventBus = new TypedEventBus();
+    // 1. Create a plugin registry
+    const registry = createPluginRegistry();
 
-    // Collect emitted events for verification
-    const pluginRegisteredEvents: EventMap["plugin:registered"][] = [];
-    const hookExecutedEvents: EventMap["hook:executed"][] = [];
-    const pluginDeactivatedEvents: EventMap["plugin:deactivated"][] = [];
+    // 2. Create a hook runner
+    const runner = createHookRunner(registry);
 
-    eventBus.on("plugin:registered", (e) => pluginRegisteredEvents.push(e));
-    eventBus.on("hook:executed", (e) => hookExecutedEvents.push(e));
-    eventBus.on("plugin:deactivated", (e) => pluginDeactivatedEvents.push(e));
-
-    // 2. Create a plugin registry with the event bus
-    const registry = createPluginRegistry({ eventBus });
-
-    // 3. Create a hook runner with the registry and event bus
-    const runner = createHookRunner(registry, { eventBus });
-
-    // 4. Define a test plugin
+    // 3. Define a test plugin
     const sessionStartCalls: Array<{ isNew: boolean }> = [];
 
     const testPlugin = createTestPlugin({
@@ -61,18 +47,18 @@ describe("Hook System Integration", () => {
       deactivate: async () => ok(undefined),
     });
 
-    // 5. Register the plugin -> verify ok result
+    // 4. Register the plugin -> verify ok result
     const registerResult = registry.register(testPlugin);
     expect(registerResult.ok).toBe(true);
 
-    // 6. Run before_agent_start hook -> verify system prompt is modified
+    // 5. Run before_agent_start hook -> verify system prompt is modified
     const beforeResult = await runner.runBeforeAgentStart(
       { systemPrompt: "Be helpful.", messages: [] },
       { agentId: "agent-1" },
     );
     expect(beforeResult?.systemPrompt).toBe("[PLUGIN] Be helpful.");
 
-    // 7. Run session_start hook -> verify tracking array has the call
+    // 6. Run session_start hook -> verify tracking array has the call
     await runner.runSessionStart(
       { sessionKey: { tenantId: "t", userId: "u", channelId: "c" }, isNew: true },
       { agentId: "agent-1" },
@@ -80,30 +66,14 @@ describe("Hook System Integration", () => {
     expect(sessionStartCalls).toHaveLength(1);
     expect(sessionStartCalls[0]).toEqual({ isNew: true });
 
-    // 8. Deactivate all plugins -> verify ok result
+    // 7. Deactivate all plugins -> verify ok result
     const deactivateResult = await registry.deactivateAll();
     expect(deactivateResult.ok).toBe(true);
-
-    // 9. Verify plugin:registered event was emitted on the event bus
-    expect(pluginRegisteredEvents).toHaveLength(1);
-    expect(pluginRegisteredEvents[0]!.pluginId).toBe("lifecycle-test");
-    expect(pluginRegisteredEvents[0]!.hookCount).toBe(2);
-
-    // 10. Verify hook:executed events were emitted for both hook calls
-    expect(hookExecutedEvents).toHaveLength(2);
-    expect(hookExecutedEvents[0]!.hookName).toBe("before_agent_start");
-    expect(hookExecutedEvents[1]!.hookName).toBe("session_start");
-    expect(hookExecutedEvents.every((e) => e.success)).toBe(true);
-
-    // Verify deactivation event
-    expect(pluginDeactivatedEvents).toHaveLength(1);
-    expect(pluginDeactivatedEvents[0]!.pluginId).toBe("lifecycle-test");
   });
 
   it("multiple plugins with priority ordering", async () => {
-    const eventBus = new TypedEventBus();
-    const registry = createPluginRegistry({ eventBus });
-    const runner = createHookRunner(registry, { eventBus });
+    const registry = createPluginRegistry();
+    const runner = createHookRunner(registry);
 
     const executionOrder: string[] = [];
 
@@ -156,12 +126,8 @@ describe("Hook System Integration", () => {
   });
 
   it("plugin error isolation", async () => {
-    const eventBus = new TypedEventBus();
-    const registry = createPluginRegistry({ eventBus });
-    const runner = createHookRunner(registry, { eventBus, catchErrors: true });
-
-    const hookEvents: EventMap["hook:executed"][] = [];
-    eventBus.on("hook:executed", (e) => hookEvents.push(e));
+    const registry = createPluginRegistry();
+    const runner = createHookRunner(registry, { catchErrors: true });
 
     // First plugin: throws an error
     registry.register(
@@ -202,15 +168,6 @@ describe("Hook System Integration", () => {
 
     // The second plugin's result is returned (first was caught)
     expect(result?.systemPrompt).toBe("from-healthy");
-
-    // Verify hook:executed events
-    expect(hookEvents).toHaveLength(2);
-    const brokenEvent = hookEvents.find((e) => e.pluginId === "broken");
-    expect(brokenEvent?.success).toBe(false);
-    expect(brokenEvent?.error).toBe("intentional failure");
-
-    const healthyEvent = hookEvents.find((e) => e.pluginId === "healthy");
-    expect(healthyEvent?.success).toBe(true);
   });
 
   it("parses config-driven plugin enablement schema", () => {

@@ -208,7 +208,7 @@ describe("Custom Adapter Wiring & Integration", () => {
 
     it("startAll() starts registry-only adapters when deps.adapters is empty", async () => {
       const eventBus = new TypedEventBus();
-      const pluginRegistry = createPluginRegistry({ eventBus });
+      const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
 
       const pluginA = createMockPlugin({ channelType: "reg-a" });
@@ -230,7 +230,7 @@ describe("Custom Adapter Wiring & Integration", () => {
 
     it("startAll() builds combined list from both direct adapters and registry plugins", async () => {
       const eventBus = new TypedEventBus();
-      const pluginRegistry = createPluginRegistry({ eventBus });
+      const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
 
       const directAdapter = createMockAdapter({ channelId: "direct-c", channelType: "direct-c" });
@@ -283,7 +283,7 @@ describe("Custom Adapter Wiring & Integration", () => {
   describe("ChannelRegistry event emission", () => {
     it("channel:registered event fires with correct channelType, pluginId, capabilities, timestamp", () => {
       const eventBus = new TypedEventBus();
-      const pluginRegistry = createPluginRegistry({ eventBus });
+      const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
 
       const events: any[] = [];
@@ -307,7 +307,7 @@ describe("Custom Adapter Wiring & Integration", () => {
 
     it("channel:deregistered event fires on unregisterChannel with correct payload", () => {
       const eventBus = new TypedEventBus();
-      const pluginRegistry = createPluginRegistry({ eventBus });
+      const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
 
       const plugin = createMockPlugin({
@@ -335,7 +335,7 @@ describe("Custom Adapter Wiring & Integration", () => {
   describe("capability feature negotiation", () => {
     it("getCapabilities returns full capability object for registered channel", () => {
       const eventBus = new TypedEventBus();
-      const pluginRegistry = createPluginRegistry({ eventBus });
+      const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
 
       const richCaps: ChannelCapability = {
@@ -380,7 +380,7 @@ describe("Custom Adapter Wiring & Integration", () => {
 
     it("capability-driven feature check: streaming support query", () => {
       const eventBus = new TypedEventBus();
-      const pluginRegistry = createPluginRegistry({ eventBus });
+      const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
 
       const streamYes = createMockPlugin({
@@ -428,7 +428,7 @@ describe("Custom Adapter Wiring & Integration", () => {
 
     it("capability-driven feature check: edit support determines operation availability", () => {
       const eventBus = new TypedEventBus();
-      const pluginRegistry = createPluginRegistry({ eventBus });
+      const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
 
       const editable = createMockPlugin({

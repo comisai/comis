@@ -356,7 +356,7 @@ describe("HookRunner", () => {
   describe("audit events for hook modifications", () => {
     it("emits audit:event when before_agent_start modifies systemPrompt", async () => {
       const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
+      const registry = createPluginRegistry();
       const runner = createHookRunner(registry, { eventBus });
 
       const auditEvents: EventMap["audit:event"][] = [];
@@ -388,7 +388,7 @@ describe("HookRunner", () => {
 
     it("emits audit:event when before_delivery modifies text", async () => {
       const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
+      const registry = createPluginRegistry();
       const runner = createHookRunner(registry, { eventBus });
 
       const auditEvents: EventMap["audit:event"][] = [];
@@ -428,7 +428,7 @@ describe("HookRunner", () => {
   describe("Zod schema validation", () => {
     it("hook returning valid schema shape is merged correctly", async () => {
       const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
+      const registry = createPluginRegistry();
       const runner = createHookRunner(registry, { eventBus });
 
       registry.register(
@@ -453,7 +453,7 @@ describe("HookRunner", () => {
 
     it("hook returning extra properties (strict mode) is skipped", async () => {
       const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
+      const registry = createPluginRegistry();
       const runner = createHookRunner(registry, { eventBus });
 
       registry.register(

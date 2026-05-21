@@ -74,11 +74,16 @@ export interface HookRunner {
 
 /**
  * Options for creating a hook runner.
+ *
+ * EVENT-CLEAN-07 (Phase 52 Plan 02): the `hook:executed` observability
+ * event was removed (zero non-test subscribers). The `eventBus` option
+ * remains for the live `audit:event` emission via `emitAuditEvent` which
+ * fires when modifying hooks alter agent prompts or delivery payloads.
  */
 export interface HookRunnerOptions {
   /** Catch and log hook handler errors instead of propagating (default: true). */
   catchErrors?: boolean;
-  /** Event bus for emitting hook:executed observability events. */
+  /** Event bus for emitting audit:event entries on modifying-hook output. */
   eventBus?: TypedEventBus;
 }
 
@@ -96,28 +101,6 @@ export function createHookRunner(
   options: HookRunnerOptions = {},
 ): HookRunner {
   const { catchErrors = true, eventBus } = options;
-
-  /**
-   * Emit a hook:executed observability event.
-   */
-  function emitHookEvent(
-    hookName: string,
-    pluginId: string,
-    startMs: number,
-    success: boolean,
-    error?: string,
-  ): void {
-    if (eventBus) {
-      eventBus.emit("hook:executed", {
-        hookName,
-        pluginId,
-        durationMs: systemNowMs() - startMs,
-        success,
-        error,
-        timestamp: systemNowMs(),
-      });
-    }
-  }
 
   /**
    * Emit an audit:event for hook modifications.
@@ -157,13 +140,9 @@ export function createHookRunner(
 
     await Promise.all(
       registeredHooks.map(async (hook: RegisteredHook<K>) => {
-        const startMs = systemNowMs();
         try {
           await (hook.handler as (e: unknown, c: unknown) => Promise<void> | void)(event, ctx);
-          emitHookEvent(hookName, hook.pluginId, startMs, true);
         } catch (e) {
-          const errorMsg = e instanceof Error ? e.message : String(e);
-          emitHookEvent(hookName, hook.pluginId, startMs, false, errorMsg);
           if (!catchErrors) throw e;
         }
       }),
@@ -188,7 +167,6 @@ export function createHookRunner(
     let result: TResult | undefined;
 
     for (const hook of registeredHooks) {
-      const startMs = systemNowMs();
       try {
         const r = await (
           hook.handler as (e: unknown, c: unknown) => Promise<TResult | void> | TResult | void
@@ -198,8 +176,6 @@ export function createHookRunner(
           if (schema) {
             const parsed = schema.safeParse(r);
             if (!parsed.success) {
-              emitHookEvent(hookName, hook.pluginId, startMs, false,
-                `Invalid hook return: ${parsed.error.issues.map(i => i.message).join(", ")}`);
               continue; // Skip invalid results
             }
           }
@@ -207,14 +183,9 @@ export function createHookRunner(
           // Audit hook modifications
           auditHookResult(hookName, hook.pluginId, r);
 
-          emitHookEvent(hookName, hook.pluginId, startMs, true);
           result = merge(result, r as TResult);
-        } else {
-          emitHookEvent(hookName, hook.pluginId, startMs, true);
         }
       } catch (e) {
-        const errorMsg = e instanceof Error ? e.message : String(e);
-        emitHookEvent(hookName, hook.pluginId, startMs, false, errorMsg);
         if (!catchErrors) throw e;
       }
     }

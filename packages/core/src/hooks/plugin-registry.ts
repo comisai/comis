@@ -7,8 +7,6 @@ import type {
   RegisteredHook,
 } from "../ports/plugin.js";
 import type { HookName, HookHandlerMap } from "../ports/hook-types.js";
-import type { TypedEventBus } from "../event-bus/index.js";
-import { systemNowMs } from "../runtime/system-time.js";
 
 /**
  * The plugin registry manages plugin lifecycle and hook storage.
@@ -30,10 +28,15 @@ export interface PluginRegistry {
 
 /**
  * Options for creating a plugin registry.
+ *
+ * EVENT-CLEAN-07 (Phase 52 Plan 02): the `eventBus` parameter was
+ * removed because the only two events emitted (`plugin:registered`,
+ * `plugin:deactivated`) had zero non-test subscribers. Tests that
+ * inspect plugin lifecycle now poll PluginRegistry state directly via
+ * the surviving accessor surface.
  */
 export interface PluginRegistryOptions {
-  /** Event bus for emitting plugin:registered and plugin:deactivated events. */
-  eventBus?: TypedEventBus;
+  // Reserved for future option keys; intentionally empty post-EVENT-CLEAN-07.
 }
 
 /**
@@ -43,8 +46,7 @@ export interface PluginRegistryOptions {
  * The registry provides a PluginRegistryApi facade to each plugin during
  * registration, capturing the plugin ID for each registered hook.
  */
-export function createPluginRegistry(options: PluginRegistryOptions = {}): PluginRegistry {
-  const { eventBus } = options;
+export function createPluginRegistry(_options: PluginRegistryOptions = {}): PluginRegistry {
   const plugins = new Map<string, PluginPort>();
   const hooks: RegisteredHook[] = [];
 
@@ -67,9 +69,7 @@ export function createPluginRegistry(options: PluginRegistryOptions = {}): Plugi
    * Create a PluginRegistryApi facade for a specific plugin.
    * Captures the pluginId so hooks are attributed correctly.
    */
-  function createApiFacade(pluginId: string): { api: PluginRegistryApi; hookCount: number } {
-    let hookCount = 0;
-
+  function createApiFacade(pluginId: string): { api: PluginRegistryApi } {
     const api: PluginRegistryApi = {
       registerHook<K extends HookName>(
         hookName: K,
@@ -84,16 +84,10 @@ export function createPluginRegistry(options: PluginRegistryOptions = {}): Plugi
           priority,
         };
         insertHookSorted(registeredHook as RegisteredHook);
-        hookCount++;
       },
     };
 
-    return {
-      api,
-      get hookCount() {
-        return hookCount;
-      },
-    };
+    return { api };
   }
 
   return {
@@ -119,16 +113,6 @@ export function createPluginRegistry(options: PluginRegistryOptions = {}): Plugi
       }
 
       plugins.set(plugin.id, plugin);
-
-      // Emit plugin:registered event
-      if (eventBus) {
-        eventBus.emit("plugin:registered", {
-          pluginId: plugin.id,
-          pluginName: plugin.name,
-          hookCount: facade.hookCount,
-          timestamp: systemNowMs(),
-        });
-      }
 
       return ok(undefined);
     },
@@ -165,15 +149,6 @@ export function createPluginRegistry(options: PluginRegistryOptions = {}): Plugi
           if (!result.ok) {
             errors.push(`${plugin.id}: ${result.error.message}`);
           }
-        }
-
-        // Emit plugin:deactivated event
-        if (eventBus) {
-          eventBus.emit("plugin:deactivated", {
-            pluginId: plugin.id,
-            reason: "shutdown",
-            timestamp: systemNowMs(),
-          });
         }
       }
 

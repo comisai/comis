@@ -2,7 +2,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { ok } from "@comis/shared";
 import type { PluginPort, PluginRegistryApi } from "../ports/plugin.js";
-import { TypedEventBus } from "../event-bus/index.js";
 import { createPluginRegistry } from "./plugin-registry.js";
 
 /**
@@ -244,68 +243,6 @@ describe("PluginRegistry", () => {
       const result = await registry.deactivateAll();
 
       expect(result.ok).toBe(true);
-    });
-  });
-
-  // ─── Event Emission ─────────────────────────────────────────────
-
-  describe("event emission", () => {
-    it("emits plugin:registered event when eventBus provided", () => {
-      const eventBus = new TypedEventBus();
-      const handler = vi.fn();
-      eventBus.on("plugin:registered", handler);
-
-      const registry = createPluginRegistry({ eventBus });
-
-      const plugin = createTestPlugin({
-        id: "evented",
-        register: (api) => {
-          api.registerHook("session_start", () => {});
-          return ok(undefined);
-        },
-      });
-
-      registry.register(plugin);
-
-      expect(handler).toHaveBeenCalledOnce();
-      expect(handler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          pluginId: "evented",
-          pluginName: "test-plugin-evented",
-          hookCount: 1,
-        }),
-      );
-    });
-
-    it("emits plugin:deactivated event on deactivation", async () => {
-      const eventBus = new TypedEventBus();
-      const handler = vi.fn();
-      eventBus.on("plugin:deactivated", handler);
-
-      const registry = createPluginRegistry({ eventBus });
-      const plugin = createTestPlugin({
-        id: "will-deactivate",
-        deactivate: async () => ok(undefined),
-      });
-
-      registry.register(plugin);
-      await registry.deactivateAll();
-
-      expect(handler).toHaveBeenCalledOnce();
-      expect(handler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          pluginId: "will-deactivate",
-          reason: "shutdown",
-        }),
-      );
-    });
-
-    it("does not throw when eventBus not provided", () => {
-      const registry = createPluginRegistry(); // no eventBus
-
-      const plugin = createTestPlugin({ id: "no-bus" });
-
-      expect(() => registry.register(plugin)).not.toThrow();
     });
   });
 });

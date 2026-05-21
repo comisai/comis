@@ -478,7 +478,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
      */
     function setup() {
       const eventBus = new TypedEventBus();
-      const pluginRegistry = createPluginRegistry({ eventBus });
+      const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
       return { eventBus, pluginRegistry, channelRegistry };
     }
