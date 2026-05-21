@@ -109,6 +109,7 @@ export function createIdentityUpdater(workspaceDir: string): IdentityUpdater {
 
       try {
         // Write proposed content to disk
+        // fs-safe-allowed: per-agent workspace dir is operator-controlled (resolveWorkspaceDir), not ~/.comis/ directly
         await fs.writeFile(filePath, update.proposedContent, "utf-8");
 
         // Initialize git repo if not already present

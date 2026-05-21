@@ -429,6 +429,7 @@ function writeToEnvFile(envFilePath: string, key: string, value: string): void {
 
   const content = lines.join("\n");
   const tmpPath = envFilePath + ".tmp";
+  // fs-safe-allowed: tmp/rename atomic-write pattern; the renamed final envFilePath is chmod'd to 0o600 on the next line
   writeFileSync(tmpPath, content, "utf-8");
   renameSync(tmpPath, envFilePath);
   chmodSync(envFilePath, 0o600);

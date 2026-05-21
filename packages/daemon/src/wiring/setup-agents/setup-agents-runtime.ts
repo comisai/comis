@@ -325,6 +325,7 @@ export async function setupSingleAgent(
   // Resolve relative discoveryPaths against dataDir so ./skills -> ~/.comis/skills
   const dataDir = container.config.dataDir || ".";
   const agentSkillsDir = safePath(dir, "skills");  // dir = agent workspace from resolveWorkspaceDir()
+  // fs-safe-allowed: per-agent workspace skills dir (`<agentWorkspace>/skills`); workspace dir is operator-configured, not ~/.comis/ directly
   mkdirSync(agentSkillsDir, { recursive: true });
   const resolvedPaths = skillsConfig.discoveryPaths.map((p: string) =>
     isAbsolute(p) ? p : resolve(dataDir, p),

@@ -202,7 +202,11 @@ export type { CacheTrace, CacheTraceInit } from "./cache-trace/runtime.js";
 export { buildCacheTraceWrapper } from "./cache-trace/stream-fn-wrapper.js";
 export type { StreamFnWrapper as CacheTraceStreamFnWrapper } from "./cache-trace/stream-fn-wrapper.js";
 
-export { attachCacheTraceToEventBus } from "./cache-trace/event-bus-bridge.js";
+export {
+  attachCacheTraceToEventBus,
+  CACHE_TRACE_BRIDGE_MAPPING,
+} from "./cache-trace/event-bus-bridge.js";
+export type { CacheTraceBridgedEventName } from "./cache-trace/event-bus-bridge.js";
 
 // ---------------------------------------------------------------------------
 // Config-audit surface.

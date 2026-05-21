@@ -252,6 +252,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       const callerAgentId = rawParams._agentId as string | undefined;
       const agentDir = (callerAgentId && deps.workspaceDirs.get(callerAgentId)) ?? deps.defaultWorkspaceDir;
       const outputDir = safePath(agentDir, "media", "tts");
+      // fs-safe-allowed: per-agent workspace media output dir (`<agentDir>/media/tts`); not ~/.comis/ directly
       await fs.mkdir(outputDir, { recursive: true });
 
       // Simple TTL cleanup: delete files older than 1 hour (best-effort)
@@ -275,6 +276,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
 
       // Write audio file
       const filePath = safePath(outputDir, fileName);
+      // fs-safe-allowed: per-agent workspace media output (`<agentDir>/media/tts/<file>`); not ~/.comis/ directly
       await fs.writeFile(filePath, synthResult.value.audio);
 
       const result = {

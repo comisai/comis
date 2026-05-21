@@ -115,6 +115,7 @@ export async function setupSchedulers(deps: {
 
     const agentWorkspace = workspaceDirs.get(agentId)!;
     const agentSchedulerDir = safePath(agentWorkspace, ".scheduler");
+    // fs-safe-allowed: per-agent scheduler dir under operator-configured workspace (`<agentWorkspace>/.scheduler`); not ~/.comis/ directly
     await fs.mkdir(agentSchedulerDir, { recursive: true });
     const cronStorePath = safePath(agentSchedulerDir, "cron-jobs.json");
     const agentCronStore = createCronStore(cronStorePath, schedulerLogger.child({ agentId }));

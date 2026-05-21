@@ -327,6 +327,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         const { createHash } = await import("node:crypto");
         const { copyFile, writeFile, readFile, mkdir } = await import("node:fs/promises");
         const { basename, extname } = await import("node:path");
+        // fs-safe-allowed: gateway-media output dir is operator-configured (`deps.mediaDir`); not ~/.comis/ directly
         await mkdir(deps.mediaDir, { recursive: true });
         const fileBuffer = await readFile(attachmentUrl);
         const hash = createHash("sha256").update(fileBuffer).digest("hex").slice(0, 16);
@@ -338,6 +339,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
 
         // Write sidecar metadata for media-routes.ts content-type resolution
         const mimeType = (rawParams.mime_type as string | undefined) ?? "application/octet-stream";
+        // fs-safe-allowed: gateway-media sidecar `.meta` next to mediaPath in operator-configured mediaDir; not ~/.comis/ directly
         await writeFile(
           `${mediaPath}.meta`,
           JSON.stringify({ contentType: mimeType, savedAt: systemNowMs(), size: fileBuffer.length }),
