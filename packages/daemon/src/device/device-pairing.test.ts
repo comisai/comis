@@ -281,4 +281,33 @@ describe("device-pairing", () => {
       expect(isPaired.value).toBe(true);
     });
   });
+
+  describe("device-pairing honors §1.4 mode invariants on substrate-routed writes (OBS-HARD-03, Plan 48-06)", () => {
+    it("create_device_pairing_creates_devices_dir_with_mode_0o700", async () => {
+      // The factory routes the devices-dir creation through
+      // `ensureContainedDir` (Phase 48 OBS-HARD-03) so design §1.4's
+      // `0o700` invariant holds for `<stateDir>/devices/`.
+      const dir = makeTmpDir();
+      createDevicePairing({ stateDir: dir });
+      const devicesDir = dir + "/devices";
+      expect(fs.existsSync(devicesDir)).toBe(true);
+      expect(fs.statSync(devicesDir).mode & 0o777).toBe(0o700);
+    });
+
+    it("request_pairing_persists_paired_json_with_mode_0o600", async () => {
+      // writeJsonFileAtomic routes the write through `writeRegularFile`
+      // (Phase 48 OBS-HARD-03) so the persisted JSON file lands at
+      // mode `0o600` per design §1.4. Atomic-rename semantics preserved
+      // (tmp file → rename → final file at 0o600).
+      const dir = makeTmpDir();
+      const pairing = createDevicePairing({ stateDir: dir });
+      const result = await pairing.requestPairing(
+        makeRequest({ deviceId: "mode-test", sourceIp: "127.0.0.1" }),
+      );
+      expect(result.ok).toBe(true);
+      const pairedJson = dir + "/devices/paired.json";
+      expect(fs.existsSync(pairedJson)).toBe(true);
+      expect(fs.statSync(pairedJson).mode & 0o777).toBe(0o600);
+    });
+  });
 });

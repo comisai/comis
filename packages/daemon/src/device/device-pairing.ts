@@ -15,6 +15,7 @@ import { ok, err, tryCatch } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import { safePath, systemNowMs } from "@comis/core";
 import type { PairingRequest, PairedDevice } from "@comis/core";
+import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -68,20 +69,31 @@ function readJsonFile<T>(filePath: string, fallback: T): Result<T, Error> {
 function writeJsonFileAtomic(
   filePath: string,
   data: unknown,
+  stateDir: string,
 ): Result<void, Error> {
   const tmpPath =
     filePath + `.tmp.${crypto.randomBytes(4).toString("hex")}`;
-  const result = tryCatch(() => {
-    const json = JSON.stringify(data, null, 2);
-    fs.writeFileSync(tmpPath, json, "utf-8");
-    fs.chmodSync(tmpPath, 0o600);
-    fs.renameSync(tmpPath, filePath);
+  // Migrated to `writeRegularFile` (Phase 48 OBS-HARD-03) — the substrate
+  // owns the symlink-safe open + defensive `fchmod(fd, 0o600)` so the
+  // explicit `chmodSync(tmpPath, 0o600)` step is no longer needed (the
+  // tmp file is created at `0o600` by the substrate's open). The atomic
+  // rename below preserves the original pattern.
+  const json = JSON.stringify(data, null, 2);
+  const writeResult = writeRegularFile({
+    path: tmpPath,
+    content: json,
+    confinedBaseDir: stateDir,
   });
-
-  if (!result.ok) {
+  if (!writeResult.ok) {
     tryCatch(() => fs.unlinkSync(tmpPath));
+    return err(writeResult.error);
   }
-  return result;
+  const renameResult = tryCatch(() => fs.renameSync(tmpPath, filePath));
+  if (!renameResult.ok) {
+    tryCatch(() => fs.unlinkSync(tmpPath));
+    return renameResult;
+  }
+  return ok(undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -149,8 +161,18 @@ export function createDevicePairing(deps: DevicePairingDeps): DevicePairing {
   const pendingPath = pendingPathResult.value;
   const pairedPath = pairedPathResult.value;
 
-  // Ensure devices directory exists
-  tryCatch(() => fs.mkdirSync(devicesDir, { recursive: true }));
+  // Ensure devices directory exists. Migrated to `ensureContainedDir`
+  // (Phase 48 OBS-HARD-03) so the dir lands at mode `0o700` per design
+  // §1.4. The outer `tryCatch` wrapper is removed — the substrate already
+  // returns Result, so wrapping it would just add a redundant
+  // Result-wrapping layer. Result.err is intentionally discarded here to
+  // preserve the existing best-effort contract (the subsequent
+  // writeJsonFileAtomic calls surface real errors via their own Result).
+  ensureContainedDir({
+    dir: devicesDir,
+    mode: 0o700,
+    confinedBaseDir: deps.stateDir,
+  });
 
   // -- Internal state helpers ------------------------------------------------
 
@@ -165,11 +187,11 @@ export function createDevicePairing(deps: DevicePairingDeps): DevicePairing {
   }
 
   function savePending(items: PairingRequest[]): Result<void, Error> {
-    return writeJsonFileAtomic(pendingPath, items);
+    return writeJsonFileAtomic(pendingPath, items, deps.stateDir);
   }
 
   function savePaired(items: PairedDevice[]): Result<void, Error> {
-    return writeJsonFileAtomic(pairedPath, items);
+    return writeJsonFileAtomic(pairedPath, items, deps.stateDir);
   }
 
   function filterExpired(items: PairingRequest[]): PairingRequest[] {
