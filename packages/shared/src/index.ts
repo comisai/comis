@@ -21,5 +21,5 @@ export {
 // VisibleDeliveryRecord: JSONL-persisted-but-not-prompt-injected delivery metadata.
 export type { VisibleDeliveryKind, VisibleDeliveryRecord } from "./visible-delivery.js";
 
-// Canonical sanitized MCP tool name parsers.
-export { extractMcpServerName, parseSanitizedMcpToolName } from "./mcp-tool-name.js";
+// Canonical sanitized MCP tool name parser.
+export { extractMcpServerName } from "./mcp-tool-name.js";
