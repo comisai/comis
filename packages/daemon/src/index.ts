@@ -38,6 +38,26 @@ export type { ContextHandlerDeps } from "./api/context-handlers.js";
 export { createAgentHandlers } from "./api/agent-handlers.js";
 export type { AgentHandlerDeps } from "./api/agent-handlers.js";
 
+// MCP management RPC handlers — re-exported so the Phase 47 MCP
+// install persistence integration test
+// (test/integration/mcp-persistence.test.ts) can drive the actual
+// `mcp.connect` / `mcp.disconnect` RPC handlers against a real
+// persistToConfig + appendConfigAuditWithOutcome pipeline pointed at a
+// tmpdir config path. Mirrors the createAgentHandlers re-export above.
+//
+// Module-level reset helpers from persist-to-config.ts are also surfaced
+// here because the persistToConfig writer holds two PROCESS-WIDE
+// singletons (sigusr1Timer + pendingConfigMutations fence) that MUST be
+// reset in beforeEach so a prior test's armed SIGUSR2 timer / pending
+// fence does not leak into the next test (per the module-level state
+// docs at packages/daemon/src/api/shared/persist-to-config.ts:12-43).
+export { createMcpHandlers } from "./api/mcp-handlers.js";
+export type { McpHandlerDeps } from "./api/mcp-handlers.js";
+export {
+  _resetSigusr1Timer,
+  _resetMutationFence,
+} from "./api/shared/persist-to-config.js";
+
 // Re-export createTracingLogger so the test daemon harness can thread the
 // `LoggerOptions.disableRedaction` opt-in through to the SAME logger
 // instance the daemon uses for production code paths. Consumer is

@@ -1434,6 +1434,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ContextHandlerDeps",
       "createAgentHandlers",
       "AgentHandlerDeps",
+      // Phase 47 MCP install persistence — re-exported so the integration
+      // test at test/integration/mcp-persistence.test.ts can drive the real
+      // mcp.connect / mcp.disconnect handlers against a tmpdir config path.
+      // The test imports these statically from @comis/daemon, but the
+      // public-export-consumers AST walker only scans packages/*/src/**
+      // (NOT test/), so the orphan list is the canonical place to record
+      // these intentional test-only public exports.
+      "createMcpHandlers",
+      "McpHandlerDeps",
+      // _resetSigusr1Timer + _resetMutationFence are PROCESS-WIDE state
+      // resets required by any test that exercises the real persistToConfig
+      // writer (see persist-to-config.ts:12-43 module-level state docs).
+      "_resetSigusr1Timer",
+      "_resetMutationFence",
       // Residency-test harness consumers (dynamic require).
       "createTracingLogger",
       "TracingLoggerOptions",
