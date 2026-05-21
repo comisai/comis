@@ -824,6 +824,31 @@ describe("skills.create handler", () => {
     expect(eventBus.emit).toHaveBeenCalledWith("skill:created", expect.objectContaining({ skillName: "new-skill" }));
     expect(reg.init).toHaveBeenCalled();
   });
+
+  it("skills_create_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
+    // OBS-HARD-03 / T-48-24b: skills.create routes its mkdir + SKILL.md
+    // writeFile through the fs-safe substrate so the new skill artifact
+    // honors the §1.4 confidentiality invariant (dir 0o700, file 0o600).
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.create"]!({
+      name: "mode-skill",
+      scope: "local",
+      content: "---\nname: mode-skill\ndescription: test skill\n---\nBody",
+      _agentId: "agent-a",
+    });
+    const skillDir = join(wsDir, "skills", "mode-skill");
+    const skillFile = join(skillDir, "SKILL.md");
+    expect(fs.statSync(skillDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
+  });
 });
 
 // ---------------------------------------------------------------------------

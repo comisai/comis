@@ -644,9 +644,47 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill directory already exists: ${params.name}. Use update action to modify existing skills.`);
       }
 
-      // Write SKILL.md
-      mkdirSync(skillDir, { recursive: true });
-      writeFileSync(safePath(skillDir, "SKILL.md"), params.content, "utf-8");
+      // OBS-HARD-03: route skill-dir creation + SKILL.md write through
+      // the shared fs-safe substrate so the new skill folder honors the
+      // §1.4 `0o700`/`0o600` invariant. Result.err propagates via thrown
+      // Error per the file's @allow-throw header.
+      const skillDirResult = ensureContainedDir({
+        dir: skillDir,
+        mode: 0o700,
+        confinedBaseDir: skillsBaseDir,
+      });
+      if (!skillDirResult.ok) {
+        logger.warn(
+          {
+            err: skillDirResult.error,
+            skillName: params.name,
+            agentId: callingAgentId,
+            hint: "Skill dir creation rejected by fs-safe substrate; check parent dir mode / symlink",
+            errorKind: "resource" as const,
+          },
+          "Skill create dir creation failed",
+        );
+        throw new Error(`Skill directory creation failed: ${skillDirResult.error.message}`);
+      }
+      const skillMdPath = safePath(skillDir, "SKILL.md");
+      const writeResult = writeRegularFile({
+        path: skillMdPath,
+        content: params.content,
+        confinedBaseDir: skillsBaseDir,
+      });
+      if (!writeResult.ok) {
+        logger.warn(
+          {
+            err: writeResult.error,
+            skillName: params.name,
+            agentId: callingAgentId,
+            hint: "Skill SKILL.md write rejected by fs-safe substrate",
+            errorKind: "resource" as const,
+          },
+          "Skill create file write failed",
+        );
+        throw new Error(`Skill file write failed: ${writeResult.error.message}`);
+      }
 
       // Re-discover
       if (scope === "shared" && deps.skillRegistries) {
