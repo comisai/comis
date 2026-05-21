@@ -5,13 +5,9 @@ export {
   createPluginRegistry,
   createHookRunner,
   BeforeAgentStartResultSchema,
-  BeforeToolCallResultSchema,
-  ToolResultPersistResultSchema,
   BeforeCompactionResultSchema,
   BeforeDeliveryResultSchema,
   mergeBeforeAgentStart,
-  mergeBeforeToolCall,
-  mergeToolResultPersist,
   mergeBeforeCompaction,
   mergeBeforeDelivery,
 } from "../hooks/index.js";

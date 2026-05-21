@@ -5,7 +5,7 @@ import { DiagnosticsConfigSchema } from "./schema-diagnostics.js";
 import { AppConfigSchema } from "./schema.js";
 
 describe("DiagnosticsConfigSchema — parse semantics", () => {
-  it("empty parse populates all four subsection defaults", () => {
+  it("empty parse populates all three subsection defaults", () => {
     const result = DiagnosticsConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
@@ -21,7 +21,6 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
       expect(result.data.configAudit.enabled).toBe(true);
       expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
       expect(result.data.configAudit.keepRotated).toBe(5);
-      expect(result.data.redact).toEqual({});
     }
   });
 
@@ -40,7 +39,6 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
       expect(result.data.configAudit.enabled).toBe(true);
       expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
       expect(result.data.configAudit.keepRotated).toBe(5);
-      expect(result.data.redact).toEqual({});
     }
   });
 
@@ -49,7 +47,6 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
       trajectory: {},
       cacheTrace: {},
       configAudit: {},
-      redact: {},
     });
     expect(result.success).toBe(true);
   });

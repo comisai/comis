@@ -478,7 +478,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
      */
     function setup() {
       const eventBus = new TypedEventBus();
-      const pluginRegistry = createPluginRegistry({ eventBus });
+      const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
       return { eventBus, pluginRegistry, channelRegistry };
     }
@@ -549,27 +549,26 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       } as ChannelPluginPort & { _lifecycleLog: string[] };
     }
 
-    it("CADPT-13: register -> activate -> deactivate lifecycle executes in order", async () => {
+    it("CADPT-13: register -> deactivate lifecycle executes in order", async () => {
       const { pluginRegistry, channelRegistry } = setup();
 
       const plugin = createCustomPlugin({ channelType: "custom-lifecycle" }) as ChannelPluginPort & {
         _lifecycleLog: string[];
       };
 
-      // Register
+      // Register (the plugin's `register()` hook fires inside)
       const registerResult = channelRegistry.registerChannel(plugin);
       expect(registerResult.ok).toBe(true);
 
-      // Activate all
-      const activateResult = await pluginRegistry.activateAll();
-      expect(activateResult.ok).toBe(true);
-
-      // Deactivate all
+      // Deactivate all — calls each plugin's `deactivate()` (no separate
+      // `activateAll` after PORT-TRIM-10; channel adapters self-start via
+      // their `start()` lifecycle when registered, not via plugin activate)
       const deactivateResult = await pluginRegistry.deactivateAll();
       expect(deactivateResult.ok).toBe(true);
 
-      // Verify lifecycle order
-      expect(plugin._lifecycleLog).toEqual(["register", "activate", "deactivate"]);
+      // Verify lifecycle order: register fires during channelRegistry.registerChannel,
+      // deactivate fires during deactivateAll
+      expect(plugin._lifecycleLog).toEqual(["register", "deactivate"]);
     });
 
     it("CADPT-14: plugin hook registration via PluginRegistryApi.registerHook()", () => {

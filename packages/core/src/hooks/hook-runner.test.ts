@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { ok } from "@comis/shared";
 import type { PluginPort, PluginRegistryApi } from "../ports/plugin.js";
 import type { EventMap } from "../event-bus/events.js";
@@ -32,7 +32,7 @@ describe("HookRunner", () => {
         createTestPlugin({
           id: "slow-1",
           register: (api) => {
-            api.registerHook("agent_end", async () => {
+            api.registerHook("session_start", async () => {
               await delay(50);
             });
             return ok(undefined);
@@ -44,7 +44,7 @@ describe("HookRunner", () => {
         createTestPlugin({
           id: "slow-2",
           register: (api) => {
-            api.registerHook("agent_end", async () => {
+            api.registerHook("session_start", async () => {
               await delay(50);
             });
             return ok(undefined);
@@ -53,8 +53,8 @@ describe("HookRunner", () => {
       );
 
       const startMs = Date.now();
-      await runner.runAgentEnd(
-        { durationMs: 100, success: true },
+      await runner.runSessionStart(
+        { sessionKey: { tenantId: "t", userId: "u", channelId: "c" }, isNew: true },
         { agentId: "test-agent" },
       );
       const elapsed = Date.now() - startMs;
@@ -72,7 +72,7 @@ describe("HookRunner", () => {
         createTestPlugin({
           id: "throws",
           register: (api) => {
-            api.registerHook("agent_end", () => {
+            api.registerHook("session_start", () => {
               throw new Error("boom");
             });
             return ok(undefined);
@@ -82,7 +82,10 @@ describe("HookRunner", () => {
 
       // Should not throw
       await expect(
-        runner.runAgentEnd({ durationMs: 100, success: true }, { agentId: "a" }),
+        runner.runSessionStart(
+          { sessionKey: { tenantId: "t", userId: "u", channelId: "c" }, isNew: true },
+          { agentId: "a" },
+        ),
       ).resolves.toBeUndefined();
     });
 
@@ -94,7 +97,7 @@ describe("HookRunner", () => {
         createTestPlugin({
           id: "throws",
           register: (api) => {
-            api.registerHook("agent_end", () => {
+            api.registerHook("session_start", () => {
               throw new Error("propagate-me");
             });
             return ok(undefined);
@@ -103,7 +106,10 @@ describe("HookRunner", () => {
       );
 
       await expect(
-        runner.runAgentEnd({ durationMs: 100, success: true }, { agentId: "a" }),
+        runner.runSessionStart(
+          { sessionKey: { tenantId: "t", userId: "u", channelId: "c" }, isNew: true },
+          { agentId: "a" },
+        ),
       ).rejects.toThrow("propagate-me");
     });
 
@@ -112,7 +118,10 @@ describe("HookRunner", () => {
       const runner = createHookRunner(registry);
 
       await expect(
-        runner.runAgentEnd({ durationMs: 100, success: true }, { agentId: "a" }),
+        runner.runSessionStart(
+          { sessionKey: { tenantId: "t", userId: "u", channelId: "c" }, isNew: true },
+          { agentId: "a" },
+        ),
       ).resolves.toBeUndefined();
     });
   });
@@ -309,115 +318,6 @@ describe("HookRunner", () => {
     });
   });
 
-  // ─── before_tool_call specific ──────────────────────────────────
-
-  describe("before_tool_call specific", () => {
-    it("before_tool_call can block tool execution", async () => {
-      const registry = createPluginRegistry();
-      const runner = createHookRunner(registry);
-
-      registry.register(
-        createTestPlugin({
-          id: "blocker",
-          register: (api) => {
-            api.registerHook("before_tool_call", () => ({
-              block: true,
-              blockReason: "denied",
-            }));
-            return ok(undefined);
-          },
-        }),
-      );
-
-      const result = await runner.runBeforeToolCall(
-        { toolName: "shell:exec", params: {} },
-        { agentId: "a" },
-      );
-
-      expect(result?.block).toBe(true);
-      expect(result?.blockReason).toBe("denied");
-    });
-
-    it("before_tool_call can modify params", async () => {
-      const registry = createPluginRegistry();
-      const runner = createHookRunner(registry);
-
-      registry.register(
-        createTestPlugin({
-          id: "modifier",
-          register: (api) => {
-            api.registerHook("before_tool_call", () => ({
-              params: { modified: true },
-            }));
-            return ok(undefined);
-          },
-        }),
-      );
-
-      const result = await runner.runBeforeToolCall(
-        { toolName: "read_file", params: { path: "/tmp" } },
-        { agentId: "a" },
-      );
-
-      expect(result?.params).toEqual({ modified: true });
-    });
-  });
-
-  // ─── tool_result_persist synchronous ────────────────────────────
-
-  describe("tool_result_persist synchronous", () => {
-    it("runToolResultPersist is synchronous (returns value, not promise)", () => {
-      const registry = createPluginRegistry();
-      const runner = createHookRunner(registry);
-
-      registry.register(
-        createTestPlugin({
-          id: "sync-plugin",
-          register: (api) => {
-            api.registerHook("tool_result_persist", () => ({
-              result: "transformed",
-            }));
-            return ok(undefined);
-          },
-        }),
-      );
-
-      const result = runner.runToolResultPersist(
-        { toolName: "test", result: "original" },
-        { agentId: "a" },
-      );
-
-      // Verify it's not a Promise
-      expect(result).toBeDefined();
-      expect(typeof result === "object" && result !== null && "then" in result).toBe(false);
-      expect(result?.result).toBe("transformed");
-    });
-
-    it("tool_result_persist can transform the persisted result", () => {
-      const registry = createPluginRegistry();
-      const runner = createHookRunner(registry);
-
-      registry.register(
-        createTestPlugin({
-          id: "redactor",
-          register: (api) => {
-            api.registerHook("tool_result_persist", (event) => ({
-              result: event.result.replace(/secret/g, "[REDACTED]"),
-            }));
-            return ok(undefined);
-          },
-        }),
-      );
-
-      const result = runner.runToolResultPersist(
-        { toolName: "test", result: "the secret data" },
-        { agentId: "a" },
-      );
-
-      expect(result?.result).toBe("the [REDACTED] data");
-    });
-  });
-
   // ─── before_compaction specific ─────────────────────────────────
 
   describe("before_compaction specific", () => {
@@ -451,224 +351,12 @@ describe("HookRunner", () => {
     });
   });
 
-  // ─── Observability Events ───────────────────────────────────────
-
-  describe("observability events", () => {
-    it("emits hook:executed event for each hook invocation", async () => {
-      const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
-      const runner = createHookRunner(registry, { eventBus });
-
-      const hookEvents: EventMap["hook:executed"][] = [];
-      eventBus.on("hook:executed", (e) => hookEvents.push(e));
-
-      registry.register(
-        createTestPlugin({
-          id: "observable",
-          register: (api) => {
-            api.registerHook("agent_end", () => {});
-            return ok(undefined);
-          },
-        }),
-      );
-
-      await runner.runAgentEnd(
-        { durationMs: 100, success: true },
-        { agentId: "a" },
-      );
-
-      expect(hookEvents).toHaveLength(1);
-    });
-
-    it("hook:executed includes correct hookName, pluginId, durationMs, success", async () => {
-      const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
-      const runner = createHookRunner(registry, { eventBus });
-
-      const hookEvents: EventMap["hook:executed"][] = [];
-      eventBus.on("hook:executed", (e) => hookEvents.push(e));
-
-      registry.register(
-        createTestPlugin({
-          id: "metric-plugin",
-          register: (api) => {
-            api.registerHook("before_agent_start", () => ({ systemPrompt: "ok" }));
-            return ok(undefined);
-          },
-        }),
-      );
-
-      await runner.runBeforeAgentStart(
-        { systemPrompt: "original", messages: [] },
-        { agentId: "a" },
-      );
-
-      expect(hookEvents).toHaveLength(1);
-      const event = hookEvents[0]!;
-      expect(event.hookName).toBe("before_agent_start");
-      expect(event.pluginId).toBe("metric-plugin");
-      expect(typeof event.durationMs).toBe("number");
-      expect(event.durationMs).toBeGreaterThanOrEqual(0);
-      expect(event.success).toBe(true);
-    });
-
-    it("hook:executed has success: false when hook throws", async () => {
-      const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
-      const runner = createHookRunner(registry, { eventBus, catchErrors: true });
-
-      const hookEvents: EventMap["hook:executed"][] = [];
-      eventBus.on("hook:executed", (e) => hookEvents.push(e));
-
-      registry.register(
-        createTestPlugin({
-          id: "failing-plugin",
-          register: (api) => {
-            api.registerHook("agent_end", () => {
-              throw new Error("hook failure");
-            });
-            return ok(undefined);
-          },
-        }),
-      );
-
-      await runner.runAgentEnd(
-        { durationMs: 100, success: true },
-        { agentId: "a" },
-      );
-
-      expect(hookEvents).toHaveLength(1);
-      const event = hookEvents[0]!;
-      expect(event.success).toBe(false);
-      expect(event.error).toBe("hook failure");
-    });
-  });
-
-  // ─── Zod Validation ─────────────────────────────────────────────
-
-  describe("Zod schema validation", () => {
-    it("hook returning valid schema shape is merged correctly", async () => {
-      const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
-      const runner = createHookRunner(registry, { eventBus });
-
-      registry.register(
-        createTestPlugin({
-          id: "valid-hook",
-          register: (api) => {
-            api.registerHook("before_agent_start", () => ({
-              systemPrompt: "modified-prompt",
-            }));
-            return ok(undefined);
-          },
-        }),
-      );
-
-      const result = await runner.runBeforeAgentStart(
-        { systemPrompt: "original", messages: [] },
-        { agentId: "a" },
-      );
-
-      expect(result?.systemPrompt).toBe("modified-prompt");
-    });
-
-    it("hook returning extra properties (strict mode) is skipped with error event", async () => {
-      const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
-      const runner = createHookRunner(registry, { eventBus });
-
-      const hookEvents: EventMap["hook:executed"][] = [];
-      eventBus.on("hook:executed", (e) => hookEvents.push(e));
-
-      registry.register(
-        createTestPlugin({
-          id: "extra-props",
-          register: (api) => {
-            api.registerHook("before_agent_start", () => ({
-              systemPrompt: "modified",
-              maliciousField: "injected",
-            }));
-            return ok(undefined);
-          },
-        }),
-      );
-
-      const result = await runner.runBeforeAgentStart(
-        { systemPrompt: "original", messages: [] },
-        { agentId: "a" },
-      );
-
-      // The result should be undefined because the invalid hook was skipped
-      expect(result).toBeUndefined();
-
-      // A hook:executed event should be emitted with success: false
-      const failEvent = hookEvents.find((e) => !e.success);
-      expect(failEvent).toBeDefined();
-      expect(failEvent?.error).toContain("Invalid hook return");
-    });
-
-    it("hook returning extra properties on before_tool_call is skipped", async () => {
-      const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
-      const runner = createHookRunner(registry, { eventBus });
-
-      registry.register(
-        createTestPlugin({
-          id: "extra-tool-props",
-          register: (api) => {
-            api.registerHook("before_tool_call", () => ({
-              block: true,
-              blockReason: "denied",
-              extraProp: "injected",
-            }));
-            return ok(undefined);
-          },
-        }),
-      );
-
-      const result = await runner.runBeforeToolCall(
-        { toolName: "shell:exec", params: {} },
-        { agentId: "a" },
-      );
-
-      // Skipped due to strict schema validation
-      expect(result).toBeUndefined();
-    });
-
-    it("sync hook (tool_result_persist) with extra properties is skipped", () => {
-      const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
-      const runner = createHookRunner(registry, { eventBus });
-
-      registry.register(
-        createTestPlugin({
-          id: "extra-sync-props",
-          register: (api) => {
-            api.registerHook("tool_result_persist", () => ({
-              result: "ok",
-              extraField: "injected",
-            }));
-            return ok(undefined);
-          },
-        }),
-      );
-
-      const result = runner.runToolResultPersist(
-        { toolName: "test", result: "original" },
-        { agentId: "a" },
-      );
-
-      // Skipped due to strict schema validation
-      expect(result).toBeUndefined();
-    });
-  });
-
-  // ─── Audit Events for Modifications ────────────────────────────
+  // ─── observability/audit events (after_delivery + before_agent_start) ─────
 
   describe("audit events for hook modifications", () => {
     it("emits audit:event when before_agent_start modifies systemPrompt", async () => {
       const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
+      const registry = createPluginRegistry();
       const runner = createHookRunner(registry, { eventBus });
 
       const auditEvents: EventMap["audit:event"][] = [];
@@ -698,9 +386,9 @@ describe("HookRunner", () => {
       expect(auditEvents[0]!.metadata?.systemPromptModified).toBe(true);
     });
 
-    it("emits audit:event when before_tool_call modifies params", async () => {
+    it("emits audit:event when before_delivery modifies text", async () => {
       const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
+      const registry = createPluginRegistry();
       const runner = createHookRunner(registry, { eventBus });
 
       const auditEvents: EventMap["audit:event"][] = [];
@@ -708,56 +396,86 @@ describe("HookRunner", () => {
 
       registry.register(
         createTestPlugin({
-          id: "param-modifier",
+          id: "delivery-modifier",
           register: (api) => {
-            api.registerHook("before_tool_call", () => ({
-              params: { overridden: true },
+            api.registerHook("before_delivery", () => ({
+              text: "modified text",
             }));
             return ok(undefined);
           },
         }),
       );
 
-      await runner.runBeforeToolCall(
-        { toolName: "read_file", params: { path: "/tmp" } },
-        { agentId: "a" },
+      await runner.runBeforeDelivery(
+        {
+          text: "original",
+          channelType: "echo",
+          channelId: "c",
+          options: {},
+          origin: "agent_turn",
+        },
+        {},
       );
 
       expect(auditEvents).toHaveLength(1);
-      expect(auditEvents[0]!.actionType).toBe("hook_modification");
-      expect(auditEvents[0]!.metadata?.hookName).toBe("before_tool_call");
-      expect(auditEvents[0]!.metadata?.paramsModified).toBe(true);
+      expect(auditEvents[0]!.metadata?.hookName).toBe("before_delivery");
+      expect(auditEvents[0]!.metadata?.textModified).toBe(true);
+    });
+  });
+
+  // ─── Zod Validation ─────────────────────────────────────────────
+
+  describe("Zod schema validation", () => {
+    it("hook returning valid schema shape is merged correctly", async () => {
+      const eventBus = new TypedEventBus();
+      const registry = createPluginRegistry();
+      const runner = createHookRunner(registry, { eventBus });
+
+      registry.register(
+        createTestPlugin({
+          id: "valid-hook",
+          register: (api) => {
+            api.registerHook("before_agent_start", () => ({
+              systemPrompt: "modified-prompt",
+            }));
+            return ok(undefined);
+          },
+        }),
+      );
+
+      const result = await runner.runBeforeAgentStart(
+        { systemPrompt: "original", messages: [] },
+        { agentId: "a" },
+      );
+
+      expect(result?.systemPrompt).toBe("modified-prompt");
     });
 
-    it("emits audit:event when before_tool_call blocks execution", async () => {
+    it("hook returning extra properties (strict mode) is skipped", async () => {
       const eventBus = new TypedEventBus();
-      const registry = createPluginRegistry({ eventBus });
+      const registry = createPluginRegistry();
       const runner = createHookRunner(registry, { eventBus });
-
-      const auditEvents: EventMap["audit:event"][] = [];
-      eventBus.on("audit:event", (e) => auditEvents.push(e));
 
       registry.register(
         createTestPlugin({
-          id: "tool-blocker",
+          id: "extra-props",
           register: (api) => {
-            api.registerHook("before_tool_call", () => ({
-              block: true,
-              blockReason: "forbidden",
+            api.registerHook("before_agent_start", () => ({
+              systemPrompt: "modified",
+              maliciousField: "injected",
             }));
             return ok(undefined);
           },
         }),
       );
 
-      await runner.runBeforeToolCall(
-        { toolName: "shell:exec", params: {} },
+      const result = await runner.runBeforeAgentStart(
+        { systemPrompt: "original", messages: [] },
         { agentId: "a" },
       );
 
-      expect(auditEvents).toHaveLength(1);
-      expect(auditEvents[0]!.metadata?.blocked).toBe(true);
-      expect(auditEvents[0]!.metadata?.blockReason).toBe("forbidden");
+      // The result should be undefined because the invalid hook was skipped
+      expect(result).toBeUndefined();
     });
   });
 });

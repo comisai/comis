@@ -4,12 +4,11 @@ import type { EventMap } from "@comis/core";
 import { TypedEventBus, createPluginRegistry } from "@comis/core";
 import { createChannelRegistry } from "./channel-registry.js";
 import { createEchoPlugin } from "../echo/echo-plugin.js";
-import { EchoChannelAdapter } from "../echo/echo-adapter.js";
 
 describe("channel plugin integration", () => {
   function setup() {
     const eventBus = new TypedEventBus();
-    const pluginRegistry = createPluginRegistry({ eventBus });
+    const pluginRegistry = createPluginRegistry();
     const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
     return { eventBus, pluginRegistry, channelRegistry };
   }
@@ -43,26 +42,6 @@ describe("channel plugin integration", () => {
       expect(channelRegistry.getChannelTypes()).toContain("echo");
     });
 
-    it("register -> activate -> start() called -> deactivate -> stop() called", async () => {
-      const { pluginRegistry, channelRegistry } = setup();
-      const echoPlugin = createEchoPlugin();
-      const echoAdapter = echoPlugin.adapter as EchoChannelAdapter;
-
-      // Register
-      channelRegistry.registerChannel(echoPlugin);
-
-      // Activate via plugin registry
-      expect(echoAdapter.isRunning()).toBe(false);
-      const activateResult = await pluginRegistry.activateAll();
-      expect(activateResult.ok).toBe(true);
-      expect(echoAdapter.isRunning()).toBe(true);
-
-      // Deactivate via plugin registry
-      const deactivateResult = await pluginRegistry.deactivateAll();
-      expect(deactivateResult.ok).toBe(true);
-      expect(echoAdapter.isRunning()).toBe(false);
-    });
-
     it("registers two different channel plugins and both are accessible", () => {
       const { channelRegistry } = setup();
       const echoPlugin = createEchoPlugin();
@@ -90,44 +69,15 @@ describe("channel plugin integration", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Plugin-registry integration (delegation)
-  // ---------------------------------------------------------------------------
-
-  describe("plugin-registry integration", () => {
-    it("channel plugin appears in pluginRegistry.getPlugins() after registration", () => {
-      const { pluginRegistry, channelRegistry } = setup();
-      const echoPlugin = createEchoPlugin();
-
-      channelRegistry.registerChannel(echoPlugin);
-
-      const plugins = pluginRegistry.getPlugins();
-      expect(plugins.some((p) => p.id === "channel-echo")).toBe(true);
-    });
-
-    it("channel plugin removed from pluginRegistry after unregistration", () => {
-      const { pluginRegistry, channelRegistry } = setup();
-      const echoPlugin = createEchoPlugin();
-
-      channelRegistry.registerChannel(echoPlugin);
-      expect(pluginRegistry.getPlugin("channel-echo")).toBeDefined();
-
-      channelRegistry.unregisterChannel("echo");
-      expect(pluginRegistry.getPlugin("channel-echo")).toBeUndefined();
-    });
-  });
-
-  // ---------------------------------------------------------------------------
   // Event integration
   // ---------------------------------------------------------------------------
 
   describe("event integration", () => {
-    it("channel:registered and plugin:registered both fire on registration", () => {
+    it("channel:registered fires on registration", () => {
       const { eventBus, channelRegistry } = setup();
 
       const channelEvents: EventMap["channel:registered"][] = [];
-      const pluginEvents: EventMap["plugin:registered"][] = [];
       eventBus.on("channel:registered", (e) => channelEvents.push(e));
-      eventBus.on("plugin:registered", (e) => pluginEvents.push(e));
 
       const echoPlugin = createEchoPlugin();
       channelRegistry.registerChannel(echoPlugin);
@@ -137,11 +87,6 @@ describe("channel plugin integration", () => {
       expect(channelEvents[0]!.channelType).toBe("echo");
       expect(channelEvents[0]!.pluginId).toBe("channel-echo");
       expect(channelEvents[0]!.capabilities.limits.maxMessageChars).toBe(10000);
-
-      // plugin:registered event (from PluginRegistry delegation)
-      expect(pluginEvents).toHaveLength(1);
-      expect(pluginEvents[0]!.pluginId).toBe("channel-echo");
-      expect(pluginEvents[0]!.pluginName).toBe("Echo Channel Plugin");
     });
 
     it("channel:deregistered fires on unregistration", () => {

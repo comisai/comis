@@ -4099,12 +4099,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
     "type": "integer"
   },
   {
-    "default": {},
-    "immutable": false,
-    "path": "diagnostics.redact",
-    "type": "object"
-  },
-  {
     "default": {
       "enabled": true,
       "maxFileBytes": 52428800
@@ -9181,7 +9175,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "keepRotated": 5,
         "rotateAtBytes": 10485760
       },
-      "redact": {},
       "trajectory": {
         "enabled": true,
         "maxFileBytes": 52428800
@@ -9265,12 +9258,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "diagnostics.configAudit.rotateAtBytes",
     "type": "integer"
-  },
-  {
-    "default": {},
-    "immutable": false,
-    "path": "diagnostics.redact",
-    "type": "object"
   },
   {
     "default": {
@@ -18117,7 +18104,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
       "keepRotated": 5,
       "rotateAtBytes": 10485760
     },
-    "redact": {},
     "trajectory": {
       "enabled": true,
       "maxFileBytes": 52428800
@@ -18201,12 +18187,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
       ],
       "type": "object"
     },
-    "redact": {
-      "additionalProperties": false,
-      "default": {},
-      "properties": {},
-      "type": "object"
-    },
     "trajectory": {
       "additionalProperties": false,
       "default": {
@@ -18244,8 +18224,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
   "required": [
     "trajectory",
     "cacheTrace",
-    "configAudit",
-    "redact"
+    "configAudit"
   ],
   "type": "object"
 }"
@@ -26878,7 +26857,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "keepRotated": 5,
           "rotateAtBytes": 10485760
         },
-        "redact": {},
         "trajectory": {
           "enabled": true,
           "maxFileBytes": 52428800
@@ -26962,12 +26940,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
-        "redact": {
-          "additionalProperties": false,
-          "default": {},
-          "properties": {},
-          "type": "object"
-        },
         "trajectory": {
           "additionalProperties": false,
           "default": {
@@ -27005,8 +26977,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "required": [
         "trajectory",
         "cacheTrace",
-        "configAudit",
-        "redact"
+        "configAudit"
       ],
       "type": "object"
     },

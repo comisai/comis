@@ -7,13 +7,9 @@ export { createHookRunner } from "./hook-runner.js";
 export type { HookRunner, HookRunnerOptions } from "./hook-runner.js";
 export {
   BeforeAgentStartResultSchema,
-  BeforeToolCallResultSchema,
-  ToolResultPersistResultSchema,
   BeforeCompactionResultSchema,
   BeforeDeliveryResultSchema,
   mergeBeforeAgentStart,
-  mergeBeforeToolCall,
-  mergeToolResultPersist,
   mergeBeforeCompaction,
   mergeBeforeDelivery,
 } from "./hook-strategies.js";

@@ -115,7 +115,7 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   const eventBus = new TypedEventBus();
 
   // 3b. Create plugin infrastructure
-  const pluginRegistry = createPluginRegistry({ eventBus });
+  const pluginRegistry = createPluginRegistry();
   const hookRunner = createHookRunner(pluginRegistry, { eventBus, catchErrors: true });
 
   // 4. Return container

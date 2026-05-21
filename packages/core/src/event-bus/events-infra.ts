@@ -45,30 +45,13 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  /** Plugin registered with the plugin registry */
-  "plugin:registered": {
-    pluginId: string;
-    pluginName: string;
-    hookCount: number;
-    timestamp: number;
-  };
-
-  /** Plugin deactivated */
-  "plugin:deactivated": {
-    pluginId: string;
-    reason: string;
-    timestamp: number;
-  };
-
-  /** Hook execution completed (for observability) */
-  "hook:executed": {
-    hookName: string;
-    pluginId: string;
-    durationMs: number;
-    success: boolean;
-    error?: string;
-    timestamp: number;
-  };
+  // EVENT-CLEAN-07: three plugin / hook lifecycle event-bus events were
+  // deleted from this map in Phase 52 Plan 02. They had zero non-test
+  // subscribers (verified via grep against packages/*/src/ excluding
+  // *.test.ts); the only emit sites were inside PluginRegistry and
+  // HookRunner themselves. Plugin lifecycle is now consumed exclusively
+  // through the in-tree PluginRegistry interface (register / unregister /
+  // getHooksByName / deactivateAll).
 
   // -------------------------------------------------------------------------
   // Auth events
