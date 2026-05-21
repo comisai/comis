@@ -545,6 +545,7 @@ export async function setupSingleAgent(
           includeMessages: container.config.diagnostics.cacheTrace.includeMessages,
           includePrompt: container.config.diagnostics.cacheTrace.includePrompt,
           includeSystem: container.config.diagnostics.cacheTrace.includeSystem,
+          maxFileBytes: container.config.diagnostics.cacheTrace.maxFileBytes,
         }
       : undefined,
     geminiCacheManager: deps.geminiCacheManager,  // Gemini cache lifecycle manager
