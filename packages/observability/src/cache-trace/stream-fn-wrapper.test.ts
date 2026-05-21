@@ -99,13 +99,16 @@ describe("buildCacheTraceWrapper", () => {
 
     expect(callOrder).toEqual(["next"]);
     const lines = readLines(filePath);
-    expect(lines).toHaveLength(2);
-    expect(lines[0]!.stage).toBe("stream:context");
-    expect(lines[0]!.provider).toBe("anthropic");
-    expect(lines[0]!.modelId).toBe("claude-3-opus");
-    expect(lines[1]!.stage).toBe("model:after");
+    // Plan 48-07: wrapper now emits 3 stages — model:before, stream:context, model:after.
+    expect(lines).toHaveLength(3);
+    expect(lines[0]!.stage).toBe("model:before");
+    expect(lines[1]!.stage).toBe("stream:context");
+    expect(lines[1]!.provider).toBe("anthropic");
+    expect(lines[1]!.modelId).toBe("claude-3-opus");
+    expect(lines[2]!.stage).toBe("model:after");
     // Ordering preserved by monotonic seq.
     expect(lines[0]!.seq).toBeLessThan(lines[1]!.seq);
+    expect(lines[1]!.seq).toBeLessThan(lines[2]!.seq);
   });
 
   it("wrapper_model_after_carries_cache_tokens_from_streamfn_return_value_usage_block", async () => {
