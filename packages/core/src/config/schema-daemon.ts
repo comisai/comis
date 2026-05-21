@@ -32,9 +32,9 @@ const TracingDefaultsSchema = z.strictObject({
  * runtime (daemon restart required to change).
  *
  * The redact knobs land inside this existing `daemon.logging` section
- * (NOT a new `schema-logging.ts` file and NOT inside
- * `diagnostics.redact`), so the section-registry parity snapshot is
- * unaffected — the snapshot covers section names, not field additions.
+ * (NOT a new `schema-logging.ts` file), so the section-registry parity
+ * snapshot is unaffected — the snapshot covers section names, not field
+ * additions.
  */
 const LoggingConfigSchema = z.strictObject({
     /** Path to the active log file. Supports ~ expansion. */

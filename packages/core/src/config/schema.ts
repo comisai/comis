@@ -80,7 +80,6 @@ export const AppConfigSchema = z.strictObject({
      *   - `diagnostics.configAudit` — config-audit log toggle + rotation
      *     (enabled, rotateAtBytes, keepRotated).
      *   - `diagnostics.cacheTrace` — cache-trace knobs.
-     *   - `diagnostics.redact` — placeholder.
      * Defaults are sticky so an empty `diagnostics: {}` block is valid.
      */
     diagnostics: DiagnosticsConfigSchema.default(() => DiagnosticsConfigSchema.parse({})),

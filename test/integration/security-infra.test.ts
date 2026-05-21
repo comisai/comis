@@ -21,7 +21,6 @@ import {
   PathTraversalError,
   validateUrl,
   createPluginRegistry,
-  TypedEventBus,
 } from "@comis/core";
 import type { PluginPort } from "@comis/core";
 import { ok } from "@comis/shared";
@@ -117,20 +116,8 @@ describe("SEC-INF-03: SSRF Guard URL Validation", () => {
 // =============================================================================
 
 describe("SEC-INF-04: Plugin Registry Security Model", () => {
-  it("emits plugin:registered event on TypedEventBus with correct pluginId and hookCount", () => {
-    const eventBus = new TypedEventBus();
+  it("registers a plugin and exposes its hooks via getHooksByName", () => {
     const registry = createPluginRegistry();
-
-    let receivedEvent: {
-      pluginId: string;
-      pluginName: string;
-      hookCount: number;
-      timestamp: number;
-    } | null = null;
-
-    eventBus.on("plugin:registered", (payload) => {
-      receivedEvent = payload;
-    });
 
     const testPlugin: PluginPort = {
       id: "test-plugin-event",
@@ -145,11 +132,12 @@ describe("SEC-INF-04: Plugin Registry Security Model", () => {
 
     const result = registry.register(testPlugin);
     expect(result.ok).toBe(true);
-    expect(receivedEvent).not.toBeNull();
-    expect(receivedEvent!.pluginId).toBe("test-plugin-event");
-    expect(receivedEvent!.pluginName).toBe("Test Plugin Event");
-    expect(receivedEvent!.hookCount).toBe(2);
-    expect(receivedEvent!.timestamp).toBeGreaterThan(0);
+    // EVENT-CLEAN-07 (Phase 52 Plan 02): the prior assertion observed a
+    // `plugin:registered` event-bus event, which was removed alongside the
+    // other plugin-lifecycle events. The surviving observation is direct
+    // PluginRegistry state inspection via getHooksByName.
+    expect(registry.getHooksByName("before_agent_start")).toHaveLength(1);
+    expect(registry.getHooksByName("session_start")).toHaveLength(1);
   });
 
   it("returns err Result for duplicate plugin registration", () => {
