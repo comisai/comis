@@ -421,15 +421,69 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill directory already exists: ${name}`);
       }
 
-      // Create skill directory and write files
-      mkdirSync(skillDir, { recursive: true });
+      // OBS-HARD-03: route skill-folder dir creation + per-file writes
+      // through the shared fs-safe substrate so every artifact honors
+      // the §1.4 `0o700`/`0o600` invariant. Mirrors the skills.upload
+      // migration; same scope-resolved `skillsBaseDir` confinement bound.
+      const skillDirResult = ensureContainedDir({
+        dir: skillDir,
+        mode: 0o700,
+        confinedBaseDir: skillsBaseDir,
+      });
+      if (!skillDirResult.ok) {
+        logger.warn(
+          {
+            err: skillDirResult.error,
+            skillName: name,
+            agentId: callingAgentId,
+            hint: "Imported skill dir creation rejected by fs-safe substrate; check parent dir mode / symlink",
+            errorKind: "resource" as const,
+          },
+          "Skill import dir creation failed",
+        );
+        throw new Error(`Skill directory creation failed: ${skillDirResult.error.message}`);
+      }
       for (const file of fetchedFiles) {
         const filePath = safePath(skillDir, file.path);
         const parentDir = filePath.substring(0, filePath.lastIndexOf("/"));
         if (parentDir && !existsSync(parentDir)) {
-          mkdirSync(parentDir, { recursive: true });
+          const parentDirResult = ensureContainedDir({
+            dir: parentDir,
+            mode: 0o700,
+            confinedBaseDir: skillsBaseDir,
+          });
+          if (!parentDirResult.ok) {
+            logger.warn(
+              {
+                err: parentDirResult.error,
+                skillName: name,
+                agentId: callingAgentId,
+                hint: "Nested parent dir creation rejected by fs-safe substrate",
+                errorKind: "resource" as const,
+              },
+              "Skill import nested parent dir creation failed",
+            );
+            throw new Error(`Skill nested parent dir creation failed: ${parentDirResult.error.message}`);
+          }
         }
-        writeFileSync(filePath, file.content, "utf-8");
+        const writeResult = writeRegularFile({
+          path: filePath,
+          content: file.content,
+          confinedBaseDir: skillsBaseDir,
+        });
+        if (!writeResult.ok) {
+          logger.warn(
+            {
+              err: writeResult.error,
+              skillName: name,
+              agentId: callingAgentId,
+              hint: "Imported skill file write rejected by fs-safe substrate",
+              errorKind: "resource" as const,
+            },
+            "Skill import file write failed",
+          );
+          throw new Error(`Skill file write failed: ${writeResult.error.message}`);
+        }
       }
 
       // Scope-aware re-discovery

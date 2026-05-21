@@ -547,6 +547,53 @@ describe("skills.import handler", () => {
     expect(fs.existsSync(join(wsDir, "skills", "my-skill", "sub", "deep.md"))).toBe(true);
     expect(reg.init).toHaveBeenCalled();
   });
+
+  it("skills_import_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
+    // OBS-HARD-03 / T-48-24b: imported skill artifacts honor §1.4 modes
+    // (dir 0o700, file 0o600) — including nested-parent dirs created
+    // by the in-loop ensureContainedDir for sub-folders.
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.includes("contents/skills/mode-skill?")) {
+        return new Response(
+          JSON.stringify([
+            { name: "SKILL.md", type: "file", download_url: "https://dl/SKILL.md", path: "skills/mode-skill/SKILL.md" },
+            { name: "sub", type: "dir", download_url: null, path: "skills/mode-skill/sub" },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (u.includes("contents/skills/mode-skill/sub?")) {
+        return new Response(
+          JSON.stringify([{ name: "deep.md", type: "file", download_url: "https://dl/deep.md", path: "skills/mode-skill/sub/deep.md" }]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("body content", { status: 200 });
+    });
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.import"]!({
+      url: "https://github.com/owner/repo/tree/main/skills/mode-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+    const skillDir = join(wsDir, "skills", "mode-skill");
+    const skillFile = join(skillDir, "SKILL.md");
+    const nestedDir = join(skillDir, "sub");
+    const nestedFile = join(nestedDir, "deep.md");
+    expect(fs.statSync(skillDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(nestedDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(nestedFile).mode & 0o777).toBe(0o600);
+  });
 });
 
 // ---------------------------------------------------------------------------
