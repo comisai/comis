@@ -28,7 +28,7 @@ import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { safePath } from "@comis/core";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { dirname } from "node:path";
 import { estimateMessageChars } from "../safety/token-estimator.js";
 import { createToolResultSizeGuard, type ContentBlock } from "../safety/tool-result-size-guard.js";
@@ -77,13 +77,23 @@ export function getInlineThreshold(toolName: string): number {
  */
 function saveToDisk(
   sessionDir: string,
+  dataDir: string,
   toolCallId: string,
   _toolName: string,
   _originalChars: number,
   content: ToolResultMessage["content"],
 ): string {
   const diskPath = safePath(sessionDir, "tool-results", `${toolCallId}.json`);
-  mkdirSync(dirname(diskPath), { recursive: true });
+  // Honor design §1.4 — parent dir at 0o700 via the fs-safe substrate.
+  // confinedBaseDir threads dataDir (typically ~/.comis/) so the ancestor-
+  // symlink escape is rejected. Result.err is intentionally discarded:
+  // the writer's existing contract is best-effort offload — a failure
+  // returns the (now-empty) diskPath, and the inline reference's "Full
+  // content saved at:" line will point at a path the read tool will
+  // fail to load. That is no worse than the pre-migration semantics
+  // (where mkdirSync/writeFileSync failures threw and were swallowed
+  // by the SDK's appendMessage caller).
+  ensureContainedDir({ dir: dirname(diskPath), mode: 0o700, confinedBaseDir: dataDir });
 
   // Concatenate all text blocks into a single raw string (same logic as extractPreview)
   let rawText = "";
@@ -93,7 +103,7 @@ function saveToDisk(
     }
   }
 
-  writeFileSync(diskPath, rawText);
+  writeRegularFile({ path: diskPath, content: rawText, confinedBaseDir: dataDir });
   return diskPath;
 }
 
@@ -195,11 +205,17 @@ function createInlineReference(
  *
  * @param sm - The SessionManager instance to guard
  * @param sessionDir - The session directory for disk offload storage
+ * @param dataDir - Confinement base for fs-safe substrate writes
+ *   (typically `~/.comis/`). Threaded as `confinedBaseDir` on every
+ *   `ensureContainedDir` + `writeRegularFile` call so the ancestor-
+ *   symlink escape is rejected — closes the §1.4 confused-deputy gap
+ *   that O_NOFOLLOW + parent-`lstat` together do NOT cover.
  * @param logger - Logger for WARN/DEBUG-level offload events
  */
 export function installMicrocompactionGuard(
   sm: SessionManager,
   sessionDir: string,
+  dataDir: string,
   logger: ComisLogger,
   onOffloaded?: (toolName: string) => void,
 ): void {
@@ -307,6 +323,7 @@ export function installMicrocompactionGuard(
 
       const diskPath = saveToDisk(
         sessionDir,
+        dataDir,
         toolResultMsg.toolCallId,
         toolResultMsg.toolName,
         totalChars,
@@ -344,6 +361,7 @@ export function installMicrocompactionGuard(
     if (totalChars > threshold) {
       const diskPath = saveToDisk(
         sessionDir,
+        dataDir,
         toolResultMsg.toolCallId,
         toolResultMsg.toolName,
         totalChars,
