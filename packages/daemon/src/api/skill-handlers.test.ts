@@ -973,4 +973,33 @@ describe("skills.update handler", () => {
     expect(eventBus.emit).toHaveBeenCalledWith("skill:updated", expect.objectContaining({ skillName: "update-me" }));
     expect(reg.init).toHaveBeenCalled();
   });
+
+  it("skills_update_writes_skill_file_at_0o600_via_fs_safe_substrate", async () => {
+    // OBS-HARD-03 / T-48-24b: skills.update routes its SKILL.md
+    // overwrite through writeRegularFile so the resulting file mode is
+    // `0o600` — and writeRegularFile's unlink-before-open + defensive
+    // fchmod path defensively corrects legacy artifacts written at a
+    // wider mode by pre-Phase 48 code.
+    const wsDir = join(tmpRoot, "ws");
+    const skillDir = join(wsDir, "skills", "mode-update");
+    fs.mkdirSync(skillDir, { recursive: true });
+    // Pre-seed a legacy SKILL.md at the wider 0o644 mode (the pre-Phase 48 default).
+    fs.writeFileSync(join(skillDir, "SKILL.md"), "LEGACY", "utf-8");
+    fs.chmodSync(join(skillDir, "SKILL.md"), 0o644);
+    const reg = makeRegistry([{ name: "mode-update", location: skillDir }]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.update"]!({
+      name: "mode-update",
+      content: "---\nname: mode-update\n---\nNEW BODY",
+      _agentId: "agent-a",
+    });
+    const skillFile = join(skillDir, "SKILL.md");
+    // The legacy 0o644 file is replaced; the new file is 0o600.
+    expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
+  });
 });

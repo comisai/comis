@@ -57,7 +57,7 @@ import {
 } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { createLogger } from "@comis/infra";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
 
 const logger = createLogger({ name: "skill-handlers" });
@@ -754,8 +754,33 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`SKILL.md not found at expected location: ${skillMdPath}`);
       }
 
-      // Overwrite SKILL.md
-      writeFileSync(skillMdPath, params.content, "utf-8");
+      // OBS-HARD-03: route the SKILL.md overwrite through the shared
+      // fs-safe substrate so the updated file honors the §1.4 `0o600`
+      // invariant — even if the existing file was previously written
+      // with a wider mode (pre-Phase 48 artifacts). `confinedBaseDir`
+      // is the resolved skill directory (which already exists by the
+      // preceding existsSync check). writeRegularFile's unlink-before-
+      // open semantics defensively re-mode the file via fchmod(0o600)
+      // so legacy artifacts are corrected in-place. Result.err
+      // propagates via thrown Error per the file's @allow-throw header.
+      const writeResult = writeRegularFile({
+        path: skillMdPath,
+        content: params.content,
+        confinedBaseDir: skill.location,
+      });
+      if (!writeResult.ok) {
+        logger.warn(
+          {
+            err: writeResult.error,
+            skillName: params.name,
+            agentId: callingAgentId,
+            hint: "Skill SKILL.md overwrite rejected by fs-safe substrate",
+            errorKind: "resource" as const,
+          },
+          "Skill update file write failed",
+        );
+        throw new Error(`Skill file write failed: ${writeResult.error.message}`);
+      }
 
       // Re-discover
       if (scope === "shared" && deps.skillRegistries) {
