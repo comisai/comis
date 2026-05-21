@@ -54,34 +54,99 @@ import { createHash } from "node:crypto";
 /**
  * Names that, regardless of casing or word boundary, are credentials
  * and must drop their value. Compared case-insensitively against the
- * field name in full.
+ * field name in full inside the diagnostic-payload sanitizer (via
+ * `isCredentialFieldName`).
+ *
+ * **EXPORTED** because the same Set drives `@comis/infra`'s Pino
+ * `redact.paths` generator (Phase 50.02). Pino's path matcher is
+ * CASE-SENSITIVE — so the Set deliberately contains THREE lanes:
+ *
+ *   1. **bare/single-word** entries (`auth`, `token`, `secret`, …) —
+ *      lower-case ASCII words, only one form needed.
+ *   2. **snake_case** forms (`access_token`, `api_key`, …) — required
+ *      for payloads keyed in snake_case.
+ *   3. **camelCase** forms (`apiKey`, `botToken`, …) — required to
+ *      preserve the legacy hand-table's camelCase coverage. Removing
+ *      the hand-table without these would silently regress production
+ *      `apiKey`/`botToken`/... redaction (RESEARCH Pitfall 3, Open
+ *      Q #4 RESOLVED).
+ *
+ * The duplication is intentional and cheap (~27 entries). The
+ * `isCredentialFieldName` predicate (below) lowercases its input
+ * before lookup, so the camelCase entries are no-op duplicates in
+ * the sanitizer's codepath; they are load-bearing for the Pino
+ * `redact.paths` codepath.
  */
-const CREDENTIAL_KEYS = new Set<string>([
-  "password",
-  "apikey",
-  "api_key",
-  "token",
-  "secret",
-  "authorization",
+export const CREDENTIAL_KEYS = new Set<string>([
+  // -------------------------------------------------------------------
+  // Bare / single-word credential names (lower-case ASCII; one form
+  // covers all uses).
+  // -------------------------------------------------------------------
   "auth",
+  "token",
+  "password",
+  "secret",
   "cookie",
-  "privatekey",
-  "private_key",
-  "botToken".toLowerCase(),
-  "bot_token",
-  "webhooksecret",
-  "webhook_secret",
-  "accesstoken",
+  "key",                  // CRIT-04 widening (Open Q #1 RESOLVED — false-positives mitigated by CREDENTIAL_ALLOWLIST)
+  "passphrase",           // CRIT-04 widening
+  "credentials",          // CRIT-04 widening
+  "credential",           // singular form (preserves prior coverage)
+  "authorization",
+  // -------------------------------------------------------------------
+  // snake_case forms (required for Pino redact.paths on snake_case
+  // payloads — Pino's matcher is case-sensitive).
+  // -------------------------------------------------------------------
   "access_token",
-  "refreshtoken",
   "refresh_token",
-  "clientsecret",
+  "api_key",
+  "bot_token",
+  "webhook_secret",
+  "private_key",
   "client_secret",
+  "connection_string",
+  "access_key",
+  // -------------------------------------------------------------------
+  // camelCase forms (REQUIRED — Pino redact.paths is case-sensitive,
+  // so the lowercased forms above do NOT redact a field named
+  // `apiKey`. Removing the legacy hand-table without preserving these
+  // would silently regress production redaction. See RESEARCH
+  // Pitfall 3 + Open Q #4 RESOLVED.)
+  //
+  // The sanitizer's `isCredentialFieldName` predicate (below) uses
+  // lowercase-compare and is unaffected by the duplication.
+  // -------------------------------------------------------------------
+  "accessToken",
+  "refreshToken",
+  "apiKey",
+  "botToken",
+  "webhookSecret",
+  "privateKey",
+  "clientSecret",
+  "connectionString",
+  "accessKey",
+  // -------------------------------------------------------------------
+  // Lowercased compatibility aliases (preserve prior `isCredentialFieldName`
+  // semantics — these forms were in the original Set; keeping them is
+  // a no-op given `.toLowerCase()` lookup, but is documented here for
+  // archaeological clarity).
+  // -------------------------------------------------------------------
+  "apikey",
+  "privatekey",
+  "accesstoken",
+  "refreshtoken",
+  "clientsecret",
+  "webhooksecret",
+  "bottoken",
 ]);
 
 /**
  * Allowlist of names that LOOK like credentials but are configuration
  * metadata and must be preserved.
+ *
+ * Phase 50.02 extension: adding the bare `key` token to CREDENTIAL_KEYS
+ * triggers false-positives on operational fields like `keyName`,
+ * `cacheKey`, `sessionKey`, `eventKey`. The 10 entries below mitigate
+ * those (RESEARCH Pitfall 4 / Open Q #1 RESOLVED).
  */
 const CREDENTIAL_ALLOWLIST = new Set<string>([
   "passwordfile",
@@ -98,6 +163,17 @@ const CREDENTIAL_ALLOWLIST = new Set<string>([
   "cookie_name",
   "secretref",
   "secret_ref",
+  // CRIT-04 `key` false-positive mitigations (Phase 50.02; Open Q #1 RESOLVED)
+  "keyname",
+  "key_name",
+  "keypath",
+  "key_path",
+  "cachekey",
+  "cache_key",
+  "sessionkey",
+  "session_key",
+  "eventkey",
+  "event_key",
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
