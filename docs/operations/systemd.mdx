@@ -110,7 +110,7 @@ Before setting up the systemd service, make sure you have:
     Wants=network-online.target
 
     [Service]
-    Type=notify
+    Type=exec
     User=comis
     Group=comis
     WorkingDirectory=/opt/comis
@@ -125,10 +125,6 @@ Before setting up the systemd service, make sure you have:
     # Restart policy
     Restart=on-failure
     RestartSec=5s
-
-    # Watchdog: systemd kills process if no ping within WatchdogSec
-    # Daemon pings at half this interval (15s) with health gating
-    WatchdogSec=30s
 
     # Shutdown: allow 45s for graceful shutdown (app timeout is 30s)
     TimeoutStopSec=45
@@ -234,19 +230,14 @@ Before setting up the systemd service, make sure you have:
 
 Here is what each important section of the unit file does:
 
-### Type=notify
+### Type=exec
 
-The daemon tells systemd when it is ready, not just when the process starts. This
-means systemd waits until Comis has fully loaded its configuration, connected to
-channels, and started the gateway before reporting the service as "active." If the
-daemon fails during startup, systemd knows immediately.
-
-### WatchdogSec=30s
-
-systemd checks every 30 seconds that the daemon is healthy. The daemon pings
-systemd at half this interval (every 15 seconds) with a health check. If the
-daemon stops pinging -- because it has crashed, frozen, or the event loop is
-blocked -- systemd automatically restarts it.
+systemd considers the service started once `execve()` returns. In-process
+liveness is observed by Comis's `ProcessMonitor` (event loop delay tracking)
+and surfaced on the `/health` HTTP endpoint; crash recovery is handled by
+`Restart=on-failure` below. Comis does not participate in the systemd
+liveness-ping protocol — operators who require kernel-level watchdog
+integration can add it via a systemd drop-in.
 
 ### Restart=on-failure + RestartSec=5s
 

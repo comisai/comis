@@ -312,30 +312,6 @@ This page covers the most common issues you might encounter with Comis. Each ent
     3. If a specific component is always slow, investigate that component (check channel connections, agent executions in progress)
   </Accordion>
 
-  <Accordion title="Event loop delay exceeds threshold, skipping watchdog ping">
-    **Warning message:**
-
-    ```
-    Event loop delay exceeds threshold, skipping watchdog ping
-    ```
-
-    **What happened:** The daemon is under heavy load and the Node.js event loop is responding slowly. The watchdog ping was skipped to avoid a false health report. If this continues, systemd may restart the daemon.
-
-    **How to fix:**
-
-    1. Check system resources — is the server running out of CPU or memory?
-       ```bash
-       top -p $(pgrep -f daemon.js)
-       ```
-    2. Reduce concurrent work (lower `scheduler.cron.maxConcurrentRuns`)
-    3. If the threshold is too sensitive for your workload, increase it:
-       ```yaml
-       daemon:
-         eventLoopDelayThresholdMs: 1000   # 1 second instead of 500ms
-       ```
-    4. Consider whether your server needs more resources
-  </Accordion>
-
   <Accordion title="Unhandled promise rejection (non-fatal)">
     **Warning message:**
 

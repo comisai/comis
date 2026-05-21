@@ -129,32 +129,6 @@ The final log line confirms a clean shutdown:
 {"level":"info","msg":"Graceful shutdown complete","shutdownDurationMs":456}
 ```
 
-## Watchdog
-
-The watchdog is an integration with systemd (the Linux service manager) that
-provides automatic health monitoring at the operating system level. If the daemon
-becomes unresponsive, systemd detects this and automatically restarts it.
-
-Here is how it works:
-
-1. When the daemon starts, it tells systemd "I am ready" (via sd-notify).
-2. Every 15 seconds, the daemon sends a heartbeat ping to systemd.
-3. Before each ping, the daemon checks its own health (specifically, whether the
-   event loop is responsive).
-4. If the event loop is too slow (above 500ms delay), the daemon skips the ping.
-5. If systemd does not receive a ping within the expected window (30 seconds by
-   default), it restarts the daemon.
-
-This means the daemon can recover from situations where it becomes stuck -- such as
-a runaway computation or resource exhaustion -- without any human intervention.
-
-<Warning>
-The watchdog only works on Linux with systemd. On macOS, watchdog operations are
-automatically disabled (this is expected during development). For automatic restarts
-on macOS, use [pm2](/operations/pm2) instead. For the full systemd setup, see the
-[systemd](/operations/systemd) page.
-</Warning>
-
 ## Recovering from Problems
 
 ### Last-Known-Good Config
@@ -229,18 +203,14 @@ do not need to change these -- the defaults work well for typical installations.
 ```yaml
 # config.yaml
 daemon:
-  watchdogIntervalMs: 30000        # systemd watchdog interval (0 to disable)
-  shutdownTimeoutMs: 30000         # maximum time to wait for graceful shutdown
-  metricsIntervalMs: 30000         # how often to collect system metrics
-  eventLoopDelayThresholdMs: 500   # skip watchdog ping if event loop is slower than this
+  shutdownTimeoutMs: 30000   # maximum time to wait for graceful shutdown
+  metricsIntervalMs: 30000   # how often to collect system metrics
 ```
 
 | Setting | Default | What It Controls |
 |---|---|---|
-| `watchdogIntervalMs` | 30000 (30s) | How often the daemon pings systemd. Set to 0 to disable. |
 | `shutdownTimeoutMs` | 30000 (30s) | Maximum time to wait for graceful shutdown before forcing exit. |
 | `metricsIntervalMs` | 30000 (30s) | How often CPU, memory, and event loop metrics are collected. |
-| `eventLoopDelayThresholdMs` | 500 (0.5s) | If the event loop is slower than this, the watchdog ping is skipped. |
 
 <CardGroup cols={2}>
   <Card title="Logging" icon="file-lines" href="/operations/logging">
