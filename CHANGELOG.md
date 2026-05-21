@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Phase 48 — Observability Stack Hardening: Workstream A Closeout
+
+This release closes three drifts between `design/observability-stack-workstream-a.md` and shipped code (cache-breaks dir-mode invariant, `diagnostics.cacheTrace.enabled` default flip without doc-update, and the §7.2 stage-taxonomy divergence), and adds a build-failing architecture-test layer that prevents future drift.
+
+#### Operator-Facing Changes
+
+- **`diagnostics.cacheTrace.enabled` default flipped to `true`** (commit `0b157dd2`, 2026-05-20). The PII gate `includeMessages: false` is retained — payloads carry `messagesDigest` only by default. Operators who want full message payloads must explicitly set `includeMessages: true`.
+- **New `diagnostics.cacheTrace.maxFileBytes` operator knob** (default 50 MB, parity with `diagnostics.trajectory.maxFileBytes`). Operators can tune the per-file cap in `~/.comis/config.yaml`. When the cap is hit, the cache-trace runtime emits a `cache_trace.write_failures` sentinel event (see below) instead of silently dropping events.
+- **Proactive `cache_trace.write_failures` sentinel** — when the queued writer rejects an append due to `FileSizeLimitExceeded`, the cache-trace runtime emits exactly ONE inline sentinel event at first rejection (`data.firstDropAt`, `data.droppedEvents`, `data.droppedBytes`, `data.reason`) — visible immediately to `tail -f | jq` operators. A second summary sentinel fires at session `flushAndClose` carrying `data.sessionLifetimeMs` + `data.totalDroppedBytes`. Sessions that never hit the cap produce zero sentinels.
+
+#### Engineering-Facing Changes
+
+- **~10 observability-adjacent writers migrated to `@comis/observability/shared/fs-safe.ts`** — `cache-break-diff-writer.ts`, `background-task-persistence.ts`, `microcompaction-guard.ts`, `comis-session-manager.ts`, `sanitize-session-secrets.ts`, `restart-continuation.ts`, `setup-shutdown.ts`, `device-pairing.ts`, `device-identity.ts`, `skill-handlers.ts`, plus 6 graph-* writers. All now use `ensureContainedDir` + `writeRegularFile` from the shared substrate, restoring the design §1.4 `0o700`/`0o600` mode invariant for every artifact under `~/.comis/`.
+- **New `ensureContainedDir` substrate helper** in `@comis/observability/shared/fs-safe.ts`, joining `appendRegularFile` and `writeRegularFile` as the three canonical entry points for any writer under `~/.comis/`. Unifies the previously-duplicated `mkdir + lstat-gated chmod + symlink-rejection` pattern; opt-in `confinedBaseDir` real-path check via the existing `assertConfinedPath` internal helper.
+- **Design doc §§1.3/1.4/2.8/7.2/7.4/12 parity sweep** — six edits to `.planning/design/observability-stack-workstream-a.md` aligning the design language with shipped code (default-on cacheTrace, new maxFileBytes knob, §7.2 stage taxonomy rewrite to enumerate the 11 shipped stages).
+- **EventBus extension:** the existing `prompt:submitted` event is now consumed by both trajectory (via `attachTrajectoryToEventBus`) and cache-trace (via the extended `attachCacheTraceToEventBus`) bridges. The cache-trace bridge's mapping table extends from 1 → 8 event subscriptions, wiring the 7 previously-reserved-but-unwired stages from the §7.2 taxonomy.
+
+#### Architecture Tests
+
+Three new tests form the design ↔ code enforcement layer:
+
+- **`test/architecture/observability-mode-invariants.test.ts`** — AST walker over `packages/**/src/**/*.ts` flagging any direct `fs.mkdirSync` / `fs.writeFileSync` / `fs.promises.mkdir` / `fs.promises.writeFile` call lacking an explicit literal `mode:` arg of `0o700` (mkdir) or `0o600` (writeFile). Allowlist is empty after the Phase 48 sweep; the `fs-safe.ts` substrate is path-allowlisted (it's the layer the rule defers to). Inline `// fs-safe-allowed: <reason>` opt-out follows the `// @allow-throw:` precedent.
+- **`test/architecture/cache-trace-stages-known.test.ts`** — closed-union enforcement on every `recordStage(<literal>, ...)` call site in `packages/observability/src/cache-trace/` and `packages/agent/src/` — the first arg must be a member of `CACHE_TRACE_STAGES`. Also asserts every member of `CACHE_TRACE_STAGES` has at least one producer call site (excluding `cache_trace.write_failures` which is sentinel-only).
+- **`test/architecture/design-schema-parity.test.ts`** — parses the §12 Zod block in `.planning/design/observability-stack-workstream-a.md` and asserts field-by-field default parity against the runtime `DiagnosticsConfigSchema` in `packages/core/src/config/schema-diagnostics.ts` for every `diagnostics.*` default (`trajectory.enabled`, `trajectory.maxFileBytes`, `cacheTrace.enabled`, `cacheTrace.maxFileBytes`, `cacheTrace.includeMessages`, `cacheTrace.includePrompt`, `cacheTrace.includeSystem`, `configAudit.enabled`, `configAudit.rotateAtBytes`, `configAudit.keepRotated`).
+
+#### SemVer note
+
+The cache-trace v1 schema (`schemaVersion: 1` in `traceSchema: "comis-cache-trace"`) is the now-stable baseline. The §7.2 stage taxonomy was rewritten on 2026-05-21 to match shipped code (closing the pre-Phase-48 reserved-but-unwired gap); the append-only insertion-order rule applies from 2026-05-21 forward. New stages may be appended; existing stages may not be reordered or removed without bumping `schemaVersion`.
+
+#### Roadmap
+
+Phase 48 `Depends on:` is corrected to `Phase 46 (CACHE-OBS substrate)`. Phase 48 is technically independent of Phase 47 (MCP-PERSIST) — the two may ship in parallel.
+
 ### Unreleased / v2.1 — Backward-Compatibility + Dead-Code Removal
 
 This release deletes every backward-compatibility shim, alias re-export, legacy gate-off path, legacy field alias, and dead export from the v2.1 source tree. No BC code remains in production source except one explicitly-kept config migration (under `@migration-since: 2026-04-22; @remove-after: v2.2`).
