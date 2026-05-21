@@ -266,10 +266,13 @@ describe("resolveStreamingConfig", () => {
     const streamingConfig: StreamingConfig = {
       enabled: false,
       defaultChunkMode: "newline",
+      defaultChunkMinChars: 100,
       defaultDeliveryTiming: { mode: "custom", minMs: 500, maxMs: 1500, jitterMs: 200, firstBlockDelayMs: 0 },
       defaultCoalescer: { minChars: 0, maxChars: 500, idleMs: 1500, codeBlockPolicy: "standalone", adaptiveIdle: false },
       defaultTypingMode: "message",
       defaultTypingRefreshMs: 4000,
+      defaultTypingCircuitBreakerThreshold: 3,
+      defaultTypingTtlMs: 60000,
       defaultUseMarkdownIR: true,
       defaultTableMode: "split",
       defaultReplyMode: "first",
