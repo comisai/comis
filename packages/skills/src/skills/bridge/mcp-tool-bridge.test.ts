@@ -196,7 +196,9 @@ describe("mcpToolsToAgentTools", () => {
     expect(callTool).toHaveBeenCalledWith("mcp:db-server/search", { query: "test" });
     expect(result.content).toHaveLength(1);
     expect(result.content[0].type).toBe("text");
-    expect((result.content[0] as { type: "text"; text: string }).text).toBe(
+    // Post-CRIT-01: success-path text content is wrapped with wrapExternalContent;
+    // the original content sits inside <<<UNTRUSTED_xxx>>>...<<<END_UNTRUSTED_xxx>>>.
+    expect((result.content[0] as { type: "text"; text: string }).text).toContain(
       "search result: found 3 items",
     );
     expect(result.details).toEqual({ success: true });
@@ -314,7 +316,9 @@ describe("mcpToolsToAgentTools source-gate truncation", () => {
     const result = await tools[0].execute("call-1", { query: "test" });
 
     const text = (result.content[0] as { type: "text"; text: string }).text;
-    expect(text).toBe(smallText);
+    // Post-CRIT-01: small text is preserved verbatim inside the wrap envelope —
+    // no truncation, no plain-equality (the wrap adds boundary markers + notice).
+    expect(text).toContain(smallText);
     expect(text).not.toContain("[MCP tool result truncated");
   });
 
@@ -351,7 +355,10 @@ describe("mcpToolsToAgentTools source-gate truncation", () => {
     const result = await tools[0].execute("call-1", { query: "test" });
 
     const text = (result.content[0] as { type: "text"; text: string }).text;
-    expect(text.length).toBeLessThanOrEqual(20_000);
+    // Post-CRIT-01: cap governs CONTENT length, not wrapper overhead. The
+    // wrap adds ~700 bytes of fixed boundary markers + SECURITY NOTICE after
+    // the cap. Total length is content-cap (≤ 20_000) + fixed wrapper bytes.
+    expect(text.length).toBeLessThanOrEqual(25_000);
     expect(text).not.toContain("[MCP tool result truncated");
   });
 
@@ -368,7 +375,9 @@ describe("mcpToolsToAgentTools source-gate truncation", () => {
     const result = await tools[0].execute("call-1", {});
 
     const text = (result.content[0] as { type: "text"; text: string }).text;
-    expect(text).toBe(smallText);
+    // Post-CRIT-01: text is wrapped; verify the original content survives
+    // inside the wrap envelope.
+    expect(text).toContain(smallText);
     expect(result.details).toEqual({ success: true });
   });
 });
@@ -378,6 +387,22 @@ describe("mcpToolsToAgentTools source-gate truncation", () => {
 // ---------------------------------------------------------------------------
 
 describe("mcpToolsToAgentTools JSON-aware truncation in source-gate", () => {
+  /**
+   * Extract the wrapped content (capped MCP result text) from between
+   * <<<UNTRUSTED_xxx>>> and <<<END_UNTRUSTED_xxx>>> markers. Post-CRIT-01,
+   * the bridge wraps success-path text — the cap test must inspect the
+   * inner content, not the full wrapped envelope.
+   */
+  function extractWrappedContent(wrapped: string): string {
+    const match = wrapped.match(/<<<UNTRUSTED_[a-f0-9]+>>>\n([\s\S]+?)\n<<<END_UNTRUSTED_[a-f0-9]+>>>/);
+    if (!match) throw new Error("Wrap markers not found in output");
+    // The captured group includes "Source: <Label>\n---\n<content>".
+    // Strip the metadata block (header up to and including the "---" separator).
+    const inner = match[1];
+    const sepIdx = inner.indexOf("\n---\n");
+    return sepIdx >= 0 ? inner.slice(sepIdx + 5) : inner;
+  }
+
   it("JSON array result truncated at structural boundary produces valid JSON", async () => {
     // Create a large JSON array exceeding default 50K maxChars
     const items = Array.from({ length: 1000 }, (_, i) => ({
@@ -402,8 +427,9 @@ describe("mcpToolsToAgentTools JSON-aware truncation in source-gate", () => {
     const text = (result.content[0] as { type: "text"; text: string }).text;
     expect(text).not.toContain("[MCP tool result truncated");
 
-    // The text IS the JSON now -- parse directly
-    const parsed = JSON.parse(text);
+    // Post-CRIT-01: extract the capped JSON from inside the wrap envelope
+    const innerJson = extractWrappedContent(text);
+    const parsed = JSON.parse(innerJson);
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed.length).toBeGreaterThan(0);
     expect(parsed.length).toBeLessThan(1000);
@@ -437,8 +463,9 @@ describe("mcpToolsToAgentTools JSON-aware truncation in source-gate", () => {
     const text = (result.content[0] as { type: "text"; text: string }).text;
     expect(text).not.toContain("[MCP tool result truncated");
 
-    // The text IS the JSON now -- parse directly
-    const parsed = JSON.parse(text);
+    // Post-CRIT-01: extract the capped JSON from inside the wrap envelope
+    const innerJson = extractWrappedContent(text);
+    const parsed = JSON.parse(innerJson);
     expect(typeof parsed).toBe("object");
     expect(Array.isArray(parsed)).toBe(false);
     const keys = Object.keys(parsed);
@@ -462,9 +489,11 @@ describe("mcpToolsToAgentTools JSON-aware truncation in source-gate", () => {
     const text = (result.content[0] as { type: "text"; text: string }).text;
     expect(text).not.toContain("[MCP tool result truncated");
 
-    // Plain slice: should be exactly maxChars long (50000) with no appended marker
-    expect(text.length).toBe(50_000);
-    expect(text).toBe(largePlainText.slice(0, 50_000));
+    // Post-CRIT-01: extract the inner content from the wrap envelope and verify
+    // the plain-slice cap was applied to it (exactly 50_000 chars of the original).
+    const innerContent = extractWrappedContent(text);
+    expect(innerContent.length).toBe(50_000);
+    expect(innerContent).toBe(largePlainText.slice(0, 50_000));
   });
 });
 
