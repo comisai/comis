@@ -363,7 +363,32 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       }
 
       await manager.disconnect(name);
-      const result = { name, status: "disconnected" as const };
+
+      // Phase 47 (R2, R6): compute the filtered servers array.
+      // Removed entry is named; remaining entries preserved in pre-call
+      // order. Empty result array is intentional — the array slot remains
+      // so subsequent persists repopulate it without recreating the path.
+      // Optional-chain on `deps.container` parallels the McpConnect site
+      // and preserves existing test fixtures that omit container.
+      const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
+      const newServers: McpServerEntry[] = currentServers.filter((s) => s.name !== params.server_name);
+
+      // Phase 47 (R2, R8, D-04): persist + audit JSONL + response-augment.
+      const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
+      const persistOutcome = await persistMcpServers(
+        deps,
+        newServers,
+        "mcp.disconnect",
+        params.server_name,
+        ctx,
+      );
+
+      const result = {
+        name,
+        status: "disconnected" as const,
+        persistence: persistOutcome.persistence,
+        ...(persistOutcome.warning !== undefined && { warning: persistOutcome.warning }),
+      };
       // Dev-mode response validation gate. The success-only
       // `status: z.literal("disconnected")` shape is asserted here.
       if (systemGetEnv("NODE_ENV") !== "production") {
@@ -452,13 +477,45 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const nameRaw = rawParams.server_name as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
 
+      const manager = deps.mcpClientManager;
+
+      // Phase 47 (D-02 / R7 SPEC numbering): override-rejection guard.
+      // mcp_manage(reconnect) MUST NOT accept transport/command/args/url/
+      // headers/env when the server has stored runtime config — the contract
+      // is "reconnect re-uses the stored config; to change params, disconnect
+      // then connect". Per RESEARCH.md §"D-02 Error-Key Convention Verification",
+      // throw a raw Error (NOT throwToolError — that lives in @comis/skills,
+      // not @comis/daemon — cross-package boundary) with the bracketed
+      // error-code prefix so the LLM can self-correct.
+      //
+      // Stored-config existence is signalled by manager.getConnection(name)
+      // returning a McpConnection: the client manager stores config and
+      // connection together at connect time (mcp-client-connect.ts:108) and
+      // deletes them together at disconnect time (mcp-client-connect.ts:219),
+      // so the live-connection presence is a sound proxy for "has stored
+      // config". (The plan text used `storedConn?.config != null`, but
+      // McpConnection has no `.config` field — that check is replaced here
+      // with the connection-presence test, preserving the same semantics.)
+      const hasOverride =
+        rawParams.transport !== undefined ||
+        rawParams.command !== undefined ||
+        rawParams.args !== undefined ||
+        rawParams.url !== undefined ||
+        rawParams.headers !== undefined ||
+        rawParams.env !== undefined;
+      const hasStoredConfig = manager.getConnection(nameRaw) !== undefined;
+      if (hasOverride && hasStoredConfig) {
+        throw new Error(
+          "[reconnect_with_overrides_not_allowed] Cannot override transport/command/args/url/headers/env on reconnect when stored config exists. " +
+          "Hint: To change MCP server parameters, disconnect then connect with the new params.",
+        );
+      }
+
       // Strip dispatcher-injected _X internals BEFORE contract parse —
       // never let internals flow into Zod parsing.
       const userParams = stripInternalFields(rawParams);
       const params = McpReconnectContract.request.parse(userParams);
       const name = params.server_name;
-
-      const manager = deps.mcpClientManager;
 
       // Use manager's reconnect (preserves generation counter, uses stored config)
       const result = await manager.reconnect(name);
