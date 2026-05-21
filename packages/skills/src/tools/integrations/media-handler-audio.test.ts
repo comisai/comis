@@ -62,7 +62,8 @@ describe("processAudioAttachment", () => {
 
     const result = await processAudioAttachment(att, deps, buildHint);
 
-    expect(result.textPrefix).toBe("[Voice message transcription]: preflight text");
+    // textPrefix is wrapped by wrapExternalContent (CRIT-01) — assert contains, not exact
+    expect(result.textPrefix).toContain("[Voice message transcription]: preflight text");
     expect(result.transcription).toEqual({ attachmentUrl: att.url, text: "preflight text" });
     expect(deps.resolveAttachment).not.toHaveBeenCalled();
   });
@@ -77,7 +78,8 @@ describe("processAudioAttachment", () => {
 
     const result = await processAudioAttachment(makeAudioAttachment(), deps, buildHint);
 
-    expect(result.textPrefix).toBe("[Voice message transcription]: hello from voice");
+    // textPrefix is wrapped by wrapExternalContent (CRIT-01) — assert contains, not exact
+    expect(result.textPrefix).toContain("[Voice message transcription]: hello from voice");
     expect(result.transcription).toEqual({
       attachmentUrl: "tg-file://audio1",
       text: "hello from voice",

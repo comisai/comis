@@ -170,7 +170,8 @@ describe("processImageAttachment", () => {
 
       const result = await processImageAttachment(makeImageAttachment(), deps, 0, buildHint);
 
-      expect(result.textPrefix).toBe("[Image analysis]: A photo of a cat sitting on a keyboard");
+      // textPrefix is wrapped by wrapExternalContent (CRIT-01) — assert contains, not exact
+      expect(result.textPrefix).toContain("[Image analysis]: A photo of a cat sitting on a keyboard");
       expect(result.analysis).toEqual({
         attachmentUrl: "tg-file://image1",
         description: "A photo of a cat sitting on a keyboard",

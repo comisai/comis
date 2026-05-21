@@ -60,7 +60,8 @@ describe("processVideoAttachment", () => {
 
     const result = await processVideoAttachment(makeVideoAttachment(), deps, buildHint);
 
-    expect(result.textPrefix).toBe("[Video description]: A person walks through a garden");
+    // textPrefix is wrapped by wrapExternalContent (CRIT-01) — assert contains, not exact
+    expect(result.textPrefix).toContain("[Video description]: A person walks through a garden");
     expect(result.videoDescription).toEqual({
       attachmentUrl: "tg-file://video1",
       description: "A person walks through a garden",
