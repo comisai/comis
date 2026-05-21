@@ -109,6 +109,7 @@ async function loadWatermark(watermarkPath: string): Promise<ReviewWatermark> {
 
 async function saveWatermark(watermarkPath: string, watermark: ReviewWatermark): Promise<Result<void, Error>> {
   const tmpPath = `${watermarkPath}.tmp`;
+  // fs-safe-allowed: watermarkPath is caller-supplied (per-agent memory state); not under ~/.comis/ directly
   const writeResult = await fromPromise(writeFile(tmpPath, JSON.stringify(watermark, null, 2), "utf-8"));
   if (!writeResult.ok) return err(writeResult.error);
   const renameResult = await fromPromise(rename(tmpPath, watermarkPath));

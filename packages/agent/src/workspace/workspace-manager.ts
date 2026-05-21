@@ -101,6 +101,7 @@ export interface WorkspaceStatus {
  */
 async function writeIfMissing(filePath: string, content: string): Promise<boolean> {
   try {
+    // fs-safe-allowed: workspace dir is operator-configured per-agent workspace, not ~/.comis/ directly; needs `wx` exclusive-create flag the substrate doesn't expose
     await fs.writeFile(filePath, content, { encoding: "utf-8", flag: "wx" });
     return true;
   } catch (err) {
@@ -181,6 +182,7 @@ async function refreshPlatformFiles(
     // Atomic write: write to .tmp sibling, then rename onto the target.
     // POSIX rename is atomic; a crash mid-write cannot corrupt the target.
     const tmpPath = safePath(dir, `${name}.tmp`);
+    // fs-safe-allowed: workspace dir is operator-configured per-agent workspace, not ~/.comis/ directly; refreshPlatformFiles atomic-write pattern requires explicit `w` flag
     await fs.writeFile(tmpPath, canonical, { encoding: "utf-8", flag: "w" });
     await fs.rename(tmpPath, filePath);
 
@@ -237,11 +239,13 @@ async function ensureGitRepo(dir: string): Promise<void> {
 export async function ensureWorkspace(options: EnsureWorkspaceOptions): Promise<WorkspaceFiles> {
   const { dir, ensureBootstrapFiles = true, initGit = true, tracker } = options;
 
+  // fs-safe-allowed: workspace dir is operator-configured per-agent workspace, not ~/.comis/ directly
   await fs.mkdir(dir, { recursive: true });
 
   // Structural directories -- created unconditionally (like the root dir itself).
   // .cache/ and .comis-tmp/ are created by the sandbox, not here.
   for (const subdir of WORKSPACE_SUBDIRS) {
+    // fs-safe-allowed: workspace subdir under operator-configured workspace dir; not ~/.comis/ directly
     await fs.mkdir(safePath(dir, subdir), { recursive: true });
   }
 

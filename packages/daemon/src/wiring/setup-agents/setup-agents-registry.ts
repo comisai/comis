@@ -255,6 +255,7 @@ export async function setupAgents(deps: {
   // Auto-create agentDir if missing (SDK needs this directory for settings files)
   try {
     if (!existsSync(resolvedAgentDir)) {
+      // fs-safe-allowed: resolvedAgentDir is operator-configured (root config `agentDir`, defaults to ~/.pi/agent); follow-up plan should migrate to ensureContainedDir
       mkdirSync(resolvedAgentDir, { recursive: true });
       agentLogger.info({ agentDir: resolvedAgentDir }, "Created SDK agent directory");
     }

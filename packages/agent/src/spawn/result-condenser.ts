@@ -526,7 +526,9 @@ async function persistFullResult(
     ? fullResult.slice(0, DISK_WRITE_HARD_CAP_CHARS)
     : fullResult;
 
+  // fs-safe-allowed: diskPath is per-spawn full-result drop dir, caller-supplied (sub-agent disk overflow); not under ~/.comis/ directly
   await mkdir(dirname(diskPath), { recursive: true });
+  // fs-safe-allowed: caller-supplied diskPath (spawn-result disk-spill); not under ~/.comis/ directly
   await writeFile(
     diskPath,
     JSON.stringify(

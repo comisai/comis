@@ -251,6 +251,7 @@ export function bindConfigWriteHandlers(
         // Write atomically: write to temp file, then rename
         const localDir = dirname(localPath);
         if (!existsSync(localDir)) {
+          // fs-safe-allowed: localDir is parent of operator-supplied localPath (config-local YAML); not ~/.comis/ directly
           mkdirSync(localDir, { recursive: true });
         }
         const tmpPath = localPath + ".tmp";

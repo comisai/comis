@@ -102,6 +102,7 @@ async function attemptWrite(
   content: string,
 ): Promise<Result<void, AgentInlineWorkspaceError>> {
   try {
+    // fs-safe-allowed: targetPath is per-agent workspace ROLE.md/IDENTITY.md, operator-configured; not ~/.comis/ directly
     await writeFile(targetPath, content, { encoding: "utf8" });
     return ok(undefined);
   } catch (e: unknown) {

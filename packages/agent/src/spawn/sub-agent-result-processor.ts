@@ -209,11 +209,13 @@ export async function persistFailureRecord(params: {
   try {
     const sanitizedKey = params.sessionKey.replace(/:/g, "_");
     const diskPath = safePath(params.dataDir, "subagent-results", sanitizedKey, `${params.runId}.json`);
+    // fs-safe-allowed: sub-agent error-spill dir (`<dataDir>/subagent-results/<key>/`); follow-up plan should migrate to ensureContainedDir + writeRegularFile
     await mkdir(dirname(diskPath), { recursive: true });
 
     // Classify error for structured context
     const errorContext = classifyErrorContext(params.error, params.endReason);
 
+    // fs-safe-allowed: sub-agent error-spill writer (`<dataDir>/subagent-results/...`); follow-up plan should migrate to writeRegularFile
     await writeFile(
       diskPath,
       JSON.stringify({

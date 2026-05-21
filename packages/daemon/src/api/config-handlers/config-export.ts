@@ -160,6 +160,7 @@ export function bindConfigExportHandlers(
         // Write atomically
         const localDir = dirname(localPath);
         if (!existsSync(localDir)) {
+          // fs-safe-allowed: localDir is parent of operator-supplied localPath (config-local YAML); not ~/.comis/ directly
           mkdirSync(localDir, { recursive: true });
         }
         const tmpPath = localPath + ".tmp";

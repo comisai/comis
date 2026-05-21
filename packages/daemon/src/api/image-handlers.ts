@@ -98,6 +98,7 @@ export function createImageHandlers(
           // Write buffer to temp file for sendAttachment (which takes a URL/path)
           const ext = result.value.mimeType === "image/png" ? ".png" : ".jpg";
           const tempPath = safePath(tmpdir(), `comis-img-${randomUUID()}${ext}`);
+          // fs-safe-allowed: ephemeral OS-tmpdir file for channel-adapter attachment plumbing; not under ~/.comis/
           await writeFile(tempPath, result.value.buffer);
 
           const attachment: AttachmentPayload = {

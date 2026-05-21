@@ -264,7 +264,9 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps): Record<stri
 
       const dir = resolveAgentDir(deps, params.agentId);
       const resolvedPath = safePath(dir, params.filePath);
+      // fs-safe-allowed: per-agent workspace dir is operator-configured (resolveAgentDir); not ~/.comis/ directly
       await fs.mkdir(dirname(resolvedPath), { recursive: true });
+      // fs-safe-allowed: per-agent workspace dir; user content via workspace.writeFile RPC
       await fs.writeFile(resolvedPath, params.content, "utf-8");
 
       const result = { written: true as const, sizeBytes };
@@ -380,6 +382,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps): Record<stri
       const defaultContent = DEFAULT_TEMPLATES[params.fileName as WorkspaceFileName];
       const dir = resolveAgentDir(deps, params.agentId);
       const resolvedPath = safePath(dir, params.fileName);
+      // fs-safe-allowed: per-agent workspace dir is operator-configured (resolveAgentDir); not ~/.comis/ directly
       await fs.writeFile(resolvedPath, defaultContent, "utf-8");
 
       const result = { reset: true as const, fileName: params.fileName };

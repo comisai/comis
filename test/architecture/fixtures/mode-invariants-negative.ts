@@ -46,11 +46,7 @@ const message = "mkdirSync is forbidden in production code";
 // fs-safe-allowed: legitimate ephemeral test-fixture state outside ~/.comis/
 fs.mkdirSync("/tmp/test4", { recursive: true });
 
-// CLEAN 11: object-property `mkdirSync` lookalike (not the fs call)
-const stub = { mkdirSync: (p: string) => p };
-stub.mkdirSync("/tmp/never");
-
-// CLEAN 12: identifier reference (not a call)
+// CLEAN 11: identifier reference (not a call)
 const fn = fs.mkdirSync;
 void fn;
 

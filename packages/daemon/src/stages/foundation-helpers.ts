@@ -149,6 +149,7 @@ export function seedBundledSkillCreator(deps: {
     }
   }
   if (shouldSeed) {
+    // fs-safe-allowed: bundled-skill seeding into `<dataDir>/skills/`; follow-up plan should migrate to ensureContainedDir (paired with the cpSync recursive copy below which is also outside substrate)
     mkdirSync(skillsTarget, { recursive: true });
     cpSync(bundledSrc, skillCreatorDest, { recursive: true });
     agentLogger.info({ skill: "skill-creator" }, "Bundled skill-creator seeded into data directory");
