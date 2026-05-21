@@ -25,7 +25,7 @@ function createMockRpcCall() {
 describe("browser-tool", () => {
   it("has correct name, label, description, and parameters", () => {
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     expect(tool.name).toBe("browser");
     expect(tool.label).toBe("Browser");
@@ -35,7 +35,7 @@ describe("browser-tool", () => {
 
   it("status action delegates to browser.status rpcCall", async () => {
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     const result = await tool.execute("call-1", { action: "status" });
 
@@ -47,7 +47,7 @@ describe("browser-tool", () => {
 
   it("navigate action calls browser.navigate rpcCall with URL", async () => {
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     const result = await tool.execute("call-2", {
       action: "navigate",
@@ -71,7 +71,7 @@ describe("browser-tool", () => {
     });
 
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     await expect(
       tool.execute("call-3", {
@@ -92,7 +92,7 @@ describe("browser-tool", () => {
     });
 
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     await tool.execute("call-4", {
       action: "navigate",
@@ -113,7 +113,7 @@ describe("browser-tool", () => {
     });
 
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     await expect(
       tool.execute("call-5", {
@@ -127,7 +127,7 @@ describe("browser-tool", () => {
 
   it("snapshot action delegates to browser.snapshot rpcCall", async () => {
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     const result = await tool.execute("call-6", { action: "snapshot" });
 
@@ -142,7 +142,7 @@ describe("browser-tool", () => {
       base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPgPAAEDAQAI",
       mimeType: "image/png",
     }));
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     const result = await tool.execute("call-7", { action: "screenshot" });
 
@@ -160,7 +160,7 @@ describe("browser-tool", () => {
     const rpcCall = vi.fn(async () => ({
       path: "/tmp/screenshot.png",
     }));
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     const result = await tool.execute("call-8", { action: "screenshot" });
 
@@ -174,7 +174,7 @@ describe("browser-tool", () => {
 
   it("act action delegates to browser.act rpcCall with request sub-object", async () => {
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     const result = await tool.execute("call-9", {
       action: "act",
@@ -194,14 +194,14 @@ describe("browser-tool", () => {
     const rpcCall = vi.fn(async () => {
       throw new Error("Browser service unavailable");
     });
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     await expect(tool.execute("call-10", { action: "status" })).rejects.toThrow("Browser service unavailable");
   });
 
   it("tabs action delegates to browser.tabs rpcCall", async () => {
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     await tool.execute("call-11", { action: "tabs" });
 
@@ -210,7 +210,7 @@ describe("browser-tool", () => {
 
   it("start action delegates to browser.start rpcCall", async () => {
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     await tool.execute("call-12", { action: "start" });
 
@@ -219,7 +219,7 @@ describe("browser-tool", () => {
 
   it("stop action delegates to browser.stop rpcCall", async () => {
     const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
+    const tool = createBrowserTool({ rpcCall });
 
     await tool.execute("call-13", { action: "stop" });
 
@@ -228,12 +228,6 @@ describe("browser-tool", () => {
 });
 
 describe("browser-tool deps interface", () => {
-  it("createBrowserTool accepts bare rpcCall function (backward compat)", () => {
-    const rpcCall = createMockRpcCall();
-    const tool = createBrowserTool(rpcCall);
-    expect(tool.name).toBe("browser");
-  });
-
   it("createBrowserTool accepts BrowserToolDeps object", () => {
     const rpcCall = createMockRpcCall();
     const tool = createBrowserTool({ rpcCall });

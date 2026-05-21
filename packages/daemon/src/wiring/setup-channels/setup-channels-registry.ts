@@ -23,7 +23,8 @@ import type { VoiceResponsePipelineDeps, ApprovalNotifier, LifecycleReactor } fr
 import type { ChannelManager } from "@comis/orchestrator";
 import { initTelegramFileGuardConfig } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
-import type { SsrfGuardedFetcher, RpcCall, LinkRunner, AudioConverter, MediaTempManager, MediaSemaphore } from "@comis/skills";
+import type { SsrfGuardedFetcher, LinkRunner, AudioConverter, MediaTempManager, MediaSemaphore } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 import { bootstrapAdapters } from "../setup-channels-adapters.js";
 import { buildMediaPipeline } from "../setup-channels-media.js";

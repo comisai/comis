@@ -38,13 +38,13 @@ import {
   assembleToolPipeline,
   mcpToolsToAgentTools,
   createCredentialInjector,
-  type RpcCall,
   type LinkRunner,
   type McpClientManager,
   type ToolSourceProfile,
   type PlatformToolProvider,
   type CredentialInjector,
 } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 
 // Tool capability adapters + factories live on the `./tools` subpath.
 // Exec / process / apply-patch tool factories, file-state tracker,

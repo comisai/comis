@@ -13,7 +13,7 @@
  */
 
 import type { ErrorKind } from "@comis/infra";
-import type { RpcCall } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 
 import type { ApiDispatchDeps } from "./types.js";
 export type { ApiDispatchDeps };

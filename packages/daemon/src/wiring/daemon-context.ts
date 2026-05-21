@@ -18,7 +18,8 @@ import type { AgentExecutor, createCostTracker, createBudgetGuard, createStepCou
 import type { SqliteMemoryAdapter, createSessionStore, createEmbeddingQueue, MemoryApi } from "@comis/memory";
 import type { HeartbeatRunner, CronScheduler, createExecutionTracker } from "@comis/scheduler";
 import type { GatewayServerHandle } from "@comis/gateway";
-import type { BrowserService, RpcCall, LinkRunner } from "@comis/skills";
+import type { BrowserService, LinkRunner } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import type { ChannelManager } from "@comis/orchestrator";
 import type { DeviceIdentity } from "@comis/core";
 
