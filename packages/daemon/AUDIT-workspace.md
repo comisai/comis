@@ -30,6 +30,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | container | required | — | packages/daemon/src/api/types.ts:291 |
 | eventBus | optional | skill lifecycle events (`skill:enabled`, `skill:disabled`, etc.) are not emitted; observers and audit consumers do not learn of skill state changes | packages/daemon/src/api/types.ts:293 |
 | secretManager | optional | mcp-handlers' env-ref validation is skipped (`mcp-handlers` reads `deps.secretManager?.has`); MCP server configs with missing env refs fail later at connect time | packages/daemon/src/api/types.ts:295 |
+| persistDeps | optional | mcp-handlers' YAML writes via `persistMcpServers` become best-effort no-ops; MCP server registrations succeed at runtime but do not persist to `config.yaml`, so subsequent daemon restarts forget them | packages/daemon/src/api/types.ts:293 |
 
 ## Removed Fields (stale-fallback — deleted)
 
