@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { mkdirSync, writeFileSync, existsSync, mkdtempSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, mkdtempSync, statSync } from "node:fs";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -224,5 +224,61 @@ describe("destroySession — session:ended emit + trajectoryRegistry close (Gap 
 
     await expect(mgr.destroySession(key)).resolves.not.toThrow();
     expect(existsSync(jsonlPath)).toBe(false);
+  });
+});
+
+describe("comis-session-manager honors §1.4 mode invariants on substrate-routed writes (OBS-HARD-03, Plan 48-06)", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* cleanup */ }
+    }
+    dirs.length = 0;
+  });
+
+  it("with_session_creates_per_channel_dir_with_mode_0o700", async () => {
+    // withSession routes the per-channel directory creation through
+    // ensureContainedDir (Phase 48 OBS-HARD-03) so design §1.4's `0o700`
+    // invariant holds for every artifact dir under ~/.comis/agents/.
+    const baseDir = makeTmpDir();
+    const lockDir = makeTmpDir();
+    dirs.push(baseDir, lockDir);
+
+    const mgr = createComisSessionManager({ sessionBaseDir: baseDir, lockDir, cwd: baseDir, fileLock });
+    const key = makeKey();
+
+    // Drive a no-op withSession to trigger directory creation
+    await mgr.withSession(key, async () => "ok");
+
+    const channelDir = join(baseDir, "default", "cron@3atest-job");
+    // The substrate's defensive chmod runs on EEXIST as well as fresh
+    // create, so the assertion holds regardless of whether the dir
+    // pre-existed (e.g., from a sibling-test interleave).
+    expect(statSync(channelDir).mode & 0o777).toBe(0o700);
+  });
+
+  it("write_session_metadata_writes_companion_file_with_mode_0o600", async () => {
+    // writeSessionMetadata routes the sentinel JSON write through
+    // writeRegularFile (Phase 48 OBS-HARD-03) so design §1.4's `0o600`
+    // invariant holds for the `_session-metadata.json` companion file.
+    const baseDir = makeTmpDir();
+    const lockDir = makeTmpDir();
+    dirs.push(baseDir, lockDir);
+
+    const mgr = createComisSessionManager({ sessionBaseDir: baseDir, lockDir, cwd: baseDir, fileLock });
+    const key = makeKey();
+
+    // Pre-create the channel dir so the metadata write site has a parent
+    const channelDir = join(baseDir, "default", "cron@3atest-job");
+    mkdirSync(channelDir, { recursive: true, mode: 0o700 });
+
+    mgr.writeSessionMetadata(key, {
+      traceId: "trace-mode-test",
+      runId: "run-mode-test",
+    });
+
+    const metadataPath = join(channelDir, "bot_session-metadata.json");
+    expect(existsSync(metadataPath)).toBe(true);
+    expect(statSync(metadataPath).mode & 0o777).toBe(0o600);
   });
 });
