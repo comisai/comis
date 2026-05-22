@@ -21,16 +21,13 @@
 
 import type { ChannelPluginPort } from "@comis/core";
 import type { ChannelRegistry } from "@comis/channels";
+import { err } from "@comis/shared";
 
 export function buildReadOnlyChannelRegistry(
   channelPlugins: Map<string, ChannelPluginPort>,
 ): ChannelRegistry {
-  const readOnlyErr = (): { ok: false; error: Error } => ({
-    ok: false as const,
-    error: new Error(
-      "ChannelRegistry at this seam is read-only; mutate via setup-channels-adapters",
-    ),
-  });
+  const readOnlyErr = () =>
+    err(new Error("ChannelRegistry at this seam is read-only; mutate via setup-channels-adapters"));
   return {
     getCapabilities: (channelType: string) => channelPlugins.get(channelType)?.capabilities,
     getAdapter: (channelType: string) => channelPlugins.get(channelType)?.adapter,
