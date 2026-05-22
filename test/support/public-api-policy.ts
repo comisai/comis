@@ -762,6 +762,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "HookSessionEndContext",
       "HookGatewayStartEvent",
       "HookGatewayStopEvent",
+      // HookGatewayStartContext + HookGatewayStopContext became orphans when
+      // the dead hookRunner?.runGatewayStart() / runGatewayStop() invocations
+      // were removed from packages/gateway/src/server/hono-server.ts (Plan
+      // 55-01). The Event types remain because plugin authors may still
+      // declare gateway lifecycle hooks; the Context types are kept in the
+      // public surface for symmetry with other Hook* pairs.
+      "HookGatewayStartContext",
+      "HookGatewayStopContext",
       "PluginPort",
       "RegisteredHook",
       "PluginToolDefinition",
@@ -1410,6 +1418,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TracingLoggerOptions",
     ])],
     // @comis/gateway: baseline orphans tracked here.
+    // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
+    // consumed by test/integration/gateway/mtls-handshake.test.ts — integration
+    // tests live outside packages/, which the public-export-consumers walker
+    // does not scan. Listed here per the documented external-API category.
     ["@comis/gateway", new Set<string>([
       "createRateLimiter",
       "createOAuthCallbackRoute",
@@ -1420,6 +1432,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createAcpAgent",
       "AcpServerDeps",
       "createMdnsAdvertiser",
+      "validateCertificates",
+      "extractClientCN",
+      "CertPaths",
     ])],
     // @comis/infra: baseline orphans + transient orphans.
     // createSystemClock/createSystemEnv/createSystemTimers are Node-backed

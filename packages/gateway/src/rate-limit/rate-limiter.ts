@@ -55,11 +55,9 @@ export function getClientIp(c: Context, trustedProxies: readonly string[]): stri
 /**
  * Create a per-client rate limiting middleware for the gateway.
  *
- * Keys rate limiting by clientId from the auth context (set by token auth).
- * Falls back to client IP if no clientId is available.
- *
- * When trustedProxies is configured, X-Forwarded-For is only trusted from
- * those proxy IPs. Otherwise, the direct connection IP is used.
+ * Keys rate limiting by the client IP returned by `getClientIp(c, trustedProxies)`.
+ * When `trustedProxies` is configured, X-Forwarded-For is only trusted from
+ * those proxy IPs; otherwise the direct connection IP is used.
  *
  * Returns JSON-RPC formatted error response on rate limit exceeded (HTTP 429).
  */
@@ -72,11 +70,7 @@ export function createRateLimiter(
   return rateLimiter({
     windowMs: config.windowMs,
     limit: config.maxRequests,
-    keyGenerator: (c: Context) => {
-      // Use clientId from auth context if available, otherwise fall back to IP
-      const clientId = c.get("clientId") as string | undefined;
-      return clientId ?? getClientIp(c, trustedProxies);
-    },
+    keyGenerator: (c: Context) => getClientIp(c, trustedProxies),
     handler: (c: Context) => {
       if (rateLimitLogger) {
         const clientIp = getClientIp(c, trustedProxies);
