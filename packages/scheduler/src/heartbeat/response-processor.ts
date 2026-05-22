@@ -14,7 +14,7 @@
  * are handled by the caller based on the returned outcome.
  */
 
-import { HEARTBEAT_OK_TOKEN } from "./relevance-filter.js";
+import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Public types

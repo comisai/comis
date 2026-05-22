@@ -7,6 +7,8 @@
  * settings, quiet hours, and critical bypass configuration.
  */
 
+import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
+
 /** Controls which notification levels are visible to the user. */
 export interface NotificationVisibility {
   /** Show "ok" status heartbeat results. */
@@ -23,9 +25,6 @@ export const DEFAULT_VISIBILITY: NotificationVisibility = {
 
 /** Severity classification for heartbeat check results. */
 export type NotificationLevel = "ok" | "alert" | "critical";
-
-/** Token embedded in heartbeat check output to signal "all clear". */
-export const HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK";
 
 /** Options for the shouldNotify decision function. */
 export interface ShouldNotifyOptions {

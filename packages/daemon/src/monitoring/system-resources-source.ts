@@ -11,7 +11,7 @@
 
 import type { ResourceMonitorConfig } from "@comis/core";
 import type { HeartbeatSourcePort, HeartbeatCheckResult } from "@comis/scheduler";
-import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
+import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
 import { cpus, freemem, totalmem } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
 import { readFile } from "node:fs/promises";
