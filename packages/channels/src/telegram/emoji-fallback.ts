@@ -44,8 +44,18 @@ export async function reactWithFallback(
   messageId: string,
   primaryEmoji: string,
 ): Promise<Result<void, Error>> {
+  // ChannelPort.reactToMessage is optional post-PORT-TRIM-14, but this helper
+  // is wired only for telegram (real impl) by the lifecycle reactor. Surface a
+  // loud error if a caller bypasses the capability gate to avoid a silent miss.
+  if (typeof adapter.reactToMessage !== "function") {
+    throw new Error(
+      `reactWithFallback: adapter "${adapter.channelType}" lacks reactToMessage — capability gate (features.reactions) must be enforced before this call`,
+    );
+  }
+  const react = adapter.reactToMessage.bind(adapter);
+
   // Try primary emoji first
-  const primaryResult = await adapter.reactToMessage(channelId, messageId, primaryEmoji);
+  const primaryResult = await react(channelId, messageId, primaryEmoji);
   if (primaryResult.ok) return primaryResult;
 
   // Check if error is a REACTION_INVALID type
@@ -63,7 +73,7 @@ export async function reactWithFallback(
     // Skip if same as the primary that just failed
     if (safeEmoji === primaryEmoji) continue;
 
-    lastResult = await adapter.reactToMessage(channelId, messageId, safeEmoji);
+    lastResult = await react(channelId, messageId, safeEmoji);
     if (lastResult.ok) return lastResult;
   }
 

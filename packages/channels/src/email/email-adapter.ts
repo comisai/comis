@@ -19,8 +19,6 @@ import type {
   AttachmentPayload,
   ChannelPort,
   ChannelStatus,
-  FetchedMessage,
-  FetchMessagesOptions,
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
@@ -276,46 +274,8 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
     return ok(messageId);
   }
 
-  async function editMessage(
-    _channelId: string,
-    _messageId: string,
-    _text: string,
-  ): Promise<Result<void, Error>> {
-    return err(new Error("Email does not support editing sent messages"));
-  }
-
   function onMessage(handler: MessageHandler): void {
     handlers.push(handler);
-  }
-
-  async function reactToMessage(
-    _channelId: string,
-    _messageId: string,
-    _emoji: string,
-  ): Promise<Result<void, Error>> {
-    return err(new Error("Email does not support reactions"));
-  }
-
-  async function removeReaction(
-    _channelId: string,
-    _messageId: string,
-    _emoji: string,
-  ): Promise<Result<void, Error>> {
-    return err(new Error("Email does not support reactions"));
-  }
-
-  async function deleteMessage(
-    _channelId: string,
-    _messageId: string,
-  ): Promise<Result<void, Error>> {
-    return err(new Error("Email does not support deleting sent messages"));
-  }
-
-  async function fetchMessages(
-    _channelId: string,
-    _options?: FetchMessagesOptions,
-  ): Promise<Result<FetchedMessage[], Error>> {
-    return err(new Error("Email does not support fetching message history"));
   }
 
   async function sendAttachment(
@@ -396,12 +356,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
     start,
     stop,
     sendMessage,
-    editMessage,
     onMessage,
-    reactToMessage,
-    removeReaction,
-    deleteMessage,
-    fetchMessages,
     sendAttachment,
     getStatus,
     platformAction,

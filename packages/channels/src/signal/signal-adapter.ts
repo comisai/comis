@@ -18,8 +18,6 @@ import type {
   AttachmentPayload,
   ChannelPort,
   ChannelStatus,
-  FetchedMessage,
-  FetchMessagesOptions,
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
@@ -257,13 +255,6 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
       return ok(messageId);
     },
 
-     
-    async editMessage(_chatId: string, _messageId: string, _text: string): Promise<Result<void, Error>> {
-      return err(
-        new Error("Editing messages is not supported on Signal."),
-      );
-    },
-
     async reactToMessage(
       chatId: string,
       messageId: string,
@@ -342,16 +333,6 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
       }
 
       return ok(undefined);
-    },
-
-     
-    async fetchMessages(_channelId: string, _options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>> {
-      return err(
-        new Error(
-          "Fetching message history is not supported on Signal. " +
-            "Messages can only be received in real-time via SSE.",
-        ),
-      );
     },
 
     async sendAttachment(

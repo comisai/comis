@@ -113,6 +113,20 @@ export function extractChannelId(sessionKey: string | SessionKey | undefined): s
 export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleReactor {
   const { eventBus, adapter, channelType, replyToMetaKey, config, logger } = deps;
 
+  // Construction-time invariant (PORT-TRIM-14): the reactor is created only for
+  // adapters whose capability gate says `features.reactions: true` (see
+  // setup-channels-runtime.ts ~L500). After ChannelPort.reactToMessage/removeReaction
+  // were made optional, narrow the adapter shape locally so the body can call the
+  // methods directly. If a caller bypasses the gate the constructor surfaces it
+  // loudly here instead of `TypeError` later inside the fire-and-forget path.
+  if (typeof adapter.reactToMessage !== "function" || typeof adapter.removeReaction !== "function") {
+    throw new Error(
+      `lifecycle-reactor: channel "${channelType}" lacks reactToMessage/removeReaction — capability gate (features.reactions) must be enforced before createLifecycleReactor()`,
+    );
+  }
+  const reactToMessage = adapter.reactToMessage.bind(adapter);
+  const removeReaction = adapter.removeReaction.bind(adapter);
+
   // Per-message state: key is `${channelId}:${platformMessageId}`
   const messageStates = new Map<string, ReactorState>();
 
@@ -138,7 +152,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
     // Remove old emoji fire-and-forget (non-blocking)
     if (state.currentEmoji) {
       suppressError(
-        adapter.removeReaction(state.channelId, state.platformMessageId, state.currentEmoji),
+        removeReaction(state.channelId, state.platformMessageId, state.currentEmoji),
         "lifecycle-reactor: platform may have already removed old reaction",
       );
     }
@@ -157,13 +171,13 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       // Slack: convert Unicode emoji to Slack shortname
       const slackName = toSlackShortname(emoji);
       suppressError(
-        adapter.reactToMessage(state.channelId, state.platformMessageId, slackName),
+        reactToMessage(state.channelId, state.platformMessageId, slackName),
         "lifecycle-reactor: slack reaction fire-and-forget",
       );
     } else {
       // All other platforms: use emoji directly
       suppressError(
-        adapter.reactToMessage(state.channelId, state.platformMessageId, emoji),
+        reactToMessage(state.channelId, state.platformMessageId, emoji),
         "lifecycle-reactor: platform reaction fire-and-forget",
       );
     }
@@ -275,7 +289,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       state.holdTimer = systemSetTimeout(() => {
         // Remove the terminal emoji
         suppressError(
-          adapter.removeReaction(state.channelId, state.platformMessageId, state.currentEmoji),
+          removeReaction(state.channelId, state.platformMessageId, state.currentEmoji),
           "lifecycle-reactor: hold timer cleanup fire-and-forget",
         );
         cleanupMessage(messageKey);

@@ -15,11 +15,8 @@
  */
 
 import type {
-  AttachmentPayload,
   ChannelPort,
   ChannelStatus,
-  FetchedMessage,
-  FetchMessagesOptions,
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
@@ -308,52 +305,6 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
         );
         return err(new Error(`Failed to send IRC message: ${sendErr.message}`));
       }
-    },
-
-     
-    async editMessage(_channelId: string, _messageId: string, _text: string): Promise<Result<void, Error>> {
-      return err(new Error("IRC does not support message editing"));
-    },
-
-     
-    async reactToMessage(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
-      return err(new Error("IRC does not support reactions"));
-    },
-
-     
-    async removeReaction(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
-      return err(new Error("Reactions are not supported on IRC"));
-    },
-
-     
-    async deleteMessage(_channelId: string, _messageId: string): Promise<Result<void, Error>> {
-      return err(new Error("IRC does not support message deletion"));
-    },
-
-     
-    async fetchMessages(_channelId: string, _options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>> {
-      return err(new Error("IRC does not support fetching message history"));
-    },
-
-    async sendAttachment(
-      channelId: string,
-       
-      _attachment: AttachmentPayload,
-       
-      _options?: SendMessageOptions,
-    ): Promise<Result<string, Error>> {
-      const attachErr = new Error("IRC does not support attachments (text-only protocol)");
-      deps.logger.warn(
-        {
-          channelType: "irc",
-          chatId: channelId,
-          err: attachErr,
-          hint: "IRC is a text-only protocol and does not support attachments",
-          errorKind: "validation" as const,
-        },
-        "Send attachment failed",
-      );
-      return err(attachErr);
     },
 
     async platformAction(

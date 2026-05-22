@@ -21,8 +21,6 @@ import type {
   AttachmentPayload,
   ChannelPort,
   ChannelStatus,
-  FetchedMessage,
-  FetchMessagesOptions,
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
@@ -310,43 +308,6 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
         );
         return err(new Error(`Failed to send LINE message: ${sendErr.message}`));
       }
-    },
-
-     
-    async editMessage(_channelId: string, _messageId: string, _text: string): Promise<Result<void, Error>> {
-      return err(
-        new Error("LINE does not support editing messages. Bots cannot modify sent messages."),
-      );
-    },
-
-     
-    async reactToMessage(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
-      return err(
-        new Error("LINE does not support message reactions for bots."),
-      );
-    },
-
-     
-    async removeReaction(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
-      return err(
-        new Error("Reactions are not supported on LINE"),
-      );
-    },
-
-     
-    async deleteMessage(_channelId: string, _messageId: string): Promise<Result<void, Error>> {
-      return err(
-        new Error("LINE does not support deleting messages for bots."),
-      );
-    },
-
-     
-    async fetchMessages(_channelId: string, _options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>> {
-      return err(
-        new Error(
-          "Fetching message history is not supported on LINE. Bots can only receive messages via webhook.",
-        ),
-      );
     },
 
     async sendAttachment(
