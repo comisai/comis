@@ -135,8 +135,14 @@ function summaryParts(summary: FindingsSummary): string[] {
         parts.push(chalk.red(`${count} fail`));
         break;
       case "warn":
-      case "warning":
+        // Doctor / health use "warn" as the count key — short label matches
+        // pre-fusion `${result.warnCount} warn` phrasing.
         parts.push(chalk.yellow(`${count} warn`));
+        break;
+      case "warning":
+        // Security uses "warning" as the count key — preserve the plural
+        // pre-fusion label `${result.warningCount} warnings` (WR-02 fix).
+        parts.push(chalk.yellow(`${count} warnings`));
         break;
       case "skip":
         parts.push(chalk.gray(`${count} skip`));
