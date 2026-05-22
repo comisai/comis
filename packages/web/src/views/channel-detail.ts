@@ -1055,11 +1055,6 @@ export class IcChannelDetail extends LitElement {
       { label: "Delete Messages", supported: cap.deleteMessages },
       { label: "Fetch History", supported: cap.fetchHistory },
       { label: "Attachments", supported: cap.attachments },
-      { label: "Threads", supported: cap.threads },
-      { label: "Mentions", supported: cap.mentions },
-      { label: "Buttons", supported: cap.buttons },
-      { label: "Cards", supported: cap.cards },
-      { label: "Effects", supported: cap.effects },
     ];
 
     return html`
