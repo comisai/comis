@@ -242,10 +242,6 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       if (drift?.drop) return 0;
       return undefined; // Use default keepTurns
     },
-    // Replay drift mode getter: activates the signature-replay-scrubber
-    // pipeline layer when drift is detected.
-    getReplayDriftMode: () => computeDriftIfNeeded(),
-
     // LLM compaction deps
     getCompactionDeps: () => ({
       logger: deps.logger,

@@ -1638,8 +1638,6 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   // Drained 75 globals entries across 22 files. Remaining 2 entries in cache-break-diff-writer.ts
   // are new Date(arg) parsing calls (not clock reads); kept as allowlist entries.
   // safety/circuit-breaker.ts retargeted to ClockPort. Drained 3 entries.
-  //packages/agent/src/session/session-reset-policy.ts
-  // retargeted to TimerPort via injected deps. Drained 2 entries.
   //packages/agent/src/spawn/sub-agent-runner.ts
   // retargeted to ClockPort/TimerPort via injected deps. Drained 25 entries.
   // ---- channels ----

@@ -58,13 +58,6 @@ export function createCronStore(filePath: string, logger?: SchedulerLogger): Cro
     try {
       const raw = await fs.readFile(filePath, "utf-8");
       const parsed = JSON.parse(raw);
-      // Normalize legacy camelCase payload_kind values
-      if (Array.isArray(parsed)) {
-        for (const item of parsed) {
-          if (item?.payload?.kind === "systemEvent") item.payload.kind = "system_event";
-          if (item?.payload?.kind === "agentTurn") item.payload.kind = "agent_turn";
-        }
-      }
       return CronJobArraySchema.parse(parsed);
     } catch (err: unknown) {
       // File doesn't exist -- return empty without warning

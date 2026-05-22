@@ -140,52 +140,6 @@ describe("CronStore", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Migration of legacy camelCase payload_kind values
-  // -----------------------------------------------------------------------
-
-  it("load normalizes legacy camelCase payload_kind values", async () => {
-    const store = createCronStore(filePath);
-    const dir = path.dirname(filePath);
-    fs.mkdirSync(dir, { recursive: true });
-
-    // Write jobs with legacy camelCase payload_kind values directly to the JSON file
-    const legacyJobs = [
-      {
-        id: "legacy-1",
-        name: "legacy systemEvent job",
-        agentId: "agent-1",
-        schedule: { kind: "every", everyMs: 60_000 },
-        payload: { kind: "systemEvent", text: "old format" },
-        sessionTarget: "isolated",
-        enabled: true,
-        consecutiveErrors: 0,
-        createdAtMs: Date.now(),
-      },
-      {
-        id: "legacy-2",
-        name: "legacy agentTurn job",
-        agentId: "agent-1",
-        schedule: { kind: "cron", expr: "0 9 * * *" },
-        payload: { kind: "agentTurn", message: "old format" },
-        sessionTarget: "isolated",
-        enabled: true,
-        consecutiveErrors: 0,
-        createdAtMs: Date.now(),
-      },
-    ];
-    fs.writeFileSync(filePath, JSON.stringify(legacyJobs, null, 2), "utf-8");
-
-    // Load via the store -- migration shim should normalize
-    const loaded = await store.load();
-    expect(loaded).toHaveLength(2);
-    expect(loaded[0].payload.kind).toBe("system_event");
-    expect(loaded[1].payload.kind).toBe("agent_turn");
-    // Other fields preserved
-    expect(loaded[0].id).toBe("legacy-1");
-    expect(loaded[1].id).toBe("legacy-2");
-  });
-
-  // -----------------------------------------------------------------------
   // File-level locking for mutations
   // -----------------------------------------------------------------------
 

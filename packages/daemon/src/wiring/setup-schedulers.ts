@@ -89,7 +89,7 @@ export async function setupSchedulers(deps: {
   /** Timer scheduling. Threaded into SessionResetScheduler. */
   timers: TimerPort;
 }): Promise<SchedulersResult> {
-  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, timers } = deps;
+  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers } = deps;
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
@@ -366,7 +366,7 @@ export async function setupSchedulers(deps: {
         return currentAgents[agentId]?.session?.resetPolicy;
       },
       computeDailyResetNextRun,
-      nowMs: undefined, // Use real clock in production
+      nowMs: clock.now.bind(clock),
       timers,
     });
 
