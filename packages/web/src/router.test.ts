@@ -225,17 +225,6 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/approvals -> ic-approvals-view, route 'approvals', params {}", () => {
-      window.location.hash = "#/approvals";
-      const router = createRouter(onChange);
-      expect(router.current()).toEqual({
-        view: "ic-approvals-view",
-        route: "approvals",
-        params: {},
-        query: {},
-      });
-    });
-
     it("#/config -> ic-config-editor, route 'config', params {}", () => {
       window.location.hash = "#/config";
       const router = createRouter(onChange);

@@ -83,7 +83,6 @@ const ROUTE_TABLE: ReadonlyArray<{ pattern: string; view: string }> = [
   { pattern: "media", view: "ic-media-test-view" },
   { pattern: "media/config", view: "ic-media-config-view" },
   { pattern: "security", view: "ic-security-view" },
-  { pattern: "approvals", view: "ic-approvals-view" },
   { pattern: "config", view: "ic-config-editor" },
   { pattern: "setup", view: "ic-setup-wizard" },
   { pattern: "pipelines", view: "ic-pipeline-list" },

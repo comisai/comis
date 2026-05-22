@@ -48,7 +48,6 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
     { route: "scheduler", label: "Scheduler", icon: "\u25A8" },
     { route: "security", label: "Security", icon: "\u2616" },
     { route: "media", label: "Media", icon: "\u25B6" },
-    { route: "approvals", label: "Approvals", icon: "\u2713", badge: "pendingApprovals" },
     { route: "config", label: "Config", icon: "\u2699" },
   ]},
 ];

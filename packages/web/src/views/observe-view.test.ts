@@ -109,8 +109,8 @@ const MOCK_AGENT_SUPPORT = {
 };
 const MOCK_CHANNEL_LIST = {
   channels: [
-    { channelType: "telegram", channelId: "tg-main", status: "running" },
-    { channelType: "discord", channelId: "dc-server-1", status: "stopped" },
+    { channelType: "telegram", channelId: "tg-main", status: "healthy" },
+    { channelType: "discord", channelId: "dc-server-1", status: "disconnected" },
   ],
   total: 2,
 };
@@ -1122,9 +1122,9 @@ describe("IcObserveView", () => {
 
     const channelGrid = el.shadowRoot?.querySelector('[aria-label="Channel health"]');
     const text = channelGrid?.textContent ?? "";
-    // Running channels show "Healthy" (via getHealthVisual("running"))
+    // Healthy channels show "Healthy" (canonical state directly via getHealthVisual)
     expect(text).toContain("Healthy");
-    // Stopped channels show "Disconnected" (via getHealthVisual("stopped"))
+    // Disconnected channels show "Disconnected"
     expect(text).toContain("Disconnected");
   });
 
