@@ -1055,12 +1055,6 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     reason: "@allow-throw boundary: quiet-hours time-format validation guards; consumed via setup-heartbeat daemon-wiring (daemon.ts bootstrap).",
     removedIn: "permanent",
   },
-  {
-    file: "packages/scheduler/src/tasks/task-store.ts",
-    lineRanges: [[49, 49]],
-    reason: "@allow-throw boundary: task-store SQLite adapter precondition guards; consumed via daemon heartbeat handlers (@allow-throw per Decision 2).",
-    removedIn: "permanent",
-  },
   // ----- skills package (40 files) -----
   {
     file: "packages/skills/src/platform-tools/tool-helpers.ts",
