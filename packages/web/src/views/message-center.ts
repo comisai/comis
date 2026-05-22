@@ -7,7 +7,6 @@ import type { FetchedMessage, PlatformCapabilities } from "../api/types/index.js
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import { systemSetTimeout } from "@comis/core";
-import { createMessageCenterController, type MessageCenterController } from "./message-center-controller.js";
 
 // Side-effect registrations for sub-components
 import "../components/nav/ic-breadcrumb.js";
@@ -314,16 +313,6 @@ export class IcMessageCenter extends LitElement {
   /** Bound click-outside handler for emoji picker. */
   private _boundEmojiOutsideClick: ((e: MouseEvent) => void) | null = null;
 
-  /** RPC-orchestration controller — created when rpcClient becomes available. */
-  @state() private _controller: MessageCenterController | null = null;
-
-  override connectedCallback(): void {
-    super.connectedCallback();
-    if (this.rpcClient && !this._controller) {
-      this._controller = createMessageCenterController(this, this.rpcClient);
-    }
-  }
-
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     this._removeEmojiOutsideListener();
@@ -331,9 +320,6 @@ export class IcMessageCenter extends LitElement {
 
   override updated(changedProperties: Map<string, unknown>): void {
     const rpcReady = this.rpcClient && this.rpcClient.status === "connected";
-    if (changedProperties.has("rpcClient") && this.rpcClient && !this._controller) {
-      this._controller = createMessageCenterController(this, this.rpcClient);
-    }
 
     // Sync effective channel from parent-provided channelType
     if (changedProperties.has("channelType") && this.channelType) {
@@ -418,11 +404,14 @@ export class IcMessageCenter extends LitElement {
 
     try {
       // Load channel list, capabilities, and channel config in parallel
-      const ctrl = this._controller!;
+      if (!this.rpcClient) {
+        throw new Error("RPC client not available");
+      }
+      const rpc = this.rpcClient;
       const [listResult, capResult, configResult] = await Promise.allSettled([
-        ctrl.listChannels(),
-        ctrl.getChannelCapabilities(channel),
-        ctrl.getChannelConfig(channel),
+        rpc.call<{ channels: Array<{ channelType: string; channelId?: string; status: string }>; total: number }>("channels.list").then((r) => r?.channels ?? []),
+        rpc.call<{ channelType: string; features: PlatformCapabilities }>("channels.capabilities", { channel_type: channel }).then((r) => r?.features ?? null),
+        rpc.call<Record<string, unknown>>("channels.get", { channel_type: channel }).then((r) => r ?? null),
       ]);
 
       // Channel list
@@ -465,10 +454,11 @@ export class IcMessageCenter extends LitElement {
    * (channel activity tracker) which tracks actual chat IDs the bot has interacted with.
    */
   private async _loadChats(): Promise<void> {
-    if (!this._controller || !this._effectiveChannel) return;
+    if (!this.rpcClient || !this._effectiveChannel) return;
 
     try {
-      const channels = await this._controller.listObsChannels();
+      const obsResult = await this.rpcClient.call<{ channels: Array<{ channelId: string; channelType: string; messagesSent: number; messagesReceived: number; lastActiveAt: number }> }>("obs.channels.all");
+      const channels = obsResult?.channels ?? [];
       const chatMap = new Map<string, string>(); // chatId -> label
 
       // Filter for the current channel type and extract chat IDs
@@ -501,16 +491,17 @@ export class IcMessageCenter extends LitElement {
   /** Re-fetch message list - uses message.fetch when the platform supports fetchHistory,
    *  otherwise falls back to stored session history via session.list + session.history. */
   private async _refetchMessages(): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
 
     // Path 1: Platform supports native fetchHistory - use message.fetch as before
     if (this._capabilities?.fetchHistory) {
       try {
-        this._messages = await this._controller.fetchMessages({
+        const fetchResult = await this.rpcClient.call<{ messages: FetchedMessage[]; channelId: string }>("message.fetch", {
           channel_type: this._effectiveChannel,
           channel_id: this._selectedChatId || this._effectiveChannel,
           limit: 50,
         });
+        this._messages = fetchResult?.messages ?? [];
       } catch {
         // Non-fatal
       }
@@ -519,7 +510,8 @@ export class IcMessageCenter extends LitElement {
 
     // Path 2: No fetchHistory - fall back to stored session data
     try {
-      const sessions = await this._controller.listSessions({ kind: "all" });
+      const sessionsResult = await this.rpcClient.call<{ sessions: Array<{ sessionKey: string; channelId: string; updatedAt: number }> }>("session.list", { kind: "all" });
+      const sessions = sessionsResult?.sessions ?? [];
       // Filter to sessions whose channelId matches the currently selected chat
       const chatId = this._selectedChatId;
       const matching = chatId
@@ -536,10 +528,11 @@ export class IcMessageCenter extends LitElement {
       const bestSession = matching[0]!;
 
       // Fetch conversation history from session store
-      const histMessages = await this._controller.loadSessionHistory({
+      const histResult = await this.rpcClient.call<{ messages: Array<{ role: string; content: string; timestamp: number }>; total: number }>("session.history", {
         session_key: bestSession.sessionKey,
         limit: 50,
       });
+      const histMessages = histResult?.messages ?? [];
 
       // Map session history messages to FetchedMessage shape
       this._messages = histMessages.map((msg, idx) => ({
@@ -583,11 +576,11 @@ export class IcMessageCenter extends LitElement {
 
   private async _handleSendConfirm(): Promise<void> {
     this._showSendConfirm = false;
-    if (!this._controller || !this._sendText.trim()) return;
+    if (!this.rpcClient || !this._sendText.trim()) return;
 
     this._actionPending = true;
     try {
-      await this._controller.sendMessage({
+      await this.rpcClient.call("message.send", {
         channel_type: this._effectiveChannel,
         channel_id: this._selectedChatId || this._effectiveChannel,
         text: this._sendText.trim(),
@@ -640,11 +633,11 @@ export class IcMessageCenter extends LitElement {
 
   private async _handleReplyConfirm(): Promise<void> {
     this._showReplyConfirm = false;
-    if (!this._controller || !this._replyText.trim() || !this._replyToId) return;
+    if (!this.rpcClient || !this._replyText.trim() || !this._replyToId) return;
 
     this._actionPending = true;
     try {
-      await this._controller.replyMessage({
+      await this.rpcClient.call("message.reply", {
         channel_type: this._effectiveChannel,
         channel_id: this._selectedChatId || this._effectiveChannel,
         text: this._replyText.trim(),
@@ -694,11 +687,11 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleEditSave(): Promise<void> {
-    if (!this._controller || !this._editText.trim() || !this._editingId) return;
+    if (!this.rpcClient || !this._editText.trim() || !this._editingId) return;
 
     this._actionPending = true;
     try {
-      await this._controller.editMessage({
+      await this.rpcClient.call("message.edit", {
         channel_type: this._effectiveChannel,
         channel_id: this._selectedChatId || this._effectiveChannel,
         message_id: this._editingId,
@@ -735,11 +728,11 @@ export class IcMessageCenter extends LitElement {
 
   private async _handleDeleteConfirm(): Promise<void> {
     this._showDeleteConfirm = false;
-    if (!this._controller || !this._deleteTargetId) return;
+    if (!this.rpcClient || !this._deleteTargetId) return;
 
     this._actionPending = true;
     try {
-      await this._controller.deleteMessage({
+      await this.rpcClient.call("message.delete", {
         channel_type: this._effectiveChannel,
         channel_id: this._selectedChatId || this._effectiveChannel,
         message_id: this._deleteTargetId,
@@ -779,12 +772,12 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleEmojiSelect(emoji: string): Promise<void> {
-    if (!this._controller || !this._reactTargetId) return;
+    if (!this.rpcClient || !this._reactTargetId) return;
 
     this._closeEmojiPicker();
     this._actionPending = true;
     try {
-      await this._controller.reactMessage({
+      await this.rpcClient.call("message.react", {
         channel_type: this._effectiveChannel,
         channel_id: this._selectedChatId || this._effectiveChannel,
         message_id: this._reactTargetId,
@@ -839,11 +832,11 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleAttachSend(): Promise<void> {
-    if (!this._controller || !this._attachUrl.trim()) return;
+    if (!this.rpcClient || !this._attachUrl.trim()) return;
 
     this._actionPending = true;
     try {
-      await this._controller.attachMessage({
+      await this.rpcClient.call("message.attach", {
         channel_type: this._effectiveChannel,
         channel_id: this._selectedChatId || this._effectiveChannel,
         attachment_url: this._attachUrl.trim(),
@@ -880,7 +873,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handlePlatformAction(platformAction: PlatformAction): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
 
     const rpcMethod = PLATFORM_RPC_METHOD[this._effectiveChannel];
     if (!rpcMethod) return;
@@ -914,7 +907,7 @@ export class IcMessageCenter extends LitElement {
     this._platformActionPending = true;
     this._actionResult = "";
     try {
-      const result = await this._controller.invokePlatformAction(rpcMethod, params);
+      const result = await this.rpcClient.call(rpcMethod, params);
       IcToast.show("Action completed", "success");
       this._actionResult = typeof result === "string" ? result : JSON.stringify(result, null, 2);
     } catch (err) {
