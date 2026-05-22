@@ -116,7 +116,7 @@ export type {
   SecretMetadata,
 } from "./secret-store.js";
 export type { OAuthCredentialStorePort, OAuthProfile } from "./oauth-credential-store.js";
-export type { Provider, ImageGenInput, ImageGenOutput, ImageGenerationPort } from "./provider.js";
+export type { ImageGenInput, ImageGenOutput, ImageGenerationPort } from "./provider.js";
 export type {
   DeliveryQueuePort,
   DeliveryQueueEntry,

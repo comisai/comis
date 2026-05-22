@@ -768,7 +768,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PluginHttpRoute",
       "OutputGuardFinding",
       "OutputGuardResult",
-      "Provider",
       "createSecretManager",
       "requiresConfirmation",
       "ActionClassification",

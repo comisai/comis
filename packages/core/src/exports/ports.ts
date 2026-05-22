@@ -98,7 +98,6 @@ export type {
   DeliveryMirrorPort,
   DeliveryMirrorEntry,
   DeliveryMirrorRecordInput,
-  Provider,
   ImageGenInput,
   ImageGenOutput,
   ImageGenerationPort,
