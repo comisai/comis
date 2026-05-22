@@ -10,7 +10,8 @@ import type {
   GatewayStatus,
   PipelineSnapshot,
 } from "../api/types/index.js";
-import type { ApiClient } from "../api/api-client.js";
+import { SSE_EVENT_TYPES } from "../api/types/index.js";
+import type { ApiClient, SseEventHandler } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
@@ -813,11 +814,31 @@ export class IcDashboard extends LitElement {
 
   // ---------------------------------------------------------------------------
   // SSE subscriber for activity feed
+  //
+  // Multiplexes `<ic-activity-feed>`'s per-handler `(event, data)` contract
+  // over `EventDispatcher.addEventListener(type, handler)`. The dispatcher
+  // already opens ONE EventSource per page (started in `app-controller.ts`);
+  // this adapter just bridges per-type listeners to the single-handler shape
+  // expected by `activity-feed.ts:267`.
+  //
+  // Inline (Option A per 57-RESEARCH.md §DUP-CONS-04 / YAGNI per AGENTS.md
+  // §2.3) — single consumer, no cross-file reuse warrants an exported helper.
   // ---------------------------------------------------------------------------
 
-  private _getSseSubscriber() {
-    if (!this.apiClient) return null;
-    return this.apiClient.subscribeEvents.bind(this.apiClient);
+  private _getSseSubscriber(): ((handler: SseEventHandler) => () => void) | null {
+    if (!this.eventDispatcher) return null;
+    const dispatcher = this.eventDispatcher;
+    return (handler: SseEventHandler) => {
+      const unsubs: Array<() => void> = [];
+      for (const eventType of SSE_EVENT_TYPES) {
+        unsubs.push(
+          dispatcher.addEventListener(eventType, (data) => handler(eventType, data)),
+        );
+      }
+      return () => {
+        for (const u of unsubs) u();
+      };
+    };
   }
 
   // ---------------------------------------------------------------------------
