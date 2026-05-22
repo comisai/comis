@@ -206,8 +206,11 @@ const IMAGE_FORMAT_KEYS = ["mimeType", "media_type", "mime_type"] as const;
  * Returns a *new* object with the substitution applied if the shape
  * matches; returns `undefined` otherwise (caller falls through to the
  * normal walk).
+ *
+ * Exported for use by `combined-walker.ts` — the combined walker runs
+ * image rewrite once per object during sanitize-stage processing.
  */
-function maybeRewriteImageObject(
+export function maybeRewriteImageObject(
   obj: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
   const data = obj["data"];
@@ -257,7 +260,14 @@ const JWT_RE = /eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
 // space or end-of-line). Case-insensitive on the prefix.
 const COOKIE_RE = /Cookie:\s*\S+/gi;
 
-function sanitizeString(input: string): string {
+/**
+ * Regex-replace embedded Authorization / JWT / Cookie credentials in
+ * free-text strings.
+ *
+ * Exported for use by `combined-walker.ts` — applied to every string
+ * value during sanitize-stage processing.
+ */
+export function sanitizeString(input: string): string {
   let out = input;
   out = out.replace(AUTH_HEADER_RE, "<redacted>");
   out = out.replace(JWT_RE, "<redacted>");
