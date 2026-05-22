@@ -9,6 +9,10 @@ export type { GatewayServerHandle } from "./server/hono-server.js";
 // Auth -- Token
 export { createTokenStore, extractBearerToken, checkScope } from "./auth/token-auth.js";
 
+// Auth -- mTLS
+export { validateCertificates, extractClientCN } from "./auth/mtls-verifier.js";
+export type { CertPaths } from "./auth/mtls-verifier.js";
+
 // Rate limiting
 export { createRateLimiter } from "./rate-limit/rate-limiter.js";
 

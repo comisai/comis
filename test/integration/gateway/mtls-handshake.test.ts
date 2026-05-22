@@ -27,17 +27,7 @@ import { join } from "node:path";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import { request as httpsRequest } from "node:https";
 import type { TLSSocket } from "node:tls";
-
-// Inlined gateway CN extractor (mtls-verifier#extractClientCN is not exported
-// from @comis/gateway; we replicate its 4-line contract here so the test
-// stays a black-box exercise of the TLS layer).
-function extractClientCN(socket: TLSSocket): string | null {
-  if (!socket.authorized) return null;
-  const cert = socket.getPeerCertificate();
-  if (!cert || !cert.subject) return null;
-  const cn = cert.subject.CN ?? null;
-  return Array.isArray(cn) ? (cn[0] ?? null) : cn;
-}
+import { extractClientCN } from "@comis/gateway";
 
 // ---------------------------------------------------------------------------
 // Skip-if-no-openssl helper
