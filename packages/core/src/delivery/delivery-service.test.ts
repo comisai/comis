@@ -1389,7 +1389,129 @@ describe("DeliveryService — full pipeline behavior", () => {
   });
 
   // -------------------------------------------------------------------------
-  // inFlightSends tracking
+  // drainInFlight (TEST-PUB-01 — internal Set ownership)
+  // -------------------------------------------------------------------------
+
+  describe("DeliveryService.drainInFlight", () => {
+    /**
+     * Build a controllable adapter whose sendMessage returns a deferred
+     * promise. `resolveAllSends()` settles every pending send with ok().
+     * Used to exercise the in-flight tracker via the production
+     * `deliverToChannel` surface — no test-only deps injection required.
+     */
+    function makeServiceWithControllableAdapter() {
+      const pending: Array<(v: Result<string, Error>) => void> = [];
+      const adapter: DeliveryAdapter = {
+        channelType: "telegram",
+        sendMessage: vi.fn().mockImplementation(
+          () =>
+            new Promise<Result<string, Error>>((resolve) => {
+              pending.push(resolve);
+            }),
+        ),
+      };
+      const service = makeDeliveryService();
+      return {
+        service,
+        adapter,
+        resolveAllSends: () => {
+          // Settle every pending promise with a successful Result.
+          let resolve: ((v: Result<string, Error>) => void) | undefined;
+          while ((resolve = pending.shift())) {
+            resolve(ok("msg-stub"));
+          }
+        },
+      };
+    }
+
+    it("resolves to zero counts when no sends are in flight", async () => {
+      const service = makeDeliveryService();
+      const result = await service.drainInFlight(5000);
+      expect(result).toEqual({ drained: 0, remaining: 0, durationMs: 0 });
+    });
+
+    it("drains all in-flight sends when they complete before the deadline", async () => {
+      const { service, adapter, resolveAllSends } = makeServiceWithControllableAdapter();
+      const p1 = service.deliverToChannel(adapter, "chan", "hello 1");
+      const p2 = service.deliverToChannel(adapter, "chan", "hello 2");
+
+      // Yield microtasks so deliverToChannel reaches the inFlightSends.add(...)
+      // line BEFORE we resolve adapter sends.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Resolve the underlying adapter sends; the in-flight Set drains via
+      // sendPromise.finally(() => inFlightSends.delete(tracked)).
+      resolveAllSends();
+      const drainResult = await service.drainInFlight(5000);
+
+      expect(drainResult.drained).toBe(2);
+      expect(drainResult.remaining).toBe(0);
+      expect(drainResult.durationMs).toBeLessThan(5000);
+      // Sanity: the deliveries themselves settle.
+      await Promise.all([p1, p2]);
+    });
+
+    it("returns remaining > 0 when a hung send exceeds the deadline", async () => {
+      const { service, adapter, resolveAllSends } = makeServiceWithControllableAdapter();
+      // Start a delivery and do NOT resolve the adapter — the underlying
+      // sendMessage promise hangs, so the inFlightSends Set holds onto it.
+      const _hung = service.deliverToChannel(adapter, "chan", "hung");
+      void _hung;
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const drainResult = await service.drainInFlight(100);
+      expect(drainResult.remaining).toBeGreaterThanOrEqual(1);
+      expect(drainResult.durationMs).toBeGreaterThanOrEqual(100);
+
+      // Cleanup so the hung promise eventually resolves (don't leak).
+      resolveAllSends();
+    });
+
+    it("permits subsequent deliverToChannel after drainInFlight resolves", async () => {
+      const { service, adapter, resolveAllSends } = makeServiceWithControllableAdapter();
+      const p1 = service.deliverToChannel(adapter, "chan", "first");
+      await Promise.resolve();
+      await Promise.resolve();
+      resolveAllSends();
+      await service.drainInFlight(5000);
+
+      // Internal Set must be empty + reusable.
+      const p2 = service.deliverToChannel(adapter, "chan", "second");
+      await Promise.resolve();
+      await Promise.resolve();
+      resolveAllSends();
+      await Promise.all([p1, p2]);
+
+      const final = await service.drainInFlight(5000);
+      expect(final.drained).toBe(0);
+      expect(final.remaining).toBe(0);
+    });
+
+    it("createDeliveryService no longer accepts an inFlightSends deps field", () => {
+      // Type-level assertion via @ts-expect-error: after TEST-PUB-01,
+      // DeliveryServiceDeps does NOT declare inFlightSends. Tests that try
+      // to pass one must fail at compile time. The runtime call still
+      // succeeds (extra properties are erased at the structural-type seam),
+      // but the @ts-expect-error directive is the load-bearing assertion.
+      const deps = {
+        hookRunner: makeNoopHookRunner(),
+        deliveryQueue: createNoOpDeliveryQueue(),
+      };
+      const _service = createDeliveryService({
+        ...deps,
+        // @ts-expect-error — inFlightSends is no longer a valid DeliveryServiceDeps field
+        inFlightSends: new Set<Promise<unknown>>(),
+      });
+      expect(_service).toBeDefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // inFlightSends tracking (legacy — REPLACED by drainInFlight tests above;
+  //   left here so Task 1 RED-state diff is visible. Task 3 REFACTOR deletes
+  //   this describe block when the deps slot is removed.)
   // -------------------------------------------------------------------------
 
   describe("inFlightSends tracking", () => {
