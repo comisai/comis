@@ -34,9 +34,9 @@ describe("channel plugin integration", () => {
       // Verify capabilities are accessible
       const caps = channelRegistry.getCapabilities("echo");
       expect(caps).toBeDefined();
-      expect(caps?.chatTypes).toContain("dm");
+      expect(caps?.features.reactions).toBe(false);
       expect(caps?.limits.maxMessageChars).toBe(10000);
-      expect(caps?.streaming.supported).toBe(false);
+      expect(caps?.features.attachments).toBe(false);
 
       // Verify channel type is listed
       expect(channelRegistry.getChannelTypes()).toContain("echo");
@@ -110,7 +110,7 @@ describe("channel plugin integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("capability-driven behavior", () => {
-    it("echo plugin capabilities indicate streaming not supported", () => {
+    it("echo plugin capabilities expose maxMessageChars for size enforcement", () => {
       const { channelRegistry } = setup();
       const echoPlugin = createEchoPlugin();
 
@@ -118,16 +118,16 @@ describe("channel plugin integration", () => {
 
       const caps = channelRegistry.getCapabilities("echo");
       expect(caps).toBeDefined();
-      expect(caps!.streaming.supported).toBe(false);
+      expect(caps!.limits.maxMessageChars).toBeGreaterThan(0);
 
-      // A helper function that uses capabilities to decide streaming behavior
-      function shouldUseStreaming(channelType: string): boolean {
+      // A helper function that uses capabilities to decide message-size policy
+      function maxCharsFor(channelType: string): number {
         const channelCaps = channelRegistry.getCapabilities(channelType);
-        return channelCaps?.streaming.supported === true;
+        return channelCaps?.limits.maxMessageChars ?? 0;
       }
 
-      expect(shouldUseStreaming("echo")).toBe(false);
-      expect(shouldUseStreaming("nonexistent")).toBe(false);
+      expect(maxCharsFor("echo")).toBeGreaterThan(0);
+      expect(maxCharsFor("nonexistent")).toBe(0);
     });
   });
 });

@@ -51,18 +51,13 @@ describe("createSignalPlugin", () => {
     expect(plugin.channelType).toBe("signal");
   });
 
-  it("has capabilities with expected chatTypes", () => {
+  it("has capabilities with expected features", () => {
     const plugin = createSignalPlugin(makeDeps());
 
-    expect(plugin.capabilities.chatTypes).toContain("dm");
-    expect(plugin.capabilities.chatTypes).toContain("group");
-  });
-
-  it("has streaming support via block method", () => {
-    const plugin = createSignalPlugin(makeDeps());
-
-    expect(plugin.capabilities.streaming?.supported).toBe(true);
-    expect(plugin.capabilities.streaming?.method).toBe("block");
+    expect(plugin.capabilities.features.reactions).toBe(true);
+    expect(plugin.capabilities.features.editMessages).toBe(false);
+    expect(plugin.capabilities.features.attachments).toBe(true);
+    expect(plugin.capabilities.replyToMetaKey).toBe("signalTimestamp");
   });
 
   it("register() returns ok", () => {

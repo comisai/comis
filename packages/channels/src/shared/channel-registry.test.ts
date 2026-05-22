@@ -46,31 +46,15 @@ function createTestChannelPlugin(
     createMockAdapter({ channelId: `${channelType}-test`, channelType });
 
   const capabilities: ChannelCapability = overrides.capabilities ?? {
-    chatTypes: ["dm"],
     features: {
       reactions: false,
       editMessages: false,
       deleteMessages: false,
       fetchHistory: false,
       attachments: false,
-      threads: false,
-      mentions: false,
-      formatting: [],
-      buttons: false,
-      cards: false,
-      effects: false,
     },
     limits: {
       maxMessageChars: 4096,
-    },
-    streaming: {
-      supported: false,
-      throttleMs: 300,
-      method: "none",
-    },
-    threading: {
-      supported: false,
-      threadType: "none",
     },
   };
 
@@ -136,30 +120,14 @@ describe("channel-registry", () => {
         channelType: "broken",
         // Force invalid capabilities -- missing required limits.maxMessageChars
         capabilities: {
-          chatTypes: ["dm"],
           features: {
             reactions: false,
             editMessages: false,
             deleteMessages: false,
             fetchHistory: false,
             attachments: false,
-            threads: false,
-            mentions: false,
-            formatting: [],
-            buttons: false,
-            cards: false,
-            effects: false,
           },
           limits: {} as ChannelCapability["limits"], // missing maxMessageChars
-          streaming: {
-            supported: false,
-            throttleMs: 300,
-            method: "none",
-          },
-          threading: {
-            supported: false,
-            threadType: "none",
-          },
         },
       });
 
@@ -223,7 +191,7 @@ describe("channel-registry", () => {
       const caps = channelRegistry.getCapabilities("discord");
 
       expect(caps).toBeDefined();
-      expect(caps?.chatTypes).toContain("dm");
+      expect(caps?.features.reactions).toBe(false);
       expect(caps?.limits.maxMessageChars).toBe(4096);
     });
 

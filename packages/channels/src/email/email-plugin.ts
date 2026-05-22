@@ -18,31 +18,15 @@ import { createEmailAdapter, type EmailAdapterDeps } from "./email-adapter.js";
 
 /** Email platform capabilities (self-declared, validated at registration). */
 const EMAIL_CAPABILITIES: ChannelCapability = {
-  chatTypes: ["dm"],
   features: {
     reactions: false,
     editMessages: false,
     deleteMessages: false,
     fetchHistory: false,
     attachments: true,
-    threads: true,
-    mentions: false,
-    formatting: ["html"],
-    buttons: false,
-    cards: false,
-    effects: false,
   },
   limits: {
     maxMessageChars: 100_000,
-  },
-  streaming: {
-    supported: false,
-    throttleMs: 300,
-    method: "none",
-  },
-  threading: {
-    supported: true,
-    threadType: "reply-chain",
   },
   replyToMetaKey: "emailMessageId",
 };

@@ -56,20 +56,13 @@ describe("createSlackPlugin", () => {
     expect(plugin.channelType).toBe("slack");
   });
 
-  it("has capabilities with expected chatTypes", () => {
+  it("has capabilities with expected features", () => {
     const plugin = createSlackPlugin(makeDeps());
 
-    expect(plugin.capabilities.chatTypes).toContain("dm");
-    expect(plugin.capabilities.chatTypes).toContain("group");
-    expect(plugin.capabilities.chatTypes).toContain("thread");
-    expect(plugin.capabilities.chatTypes).toContain("channel");
-  });
-
-  it("has streaming support via edit method", () => {
-    const plugin = createSlackPlugin(makeDeps());
-
-    expect(plugin.capabilities.streaming?.supported).toBe(true);
-    expect(plugin.capabilities.streaming?.method).toBe("edit");
+    expect(plugin.capabilities.features.reactions).toBe(true);
+    expect(plugin.capabilities.features.editMessages).toBe(true);
+    expect(plugin.capabilities.features.fetchHistory).toBe(true);
+    expect(plugin.capabilities.replyToMetaKey).toBe("slackTs");
   });
 
   it("register() returns ok", () => {

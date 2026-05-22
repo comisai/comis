@@ -92,28 +92,16 @@ describe("createEmailPlugin", () => {
     expect(plugin.capabilities.features.editMessages).toBe(false);
   });
 
-  it("capabilities.features.threads is true", async () => {
+  it("capabilities.features.attachments is true", async () => {
     const { createEmailPlugin } = await getModule();
     const plugin = createEmailPlugin(makeDeps());
-    expect(plugin.capabilities.features.threads).toBe(true);
-  });
-
-  it("capabilities.features.formatting includes 'html'", async () => {
-    const { createEmailPlugin } = await getModule();
-    const plugin = createEmailPlugin(makeDeps());
-    expect(plugin.capabilities.features.formatting).toContain("html");
+    expect(plugin.capabilities.features.attachments).toBe(true);
   });
 
   it("capabilities.limits.maxMessageChars is 100_000", async () => {
     const { createEmailPlugin } = await getModule();
     const plugin = createEmailPlugin(makeDeps());
     expect(plugin.capabilities.limits.maxMessageChars).toBe(100_000);
-  });
-
-  it("capabilities.threading.threadType is 'reply-chain'", async () => {
-    const { createEmailPlugin } = await getModule();
-    const plugin = createEmailPlugin(makeDeps());
-    expect(plugin.capabilities.threading.threadType).toBe("reply-chain");
   });
 
   it("replyToMetaKey is 'emailMessageId'", async () => {

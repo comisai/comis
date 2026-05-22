@@ -14,33 +14,15 @@ import { createSlackAdapter, type SlackAdapterDeps } from "./slack-adapter.js";
 
 /** Slack platform capabilities (self-declared, validated at registration). */
 const CAPABILITIES: ChannelCapability = {
-  chatTypes: ["dm", "group", "thread", "channel"],
   features: {
     reactions: true,
     editMessages: true,
     deleteMessages: true,
     fetchHistory: true,
     attachments: true,
-    threads: true,
-    mentions: true,
-    formatting: ["mrkdwn"],
-    buttons: true,
-    cards: true,
-    effects: false,
   },
   limits: {
     maxMessageChars: 4000,
-    maxAttachmentSizeMb: 1000,
-  },
-  streaming: {
-    supported: true,
-    throttleMs: 400,
-    maxChars: 4000,
-    method: "edit",
-  },
-  threading: {
-    supported: true,
-    threadType: "reply-chain",
   },
   replyToMetaKey: "slackTs",
 };

@@ -758,12 +758,6 @@ describe("createChannelHandlers - channel management", () => {
             deleteMessages: true,
             fetchHistory: false,
             attachments: true,
-            threads: true,
-            mentions: true,
-            formatting: ["bold", "italic"],
-            buttons: true,
-            cards: true,
-            effects: true,
           },
         },
       };
@@ -778,7 +772,7 @@ describe("createChannelHandlers - channel management", () => {
       expect(result.channelType).toBe("telegram");
       expect(result.features.reactions).toBe(true);
       expect(result.features.editMessages).toBe(true);
-      expect(result.features.threads).toBe(true);
+      expect(result.features.attachments).toBe(true);
     });
 
     it("throws when channel_type is missing", async () => {

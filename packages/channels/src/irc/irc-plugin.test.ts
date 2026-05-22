@@ -55,17 +55,17 @@ describe("createIrcPlugin", () => {
     expect(plugin.channelType).toBe("irc");
   });
 
-  it("has capabilities with expected chatTypes", () => {
+  it("has capabilities with no reactions or attachments", () => {
     const plugin = createIrcPlugin(makeDeps());
 
-    expect(plugin.capabilities.chatTypes).toContain("dm");
-    expect(plugin.capabilities.chatTypes).toContain("channel");
+    expect(plugin.capabilities.features.reactions).toBe(false);
+    expect(plugin.capabilities.features.attachments).toBe(false);
   });
 
-  it("has no streaming support", () => {
+  it("declares irc-specific replyToMetaKey", () => {
     const plugin = createIrcPlugin(makeDeps());
 
-    expect(plugin.capabilities.streaming?.supported).toBe(false);
+    expect(plugin.capabilities.replyToMetaKey).toBe("ircMessageId");
   });
 
   it("has 512 char message limit", () => {
