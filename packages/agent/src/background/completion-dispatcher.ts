@@ -116,11 +116,9 @@ export interface DispatcherTaskManager {
 /**
  * Dispatcher dependencies.
  *
- * Public minimum: `eventBus`, `taskManager`, `logger`. Tests use
- * `notifyFn`; production wires both `notifyFn` and `fallbackNotifyFn`
- * (they are aliases — the dispatcher prefers `fallbackNotifyFn` when
- * both are provided so production callers reading the daemon wiring
- * see the canonical name).
+ * Public minimum: `eventBus`, `taskManager`, `logger`. Production wires
+ * `fallbackNotifyFn` (the user-visible notification fired when the
+ * dispatcher cannot route to the originating session).
  *
  * `sessionStore` + `maxBackgroundHops` are optional. When absent, the
  * dispatcher falls back to the safe behavior: pending → dispatched
@@ -132,12 +130,9 @@ export interface CompletionDispatcherDeps {
   taskManager: DispatcherTaskManager;
   /**
    * User-visible notification fired when the dispatcher cannot route to
-   * the originating session. Either name accepted; `fallbackNotifyFn`
-   * preferred when both are provided.
+   * the originating session.
    */
   fallbackNotifyFn?: NotifyFn;
-  /** Alias for `fallbackNotifyFn` (test fixture compatibility). */
-  notifyFn?: NotifyFn;
   /** Active-session check (production wiring). When absent, the dispatcher
    *  defers to the runner without firing fallback. */
   sessionStore?: DispatcherSessionStore;
@@ -165,7 +160,7 @@ export function createCompletionDispatcher(
   deps: CompletionDispatcherDeps,
 ): CompletionDispatcher {
   const log = deps.logger.child({ submodule: "completion-dispatcher" });
-  const fallback = deps.fallbackNotifyFn ?? deps.notifyFn;
+  const fallback = deps.fallbackNotifyFn;
   let stopped = false;
   let inflight: Promise<void> = Promise.resolve();
 
@@ -313,7 +308,7 @@ export function createCompletionDispatcher(
           traceId: task.origin?.traceId ?? undefined,
           hint: "No fallbackNotifyFn wired; dispatcher cannot fire user-visible notification",
         },
-        "Completion dispatcher: fallback skipped (no notifyFn)",
+        "Completion dispatcher: fallback skipped (no fallbackNotifyFn)",
       );
       return;
     }

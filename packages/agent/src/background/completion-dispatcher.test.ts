@@ -68,7 +68,7 @@ async function loadDispatcher(): Promise<
       createCompletionDispatcher: (deps: {
         eventBus: import("@comis/core").TypedEventBus;
         taskManager: { getTask: (id: string) => unknown };
-        notifyFn: (...args: unknown[]) => void | Promise<unknown>;
+        fallbackNotifyFn: (...args: unknown[]) => void | Promise<unknown>;
         logger: import("@comis/core").ComisLogger;
       }) => { shutdown: () => Promise<void> };
     }
@@ -81,7 +81,7 @@ async function loadDispatcher(): Promise<
       createCompletionDispatcher: (deps: {
         eventBus: import("@comis/core").TypedEventBus;
         taskManager: { getTask: (id: string) => unknown };
-        notifyFn: (...args: unknown[]) => void | Promise<unknown>;
+        fallbackNotifyFn: (...args: unknown[]) => void | Promise<unknown>;
         logger: import("@comis/core").ComisLogger;
       }) => { shutdown: () => Promise<void> };
     };
@@ -93,15 +93,15 @@ async function loadDispatcher(): Promise<
 describe("createCompletionDispatcher: at-most-once routing via dispatchState", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let taskManager: { getTask: ReturnType<typeof vi.fn> };
-  let notifyFn: ReturnType<typeof vi.fn>;
+  let fallbackNotifyFn: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     eventBus = createFakeEventBus();
     taskManager = { getTask: vi.fn() };
-    notifyFn = vi.fn().mockResolvedValue(undefined);
+    fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
   });
 
-  it("pending → dispatched transition does NOT call notifyFn (single-owner reentry)", async () => {
+  it("pending → dispatched transition does NOT call fallbackNotifyFn (single-owner reentry)", async () => {
     const mod = await loadDispatcher();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -111,7 +111,7 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     const dispatcher = mod.createCompletionDispatcher({
       eventBus,
       taskManager,
-      notifyFn,
+      fallbackNotifyFn,
       logger: makeLogger(),
     });
 
@@ -127,13 +127,13 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     await new Promise((r) => setTimeout(r, 5));
 
     // Pending → dispatched: completion-runner reentry handles it. The
-    // dispatcher MUST NOT call the notifyFn fallback (zero spurious
+    // dispatcher MUST NOT call the fallbackNotifyFn fallback (zero spurious
     // notifications).
-    expect(notifyFn).not.toHaveBeenCalled();
+    expect(fallbackNotifyFn).not.toHaveBeenCalled();
     await dispatcher.shutdown();
   });
 
-  it("already-notified state does NOT call notifyFn again (at-most-once)", async () => {
+  it("already-notified state does NOT call fallbackNotifyFn again (at-most-once)", async () => {
     const mod = await loadDispatcher();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -143,7 +143,7 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     const dispatcher = mod.createCompletionDispatcher({
       eventBus,
       taskManager,
-      notifyFn,
+      fallbackNotifyFn,
       logger: makeLogger(),
     });
 
@@ -158,7 +158,7 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     await new Promise((r) => setTimeout(r, 5));
 
     // Already notified — the dispatcher MUST NOT double-notify.
-    expect(notifyFn).not.toHaveBeenCalled();
+    expect(fallbackNotifyFn).not.toHaveBeenCalled();
     await dispatcher.shutdown();
   });
 });
