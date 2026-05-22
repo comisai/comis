@@ -111,9 +111,11 @@ export interface PlatformToolBuildContext {
   readonly eventBus?: unknown;
   /**
    * Optional callback for suspicious content detection. Forwarded by the
-   * daemon (built once per process in `stages/agents-helpers.ts:buildAuditBundle`).
-   * Currently consumed by the MCP bridge via `mcpToolsToAgentTools` and reserved
-   * for future MCP-wrapping platform-tool descriptors.
+   * daemon (built once per process inside `bootAgents` in `daemon.ts`,
+   * from the audit-aggregator constructed there; Phase 59 REFACTOR-01
+   * inlined the former `buildAuditBundle` helper directly into the stage
+   * body). Currently consumed by the MCP bridge via `mcpToolsToAgentTools`
+   * and reserved for future MCP-wrapping platform-tool descriptors.
    */
   readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /** `image_generate` tool's conditional predicate signal (truthy when provider wired). */
