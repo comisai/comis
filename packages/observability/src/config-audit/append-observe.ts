@@ -39,6 +39,7 @@ import {
   redactConfigAuditArgv,
   CONFIG_AUDIT_ARGV_CAP,
 } from "./argv-redactor.js";
+import { emitSerializationErrorSentinel } from "./serialization-sentinel.js";
 import { detectSuspicious } from "./suspicious.js";
 import {
   DEFAULT_KEEP_ROTATED,
@@ -257,21 +258,7 @@ function encodeObserveRecord(record: ConfigObserveAuditRecord): string {
   sanitized.argv = argvRedacted;
   const json = safeJsonStringify(sanitized);
   if (json === undefined) {
-    // Hand-crafted sentinel that always serializes. Matches the
-    // write-side fallback in `emitSerializationErrorSentinel` — we
-    // duplicate it here so the observe writer can stand alone.
-    const sentinel = {
-      traceSchema: "comis-config-audit" as const,
-      schemaVersion: 1 as const,
-      __serializationError: "record-not-serializable" as const,
-      ts: systemDateFrom(systemNowMs()).toISOString(),
-    };
-    // Sentinel is hand-crafted with only string + number literals so
-    // JSON.stringify cannot return undefined. The non-null assertion
-    // is a defense-in-depth contract: the caller never sees `undefined`
-    // come back from this fallback path.
-    const sentinelJson = JSON.stringify(sentinel);
-    return (sentinelJson ?? "{}") + "\n";
+    return emitSerializationErrorSentinel();
   }
   return json + "\n";
 }
