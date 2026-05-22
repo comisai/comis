@@ -48,16 +48,6 @@ export type { DuplicateDetector, DeliveryBridgeDeps, DeliveryTarget, DeliveryOut
 export { isInQuietHours, parseTimeToMinutes, getCurrentMinutesInTimezone } from "./heartbeat/index.js";
 export type { QuietHoursConfig } from "./heartbeat/index.js";
 
-// Task extraction
-export { createTaskExtractor } from "./tasks/task-extractor.js";
-export type { TaskExtractor, TaskExtractorDeps, ExtractionFn } from "./tasks/task-extractor.js";
-export { createTaskStore } from "./tasks/task-store.js";
-export type { TaskStore } from "./tasks/task-store.js";
-export type { ExtractedTask, TaskPriority, TaskStatus, TaskExtractionResult } from "./tasks/task-types.js";
-export { ExtractedTaskSchema, TaskExtractionResultSchema, TaskPrioritySchema, TaskStatusSchema } from "./tasks/task-types.js";
-export { scorePriority, rankTasks, PRIORITY_WEIGHTS } from "./tasks/task-priority.js";
-export type { PriorityScore } from "./tasks/task-priority.js";
-
 // File gate: trigger-based bypass logic
 export { shouldBypassFileGates } from "./heartbeat/index.js";
 export type { HeartbeatTriggerKind } from "./heartbeat/index.js";
