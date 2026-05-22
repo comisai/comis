@@ -85,8 +85,10 @@ const BASELINE_INTRA_PACKAGE_CYCLES: ReadonlySet<string> = new Set([
   "orchestrator/src/execution/execution-filter.ts|orchestrator/src/execution/execution-pipeline.ts",
   "orchestrator/src/execution/execution-pipeline.ts|orchestrator/src/execution/execution-policy.ts",
   "orchestrator/src/inbound/inbound-gate.ts|orchestrator/src/inbound/inbound-pipeline.ts",
-  "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/inbound-preprocess.ts",
-  "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/inbound-resolve.ts",
+  // Phase 59-04 merged inbound-resolve.ts + inbound-preprocess.ts -> resolve-and-preprocess.ts;
+  // the two pre-collapse cycle entries (inbound-pipeline|inbound-preprocess and
+  // inbound-pipeline|inbound-resolve) became the single entry below.
+  "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/resolve-and-preprocess.ts",
   "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/inbound-route.ts",
   "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/inbound-setup.ts",
   "channels/src/slack/media-handler.ts|channels/src/slack/message-mapper.ts",
