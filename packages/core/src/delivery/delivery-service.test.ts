@@ -95,9 +95,13 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     expect(typeof service.deliverToChannel).toBe("function");
   });
 
-  it("Test 2: returned shape matches the single-method interface", () => {
+  it("Test 2: returned shape matches the deliverToChannel + drainInFlight interface", () => {
     const service = createDeliveryService(makeDeps());
-    expect(Object.keys(service)).toEqual(["deliverToChannel"]);
+    // After TEST-PUB-01 the service exposes both `deliverToChannel` (per-call
+    // outbound delivery) and `drainInFlight` (shutdown drain). Ordering is
+    // factory-emission order — assert on the Set so iteration order is
+    // irrelevant.
+    expect(new Set(Object.keys(service))).toEqual(new Set(["deliverToChannel", "drainInFlight"]));
   });
 
   it("Test 3: constructing the service does NOT call tryGetContext()", () => {
@@ -1508,89 +1512,4 @@ describe("DeliveryService — full pipeline behavior", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // inFlightSends tracking (legacy — REPLACED by drainInFlight tests above;
-  //   left here so Task 1 RED-state diff is visible. Task 3 REFACTOR deletes
-  //   this describe block when the deps slot is removed.)
-  // -------------------------------------------------------------------------
-
-  describe("inFlightSends tracking", () => {
-    function createMockQueueForInFlight(): DeliveryQueuePort & {
-      enqueue: ReturnType<typeof vi.fn>;
-      enqueueInFlight: ReturnType<typeof vi.fn>;
-      ack: ReturnType<typeof vi.fn>;
-      nack: ReturnType<typeof vi.fn>;
-      fail: ReturnType<typeof vi.fn>;
-    } {
-      return {
-        enqueue: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
-        enqueueInFlight: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
-        ack: vi.fn().mockResolvedValue(ok(undefined)),
-        nack: vi.fn().mockResolvedValue(ok(undefined)),
-        fail: vi.fn().mockResolvedValue(ok(undefined)),
-        pendingEntries: vi.fn().mockResolvedValue(ok([])),
-        pruneExpired: vi.fn().mockResolvedValue(ok(0)),
-        statusCounts: vi.fn().mockResolvedValue(
-          ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
-        ),
-        recoverInFlight: vi.fn().mockResolvedValue(ok(0)),
-      };
-    }
-
-    it("adds sendPromise to inFlightSends Set before await and removes via finally on success", async () => {
-      const adapter = createMockAdapter("telegram");
-      let resolveSend: (v: Result<string, Error>) => void = () => {};
-      adapter.sendMessage.mockImplementation(
-        () =>
-          new Promise<Result<string, Error>>((resolve) => {
-            resolveSend = resolve;
-          }),
-      );
-      const inFlightSends = new Set<Promise<unknown>>();
-      const queue = createMockQueueForInFlight();
-      const service = makeDeliveryService({ deliveryQueue: queue, inFlightSends });
-
-      const deliveryPromise = service.deliverToChannel(adapter, "chat-1", "Hello");
-
-      // Allow microtasks to run: the send is now in-flight (awaiting resolution).
-      // The Set must observe the promise BEFORE the await -- this is the
-      // load-bearing assertion for SIGUSR2 mid-send detection.
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(inFlightSends.size).toBe(1);
-
-      resolveSend(ok("msg-id-1"));
-      await deliveryPromise;
-
-      // After settle, .finally must have removed the entry.
-      expect(inFlightSends.size).toBe(0);
-    });
-
-    it("removes sendPromise via finally even when sendMessage rejects (Result err)", async () => {
-      const adapter = createMockAdapter("telegram");
-      let resolveSend: (v: Result<string, Error>) => void = () => {};
-      adapter.sendMessage.mockImplementation(
-        () =>
-          new Promise<Result<string, Error>>((resolve) => {
-            resolveSend = resolve;
-          }),
-      );
-      const inFlightSends = new Set<Promise<unknown>>();
-      const queue = createMockQueueForInFlight();
-      const service = makeDeliveryService({ deliveryQueue: queue, inFlightSends });
-
-      const deliveryPromise = service.deliverToChannel(adapter, "chat-1", "Hello");
-
-      // Allow microtasks: send is in-flight, Set has 1 entry.
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(inFlightSends.size).toBe(1);
-
-      // Resolve the promise with an err Result -- still settles, .finally fires.
-      resolveSend(err(new Error("Network exploded")));
-      await deliveryPromise;
-
-      expect(inFlightSends.size).toBe(0);
-    });
-  });
 });

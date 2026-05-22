@@ -82,6 +82,10 @@ export function makeDeliveryService(
     retryEngine: overrides.retryEngine,
     maxCharsOverride: overrides.maxCharsOverride,
     replyMode: overrides.replyMode,
-    inFlightSends: overrides.inFlightSends,
+    // TEST-PUB-01: in-flight outbound tracking is now internal to
+    // createDeliveryService (see DeliveryService.drainInFlight). Tests that
+    // need to observe in-flight Set state should drive it through the
+    // production `deliverToChannel` surface and assert via `drainInFlight()`
+    // telemetry rather than injecting a Set via deps.
   });
 }
