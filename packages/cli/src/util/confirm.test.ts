@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import chalk from "chalk";
 
 // Mock @clack/prompts before importing the confirm helper so the helper
 // resolves to the mocked module.
@@ -12,6 +13,8 @@ import * as p from "@clack/prompts";
 import { confirm } from "./confirm.js";
 
 describe("confirm", () => {
+  let originalChalkLevel: number;
+
   beforeEach(() => {
     vi.mocked(p.confirm).mockReset();
     vi.mocked(p.isCancel).mockReset();
@@ -19,10 +22,17 @@ describe("confirm", () => {
     vi.mocked(p.isCancel).mockImplementation(
       (v: unknown) => typeof v === "symbol",
     );
+    // Force chalk to emit ANSI escape codes regardless of TTY detection —
+    // Vitest runs in a no-TTY worker, where chalk.level defaults to 0 and
+    // chalk.yellow("X") returns the bare string "X". We need level >= 1 to
+    // assert on the ANSI styling produced by the production helper.
+    originalChalkLevel = chalk.level;
+    chalk.level = 1;
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    chalk.level = originalChalkLevel as 0 | 1 | 2 | 3;
   });
 
   it("returns true when p.confirm resolves true", async () => {
@@ -63,7 +73,9 @@ describe("confirm", () => {
     await confirm({ message: "Delete?" });
     const call = vi.mocked(p.confirm).mock.calls[0]?.[0];
     expect(call?.message).toContain("Delete?");
-    // chalk.yellow emits an ANSI escape sequence (starts with ESC = \x1b or [):
-    expect(call?.message).toMatch(/\[|\[\d+m/);
+    // chalk.yellow emits an ANSI escape sequence: ESC (\x1b) + "[" + digits + "m".
+    // Yellow's foreground code is 33m; the helper wraps the message in
+    // chalk.yellow so the produced string starts with "\x1b[33m".
+    expect(call?.message).toMatch(/\x1b\[\d+m/);
   });
 });
