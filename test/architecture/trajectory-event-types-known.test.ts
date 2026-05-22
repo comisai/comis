@@ -97,7 +97,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // Model catalog + observability metadata not tied to a single turn.
   // -------------------------------------------------------------------
   "model:catalog_loaded",
-  "model:lkw_fallback_succeeded",
   "observability:cache_break",
   "observability:latency",
 

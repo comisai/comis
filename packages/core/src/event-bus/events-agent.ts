@@ -295,13 +295,6 @@ export interface AgentEvents {
     timestamp: number;
   };
 
-  /** Last-known-working model fallback: LKW model succeeded */
-  "model:lkw_fallback_succeeded": {
-    provider: string;
-    model: string;
-    timestamp: number;
-  };
-
   /** Auth profile entered cooldown after failure */
   "model:auth_cooldown": {
     keyName: string;
