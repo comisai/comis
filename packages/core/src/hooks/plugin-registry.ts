@@ -35,9 +35,8 @@ export interface PluginRegistry {
  * inspect plugin lifecycle now poll PluginRegistry state directly via
  * the surviving accessor surface.
  */
-export interface PluginRegistryOptions {
-  // Reserved for future option keys; intentionally empty post-EVENT-CLEAN-07.
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- reserved for future option keys; intentionally empty post-EVENT-CLEAN-07 (Phase 52)
+export interface PluginRegistryOptions {}
 
 /**
  * Create a plugin registry that stores plugins and their hooks.
