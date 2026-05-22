@@ -229,7 +229,7 @@ export function createAnthropicVisionProvider(
         const result = await analyzeWithAnthropic(
           req.image,
           req.prompt,
-          { mimeType: req.mimeType, maxTokens: req.maxTokens },
+          { mimeType: req.mimeType, maxTokens },
           {
             apiKey,
             model: resolvedModel,
@@ -272,7 +272,7 @@ export function createOpenAIVisionProvider(
         const result = await analyzeWithOpenAI(
           req.image,
           req.prompt,
-          { mimeType: req.mimeType, maxTokens: req.maxTokens },
+          { mimeType: req.mimeType, maxTokens },
           {
             apiKey,
             model: resolvedModel,
