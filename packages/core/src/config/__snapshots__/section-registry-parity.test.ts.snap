@@ -5270,8 +5270,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("memor
   },
   {
     "default": {
-      "maxAgeDays": 0,
-      "maxEntries": 0
+      "maxAgeDays": 0
     },
     "immutable": false,
     "path": "memory.retention",
@@ -5281,12 +5280,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("memor
     "default": 0,
     "immutable": false,
     "path": "memory.retention.maxAgeDays",
-    "type": "integer"
-  },
-  {
-    "default": 0,
-    "immutable": false,
-    "path": "memory.retention.maxEntries",
     "type": "integer"
   },
   {
@@ -10702,8 +10695,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "embeddingDimensions": 1536,
       "embeddingModel": "text-embedding-3-small",
       "retention": {
-        "maxAgeDays": 0,
-        "maxEntries": 0
+        "maxAgeDays": 0
       },
       "walMode": true
     },
@@ -10759,8 +10751,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "maxAgeDays": 0,
-      "maxEntries": 0
+      "maxAgeDays": 0
     },
     "immutable": false,
     "path": "memory.retention",
@@ -10770,12 +10761,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": 0,
     "immutable": false,
     "path": "memory.retention.maxAgeDays",
-    "type": "integer"
-  },
-  {
-    "default": 0,
-    "immutable": false,
-    "path": "memory.retention.maxEntries",
     "type": "integer"
   },
   {
@@ -19538,8 +19523,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
     "retention": {
       "additionalProperties": false,
       "default": {
-        "maxAgeDays": 0,
-        "maxEntries": 0
+        "maxAgeDays": 0
       },
       "properties": {
         "maxAgeDays": {
@@ -19547,17 +19531,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
           "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
-        },
-        "maxEntries": {
-          "default": 0,
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
         }
       },
       "required": [
-        "maxAgeDays",
-        "maxEntries"
+        "maxAgeDays"
       ],
       "type": "object"
     },
@@ -28810,8 +28787,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "embeddingDimensions": 1536,
         "embeddingModel": "text-embedding-3-small",
         "retention": {
-          "maxAgeDays": 0,
-          "maxEntries": 0
+          "maxAgeDays": 0
         },
         "walMode": true
       },
@@ -28865,8 +28841,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "retention": {
           "additionalProperties": false,
           "default": {
-            "maxAgeDays": 0,
-            "maxEntries": 0
+            "maxAgeDays": 0
           },
           "properties": {
             "maxAgeDays": {
@@ -28874,17 +28849,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maximum": 9007199254740991,
               "minimum": 0,
               "type": "integer"
-            },
-            "maxEntries": {
-              "default": 0,
-              "maximum": 9007199254740991,
-              "minimum": 0,
-              "type": "integer"
             }
           },
           "required": [
-            "maxAgeDays",
-            "maxEntries"
+            "maxAgeDays"
           ],
           "type": "object"
         },

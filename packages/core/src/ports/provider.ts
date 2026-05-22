@@ -2,26 +2,6 @@
 import type { Result } from "@comis/shared";
 
 /**
- * Unified provider interface for external service integrations.
- *
- * Generic over input and output types to support diverse provider
- * categories (image generation, TTS, transcription, etc.).
- *
- * @template TInput - Provider-specific request payload
- * @template TOutput - Provider-specific response payload
- */
-export interface Provider<TInput, TOutput> {
-  /** Unique provider identifier (e.g., "fal", "openai") */
-  readonly id: string;
-  /** Whether the provider is currently available (API key present, etc.) */
-  isAvailable(): boolean;
-  /** Execute the provider with the given input */
-  execute(input: TInput): Promise<Result<TOutput, Error>>;
-  /** Optional cost estimation for the given input */
-  estimateCost?(input: TInput): number | undefined;
-}
-
-/**
  * Input for image generation providers.
  */
 export interface ImageGenInput {
@@ -44,6 +24,19 @@ export interface ImageGenOutput {
 }
 
 /**
- * Image generation port -- specialized Provider for image generation.
+ * Image generation port — concrete hexagonal boundary for image-generation
+ * adapters (OpenAI gpt-image-1, fal.ai, etc.).
+ *
+ * Plan 51.02 SPEC-ABS-01 inlined the previous `Provider<TInput, TOutput>`
+ * generic into this concrete interface: the generic had a single consumer
+ * (`ImageGenerationPort`), and the optional `estimateCost` field had zero
+ * production callers.
  */
-export type ImageGenerationPort = Provider<ImageGenInput, ImageGenOutput>;
+export interface ImageGenerationPort {
+  /** Unique provider identifier (e.g., "fal", "openai") */
+  readonly id: string;
+  /** Whether the provider is currently available (API key present, etc.) */
+  isAvailable(): boolean;
+  /** Execute the provider with the given input */
+  execute(input: ImageGenInput): Promise<Result<ImageGenOutput, Error>>;
+}

@@ -36,7 +36,6 @@ export type {
   ObsTableName,
   ResetResult,
   PruneResult,
-  TokenUsageQueryParams,
   DeliveryQueryParams,
   DiagnosticQueryParams,
   SystemPromptReportRow,

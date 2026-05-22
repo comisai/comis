@@ -18,7 +18,6 @@ export type {
   InspectFilters,
   ClearScope,
   MemoryStats,
-  GuardrailResult,
 } from "./memory-api.js";
 
 // Embedding queue (async background embedding generation)

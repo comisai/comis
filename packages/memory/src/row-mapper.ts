@@ -299,7 +299,7 @@ export interface MapperError {
 
 /**
  * Generic typed row mapper. Wraps a Zod schema with Result-returning
- * parseRow / parseOptionalRow / parseRows methods.
+ * parseOptionalRow / parseRows methods.
  *
  * Created via createRowMapper(schema). Used at every memory-package SQLite
  * call site to replace `db.prepare(...).all() as Foo[]` casts.
@@ -307,8 +307,6 @@ export interface MapperError {
  * @template TRow The parsed row type (matches the Zod schema's output).
  */
 export interface RowMapper<TRow> {
-  /** Parse a single row from `Statement.get()` or single-row results. */
-  parseRow(raw: unknown): Result<TRow, MapperError>;
   /**
    * Parse a single row that may be absent (`Statement.get()` returns
    * `undefined` when no row matched). Distinguishes:
@@ -350,20 +348,6 @@ function issuesFromZod(
  */
 export function createRowMapper<TRow>(schema: ZodType<TRow>): RowMapper<TRow> {
   return {
-    parseRow(raw) {
-      const parsed = schema.safeParse(raw);
-      if (!parsed.success) {
-        const issues = issuesFromZod(parsed.error);
-        const path = issues[0]?.path.join(".") ?? "<root>";
-        return err({
-          code: "row-validation-failed",
-          message: `Row validation failed at ${path}`,
-          path,
-          issues,
-        });
-      }
-      return ok(parsed.data);
-    },
     parseOptionalRow(raw) {
       // Undefined input → ok(undefined) (no row matched).
       // Malformed-but-present → err.

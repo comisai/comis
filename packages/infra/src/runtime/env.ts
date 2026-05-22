@@ -19,10 +19,5 @@ export function createSystemEnv(
 ): EnvPort {
   return {
     get: (key) => source[key],
-    snapshot: (keys) => {
-      const snap: Record<string, string | undefined> = {};
-      for (const key of keys) snap[key] = source[key];
-      return Object.freeze(snap);
-    },
   };
 }

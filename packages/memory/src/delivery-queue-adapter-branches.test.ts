@@ -141,14 +141,9 @@ describe("SqliteDeliveryQueueAdapter — branch-gap coverage", () => {
       }
     });
 
-    it("returns err result when depth runs against a closed database", async () => {
-      db.close();
-      const result = await queue.depth();
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error).toBeInstanceOf(Error);
-      }
-    });
+    // NOTE: "depth runs against a closed database" branch test was removed in
+    // Plan 51.02 PORT-TRIM-06 along with the queue.depth() port method. The
+    // surviving statusCounts() closed-DB test below covers the equivalent path.
 
     it("returns err result when statusCounts runs against a closed database", async () => {
       db.close();

@@ -715,11 +715,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "decodeCodexJwtPayload",
       "resolveCodexStableSubject",
       "RewrittenOAuthError",
-      "SkillPort",
-      "SkillPermissions",
-      "SkillInput",
-      "SkillOutput",
-      "SkillManifest",
       "FileExtractionErrorKind",
       // RagConfig: surface-only export. The createRagRetriever factory in
       // packages/agent/src/rag/rag-retriever.ts was deleted in Phase 53
@@ -773,7 +768,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PluginHttpRoute",
       "OutputGuardFinding",
       "OutputGuardResult",
-      "Provider",
       "createSecretManager",
       "requiresConfirmation",
       "ActionClassification",

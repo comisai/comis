@@ -128,11 +128,6 @@ export interface DeliveryQueuePort {
   pruneExpired(): Promise<Result<number, Error>>;
 
   /**
-   * Count of entries in active states (pending + in_flight).
-   */
-  depth(): Promise<Result<number, Error>>;
-
-  /**
    * Per-status count breakdown for observability.
    * @param channelType - Optional filter to restrict counts to a specific channel.
    */

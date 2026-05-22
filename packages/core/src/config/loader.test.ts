@@ -312,7 +312,7 @@ integrations:
           embeddingModel: "text-embedding-3-small",
           embeddingDimensions: 1536,
           compaction: { enabled: true, threshold: 500, targetSize: 250 },
-          retention: { maxAgeDays: 90, maxEntries: 10_000 },
+          retention: { maxAgeDays: 90 },
         },
         security: {
           logRedaction: true,

@@ -537,16 +537,10 @@ describe("whitelist exports", () => {
 // ── createRowMapper — generic factory ───────────────────────────────
 
 describe("createRowMapper — generic factory", () => {
-  it("createRowMapper parseRow rejects mismatched schema with row-validation-failed code", () => {
-    const schema = z.strictObject({ id: z.string(), count: z.number() });
-    const mapper = createRowMapper(schema);
-    const result = mapper.parseRow({ id: "abc", count: "not-a-number" });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.code).toBe("row-validation-failed");
-    expect(result.error.path).toMatch(/count/);
-    expect(result.error.issues.length).toBeGreaterThanOrEqual(1);
-  });
+  // NOTE: 2 it() tests for parseRow (singular) were removed in Plan 51.02
+  // PORT-TRIM-11 along with the method itself. parseOptionalRow and parseRows
+  // cover the surviving surface; the row-validation-failed path is still
+  // exercised below.
 
   it("createRowMapper parseRows surfaces row index in error path on per-row failures", () => {
     const schema = z.strictObject({ id: z.string() });
@@ -586,13 +580,4 @@ describe("createRowMapper — generic factory", () => {
     expect(result.value.length).toBe(0);
   });
 
-  it("createRowMapper parseRow returns ok with typed value for valid row", () => {
-    const schema = z.strictObject({ id: z.string(), count: z.number() });
-    const mapper = createRowMapper(schema);
-    const result = mapper.parseRow({ id: "abc", count: 7 });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.id).toBe("abc");
-    expect(result.value.count).toBe(7);
-  });
 });
