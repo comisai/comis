@@ -46,9 +46,8 @@ export interface RpcClient {
   /**
    * Send a JSON-RPC 2.0 request and await the response.
    *
-   * Compile-time method-name validation runs through the generated CONTRACTS
-   * dispatch table (`./contracts.generated.ts`); the api-client wrappers use
-   * its `typedCall` helper.
+   * Compile-time method-name validation runs via the generated CONTRACTS
+   * dispatch table (`./contracts.generated.ts`) and its `typedCall` helper.
    */
   call<T>(method: string, params?: unknown): Promise<T>;
   /** Subscribe to connection status changes. Returns an unsubscribe function. */
