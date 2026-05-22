@@ -41,6 +41,17 @@ describe("SchedulerController", () => {
     const result = await controller.listJobs();
     expect(Array.isArray(result)).toBe(false);
     expect((result as { jobs: unknown[] }).jobs.length).toBe(2);
+
+    // Assert the exact RPC call shape — the no-argument call must send
+    // `{}` (i.e. `_agentId` omitted, not explicit `undefined`). This is
+    // the project convention from sessions-behavior.test.ts:265 — vitest's
+    // toEqual treats undefined values as equivalent to missing keys, so
+    // `{ _agentId: undefined }` matches `{}` here. Locks in the
+    // serializer-independent contract: omitted `_agentId` -> internal
+    // dispatcher derives tenant from auth context.
+    const sent = (rpc as { call: ReturnType<typeof vi.fn> }).call.mock.calls[0];
+    expect(sent[0]).toBe("cron.list");
+    expect(sent[1]).toEqual({}); // _agentId omitted when agentId is undefined
   });
 
   it("readConfig / getStatus / getHeartbeatStates: forward to matching RPC methods", async () => {
