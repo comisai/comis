@@ -33,7 +33,7 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
     { route: "pipelines", label: "Pipelines", icon: "\u25C8" },
   ]},
   { id: "observe", label: "Observe", items: [
-    { route: "observe", label: "Overview", icon: "\u25B3", badge: "errorCount" },
+    { route: "observe/overview", label: "Overview", icon: "\u25B3", badge: "errorCount" },
     { route: "observe/context", label: "Context Engine", icon: "\u25E5" },
     { route: "context", label: "Context DAG", icon: "\u25D6" },
     { route: "observe/billing", label: "Billing", icon: "\u25C7" },
@@ -48,7 +48,6 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
     { route: "scheduler", label: "Scheduler", icon: "\u25A8" },
     { route: "security", label: "Security", icon: "\u2616" },
     { route: "media", label: "Media", icon: "\u25B6" },
-    { route: "approvals", label: "Approvals", icon: "\u2713", badge: "pendingApprovals" },
     { route: "config", label: "Config", icon: "\u2699" },
   ]},
 ];

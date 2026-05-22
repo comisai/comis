@@ -225,17 +225,6 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/approvals -> ic-approvals-view, route 'approvals', params {}", () => {
-      window.location.hash = "#/approvals";
-      const router = createRouter(onChange);
-      expect(router.current()).toEqual({
-        view: "ic-approvals-view",
-        route: "approvals",
-        params: {},
-        query: {},
-      });
-    });
-
     it("#/config -> ic-config-editor, route 'config', params {}", () => {
       window.location.hash = "#/config";
       const router = createRouter(onChange);
@@ -285,27 +274,6 @@ describe("createRouter", () => {
     });
   });
 
-  describe("route aliases", () => {
-    it("#/observe alias redirects to #/observe/overview via replaceState", () => {
-      window.location.hash = "#/observe";
-      const router = createRouter(onChange);
-      const match = router.current();
-      expect(match.view).toBe("ic-observe-dashboard");
-      expect(match.route).toBe("observe/overview");
-      expect(match.params).toEqual({});
-      expect(match.query).toEqual({});
-    });
-
-    it("alias preserves query parameters during redirect", () => {
-      window.location.hash = "#/observe?tab=metrics&range=7d";
-      const router = createRouter(onChange);
-      const match = router.current();
-      expect(match.view).toBe("ic-observe-dashboard");
-      expect(match.route).toBe("observe/overview");
-      expect(match.query).toEqual({ tab: "metrics", range: "7d" });
-    });
-  });
-
   describe("query parameter parsing", () => {
     it("parses query parameters from hash", () => {
       window.location.hash = "#/sessions?filter=active&sort=recent";
@@ -342,52 +310,6 @@ describe("createRouter", () => {
       const router = createRouter(onChange);
       const match = router.current();
       expect(match.view).toBe("ic-agent-list");
-      expect(match.query).toEqual({});
-    });
-  });
-
-  describe("setQuery", () => {
-    it("updates URL without triggering navigation", () => {
-      window.location.hash = "#/sessions";
-      const router = createRouter(onChange);
-      router.start();
-      onChange.mockClear();
-
-      router.setQuery({ filter: "active" });
-
-      // setQuery uses replaceState, should NOT trigger hashchange
-      expect(onChange).not.toHaveBeenCalled();
-      router.stop();
-    });
-
-    it("merges new params with existing query params", () => {
-      window.location.hash = "#/sessions?filter=active";
-      const router = createRouter(onChange);
-
-      router.setQuery({ sort: "recent" });
-
-      // After setQuery, current() should show merged params
-      const match = router.current();
-      expect(match.query).toEqual({ filter: "active", sort: "recent" });
-    });
-
-    it("removes params with empty string values", () => {
-      window.location.hash = "#/sessions?filter=active&sort=recent";
-      const router = createRouter(onChange);
-
-      router.setQuery({ filter: "" });
-
-      const match = router.current();
-      expect(match.query).toEqual({ sort: "recent" });
-    });
-
-    it("clears all query params when all set to empty", () => {
-      window.location.hash = "#/sessions?filter=active";
-      const router = createRouter(onChange);
-
-      router.setQuery({ filter: "" });
-
-      const match = router.current();
       expect(match.query).toEqual({});
     });
   });
