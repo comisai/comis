@@ -73,6 +73,84 @@ sqlite3 ~/.comis/memory.db \
   (`createIdentityLinkResolver`, `IdentityLinkResolver`,
   `IdentityLinkResolverDeps`).
 
+### Phase 51 — Memory + Core port/schema deletions — Plan 51.05 (BC-REM stragglers)
+
+This sub-release closes 5 backward-compatibility stragglers (BC-REM-01, BC-REM-02,
+BC-REM-04, BC-REM-06, BC-REM-16) that escaped v2.1 Phase 38's line-pinned
+`noBackwardCompatAllowlist` regex. Per AGENTS.md §2.9 (no backward compatibility)
+the project does not ship migration shims, alias re-exports, or
+default-to-old-behavior fallbacks — these stragglers are mostly migration shims,
+comment-only "legacy" naming, and one redundant event-payload field.
+
+#### Operator-Facing Changes — BREAKING
+
+**`migrateConfig` deleted (BC-REM-01).** The `core/src/config/migrate.ts`
+streaming-config migration shim is gone. Pre-v2.2 YAML configs using the
+following deprecated keys will now fail Zod validation at daemon start:
+
+- `streaming.defaultPacingMinMs` / `streaming.defaultPacingMaxMs` — migrate to
+  `streaming.defaultDeliveryTiming.minMs` / `streaming.defaultDeliveryTiming.maxMs`
+- `streaming.perChannel.*.pacingMinMs` / `streaming.perChannel.*.pacingMaxMs` —
+  migrate to `streaming.perChannel.*.deliveryTiming.minMs` /
+  `streaming.perChannel.*.deliveryTiming.maxMs`
+- `streaming.perChannel.*.coalesceMaxChars` — migrate to
+  `streaming.perChannel.*.coalescer.maxChars`
+
+The `@remove-after: v2.2` marker on the shim was honored — v2.2 closed
+2026-05-21. Operators with the deprecated keys in `~/.comis/config.yaml`
+must update them to canonical form before deploying this release; the Zod
+error message lists the offending fields.
+
+**5 memory `ALTER TABLE ADD COLUMN` shims deleted (BC-REM-02).** Pre-Phase-31
+(`memories.agent_id` for agent isolation) and pre-cache-cost
+(`obs_token_usage.{cost_cache_read, cost_cache_write, cache_saved, cache_retention}`)
+memory.db files are no longer auto-migrated at daemon start. Fresh databases
+created by current code already include these columns via the CREATE TABLE
+statements (no behavior change for new installs). Operators with legacy DBs
+predating these migrations must wipe `~/.comis/memory.db` to upgrade:
+
+```bash
+rm ~/.comis/memory.db   # daemon recreates on next start with current schema
+```
+
+Phase 31 shipped 2026-05-11; v2.3 starts 2026-05-21 — all real users would
+have re-created their DBs in the intervening 10-day window. Per AGENTS.md
+§2.9 no-backward-compatibility policy.
+
+#### Engineering-Facing Changes
+
+- **BC-REM-01**: `packages/core/src/config/migrate.ts` (~127 LOC) + paired
+  test (~290 LOC) deleted. `migrateConfig` re-export dropped from
+  `core/src/config/index.ts`; `mergeLayered` in `core/src/config/layered.ts`
+  now calls `validateConfig(merged)` directly (no migration step). The
+  `noBackwardCompatAllowlist` array in `test/support/architecture-allowlist.ts`
+  is now empty (`[] as const`) — the migrate.ts entry was its only member.
+  One test case in `layered.test.ts` ("migrates legacy streaming keys before
+  validation") removed.
+- **BC-REM-02**: 5 `ALTER TABLE` try/catch shims removed from
+  `packages/memory/src/schema.ts`. The CREATE TABLE blocks for `memories`
+  (with `agent_id`) and `obs_token_usage` (with `cost_cache_read`,
+  `cost_cache_write`, `cache_saved`, `cache_retention`) already define these
+  columns, so fresh databases are unaffected.
+- **BC-REM-04**: 4 "legacy mode" references in `packages/memory/src/setup-secrets.ts`
+  renamed to "envfile mode" / "envfile-only mode" (comment-only edits;
+  behavior unchanged). The L64 user-facing error message wording updates from
+  "or remove the variable for legacy mode." to "or remove the variable for
+  envfile-only mode."
+- **BC-REM-06**: `profileName` field removed from the `auth:token_rotated`
+  event-bus payload (`packages/core/src/event-bus/events-infra.ts`); the
+  stale "Coexists with profileName for backward compat" JSDoc on `profileId`
+  dropped. The emit site in `packages/agent/src/model/oauth-token-manager.ts`
+  no longer sets `profileName` (only the canonical `profileId`,
+  `expiresAtMs`, `timestamp` remain). Tests in `events-infra.test.ts` and
+  `oauth-token-manager.test.ts` updated.
+- **BC-REM-16**: "(backward compat)" parenthetical dropped from
+  `packages/core/src/config/schema-secrets.ts:6` JSDoc; "for backward compat"
+  in `schema-secrets.ts:14` replaced with "(opt-in to encrypted secrets
+  store)"; "for backward compatibility" in
+  `packages/core/src/config/schema-channel.ts:22` replaced with "(opt-out
+  per-channel)". Comment-only edits; behavior unchanged.
+
 ### Phase 54 — Skills + Channels + Orchestrator Dead-Code Deletion
 
 This release removes ~2,500 prod LOC of verified-dead code across `packages/skills`, `packages/channels`, `packages/orchestrator`, `packages/core`, `packages/shared`, and `packages/web`. All deletions have ZERO production callers (verified via grep against the current source tree); the only behavior-preserving change is inlining `multimodal-analyzer.ts` into 2 thin vision-provider factories.

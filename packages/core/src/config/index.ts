@@ -350,9 +350,6 @@ export {
   type UnresolvedEnvRef,
 } from "./env-substitution.js";
 
-// Config migration (legacy key transformation)
-export { migrateConfig } from "./migrate.js";
-
 // Layered merge
 export { deepMerge, mergeLayered, loadLayered } from "./layered.js";
 

@@ -166,32 +166,6 @@ describe("config/layered", () => {
       }
     });
 
-    it("migrates legacy streaming keys before validation", () => {
-      const result = mergeLayered([{
-        streaming: {
-          perChannel: {
-            test: {
-              pacingMinMs: 100,
-              pacingMaxMs: 200,
-              coalesceMaxChars: 400,
-            },
-          },
-        },
-      }]);
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        const testChannel = result.value.streaming.perChannel.test;
-        expect(testChannel).toBeDefined();
-        // New nested structure should be present
-        expect(testChannel.deliveryTiming.minMs).toBe(100);
-        expect(testChannel.deliveryTiming.maxMs).toBe(200);
-        expect(testChannel.coalescer.maxChars).toBe(400);
-        // Old flat keys should NOT be present
-        expect((testChannel as any).pacingMinMs).toBeUndefined();
-        expect((testChannel as any).pacingMaxMs).toBeUndefined();
-        expect((testChannel as any).coalesceMaxChars).toBeUndefined();
-      }
-    });
   });
 
   describe("loadLayered", () => {
