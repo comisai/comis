@@ -1871,12 +1871,14 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // Plan 59-03: the 3 eliminable local-scope refs (session-tracker,
   // tool-assembler, inbound-message-id-resolver) are GONE.
   //   - assembleToolsForAgent is now a direct value (setupTools hoisted below).
-  //   - sessionTracker / inboundMessageIdResolver are local `let` slots; the
-  //     accessor closures passed into buildChannelManagerDeps read them at
-  //     message-arrival time (lambdas captured by setupChannels are not
-  //     invoked during setupChannels itself).
-  let sessionTracker: import("./notification/session-tracker.js").SessionTracker | undefined;
-  let inboundMessageIdResolver: InboundMessageIdResolver | undefined;
+  //   - sessionTracker / inboundMessageIdResolver use a `const {current?: T}`
+  //     container pattern: the binding is `const` (satisfies prefer-const)
+  //     and the `.current` field is mutated after setupChannels returns. The
+  //     accessor closures passed into buildChannelManagerDeps read
+  //     `container.current` at message-arrival time (lambdas captured by
+  //     setupChannels are not invoked during setupChannels itself).
+  const sessionTrackerSlot: { current?: import("./notification/session-tracker.js").SessionTracker } = {};
+  const inboundMessageIdResolverSlot: { current?: InboundMessageIdResolver } = {};
 
   // 6.6.8.4.1. Sandbox + image generation providers (HOISTED before setupTools
   // because setupTools consumes both as direct inputs).
@@ -1931,17 +1933,18 @@ async function bootChannels(boot: BootContext): Promise<void> {
 
   // 6.6.8. Channels — pass assembleToolsForAgent DIRECTLY (no ref) and
   // pass accessor closures for sessionTracker / inboundMessageIdResolver
-  // (local-let slots; populated after setupChannels returns).
+  // (const `{current?:T}` container pattern; populated after setupChannels
+  // returns by mutating the .current field).
   const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, commandQueue, deliveryService, approvalNotifier } = await setupChannels(
     buildChannelManagerDeps({
       agents: handle,
       assembleToolsForAgent,
-      getInboundMessageIdResolver: () => inboundMessageIdResolver,
-      getSessionTracker: () => sessionTracker,
+      getInboundMessageIdResolver: () => inboundMessageIdResolverSlot.current,
+      getSessionTracker: () => sessionTrackerSlot.current,
     }),
   );
   channelPluginsRef.ref = channelPlugins;
-  inboundMessageIdResolver = (() => {
+  inboundMessageIdResolverSlot.current = (() => {
     const metaKeyByChannel = new Map<string, string>();
     for (const [type, plugin] of channelPlugins) {
       const metaKey = plugin.capabilities.replyToMetaKey;
@@ -1949,6 +1952,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     }
     return createInboundMessageIdResolver({ metaKeyByChannel });
   })();
+  // Local alias for the BootContext-bound publication below.
+  const inboundMessageIdResolver = inboundMessageIdResolverSlot.current;
   // CRIT-03: wirePostChannelsLifecycle now returns outputRetentionHandle so
   // the composition root can route .shutdown() through ShutdownDeps. The
   // eventBus.on("system:shutdown", ...) subscribers previously here are
@@ -1973,7 +1978,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     activeAdapterTypes: new Set(adaptersByType.keys()),
     logger: daemonLogger, tenantId: container.config.tenantId,
   });
-  sessionTracker = notificationContext.sessionTracker;
+  sessionTrackerSlot.current = notificationContext.sessionTracker;
   bgNotifyRef.ref = notificationContext.notificationService;
   const bgConfigForRunner = BackgroundTasksConfigSchema.parse(agents[defaultAgentId]?.backgroundTasks ?? {});
   const bgCompletionRunnerContext = setupBackgroundCompletionRunner({
