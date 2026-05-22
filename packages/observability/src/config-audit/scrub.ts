@@ -38,14 +38,10 @@ import * as fs from "node:fs";
 import { ok, err, type Result } from "@comis/shared";
 import { writeRegularFile } from "../shared/fs-safe.js";
 
-import { sanitizeForPersistence } from "../redact/redact-secrets.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
 
-import {
-  redactConfigAuditArgv,
-  CONFIG_AUDIT_ARGV_CAP,
-} from "./argv-redactor.js";
 import { emitSerializationErrorSentinel } from "./serialization-sentinel.js";
+import { encodeAuditRecord } from "./encode-record.js";
 
 /** Error class for the scrubber. */
 export class ScrubConfigAuditError extends Error {
@@ -86,7 +82,10 @@ export interface ScrubParams {
   readonly confinedBaseDir?: string;
 }
 
-/** Re-encode a single parsed record through the redactor + sanitizer.
+/** Re-encode a single parsed record through the shared encoder.
+ *  Non-object inputs (parse-yielded primitives) are encoded verbatim;
+ *  object inputs delegate to `encodeAuditRecord` which owns the
+ *  argv-redact + sanitize + sentinel-fallback pipeline.
  *  Exported for test-driven verification. */
 export function reEncodeRecord(parsed: unknown): string {
   if (parsed === null || typeof parsed !== "object") {
@@ -95,27 +94,7 @@ export function reEncodeRecord(parsed: unknown): string {
     if (json === undefined) return emitSerializationErrorSentinel();
     return json + "\n";
   }
-  const obj = parsed as Record<string, unknown>;
-  const withoutArgv: Record<string, unknown> = { ...obj };
-  delete (withoutArgv as { argv?: unknown }).argv;
-  const sanitized = sanitizeForPersistence(withoutArgv) as Record<string, unknown>;
-  // If the record carries an argv array, run it through the
-  // dedicated redactor.
-  const rawArgv = obj.argv;
-  if (Array.isArray(rawArgv)) {
-    const safeArgv = rawArgv.map((v) =>
-      typeof v === "string" ? v : String(v),
-    );
-    sanitized.argv = redactConfigAuditArgv(safeArgv).slice(
-      0,
-      CONFIG_AUDIT_ARGV_CAP,
-    );
-  } else if (rawArgv !== undefined) {
-    sanitized.argv = rawArgv;
-  }
-  const json = safeJsonStringify(sanitized);
-  if (json === undefined) return emitSerializationErrorSentinel();
-  return json + "\n";
+  return encodeAuditRecord(parsed as Record<string, unknown>);
 }
 
 /**

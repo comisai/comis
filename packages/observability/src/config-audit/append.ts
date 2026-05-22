@@ -42,14 +42,7 @@ import { ok, err, type Result } from "@comis/shared";
 import { appendRegularFile, ensureContainedDir } from "../shared/fs-safe.js";
 import { safePath, systemDateFrom, systemNowMs } from "@comis/core";
 
-import { sanitizeForPersistence } from "../redact/redact-secrets.js";
-import { safeJsonStringify } from "../shared/safe-json-stringify.js";
-
-import {
-  redactConfigAuditArgv,
-  CONFIG_AUDIT_ARGV_CAP,
-} from "./argv-redactor.js";
-import { emitSerializationErrorSentinel } from "./serialization-sentinel.js";
+import { encodeAuditRecord } from "./encode-record.js";
 import { detectSuspicious } from "./suspicious.js";
 import type {
   ConfigWriteAuditRecord,
@@ -365,7 +358,7 @@ export interface AppendConfigAuditParams {
   readonly keepRotated?: number;
   /**
    * Opt-in real-path confinement base forwarded to `appendRegularFile`.
-   * Production callers (last-known-good, config-audit-hook, CLI
+   * Production callers (last-known-good, audit-hook, CLI
    * sync-tooling audit) should pass `path.join(os.homedir(), ".comis")`
    * via `getDefaultConfigAuditConfinedBase()` to close the
    * ancestor-symlink gap. Tests omit it (default `undefined`) to keep
@@ -416,41 +409,6 @@ export class ConfigAuditAppendError extends Error {
     super(message);
     this.code = code;
   }
-}
-
-/**
- * Encode a record for on-disk persistence: argv goes through the
- * dedicated `redactConfigAuditArgv` (which knows `--flag=value`
- * shape); the rest of the record goes through `sanitizeForPersistence`.
- * The two redactors are NOT composed because they would mutually
- * over-redact — `redactSecretsInText` matches `--api-key=...` as a
- * credential pattern and would collapse the already-masked
- * `--api-key=***` to a bare `***`, losing the flag-name evidence
- * operators need for forensics.
- */
-function encodeRecord(record: ConfigWriteAuditRecord): string {
-  const argvRedacted = redactConfigAuditArgv(record.argv).slice(
-    0,
-    CONFIG_AUDIT_ARGV_CAP,
-  );
-  // Sanitize everything EXCEPT argv. Use a placeholder marker for
-  // argv so the sanitizer leaves the slot alone, then splice the
-  // dedicated redacted argv back in via the parsed graph.
-  const withoutArgv: Record<string, unknown> = { ...record };
-  delete (withoutArgv as { argv?: unknown }).argv;
-  const sanitized = sanitizeForPersistence(withoutArgv) as Record<string, unknown>;
-  // Splice the argv back in. We trust `argvRedacted` (the dedicated
-  // redactor) is already strictly safer than the regex pass would be.
-  sanitized.argv = argvRedacted;
-  const json = safeJsonStringify(sanitized);
-  if (json === undefined) {
-    // safeJsonStringify returned undefined (BigInt, circular ref,
-    // or host throw in JSON.stringify). Falling back to a JSON-parseable
-    // sentinel preserves audit-log forensic integrity; downstream
-    // consumers can recognize and skip the sentinel without parse failures.
-    return emitSerializationErrorSentinel();
-  }
-  return json + "\n";
 }
 
 /**
@@ -515,7 +473,7 @@ function appendConfigAuditRecordSyncImpl(
 ): Result<{ totalBytes: number }, ConfigAuditAppendError> {
   const rotateAtBytes = params.rotateAtBytes ?? DEFAULT_ROTATE_AT_BYTES;
   const keepRotated = params.keepRotated ?? DEFAULT_KEEP_ROTATED;
-  const encoded = encodeRecord(params.record);
+  const encoded = encodeAuditRecord(params.record as unknown as Record<string, unknown>);
   const bytes = Buffer.byteLength(encoded, "utf8");
 
   ensureConfigAuditParentDir(params.filePath);
