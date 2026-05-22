@@ -18,6 +18,9 @@ export function emitSerializationErrorSentinel(): string {
     __serializationError: "record-not-serializable" as const,
     ts: systemDateFrom(systemNowMs()).toISOString(),
   };
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  return JSON.stringify(sentinel)! + "\n";
+  // Sentinel is hand-crafted from string + number literals — JSON.stringify
+  // cannot return undefined here. The `?? ""` is a belt-and-braces fallback
+  // for the type system; if it ever fires, the test in
+  // serialization-sentinel.test.ts will go red.
+  return (JSON.stringify(sentinel) ?? "") + "\n";
 }
