@@ -3,7 +3,7 @@
  * setupSecrets — Master key bootstrap utility.
  *
  * Three-way branching on SECRETS_MASTER_KEY:
- *  1. Absent / empty / whitespace → ok(null) — legacy mode, no store created
+ *  1. Absent / empty / whitespace → ok(null) — envfile mode (no encrypted store)
  *  2. Present but invalid          → err() with actionable guidance
  *  3. Present and valid            → ok({ crypto, dbPath }) — ready for SqliteSecretStore
  *
@@ -40,7 +40,7 @@ export interface SetupSecretsOptions {
 /**
  * Resolve the master key from the environment and prepare crypto + path.
  *
- * @returns ok(null) when key absent (legacy mode), ok({ crypto, dbPath }) when valid,
+ * @returns ok(null) when key absent (envfile mode), ok({ crypto, dbPath }) when valid,
  *          err(Error) when key is present but invalid.
  */
 export function setupSecrets(
@@ -48,7 +48,7 @@ export function setupSecrets(
 ): Result<SecretsBootResult | null, Error> {
   const raw = opts.env.SECRETS_MASTER_KEY;
 
-  // Branch 1: absent or empty → legacy mode
+  // Branch 1: absent or empty → envfile mode
   if (raw === undefined || raw.trim() === "") {
     return ok(null);
   }
@@ -61,7 +61,7 @@ export function setupSecrets(
       new Error(
         `Invalid SECRETS_MASTER_KEY: ${parseResult.error.message}. ` +
           "Set a valid hex (64+ chars) or base64 (44+ chars) key, " +
-          "or remove the variable for legacy mode.",
+          "or remove the variable for envfile-only mode.",
       ),
     );
   }
