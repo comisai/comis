@@ -627,7 +627,10 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
       // (the only sanctioned-root in `packages/core/src/runtime/system-time.ts`).
       await Promise.race([
         Promise.allSettled([...inFlightSends]),
-        new Promise<void>((resolve) => systemSetTimeout(() => resolve(), deadlineMs)),
+        new Promise<void>((resolve) => {
+          const handle = systemSetTimeout(() => resolve(), deadlineMs);
+          handle.unref?.();
+        }),
       ]);
       return {
         drained: inFlightCount - inFlightSends.size,
