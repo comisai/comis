@@ -9,6 +9,7 @@
  * @module
  */
 
+import chalk from "chalk";
 import type { AuditResult } from "./types.js";
 import { json } from "../output/format.js";
 import {
@@ -52,9 +53,12 @@ export function renderAuditTable(result: AuditResult): void {
       warning: result.warningCount,
       info: result.infoCount,
     },
+    // Pre-colored footers: green for pass, red+bold for fail. The renderer
+    // emits the footer as-is, preserving the severity-conditioned signal
+    // operators rely on for CI alarm scanning (WR-01 fix).
     footer: result.passed
-      ? "Audit PASSED (no critical findings)"
-      : "Audit FAILED (critical findings detected)",
+      ? chalk.green("Audit PASSED (no critical findings)")
+      : chalk.red.bold("Audit FAILED (critical findings detected)"),
   };
 
   renderFindings(

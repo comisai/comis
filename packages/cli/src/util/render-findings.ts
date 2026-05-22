@@ -142,7 +142,7 @@ function summaryParts(summary: FindingsSummary): string[] {
         parts.push(chalk.gray(`${count} skip`));
         break;
       case "critical":
-        parts.push(chalk.red(`${count} critical`));
+        parts.push(chalk.red.bold(`${count} critical`));
         break;
       case "info":
         parts.push(chalk.blue(`${count} info`));
@@ -154,14 +154,22 @@ function summaryParts(summary: FindingsSummary): string[] {
   return parts;
 }
 
-/** Print the summary line + optional footer for findings variants. */
+/**
+ * Print the summary line + optional footer for findings variants.
+ *
+ * The footer is emitted as-is (no chalk wrapping). Callers that want a colored
+ * footer must supply pre-colored strings (e.g., `chalk.green("Audit PASSED")`
+ * or `chalk.red.bold("Audit FAILED")`). This preserves severity-conditioned
+ * styling per the WR-01 fix; an unconditional `chalk.cyan` wrap here would
+ * obliterate caller-supplied red/green/etc. ANSI codes.
+ */
 function emitSummary(summary: FindingsSummary): void {
   const parts = summaryParts(summary);
   if (parts.length > 0) {
     console.log(`\n  ${parts.join(", ")}.`);
   }
   if (summary.footer !== undefined && summary.footer !== "") {
-    console.log(chalk.cyan(`  ${summary.footer}`));
+    console.log(`  ${summary.footer}`);
   }
 }
 
