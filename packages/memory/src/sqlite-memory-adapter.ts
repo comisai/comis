@@ -102,33 +102,6 @@ export class SqliteMemoryAdapter implements MemoryPort {
     }
   }
 
-  // ── storeWithType (for compaction service) ───────────────────────
-
-  /**
-   * Store a memory entry with an explicit memoryType.
-   * Used by the compaction service to store summarized entries
-   * as 'semantic' and working memories.
-   */
-  async storeWithType(
-    entry: MemoryEntry,
-    memoryType: "working" | "episodic" | "semantic" | "procedural",
-  ): Promise<Result<MemoryEntry, Error>> {
-    try {
-      const vecAvailable = this.vecAvailable;
-      const tx = this.db.transaction(() => {
-        insertMemoryRow(this.db, entry, memoryType);
-        if (entry.embedding) {
-          storeEmbedding(this.db, entry.id, entry.embedding, vecAvailable);
-        }
-      });
-      tx();
-
-      return ok(entry);
-    } catch (e: unknown) {
-      return err(e instanceof Error ? e : new Error(String(e)));
-    }
-  }
-
   // ── retrieve ─────────────────────────────────────────────────────
 
   async retrieve(id: string, tenantId?: string): Promise<Result<MemoryEntry | undefined, Error>> {

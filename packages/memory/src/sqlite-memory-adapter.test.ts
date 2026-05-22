@@ -195,38 +195,6 @@ describe("SqliteMemoryAdapter", () => {
     });
   });
 
-  // ── storeWithType ──────────────────────────────────────────────
-
-  describe("storeWithType", () => {
-    it("stores entry with explicit memory type", async () => {
-      const entry = makeEntry();
-      await adapter.storeWithType(entry, "episodic");
-
-      const row = adapter
-        .getDb()
-        .prepare("SELECT memory_type FROM memories WHERE id = ?")
-        .get(entry.id) as { memory_type: string };
-
-      expect(row.memory_type).toBe("episodic");
-    });
-
-    it("supports all memory types", async () => {
-      const types = ["working", "episodic", "semantic", "procedural"] as const;
-
-      for (const type of types) {
-        const entry = makeEntry();
-        const result = await adapter.storeWithType(entry, type);
-        expect(result.ok).toBe(true);
-
-        const row = adapter
-          .getDb()
-          .prepare("SELECT memory_type FROM memories WHERE id = ?")
-          .get(entry.id) as { memory_type: string };
-        expect(row.memory_type).toBe(type);
-      }
-    });
-  });
-
   // ── retrieve ───────────────────────────────────────────────────
 
   describe("retrieve", () => {

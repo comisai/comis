@@ -62,8 +62,7 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry & 
 /**
  * Insert a memory entry into the `memories` table.
  *
- * Encapsulates the INSERT SQL previously duplicated in
- * SqliteMemoryAdapter.store() and storeWithType().
+ * Encapsulates the INSERT SQL used by SqliteMemoryAdapter.store().
  */
 export function insertMemoryRow(
   db: Database.Database,
