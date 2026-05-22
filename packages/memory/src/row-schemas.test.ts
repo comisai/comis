@@ -174,7 +174,6 @@ describe("row-schemas — internal DB row runtime parses", () => {
       trace_id: "trace-1",
       agent_id: "agent-1",
       channel_id: "channel-1",
-      execution_id: "exec-1",
       session_key: "sess-1",
       provider: "openai",
       model: "gpt-5",
@@ -401,7 +400,7 @@ describe("row-schemas — internal DB row runtime parses", () => {
     expect(DeliveryMirrorDbRowSchema.safeParse(sample).success).toBe(true);
   });
 
-  it("DeliveryQueueDbRowSchema parses a delivery_queue row with all 21 columns", () => {
+  it("DeliveryQueueDbRowSchema parses a delivery_queue row with all 17 columns", () => {
     const sample = {
       id: "q-1",
       text: "hello",
@@ -410,8 +409,6 @@ describe("row-schemas — internal DB row runtime parses", () => {
       tenant_id: "tenant-1",
       options_json: "{}",
       origin: "agent",
-      format_applied: 0,
-      chunking_applied: 0,
       status: "pending",
       attempt_count: 0,
       max_attempts: 3,
@@ -421,8 +418,6 @@ describe("row-schemas — internal DB row runtime parses", () => {
       last_attempt_at: null,
       next_retry_at: null,
       last_error: null,
-      markdown_fallback_applied: 0,
-      delivered_message_id: null,
       trace_id: null,
     };
     expect(DeliveryQueueDbRowSchema.safeParse(sample).success).toBe(true);

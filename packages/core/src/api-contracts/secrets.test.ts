@@ -168,7 +168,6 @@ describe("secrets-domain contracts", () => {
         secrets: [
           {
             name: "OPENAI_API_KEY",
-            usageCount: 3,
             createdAt: 1_700_000_000_000,
             updatedAt: 1_700_001_000_000,
           },
@@ -177,7 +176,7 @@ describe("secrets-domain contracts", () => {
     ).not.toThrow();
   });
 
-  it("secrets.list: response accepts optional provider, description, expiresAt, lastUsedAt", () => {
+  it("secrets.list: response accepts optional provider, description, expiresAt", () => {
     expect(() =>
       SecretsListContract.response.parse({
         secrets: [
@@ -186,8 +185,6 @@ describe("secrets-domain contracts", () => {
             provider: "openai",
             description: "Primary key",
             expiresAt: 1_800_000_000_000,
-            lastUsedAt: 1_700_002_000_000,
-            usageCount: 5,
             createdAt: 1_700_000_000_000,
             updatedAt: 1_700_001_000_000,
           },
@@ -196,7 +193,7 @@ describe("secrets-domain contracts", () => {
     ).not.toThrow();
   });
 
-  it("secrets.list: response rejects rows missing required usageCount / createdAt / updatedAt", () => {
+  it("secrets.list: response rejects rows missing required createdAt / updatedAt", () => {
     expect(() =>
       SecretsListContract.response.parse({
         secrets: [{ name: "FOO" }],
@@ -222,7 +219,6 @@ describe("secrets-domain contracts", () => {
       secrets: [
         {
           name: "OPENAI_API_KEY",
-          usageCount: 3,
           createdAt: 1_700_000_000_000,
           updatedAt: 1_700_001_000_000,
           value: "sk-leaked-MUST-NOT-CROSS-BOUNDARY",

@@ -3200,12 +3200,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "updatedAt": {
                 "type": "number"
               },
-              "lastUsedAt": {
-                "type": "number"
-              },
-              "usageCount": {
-                "type": "number"
-              },
               "expiresAt": {
                 "type": "number"
               }
@@ -7647,12 +7641,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "expiresAt": {
                 "type": "number"
               },
-              "lastUsedAt": {
-                "type": "number"
-              },
-              "usageCount": {
-                "type": "number"
-              },
               "createdAt": {
                 "type": "number"
               },
@@ -7662,7 +7650,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "required": [
               "name",
-              "usageCount",
               "createdAt",
               "updatedAt"
             ],

@@ -45,8 +45,6 @@ export function initSecretSchema(db: Database.Database): void {
       provider TEXT,
       description TEXT,
       expires_at INTEGER,
-      last_used_at INTEGER,
-      usage_count INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )

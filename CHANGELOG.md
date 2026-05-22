@@ -6,6 +6,96 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Phase 51 — Memory + Core port/schema deletions — Plan 51.03 (Schema Tier)
+
+This sub-release closes the Schema Tier of Phase 51: 7 dead SQLite columns
+dropped across 3 tables, 2 paired `SecretStorePort` methods removed, and 39
+unused row-schema type aliases deleted. The `secrets` column drop is paired
+with a **public CLI shape break** in `comis secrets list` and a corresponding
+break in the `SecretMetadata` / `EnvListEntry` daemon RPC contracts.
+
+#### Operator-Facing Changes — BREAKING
+
+**`comis secrets list` table now has 3 columns instead of 5.** The `Last Used`
+and `Usage Count` columns are gone, alongside the underlying
+`SecretStorePort.recordUsage()` method and the `last_used_at` /
+`usage_count` columns in `~/.comis/secrets.db`. The data was never displayed
+elsewhere — operators relying on usage telemetry should migrate to the
+structured `audit:event` event-bus stream, which already captures secret
+access events.
+
+Before (v2.3 Plan 51.02 and earlier):
+
+| Name | Provider | Created | Last Used | Usage Count |
+|------|----------|---------|-----------|-------------|
+
+After (v2.3 Plan 51.03):
+
+| Name | Provider | Created |
+|------|----------|---------|
+
+**`SecretMetadata` interface no longer carries `lastUsedAt` or `usageCount`.**
+The daemon's `secrets.list` and `env.list` RPC payloads dropped these fields.
+`packages/web/src/api/contracts.generated.ts` has been regenerated to reflect
+the new shape. Direct consumers of the daemon RPC (web SPA, third-party
+admin tooling, etc.) must drop these fields from their type definitions.
+
+**`SecretStorePort.exists()` and `SecretStorePort.recordUsage()` removed.**
+Internal hexagonal-port surface trim (paired with the `secrets` schema
+deletion). The two methods had zero production callers — `exists()` was
+shadowed by `getDecrypted()` returning `undefined`, and `recordUsage()` was
+never wired into any production flow.
+
+#### Operator-Facing Changes — orphan column tolerance
+
+Existing `~/.comis/secrets.db` files retain orphan `last_used_at` and
+`usage_count` columns. SQLite tolerates extra columns at INSERT/SELECT when
+not listed in the statement, so legacy databases continue to work without
+migration. Per AGENTS.md §2.9 no-backward-compatibility policy: no
+`ALTER TABLE DROP COLUMN` migration is run, no shim is added. To clean up
+manually:
+
+```bash
+# Simpler path: delete the DB and re-import secrets (encrypted contents
+# are unreadable without the master key anyway)
+rm ~/.comis/secrets.db ~/.comis/secrets.db-wal ~/.comis/secrets.db-shm
+```
+
+The same orphan-column tolerance applies to:
+
+- `delivery_queue.format_applied` / `chunking_applied` /
+  `markdown_fallback_applied` / `delivered_message_id` (4 columns, never
+  read by any code path after this deletion).
+- `obs_token_usage.execution_id` (1 column; the event-bus payload
+  `observability:token_usage.executionId` is **unaffected** — it is a
+  different surface).
+
+#### Engineering-Facing Changes
+
+- **SCHEMA-TRIM-01**: 4 dead columns dropped from the `delivery_queue` table.
+  `DeliveryQueueEntry` interface trimmed; `DeliveryQueueEnqueueInput` Omit
+  list shrunk by 2 entries. Producer enqueue calls at
+  `delivery-service.ts:352` and `notification-service.ts:203` no longer pass
+  `formatApplied` / `chunkingApplied`. The `ackStmt` UPDATE no longer writes
+  `delivered_message_id`.
+- **SCHEMA-TRIM-02**: 1 dead column dropped from `obs_token_usage`.
+  `TokenUsageRow` interface + `TokenUsageDbRow` snake_case row type +
+  `tokenUsageFromRow` mapper + `tokenUsageEventToRow` event-to-row mapper
+  trimmed. The agent-side `executionId` event payload remains.
+- **SCHEMA-TRIM-03** + **PORT-TRIM-04**: 2 columns dropped from `secrets`;
+  `SecretStorePort.exists` and `SecretStorePort.recordUsage` deleted;
+  `SecretMetadata.lastUsedAt` and `SecretMetadata.usageCount` deleted;
+  matching `SecretMetadataSchema` (`api-contracts/secrets.ts`) and
+  `EnvListEntrySchema` (`api-contracts/config.ts`) Zod fields removed;
+  `contracts.generated.ts` regenerated via `pnpm contracts:generate`;
+  daemon `env-handlers.ts` metadata projection cleaned;
+  `cli/src/commands/secrets.ts` `renderTable(...)` shrunk to 3 columns.
+- **SCHEMA-TRIM-06**: 39 unused `*FromSchema` type aliases dropped from
+  `packages/memory/src/row-schemas.ts`. The Zod schemas themselves
+  (`*RowSchema`) are preserved — they remain the SSOT for the row mapper
+  parses. Zero external consumers of the deleted aliases were found via
+  cross-package grep.
+
 ### Phase 51 — Memory + Core port/schema deletions — Plan 51.01 (Isolation Tier)
 
 This sub-release removes 3 dead memory modules (~1,700 prod LOC + ~1,250 test LOC)

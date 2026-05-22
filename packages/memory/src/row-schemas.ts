@@ -82,7 +82,6 @@ export const MemoryRowSchema = z.strictObject({
   /** 0 or 1 — whether vec_memories has an embedding for this entry. */
   has_embedding: z.number(),
 });
-export type MemoryRowFromSchema = z.infer<typeof MemoryRowSchema>;
 
 /**
  * Schema for the `sessions` table.
@@ -102,7 +101,6 @@ export const SessionRowSchema = z.strictObject({
   /** JSON-encoded Record<string, unknown>. */
   metadata: z.string(),
 });
-export type SessionRowFromSchema = z.infer<typeof SessionRowSchema>;
 
 /**
  * Schema for sqlite-vec KNN query results.
@@ -112,7 +110,6 @@ export const VecSearchRowSchema = z.strictObject({
   memory_id: z.string(),
   distance: z.number(),
 });
-export type VecSearchRowFromSchema = z.infer<typeof VecSearchRowSchema>;
 
 /**
  * Schema for FTS5 search joined with memories.
@@ -123,7 +120,6 @@ export const FtsSearchRowSchema = z.strictObject({
   content: z.string(),
   rank: z.number(),
 });
-export type FtsSearchRowFromSchema = z.infer<typeof FtsSearchRowSchema>;
 
 /**
  * Schema for the `named_graphs` table.
@@ -141,7 +137,6 @@ export const NamedGraphRowSchema = z.strictObject({
   updated_at: z.number(),
   deleted_at: z.number().nullable(),
 });
-export type NamedGraphRowFromSchema = z.infer<typeof NamedGraphRowSchema>;
 
 // =====================================================================
 // 2. Context-store rows (paired with @comis/core/ports/context-store-types)
@@ -160,7 +155,6 @@ export const CtxConversationRowSchema = z.strictObject({
   created_at: z.string(),
   updated_at: z.string(),
 });
-export type CtxConversationRowFromSchema = z.infer<typeof CtxConversationRowSchema>;
 
 /**
  * Schema for the `ctx_messages` table.
@@ -178,7 +172,6 @@ export const CtxMessageRowSchema = z.strictObject({
   tool_call_id: z.string().nullable(),
   created_at: z.string(),
 });
-export type CtxMessageRowFromSchema = z.infer<typeof CtxMessageRowSchema>;
 
 /**
  * Schema for the `ctx_message_parts` table.
@@ -192,7 +185,6 @@ export const CtxMessagePartRowSchema = z.strictObject({
   content: z.string().nullable(),
   metadata: z.string().nullable(),
 });
-export type CtxMessagePartRowFromSchema = z.infer<typeof CtxMessagePartRowSchema>;
 
 /**
  * Schema for the `ctx_summaries` table.
@@ -216,7 +208,6 @@ export const CtxSummaryRowSchema = z.strictObject({
   compaction_level: z.string().nullable(),
   created_at: z.string(),
 });
-export type CtxSummaryRowFromSchema = z.infer<typeof CtxSummaryRowSchema>;
 
 /**
  * Schema for the `ctx_summary_messages` link table.
@@ -227,7 +218,6 @@ export const CtxSummaryMessageRowSchema = z.strictObject({
   message_id: z.number(),
   ordinal: z.number(),
 });
-export type CtxSummaryMessageRowFromSchema = z.infer<typeof CtxSummaryMessageRowSchema>;
 
 /**
  * Schema for the `ctx_summary_parents` link table.
@@ -238,7 +228,6 @@ export const CtxSummaryParentRowSchema = z.strictObject({
   parent_summary_id: z.string(),
   ordinal: z.number(),
 });
-export type CtxSummaryParentRowFromSchema = z.infer<typeof CtxSummaryParentRowSchema>;
 
 /**
  * Schema for the `ctx_context_items` table.
@@ -251,7 +240,6 @@ export const CtxContextItemRowSchema = z.strictObject({
   message_id: z.number().nullable(),
   summary_id: z.string().nullable(),
 });
-export type CtxContextItemRowFromSchema = z.infer<typeof CtxContextItemRowSchema>;
 
 /**
  * Schema for the `ctx_large_files` table.
@@ -268,7 +256,6 @@ export const CtxLargeFileRowSchema = z.strictObject({
   exploration_summary: z.string().nullable(),
   created_at: z.string(),
 });
-export type CtxLargeFileRowFromSchema = z.infer<typeof CtxLargeFileRowSchema>;
 
 /**
  * Schema for the `ctx_expansion_grants` table.
@@ -286,7 +273,6 @@ export const CtxExpansionGrantRowSchema = z.strictObject({
   revoked: z.number(),
   created_at: z.string(),
 });
-export type CtxExpansionGrantRowFromSchema = z.infer<typeof CtxExpansionGrantRowSchema>;
 
 // =====================================================================
 // 3. Session-store DTOs (paired with @comis/core/ports/session-store-types)
@@ -306,7 +292,6 @@ export const SessionDataSchema = z.strictObject({
   createdAt: z.number(),
   updatedAt: z.number(),
 });
-export type SessionDataFromSchema = z.infer<typeof SessionDataSchema>;
 
 /**
  * Schema for SessionStorePort.list() rows.
@@ -316,7 +301,6 @@ export const SessionListEntrySchema = z.strictObject({
   sessionKey: z.string(),
   updatedAt: z.number(),
 });
-export type SessionListEntryFromSchema = z.infer<typeof SessionListEntrySchema>;
 
 /**
  * Schema for SessionStorePort.listDetailed() rows.
@@ -332,7 +316,6 @@ export const SessionDetailedEntrySchema = z.strictObject({
   updatedAt: z.number(),
   messageCount: z.number(),
 });
-export type SessionDetailedEntryFromSchema = z.infer<typeof SessionDetailedEntrySchema>;
 
 // =====================================================================
 // 4. Internal DB-row schemas (single-source-of-truth for consumer
@@ -351,7 +334,6 @@ export const TokenUsageDbRowSchema = z.strictObject({
   trace_id: z.string(),
   agent_id: z.string(),
   channel_id: z.string(),
-  execution_id: z.string(),
   session_key: z.string(),
   provider: z.string(),
   model: z.string(),
@@ -369,7 +351,6 @@ export const TokenUsageDbRowSchema = z.strictObject({
   latency_ms: z.number(),
   cache_retention: z.string().nullable(),
 });
-export type TokenUsageDbRowFromSchema = z.infer<typeof TokenUsageDbRowSchema>;
 
 /**
  * Schema for the `delivery` table.
@@ -392,7 +373,6 @@ export const DeliveryDbRowSchema = z.strictObject({
   tokens_total: z.number(),
   cost_total: z.number(),
 });
-export type DeliveryDbRowFromSchema = z.infer<typeof DeliveryDbRowSchema>;
 
 /**
  * Schema for the `diagnostics` table.
@@ -409,7 +389,6 @@ export const DiagnosticDbRowSchema = z.strictObject({
   details: z.string(),
   trace_id: z.string(),
 });
-export type DiagnosticDbRowFromSchema = z.infer<typeof DiagnosticDbRowSchema>;
 
 /**
  * Schema for the `channels` table.
@@ -425,7 +404,6 @@ export const ChannelSnapshotDbRowSchema = z.strictObject({
   messages_received: z.number(),
   uptime_ms: z.number(),
 });
-export type ChannelSnapshotDbRowFromSchema = z.infer<typeof ChannelSnapshotDbRowSchema>;
 
 /**
  * Schema for `provider`-grouped aggregation rows.
@@ -439,7 +417,6 @@ export const ProviderAggDbRowSchema = z.strictObject({
   call_count: z.number(),
   total_cache_saved: z.number(),
 });
-export type ProviderAggDbRowFromSchema = z.infer<typeof ProviderAggDbRowSchema>;
 
 /**
  * Schema for `agent_id`-grouped aggregation rows.
@@ -452,7 +429,6 @@ export const AgentAggDbRowSchema = z.strictObject({
   call_count: z.number(),
   total_cache_saved: z.number(),
 });
-export type AgentAggDbRowFromSchema = z.infer<typeof AgentAggDbRowSchema>;
 
 /**
  * Schema for `session_key`-grouped aggregation rows.
@@ -465,7 +441,6 @@ export const SessionAggDbRowSchema = z.strictObject({
   call_count: z.number(),
   total_cache_saved: z.number(),
 });
-export type SessionAggDbRowFromSchema = z.infer<typeof SessionAggDbRowSchema>;
 
 /**
  * Schema for hourly time-bucket aggregation rows.
@@ -478,7 +453,6 @@ export const HourlyBucketDbRowSchema = z.strictObject({
   call_count: z.number(),
   total_cache_saved: z.number(),
 });
-export type HourlyBucketDbRowFromSchema = z.infer<typeof HourlyBucketDbRowSchema>;
 
 /**
  * Schema for delivery-status statistics rows.
@@ -492,7 +466,6 @@ export const DeliveryStatsDbRowSchema = z.strictObject({
   filtered: z.number(),
   avg_latency_ms: z.number(),
 });
-export type DeliveryStatsDbRowFromSchema = z.infer<typeof DeliveryStatsDbRowSchema>;
 
 /**
  * Schema for `system_prompt_reports` rows.
@@ -514,7 +487,6 @@ export const SystemPromptReportDbRowSchema = z.strictObject({
   system_sha256: z.string(),
   report_json: z.string(),
 });
-export type SystemPromptReportDbRowFromSchema = z.infer<typeof SystemPromptReportDbRowSchema>;
 
 /**
  * Cache-stats SQL row schemas. Four shapes — the single-row window
@@ -530,7 +502,6 @@ export const CacheStatsWindowRawDbRowSchema = z.strictObject({
   output_tokens: z.number(),
   turns: z.number(),
 });
-export type CacheStatsWindowRawDbRowFromSchema = z.infer<typeof CacheStatsWindowRawDbRowSchema>;
 
 export const CacheStatsByProviderRawDbRowSchema = z.strictObject({
   provider: z.string(),
@@ -540,9 +511,6 @@ export const CacheStatsByProviderRawDbRowSchema = z.strictObject({
   output_tokens: z.number(),
   turns: z.number(),
 });
-export type CacheStatsByProviderRawDbRowFromSchema = z.infer<
-  typeof CacheStatsByProviderRawDbRowSchema
->;
 
 export const CacheStatsByModelRawDbRowSchema = z.strictObject({
   provider: z.string(),
@@ -553,9 +521,6 @@ export const CacheStatsByModelRawDbRowSchema = z.strictObject({
   output_tokens: z.number(),
   turns: z.number(),
 });
-export type CacheStatsByModelRawDbRowFromSchema = z.infer<
-  typeof CacheStatsByModelRawDbRowSchema
->;
 
 export const CacheStatsByAgentRawDbRowSchema = z.strictObject({
   agent_id: z.string(),
@@ -565,9 +530,6 @@ export const CacheStatsByAgentRawDbRowSchema = z.strictObject({
   output_tokens: z.number(),
   turns: z.number(),
 });
-export type CacheStatsByAgentRawDbRowFromSchema = z.infer<
-  typeof CacheStatsByAgentRawDbRowSchema
->;
 
 // --- OAuth profile store (packages/memory/src/oauth-profile-store-encrypted.ts:29) ---
 
@@ -591,7 +553,6 @@ export const OAuthProfileRowSchema = z.strictObject({
   created_at: z.number(),
   updated_at: z.number(),
 });
-export type OAuthProfileRowFromSchema = z.infer<typeof OAuthProfileRowSchema>;
 
 // --- Delivery mirror (packages/memory/src/delivery-mirror-adapter.ts:23) ---
 
@@ -613,7 +574,6 @@ export const DeliveryMirrorDbRowSchema = z.strictObject({
   created_at: z.number(),
   acknowledged_at: z.number().nullable(),
 });
-export type DeliveryMirrorDbRowFromSchema = z.infer<typeof DeliveryMirrorDbRowSchema>;
 
 // --- Delivery queue (packages/memory/src/delivery-queue-adapter.ts:23) ---
 
@@ -630,10 +590,6 @@ export const DeliveryQueueDbRowSchema = z.strictObject({
   /** JSON-encoded options shape. */
   options_json: z.string(),
   origin: z.string(),
-  /** 0 or 1. */
-  format_applied: z.number(),
-  /** 0 or 1. */
-  chunking_applied: z.number(),
   status: z.string(),
   attempt_count: z.number(),
   max_attempts: z.number(),
@@ -643,12 +599,8 @@ export const DeliveryQueueDbRowSchema = z.strictObject({
   last_attempt_at: z.number().nullable(),
   next_retry_at: z.number().nullable(),
   last_error: z.string().nullable(),
-  /** 0 or 1. */
-  markdown_fallback_applied: z.number(),
-  delivered_message_id: z.string().nullable(),
   trace_id: z.string().nullable(),
 });
-export type DeliveryQueueDbRowFromSchema = z.infer<typeof DeliveryQueueDbRowSchema>;
 
 // --- Embedding cache SQLite (packages/memory/src/embedding-cache-sqlite.ts:81) ---
 
@@ -660,7 +612,6 @@ export const BatchCacheRowSchema = z.strictObject({
   text_hash: z.string(),
   embedding: z.instanceof(Buffer),
 });
-export type BatchCacheRowFromSchema = z.infer<typeof BatchCacheRowSchema>;
 
 // =====================================================================
 // 5. Common projection shapes (frequently encountered)
@@ -673,7 +624,6 @@ export type BatchCacheRowFromSchema = z.infer<typeof BatchCacheRowSchema>;
 export const IdProjectionRowSchema = z.strictObject({
   id: z.string(),
 });
-export type IdProjectionRowFromSchema = z.infer<typeof IdProjectionRowSchema>;
 
 /**
  * Schema for `SELECT COUNT(*) as count FROM ...` results.
@@ -682,4 +632,3 @@ export type IdProjectionRowFromSchema = z.infer<typeof IdProjectionRowSchema>;
 export const CountProjectionRowSchema = z.strictObject({
   count: z.number(),
 });
-export type CountProjectionRowFromSchema = z.infer<typeof CountProjectionRowSchema>;

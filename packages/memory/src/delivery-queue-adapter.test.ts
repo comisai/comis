@@ -30,8 +30,6 @@ describe("SqliteDeliveryQueueAdapter", () => {
       tenantId: "default",
       optionsJson: "{}",
       origin: "agent",
-      formatApplied: false,
-      chunkingApplied: false,
       maxAttempts: 5,
       createdAt: now,
       scheduledAt: now,
@@ -81,9 +79,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
     });
 
     it("persists all fields correctly", async () => {
-      await queue.enqueue(
-        makeEntry({ formatApplied: true, chunkingApplied: true }),
-      );
+      await queue.enqueue(makeEntry());
       const pending = await queue.pendingEntries();
       expect(pending.ok).toBe(true);
       if (pending.ok) {
@@ -94,14 +90,10 @@ describe("SqliteDeliveryQueueAdapter", () => {
         expect(entry.tenantId).toBe("default");
         expect(entry.optionsJson).toBe("{}");
         expect(entry.origin).toBe("agent");
-        expect(entry.formatApplied).toBe(true);
-        expect(entry.chunkingApplied).toBe(true);
         expect(entry.status).toBe("pending");
         expect(entry.attemptCount).toBe(0);
         expect(entry.maxAttempts).toBe(5);
         expect(entry.traceId).toBe("trace-abc");
-        expect(entry.markdownFallbackApplied).toBe(false);
-        expect(entry.deliveredMessageId).toBeNull();
         expect(entry.lastAttemptAt).toBeNull();
         expect(entry.nextRetryAt).toBeNull();
         expect(entry.lastError).toBeNull();
@@ -361,15 +353,15 @@ describe("SqliteDeliveryQueueAdapter", () => {
       // Two crashed rows directly via raw SQL
       db.prepare(
         `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
-                                       format_applied, chunking_applied, status, attempt_count, max_attempts,
+                                       status, attempt_count, max_attempts,
                                        created_at, scheduled_at, expire_at, last_error)
-         VALUES ('crashed-1', 't', 'tg', 'c1', 'def', '{}', 'channel', 0, 0, 'in_flight', 0, 5, ?, ?, ?, 'crashed mid-send')`,
+         VALUES ('crashed-1', 't', 'tg', 'c1', 'def', '{}', 'channel', 'in_flight', 0, 5, ?, ?, ?, 'crashed mid-send')`,
       ).run(now, now, now + 60_000);
       db.prepare(
         `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
-                                       format_applied, chunking_applied, status, attempt_count, max_attempts,
+                                       status, attempt_count, max_attempts,
                                        created_at, scheduled_at, expire_at, last_error)
-         VALUES ('crashed-2', 't', 'tg', 'c1', 'def', '{}', 'channel', 0, 0, 'in_flight', 0, 5, ?, ?, ?, NULL)`,
+         VALUES ('crashed-2', 't', 'tg', 'c1', 'def', '{}', 'channel', 'in_flight', 0, 5, ?, ?, ?, NULL)`,
       ).run(now, now, now + 60_000);
       // One pending row via the public API (still works after constructor change)
       await queue.enqueue(makeEntry({ text: "fresh" }));

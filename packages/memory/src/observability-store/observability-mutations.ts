@@ -40,11 +40,11 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
 
   const insertTokenUsageStmt = db.prepare(`
     INSERT INTO obs_token_usage (
-      timestamp, trace_id, agent_id, channel_id, execution_id, session_key,
+      timestamp, trace_id, agent_id, channel_id, session_key,
       provider, model, prompt_tokens, completion_tokens, total_tokens,
       cache_read_tokens, cache_write_tokens, cost_input, cost_output, cost_total,
       cost_cache_read, cost_cache_write, cache_saved, latency_ms, cache_retention
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertDeliveryStmt = db.prepare(`
@@ -85,7 +85,6 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
       entry.traceId,
       entry.agentId,
       entry.channelId ?? "",
-      entry.executionId ?? "",
       entry.sessionKey ?? "",
       entry.provider,
       entry.model,

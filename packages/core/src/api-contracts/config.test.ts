@@ -634,8 +634,6 @@ describe("config + env + gateway-infrastructure contracts", () => {
             description: "Production API key",
             createdAt: 1_700_000_000_000,
             updatedAt: 1_700_001_000_000,
-            lastUsedAt: 1_700_002_000_000,
-            usageCount: 42,
             expiresAt: 1_800_000_000_000,
           },
         ],
