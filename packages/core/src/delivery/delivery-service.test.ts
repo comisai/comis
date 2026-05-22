@@ -285,7 +285,6 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
   fail: ReturnType<typeof vi.fn>;
   pendingEntries: ReturnType<typeof vi.fn>;
   pruneExpired: ReturnType<typeof vi.fn>;
-  depth: ReturnType<typeof vi.fn>;
   statusCounts: ReturnType<typeof vi.fn>;
   recoverInFlight: ReturnType<typeof vi.fn>;
 } {
@@ -297,7 +296,6 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
     fail: vi.fn().mockResolvedValue(ok(undefined)),
     pendingEntries: vi.fn().mockResolvedValue(ok([])),
     pruneExpired: vi.fn().mockResolvedValue(ok(0)),
-    depth: vi.fn().mockResolvedValue(ok(0)),
     statusCounts: vi.fn().mockResolvedValue(
       ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
     ),
@@ -1242,7 +1240,6 @@ describe("DeliveryService — full pipeline behavior", () => {
       fail: ReturnType<typeof vi.fn>;
       pendingEntries: ReturnType<typeof vi.fn>;
       pruneExpired: ReturnType<typeof vi.fn>;
-      depth: ReturnType<typeof vi.fn>;
       statusCounts: ReturnType<typeof vi.fn>;
       recoverInFlight: ReturnType<typeof vi.fn>;
     } {
@@ -1255,7 +1252,6 @@ describe("DeliveryService — full pipeline behavior", () => {
         fail: vi.fn().mockResolvedValue(ok(undefined)),
         pendingEntries: vi.fn().mockResolvedValue(ok([])),
         pruneExpired: vi.fn().mockResolvedValue(ok(0)),
-        depth: vi.fn().mockResolvedValue(ok(0)),
         statusCounts: vi.fn().mockResolvedValue(
           ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
         ),
@@ -1412,7 +1408,6 @@ describe("DeliveryService — full pipeline behavior", () => {
         fail: vi.fn().mockResolvedValue(ok(undefined)),
         pendingEntries: vi.fn().mockResolvedValue(ok([])),
         pruneExpired: vi.fn().mockResolvedValue(ok(0)),
-        depth: vi.fn().mockResolvedValue(ok(0)),
         statusCounts: vi.fn().mockResolvedValue(
           ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
         ),
