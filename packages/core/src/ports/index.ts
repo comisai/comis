@@ -19,13 +19,6 @@ export type {
   MemorySearchResult,
   MemoryUpdateFields,
 } from "./memory.js";
-export type {
-  SkillPort,
-  SkillPermissions,
-  SkillInput,
-  SkillOutput,
-  SkillManifest,
-} from "./skill.js";
 export type { EmbeddingPort } from "./embedding.js";
 export type { ContextStorePort } from "./context-store.js";
 export type {
@@ -114,12 +107,6 @@ export type {
   ChannelCapability,
 } from "./channel-plugin.js";
 export type { ChannelStatus } from "./channel.js";
-export type {
-  DeviceIdentity,
-  DeviceIdentityPort,
-  PairingRequest,
-  PairedDevice,
-} from "./device-identity.js";
 export type {
   OutputGuardPort,
   OutputGuardFinding,
