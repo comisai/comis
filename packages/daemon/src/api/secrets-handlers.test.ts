@@ -245,7 +245,6 @@ describe("createSecretsHandlers", () => {
               provider: "openai",
               createdAt: 1,
               updatedAt: 1,
-              usageCount: 0,
             },
           ] as SecretMetadata[]),
         ),

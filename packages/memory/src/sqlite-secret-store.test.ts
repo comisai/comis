@@ -158,19 +158,6 @@ describe("createSqliteSecretStore", () => {
     });
   });
 
-  describe("exists", () => {
-    it("returns true for stored secret, false for missing", () => {
-      const store = createSqliteSecretStore(dbPath, crypto);
-
-      expect(store.exists("ABSENT")).toBe(false);
-
-      store.set("PRESENT", "value");
-      expect(store.exists("PRESENT")).toBe(true);
-
-      store.close();
-    });
-  });
-
   describe("list", () => {
     it("returns metadata without secret values", () => {
       const store = createSqliteSecretStore(dbPath, crypto);
@@ -187,7 +174,6 @@ describe("createSqliteSecretStore", () => {
       expect(item.name).toBe("DB_PASSWORD");
       expect(item.provider).toBe("postgres");
       expect(item.description).toBe("Main database password");
-      expect(item.usageCount).toBe(0);
       expect(item.createdAt).toBeTypeOf("number");
       expect(item.updatedAt).toBeTypeOf("number");
 
@@ -223,8 +209,9 @@ describe("createSqliteSecretStore", () => {
       const deleted = unwrap(store.delete("TO_DELETE"));
       expect(deleted).toBe(true);
 
-      // Confirm deleted
-      expect(store.exists("TO_DELETE")).toBe(false);
+      // Confirm deleted via list (the deleted secret should not appear)
+      const items = unwrap(store.list());
+      expect(items.find((i) => i.name === "TO_DELETE")).toBeUndefined();
 
       store.close();
     });
@@ -234,37 +221,6 @@ describe("createSqliteSecretStore", () => {
 
       const deleted = unwrap(store.delete("DOES_NOT_EXIST"));
       expect(deleted).toBe(false);
-
-      store.close();
-    });
-  });
-
-  describe("recordUsage", () => {
-    it("increments usage_count and updates last_used_at", () => {
-      const store = createSqliteSecretStore(dbPath, crypto);
-
-      store.set("TRACKED", "value");
-
-      // Initial state
-      const beforeItems = unwrap(store.list());
-      const before = beforeItems.find((m) => m.name === "TRACKED");
-      expect(before!.usageCount).toBe(0);
-      expect(before!.lastUsedAt).toBeUndefined();
-
-      // Record usage
-      store.recordUsage("TRACKED");
-
-      const afterItems = unwrap(store.list());
-      const after = afterItems.find((m) => m.name === "TRACKED");
-      expect(after!.usageCount).toBe(1);
-      expect(after!.lastUsedAt).toBeTypeOf("number");
-
-      // Record again
-      store.recordUsage("TRACKED");
-
-      const finalItems = unwrap(store.list());
-      const final = finalItems.find((m) => m.name === "TRACKED");
-      expect(final!.usageCount).toBe(2);
 
       store.close();
     });

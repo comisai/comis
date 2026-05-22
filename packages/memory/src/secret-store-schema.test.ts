@@ -45,13 +45,12 @@ describe("initSecretSchema", () => {
     expect(columnNames).toContain("provider");
     expect(columnNames).toContain("description");
     expect(columnNames).toContain("expires_at");
-    expect(columnNames).toContain("last_used_at");
-    expect(columnNames).toContain("usage_count");
     expect(columnNames).toContain("created_at");
     expect(columnNames).toContain("updated_at");
 
-    // Should have exactly 12 columns
-    expect(columns).toHaveLength(12);
+    // Should have exactly 10 columns (last_used_at + usage_count removed in
+    // Phase 51.03 SCHEMA-TRIM-03 + PORT-TRIM-04)
+    expect(columns).toHaveLength(10);
 
     // Verify BLOB types for encrypted fields
     const blobColumns = columns.filter((c) => c.type === "BLOB");
@@ -71,7 +70,7 @@ describe("initSecretSchema", () => {
     const columns = db
       .prepare("PRAGMA table_info(secrets)")
       .all() as Array<{ name: string }>;
-    expect(columns).toHaveLength(12);
+    expect(columns).toHaveLength(10);
   });
 });
 

@@ -25,10 +25,8 @@ function createMockSecretStore(): SecretStorePort {
     set: vi.fn(() => ok(undefined)),
     getDecrypted: vi.fn(() => ok(undefined)),
     decryptAll: vi.fn(() => ok(new Map())),
-    exists: vi.fn(() => false),
     list: vi.fn(() => ok([])),
     delete: vi.fn(() => ok(true)),
-    recordUsage: vi.fn(),
     close: vi.fn(),
   } as unknown as SecretStorePort;
 }
@@ -530,8 +528,6 @@ describe("env.list handler", () => {
           description: "test",
           createdAt: 1000,
           updatedAt: 2000,
-          lastUsedAt: 3000,
-          usageCount: 5,
           expiresAt: undefined,
         },
       ]),
@@ -548,7 +544,6 @@ describe("env.list handler", () => {
         source: string;
         provider?: string;
         createdAt?: number;
-        usageCount?: number;
       }>;
     };
 
@@ -558,7 +553,6 @@ describe("env.list handler", () => {
     expect(stored.source).toBe("secretstore");
     expect(stored.provider).toBe("openai");
     expect(stored.createdAt).toBe(1000);
-    expect(stored.usageCount).toBe(5);
 
     expect(plain.source).toBe("envfile");
     expect(plain).not.toHaveProperty("provider");

@@ -308,14 +308,12 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       const selected = names.slice().sort().slice(0, limit);
 
       // Enrich with SecretStorePort metadata when available.
-      // Metadata is name + provider + timestamps + usageCount — NEVER a value.
+      // Metadata is name + provider + timestamps — NEVER a value.
       const metaByName = new Map<string, {
         provider?: string;
         description?: string;
         createdAt?: number;
         updatedAt?: number;
-        lastUsedAt?: number;
-        usageCount?: number;
         expiresAt?: number;
       }>();
       if (deps.secretStore) {
@@ -327,8 +325,6 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
               description: m.description,
               createdAt: m.createdAt,
               updatedAt: m.updatedAt,
-              lastUsedAt: m.lastUsedAt,
-              usageCount: m.usageCount,
               expiresAt: m.expiresAt,
             });
           }
