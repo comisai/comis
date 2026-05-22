@@ -388,7 +388,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // api/*-handlers.ts split into per-domain modules)
   {
     file: "packages/daemon/src/daemon.ts",
-    lines: 2700, // re-measure post-collapse — final value may be 2,500-2,800; Plan 59-03 owns the re-derivation
+    lines: 2516, // re-measured post-collapse (Plan 59-03)
     reason: "daemon.ts composition root after Phase 59 stage decomposition collapse (REFACTOR-01 + BOUND-RELAX-02). Single file holds main() + 4 small helpers (DEFAULT_CONFIG_PATHS / applyInspectDefaultsForLogging / hardenDataDirPermissions / runPreflightDoctor) + inlined foundation/agents/channels/gateway/shutdown bodies + 30 ex-stage-helper functions. The 5-stage decomposition was removed because its enforcement test (200-LOC-per-stage rule at __tests__/architecture.test.ts:174-382) created more structural overhead than the per-stage cap mitigated. The bootstrap-order assertion (5-stage call sequence + handle chaining contract) was deleted entirely; its runtime invariant is now carried by integration tests — daemon-lifecycle.test.ts:89-99 asserts the 5 startup log lines emit in source order. Composition-root cap raised to 3000L per Phase 59 RESEARCH §C.4 (350L headroom over re-measured 2,700L baseline).",
     removedIn: "deferred",
   },
@@ -872,8 +872,8 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   },
   {
     file: "packages/daemon/src/daemon.ts",
-    lineRanges: [[326, 326], [335, 335]], // pre-collapse pair; Plan 59-03 re-derives after stages/* inline
-    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution, secrets bootstrap, secret decryption, capability port resolution, hot-add post-shutdown guard); hard-fail at startup is the correct contract per AGENTS.md §6.2. Phase 59 will collapse stages/* back into daemon.ts (Plan 59-03); after that, the file-level `// @allow-throw: daemon bootstrap composition-root failures` annotation at daemon.ts:2 is the primary mechanism per test/architecture/raw-throw.test.ts. lineRanges will be re-derived in Plan 59-03 by grepping daemon.ts post-collapse.",
+    lineRanges: [[432, 432], [446, 446], [888, 888], [1318, 1318], [1327, 1327], [1912, 1912]], // 6 post-collapse throws re-derived (Plan 59-03)
+    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution, secrets bootstrap, secret decryption, capability port resolution, hot-add post-shutdown guard); hard-fail at startup is the correct contract per AGENTS.md §6.2. Phase 59 collapsed stages/* back into daemon.ts; the file-level `// @allow-throw: daemon bootstrap composition-root failures` annotation at daemon.ts:2 is the primary mechanism per test/architecture/raw-throw.test.ts.",
     removedIn: "permanent",
   },
   {
