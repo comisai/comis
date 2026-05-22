@@ -169,9 +169,17 @@ export function registerHealthCommand(program: Command): void {
           json(filtered);
         } else {
           const findings = mapHealthFindings(filtered);
+          // Pre-fusion `renderHealthTable` emitted ONLY the footer line —
+          // either "All checks passed" (green) or "N issues found (X errors,
+          // Y warnings)". There was NO leading "N checks, X fail, Y warn"
+          // preamble. Suppress the preamble by passing total=0 and empty
+          // counts; the renderer's `summaryParts()` then yields no entries
+          // and `emitSummary()` only emits the footer (WR-03 fix). This also
+          // resolves WR-04 — the pre-vs-post-filter `total`/`counts` mismatch
+          // is moot once no preamble renders.
           const summary = {
-            total: findings.length,
-            counts: { fail: result.failCount, warn: result.warnCount },
+            total: 0,
+            counts: {},
             footer: buildHealthFooter(result.failCount, result.warnCount),
           };
           renderFindings(
