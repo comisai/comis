@@ -91,60 +91,45 @@ describe("@comis/core -- architecture invariants", () => {
     ).toEqual([]);
   });
 
-  it("exports ContextStorePort interface from core/src/ports/context-store.ts", () => {
-    // Asserts the type-only port file exists and declares the
-    // ContextStorePort interface. The "ports/*.ts is type-only" rule below
-    // gates that the file is type-only; this test asserts the export shape.
+  it("exports ContextStorePort (interface or alias) + ContextEngineStore + ContextAdminStore from core/src/ports/", () => {
+    // Phase 60-02: ContextStorePort split into ContextEngineStore (34
+    // per-session read/write methods) + ContextAdminStore (4 admin/cleanup
+    // methods). ContextStorePort is now declared as an intersection type
+    // alias: `export type ContextStorePort = ContextEngineStore &
+    // ContextAdminStore`. This assertion accepts BOTH the legacy interface
+    // form AND the post-split type-alias form to remain stable across the
+    // refactor window.
     //
-    // Row DTOs live at core/src/ports/context-store-types.ts.
-    //
-    // Historical context for the memory-side declaration:
-    //   • Earlier — `export interface ContextStore { ... }` (full mirror;
-    //     enforced via method-count parity).
-    //   • Intermediate — `export type ContextStore = ContextStorePort`
-    //     (alias is structurally faithful by definition).
-    //   • Terminal state (this branch) — no `ContextStore` declaration in
-    //     memory pkg; ContextStorePort from @comis/core is the single
-    //     source of truth. All daemon + internal memory consumers import
-    //     the Port from core directly.
-    //
-    // Accept any of the three states; flag drift only if the port is missing
-    // OR an interface-form declaration drifts from method-count parity.
-    const portFile = resolve(SRC_ROOT, "ports/context-store.ts");
-    const source = readFileSync(portFile, "utf8");
+    // The dead memory-parity-check branch is intentionally removed — memory
+    // pkg no longer declares its own `ContextStore` type (terminal state
+    // per pre-refactor architecture comment); ContextStorePort from
+    // @comis/core is the single source of truth.
     const missing: string[] = [];
-    if (!/export\s+interface\s+ContextStorePort\b/.test(source)) {
+
+    // ContextStorePort — accept BOTH interface AND type alias (post-split form).
+    const portFile = resolve(SRC_ROOT, "ports/context-store.ts");
+    const portSrc = readFileSync(portFile, "utf8");
+    if (!/export\s+(?:interface|type)\s+ContextStorePort\b/.test(portSrc)) {
       missing.push("ContextStorePort");
     }
-    const memorySource = readFileSync(
-      resolve(SRC_ROOT, "..", "..", "memory", "src", "context-store.ts"),
-      "utf8",
-    );
-    const memAliasMatch = /export\s+type\s+ContextStore\s*=\s*ContextStorePort\b/.test(
-      memorySource,
-    );
-    const memInterfaceMatch = /export\s+interface\s+ContextStore\b/.test(memorySource);
-    if (!memAliasMatch && memInterfaceMatch) {
-      // Interface-form path: gate method-count parity.
-      const memBlock = /export\s+interface\s+ContextStore\b[\s\S]*?\n\}/.exec(
-        memorySource,
-      );
-      const portBlock = /export\s+interface\s+ContextStorePort\b[\s\S]*?\n\}/.exec(source);
-      const countMethods = (block: string | undefined): number =>
-        block ? (block.match(/^ {2}[a-z][a-zA-Z]+\(/gm) ?? []).length : 0;
-      const memMethodCount = countMethods(memBlock?.[0]);
-      const portMethodCount = countMethods(portBlock?.[0]);
-      if (portMethodCount < memMethodCount) {
-        missing.push(
-          `method-count parity (port has ${portMethodCount}, memory's ContextStore has ${memMethodCount} — full-mirror requires >=)`,
-        );
-      }
+
+    // ContextEngineStore — interface in new file (34 per-session methods).
+    const engineFile = resolve(SRC_ROOT, "ports/context-engine-store.ts");
+    const engineSrc = readFileSync(engineFile, "utf8");
+    if (!/export\s+interface\s+ContextEngineStore\b/.test(engineSrc)) {
+      missing.push("ContextEngineStore");
     }
-    // If neither alias nor interface is present, the migration is complete
-    // (Port is canonical) — no drift gate needed.
+
+    // ContextAdminStore — interface in new file (4 admin/cleanup methods).
+    const adminFile = resolve(SRC_ROOT, "ports/context-admin-store.ts");
+    const adminSrc = readFileSync(adminFile, "utf8");
+    if (!/export\s+interface\s+ContextAdminStore\b/.test(adminSrc)) {
+      missing.push("ContextAdminStore");
+    }
+
     expect(
       missing,
-      "core/src/ports/context-store.ts must export the ContextStorePort interface. Terminal state: memory pkg no longer declares a `ContextStore` type — the Port from @comis/core is the single source of truth.",
+      `Expected ContextStorePort (interface or alias) + ContextEngineStore + ContextAdminStore port declarations to exist. Missing: ${missing.join(", ")}`,
     ).toEqual([]);
   });
 
@@ -368,24 +353,35 @@ describe("port-DTO residency text-level checks", () => {
   const PORTS_DIR_P31 = resolve(SRC_ROOT, "ports");
   const DOMAIN_DIR_P31 = resolve(SRC_ROOT, "domain");
 
-  it("every Ctx*Row name appearing in context-store.ts source-text is exported from context-store-types.ts", () => {
+  it("every Ctx*Row name appearing in the context-store port files is exported from context-store-types.ts", () => {
     // Complementary check — the primary AST-level check is the
     // TS-compiler-API walker wired in test/architecture/source-rules.test.ts.
     // This regex check additionally catches Ctx*Row names mentioned in
-    // comments or non-method-signature positions in context-store.ts.
-    const portFile = readFileSync(resolve(PORTS_DIR_P31, "context-store.ts"), "utf8");
+    // comments or non-method-signature positions.
+    //
+    // Phase 60-02 (REFACTOR-04) split ContextStorePort into two narrower
+    // ports — ContextEngineStore (34 methods) + ContextAdminStore (4
+    // methods). The Ctx*Row references moved out of `context-store.ts`
+    // (now a ~30-line intersection-alias file with no DTO references) and
+    // into the two new port files. The residency check now unions the
+    // names across all three files.
+    const portFileSources = [
+      readFileSync(resolve(PORTS_DIR_P31, "context-store.ts"), "utf8"),
+      readFileSync(resolve(PORTS_DIR_P31, "context-engine-store.ts"), "utf8"),
+      readFileSync(resolve(PORTS_DIR_P31, "context-admin-store.ts"), "utf8"),
+    ].join("\n");
     const typesFile = readFileSync(resolve(PORTS_DIR_P31, "context-store-types.ts"), "utf8");
     const ctxRowNames = new Set(
-      [...portFile.matchAll(/\bCtx[A-Z][A-Za-z]+Row\b/g)].map((m) => m[0]),
+      [...portFileSources.matchAll(/\bCtx[A-Z][A-Za-z]+Row\b/g)].map((m) => m[0]),
     );
     expect(
       ctxRowNames.size,
-      "context-store.ts must reference at least 1 Ctx*Row type",
+      "context-store port files must reference at least 1 Ctx*Row type",
     ).toBeGreaterThan(0);
     for (const name of ctxRowNames) {
       expect(
         typesFile,
-        `${name} (used in context-store.ts) must be exported from context-store-types.ts`,
+        `${name} (used in a context-store port file) must be exported from context-store-types.ts`,
       ).toMatch(new RegExp(`export\\s+interface\\s+${name}\\b`));
     }
   });

@@ -447,24 +447,36 @@ describe("source-rules -- [REDACTED] literal forbidden in production source", ()
 });
 
 describe("source-rules -- ContextStorePort row-DTO residency", () => {
-  it("every Ctx*Row referenced from ContextStorePort method signatures is exported from context-store-types.ts (TS-compiler-API walker)", () => {
-    const contextStorePath = resolve(
+  it("every Ctx*Row referenced from ContextEngineStore + ContextAdminStore method signatures is exported from context-store-types.ts (TS-compiler-API walker)", () => {
+    // Phase 60-02 (REFACTOR-04): the original 38-method ContextStorePort
+    // interface was split into ContextEngineStore (34 methods, in
+    // `context-engine-store.ts`) + ContextAdminStore (4 methods, in
+    // `context-admin-store.ts`). ContextStorePort itself is now a type
+    // alias (`type ContextStorePort = ContextEngineStore &
+    // ContextAdminStore`). The walker unions the Ctx*Row references
+    // across both interface declarations.
+    const contextEngineStorePath = resolve(
       PACKAGES_ROOT,
-      "core/src/ports/context-store.ts",
+      "core/src/ports/context-engine-store.ts",
+    );
+    const contextAdminStorePath = resolve(
+      PACKAGES_ROOT,
+      "core/src/ports/context-admin-store.ts",
     );
     const typesPath = resolve(
       PACKAGES_ROOT,
       "core/src/ports/context-store-types.ts",
     );
     const violations = checkContextStoreRowResidency(
-      contextStorePath,
+      [contextEngineStorePath, contextAdminStorePath],
       typesPath,
+      ["ContextEngineStore", "ContextAdminStore"],
     );
     expect(
       violations,
       formatViolations({
         description:
-          "Every Ctx*Row referenced transitively from ContextStorePort method signatures (parameters and return types) MUST be exported as an interface from context-store-types.ts. Walks the AST via TypeChecker — this is the PRIMARY check. A complementary text-level regex check lives in packages/core/src/__tests__/architecture.test.ts.",
+          "Every Ctx*Row referenced transitively from ContextEngineStore + ContextAdminStore method signatures (parameters and return types) MUST be exported as an interface from context-store-types.ts. Walks the AST via TypeChecker — this is the PRIMARY check. A complementary text-level regex check lives in packages/core/src/__tests__/architecture.test.ts.",
         violations: violations.map((v) => ({
           file: v.file,
           line: v.line,
