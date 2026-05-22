@@ -17,9 +17,22 @@ vi.mock("../client/rpc-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
   return {
     ...actual,
+    // agents.update default mock: AgentsUpdateContract.response success shape.
+    // (Test-helper default; per-test overrides via mockImplementationOnce for
+    // failure paths.) Under always-on parse, the response must satisfy
+    // `{ agentId, config, updated: true }` — a bare `{ updated: true }` would
+    // throw a non-obvious zod parse error in any future caller.
     withClient: vi.fn(async (fn: (client: { call: (m: string, p: unknown) => Promise<unknown> }) => Promise<unknown>) => {
-      // Default mock client: succeeds with a stub success payload.
-      return fn({ call: async () => ({ updated: true }) });
+      return fn({
+        call: async (_method: string, params: unknown) => {
+          const p = (params ?? {}) as { agentId?: string; config?: Record<string, unknown> };
+          return {
+            agentId: p.agentId ?? "unknown",
+            config: p.config ?? {},
+            updated: true,
+          };
+        },
+      });
     }),
   };
 });
@@ -198,9 +211,20 @@ describe("agent set-oauth-profile", () => {
 
   beforeEach(() => {
     mockWithClient.mockReset();
-    // Default mock: success path. Per-test overrides for error scenarios.
+    // Default mock: AgentsUpdateContract.response success shape
+    // (`{ agentId, config, updated: true }`). Per-test overrides for
+    // error scenarios via mockImplementationOnce.
     mockWithClient.mockImplementation(async (fn) =>
-      fn({ call: async () => ({ updated: true }) } as never),
+      fn({
+        call: async (_method: string, params: unknown) => {
+          const p = (params ?? {}) as { agentId?: string; config?: Record<string, unknown> };
+          return {
+            agentId: p.agentId ?? "unknown",
+            config: p.config ?? {},
+            updated: true,
+          };
+        },
+      } as never),
     );
     program = new Command();
     program.exitOverride();
