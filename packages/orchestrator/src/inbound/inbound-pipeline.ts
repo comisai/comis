@@ -2,14 +2,14 @@
 /**
  * Inbound Pipeline: Thin orchestrator for message reception and routing.
  *
- * Delegates to 4 focused phase modules (5 → 3 collapse in progress; Phase 59
- * REFACTOR-02 merged resolve + preprocess in Plan 59-04; setup + route
- * merge in Plan 59-05):
+ * Delegates to 3 focused phase modules (target 5 → 3 collapse achieved by
+ * Phase 59 REFACTOR-02: Plan 59-04 merged resolve + preprocess; Plan 59-05
+ * merged setup + route):
  *   1. resolve-and-preprocess — agent resolution, session key, audio preflight,
  *                                media preprocessing, compression
  *   2. inbound-gate           — auto-reply, slash commands, reset triggers, skills
- *   3. inbound-setup          — ack reaction, typing controller
- *   4. inbound-route          — debounce, group history, queue routing, execution
+ *   3. setup-and-route        — typing controller, streaming config, steer/followup,
+ *                                queue routing, execution
  *
  * @module
  */
@@ -40,8 +40,7 @@ import { isRegexSafe } from "@comis/channels";
 // Phase module imports
 import { resolveAndPreprocess } from "./resolve-and-preprocess.js";
 import { evaluateInboundGate } from "./inbound-gate.js";
-import { setupInboundExecution } from "./inbound-setup.js";
-import { routeInboundMessage } from "./inbound-route.js";
+import { setupAndRoute } from "./setup-and-route.js";
 import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -145,7 +144,10 @@ export function matchesResetTrigger(text: string, triggers: string[]): boolean {
 /**
  * Process an inbound message through the full pipeline.
  *
- * Orchestrates 5 phases: resolve -> preprocess -> gate -> setup -> route.
+ * Orchestrates 3 phases (target post-collapse shape):
+ *   1. resolveAndPreprocess
+ *   2. evaluateInboundGate
+ *   3. setupAndRoute
  */
 export async function processInboundMessage(
   deps: InboundPipelineDeps,
@@ -170,24 +172,18 @@ export async function processInboundMessage(
     return;
   }
 
-  // Phase 1: Resolve agent + preprocess (merged in Phase 59 REFACTOR-02)
+  // Phase 1: Resolve agent + preprocess (merged in Phase 59 REFACTOR-02 Plan 59-04)
   const resolved = await resolveAndPreprocess(deps, adapter, msg);
   if (!resolved) return; // No executor -- early exit
   const { agentId, executor, sessionKey, processedMsg } = resolved;
 
-  // Phase 3: Auto-reply gate, slash commands, reset triggers, prompt skills
+  // Phase 2: Auto-reply gate, slash commands, reset triggers, prompt skills
   const gate = await evaluateInboundGate(deps, adapter, processedMsg, sessionKey, agentId, sendOverrides);
   if (gate.action === "handled" || gate.action === "skip") return;
 
-  // Phase 4: Ack reaction, typing controller, streaming config
-  const { typingLifecycle, streamCfg } = setupInboundExecution(
-    deps, adapter, gate.processedMsg, msg, sessionKey,
-  );
-
-  // Phase 5: Debounce, group history, steer+followup, queue routing, execution
-  await routeInboundMessage(
+  // Phase 3: Setup + route (merged in Phase 59 REFACTOR-02 Plan 59-05)
+  await setupAndRoute(
     deps, adapter, gate.processedMsg, msg, sessionKey, agentId,
-    executor, streamCfg, activePacers, sendOverrides,
-    typingLifecycle, gate.directives,
+    executor, activePacers, sendOverrides, gate.directives,
   );
 }
