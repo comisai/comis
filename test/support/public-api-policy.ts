@@ -724,6 +724,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SkillOutput",
       "SkillManifest",
       "FileExtractionErrorKind",
+      // RagConfig: surface-only export. The createRagRetriever factory in
+      // packages/agent/src/rag/rag-retriever.ts was deleted in Phase 53
+      // Plan 01 (DEAD-MOD-08); the canonical post-deletion consumer is
+      // packages/agent/src/executor/prompt-assembly.ts:649 which reads
+      // `config.rag.includeTrustLevels` off the PerAgentConfig.rag slot
+      // typed via the schema. No production code carries `RagConfig` as a
+      // named import after the factory removal. Kept exported because the
+      // RagConfigSchema is still operator-facing config; the type alias is
+      // simply zero-consumer until the next round of public-API trimming.
+      "RagConfig",
       "HookName",
       "ModifyingHookName",
       "VoidHookName",

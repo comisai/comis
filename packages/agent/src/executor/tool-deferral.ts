@@ -384,10 +384,6 @@ export function applyToolDeferral(
   // narrow context windows). Providers without mid-turn injection (OpenAI,
   // xAI, etc.) were already exempt from MCP deferral and remain so -- the
   // flip means the Anthropic/Google branch now matches their behavior.
-  //
-  // No MCP-deferral pass runs here. This block is intentionally left as a
-  // comment-only architectural slot so a future budget-pressure rule can
-  // reintroduce conditional MCP deferral if telemetry justifies it.
 
   // Small model aggressive deferral
   if (deferralContext.modelTier === "small") {
