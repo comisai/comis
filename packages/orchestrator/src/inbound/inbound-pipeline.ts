@@ -2,12 +2,14 @@
 /**
  * Inbound Pipeline: Thin orchestrator for message reception and routing.
  *
- * Delegates to 5 focused phase modules:
- *   1. inbound-resolve  — agent resolution, identity, session key
- *   2. inbound-preprocess — audio preflight, media preprocessing, compression
- *   3. inbound-gate     — auto-reply, slash commands, reset triggers, skills
- *   4. inbound-setup    — ack reaction, typing controller
- *   5. inbound-route    — debounce, group history, queue routing, execution
+ * Delegates to 4 focused phase modules (5 → 3 collapse in progress; Phase 59
+ * REFACTOR-02 merged resolve + preprocess in Plan 59-04; setup + route
+ * merge in Plan 59-05):
+ *   1. resolve-and-preprocess — agent resolution, session key, audio preflight,
+ *                                media preprocessing, compression
+ *   2. inbound-gate           — auto-reply, slash commands, reset triggers, skills
+ *   3. inbound-setup          — ack reaction, typing controller
+ *   4. inbound-route          — debounce, group history, queue routing, execution
  *
  * @module
  */
@@ -36,8 +38,7 @@ import type { RetryEngine } from "@comis/core";
 import { isRegexSafe } from "@comis/channels";
 
 // Phase module imports
-import { resolveInboundAgent } from "./inbound-resolve.js";
-import { preprocessInboundMessage } from "./inbound-preprocess.js";
+import { resolveAndPreprocess } from "./resolve-and-preprocess.js";
 import { evaluateInboundGate } from "./inbound-gate.js";
 import { setupInboundExecution } from "./inbound-setup.js";
 import { routeInboundMessage } from "./inbound-route.js";
@@ -169,13 +170,10 @@ export async function processInboundMessage(
     return;
   }
 
-  // Phase 1: Resolve agent, identity, session key
-  const resolved = resolveInboundAgent(deps, adapter, msg);
+  // Phase 1: Resolve agent + preprocess (merged in Phase 59 REFACTOR-02)
+  const resolved = await resolveAndPreprocess(deps, adapter, msg);
   if (!resolved) return; // No executor -- early exit
-  const { agentId, executor, sessionKey } = resolved;
-
-  // Phase 2: Audio preflight, media preprocessing, compression
-  const processedMsg = await preprocessInboundMessage(deps, msg, adapter.channelType);
+  const { agentId, executor, sessionKey, processedMsg } = resolved;
 
   // Phase 3: Auto-reply gate, slash commands, reset triggers, prompt skills
   const gate = await evaluateInboundGate(deps, adapter, processedMsg, sessionKey, agentId, sendOverrides);
