@@ -58,6 +58,7 @@ import {
   resolveEnvRefs,
   truncate,
 } from "./config-parsers.js";
+import { confirm } from "../util/confirm.js";
 
 /** Default config paths to check (matching daemon defaults). */
 const DEFAULT_CONFIG_PATHS = [
@@ -352,23 +353,11 @@ export function registerConfigCommand(program: Command): void {
     .action(async (sha: string, options: { yes?: boolean }) => {
       // Confirmation prompt unless --yes
       if (!options.yes) {
-        const readline = await import("node:readline");
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-        });
-
-        const answer = await new Promise<string>((resolve) => {
-          rl.question(
-            chalk.yellow(`Rollback config to ${sha.slice(0, 7)}? This will restart the daemon. (y/N) `),
-            (ans) => {
-              rl.close();
-              resolve(ans.trim().toLowerCase());
-            },
-          );
-        });
-
-        if (answer !== "y" && answer !== "yes") {
+        if (
+          !(await confirm({
+            message: `Rollback config to ${sha.slice(0, 7)}? This will restart the daemon.`,
+          }))
+        ) {
           info("Cancelled");
           return;
         }
