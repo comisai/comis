@@ -80,16 +80,13 @@ export const TRAJECTORY_EVENT_TYPES = [
 export type TrajectoryEventType = (typeof TRAJECTORY_EVENT_TYPES)[number];
 
 /**
- * Closed union of trajectory event sources (design §6.2).
+ * Trajectory event source (design §6.2).
  *
  * - `"runtime"` — emitted live by `createTrajectoryRecorder` during agent execution.
- * - `"transcript"` — reserved for future post-processors that reconstruct trajectory
- *   events from session transcripts.
- * - `"export"` — reserved for future bulk-export tooling.
  *
- * Only `"runtime"` is in use today; the recorder unconditionally writes that value.
+ * Single-member union preserved for forward-compatibility of on-disk JSONL artifacts.
  */
-export type TrajectoryEventSource = "runtime" | "transcript" | "export";
+export type TrajectoryEventSource = "runtime";
 
 /**
  * Trajectory event — one record per JSONL line.
@@ -104,8 +101,6 @@ export type TrajectoryEventSource = "runtime" | "transcript" | "export";
  *   from a parent (e.g., `tool.result.parentEntryId === tool.call.entryId`).
  * - `seq`: monotonic per-file counter (1-indexed) — per-session monotonic
  *   across all turns in the session (does NOT reset between turns).
- * - `sourceSeq`: optional upstream sequence number when the event was
- *   forwarded from another recorder (e.g., transcript replay).
  * - `provider` / `modelId` / `modelApi` / `workspaceDir`: optional envelope-level
  *   metadata copied from `TrajectoryRecorderInit` when defined.
  * - `data`: typed payload (after `sanitizeForPersistence`).
@@ -120,7 +115,6 @@ export interface TrajectoryEvent {
   readonly type: TrajectoryEventType;
   readonly ts: string;
   readonly seq: number;
-  readonly sourceSeq?: number;
 
   // Correlation IDs.
   readonly agentId: string;
