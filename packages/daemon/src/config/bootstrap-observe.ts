@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Bootstrap-time config observe emitters.
- * Extracted from packages/daemon/src/stages/foundation-helpers.ts as part of
- * Phase 59 REFACTOR-01 stage decomposition collapse. These 3 ConfigObserve
- * symbols live here because they are the ONLY external test consumer of
- * any former stages/* helper (consumed by daemon-config-observe.test.ts).
+ * Extracted from packages/daemon/src/daemon.ts (originally part of the
+ * deleted stage-helpers layer) as part of Phase 59 REFACTOR-01 stage
+ * decomposition collapse. These 3 ConfigObserve symbols live here because
+ * they are the ONLY external test consumer of any former stage-helper
+ * (consumed by daemon-config-observe.test.ts).
  */
 
 import {
