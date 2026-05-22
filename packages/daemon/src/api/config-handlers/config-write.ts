@@ -38,7 +38,7 @@ import { stringify as yamlStringify } from "yaml";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "./config-audit-hook.js";
+import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "../../config/audit-hook.js";
 
 import type { RpcHandler } from "../types.js";
 import {

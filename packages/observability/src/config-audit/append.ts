@@ -358,7 +358,7 @@ export interface AppendConfigAuditParams {
   readonly keepRotated?: number;
   /**
    * Opt-in real-path confinement base forwarded to `appendRegularFile`.
-   * Production callers (last-known-good, config-audit-hook, CLI
+   * Production callers (last-known-good, audit-hook, CLI
    * sync-tooling audit) should pass `path.join(os.homedir(), ".comis")`
    * via `getDefaultConfigAuditConfinedBase()` to close the
    * ancestor-symlink gap. Tests omit it (default `undefined`) to keep

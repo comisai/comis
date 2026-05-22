@@ -154,7 +154,7 @@ export function createConfigObserveAuditRecord(
   // no-restricted-syntax process.env rule is not enforced — but the
   // call still reads runtime process state, which is the intentional
   // semantics here (mirror-matches `process.pid` reads in
-  // packages/daemon/src/api/config-handlers/config-audit-hook.ts and
+  // packages/daemon/src/config/audit-hook.ts and
   // packages/daemon/src/config/last-known-good.ts).
   const pid = process.pid;
   const ppid = process.ppid;
