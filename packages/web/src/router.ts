@@ -2,7 +2,7 @@
 /**
  * Hash-based router with parameterized route support for the Comis SPA.
  *
- * Supports 27 route patterns with named parameters (e.g., `:id`, `:type`).
+ * Supports 38 route patterns with named parameters (e.g., `:id`, `:type`).
  * Routes are matched longest-first to ensure specific patterns like
  * `observe/billing` take priority over `observe` with a parameter.
  *

@@ -58,7 +58,7 @@ const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
  *
  * Handles authentication, routing, and provides the API client
  * to child views via property passing. Uses sidebar + topbar shell
- * layout with 14 navigation items and 27 parameterized routes.
+ * layout with 23 navigation items and 38 parameterized routes.
  *
  * Auth + polling + global-state + keyboard + command-palette
  * orchestration is owned by `app-controller.ts` (createAppController).

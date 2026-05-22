@@ -16,7 +16,7 @@ describe("createRouter", () => {
     window.location.hash = "";
   });
 
-  describe("parameterized route matching - all 22 routes", () => {
+  describe("parameterized route matching - 21 representative tests over 38 routes", () => {
     it("#/dashboard -> ic-dashboard, route 'dashboard', params {}", () => {
       window.location.hash = "#/dashboard";
       const router = createRouter(onChange);
