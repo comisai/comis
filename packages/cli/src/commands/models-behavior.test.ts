@@ -289,12 +289,15 @@ describe("models list --format json outputs valid JSON", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("models.list", SAMPLE_MODELS)
-        .build();
-      return fn(mockClient);
-    });
+    // ModelsListContract.response = z.record(z.string(), z.unknown()) — zod 4
+    // rejects arrays for record schemas, so a mock returning SAMPLE_MODELS
+    // (an array) would fail always-on parse. Exercise the local-catalog
+    // fallback path explicitly (same pattern as the "falls back to local
+    // catalog when daemon offline" describe block above) so the test is
+    // self-contained instead of depending on cross-describe mock-state leakage.
+    vi.mocked(withClient).mockRejectedValue(new Error("Connection refused"));
+    const catalog = vi.mocked(createModelCatalog)();
+    vi.mocked(catalog.getAll).mockReturnValue(SAMPLE_MODELS as never);
   });
 
   afterEach(() => {
