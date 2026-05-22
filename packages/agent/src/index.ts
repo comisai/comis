@@ -62,10 +62,6 @@ export type { ImageRouterParams, ImageRouterResult, ImageFallbackChain, ImageFal
 export { createModelAllowlist } from "./model/model-allowlist.js";
 export type { ModelAllowlist } from "./model/model-allowlist.js";
 
-// Model alias resolver
-export { createModelAliasResolver } from "./model/model-alias-resolver.js";
-export type { ModelAliasResolver, ModelAliasResolverDeps } from "./model/model-alias-resolver.js";
-
 // Context window resolver
 export { createContextWindowResolver } from "./model/context-window-resolver.js";
 export type { ContextWindowResolver, ContextWindowResolverDeps } from "./model/context-window-resolver.js";
@@ -169,8 +165,7 @@ export { runMemoryReview } from "./memory/memory-review-job.js";
 export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 
 // RAG (Retrieval-Augmented Generation)
-export { createRagRetriever, formatMemorySection } from "./rag/rag-retriever.js";
-export type { RagRetriever, RagRetrieverDeps } from "./rag/rag-retriever.js";
+export { formatMemorySection } from "./rag/rag-retriever.js";
 
 // Queue symbols live in @comis/orchestrator:
 // createCommandQueue, CommandQueue, DebounceBuffer, FollowupTrigger,
