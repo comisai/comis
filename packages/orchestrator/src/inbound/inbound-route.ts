@@ -20,7 +20,6 @@ import type {
   TypingLifecycleController,
   SendOverrideStore,
 } from "@comis/channels";
-import { isGroupMessage } from "@comis/channels";
 import { executeAndDeliver } from "../execution/execution-pipeline.js";
 
 // ---------------------------------------------------------------------------
@@ -32,9 +31,6 @@ export type RouteDeps = Pick<
   InboundPipelineDeps,
   | "logger"
   | "eventBus"
-  | "debounceBuffer"
-  | "groupHistoryBuffer"
-  | "sessionLabelStore"
   | "commandQueue"
   | "queueConfig"
   | "activeRunRegistry"
@@ -46,8 +42,6 @@ export type RouteDeps = Pick<
   | "retryEngine"
   | "deliveryQueue"
   | "deliveryService"
-  | "followupTrigger"
-  | "followupConfig"
   | "assembleToolsForAgent"
   | "voiceResponsePipeline"
   | "parseOutboundMedia"
@@ -82,54 +76,12 @@ export async function routeInboundMessage(
   typingLifecycle: TypingLifecycleController | undefined,
   directives: Record<string, unknown> | undefined,
 ): Promise<void> {
-  let msg = processedMsg;
+  const msg = processedMsg;
 
-  // -------------------------------------------------------------------
-  // DEBOUNCE BUFFER GATE
-  // -------------------------------------------------------------------
-  const isDebounced = msg.metadata?.isDebounced === true;
-  if (!isDebounced && deps.debounceBuffer) {
-    deps.logger.debug({
-      step: "debounce-buffered",
-      channelType: adapter.channelType,
-      chatId: msg.channelId,
-    }, "Message buffered for debounce");
-    deps.debounceBuffer.push(sessionKey, msg, adapter.channelType);
-    return; // Message is buffered; execution deferred to flush callback
-  }
-
-  // -------------------------------------------------------------------
-  // GROUP HISTORY INJECTION
-  // -------------------------------------------------------------------
-  if (deps.groupHistoryBuffer) {
-    const skFormatted = formatSessionKey(sessionKey);
-    let effectiveText = msg.text ?? "";
-    const sessionLabel = deps.sessionLabelStore?.getLabel(sessionKey);
-    const history = deps.groupHistoryBuffer.getFormatted(skFormatted, sessionLabel);
-    if (history) {
-      effectiveText = `${history}\n---\n${effectiveText}`;
-      deps.eventBus.emit("grouphistory:injected", {
-        sessionKey: skFormatted,
-        channelType: adapter.channelType,
-        messageCount: deps.groupHistoryBuffer.depth(skFormatted),
-        charCount: history.length,
-        timestamp: systemNowMs(),
-      });
-      deps.logger.debug({
-        step: "group-history-inject",
-        itemCount: deps.groupHistoryBuffer.depth(skFormatted),
-        inputLen: history.length,
-      }, "Group history injected");
-    }
-    // Also push the current activating message to the buffer (for next activation's context)
-    if (isGroupMessage(msg)) {
-      deps.groupHistoryBuffer.push(skFormatted, msg);
-    }
-    // Create the effective message with injected history
-    if (effectiveText !== (msg.text ?? "")) {
-      msg = { ...msg, text: effectiveText };
-    }
-  }
+  // Debounce buffer + group history injection deps slots (debounceBuffer,
+  // groupHistoryBuffer, sessionLabelStore) were never wired by the daemon;
+  // their absent-mode (direct routing without coalescing or history injection)
+  // IS the production code path. Deleted in Plan 56-06.
 
   // Build narrow execution pipeline deps from the inbound pipeline deps
   const execDeps = {
@@ -142,8 +94,6 @@ export async function routeInboundMessage(
     retryEngine: deps.retryEngine,
     deliveryQueue: deps.deliveryQueue,
     deliveryService: deps.deliveryService,
-    followupTrigger: deps.followupTrigger,
-    followupConfig: deps.followupConfig,
     commandQueue: deps.commandQueue,
     assembleToolsForAgent: deps.assembleToolsForAgent,
     voiceResponsePipeline: deps.voiceResponsePipeline,

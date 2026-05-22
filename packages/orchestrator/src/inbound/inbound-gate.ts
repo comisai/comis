@@ -14,7 +14,7 @@ import type { ChannelPort, NormalizedMessage, SessionKey, AutoReplyEngineConfig 
 import { formatSessionKey, systemNowMs } from "@comis/core";
 // Command parsers/matchers live inside this orchestrator package; use local
 // relative imports so the gate does not pull them via @comis/agent.
-import { parseSlashCommand, matchPromptSkillCommand } from "../commands/index.js";
+import { parseSlashCommand } from "../commands/index.js";
 
 import type { InboundPipelineDeps } from "./inbound-pipeline.js";
 import { evaluateAutoReply, isGroupMessage } from "@comis/channels";
@@ -32,13 +32,8 @@ export type GateDeps = Pick<
   | "eventBus"
   | "sessionManager"
   | "autoReplyEngineConfig"
-  | "groupHistoryBuffer"
   | "commandQueue"
-  | "sessionLabelStore"
   | "getResetTriggers"
-  | "greetingGenerator"
-  | "loadPromptSkill"
-  | "getUserInvocableSkillNames"
   | "approvalGate"
   | "handleConfigCommand"
   | "handleSlashCommand"
@@ -132,10 +127,8 @@ export async function evaluateInboundGate(
         "Group message did not activate agent",
       );
 
-      // Push to group history ring buffer for context injection
-      if (deps.groupHistoryBuffer) {
-        deps.groupHistoryBuffer.push(formatSessionKey(sessionKey), msg);
-      }
+      // Group history injection was disabled in production (groupHistoryBuffer
+      // deps slot was never wired); removed in Plan 56-06.
 
       // Route history injection through command queue for serialization
       if (deps.commandQueue) {
@@ -326,54 +319,15 @@ export async function evaluateInboundGate(
       sessionKey,
       reason: "auto-reset:trigger-phrase",
     });
-    let resetMessage = "Session reset.";
-    if (deps.greetingGenerator) {
-      const greetingResult = await deps.greetingGenerator.generate(agentId);
-      if (greetingResult.ok) {
-        resetMessage = greetingResult.value;
-      }
-    }
-    await deps.deliveryService.deliverToChannel(adapter, msg.channelId, resetMessage, { skipChunking: true });
+    // greetingGenerator deps slot deleted in Plan 56-06; static reset message
+    // matches the production absent-mode behavior documented in AUDIT.md.
+    await deps.deliveryService.deliverToChannel(adapter, msg.channelId, "Session reset.", { skipChunking: true });
     return { action: "handled" }; // Do not route to agent
   }
 
-  // -------------------------------------------------------------------
-  // PROMPT SKILL DETECTION
-  // -------------------------------------------------------------------
-  if (msg.text && deps.loadPromptSkill && deps.getUserInvocableSkillNames) {
-    const systemCmd = parseSlashCommand(msg.text);
-    if (!systemCmd.found) {
-      const skillNames = deps.getUserInvocableSkillNames();
-      const skillMatch = matchPromptSkillCommand(msg.text, skillNames);
-      if (skillMatch) {
-        const loadResult = await deps.loadPromptSkill(skillMatch.name, skillMatch.args || undefined);
-        if (loadResult.ok) {
-          const skill = loadResult.value;
-          msg = {
-            ...msg,
-            text: skillMatch.args || "",
-            metadata: {
-              ...msg.metadata,
-              promptSkillContent: skill.content,
-              promptSkillAllowedTools: skill.allowedTools.length > 0 ? skill.allowedTools : undefined,
-              promptSkillName: skill.skillName,
-            },
-          };
-          deps.eventBus.emit("skill:prompt_invoked", {
-            skillName: skill.skillName,
-            invokedBy: "user",
-            args: skillMatch.args,
-            timestamp: systemNowMs(),
-          });
-        } else {
-          deps.logger.warn(
-            { skillName: skillMatch.name, err: loadResult.error, hint: "Check skill manifest and file accessibility", errorKind: "config" as const },
-            "Failed to load prompt skill",
-          );
-        }
-      }
-    }
-  }
+  // Prompt skill detection (loadPromptSkill + getUserInvocableSkillNames deps slots)
+  // was removed in Plan 56-06. Both fields were never wired by the daemon; skill
+  // commands now pass through as plain text to the agent (production absent-mode).
 
   // Extract command directives from metadata (set by general slash command interception above)
   const directives = msg.metadata?._commandDirectives as Record<string, unknown> | undefined;

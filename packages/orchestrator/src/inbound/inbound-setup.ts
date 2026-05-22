@@ -50,7 +50,6 @@ export type SetupDeps = Pick<
   | "logger"
   | "eventBus"
   | "channelRegistry"
-  | "ackReactionConfig"
   | "lifecycleReactionsEnabled"
   | "streamingConfig"
 >;
@@ -106,53 +105,9 @@ export function setupInboundExecution(
   originalMsg: NormalizedMessage,
   _sessionKey: SessionKey,
 ): SetupResult {
-  // -------------------------------------------------------------------
-  // ACK REACTION -- fire-and-forget after activation
-  // -------------------------------------------------------------------
-  if (deps.ackReactionConfig?.enabled && !deps.lifecycleReactionsEnabled) {
-    const caps = deps.channelRegistry?.getCapabilities(adapter.channelType);
-    const supportsReactions = caps?.features?.reactions ?? false;
-    // PORT-TRIM-14: reactToMessage is now optional on ChannelPort. The
-    // capability gate (supportsReactions) is the production sentinel, but
-    // adapters MUST also expose the method when caps say `reactions: true`.
-    // Guard defensively so a misconfigured gate cannot crash inbound setup.
-    if (supportsReactions && typeof adapter.reactToMessage === "function") {
-      const reactToMessage = adapter.reactToMessage.bind(adapter);
-      const metaKey = caps?.replyToMetaKey;
-      const platformMsgId = metaKey ? String(processedMsg.metadata?.[metaKey] ?? "") : "";
-      if (platformMsgId) {
-        reactToMessage(processedMsg.channelId, platformMsgId, deps.ackReactionConfig.emoji)
-          .then((result) => {
-            if (result.ok) {
-              deps.eventBus.emit("ack:reaction_sent", {
-                channelId: processedMsg.channelId,
-                channelType: adapter.channelType,
-                messageId: platformMsgId,
-                emoji: deps.ackReactionConfig!.emoji,
-                timestamp: systemNowMs(),
-              });
-            } else {
-              deps.logger.warn({
-                channelType: adapter.channelType,
-                chatId: processedMsg.channelId,
-                err: result.error,
-                hint: "Platform may not support reactions or message may be too old",
-                errorKind: "platform" as const,
-              }, "Ack reaction failed");
-            }
-          })
-          .catch((error: unknown) => {
-            deps.logger.warn({
-              channelType: adapter.channelType,
-              chatId: processedMsg.channelId,
-              err: error instanceof Error ? error : new Error(String(error)),
-              hint: "Unexpected error in ack reaction handler",
-              errorKind: "platform" as const,
-            }, "Ack reaction error");
-          });
-      }
-    }
-  }
+  // Ack reactions are handled by the lifecycle reactor (when enabled); the
+  // ackReactionConfig deps slot was removed in Plan 56-06 since no ack reactions
+  // were sent through this stage in production.
 
   // -------------------------------------------------------------------
   // Resolve streaming config and typing controller

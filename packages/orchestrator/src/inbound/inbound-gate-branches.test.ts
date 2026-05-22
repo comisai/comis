@@ -16,7 +16,7 @@ import type {
   SessionKey,
   DeliveryService,
 } from "@comis/core";
-import { ok, err } from "@comis/shared";
+import { ok } from "@comis/shared";
 
 import { evaluateInboundGate } from "./inbound-gate.js";
 import type { GateDeps } from "./inbound-gate.js";
@@ -462,189 +462,14 @@ describe("evaluateInboundGate reset trigger phrase gate", () => {
     );
   });
 
-  it("uses greetingGenerator output when generator returns ok result", async () => {
-    const sessionManager = {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
-      isExpired: vi.fn(() => false),
-      expire: vi.fn(() => true),
-      cleanStale: vi.fn(() => 0),
-    };
-    const greetingGenerator = {
-      generate: vi.fn(async () => ok("Hello, fresh start!")),
-    };
-    const deps = makeDeps({
-      sessionManager,
-      greetingGenerator,
-      getResetTriggers: () => ["reset"],
-    });
-    const adapter = makeAdapter();
-    const msg = makeMsg({ text: "reset" });
-
-    await evaluateInboundGate(
-      deps,
-      adapter,
-      msg,
-      makeSessionKey(),
-      "agent-1",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
-    );
-
-    expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
-      adapter,
-      "chat-1",
-      "Hello, fresh start!",
-      expect.any(Object),
-    );
-  });
-
-  it("falls back to default reset message when greetingGenerator errors", async () => {
-    const sessionManager = {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
-      isExpired: vi.fn(() => false),
-      expire: vi.fn(() => true),
-      cleanStale: vi.fn(() => 0),
-    };
-    const greetingGenerator = {
-      generate: vi.fn(async () => err(new Error("LLM unavailable"))),
-    };
-    const deps = makeDeps({
-      sessionManager,
-      greetingGenerator,
-      getResetTriggers: () => ["reset"],
-    });
-    const adapter = makeAdapter();
-    const msg = makeMsg({ text: "reset" });
-
-    await evaluateInboundGate(
-      deps,
-      adapter,
-      msg,
-      makeSessionKey(),
-      "agent-1",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
-    );
-
-    expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
-      adapter,
-      "chat-1",
-      "Session reset.",
-      expect.any(Object),
-    );
-  });
+  // greetingGenerator-based tests deleted in Plan 56-06: the greetingGenerator
+  // deps slot was removed; the reset path now always sends static "Session reset."
+  // (production absent-mode).
 });
 
-// ---------------------------------------------------------------------------
-// Prompt skill detection
-// ---------------------------------------------------------------------------
-
-describe("evaluateInboundGate prompt skill detection", () => {
-  it("attaches promptSkillContent to metadata when matchPromptSkillCommand finds a registered skill", async () => {
-    const loadPromptSkill = vi.fn(async () =>
-      ok({
-        content: "skill prompt content",
-        allowedTools: ["search"],
-        skillName: "summarize",
-      }),
-    );
-    const getUserInvocableSkillNames = vi.fn(() => new Set(["summarize"]));
-    const deps = makeDeps({
-      loadPromptSkill,
-      getUserInvocableSkillNames,
-    });
-    const adapter = makeAdapter();
-    const msg = makeMsg({ text: "/skill:summarize the docs" });
-
-    const result = await evaluateInboundGate(
-      deps,
-      adapter,
-      msg,
-      makeSessionKey(),
-      "agent-1",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
-    );
-
-    expect(loadPromptSkill).toHaveBeenCalled();
-    expect(result.action).toBe("process");
-    if (result.action === "process") {
-      expect(result.processedMsg.metadata?.promptSkillContent).toBe(
-        "skill prompt content",
-      );
-      expect(result.processedMsg.metadata?.promptSkillName).toBe("summarize");
-    }
-  });
-
-  it("logs warning and continues when loadPromptSkill returns err", async () => {
-    const loadPromptSkill = vi.fn(async () =>
-      err(new Error("skill manifest missing")),
-    );
-    const getUserInvocableSkillNames = vi.fn(() => new Set(["summarize"]));
-    const logger = {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-      fatal: vi.fn(),
-      trace: vi.fn(),
-      child: vi.fn().mockReturnThis(),
-    };
-    const deps = makeDeps({
-      loadPromptSkill,
-      getUserInvocableSkillNames,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      logger: logger as any,
-    });
-    const adapter = makeAdapter();
-    const msg = makeMsg({ text: "/skill:summarize broken" });
-
-    const result = await evaluateInboundGate(
-      deps,
-      adapter,
-      msg,
-      makeSessionKey(),
-      "agent-1",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
-    );
-
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        skillName: "summarize",
-        errorKind: "config",
-      }),
-      "Failed to load prompt skill",
-    );
-    expect(result.action).toBe("process");
-  });
-
-  it("does not match prompt skill when text starts with a system slash command", async () => {
-    const loadPromptSkill = vi.fn();
-    const getUserInvocableSkillNames = vi.fn(() => new Set(["stop"]));
-    const deps = makeDeps({
-      loadPromptSkill,
-      getUserInvocableSkillNames,
-    });
-    const adapter = makeAdapter();
-    // /stop is a system command — prompt skill matcher must skip it
-    const msg = makeMsg({ text: "/stop" });
-
-    await evaluateInboundGate(
-      deps,
-      adapter,
-      msg,
-      makeSessionKey(),
-      "agent-1",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
-    );
-
-    expect(loadPromptSkill).not.toHaveBeenCalled();
-  });
-});
+// "evaluateInboundGate prompt skill detection" describe block deleted in
+// Plan 56-06: loadPromptSkill + getUserInvocableSkillNames deps slots removed;
+// skill commands now pass through as plain text to the agent.
 
 // ---------------------------------------------------------------------------
 // handleSlashCommand directive branch

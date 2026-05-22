@@ -598,57 +598,9 @@ describe("/approve and /deny command interception", () => {
   });
 });
 
-describe("ack reaction bypass with lifecycleReactionsEnabled", () => {
-  it("skips ack reaction when lifecycleReactionsEnabled is true", async () => {
-    const adapter = makeAdapterForTest();
-    const deps = makeMinimalDeps({
-      ackReactionConfig: { enabled: true, emoji: "\u{1F440}" },
-      lifecycleReactionsEnabled: true,
-      channelRegistry: {
-        getCapabilities: vi.fn(() => ({
-          features: { reactions: true, editMessages: true, deleteMessages: true, fetchHistory: false, attachments: true },
-          limits: { maxMessageChars: 4096 },
-          replyToMetaKey: "telegramMessageId",
-        })),
-        getAdapter: vi.fn(),
-        getChannelTypes: vi.fn(() => []),
-        getChannelPlugins: vi.fn(() => []),
-        registerChannel: vi.fn(() => ok(undefined)),
-        unregisterChannel: vi.fn(() => ok(undefined)),
-      } as any,
-    });
-
-    await processInboundMessage(deps, adapter, makeMsg(), new Set(), new Map() as any);
-
-    // reactToMessage should NOT have been called for ack reaction
-    expect(adapter.reactToMessage).not.toHaveBeenCalled();
-  });
-
-  it("sends ack reaction when lifecycleReactionsEnabled is false", async () => {
-    const adapter = makeAdapterForTest();
-    const deps = makeMinimalDeps({
-      ackReactionConfig: { enabled: true, emoji: "\u{1F440}" },
-      lifecycleReactionsEnabled: false,
-      channelRegistry: {
-        getCapabilities: vi.fn(() => ({
-          features: { reactions: true, editMessages: true, deleteMessages: true, fetchHistory: false, attachments: true },
-          limits: { maxMessageChars: 4096 },
-          replyToMetaKey: "telegramMessageId",
-        })),
-        getAdapter: vi.fn(),
-        getChannelTypes: vi.fn(() => []),
-        getChannelPlugins: vi.fn(() => []),
-        registerChannel: vi.fn(() => ok(undefined)),
-        unregisterChannel: vi.fn(() => ok(undefined)),
-      } as any,
-    });
-
-    await processInboundMessage(deps, adapter, makeMsg(), new Set(), new Map() as any);
-
-    // reactToMessage SHOULD have been called for ack reaction
-    expect(adapter.reactToMessage).toHaveBeenCalledWith("chat-1", "42", "\u{1F440}");
-  });
-});
+// "ack reaction bypass with lifecycleReactionsEnabled" describe block deleted
+// in Plan 56-06: ackReactionConfig deps slot was removed; the ack-reaction
+// code path that conditionally fired based on lifecycleReactionsEnabled is gone.
 
 // ---------------------------------------------------------------------------
 // General slash command interception

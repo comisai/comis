@@ -18,13 +18,10 @@ import type { MessageRouter } from "../routing/message-router.js";
 import type { SessionLifecycle } from "@comis/agent";
 // Relative path used because orchestrator cannot import its own published name.
 import type { CommandQueue } from "../queue/command-queue.js";
-import type { DebounceBuffer } from "../queue/debounce-buffer.js";
-import type { FollowupTrigger } from "../queue/followup-trigger.js";
-import type { SessionLabelStore } from "@comis/agent";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
-import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig, AckReactionConfig } from "@comis/core";
+import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 
@@ -33,7 +30,6 @@ import type {
   ChannelRegistry,
   SendOverrideStore,
   PreflightResult,
-  GroupHistoryBuffer,
   VoiceResponsePipelineDeps,
 } from "@comis/channels";
 import type { RetryEngine } from "@comis/core";
@@ -64,21 +60,10 @@ export interface InboundPipelineDeps {
   autoReplyEngineConfig?: AutoReplyEngineConfig;
   sendPolicyConfig?: SendPolicyConfig;
   getResetTriggers?: (agentId: string) => string[];
-  identityResolver?: { resolve(provider: string, providerUserId: string): string | undefined };
-  getDmScopeConfig?: (agentId: string) => { mode?: string; threadIsolation?: boolean } | undefined;
-  debounceBuffer?: DebounceBuffer;
-  groupHistoryBuffer?: GroupHistoryBuffer;
-  followupTrigger?: FollowupTrigger;
-  followupConfig?: { maxFollowupRuns: number };
   queueConfig?: QueueConfig;
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
-  sessionLabelStore?: SessionLabelStore;
-  ackReactionConfig?: AckReactionConfig;
-  loadPromptSkill?: (name: string, args?: string) => Promise<Result<{ content: string; allowedTools: string[]; skillName: string }, Error>>;
-  getUserInvocableSkillNames?: () => Set<string>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assembleToolsForAgent?: (agentId: string, options?: { sessionKey?: SessionKey }) => Promise<any[]>;
-  greetingGenerator?: { generate(agentName: string): Promise<Result<string, Error>> };
   audioPreflight?: (msg: NormalizedMessage) => Promise<PreflightResult>;
   voiceResponsePipeline?: VoiceResponsePipelineDeps;
   parseOutboundMedia?: (text: string) => { text: string; mediaUrls: string[] };

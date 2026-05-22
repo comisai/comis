@@ -8,8 +8,6 @@
  *   3. execution-filter  — response sanitization, filtering, media, voice, prefix
  *   4. execution-deliver — chunking, coalescing, block pacing, delivery
  *
- * Keeps follow-up trigger logic here (needs full closure deps for re-enqueue).
- *
  * @module
  */
 
@@ -26,7 +24,6 @@ import type { AgentExecutor } from "@comis/agent";
 import type { CommandDirectives } from "../commands/index.js";
 // Relative path used because orchestrator cannot import its own published name.
 import type { CommandQueue } from "../queue/command-queue.js";
-import type { FollowupTrigger } from "../queue/followup-trigger.js";
 
 import type {
   BlockPacer,
@@ -86,8 +83,6 @@ export interface ExecutionPipelineDeps {
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
   channelRegistry?: ChannelRegistry;
   retryEngine?: RetryEngine;
-  followupTrigger?: FollowupTrigger;
-  followupConfig?: { maxFollowupRuns: number };
   commandQueue?: CommandQueue;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assembleToolsForAgent?: (agentId: string, options?: { sessionKey?: SessionKey }) => Promise<any[]>;
@@ -264,10 +259,6 @@ export async function executeAndDeliver(
       return;
     }
 
-    // Follow-up trigger check — stays in orchestrator for closure access
-    handleFollowupTrigger(deps, adapter, policy.effectiveMsg, sessionKey, agentId, executor,
-      execResult.result, execResult.finishReason, blockStreamCfg, activePacers, sendOverrides);
-
     // Signal execution complete for thinking mode
     if (typingLifecycle && blockStreamCfg.typingMode !== "message") {
       typingLifecycle.markRunComplete();
@@ -328,93 +319,3 @@ export async function executeAndDeliver(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Follow-up trigger (kept in orchestrator for closure deps access)
-// ---------------------------------------------------------------------------
-
-/** Check and enqueue follow-up if trigger conditions are met. */
-function handleFollowupTrigger(
-  deps: ExecutionPipelineDeps,
-  adapter: ChannelPort,
-  effectiveMsg: NormalizedMessage,
-  sessionKey: SessionKey,
-  agentId: string,
-  executor: AgentExecutor,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  result: any,
-  diagFinishReason: string,
-  blockStreamCfg: PerChannelStreamingConfig,
-  activePacers: Set<BlockPacer>,
-  sendOverrides: SendOverrideStore,
-): void {
-  if (!deps.followupTrigger || !deps.commandQueue) return;
-
-  const resultMeta: Record<string, unknown> = {};
-  const resMeta = (result as unknown as Record<string, unknown>).metadata as Record<string, unknown> | undefined;
-  if (resMeta?.needs_followup) resultMeta.needs_followup = true;
-  if (resMeta?.compaction_triggered) resultMeta.compaction_triggered = true;
-  if (diagFinishReason === "compaction") resultMeta.compaction_triggered = true;
-
-  if (!deps.followupTrigger.shouldFollowup(resultMeta)) return;
-
-  const chainId = (effectiveMsg.metadata?.followupChainId as string) ?? randomUUID();
-  const currentDepth = deps.followupTrigger.getChainDepth(chainId);
-  const maxDepth = deps.followupConfig?.maxFollowupRuns ?? 3;
-
-  if (currentDepth >= maxDepth) {
-    deps.eventBus.emit("followup:depth_exceeded", {
-      sessionKey: formatSessionKey(sessionKey),
-      chainId,
-      maxDepth,
-      timestamp: systemNowMs(),
-    });
-    return;
-  }
-
-  const newDepth = deps.followupTrigger.incrementChain(chainId);
-
-  const threadMeta: Record<string, unknown> = {};
-  for (const key of THREAD_PROPAGATION_KEYS) {
-    if (effectiveMsg.metadata?.[key] != null) {
-      threadMeta[key] = effectiveMsg.metadata[key];
-    }
-  }
-
-  const followupMsg = deps.followupTrigger.createFollowupMessage(
-    sessionKey, adapter.channelType, effectiveMsg.channelId,
-    resultMeta.compaction_triggered ? "compaction" : "tool_result",
-    chainId, newDepth,
-    Object.keys(threadMeta).length > 0 ? threadMeta : undefined,
-  );
-
-  deps.eventBus.emit("followup:enqueued", {
-    sessionKey: formatSessionKey(sessionKey),
-    channelType: adapter.channelType,
-    reason: resultMeta.compaction_triggered ? "compaction" : "tool_result",
-    chainId,
-    chainDepth: newDepth,
-    timestamp: systemNowMs(),
-  });
-
-  // Re-enqueue follow-up through command queue (fire-and-forget)
-  deps.commandQueue.enqueue(sessionKey, followupMsg, adapter.channelType, async (messages) => {
-    const fMsg = messages[0]!;
-    await executeAndDeliver(deps, adapter, fMsg, fMsg, executor, sessionKey, agentId, blockStreamCfg, activePacers, sendOverrides, undefined);
-  }).then((enqueueResult) => {
-    if (!enqueueResult.ok) {
-      deps.logger.warn({
-        err: enqueueResult.error.message,
-        hint: "Check if command queue is shut down or overflow policy rejected the message",
-        errorKind: "resource" as const,
-        channelType: adapter.channelType,
-      }, "Follow-up enqueue failed");
-    }
-  }).catch((e: unknown) => {
-    deps.logger.warn({
-      err: e instanceof Error ? e.message : String(e),
-      hint: "Unexpected error during follow-up enqueue",
-      errorKind: "internal" as const,
-      channelType: adapter.channelType,
-    }, "Follow-up enqueue failed");
-  });
-}

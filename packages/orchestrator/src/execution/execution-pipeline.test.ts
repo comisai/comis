@@ -5,8 +5,6 @@ import { StreamingConfigSchema, PerChannelStreamingConfigSchema } from "@comis/c
 import type { AgentExecutor } from "@comis/agent";
 // Queue types live in orchestrator. Relative paths used because orchestrator
 // cannot import its own published name.
-import type { FollowupTrigger } from "../queue/followup-trigger.js";
-import type { CommandQueue } from "../queue/command-queue.js";
 import { ok } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -1223,137 +1221,10 @@ describe("executeAndDeliver", () => {
       expect(sendOpts.threadId).toBeUndefined();
     });
 
-    it("followup message preserves thread metadata via extraMetadata", async () => {
-      const mockFollowupTrigger: FollowupTrigger = {
-        shouldFollowup: vi.fn(() => true),
-        createFollowupMessage: vi.fn((_sk, _ct, _ci, _r, _cid, _cd, _em) => ({
-          id: "followup-1",
-          channelId: "12345",
-          channelType: "telegram",
-          senderId: "system",
-          text: "[System: Continue processing.]",
-          timestamp: Date.now(),
-          attachments: [],
-          metadata: { isFollowup: true },
-        })),
-        getChainDepth: vi.fn(() => 0),
-        incrementChain: vi.fn(() => 1),
-        clearChain: vi.fn(),
-      };
-      const mockCommandQueue: CommandQueue = {
-        enqueue: vi.fn(async () => ok(undefined)),
-        getQueueDepth: vi.fn(() => 0),
-        isProcessing: vi.fn(() => false),
-        drain: vi.fn(async () => {}),
-        shutdown: vi.fn(async () => {}),
-      } as any;
-
-      const executor = makeExecutor({
-        execute: vi.fn(async () => ({
-          response: "Done",
-          sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
-          tokensUsed: { input: 100, output: 50, total: 150 },
-          cost: { total: 0.001 },
-          stepsExecuted: 0,
-          llmCalls: 1,
-          finishReason: "stop" as const,
-          metadata: { needs_followup: true },
-        })),
-      });
-
-      const deps = makeDeps({
-        followupTrigger: mockFollowupTrigger,
-        commandQueue: mockCommandQueue,
-        followupConfig: { maxFollowupRuns: 3 },
-      });
-      const msg = makeMessage({
-        metadata: {
-          telegramMessageId: 42,
-          telegramChatType: "private",
-          threadId: "42",
-          telegramThreadId: 42,
-          telegramIsForum: true,
-          telegramThreadScope: "forum",
-        },
-      });
-
-      await executeAndDeliver(
-        deps, makeAdapter(), msg, msg, executor, makeSessionKey(),
-        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
-      );
-
-      // createFollowupMessage should have been called with 7th argument containing thread keys
-      expect(mockFollowupTrigger.createFollowupMessage).toHaveBeenCalledWith(
-        expect.anything(), // sessionKey
-        "telegram",        // channelType
-        "12345",           // channelId
-        "tool_result",     // reason
-        expect.any(String), // chainId
-        1,                 // newDepth
-        {
-          threadId: "42",
-          telegramThreadId: 42,
-          telegramIsForum: true,
-          telegramThreadScope: "forum",
-        },
-      );
-    });
-
-    it("followup message has no extraMetadata when no thread context", async () => {
-      const mockFollowupTrigger: FollowupTrigger = {
-        shouldFollowup: vi.fn(() => true),
-        createFollowupMessage: vi.fn((_sk, _ct, _ci, _r, _cid, _cd, _em) => ({
-          id: "followup-1",
-          channelId: "12345",
-          channelType: "telegram",
-          senderId: "system",
-          text: "[System: Continue processing.]",
-          timestamp: Date.now(),
-          attachments: [],
-          metadata: { isFollowup: true },
-        })),
-        getChainDepth: vi.fn(() => 0),
-        incrementChain: vi.fn(() => 1),
-        clearChain: vi.fn(),
-      };
-      const mockCommandQueue: CommandQueue = {
-        enqueue: vi.fn(async () => ok(undefined)),
-        getQueueDepth: vi.fn(() => 0),
-        isProcessing: vi.fn(() => false),
-        drain: vi.fn(async () => {}),
-        shutdown: vi.fn(async () => {}),
-      } as any;
-
-      const executor = makeExecutor({
-        execute: vi.fn(async () => ({
-          response: "Done",
-          sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
-          tokensUsed: { input: 100, output: 50, total: 150 },
-          cost: { total: 0.001 },
-          stepsExecuted: 0,
-          llmCalls: 1,
-          finishReason: "stop" as const,
-          metadata: { needs_followup: true },
-        })),
-      });
-
-      const deps = makeDeps({
-        followupTrigger: mockFollowupTrigger,
-        commandQueue: mockCommandQueue,
-        followupConfig: { maxFollowupRuns: 3 },
-      });
-      // Message with no thread metadata
-      const msg = makeMessage();
-
-      await executeAndDeliver(
-        deps, makeAdapter(), msg, msg, executor, makeSessionKey(),
-        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
-      );
-
-      // createFollowupMessage should have been called with 7th argument as undefined
-      const createCall = vi.mocked(mockFollowupTrigger.createFollowupMessage).mock.calls[0];
-      expect(createCall[6]).toBeUndefined();
-    });
+    // followupTrigger-based tests deleted in Plan 56-06: the followupTrigger
+    // and followupConfig deps slots + handleFollowupTrigger helper were removed
+    // from the execution pipeline. createFollowupMessage cross-reference moved
+    // to dedicated unit tests in queue/followup-trigger.test.ts (when needed).
   });
 
   // -------------------------------------------------------------------
