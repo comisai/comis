@@ -18,10 +18,7 @@ vi.mock("../client/rpc-client.js", async (importOriginal) => {
   return {
     ...actual,
     // agents.update default mock: AgentsUpdateContract.response success shape.
-    // (Test-helper default; per-test overrides via mockImplementationOnce for
-    // failure paths.) Under always-on parse, the response must satisfy
-    // `{ agentId, config, updated: true }` — a bare `{ updated: true }` would
-    // throw a non-obvious zod parse error in any future caller.
+    // (Test-helper default; per-test overrides via mockImplementationOnce for failure paths.)
     withClient: vi.fn(async (fn: (client: { call: (m: string, p: unknown) => Promise<unknown> }) => Promise<unknown>) => {
       return fn({
         call: async (_method: string, params: unknown) => {
