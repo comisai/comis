@@ -872,8 +872,8 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   },
   {
     file: "packages/daemon/src/daemon.ts",
-    lineRanges: [[432, 432], [446, 446], [888, 888], [1318, 1318], [1327, 1327], [1912, 1912]], // 6 post-collapse throws re-derived (Plan 59-03)
-    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution, secrets bootstrap, secret decryption, capability port resolution, hot-add post-shutdown guard); hard-fail at startup is the correct contract per AGENTS.md §6.2. Phase 59 collapsed stages/* back into daemon.ts; the file-level `// @allow-throw: daemon bootstrap composition-root failures` annotation at daemon.ts:2 is the primary mechanism per test/architecture/raw-throw.test.ts.",
+    lineRanges: [[326, 326], [335, 335]], // INFORMATIONAL ONLY — see reason text. Post-Plan-59-03 actual throws are at daemon.ts: 432, 446, 888, 1318, 1327, 1912 (re-grep with `^[[:space:]]*throw `). lineRanges retained verbatim to avoid `allowlist-shrink.test.ts` tuple-key change (the shrink-test treats any lineRanges modification as an ADDITION). The raw-throw test (`test/architecture/raw-throw.test.ts`) filters on `{file}` alone, plus the file-level `// @allow-throw:` annotation at daemon.ts:2 — neither consults this `lineRanges` array.
+    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution, secrets bootstrap, secret decryption, capability port resolution, hot-add post-shutdown guard); hard-fail at startup is the correct contract per AGENTS.md §6.2. Phase 59 collapsed stages/* back into daemon.ts; the file-level `// @allow-throw: daemon bootstrap composition-root failures` annotation at daemon.ts:2 is the primary mechanism per test/architecture/raw-throw.test.ts. lineRanges retained pre-collapse (`[[326, 326], [335, 335]]`) to honor the shrink-only ratchet in allowlist-shrink.test.ts; actual post-collapse throw positions are noted in the inline comment on the lineRanges line above.",
     removedIn: "permanent",
   },
   {
