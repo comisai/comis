@@ -60,8 +60,7 @@ export interface InfraEvents {
   /** Provider auth token rotated (OAuth refresh) */
   "auth:token_rotated": {
     provider: string;
-    profileName: string;
-    /** Canonical "<provider>:<identity>" form. Coexists with profileName for backward compat. */
+    /** Canonical "<provider>:<identity>" form. */
     profileId: string;
     expiresAtMs: number;
     timestamp: number;

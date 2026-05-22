@@ -97,7 +97,6 @@ describe("InfraEvents payload structure", () => {
     const expiresAt = Date.now() + 3600000;
     const payload: EventMap["auth:token_rotated"] = {
       provider: "google",
-      profileName: "gmail-oauth",
       profileId: "google:gmail-oauth",
       expiresAtMs: expiresAt,
       timestamp: Date.now(),

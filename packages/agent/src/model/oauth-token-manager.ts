@@ -1072,7 +1072,6 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             // — use directly, do NOT multiply by 1000.
             eventBus.emit("auth:token_rotated", {
               provider: providerId,
-              profileName: toSecretKey(providerId, keyPrefix),
               profileId: profile.profileId,
               expiresAtMs: newProfile.expires,
               timestamp: systemNowMs(),
