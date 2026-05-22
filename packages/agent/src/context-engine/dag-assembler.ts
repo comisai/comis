@@ -19,7 +19,7 @@ import type {
   CtxContextItemRow,
   CtxMessageRow,
   CtxSummaryRow,
-  ContextStorePort,
+  ContextEngineStore,
 } from "@comis/core";
 import type { ContextLayer, TokenBudget, DagAssemblerDeps, DagAssemblerConfig } from "./types.js";
 import { XML_WRAPPER_OVERHEAD_TOKENS, RECALL_GUIDANCE } from "./constants.js";
@@ -57,7 +57,7 @@ interface ScoredItem extends ResolvedItem {
  * Items with missing backing data are filtered out.
  */
 function resolveContextItems(
-  store: ContextStorePort,
+  store: ContextEngineStore,
   conversationId: string,
 ): ResolvedItem[] {
   const items = store.getContextItems(conversationId);

@@ -142,7 +142,7 @@ export interface PiExecutorDeps {
   /** Documentation config from AppConfig. */
   documentationConfig?: import("@comis/core").DocumentationConfig;
   /** Context store for DAG mode. Optional -- only present when DAG tables exist. */
-  contextStore?: import("@comis/core").ContextStorePort;
+  contextStore?: import("@comis/core").ContextEngineStore;
   /** Raw database handle for DAG transactions. */
   db?: unknown;
   /** Tenant ID for conversation creation. */

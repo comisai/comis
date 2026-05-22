@@ -49,7 +49,7 @@ export interface ContextEngineSetupDeps {
   authStorage: import("@earendil-works/pi-coding-agent").AuthStorage;
   modelRegistry: import("@earendil-works/pi-coding-agent").ModelRegistry;
   getPromptSkillsXml?: () => string;
-  contextStore?: import("@comis/core").ContextStorePort;
+  contextStore?: import("@comis/core").ContextEngineStore;
   db?: unknown;
   /**
    * Optional OAuth token manager. When provided, compaction LLM
