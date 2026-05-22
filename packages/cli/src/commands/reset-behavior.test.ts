@@ -86,9 +86,29 @@ describe("reset sessions via RPC", () => {
   });
 
   it("deletes all sessions via RPC when daemon is running", async () => {
+    // SessionListContract.response = { sessions: SessionInfo[], total }
+    // SessionDeleteContract.response = { sessionKey, deleted: true, transcript: {...} }
+    const makeSession = (sessionKey: string) => ({
+      sessionKey,
+      agentId: "default",
+      userId: "u",
+      channelId: "c",
+      kind: "discord",
+      messageCount: 0,
+      totalTokens: 0,
+      updatedAt: 0,
+      createdAt: 0,
+    });
     const mockCall = vi.fn()
-      .mockResolvedValueOnce({ sessions: [{ sessionKey: "s1" }, { sessionKey: "s2" }], total: 2 })
-      .mockResolvedValue(undefined);
+      .mockResolvedValueOnce({
+        sessions: [makeSession("s1"), makeSession("s2")],
+        total: 2,
+      })
+      .mockImplementation(async (_method: string, params: { session_key: string }) => ({
+        sessionKey: params.session_key,
+        deleted: true,
+        transcript: { messages: [], metadata: {}, messageCount: 0 },
+      }));
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: mockCall, close: vi.fn() });
     });

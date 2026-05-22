@@ -472,10 +472,9 @@ export function registerAuthCommand(program: Command): void {
       if (storage === "encrypted") {
         await requireDaemonOrExit();
         try {
-          // callTyped enforces the AuthListContract request/response
-          // schemas under the VALIDATE gate (dev or
-          // COMIS_CLI_VALIDATE=1). Production skips the parse for
-          // cold-start budget compliance — the daemon side always parses.
+          // callTyped always enforces the AuthListContract request/response
+          // schemas (Zod parse on both sides). The daemon side has always
+          // parsed; the CLI side now matches (no env gating).
           const result = await withClient(async (client) =>
             callTyped(
               client,

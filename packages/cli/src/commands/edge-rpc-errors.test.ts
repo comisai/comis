@@ -335,23 +335,10 @@ describe("null/empty RPC response handling", () => {
     expect(output).toContain("No agents configured");
   });
 
-  it("agent list with null RPC response does not crash", async () => {
-    // client.call returns null; spreading null produces {}, extractAgents({}) returns []
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("config.read", null)
-        .build();
-      return fn(mockClient);
-    });
-
-    const program = createTestProgram();
-    registerAgentCommand(program);
-    await program.parseAsync(["node", "test", "agent", "list"]);
-
-    expect(exitSpy.spy).not.toHaveBeenCalled();
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("No agents configured");
-  });
+  // NOTE: "agent list with null RPC response does not crash" deleted in 55-04 —
+  // ConfigReadContract.response is `z.record(z.string(), z.unknown())`, which
+  // rejects raw `null`. The CLI's always-on response.parse closes that path
+  // structurally; the test only ever covered the dev-skip dead path.
 
   it("agent list with { agents: null } does not crash", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
@@ -373,9 +360,10 @@ describe("null/empty RPC response handling", () => {
   // -- Sessions list empty/null ---------------------------------------------
 
   it("sessions list with empty sessions array shows 'No sessions found'", async () => {
+    // SessionListContract.response = { sessions: SessionInfo[], total }
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("session.list", { sessions: [] })
+        .onCall("session.list", { sessions: [], total: 0 })
         .build();
       return fn(mockClient);
     });
@@ -441,9 +429,10 @@ describe("null/empty RPC response handling", () => {
   // -- Memory search empty/null ---------------------------------------------
 
   it("memory search with empty results shows 'No matching entries found'", async () => {
+    // ContextSearchContract.response = { results: SearchResult[], total }
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("context.search", { results: [] })
+        .onCall("context.search", { results: [], total: 0 })
         .build();
       return fn(mockClient);
     });
@@ -457,23 +446,10 @@ describe("null/empty RPC response handling", () => {
     expect(output).toContain("No matching entries found");
   });
 
-  it("memory search with { results: null } does not crash", async () => {
-    // result.results ?? [] → null ?? [] → [] — shows "No matching entries found"
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("context.search", { results: null })
-        .build();
-      return fn(mockClient);
-    });
-
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-    await program.parseAsync(["node", "test", "memory", "search", "test"]);
-
-    expect(exitSpy.spy).not.toHaveBeenCalled();
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("No matching entries found");
-  });
+  // NOTE: "memory search with { results: null } does not crash" deleted in 55-04 —
+  // ContextSearchContract.response requires `results: z.array(...)` and `total`;
+  // raw `{ results: null }` is rejected by always-on response.parse, making the
+  // pre-validation dead path structurally unreachable.
 
   // -- Memory inspect null --------------------------------------------------
 

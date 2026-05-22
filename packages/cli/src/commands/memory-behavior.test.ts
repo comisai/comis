@@ -39,7 +39,11 @@ const { registerMemoryCommand } = await import("./memory.js");
 const { withClient } = await import("../client/rpc-client.js");
 
 /**
- * Sample search results with varying scores for table formatting tests.
+ * Sample search results matching ContextSearchContract.response shape:
+ * `{ id, content, type, rank? }` + top-level `total`. Note: the contract
+ * does NOT carry `score` or `createdAt` — those fields are stripped by
+ * always-on response.parse, so they cannot be asserted on the display
+ * output.
  */
 const SEARCH_RESULTS = {
   results: [
@@ -47,22 +51,23 @@ const SEARCH_RESULTS = {
       id: "mem-001",
       content:
         "User prefers dark mode and compact layout settings for the dashboard interface",
-      score: 0.92,
-      createdAt: "2026-01-15T11:00:00Z",
+      type: "message" as const,
+      rank: -1.0,
     },
     {
       id: "mem-002",
       content: "Project deadline is March 15",
-      score: 0.85,
-      createdAt: "2026-01-14T09:30:00Z",
+      type: "message" as const,
+      rank: -0.8,
     },
     {
       id: "mem-003",
       content: "API key rotation scheduled",
-      score: 0.45,
-      createdAt: "2026-01-13T16:00:00Z",
+      type: "summary" as const,
+      rank: -0.5,
     },
   ],
+  total: 3,
 };
 
 /**
@@ -116,18 +121,13 @@ describe("memory search table output", () => {
     exitSpy.restore();
   });
 
-  it("renders search results in table with score percentages and truncated content", async () => {
+  it("renders search results in table with truncated content and result count", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
     await program.parseAsync(["node", "test", "memory", "search", "dark mode"]);
 
     const output = getSpyOutput(consoleSpy.log);
-
-    // Score percentages should appear
-    expect(output).toContain("92%");
-    expect(output).toContain("85%");
-    expect(output).toContain("45%");
 
     // First result content is >60 chars, should be truncated with "..."
     expect(output).toContain("...");
@@ -154,7 +154,7 @@ describe("memory search no results", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("context.search", { results: [] })
+        .onCall("context.search", { results: [], total: 0 })
         .build();
       return fn(mockClient);
     });
@@ -223,7 +223,8 @@ describe("memory search --limit constrains result count", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    callSpy = vi.fn().mockResolvedValue({ results: [] });
+    // ContextSearchContract.response = { results: [...], total }
+    callSpy = vi.fn().mockResolvedValue({ results: [], total: 0 });
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
     });
@@ -286,16 +287,15 @@ describe("memory search --format json", () => {
     const parsed = JSON.parse(output) as Array<{
       id: string;
       content: string;
-      score: number;
-      createdAt: string;
+      type: "message" | "summary";
+      rank?: number;
     }>;
 
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(3);
     expect(parsed[0]!.id).toBe("mem-001");
     expect(parsed[0]!.content).toContain("dark mode");
-    expect(parsed[0]!.score).toBe(0.92);
-    expect(parsed[0]!.createdAt).toBe("2026-01-15T11:00:00Z");
+    expect(parsed[0]!.type).toBe("message");
     expect(parsed[1]!.id).toBe("mem-002");
     expect(parsed[2]!.id).toBe("mem-003");
   });
@@ -625,7 +625,12 @@ describe("memory clear with --yes and --filter sends RPC", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    callSpy = vi.fn().mockResolvedValue({});
+    // MemoryFlushContract.response = { flushed: true, entriesRemoved, scope: { tenantId, agentId } }
+    callSpy = vi.fn().mockImplementation(async (_method: string, params: { tenant_id?: string; agent_id?: string }) => ({
+      flushed: true,
+      entriesRemoved: 0,
+      scope: { tenantId: params.tenant_id ?? "", agentId: params.agent_id ?? null },
+    }));
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
     });
@@ -666,7 +671,12 @@ describe("memory clear with --yes and --tenant", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    callSpy = vi.fn().mockResolvedValue({});
+    // MemoryFlushContract.response = { flushed: true, entriesRemoved, scope }
+    callSpy = vi.fn().mockImplementation(async (_method: string, params: { tenant_id?: string; agent_id?: string }) => ({
+      flushed: true,
+      entriesRemoved: 0,
+      scope: { tenantId: params.tenant_id ?? "", agentId: params.agent_id ?? null },
+    }));
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
     });
@@ -708,7 +718,12 @@ describe("memory clear with both --filter and --tenant", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    callSpy = vi.fn().mockResolvedValue({});
+    // MemoryFlushContract.response = { flushed: true, entriesRemoved, scope }
+    callSpy = vi.fn().mockImplementation(async (_method: string, params: { tenant_id?: string; agent_id?: string }) => ({
+      flushed: true,
+      entriesRemoved: 0,
+      scope: { tenantId: params.tenant_id ?? "", agentId: params.agent_id ?? null },
+    }));
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
     });
@@ -785,7 +800,12 @@ describe("memory clear with filter containing = in value", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    callSpy = vi.fn().mockResolvedValue({});
+    // MemoryFlushContract.response = { flushed: true, entriesRemoved, scope }
+    callSpy = vi.fn().mockImplementation(async (_method: string, params: { tenant_id?: string; agent_id?: string }) => ({
+      flushed: true,
+      entriesRemoved: 0,
+      scope: { tenantId: params.tenant_id ?? "", agentId: params.agent_id ?? null },
+    }));
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
     });

@@ -246,7 +246,12 @@ describe("agent set-oauth-profile", () => {
   });
 
   it("sends agents.update RPC with the oauthProfiles patch on valid input", async () => {
-    const callSpy = vi.fn(async () => ({ updated: true }));
+    // AgentsUpdateContract.response = { agentId, config, updated: true }
+    const callSpy = vi.fn(async (_method: string, params: { agentId: string; config?: Record<string, unknown> }) => ({
+      agentId: params.agentId,
+      config: params.config ?? {},
+      updated: true,
+    }));
     mockWithClient.mockImplementationOnce(async (fn) =>
       fn({ call: callSpy } as never),
     );
