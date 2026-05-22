@@ -31,7 +31,7 @@ import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent"
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig, AckReactionConfig } from "@comis/core";
-import { formatSessionKey, systemNowMs, systemSetTimeout } from "@comis/core";
+import { formatSessionKey } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 
@@ -203,16 +203,6 @@ export interface ChannelManagerDeps {
    * (channels cannot import from orchestrator).
    */
   processInboundMessage: ProcessInboundMessageFn;
-  /**
-   * Optional in-flight outbound sendMessage promise tracker. PRODUCTION
-   * callers (daemon) MUST NOT pass this -- the factory creates its own
-   * per-instance Set. Exposed via deps strictly to allow unit tests to
-   * inject a controllable Set for drain-ordering and deadline assertions.
-   * Drained in stopAll() with a 5s deadline so SIGUSR2 cannot tear down
-   * adapters mid-send (which would orphan the SQLite delivery-queue ack
-   * and trigger a duplicate retry on the next instance).
-   */
-  inFlightSends?: Set<Promise<unknown>>;
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];
 }
@@ -249,27 +239,14 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
   const adaptersByType = new Map<string, ChannelPort>();
 
   /**
-   * Per-instance in-flight outbound sendMessage promises. Used by
-   * deliver-to-channel.ts to register active sends; drained in stopAll() with
-   * a 5s deadline so SIGUSR2 cannot tear down adapters mid-send (which would
-   * orphan the SQLite delivery-queue ack and trigger a duplicate retry on the
-   * next instance).
-   *
-   * Tests may inject a Set via deps.inFlightSends to seed controllable
-   * promises for drain-ordering and deadline assertions; production callers
-   * (daemon) must NOT pass this -- the factory creates its own.
+   * Pipeline deps for processInboundMessage at all three call sites
+   * (debounce flush handler, normal onMessage handler, injectMessage).
+   * In-flight outbound `Promise` tracking has moved INSIDE DeliveryService
+   * after TEST-PUB-01 (Plan 56-05) — drainInFlight() replaces the inline
+   * Promise.race in stopAll() below; the seam no longer threads through
+   * pipelineDeps.
    */
-  const inFlightSends = deps.inFlightSends ?? new Set<Promise<unknown>>();
-
-  /**
-   * Pipeline deps with inFlightSends threaded in. Spread once so the Set is
-   * visible to processInboundMessage at all three call sites (debounce flush
-   * handler, normal onMessage handler, injectMessage). The original deps
-   * object is left untouched -- callbacks like onMessageProcessed and
-   * onGraphReportRequest live on the same reference (spread copies the
-   * function references, not the underlying behavior).
-   */
-  const pipelineDeps: ChannelManagerDeps = { ...deps, inFlightSends };
+  const pipelineDeps: ChannelManagerDeps = deps;
 
   // Clean up stale overrides, debounce entries, and group history when sessions expire
   deps.eventBus.on("session:expired", (ev) => {
@@ -404,20 +381,17 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       // Await in-flight outbound sends with a 5s deadline so SIGUSR2 cannot
       // tear down adapters mid-HTTP-response (which would orphan the SQLite
       // delivery-queue ack and trigger a duplicate retry on the next instance).
-      // Empty-Set fast path takes no log line, no setTimeout, no Promise.race --
-      // existing shutdown latency is preserved when nothing is in flight.
-      if (inFlightSends.size > 0) {
-        const drainStart = systemNowMs();
-        const inFlightCount = inFlightSends.size;
-        await Promise.race([
-          Promise.allSettled([...inFlightSends]),
-          new Promise<void>((resolve) => systemSetTimeout(resolve, 5000)),
-        ]);
+      // Drain logic lives inside DeliveryService since TEST-PUB-01 (Plan 56-05);
+      // empty-Set fast path inside `drainInFlight` returns `{drained: 0,
+      // remaining: 0, durationMs: 0}` with no setTimeout/Promise.race so
+      // shutdown latency is preserved when nothing is in flight.
+      const drainResult = await deps.deliveryService.drainInFlight(5000);
+      if (drainResult.drained > 0 || drainResult.remaining > 0) {
         deps.logger.info(
           {
-            inFlightCount,
-            drainMs: systemNowMs() - drainStart,
-            remaining: inFlightSends.size,
+            inFlightCount: drainResult.drained + drainResult.remaining,
+            drainMs: drainResult.durationMs,
+            remaining: drainResult.remaining,
             hint: "Outbound sends drained before adapter teardown to avoid duplicate-message risk on SIGUSR2 hot-reload",
           },
           "Channel manager: in-flight outbound sends drained",

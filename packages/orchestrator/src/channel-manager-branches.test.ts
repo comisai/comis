@@ -65,6 +65,11 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: 0,
       }),
     ),
+    // TEST-PUB-01 (Plan 56-05): channel-manager.stopAll() drains via
+    // deps.deliveryService.drainInFlight(5000). Default fake returns empty
+    // drain telemetry so this test suite's stopAll() exercises complete
+    // cleanly when no sends are tracked.
+    drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
 

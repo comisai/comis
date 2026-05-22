@@ -1,15 +1,15 @@
 # ChannelManagerDeps Audit
 
 **Generated:** 2026-05-11
-**Interface source:** `packages/orchestrator/src/channel-manager.ts:78–218` (49-field interface)
+**Interface source:** `packages/orchestrator/src/channel-manager.ts:78–218` (48-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-channels.ts:739` (single site — `createChannelManager({`)
-**Field count:** 49 (7 required + 42 optional + 0 stale-fallback)
+**Field count:** 48 (7 required + 41 optional + 0 stale-fallback)
 
 This file is co-located with the orchestrator package. `files: ["dist"]` in `packages/orchestrator/package.json` excludes it from the npm tarball.
 
 ## Audit Result
 
-Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path that fires in that omission. None of the 14 fields that the daemon never wires are dead code; each has at least one `if (deps.X)` or `deps.X?.method()` site in the orchestrator production source whose absent branch IS the production behavior.
+Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path that fires in that omission. None of the 13 fields that the daemon never wires are dead code; each has at least one `if (deps.X)` or `deps.X?.method()` site in the orchestrator production source whose absent branch IS the production behavior.
 
 The architecture-test invariants enforced by `packages/orchestrator/src/__tests__/architecture.test.ts` hold: bidirectional set equality between this table and `ChannelManagerDeps`; every classification is `required` or `optional`; classification matches the interface's `?` marker; every row has a non-empty evidence-link cell.
 
@@ -66,7 +66,6 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | handleSlashCommand | optional | unknown slash commands pass through as plain text to the agent | packages/orchestrator/src/channel-manager.ts:184 |
 | getEnforceFinalTag | optional | enforceFinalTag executor option is undefined (executor default applies) | packages/orchestrator/src/channel-manager.ts:198 |
 | processInboundMessage | required | — | packages/orchestrator/src/channel-manager.ts:205 |
-| inFlightSends | optional | factory creates its own per-instance Set (production path) | packages/orchestrator/src/channel-manager.ts:215 |
 | getAllowFrom | optional | no allowFrom sender filter (all senders allowed) | packages/orchestrator/src/channel-manager.ts:217 |
 
 ## Removed Fields (stale-fallback)
@@ -76,12 +75,11 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 - `debounceBuffer`: 7 production usages; daemon never wires it (`inbound-route.ts:93` `if (!isDebounced && deps.debounceBuffer)` selects the no-debounce path in production).
 - `groupHistoryBuffer`: 8 production usages; daemon never wires it (group-history injection is disabled in production).
 - `loadPromptSkill` / `getUserInvocableSkillNames`: 2 usages each (`inbound-gate.ts:344` `if (... && deps.loadPromptSkill && deps.getUserInvocableSkillNames)`); daemon never wires either, so skill commands pass through as plain text in production.
-- `inFlightSends`: 3 usages; the interface JSDoc documents this as a test-only injection point; the factory creates its own per-instance Set when absent (the production path, `channel-manager.ts:273`).
-- `ackReactionConfig`, `channelRegistry`, `followupConfig`, `followupTrigger`, `getDmScopeConfig`, `greetingGenerator`, `identityResolver`, `sessionLabelStore`: all follow the same pattern — declared optional, daemon does not wire, absent-mode is the production code path.
+- `ackReactionConfig`, `channelRegistry`, `followupConfig`, `followupTrigger`, `getDmScopeConfig`, `greetingGenerator`, `identityResolver`, `sessionLabelStore`: all follow the same pattern — declared optional, daemon does not wire, absent-mode is the production code path. (`inFlightSends` was previously listed here as a 14th test-only injection point; Plan 56-05 moved the Set inside `DeliveryService` and deleted the deps slot, so it no longer appears in `ChannelManagerDeps`.)
 
 ## Summary
 
-- **Total fields:** 49 (7 required + 42 optional)
+- **Total fields:** 48 (7 required + 41 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value)
 

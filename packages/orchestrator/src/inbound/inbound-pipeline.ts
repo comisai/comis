@@ -92,14 +92,6 @@ export interface InboundPipelineDeps {
    *  inbound-gate.ts and execution-deliver.ts use the method form instead
    *  of the free-standing standalone export. */
   deliveryService: DeliveryService;
-  /**
-   * Per-instance set of in-flight outbound sendMessage promises. Threaded
-   * through ExecutionPipelineDeps -> DeliverToChannelDeps so deliver-to-channel
-   * can register active sends. Drained in stopAll() with a 5s deadline so
-   * SIGUSR2 cannot tear down adapters mid-send. Created by the channel-manager
-   * factory; do not pass externally.
-   */
-  inFlightSends?: Set<Promise<unknown>>;
   /** Optional active run registry for SDK-native steer+followup. */
   activeRunRegistry?: ActiveRunRegistry;
   /**
