@@ -62,7 +62,8 @@ export interface MappedWebhookEndpointDeps {
  *
  * Error responses:
  * - 401: Missing or invalid HMAC signature (when secret is configured)
- * - 400: Invalid JSON body or body exceeds maxBodyBytes
+ * - 413: Request body exceeds `maxBodyBytes` (enforced by Hono `bodyLimit`)
+ * - 400: Invalid JSON body
  * - 404: No matching webhook mapping for this path
  * - 500: Handler error
  *
@@ -91,17 +92,15 @@ export function createMappedWebhookEndpoint(deps: MappedWebhookEndpointDeps): Ho
   }
 
   app.post("/:path{.+}", async (c) => {
-    // Read raw body (either from HMAC middleware context or directly)
+    // Read raw body (either from HMAC middleware context or directly).
+    // Body-size limits are enforced upstream by `bodyLimitMw` (411/413 before
+    // the handler runs — covered by the "rejects mapped webhook with body
+    // over 1MB" test). No second check needed here.
     let rawBody: string;
     if (secret) {
       rawBody = c.get("rawBody");
     } else {
       rawBody = await c.req.text();
-    }
-
-    // Enforce body size limit
-    if (rawBody.length > maxBodyBytes) {
-      return c.json({ error: "Request body exceeds maximum size" }, 400);
     }
 
     // Parse JSON (loose — no schema validation)
