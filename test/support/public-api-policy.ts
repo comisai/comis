@@ -666,8 +666,28 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PROFILE_ID_RE",
       // ContextStorePort is declared but not yet consumed by agent —
       // tracked as a planned-orphan policy entry mirrored from the
-      // FileLockPort pattern.
+      // FileLockPort pattern. Phase 60-02 (REFACTOR-04) preserved this
+      // entry through the split: ContextStorePort is now a type alias
+      // (`type ContextStorePort = ContextEngineStore & ContextAdminStore`)
+      // and remains an in-codebase symbol consumed primarily by the
+      // daemon's context-handlers + the memory contract test.
       "ContextStorePort",
+      // ContextEngineStore (34 per-session read/write methods) — Phase
+      // 60-02 (REFACTOR-04). Consumed by the agent context-engine + the
+      // executor injection-deps types; the public-export-consumers test
+      // resolves the consumer files (so a runtime consumer entry is not
+      // required here for Engine). Tracked alongside ContextAdminStore
+      // for documentation symmetry.
+      // ContextAdminStore (4 admin/cleanup methods) — Phase 60-02
+      // (REFACTOR-04). The admin half of ContextStorePort. No production
+      // consumer imports this name as a value-typed annotation today —
+      // the daemon's context-handlers + api/types.ts consume the wider
+      // intersection alias `ContextStorePort` (which still resolves
+      // structurally through the alias to the union of Engine + Admin
+      // methods). Tracked as a planned-orphan policy entry mirroring the
+      // ContextStorePort pattern above; the memory contract test gates
+      // the type contract via `.toExtend<ContextAdminStore>()`.
+      "ContextAdminStore",
       // Row DTOs for ContextStorePort moved from @comis/memory into
       // core/src/ports/context-store-types.ts. The 2 link-table types
       // (CtxSummaryMessageRow, CtxSummaryParentRow) were already orphans

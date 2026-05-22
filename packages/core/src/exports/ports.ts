@@ -24,6 +24,8 @@ export type {
   MemorySearchResult,
   EmbeddingPort,
   ContextStorePort,
+  ContextEngineStore,
+  ContextAdminStore,
   CtxConversationRow,
   CtxMessageRow,
   CtxMessagePartRow,

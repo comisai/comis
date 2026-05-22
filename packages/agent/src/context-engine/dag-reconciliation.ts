@@ -20,7 +20,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ComisLogger, ContextStorePort } from "@comis/core";
+import type { ComisLogger, ContextEngineStore } from "@comis/core";
 import type { ContextEngineConfig } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import type {
@@ -133,7 +133,7 @@ export function mapMessageRole(message: AgentMessage): string {
  */
 export function reconcileJsonlToDag(
   messages: AgentMessage[],
-  store: ContextStorePort,
+  store: ContextEngineStore,
   db: unknown,
   conversationId: string,
   estimateTokens: (text: string) => number,
@@ -325,7 +325,7 @@ export function reconcileJsonlToDag(
  */
 export function installDagIngestionHook(
   sm: unknown,
-  store: ContextStorePort,
+  store: ContextEngineStore,
   conversationId: string,
   logger: ComisLogger,
   estimateTokens: (text: string) => number,
