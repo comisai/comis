@@ -111,8 +111,6 @@ export interface InboundPipelineDeps {
   sessionResolver?: BackgroundSessionResolver;
   /** Handle /config command. Returns response text or undefined if not a config command. */
   handleConfigCommand?: (args: string[], channelType: string) => Promise<string | undefined>;
-  /** Optional callback for task extraction after successful agent execution. */
-  onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
   /** When true, lifecycle reactor handles queued/thinking reactions -- skip ack reaction. */
   lifecycleReactionsEnabled?: boolean;
   /** Response prefix config for template-based prefix/suffix on agent responses. */

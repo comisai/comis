@@ -74,7 +74,6 @@ export interface ChannelManagerBuildDeps {
   activeRunRegistry?: ActiveRunRegistry;
   sessionResolver?: BackgroundSessionResolver;
   rpcCall?: RpcCall;
-  onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
   onMessageReceived?: (msg: NormalizedMessage, channelType: string) => void;
   onMessageProcessed?: (msg: NormalizedMessage, channelType: string) => void;
   approvalGate?: import("@comis/core").ApprovalGate;
@@ -257,8 +256,6 @@ export async function buildAndStartChannelManager(
           return `Config command failed: ${err instanceof Error ? err.message : String(err)}`;
         }
       } : undefined,
-      // Task extraction callback (gated by config.scheduler.tasks.enabled)
-      onTaskExtraction: deps.onTaskExtraction,
       onMessageReceived: deps.onMessageReceived,
       onMessageProcessed: deps.onMessageProcessed,
       // Graph report button callback intercept: deliver full report as .md file attachment

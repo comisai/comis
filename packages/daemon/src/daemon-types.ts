@@ -75,7 +75,6 @@ import type {
   setupTools,
   setupMonitoring,
   setupHeartbeat,
-  setupTaskExtraction,
   setupRpcBridge,
   setupDeliveryQueue,
   setupDeliveryMirror,
@@ -342,7 +341,6 @@ export interface AgentsHandle extends FoundationHandle {
   getAgentCronScheduler: Awaited<ReturnType<typeof setupSchedulers>>["getAgentCronScheduler"];
   getAgentBrowserService: Awaited<ReturnType<typeof setupSchedulers>>["getAgentBrowserService"];
   sessionTrackerRegistry: SessionTrackerRegistry<ReturnType<typeof createFileStateTracker>>;
-  extractFromConversation: ReturnType<typeof setupTaskExtraction>["extractFromConversation"];
   auditAggregator: ReturnType<typeof createAuditAggregator>;
   onSuspiciousContent: WrapExternalContentOptions["onSuspiciousContent"];
   // Media

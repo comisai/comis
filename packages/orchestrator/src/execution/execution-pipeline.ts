@@ -102,8 +102,6 @@ export interface ExecutionPipelineDeps {
   voiceResponsePipeline?: VoiceResponsePipelineDeps;
   parseOutboundMedia?: (text: string) => { text: string; mediaUrls: string[] };
   outboundMediaFetch?: (url: string) => Promise<Result<{ buffer: Buffer; mimeType?: string }, Error>>;
-  /** Optional callback for task extraction after successful agent execution. */
-  onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
   /** Response prefix config for template-based prefix/suffix on agent responses. */
   responsePrefixConfig?: { template: string; position: "prepend" | "append" };
   /** Template context builder for response prefix variables. */
@@ -322,18 +320,6 @@ export async function executeAndDeliver(
       messageId: "block-delivery",
       content: filterResult.text,
     });
-
-    // Task extraction: extract commitments/follow-ups from the conversation (non-blocking)
-    if (deps.onTaskExtraction && filterResult.text) {
-      deps.onTaskExtraction(filterResult.text, formatSessionKey(sessionKey), agentId).catch(
-        (err: unknown) => {
-          deps.logger.debug(
-            { err: err instanceof Error ? err.message : String(err) },
-            "Task extraction callback error (non-blocking)",
-          );
-        },
-      );
-    }
 
     // Emit diagnostic:message_processed for full lifecycle tracking
     emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason);

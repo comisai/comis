@@ -146,8 +146,6 @@ export interface ChannelsDeps {
   sessionResolver?: BackgroundSessionResolver;
   /** RPC call dispatcher for /config chat commands (deferred dispatch -- safe to pass before wireDispatch). */
   rpcCall?: RpcCall;
-  /** Optional callback for task extraction after successful agent execution (gated by config.scheduler.tasks.enabled). */
-  onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
   /**
    * Optional callback fired BEFORE each inbound message is dispatched to the
    * executor. Used by the restart continuation tracker so the session is
@@ -293,7 +291,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       activeRunRegistry: deps.activeRunRegistry,
       sessionResolver: deps.sessionResolver,
       rpcCall: deps.rpcCall,
-      onTaskExtraction: deps.onTaskExtraction,
       onMessageReceived: deps.onMessageReceived,
       onMessageProcessed: deps.onMessageProcessed,
       approvalGate: deps.approvalGate,

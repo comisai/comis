@@ -52,7 +52,6 @@ describe("setup-channels-runtime", () => {
       activeRunRegistry: true,
       sessionResolver: true,
       rpcCall: true,
-      onTaskExtraction: true,
       onMessageReceived: true,
       onMessageProcessed: true,
       approvalGate: true,
@@ -60,7 +59,7 @@ describe("setup-channels-runtime", () => {
       costTrackers: true,
       cronExecutionTrackers: true,
     };
-    expect(Object.keys(witness).length).toBe(29);
+    expect(Object.keys(witness).length).toBe(28);
   });
 
   it("ChannelManagerBuildResult witness pins the manager handle output keys", () => {

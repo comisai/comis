@@ -56,7 +56,6 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | activeRunRegistry | optional | all messages route through CommandQueue | packages/orchestrator/src/channel-manager.ts:157 |
 | sessionResolver | optional | activeRunRegistry.has/.get used for production lookups | packages/orchestrator/src/channel-manager.ts:163 |
 | handleConfigCommand | optional | /config commands pass through as plain text to the agent | packages/orchestrator/src/channel-manager.ts:165 |
-| onTaskExtraction | optional | no post-execution task extraction is triggered | packages/orchestrator/src/channel-manager.ts:167 |
 | onMessageReceived | optional | no pre-dispatch hook fires (continuation tracker is not notified) | packages/orchestrator/src/channel-manager.ts:175 |
 | onMessageProcessed | optional | no post-processing hook fires (notification session activity is not recorded) | packages/orchestrator/src/channel-manager.ts:177 |
 | lifecycleReactionsEnabled | optional | inbound pipeline emits ack reaction (no lifecycle-reactor handoff) | packages/orchestrator/src/channel-manager.ts:179 |

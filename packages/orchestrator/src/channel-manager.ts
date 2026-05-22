@@ -156,8 +156,6 @@ export interface ChannelManagerDeps {
   sessionResolver?: BackgroundSessionResolver;
   /** Handle /config command. Returns response text or undefined if not a config command. */
   handleConfigCommand?: (args: string[], channelType: string) => Promise<string | undefined>;
-  /** Optional callback for task extraction after successful agent execution. */
-  onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
   /**
    * Optional hook fired BEFORE the inbound message is dispatched to the executor.
    * Use this for state that must be visible during processing (e.g. continuation

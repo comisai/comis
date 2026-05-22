@@ -53,7 +53,6 @@ export type RouteDeps = Pick<
   | "voiceResponsePipeline"
   | "parseOutboundMedia"
   | "outboundMediaFetch"
-  | "onTaskExtraction"
   | "responsePrefixConfig"
   | "buildTemplateContext"
   | "getEnforceFinalTag"
@@ -152,7 +151,6 @@ export async function routeInboundMessage(
     voiceResponsePipeline: deps.voiceResponsePipeline,
     parseOutboundMedia: deps.parseOutboundMedia,
     outboundMediaFetch: deps.outboundMediaFetch,
-    onTaskExtraction: deps.onTaskExtraction,
     responsePrefixConfig: deps.responsePrefixConfig,
     buildTemplateContext: deps.buildTemplateContext,
     enforceFinalTag: deps.getEnforceFinalTag?.(agentId),

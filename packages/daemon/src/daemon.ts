@@ -44,7 +44,6 @@ import {
   setupTools,
   setupMonitoring,
   setupHeartbeat,
-  setupTaskExtraction,
   setupShutdown,
   setupGateway,
   setupRpcBridge,
@@ -484,7 +483,7 @@ async function stageFoundation(input: {
  *   - subprocessEnv + execToolEnv (filtered envs for trusted/untrusted children)
  *   - systemEventQueue (cron-heartbeat routing) + setupSchedulers
  *   - sessionTrackerRegistry + Gemini-cache cleanup + MCP disconnect cleanup
- *   - setupTaskExtraction + auditAggregator + onSuspiciousContent
+ *   - auditAggregator + onSuspiciousContent
  *   - setupMedia + setupRpcBridge
  *   - approvalGate + restoreApprovalState (extracted helper)
  *   - setupDeliveryQueue (+ channelAdaptersRef placeholder)
@@ -628,11 +627,6 @@ async function stageAgents(input: {
     daemonLogger,
   });
 
-  // 6.6.5.5. Task extraction (conversation -> extracted tasks pipeline)
-  const { extractFromConversation } = setupTaskExtraction({
-    container, workspaceDirs, schedulerLogger,
-  });
-
   // Audit aggregator for deduplicating security events (extracted helper).
   const { auditAggregator, onSuspiciousContent } = buildAuditBundle({
     eventBus: container.eventBus,
@@ -688,7 +682,7 @@ async function stageAgents(input: {
     continuationTracker, subprocessEnv, execToolEnv,
     systemEventQueue, cronSchedulers, executionTrackers, browserServices, resetSchedulers,
     getAgentCronScheduler, getAgentBrowserService,
-    sessionTrackerRegistry, extractFromConversation, auditAggregator, onSuspiciousContent,
+    sessionTrackerRegistry, auditAggregator, onSuspiciousContent,
     ttsAdapter, visionRegistry, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
     rpcCall, wireDispatch, approvalGate,

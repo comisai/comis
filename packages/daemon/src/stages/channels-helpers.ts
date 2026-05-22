@@ -60,7 +60,7 @@ export function buildChannelManagerDeps(deps: {
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
     workspaceDirs, defaultWorkspaceDir, memoryAdapter, embeddingQueue,
-    activeRunRegistry, sessionResolver, rpcCall, extractFromConversation,
+    activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
     onSuspiciousContent,
@@ -81,7 +81,6 @@ export function buildChannelManagerDeps(deps: {
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
     activeRunRegistry, sessionResolver, rpcCall,
-    onTaskExtraction: extractFromConversation,
     onMessageReceived: (msg, channelType) => {
       const chatType = typeof msg.metadata?.telegramChatType === "string"
         ? msg.metadata.telegramChatType
