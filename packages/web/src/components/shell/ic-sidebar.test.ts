@@ -47,11 +47,11 @@ describe("IcSidebar", () => {
     expect(labels).toEqual(["Home", "Operate", "Observe", "Configure"]);
   });
 
-  it("renders nav items grouped under sections (22 total: 1+7+6+9) plus 1 Setup = 24", async () => {
+  it("renders nav items grouped under sections (22 total: 1+7+6+8) plus 1 Setup = 23", async () => {
     const el = await createElement<IcSidebar>("ic-sidebar");
     const navItems = el.shadowRoot?.querySelectorAll("nav .nav-item");
-    // 1 (Home) + 7 (Operate: Agents, Channels, Messages, Chat, Sessions, Sub-Agents, Pipelines) + 6 (Observe: Overview, Context Engine, Context DAG, Billing, Delivery, Diagnostics) + 9 (Configure: Skills, MCP Servers, Models, Memory, Scheduler, Security, Media, Approvals, Config) + 1 (Setup) = 24
-    expect(navItems?.length).toBe(24);
+    // 1 (Home) + 7 (Operate: Agents, Channels, Messages, Chat, Sessions, Sub-Agents, Pipelines) + 6 (Observe: Overview, Context Engine, Context DAG, Billing, Delivery, Diagnostics) + 8 (Configure: Skills, MCP Servers, Models, Memory, Scheduler, Security, Media, Config) + 1 (Setup) = 23
+    expect(navItems?.length).toBe(23);
   });
 
   it("renders Setup item below divider", async () => {
@@ -85,31 +85,6 @@ describe("IcSidebar", () => {
       item.textContent?.includes("Chat"),
     );
     expect(chatItem?.hasAttribute("aria-current")).toBe(false);
-  });
-
-  it("shows badge count on Approvals item when pendingApprovals > 0", async () => {
-    const el = await createElement<IcSidebar>("ic-sidebar", {
-      pendingApprovals: 5,
-    });
-    const navItems = el.shadowRoot?.querySelectorAll("nav .nav-item");
-    const approvalsItem = Array.from(navItems!).find((item) =>
-      item.textContent?.includes("Approvals"),
-    );
-    const badge = approvalsItem?.querySelector(".badge");
-    expect(badge).toBeTruthy();
-    expect(badge?.textContent?.trim()).toBe("5");
-  });
-
-  it("hides badge on Approvals when pendingApprovals is 0", async () => {
-    const el = await createElement<IcSidebar>("ic-sidebar", {
-      pendingApprovals: 0,
-    });
-    const navItems = el.shadowRoot?.querySelectorAll("nav .nav-item");
-    const approvalsItem = Array.from(navItems!).find((item) =>
-      item.textContent?.includes("Approvals"),
-    );
-    const badge = approvalsItem?.querySelector(".badge");
-    expect(badge).toBeFalsy();
   });
 
   it("shows badge count on Overview (Observe) item when errorCount > 0", async () => {
