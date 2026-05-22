@@ -30,7 +30,6 @@ import type {
 import { LAYER_CIRCUIT_BREAKER_THRESHOLD, CHARS_PER_TOKEN_RATIO, DEFAULT_COMPACTION_PREFIX_ANCHOR_TURNS } from "./constants.js";
 import { computeTokenBudget } from "./token-budget.js";
 import { createThinkingBlockCleaner } from "./thinking-block-cleaner.js";
-import { createSignatureReplayScrubber } from "./signature-replay-scrubber.js";
 import { createSignatureSurrogateGuard } from "./signature-surrogate-guard.js";
 import { createReasoningTagStripper } from "./reasoning-tag-stripper.js";
 import { createHistoryWindowLayer } from "./history-window.js";
@@ -292,29 +291,6 @@ export function createContextEngine(
     layers.push(thinkingCleaner);
   }
 
-  // Signature replay scrubber: drops thinking signatures (and toolCall
-  // thoughtSignatures) from every assistant message OLDER than the
-  // most recent one. Always-on — no drift-mode gate. The latest
-  // assistant message keeps its signatures so Anthropic's
-  // extended-thinking continuation can validate the immediate next
-  // call's prefix.
-  if (deps.getReplayDriftMode) {
-    const getReplayDriftMode = deps.getReplayDriftMode;
-    layers.push(createSignatureReplayScrubber({
-      getReplayDriftMode,
-      onScrubbed: (stats) => {
-        // Snapshot the latest stats for the post-pipeline DEBUG summary
-        // (canonical field names blocksAffected / toolCallsAffected).
-        callbackState.signatureReplayScrubber = stats;
-        // Also forward stats to the optional per-execute accumulator wired
-        // in by executor-context-engine-setup.ts. The two callbacks are
-        // deliberately separate: the snapshot consumer overwrites per-call,
-        // the accumulator sums across calls.
-        deps.onSignatureReplayScrubbed?.(stats);
-      },
-      logger: deps.logger,
-    }));
-  }
 
   // Signature surrogate guard (Fix #3): scrub thinkingSignature from blocks
   // whose text contains unpaired UTF-16 surrogates so pi-ai's
