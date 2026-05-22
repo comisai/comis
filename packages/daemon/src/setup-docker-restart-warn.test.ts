@@ -7,6 +7,13 @@
  *
  * The probe is dependency-injected via `opts.isDocker` so we don't need to
  * `vi.mock` `@comis/infra` -- keeps the test deterministic and isolated.
+ *
+ * One additional behavior test (the "two-probe" block) drives the
+ * Plan 55-06 retarget of `defaultIsDocker` from `@comis/infra` (single-probe
+ * `/.dockerenv` only) to `@comis/core` (two-probe `/.dockerenv` +
+ * `/proc/1/cgroup` regex). It mocks `node:fs` so the marker file is
+ * absent BUT the cgroup contains a docker pattern -- behavior diverges
+ * between the two impls and the test fails until the import retargets.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -56,5 +63,55 @@ describe("emitDockerRestartPolicyWarn", () => {
     // No other side effects on the logger either.
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.error).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Behavior gate for Plan 55-06 (DUP-CONS-01): the daemon's default
+ * `isDocker` probe MUST be core's two-probe impl (`/.dockerenv` + cgroup
+ * regex). Infra's deprecated single-probe (`/.dockerenv` only) misses
+ * rootless / minimal images that lack the marker file.
+ *
+ * We mock `node:fs` so that:
+ *   - `existsSync("/.dockerenv")` returns false (marker absent)
+ *   - `readFileSync("/proc/1/cgroup", "utf8")` returns a docker-pattern
+ *     cgroup line (`0::/docker/<hash>`)
+ *
+ * Core's two-probe returns TRUE here (falls through to cgroup).
+ * Infra's single-probe returns FALSE here (no marker, no fallback).
+ *
+ * We then call `emitDockerRestartPolicyWarn(logger, {})` -- NO
+ * `isDocker` injection, so the default closure is exercised. The default
+ * must be core's two-probe for the warning to fire.
+ *
+ * Uses `vi.doMock` + `vi.resetModules` + dynamic import to avoid affecting
+ * the static-imported instance used by the tests above.
+ */
+describe("emitDockerRestartPolicyWarn default isDocker probe (Plan 55-06)", () => {
+  it("uses two-probe isDocker by default (detects via /proc/1/cgroup when /.dockerenv missing)", async () => {
+    vi.resetModules();
+    vi.doMock("node:fs", () => ({
+      existsSync: (p: string) => p === "/.dockerenv" ? false : false,
+      readFileSync: (p: string) =>
+        p === "/proc/1/cgroup" ? "0::/docker/abc123def456" : "",
+    }));
+
+    const { emitDockerRestartPolicyWarn: emitDefault } = await import(
+      "./setup-docker-restart-warn.js"
+    );
+    const logger = makeMockLogger();
+
+    // No opts.isDocker -> the default closure runs.
+    // Core's two-probe sees the cgroup match and returns true; infra's
+    // single-probe sees no marker file and returns false (this test
+    // would fail before the import retarget).
+    emitDefault(logger as never);
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const [fields] = logger.warn.mock.calls[0]!;
+    expect(fields).toMatchObject({ errorKind: "config" });
+
+    vi.doUnmock("node:fs");
+    vi.resetModules();
   });
 });

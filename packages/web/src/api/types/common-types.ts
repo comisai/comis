@@ -67,7 +67,6 @@ export const SSE_EVENT_TYPES = [
   "security:memory_tainted",
   "security:warn",
   "secret:accessed",
-  "secret:modified",
   "model:fallback_attempt",
   "model:fallback_exhausted",
   "model:auth_cooldown",
