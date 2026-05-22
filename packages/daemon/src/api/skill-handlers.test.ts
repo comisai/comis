@@ -801,7 +801,7 @@ describe("skills.create handler", () => {
     ).rejects.toThrow(/already exists/i);
   });
 
-  it("writes SKILL.md and emits skill:created event on successful create in local scope", async () => {
+  it("writes SKILL.md and triggers registry re-init on successful create in local scope", async () => {
     const wsDir = join(tmpRoot, "ws");
     fs.mkdirSync(wsDir, { recursive: true });
     const reg = makeRegistry([]);
@@ -947,7 +947,7 @@ describe("skills.update handler", () => {
     ).rejects.toThrow(/SKILL\.md not found/i);
   });
 
-  it("overwrites SKILL.md and emits skill:updated event on successful update in local scope", async () => {
+  it("overwrites SKILL.md and triggers registry re-init on successful update in local scope", async () => {
     const wsDir = join(tmpRoot, "ws");
     const skillDir = join(wsDir, "skills", "update-me");
     fs.mkdirSync(skillDir, { recursive: true });
