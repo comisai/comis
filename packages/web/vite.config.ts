@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 import { fileURLToPath } from "node:url";
-import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 
 // All `@comis/core` imports from web are system-time helpers (verified by grep).
@@ -14,7 +13,6 @@ const coreSystemTime = fileURLToPath(
 export default defineConfig({
   root: "src",
   base: "/app/",
-  plugins: [tailwindcss()],
   resolve: {
     alias: {
       "@comis/core": coreSystemTime,
