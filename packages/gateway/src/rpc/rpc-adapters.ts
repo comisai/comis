@@ -147,7 +147,7 @@ async function handleAgentRequest(
  * dispatching to the underlying adapter function.
  *
  * @param deps - Function-based dependencies (not concrete class imports)
- * @returns RpcMethodMap suitable for createMethodRouter()
+ * @returns RpcMethodMap suitable for createDynamicMethodRouter()
  */
 export function createRpcAdapters(
   deps: RpcAdapterDeps,
