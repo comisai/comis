@@ -174,6 +174,38 @@ function makeSessionManager(): SessionLifecycle {
   };
 }
 
+/**
+ * DUP-CONS-13 (Plan 56-05): the orchestrator now reads `replyToMetaKey` via
+ * `deps.channelRegistry?.getCapabilities(channelType)`. The hardcoded
+ * REPLY_TO_META_KEY Record fallback was deleted, so tests that previously
+ * relied on the implicit telegram/discord/slack/whatsapp fallback must
+ * inject this fake registry to keep those code paths covered.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stub
+function makeFakeChannelRegistry(): any {
+  const caps: Record<string, { replyToMetaKey: string; features: { reactions: boolean } }> = {
+    telegram: { replyToMetaKey: "telegramMessageId", features: { reactions: true } },
+    discord: { replyToMetaKey: "discordMessageId", features: { reactions: true } },
+    slack: { replyToMetaKey: "slackTs", features: { reactions: true } },
+    whatsapp: { replyToMetaKey: "whatsappMessageId", features: { reactions: true } },
+    signal: { replyToMetaKey: "signalTimestamp", features: { reactions: true } },
+    line: { replyToMetaKey: "lineMessageId", features: { reactions: false } },
+    imessage: { replyToMetaKey: "imsgMessageId", features: { reactions: false } },
+    irc: { replyToMetaKey: "ircMessageId", features: { reactions: false } },
+    email: { replyToMetaKey: "emailMessageId", features: { reactions: false } },
+    echo: { replyToMetaKey: "echoMessageId", features: { reactions: false } },
+  };
+  return {
+    // eslint-disable-next-line security/detect-object-injection -- test-only lookup over closed map
+    getCapabilities: (channelType: string) => caps[channelType],
+    getAdapter: () => undefined,
+    getChannelTypes: () => Object.keys(caps),
+    getChannelPlugins: () => [],
+    registerChannel: () => ({ ok: true as const, value: undefined }),
+    unregisterChannel: () => ({ ok: true as const, value: undefined }),
+  };
+}
+
 function makeEventBus() {
   return {
     emit: vi.fn(() => true),
@@ -199,6 +231,11 @@ function makeDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManagerDeps {
     // to adapter.sendMessage so the existing assertions remain valid
     // (assertions observe adapter call shape, not the in-between layer).
     deliveryService: makeFakeDeliveryService(),
+    // DUP-CONS-13: orchestrator reads replyToMetaKey via this registry; the
+    // fake mirrors plugin CAPABILITIES for the 10 channel types so tests
+    // that exercise the inbound replyTo extraction path keep their
+    // assertions valid after the REPLY_TO_META_KEY Record was deleted.
+    channelRegistry: makeFakeChannelRegistry(),
     // processInboundMessage is injected. Default wires the REAL
     // implementation so existing test assertions on executor.execute /
     // adapter.sendMessage / preprocessMessage / etc. still exercise the

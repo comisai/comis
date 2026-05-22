@@ -21,7 +21,6 @@ import type {
   TypingController,
   TypingLifecycleController,
 } from "@comis/channels";
-import { REPLY_TO_META_KEY } from "../execution/execution-pipeline.js";
 
 // ---------------------------------------------------------------------------
 // Per-platform typing refresh defaults
@@ -119,7 +118,7 @@ export function setupInboundExecution(
     // Guard defensively so a misconfigured gate cannot crash inbound setup.
     if (supportsReactions && typeof adapter.reactToMessage === "function") {
       const reactToMessage = adapter.reactToMessage.bind(adapter);
-      const metaKey = caps?.replyToMetaKey ?? REPLY_TO_META_KEY[adapter.channelType];
+      const metaKey = caps?.replyToMetaKey;
       const platformMsgId = metaKey ? String(processedMsg.metadata?.[metaKey] ?? "") : "";
       if (platformMsgId) {
         reactToMessage(processedMsg.channelId, platformMsgId, deps.ackReactionConfig.emoji)

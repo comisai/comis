@@ -26,7 +26,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | adapters | optional | channelRegistry plugins are the sole adapter source (production path when adapters is empty) | packages/orchestrator/src/channel-manager.ts:84 |
 | logger | required | — | packages/orchestrator/src/channel-manager.ts:85 |
 | preprocessMessage | optional | inbound messages pass through unprocessed (no voice transcription / image analysis pre-agent) | packages/orchestrator/src/channel-manager.ts:87 |
-| channelRegistry | optional | hardcoded channel-capability maps used as fallback | packages/orchestrator/src/channel-manager.ts:89 |
+| channelRegistry | optional | echo + any plugin without `replyToMetaKey` declared in CAPABILITIES loses reply threading (production wires registry from channelPlugins, so the absent path only fires in unit-test deps fixtures) | packages/orchestrator/src/channel-manager.ts:89 |
 | commandQueue | optional | direct execution without per-session serialization | packages/orchestrator/src/channel-manager.ts:91 |
 | streamingConfig | optional | block streaming uses hardcoded defaults (enabled) | packages/orchestrator/src/channel-manager.ts:93 |
 | autoReplyEngineConfig | optional | all messages activate the agent | packages/orchestrator/src/channel-manager.ts:95 |
@@ -75,7 +75,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 - `debounceBuffer`: 7 production usages; daemon never wires it (`inbound-route.ts:93` `if (!isDebounced && deps.debounceBuffer)` selects the no-debounce path in production).
 - `groupHistoryBuffer`: 8 production usages; daemon never wires it (group-history injection is disabled in production).
 - `loadPromptSkill` / `getUserInvocableSkillNames`: 2 usages each (`inbound-gate.ts:344` `if (... && deps.loadPromptSkill && deps.getUserInvocableSkillNames)`); daemon never wires either, so skill commands pass through as plain text in production.
-- `ackReactionConfig`, `channelRegistry`, `followupConfig`, `followupTrigger`, `getDmScopeConfig`, `greetingGenerator`, `identityResolver`, `sessionLabelStore`: all follow the same pattern — declared optional, daemon does not wire, absent-mode is the production code path. (`inFlightSends` was previously listed here as a 14th test-only injection point; Plan 56-05 moved the Set inside `DeliveryService` and deleted the deps slot, so it no longer appears in `ChannelManagerDeps`.)
+- `ackReactionConfig`, `followupConfig`, `followupTrigger`, `getDmScopeConfig`, `greetingGenerator`, `identityResolver`, `sessionLabelStore`: all follow the same pattern — declared optional, daemon does not wire, absent-mode is the production code path. (`inFlightSends` was previously listed here as a 14th test-only injection point; Plan 56-05 moved the Set inside `DeliveryService` and deleted the deps slot, so it no longer appears in `ChannelManagerDeps`. `channelRegistry` was previously in this list; Plan 56-05 wires it from `setup-channels-runtime.ts` against the `channelPlugins` Map so it now flows through production deps and the absent-mode applies only to unit-test fixtures.)
 
 ## Summary
 

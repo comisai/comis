@@ -26,7 +26,9 @@ import {
   createLifecycleReactor,
   reactWithFallback,
   type LifecycleReactor,
+  type ChannelRegistry,
 } from "@comis/channels";
+import { buildReadOnlyChannelRegistry } from "./setup-channels-registry-builder.js";
 import { createChannelManager, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
 import { RetryConfigSchema, createRetryEngine } from "@comis/core";
 import {
@@ -99,6 +101,7 @@ export interface ChannelManagerBuildResult {
   approvalNotifier?: ApprovalNotifier;
   commandQueue?: CommandQueue;
 }
+
 
 /**
  * Construct and start the ChannelManager (voice response pipeline +
@@ -191,6 +194,12 @@ export async function buildAndStartChannelManager(
     const retryConfig = RetryConfigSchema.parse({});
     const retryEngine = createRetryEngine(retryConfig, container.eventBus, channelsLogger);
 
+    // DUP-CONS-13 (Plan 56-05): lightweight read-only ChannelRegistry over
+    // the bootstrapped channelPlugins Map. Orchestrator reads
+    // `getCapabilities(...).replyToMetaKey` (REPLY_TO_META_KEY Record was
+    // deleted). Channel lifecycle is owned by setup-channels-adapters.
+    const channelRegistry: ChannelRegistry = buildReadOnlyChannelRegistry(channelPlugins);
+
     channelManager = createChannelManager({
       eventBus: container.eventBus,
       messageRouter,
@@ -199,6 +208,7 @@ export async function buildAndStartChannelManager(
       retryEngine,
       deliveryQueue: deps.deliveryQueue,
       deliveryService,
+      channelRegistry,
       // Required dep — orchestrator-side inbound pipeline entrypoint.
       // Routed through ChannelManagerDeps so channels does not create a
       // back-edge import of @comis/orchestrator.
