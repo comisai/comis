@@ -2,7 +2,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles } from "../../styles/shared.js";
-import type { SessionInfo } from "../../api/types/index.js";
+import type { SessionListItem } from "../../api/types/index.js";
 import {
   parseSessionKeyString,
   formatSessionDisplayName,
@@ -26,7 +26,7 @@ const STATUS_COLORS: Record<string, string> = {
  * Parses the raw session key into a user-friendly label with channel
  * and agent tags, status indicator, message count, and relative time.
  *
- * @fires session-click - CustomEvent<SessionInfo> when the row is clicked
+ * @fires session-click - CustomEvent<SessionListItem> when the row is clicked
  *
  * @example
  * ```html
@@ -102,7 +102,7 @@ export class IcSessionRow extends LitElement {
   ];
 
   /** Session data to display in this row. */
-  @property({ attribute: false }) session: SessionInfo | null = null;
+  @property({ attribute: false }) session: SessionListItem | null = null;
 
   private _handleClick(): void {
     if (!this.session) return;
@@ -119,16 +119,16 @@ export class IcSessionRow extends LitElement {
     if (!this.session) return nothing;
 
     const s = this.session;
-    const parsed = parseSessionKeyString(s.key);
+    const parsed = parseSessionKeyString(s.sessionKey);
     const displayName = parsed
       ? formatSessionDisplayName(parsed)
-      : s.key.length > 15
-        ? s.key.slice(0, 12) + "..."
-        : s.key;
+      : s.sessionKey.length > 15
+        ? s.sessionKey.slice(0, 12) + "..."
+        : s.sessionKey;
 
-    const status = computeSessionStatus(s.lastActiveAt);
+    const status = computeSessionStatus(s.updatedAt);
     const statusColor = STATUS_COLORS[status] ?? STATUS_COLORS.expired;
-    const channelLabel = parsed?.channelId ?? s.channelType;
+    const channelLabel = parsed?.channelId ?? s.kind;
     // Session keys do not carry an `agent:<agentId>:` prefix, so we read
     // the agent label only from the session row's own `agentId` field
     // (carried in the API response).
@@ -138,15 +138,15 @@ export class IcSessionRow extends LitElement {
       <div class="row" @click=${this._handleClick} role="button" tabindex="0" aria-label="Session ${displayName}">
         <div class="status-dot" style="background: ${statusColor}" title="${status}"></div>
         <div class="info">
-          <div class="display-name" title="${s.key}">${displayName}</div>
+          <div class="display-name" title="${s.sessionKey}">${displayName}</div>
           <div class="tags">
-            <ic-tag variant=${s.channelType}>${channelLabel}</ic-tag>
+            <ic-tag variant=${s.kind}>${channelLabel}</ic-tag>
             ${agentLabel ? html`<ic-tag>${agentLabel}</ic-tag>` : nothing}
           </div>
         </div>
         <div class="meta">
           <span class="msg-count">${s.messageCount} msgs</span>
-          <ic-relative-time .timestamp=${s.lastActiveAt}></ic-relative-time>
+          <ic-relative-time .timestamp=${s.updatedAt}></ic-relative-time>
         </div>
       </div>
     `;

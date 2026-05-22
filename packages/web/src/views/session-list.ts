@@ -6,7 +6,7 @@ import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
-import type { SessionInfo, SessionSearchResult } from "../api/types/index.js";
+import type { SessionListItem, SessionSearchResult } from "../api/types/index.js";
 import { computeSessionStatus } from "../utils/session-key-parser.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
@@ -184,8 +184,8 @@ export class IcSessionListView extends LitElement {
   private _sse: SseController | null = null;
   private _reloadDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  @state() private _sessions: SessionInfo[] = [];
-  @state() private _filteredSessions: SessionInfo[] = [];
+  @state() private _sessions: SessionListItem[] = [];
+  @state() private _filteredSessions: SessionListItem[] = [];
   @state() private _loading = false;
   @state() private _error = "";
   @state() private _searchQuery = "";
@@ -265,15 +265,15 @@ export class IcSessionListView extends LitElement {
     if (this._searchQuery) {
       // If RPC search provided keys, filter to those keys
       if (this._searchResultKeys) {
-        filtered = filtered.filter((s) => this._searchResultKeys!.has(s.key));
+        filtered = filtered.filter((s) => this._searchResultKeys!.has(s.sessionKey));
       } else {
         // Client-side fallback: text match on key/agent/channel
         const q = this._searchQuery.toLowerCase();
         filtered = filtered.filter(
           (s) =>
-            s.key.toLowerCase().includes(q) ||
+            s.sessionKey.toLowerCase().includes(q) ||
             s.agentId.toLowerCase().includes(q) ||
-            s.channelType.toLowerCase().includes(q),
+            s.kind.toLowerCase().includes(q),
         );
       }
     }
@@ -283,12 +283,12 @@ export class IcSessionListView extends LitElement {
     }
 
     if (this._channelFilter) {
-      filtered = filtered.filter((s) => s.channelType === this._channelFilter);
+      filtered = filtered.filter((s) => s.kind === this._channelFilter);
     }
 
     if (this._statusFilter) {
       filtered = filtered.filter(
-        (s) => computeSessionStatus(s.lastActiveAt) === this._statusFilter,
+        (s) => computeSessionStatus(s.updatedAt) === this._statusFilter,
       );
     }
 
@@ -314,7 +314,7 @@ export class IcSessionListView extends LitElement {
   }
 
   private _getUniqueChannels(): string[] {
-    const channels = new Set(this._sessions.map((s) => s.channelType));
+    const channels = new Set(this._sessions.map((s) => s.kind));
     return [...channels].sort();
   }
 
@@ -376,9 +376,9 @@ export class IcSessionListView extends LitElement {
     this._applyFilters();
   }
 
-  private _handleSessionClick(e: CustomEvent<SessionInfo>): void {
+  private _handleSessionClick(e: CustomEvent<SessionListItem>): void {
     const session = e.detail;
-    window.location.hash = `#/sessions/${session.key}`;
+    window.location.hash = `#/sessions/${session.sessionKey}`;
   }
 
   private _handleSelectionChange(e: CustomEvent<string[]>): void {

@@ -17,6 +17,7 @@ import type {
   ActivityEntry,
   MemoryEntry,
   SessionInfo,
+  SessionListItem,
   SessionMessage,
 } from "./types/index.js";
 import {
@@ -109,7 +110,7 @@ export interface ApiClient {
   // --- Session management methods ---
 
   /** List all sessions */
-  listSessions(params?: ListSessionsParams): Promise<SessionInfo[]>;
+  listSessions(params?: ListSessionsParams): Promise<SessionListItem[]>;
   /** Get session detail with history */
   getSessionDetail(key: string): Promise<{ session: SessionInfo; messages: SessionMessage[] }>;
   /** Reset a session */
@@ -411,42 +412,20 @@ export function createApiClient(
 
     // --- Session management methods ---
 
-    async listSessions(params?: ListSessionsParams): Promise<SessionInfo[]> {
+    async listSessions(params?: ListSessionsParams): Promise<SessionListItem[]> {
       if (rpcCall) {
         const result = await typedCall<{
-          sessions: Array<Record<string, unknown>>;
+          sessions: SessionListItem[];
           total: number;
         }>(rpcCall, "session.list", params ?? {});
-        return (result.sessions ?? []).map((raw) => {
-          const sessionKey = String(raw.sessionKey ?? raw.key ?? "");
-          // Extract agentId from session key: [agent:{agentId}:]{tenantId}:{userId}:{channelId}
-          let agentId = "unknown";
-          const parts = sessionKey.split(":");
-          if (parts[0] === "agent" && parts.length >= 3) {
-            agentId = parts[1] ?? "unknown";
-          }
-          return {
-            key: sessionKey,
-            agentId: String(raw.agentId ?? agentId),
-            channelType: String(raw.kind ?? raw.channelType ?? "unknown"),
-            messageCount: Number(raw.messageCount ?? 0),
-            totalTokens: Number(raw.totalTokens ?? 0),
-            inputTokens: Number(raw.inputTokens ?? 0),
-            outputTokens: Number(raw.outputTokens ?? 0),
-            toolCalls: Number(raw.toolCalls ?? 0),
-            compactions: Number(raw.compactions ?? 0),
-            resetCount: Number(raw.resetCount ?? 0),
-            createdAt: Number(raw.createdAt ?? Date.now()),
-            lastActiveAt: Number(raw.updatedAt ?? raw.lastActiveAt ?? Date.now()),
-          };
-        });
+        return result.sessions;
       }
       const qs = new URLSearchParams();
       if (params?.agentId) qs.set("agentId", params.agentId);
       if (params?.channelType) qs.set("channelType", params.channelType);
       if (params?.search) qs.set("search", params.search);
       const query = qs.toString();
-      return fetchJson<SessionInfo[]>(`/api/sessions${query ? `?${query}` : ""}`);
+      return fetchJson<SessionListItem[]>(`/api/sessions${query ? `?${query}` : ""}`);
     },
 
     async getSessionDetail(

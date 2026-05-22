@@ -27,6 +27,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // search but the contract only allows kind/since_minutes). These are pre-
 // existing wrapper bugs orthogonal to this file's coverage objective; we
 // stub the validators to expose the rpcCall delegation branch underneath.
+// Post Plan 55-03: listSessions returns SessionListItem[] (9-field pass-through) —
+// no aliasing, no parsing, no invented fields. Tests reflect that contract.
 vi.mock("./contracts.generated.js", () => ({
   validateRequest: () => true,
   validateResponse: () => true,
@@ -113,70 +115,33 @@ describe("createApiClient — session.list via rpcCall path", () => {
     });
   });
 
-  it("extracts agentId from canonical session-key prefix when raw response omits agentId field", async () => {
+  it("passes through SessionListItem rows verbatim from the contract response (no aliasing)", async () => {
+    // Plan 55-03: tight pass-through — the wrapper does NOT alias raw.key → sessionKey
+    // or compute agentId from the session-key prefix. The daemon-side handler is the
+    // trust boundary; the client returns result.sessions unchanged.
     const rpc = makeRpc({
       sessions: [
         {
           sessionKey: "agent:alpha:tenant:user:channel",
+          agentId: "alpha",
+          userId: "user",
+          channelId: "channel",
           kind: "slack",
           messageCount: 4,
+          totalTokens: 100,
+          updatedAt: 1000,
+          createdAt: 500,
         },
       ],
       total: 1,
     });
     const sessions = await createApiClient(BASE_URL, TOKEN, rpc).listSessions();
     expect(sessions[0]?.agentId).toBe("alpha");
-    expect(sessions[0]?.channelType).toBe("slack");
+    expect(sessions[0]?.kind).toBe("slack");
     expect(sessions[0]?.messageCount).toBe(4);
-  });
-
-  it("defaults agentId to 'unknown' when session key has no agent prefix", async () => {
-    const rpc = makeRpc({
-      sessions: [{ sessionKey: "tenant:user:channel" }],
-      total: 1,
-    });
-    const sessions = await createApiClient(BASE_URL, TOKEN, rpc).listSessions();
-    expect(sessions[0]?.agentId).toBe("unknown");
-  });
-
-  it("prefers raw.key when raw.sessionKey is absent for session-key parsing", async () => {
-    const rpc = makeRpc({
-      sessions: [{ key: "agent:beta:t:u:c" }],
-      total: 1,
-    });
-    const sessions = await createApiClient(BASE_URL, TOKEN, rpc).listSessions();
-    expect(sessions[0]?.key).toBe("agent:beta:t:u:c");
-    expect(sessions[0]?.agentId).toBe("beta");
-  });
-
-  it("populates totalTokens/inputTokens/outputTokens/toolCalls/compactions/resetCount from raw fields", async () => {
-    const rpc = makeRpc({
-      sessions: [
-        {
-          sessionKey: "agent:a:t:u:c",
-          totalTokens: 100,
-          inputTokens: 60,
-          outputTokens: 40,
-          toolCalls: 7,
-          compactions: 2,
-          resetCount: 1,
-        },
-      ],
-      total: 1,
-    });
-    const [session] = await createApiClient(BASE_URL, TOKEN, rpc).listSessions();
-    expect(session?.totalTokens).toBe(100);
-    expect(session?.inputTokens).toBe(60);
-    expect(session?.outputTokens).toBe(40);
-    expect(session?.toolCalls).toBe(7);
-    expect(session?.compactions).toBe(2);
-    expect(session?.resetCount).toBe(1);
-  });
-
-  it("returns empty array when session.list raw response omits the sessions field", async () => {
-    const rpc = makeRpc({ total: 0 });
-    const sessions = await createApiClient(BASE_URL, TOKEN, rpc).listSessions();
-    expect(sessions).toEqual([]);
+    expect(sessions[0]?.sessionKey).toBe("agent:alpha:tenant:user:channel");
+    expect(sessions[0]?.userId).toBe("user");
+    expect(sessions[0]?.channelId).toBe("channel");
   });
 });
 
