@@ -22,22 +22,22 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const comisRoot = resolve(__dirname, "..");
 const monoRoot = resolve(comisRoot, "../..");
 
-const WORKSPACE_PACKAGES = [
-  "shared",
-  "core",
-  "infra",
-  "memory",
-  "gateway",
-  "skills",
-  "scheduler",
-  "agent",
-  "channels",
-  "cli",
-  "daemon",
-  "orchestrator",
-  "observability",
-  "web",
-];
+// Single source of truth: bundledDependencies in our own package.json.
+// Tarball-smoke and umbrella-bundling test read the SAME source.
+// `bundledDependencies` also contains native-dep helpers (`bindings`,
+// `file-uri-to-path`) bundled via FORCE_BUNDLE in step 4 — the filter
+// keeps only `@comis/*` entries as workspace packages.
+const ownPkgJson = JSON.parse(
+  readFileSync(join(comisRoot, "package.json"), "utf8"),
+);
+const WORKSPACE_PACKAGES = (ownPkgJson.bundledDependencies ?? [])
+  .filter(/** @param {string} s */ (s) => typeof s === "string" && s.startsWith("@comis/"))
+  .map(/** @param {string} s */ (s) => s.replace(/^@comis\//, ""));
+
+if (WORKSPACE_PACKAGES.length === 0) {
+  console.error("ERROR: bundledDependencies @comis/* entries empty in packages/comis/package.json");
+  process.exit(1);
+}
 
 // --- Step 1: Bundle workspace packages into node_modules/@comis/ ---
 
