@@ -532,13 +532,6 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  /** Secret lifecycle event (CRUD operations) */
-  "secret:modified": {
-    secretName: string;
-    action: "created" | "updated" | "deleted" | "imported";
-    timestamp: number;
-  };
-
   // -------------------------------------------------------------------------
   // Security warning events
   // -------------------------------------------------------------------------
