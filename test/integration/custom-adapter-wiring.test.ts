@@ -172,6 +172,7 @@ function makeMinimalDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManage
     // pipeline, so the service is fine as a noop stub.
     deliveryService: {
       deliverToChannel: vi.fn(async () => ({ ok: true, value: { ok: true } })) as any,
+      drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })) as any,
     } as any,
     // processInboundMessage is dep-injected on ChannelManagerDeps so
     // channels does not back-edge import orchestrator. The CWIRE tests do

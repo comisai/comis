@@ -14,7 +14,6 @@ import { formatSessionKey, systemNowMs } from "@comis/core";
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
 import { isGroupMessage, evaluateSendPolicy, applySessionOverride } from "@comis/channels";
 import type { SendOverrideStore, SendPolicyContext } from "@comis/channels";
-import { REPLY_TO_META_KEY } from "./execution-pipeline.js";
 
 // ---------------------------------------------------------------------------
 // Deps narrowing
@@ -66,7 +65,7 @@ export function evaluateExecutionPolicy(
 ): PolicyResult {
   // Capability-driven config lookup (falls back to hardcoded maps)
   const caps = deps.channelRegistry?.getCapabilities(adapter.channelType);
-  const metaKey = caps?.replyToMetaKey ?? REPLY_TO_META_KEY[adapter.channelType];
+  const metaKey = caps?.replyToMetaKey;
   // In DMs, skip reply-to -- quoting the user's own message adds noise in 1-on-1 chats.
   const replyTo =
     isGroupMessage(originalMsg) && metaKey && originalMsg.metadata?.[metaKey]

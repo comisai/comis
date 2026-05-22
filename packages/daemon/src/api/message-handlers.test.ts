@@ -34,6 +34,10 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: text.length,
       });
     }),
+    // TEST-PUB-01 (Plan 56-05): DeliveryService gained drainInFlight().
+    // Default fake returns empty drain telemetry; tests that exercise drain
+    // semantics override this field.
+    drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
 

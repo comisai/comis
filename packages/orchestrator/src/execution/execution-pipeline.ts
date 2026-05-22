@@ -47,14 +47,6 @@ import { deliverExecutionResponse } from "./execution-deliver.js";
 // Platform-specific configuration
 // ---------------------------------------------------------------------------
 
-/** Maps channelType to the metadata key containing the platform message ID for reply-to. */
-export const REPLY_TO_META_KEY: Record<string, string> = {
-  telegram: "telegramMessageId",
-  discord: "discordMessageId",
-  slack: "slackTs",
-  whatsapp: "whatsappMessageId",
-};
-
 /**
  * Metadata keys that carry thread context -- must be propagated to followup messages.
  * Mirror of TELEGRAM_THREAD_META_KEYS in thread-context.ts -- kept in sync via
@@ -117,14 +109,6 @@ export interface ExecutionPipelineDeps {
    * free-standing standalone export.
    */
   deliveryService: DeliveryService;
-  /**
-   * Per-instance set of in-flight outbound sendMessage promises. Threaded
-   * through DeliverToChannelDeps so deliver-to-channel can register active
-   * sends. Drained in stopAll() with a 5s deadline so SIGUSR2 cannot tear
-   * down adapters mid-send. Created by the channel-manager factory; do not
-   * pass externally.
-   */
-  inFlightSends?: Set<Promise<unknown>>;
   /** When true, only content inside <final> blocks reaches users. */
   enforceFinalTag?: boolean;
 }

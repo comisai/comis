@@ -25,6 +25,11 @@ const CAPABILITIES: ChannelCapability = {
   limits: {
     maxMessageChars: 10000,
   },
+  // DUP-CONS-13 (Plan 56-05): defensive declaration so the lifecycle
+  // reactor + replyToMetaKey single-source path (post-REPLY_TO_META_KEY
+  // Record deletion) does not silently disable echo replies in
+  // integration tests. Echo's adapter stores message IDs under this key.
+  replyToMetaKey: "echoMessageId",
 };
 
 /**

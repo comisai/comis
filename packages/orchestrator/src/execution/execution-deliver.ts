@@ -23,7 +23,7 @@ import type { BlockPacer, TypingLifecycleController } from "@comis/channels";
 /** Minimal deps needed for the delivery stage. */
 export type DeliverDeps = Pick<
   ExecutionPipelineDeps,
-  "eventBus" | "logger" | "streamingConfig" | "channelRegistry" | "retryEngine" | "deliveryQueue" | "inFlightSends" | "deliveryService"
+  "eventBus" | "logger" | "streamingConfig" | "channelRegistry" | "retryEngine" | "deliveryQueue" | "deliveryService"
 >;
 
 // ---------------------------------------------------------------------------
@@ -128,8 +128,8 @@ export async function deliverExecutionResponse(
       const threadOpts = buildThreadSendOpts(effectiveMsg.metadata);
 
       // Method form via threaded DeliveryService. retryEngine /
-      // deliveryQueue / eventBus / inFlightSends are captured by the closure
-      // at composition root; replyMode + abortSignal still ride per-call.
+      // deliveryQueue / eventBus / in-flight tracking are captured by the
+      // closure at composition root; replyMode + abortSignal still ride per-call.
       const deliveryResult = await deps.deliveryService.deliverToChannel(adapter, effectiveMsg.channelId, text, {
         replyTo: blockIndex === 0 ? replyTo : undefined,
         threadId: threadOpts?.threadId,
