@@ -534,7 +534,14 @@ describe("config set modifies config with restart warning", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    mockWithClientResult({ patched: true, restarting: true });
+    // ConfigPatchContract.response = { patched: true, section, key?, value, restarting: true }
+    mockWithClientResult({
+      patched: true,
+      section: "agent.budget",
+      key: "maxTokens",
+      value: 50000,
+      restarting: true,
+    });
   });
 
   afterEach(() => {
@@ -607,7 +614,15 @@ describe("config set parses JSON values", () => {
       const mockClient = {
         call: vi.fn().mockImplementation((...args: unknown[]) => {
           capturedCallArgs = args;
-          return Promise.resolve({ patched: true });
+          // ConfigPatchContract.response = { patched, section, key?, value, restarting }
+          const params = args[1] as { section?: string; key?: string; value: unknown };
+          return Promise.resolve({
+            patched: true,
+            section: params.section ?? "",
+            key: params.key,
+            value: params.value,
+            restarting: true,
+          });
         }),
         close: vi.fn(),
       };
@@ -645,9 +660,16 @@ describe("config history displays table", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
+    // ConfigHistoryContract.response = { entries: ConfigHistoryEntrySchema[] }
+    // ConfigHistoryEntrySchema = { sha, timestamp, message, metadata: { section, summary, ... } }
     mockWithClientResult({
       entries: [
-        { sha: "abc1234567890", date: "2026-02-25T12:00:00Z", message: "Changed agent.name" },
+        {
+          sha: "abc1234567890",
+          timestamp: "2026-02-25T12:00:00Z",
+          message: "Changed agent.name",
+          metadata: { section: "agent", summary: "Changed agent.name" },
+        },
       ],
     });
   });
@@ -819,7 +841,13 @@ describe("config rollback with --yes skips prompt", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    mockWithClientResult({ rolledBack: true, sha: "abc1234", restarting: true });
+    // ConfigRollbackContract.response = { rolledBack: true, sha, newCommitSha, restarting: true }
+    mockWithClientResult({
+      rolledBack: true,
+      sha: "abc1234",
+      newCommitSha: "def5678",
+      restarting: true,
+    });
   });
 
   afterEach(() => {

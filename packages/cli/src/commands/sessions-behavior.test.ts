@@ -47,33 +47,49 @@ const { withClient } = await import("../client/rpc-client.js");
 const clackPrompts = await import("@clack/prompts");
 
 /**
- * Session data matching what session.list RPC returns.
- * Uses epoch millisecond numbers for lastActive (matching sessions.ts expectations).
+ * Session data matching `SessionListContract.response`:
+ * `{ sessions: SessionInfo[], total }` where SessionInfo carries
+ * `sessionKey/agentId/userId/channelId/kind/messageCount/totalTokens/updatedAt/createdAt`.
+ * The CLI reads `sessionKey ?? key`, `userId ?? user`, `updatedAt ?? lastActive` —
+ * contract-shape data flows through always-on response.parse unchanged.
  */
 const SESSIONS_DATA = {
   sessions: [
     {
-      key: "test-tenant:user-1:discord-main",
-      channel: "discord-main",
-      user: "user-1",
-      lastActive: Date.now() - 5 * 60 * 1000,
+      sessionKey: "test-tenant:user-1:discord-main",
+      agentId: "default",
+      userId: "user-1",
+      channelId: "discord-main",
+      kind: "discord",
       messageCount: 42,
+      totalTokens: 1000,
+      updatedAt: Date.now() - 5 * 60 * 1000,
+      createdAt: Date.now() - 60 * 60 * 1000,
     },
     {
-      key: "test-tenant:user-2:telegram-bot",
-      channel: "telegram-bot",
-      user: "user-2",
-      lastActive: Date.now() - 2 * 60 * 60 * 1000,
+      sessionKey: "test-tenant:user-2:telegram-bot",
+      agentId: "default",
+      userId: "user-2",
+      channelId: "telegram-bot",
+      kind: "telegram",
       messageCount: 7,
+      totalTokens: 200,
+      updatedAt: Date.now() - 2 * 60 * 60 * 1000,
+      createdAt: Date.now() - 3 * 60 * 60 * 1000,
     },
     {
-      key: "other-tenant:user-3:slack-ws",
-      channel: "slack-ws",
-      user: "user-3",
-      lastActive: Date.now() - 3 * 24 * 60 * 60 * 1000,
+      sessionKey: "other-tenant:user-3:slack-ws",
+      agentId: "default",
+      userId: "user-3",
+      channelId: "slack-ws",
+      kind: "slack",
       messageCount: 1,
+      totalTokens: 50,
+      updatedAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
+      createdAt: Date.now() - 4 * 24 * 60 * 60 * 1000,
     },
   ],
+  total: 3,
 };
 
 describe("sessions list table output", () => {
@@ -141,8 +157,9 @@ describe("sessions list empty", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
+      // SessionListContract.response = { sessions: [...], total }
       const mockClient = createMockRpcClient()
-        .onCall("session.list", { sessions: [] })
+        .onCall("session.list", { sessions: [], total: 0 })
         .build();
       return fn(mockClient);
     });
@@ -193,15 +210,21 @@ describe("sessions list --format json", () => {
     await program.parseAsync(["node", "test", "sessions", "list", "--format", "json"]);
 
     const output = getSpyOutput(consoleSpy.log);
-    const parsed = JSON.parse(output) as Array<{ key: string; channel: string; user: string }>;
+    // Post-validation, the JSON output carries the contract field names
+    // (sessionKey/channelId/userId), not the legacy (key/channel/user) names.
+    const parsed = JSON.parse(output) as Array<{
+      sessionKey: string;
+      channelId: string;
+      userId: string;
+    }>;
 
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(3);
-    expect(parsed[0]!.key).toBe("test-tenant:user-1:discord-main");
-    expect(parsed[0]!.channel).toBe("discord-main");
-    expect(parsed[0]!.user).toBe("user-1");
-    expect(parsed[1]!.key).toBe("test-tenant:user-2:telegram-bot");
-    expect(parsed[2]!.key).toBe("other-tenant:user-3:slack-ws");
+    expect(parsed[0]!.sessionKey).toBe("test-tenant:user-1:discord-main");
+    expect(parsed[0]!.channelId).toBe("discord-main");
+    expect(parsed[0]!.userId).toBe("user-1");
+    expect(parsed[1]!.sessionKey).toBe("test-tenant:user-2:telegram-bot");
+    expect(parsed[2]!.sessionKey).toBe("other-tenant:user-3:slack-ws");
   });
 });
 
@@ -215,7 +238,8 @@ describe("sessions list --tenant filters by tenant", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    callSpy = vi.fn().mockResolvedValue({ sessions: [] });
+    // SessionListContract.response = { sessions: [...], total }
+    callSpy = vi.fn().mockResolvedValue({ sessions: [], total: 0 });
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
     });

@@ -558,8 +558,13 @@ describe("memory clear no-filter rejection", () => {
   it("accepts valid filter with --yes", async () => {
     // Mock withClient to succeed for valid clear operation
     vi.mocked(withClient).mockImplementation(async (fn) => {
+      // MemoryFlushContract.response = { flushed: true, entriesRemoved, scope }
       const mockClient = createMockRpcClient()
-        .onCall("memory.flush", {})
+        .onCall("memory.flush", {
+          flushed: true,
+          entriesRemoved: 0,
+          scope: { tenantId: "", agentId: null },
+        })
         .build();
       return fn(mockClient);
     });

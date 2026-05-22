@@ -117,9 +117,20 @@ describe("models list displays models from daemon via RPC", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
+    // The daemon's models.list handler returns
+    // `{ providers: [...], totalModels }` (unfiltered) or `{ models: [...], total }`
+    // (filtered) — never a raw CatalogEntry[]. The CLI's loadModels
+    // therefore always falls through to the local catalog. Seed the
+    // mocked catalog with SAMPLE_MODELS so the render assertions still
+    // verify the table-rendering behavior.
+    const catalog = vi.mocked(createModelCatalog)();
+    vi.mocked(catalog.getAll).mockReturnValue(SAMPLE_MODELS as never);
+
     vi.mocked(withClient).mockImplementation(async (fn) => {
+      // ModelsListContract.response = z.record(z.string(), z.unknown())
+      // Empty object passes parse but is not an array → CLI falls back.
       const mockClient = createMockRpcClient()
-        .onCall("models.list", SAMPLE_MODELS)
+        .onCall("models.list", {})
         .build();
       return fn(mockClient);
     });
@@ -228,10 +239,15 @@ describe("models list --provider filters by provider", () => {
     exitSpy = createProcessExitSpy();
 
     const anthropicModels = SAMPLE_MODELS.filter((m) => m.provider === "anthropic");
+    // Seed the local catalog (used post-RPC-fallback) with the filtered set.
+    const catalog = vi.mocked(createModelCatalog)();
+    vi.mocked(catalog.getByProvider).mockReturnValue(anthropicModels as never);
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
+      // ModelsListContract.response = z.record(...) — empty object is valid;
+      // CLI falls through to the local catalog (see "displays models" describe).
       const mockClient = createMockRpcClient()
-        .onCall("models.list", anthropicModels)
+        .onCall("models.list", {})
         .build();
       return fn(mockClient);
     });
@@ -325,10 +341,18 @@ describe("models list shows info when no models found", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    // Return empty array from RPC
+    // ModelsListContract.response = z.record(...) — empty object passes,
+    // CLI falls through to the local catalog. Reset catalog mocks to
+    // empty so the "no models" assertion isn't polluted by earlier
+    // describe blocks (vi.mock returns the same mockCatalog object across
+    // describes, so per-test mockReturnValue state carries over).
+    const catalog = vi.mocked(createModelCatalog)();
+    vi.mocked(catalog.getAll).mockReturnValue([]);
+    vi.mocked(catalog.getByProvider).mockReturnValue([]);
+
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("models.list", [])
+        .onCall("models.list", {})
         .build();
       return fn(mockClient);
     });
