@@ -174,7 +174,6 @@ describe("row-schemas — internal DB row runtime parses", () => {
       trace_id: "trace-1",
       agent_id: "agent-1",
       channel_id: "channel-1",
-      execution_id: "exec-1",
       session_key: "sess-1",
       provider: "openai",
       model: "gpt-5",

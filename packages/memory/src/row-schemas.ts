@@ -351,7 +351,6 @@ export const TokenUsageDbRowSchema = z.strictObject({
   trace_id: z.string(),
   agent_id: z.string(),
   channel_id: z.string(),
-  execution_id: z.string(),
   session_key: z.string(),
   provider: z.string(),
   model: z.string(),

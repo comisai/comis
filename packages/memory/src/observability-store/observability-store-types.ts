@@ -65,7 +65,6 @@ export interface TokenUsageRow {
   traceId: string;
   agentId: string;
   channelId?: string;
-  executionId?: string;
   sessionKey?: string;
   provider: string;
   model: string;
@@ -279,7 +278,6 @@ export interface TokenUsageDbRow {
   trace_id: string;
   agent_id: string;
   channel_id: string;
-  execution_id: string;
   session_key: string;
   provider: string;
   model: string;
@@ -369,7 +367,6 @@ export function tokenUsageFromRow(row: TokenUsageDbRow): TokenUsageRow {
     traceId: row.trace_id,
     agentId: row.agent_id,
     channelId: row.channel_id,
-    executionId: row.execution_id,
     sessionKey: row.session_key,
     provider: row.provider,
     model: row.model,

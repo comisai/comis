@@ -173,7 +173,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
       trace_id TEXT NOT NULL,
       agent_id TEXT NOT NULL,
       channel_id TEXT DEFAULT '',
-      execution_id TEXT DEFAULT '',
       session_key TEXT DEFAULT '',
       provider TEXT NOT NULL,
       model TEXT NOT NULL,
