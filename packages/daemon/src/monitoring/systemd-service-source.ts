@@ -9,7 +9,7 @@
 
 import type { SystemdMonitorConfig } from "@comis/core";
 import type { HeartbeatSourcePort, HeartbeatCheckResult } from "@comis/scheduler";
-import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
+import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
 import { execFile as execFileCb } from "node:child_process";
 import { access, constants } from "node:fs/promises";
 import { promisify } from "node:util";

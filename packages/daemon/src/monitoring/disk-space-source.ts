@@ -8,7 +8,7 @@
 
 import type { DiskMonitorConfig } from "@comis/core";
 import type { HeartbeatSourcePort, HeartbeatCheckResult } from "@comis/scheduler";
-import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
+import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
 import { statfs } from "node:fs/promises";
 import { systemNowMs } from "@comis/core";
 

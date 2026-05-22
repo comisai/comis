@@ -24,7 +24,8 @@ export type { ExecutionTracker, ExecutionLogEntry } from "./execution/index.js";
 // @comis/core; scheduler no longer mediates the FileLockPort factory.
 
 // Heartbeat monitoring
-export { HEARTBEAT_OK_TOKEN, createHeartbeatRunner } from "./heartbeat/index.js";
+// HEARTBEAT_OK_TOKEN was previously re-exported here; canonical home is @comis/shared (Phase 53-02).
+export { createHeartbeatRunner } from "./heartbeat/index.js";
 export type { HeartbeatCheckResult, HeartbeatSourcePort, HeartbeatRunner } from "./heartbeat/index.js";
 
 // Per-agent heartbeat config resolution

@@ -5,9 +5,6 @@
 export { resolveEffectiveHeartbeatConfig } from "./heartbeat-config.js";
 export type { EffectiveHeartbeatConfig } from "./heartbeat-config.js";
 
-// Relevance filter
-export { HEARTBEAT_OK_TOKEN } from "./relevance-filter.js";
-
 // Heartbeat source port
 export type { HeartbeatCheckResult, HeartbeatSourcePort } from "./heartbeat-source.js";
 

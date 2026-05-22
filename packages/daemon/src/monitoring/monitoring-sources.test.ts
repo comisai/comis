@@ -8,7 +8,7 @@
  * promisify that returns our async mock directly.
  */
 
-import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
+import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---------------------------------------------------------------------------

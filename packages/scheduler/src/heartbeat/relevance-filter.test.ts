@@ -5,8 +5,8 @@ import {
   shouldNotify,
   classifyHeartbeatResult,
   DEFAULT_VISIBILITY,
-  HEARTBEAT_OK_TOKEN,
 } from "./relevance-filter.js";
+import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
 
 describe("classifyHeartbeatResult", () => {
   it("classifies HEARTBEAT_OK_TOKEN as 'ok'", () => {
