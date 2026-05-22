@@ -15,7 +15,7 @@
  *   Domain 3:  Skills/Tools (6 events)
  *   Domain 4:  Observability/Metrics (3 events)
  *   Domain 5:  Scheduler/Tasks (5 events)
- *   Domain 6:  Queue/Priority (8 events)
+ *   Domain 6:  Queue (6 events)
  *   Domain 7:  Plugin/Hooks (3 events)
  *   Domain 8:  Delivery/Streaming/Retry (7 events)
  *   Domain 9:  Model/Failover (5 events)
@@ -29,7 +29,7 @@
  *   Behavioral Guarantees (6 tests)
  *   EventAwaiter Integration (5 tests)
  *
- * Total: 77 payload tests + 11 behavioral/EventAwaiter tests = ~88 tests
+ * Total: 75 payload tests + 11 behavioral/EventAwaiter tests = ~86 tests
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
