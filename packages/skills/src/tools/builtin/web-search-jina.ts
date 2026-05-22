@@ -10,7 +10,7 @@
  */
 
 import { wrapWebContent, type WrapExternalContentOptions } from "@comis/core";
-import { readResponseText, withTimeout } from "./web-shared.js";
+import { readResponseText, combineSignalWithTimeout } from "./web-shared.js";
 import { registerSearchProvider, type SearchProvider, type SearchProviderParams } from "./search-provider.js";
 
 // ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ export async function runJinaSearch(params: {
       Authorization: `Bearer ${params.apiKey}`,
       "X-Return-Format": "json",
     },
-    signal: withTimeout(undefined, params.timeoutSeconds * 1000),
+    signal: combineSignalWithTimeout(undefined, params.timeoutSeconds * 1000),
   });
 
   if (!res.ok) {

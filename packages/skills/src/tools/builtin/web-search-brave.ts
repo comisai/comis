@@ -10,7 +10,7 @@
  */
 
 import { systemDateFrom, type WrapExternalContentOptions, wrapWebContent } from "@comis/core";
-import { readResponseText, withTimeout } from "./web-shared.js";
+import { readResponseText, combineSignalWithTimeout } from "./web-shared.js";
 import { registerSearchProvider, type SearchProvider, type SearchProviderParams } from "./search-provider.js";
 
 // ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ export async function runBraveSearch(params: {
       Accept: "application/json",
       "X-Subscription-Token": params.apiKey,
     },
-    signal: withTimeout(undefined, params.timeoutSeconds * 1000),
+    signal: combineSignalWithTimeout(undefined, params.timeoutSeconds * 1000),
   });
 
   if (!res.ok) {

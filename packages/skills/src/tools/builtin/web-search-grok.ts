@@ -10,7 +10,7 @@
  * @module
  */
 
-import { readResponseText, withTimeout } from "./web-shared.js";
+import { readResponseText, combineSignalWithTimeout } from "./web-shared.js";
 import { registerSearchProvider, type SearchProvider, type SearchProviderParams } from "./search-provider.js";
 
 // ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ export async function runGrokSearch(params: {
       Authorization: `Bearer ${params.apiKey}`,
     },
     body: JSON.stringify(body),
-    signal: withTimeout(undefined, params.timeoutSeconds * 1000),
+    signal: combineSignalWithTimeout(undefined, params.timeoutSeconds * 1000),
   });
 
   if (!res.ok) {
