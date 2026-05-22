@@ -328,19 +328,6 @@ describe("SqliteMemoryAdapter — branch-gap coverage", () => {
       }
     });
 
-    it("wraps non-Error throws into Error inside storeWithType() catch", async () => {
-      const db = adapter.getDb();
-      vi.spyOn(db, "transaction").mockImplementationOnce(() => {
-        return Object.assign(() => { throw "non-error-in-storeWithType"; }, { default: () => {}, deferred: () => {}, immediate: () => {}, exclusive: () => {} }) as never;
-      });
-      const result = await adapter.storeWithType(makeEntry(), "episodic");
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error).toBeInstanceOf(Error);
-        expect(result.error.message).toBe("non-error-in-storeWithType");
-      }
-    });
-
     it("wraps non-Error throws into Error inside retrieve() catch", async () => {
       const db = adapter.getDb();
       vi.spyOn(db, "prepare").mockImplementationOnce(() => {

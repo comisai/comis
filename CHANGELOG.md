@@ -6,6 +6,73 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Phase 51 — Memory + Core port/schema deletions — Plan 51.01 (Isolation Tier)
+
+This sub-release removes 3 dead memory modules (~1,700 prod LOC + ~1,250 test LOC)
+that had zero production callers. The deleted modules backed three SQLite tables
+that are no longer created on fresh `~/.comis/memory.db` databases.
+
+#### Operator-Facing Changes — orphan-table tolerance
+
+Three memory tables are no longer created on fresh `~/.comis/memory.db` databases:
+
+- `archives` (compaction service deleted — `compaction.ts` had zero callers)
+- `identity_links` (cross-platform identity mapping deleted — never wired into
+  production; the in-memory identity-binding at the channel-adapter ingress layer
+  is unaffected)
+- `credential_mappings` (CredentialMappingStore deleted — daemon wiring branch
+  `if (credentialMappingStore) { ... }` in setup-tools.ts was dead code; the
+  `credentialMappingStore` Deps field was never populated in production)
+
+Existing legacy `memory.db` files retain these tables as orphans — harmless
+because no code path reads or writes them after this deletion (SQLite tolerates
+unreferenced tables). Per AGENTS.md §2.9 no-backward-compatibility policy: no
+`ALTER TABLE DROP TABLE` migration is run, no shim is added. To clean up
+manually:
+
+```bash
+sqlite3 ~/.comis/memory.db \
+  'DROP TABLE IF EXISTS archives; \
+   DROP TABLE IF EXISTS identity_links; \
+   DROP TABLE IF EXISTS credential_mappings;'
+```
+
+#### Engineering-Facing Changes
+
+- **DEAD-MOD-05**: `packages/memory/src/compaction.ts` (297 LOC) + paired test
+  (450 LOC) deleted. The `archives` CREATE TABLE block in `schema.ts:172-181`
+  removed. The `storeWithType` method on `SqliteMemoryAdapter` (only called
+  by the deleted compaction service) deleted; 2 callers in `memory-api.test.ts`
+  retargeted to `adapter.store(entry)` (the store method already reads
+  `entry.memoryType`, so behavior is identical).
+- **DEAD-MOD-06**: `packages/memory/src/identity-link-store.ts` (134 LOC) +
+  paired test (119 LOC); `packages/agent/src/identity/identity-link-resolver.ts`
+  (90 LOC, leaf-of-leaf) + paired test (139 LOC) deleted. The `identity_links`
+  CREATE TABLE block in `schema.ts:184-194` and `IdentityLinkRowSchema` Zod
+  block in `row-schemas.ts:669-682` removed. Barrel re-exports for
+  `createIdentityLinkResolver`/`IdentityLinkResolver`/`IdentityLinkResolverDeps`
+  dropped from `packages/agent/src/index.ts:160-161`.
+- **DEAD-MOD-07**: `packages/memory/src/credential-mapping-store.ts` (157 LOC) +
+  paired test (421 LOC); `packages/memory/src/credential-mapping-schema.ts`
+  (43 LOC) + paired test deleted. `CredentialMappingRowSchema` in
+  `row-schemas.ts:602-610` and 3 `credentialMappingStore`-mocking test blocks
+  in `setup-tools.test.ts` deleted. `setup-tools.ts` lost its
+  `credentialMappingStore?: CredentialMappingPort` Deps field, its
+  destructure, and the entire `if (credentialMappingStore) { ... }` branch
+  (dead code in production wiring). Barrel re-exports for now-orphaned
+  `CredentialMappingPort` (from `core/src/ports/index.ts` +
+  `core/src/exports/ports.ts`) and `createCredentialInjector`/`CredentialInjector`
+  (from `skills/src/skills/index.ts`) dropped. The port file
+  (`packages/core/src/ports/credential-mapping.ts`) is preserved for Plan 51.02
+  PORT-TRIM-03 to delete. The domain type
+  (`packages/core/src/domain/credential-mapping.ts`) is preserved permanently —
+  still used by `packages/skills/src/skills/bridge/credential-injector.ts`.
+- **Allowlist sync**: 1 `rawThrowAllowlist` entry (memory/src/credential-mapping-store.ts)
+  drained from `test/support/architecture-allowlist.ts`; 3 `@comis/agent`
+  baseline orphan strings dropped from `test/support/public-api-policy.ts`
+  (`createIdentityLinkResolver`, `IdentityLinkResolver`,
+  `IdentityLinkResolverDeps`).
+
 ### Phase 54 — Skills + Channels + Orchestrator Dead-Code Deletion
 
 This release removes ~2,500 prod LOC of verified-dead code across `packages/skills`, `packages/channels`, `packages/orchestrator`, `packages/core`, `packages/shared`, and `packages/web`. All deletions have ZERO production callers (verified via grep against the current source tree); the only behavior-preserving change is inlining `multimodal-analyzer.ts` into 2 thin vision-provider factories.

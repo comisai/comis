@@ -17,8 +17,8 @@
  *    matches the interface exactly.
  *
  * 2. **Runtime-parse tests** — for schemas whose source interface is
- *    file-internal (TokenUsageDbRow, OAuthProfileRow, CredentialMappingRow,
- *    DeliveryMirrorDbRow, DeliveryQueueDbRow, IdentityLinkRow, BatchCacheRow,
+ *    file-internal (TokenUsageDbRow, OAuthProfileRow,
+ *    DeliveryMirrorDbRow, DeliveryQueueDbRow, BatchCacheRow,
  *    and observability *DbRow types). The schema IS the single source of
  *    truth (interfaces are `z.infer<typeof XxxRowSchema>`); we prove the
  *    schema parses representative rows + rejects malformed ones.
@@ -79,10 +79,8 @@ import {
   DeliveryStatsDbRowSchema,
   SystemPromptReportDbRowSchema,
   OAuthProfileRowSchema,
-  CredentialMappingRowSchema,
   DeliveryMirrorDbRowSchema,
   DeliveryQueueDbRowSchema,
-  IdentityLinkRowSchema,
   BatchCacheRowSchema,
   IdProjectionRowSchema,
   CountProjectionRowSchema,
@@ -386,18 +384,6 @@ describe("row-schemas — internal DB row runtime parses", () => {
     expect(OAuthProfileRowSchema.safeParse(sample).success).toBe(true);
   });
 
-  it("CredentialMappingRowSchema parses a credential_mappings row with nullable fields", () => {
-    const sample = {
-      id: "map-1",
-      secret_name: "GITHUB_TOKEN",
-      injection_type: "bearer",
-      injection_key: null,
-      url_pattern: "https://api.github.com/*",
-      tool_name: null,
-    };
-    expect(CredentialMappingRowSchema.safeParse(sample).success).toBe(true);
-  });
-
   it("DeliveryMirrorDbRowSchema parses a delivery_mirror row with acknowledged_at null", () => {
     const sample = {
       id: "del-1",
@@ -440,17 +426,6 @@ describe("row-schemas — internal DB row runtime parses", () => {
       trace_id: null,
     };
     expect(DeliveryQueueDbRowSchema.safeParse(sample).success).toBe(true);
-  });
-
-  it("IdentityLinkRowSchema parses an identity_links row", () => {
-    const sample = {
-      canonical_id: "canonical-1",
-      provider: "github",
-      provider_user_id: "gh-1",
-      display_name: "Alice",
-      linked_at: 1700000000000,
-    };
-    expect(IdentityLinkRowSchema.safeParse(sample).success).toBe(true);
   });
 
   it("BatchCacheRowSchema parses an embedding_cache batch row with Buffer embedding", () => {

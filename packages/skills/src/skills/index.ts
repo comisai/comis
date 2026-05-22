@@ -44,10 +44,6 @@ export type { PlatformToolProvider } from "./bridge/tool-bridge.js";
 // Bridge -- Metadata enforcement
 export { wrapWithMetadataEnforcement } from "./bridge/tool-metadata-enforcement.js";
 
-// Bridge -- Credential injection
-export { createCredentialInjector } from "./bridge/credential-injector.js";
-export type { CredentialInjector } from "./bridge/credential-injector.js";
-
 // Bridge -- AgentTool to ToolDefinition adapter
 export { agentToolsToToolDefinitions } from "./bridge/tool-definition-adapter.js";
 

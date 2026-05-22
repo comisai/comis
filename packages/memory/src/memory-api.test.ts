@@ -123,11 +123,7 @@ describe("MemoryApi", () => {
     ];
 
     for (const entry of entries) {
-      const memoryType = entry.memoryType ?? "semantic";
-      await adapter.storeWithType(
-        entry,
-        memoryType as "working" | "episodic" | "semantic" | "procedural",
-      );
+      await adapter.store(entry);
     }
 
     // Add a session for stats testing
@@ -445,11 +441,7 @@ describe("MemoryApi", () => {
       ];
 
       for (const entry of entries) {
-        const memoryType = entry.memoryType ?? "semantic";
-        await multiAdapter.storeWithType(
-          entry,
-          memoryType as "working" | "episodic" | "semantic" | "procedural",
-        );
+        await multiAdapter.store(entry);
       }
     });
 

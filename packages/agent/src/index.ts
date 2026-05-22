@@ -153,8 +153,6 @@ export { loadIdentityFiles } from "./identity/identity-loader.js";
 export type { IdentityFiles } from "./identity/identity-loader.js";
 export { createIdentityUpdater } from "./identity/identity-updater.js";
 export type { IdentityUpdater, PendingUpdate } from "./identity/identity-updater.js";
-export { createIdentityLinkResolver } from "./identity/identity-link-resolver.js";
-export type { IdentityLinkResolver, IdentityLinkResolverDeps } from "./identity/identity-link-resolver.js";
 
 // Greeting (LLM-powered session greeting for /new and /reset)
 export { createGreetingGenerator } from "./greeting/session-greeting.js";

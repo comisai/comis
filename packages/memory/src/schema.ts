@@ -169,30 +169,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
   `);
 
-  // --- Archives table (compaction service) ---
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS archives (
-      session_key TEXT NOT NULL,
-      messages TEXT NOT NULL,
-      archived_at INTEGER NOT NULL,
-      expires_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_archives_expires ON archives(expires_at);
-  `);
-
-  // --- Identity links table (cross-platform user recognition) ---
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS identity_links (
-      canonical_id TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      provider_user_id TEXT NOT NULL,
-      display_name TEXT,
-      linked_at INTEGER NOT NULL,
-      PRIMARY KEY (provider, provider_user_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_identity_canonical ON identity_links(canonical_id);
-  `);
-
   // --- Context store tables (DAG schema) ---
   initContextSchema(db);
 
