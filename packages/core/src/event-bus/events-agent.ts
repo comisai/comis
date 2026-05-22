@@ -287,13 +287,6 @@ export interface AgentEvents {
     timestamp: number;
   };
 
-  /** Last-known-working model fallback: LKW model succeeded */
-  "model:lkw_fallback_succeeded": {
-    provider: string;
-    model: string;
-    timestamp: number;
-  };
-
   /** Auth profile entered cooldown after failure */
   "model:auth_cooldown": {
     keyName: string;
@@ -409,19 +402,6 @@ export interface AgentEvents {
     agentId: string;
     sessionKey: string;
     stepCount: number;
-    timestamp: number;
-  };
-
-  /** SEP plan completed (all steps resolved). Observability-only post-L4 —
-   *  the legacy enforcement nudge was replaced by the post-batch
-   *  continuation handler. */
-  "sep:plan_completed": {
-    agentId: string;
-    sessionKey: string;
-    stepsPlanned: number;
-    stepsCompleted: number;
-    stepsSkipped: number;
-    durationMs: number;
     timestamp: number;
   };
 
