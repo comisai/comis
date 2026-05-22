@@ -47,6 +47,8 @@ export async function reactWithFallback(
   // ChannelPort.reactToMessage is optional post-PORT-TRIM-14, but this helper
   // is wired only for telegram (real impl) by the lifecycle reactor. Surface a
   // loud error if a caller bypasses the capability gate to avoid a silent miss.
+  // @allow-throw: Construction-time invariant — capability-gate bypass is a
+  // composition-root bug that must surface loudly; not a runtime Result.err path.
   if (typeof adapter.reactToMessage !== "function") {
     throw new Error(
       `reactWithFallback: adapter "${adapter.channelType}" lacks reactToMessage — capability gate (features.reactions) must be enforced before this call`,

@@ -211,11 +211,18 @@ export async function filterExecutionResponse(
   // -------------------------------------------------------------------
   // VOICE RESPONSE PIPELINE
   // -------------------------------------------------------------------
-  if (deps.voiceResponsePipeline) {
+  // PORT-TRIM-14: ChannelPort.sendAttachment is now optional. Voice delivery
+  // requires the adapter to implement it; otherwise skip the voice pipeline
+  // and fall through to text delivery. Adapters without sendAttachment (e.g.,
+  // IRC) cannot send voice messages regardless of TTS config.
+  if (deps.voiceResponsePipeline && typeof adapter.sendAttachment === "function") {
+    const voiceAdapter = {
+      sendAttachment: adapter.sendAttachment.bind(adapter),
+    };
     const voiceResult = await executeVoiceResponse(deps.voiceResponsePipeline, {
       responseText: finalDeliveryText,
       originalMessage: originalMsg,
-      adapter,
+      adapter: voiceAdapter,
       channelType: adapter.channelType,
       channelId: effectiveMsg.channelId,
       sendOptions: buildThreadSendOpts(effectiveMsg.metadata),

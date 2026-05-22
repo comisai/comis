@@ -94,7 +94,12 @@ export function createImageHandlers(
 
       if (channelType && channelId) {
         const adapter = deps.getChannelAdapter(channelType);
-        if (adapter) {
+        // PORT-TRIM-14: sendAttachment is now optional on ChannelPort. When the
+        // adapter omits it (e.g., IRC), skip direct delivery and fall through
+        // to the base64 fallback. This is a Class B call site (no capability
+        // gate runs before image-handlers reaches the adapter).
+        if (adapter && typeof adapter.sendAttachment === "function") {
+          const sendAttachment = adapter.sendAttachment.bind(adapter);
           // Write buffer to temp file for sendAttachment (which takes a URL/path)
           const ext = result.value.mimeType === "image/png" ? ".png" : ".jpg";
           const tempPath = safePath(tmpdir(), `comis-img-${randomUUID()}${ext}`);
@@ -109,7 +114,7 @@ export function createImageHandlers(
           };
 
           try {
-            const sendResult = await adapter.sendAttachment(channelId, attachment);
+            const sendResult = await sendAttachment(channelId, attachment);
             if (!sendResult.ok) {
               deps.logger.warn(
                 {

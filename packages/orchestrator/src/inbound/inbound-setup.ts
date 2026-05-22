@@ -113,11 +113,16 @@ export function setupInboundExecution(
   if (deps.ackReactionConfig?.enabled && !deps.lifecycleReactionsEnabled) {
     const caps = deps.channelRegistry?.getCapabilities(adapter.channelType);
     const supportsReactions = caps?.features?.reactions ?? false;
-    if (supportsReactions) {
+    // PORT-TRIM-14: reactToMessage is now optional on ChannelPort. The
+    // capability gate (supportsReactions) is the production sentinel, but
+    // adapters MUST also expose the method when caps say `reactions: true`.
+    // Guard defensively so a misconfigured gate cannot crash inbound setup.
+    if (supportsReactions && typeof adapter.reactToMessage === "function") {
+      const reactToMessage = adapter.reactToMessage.bind(adapter);
       const metaKey = caps?.replyToMetaKey ?? REPLY_TO_META_KEY[adapter.channelType];
       const platformMsgId = metaKey ? String(processedMsg.metadata?.[metaKey] ?? "") : "";
       if (platformMsgId) {
-        adapter.reactToMessage(processedMsg.channelId, platformMsgId, deps.ackReactionConfig.emoji)
+        reactToMessage(processedMsg.channelId, platformMsgId, deps.ackReactionConfig.emoji)
           .then((result) => {
             if (result.ok) {
               deps.eventBus.emit("ack:reaction_sent", {

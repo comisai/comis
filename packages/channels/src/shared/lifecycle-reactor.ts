@@ -119,6 +119,11 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
   // were made optional, narrow the adapter shape locally so the body can call the
   // methods directly. If a caller bypasses the gate the constructor surfaces it
   // loudly here instead of `TypeError` later inside the fire-and-forget path.
+  // @allow-throw: Construction-time invariant — capability-gate misconfiguration
+  // is a developer/composition-root bug that must surface loudly at startup, not
+  // be swallowed into Result.err. The caller (setup-channels-runtime.ts) creates
+  // reactors only when `caps.supportsReactions` is true; reaching here means the
+  // capability metadata claims support but the adapter omits the method.
   if (typeof adapter.reactToMessage !== "function" || typeof adapter.removeReaction !== "function") {
     throw new Error(
       `lifecycle-reactor: channel "${channelType}" lacks reactToMessage/removeReaction — capability gate (features.reactions) must be enforced before createLifecycleReactor()`,
