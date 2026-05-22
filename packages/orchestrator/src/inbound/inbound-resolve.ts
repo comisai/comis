@@ -12,8 +12,7 @@ import type { NormalizedMessage, SessionKey, ChannelPort } from "@comis/core";
 // Session-key builder lives at packages/orchestrator/src/session-key/session-key-builder.ts.
 // Orchestrator's own TS build cannot import its own published package name, so the import
 // must use the relative path.
-import { buildScopedSessionKey, extractThreadId } from "../session-key/session-key-builder.js";
-import type { DmScopeMode } from "../session-key/session-key-builder.js";
+import { buildScopedSessionKey } from "../session-key/session-key-builder.js";
 import type { AgentExecutor } from "@comis/agent";
 
 import type { InboundPipelineDeps } from "./inbound-pipeline.js";
@@ -25,7 +24,7 @@ import type { InboundPipelineDeps } from "./inbound-pipeline.js";
 /** Minimal deps needed for agent resolution phase. */
 export type ResolveDeps = Pick<
   InboundPipelineDeps,
-  "logger" | "eventBus" | "messageRouter" | "sessionManager" | "createExecutor" | "identityResolver" | "getDmScopeConfig"
+  "logger" | "eventBus" | "messageRouter" | "sessionManager" | "createExecutor"
 >;
 
 // ---------------------------------------------------------------------------
@@ -71,26 +70,17 @@ export function resolveInboundAgent(
     return undefined;
   }
 
-  // 3. Resolve canonical identity (if identityResolver provided)
-  const canonicalId = deps.identityResolver?.resolve(msg.channelType, msg.senderId);
-  const effectiveMsg = canonicalId ? { ...msg, senderId: canonicalId } : msg;
+  // 3. senderId is used directly (no cross-platform identity resolution)
+  const effectiveMsg = msg;
 
-  // 4. Extract thread ID from platform metadata
-  const threadId = extractThreadId(msg);
-
-  // 5. Get DM scope config for this agent
-  const dmScopeConfig = deps.getDmScopeConfig?.(agentId);
-
-  // 6. Build scoped session key
+  // 4. Build scoped session key (defaults to per-channel-peer DM scope)
   const sessionKey = buildScopedSessionKey({
     msg: effectiveMsg,
     agentId,
     adapterChannelId: adapter.channelId,
-    dmScopeMode: (dmScopeConfig?.mode as DmScopeMode) ?? undefined,
-    threadId: dmScopeConfig?.threadIsolation ? threadId : undefined,
   });
 
-  // 7. Emit message:received with the scoped session key
+  // 5. Emit message:received with the scoped session key
   deps.eventBus.emit("message:received", { message: msg, sessionKey });
 
   // Load or create session
