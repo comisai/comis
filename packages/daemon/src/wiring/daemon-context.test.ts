@@ -45,7 +45,6 @@ describe("DaemonContext", () => {
       "daemonVersion",
       // Observability
       "tokenTracker",
-      "latencyRecorder",
       "sharedCostTracker",
       "diagnosticCollector",
       "billingEstimator",

@@ -259,14 +259,6 @@ export interface AgentEvents {
     effortValue?: string;
   };
 
-  /** Latency recorded for an operation */
-  "observability:latency": {
-    operation: "llm_call" | "tool_execution" | "memory_search";
-    durationMs: number;
-    timestamp: number;
-    metadata?: Record<string, unknown>;
-  };
-
   /** Model failover: attempt to switch from one model to another */
   "model:fallback_attempt": {
     fromProvider: string;

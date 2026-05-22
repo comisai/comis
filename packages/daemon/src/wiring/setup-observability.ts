@@ -13,8 +13,6 @@ import { systemSetInterval } from "@comis/core";
 import { createCostTracker, createCacheBreakDiffWriter } from "@comis/agent";
 import type { createTokenTracker } from "../observability/token-tracker.js";
 import type { TokenTracker } from "../observability/token-tracker.js";
-import type { createLatencyRecorder } from "../observability/latency-recorder.js";
-import type { LatencyRecorder } from "../observability/latency-recorder.js";
 import { createDiagnosticCollector } from "../observability/diagnostic-collector.js";
 import type { DiagnosticCollector } from "../observability/diagnostic-collector.js";
 import { createBillingEstimator } from "../observability/billing-estimator.js";
@@ -31,7 +29,6 @@ import type { DeliveryTracer } from "../observability/delivery-tracer.js";
 /** All services produced by the observability setup phase. */
 export interface ObservabilityResult {
   tokenTracker: TokenTracker;
-  latencyRecorder: LatencyRecorder;
   sharedCostTracker: ReturnType<typeof createCostTracker>;
   diagnosticCollector: DiagnosticCollector;
   billingEstimator: BillingEstimator;
@@ -44,27 +41,23 @@ export interface ObservabilityResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Create the full observability subsystem: token tracker, latency
- * recorder, shared cost tracker with event-bus subscription,
- * diagnostic collector, billing estimator, channel activity tracker,
- * and delivery tracer.
+ * Create the full observability subsystem: token tracker, shared cost
+ * tracker with event-bus subscription, diagnostic collector, billing
+ * estimator, channel activity tracker, and delivery tracer.
  * @param deps.eventBus - Typed event bus from bootstrap container
  * @param deps._createTokenTracker - Factory (overridable for tests)
- * @param deps._createLatencyRecorder - Factory (overridable for tests)
  */
 export function setupObservability(deps: {
   eventBus: AppContainer["eventBus"];
   _createTokenTracker: typeof createTokenTracker;
-  _createLatencyRecorder: typeof createLatencyRecorder;
   logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
   /** Data directory for persistent observability files (e.g., cache-break diffs) */
   dataDir?: string;
 }): ObservabilityResult {
-  const { eventBus, _createTokenTracker, _createLatencyRecorder } = deps;
+  const { eventBus, _createTokenTracker } = deps;
 
-  // 4. Create token tracker and latency recorder
+  // 4. Create token tracker
   const tokenTracker = _createTokenTracker(eventBus);
-  const latencyRecorder = _createLatencyRecorder(eventBus);
 
   // 4.5. Create observability modules (diagnostic events, billing, channel activity)
   // Shared CostTracker for cross-agent billing aggregation -- subscribes to
@@ -146,13 +139,11 @@ export function setupObservability(deps: {
 
   const pruneTimer = systemSetInterval(() => {
     tokenTracker.prune(PRUNE_MAX_AGE_MS);
-    latencyRecorder.prune(PRUNE_MAX_AGE_MS);
   }, PRUNE_INTERVAL_MS);
   pruneTimer.unref();
 
   return {
     tokenTracker,
-    latencyRecorder,
     sharedCostTracker,
     diagnosticCollector,
     billingEstimator,

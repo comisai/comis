@@ -24,7 +24,6 @@ import type { ChannelManager } from "@comis/orchestrator";
 
 import type { LogLevelManager } from "../observability/log-infra.js";
 import type { TokenTracker } from "../observability/token-tracker.js";
-import type { LatencyRecorder } from "../observability/latency-recorder.js";
 import type { DiagnosticCollector } from "../observability/diagnostic-collector.js";
 import type { BillingEstimator } from "../observability/billing-estimator.js";
 import type { ChannelActivityTracker } from "../observability/channel-activity-tracker.js";
@@ -75,8 +74,6 @@ export interface DaemonContext {
 
   /** Token usage tracking across all agents. */
   tokenTracker: TokenTracker;
-  /** Latency recording for timed operations. */
-  latencyRecorder: LatencyRecorder;
   /** Shared cost tracker for cross-agent billing aggregation. */
   sharedCostTracker: ReturnType<typeof createCostTracker>;
   /** Diagnostic event collector. */

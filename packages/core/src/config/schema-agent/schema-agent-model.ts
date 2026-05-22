@@ -129,9 +129,6 @@ export const PromptTimeoutConfigSchema = z.strictObject({
 
 /**
  * Valid operation type keys for model resolution.
- *
- * Named ModelOperationType (not OperationType) to avoid collision with
- * the existing OperationType in packages/daemon/src/observability/latency-recorder.ts.
  */
 export type ModelOperationType =
   | "interactive"
