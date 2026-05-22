@@ -46,10 +46,19 @@
  * `limitPayloadValue` in the canonical chain
  * `redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value)))`.
  *
+ * **Phase 58 (DUP-CONS-02):** The recursive `walk` body, WeakSet allocation,
+ * and `isPlainObject` predicate were lifted into the shared
+ * `combined-walker.ts`. `sanitizeDiagnosticPayload` is now a one-line
+ * delegate invoking `combinedWalk` with `sanitizeNodeHook` only.
+ * `sanitizeString` and `maybeRewriteImageObject` remain here (sanitize-
+ * stage knowledge); they are narrow-exported for the combined walker.
+ *
  * @module
  */
 
 import { createHash } from "node:crypto";
+
+import { combinedWalk, sanitizeNodeHook } from "./combined-walker.js";
 
 /**
  * Names that, regardless of casing or word boundary, are credentials
@@ -176,25 +185,20 @@ const CREDENTIAL_ALLOWLIST = new Set<string>([
   "event_key",
 ]);
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * True when `name` is a known credential key (case-insensitive).
  *
  * Exported as `isCredentialFieldName` from the package barrel for
  * use by `redactSecrets` (the structured walker) which needs the same
  * credential-key set + allowlist semantics for value-mode masking.
+ * Also consumed by `combined-walker.ts`'s `sanitizeNodeHook` and
+ * `redactNodeHook` for per-key decisions.
  */
 export function isCredentialFieldName(name: string): boolean {
   const lower = name.toLowerCase();
   if (CREDENTIAL_ALLOWLIST.has(lower)) return false;
   return CREDENTIAL_KEYS.has(lower);
 }
-
-/** Internal alias for the existing call sites in this file. */
-const isCredentialName = isCredentialFieldName;
 
 /** Mime-type alias keys for image-shape detection. */
 const IMAGE_FORMAT_KEYS = ["mimeType", "media_type", "mime_type"] as const;
@@ -275,65 +279,14 @@ export function sanitizeString(input: string): string {
   return out;
 }
 
-// --- Recursive walker ----------------------------------------------------
-
-function walk(value: unknown, seen: WeakSet<object>): unknown {
-  if (typeof value === "string") {
-    return sanitizeString(value);
-  }
-
-  if (Array.isArray(value)) {
-    if (seen.has(value)) return "[Circular]";
-    seen.add(value);
-    const mapped = value.map((entry) => walk(entry, seen));
-    seen.delete(value);
-    return mapped;
-  }
-
-  if (isPlainObject(value)) {
-    if (seen.has(value)) return "[Circular]";
-    seen.add(value);
-
-    // Image-shape rewrite first.
-    const imageRewritten = maybeRewriteImageObject(value);
-    const subject = imageRewritten ?? value;
-
-    // Name/value pair shape — if `name` is a credential name, redact the
-    // value but preserve the pair.
-    const isNameValuePair =
-      typeof subject["name"] === "string" &&
-      Object.prototype.hasOwnProperty.call(subject, "value") &&
-      isCredentialName(subject["name"] as string);
-
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(subject)) {
-      const v = subject[key];
-
-      // Name/value: keep `name`, redact `value`.
-      if (isNameValuePair && key === "value") {
-        out[key] = "<redacted>";
-        continue;
-      }
-      if (isNameValuePair && key === "name") {
-        out[key] = v;
-        continue;
-      }
-
-      // Credential field-name drop (skip the key entirely).
-      if (isCredentialName(key)) continue;
-
-      out[key] = walk(v, seen);
-    }
-
-    seen.delete(value);
-    return out;
-  }
-
-  return value;
-}
-
 /**
  * Sanitize a diagnostic payload.
+ *
+ * Delegates to `combinedWalk` with the sanitize-node hook only
+ * (DUP-CONS-02). The walker scaffolding (WeakSet allocation, recursion,
+ * `isPlainObject` predicate, per-string regex pass, image-shape rewrite
+ * sequencing) lives in `combined-walker.ts`; the per-key credential-drop
+ * and name/value-pair decision logic is encapsulated in `sanitizeNodeHook`.
  *
  * @param value - any JavaScript value
  * @returns a new value with credential fields stripped, images replaced
@@ -341,6 +294,5 @@ function walk(value: unknown, seen: WeakSet<object>): unknown {
  *   redacted, and back-edges replaced with `"[Circular]"`.
  */
 export function sanitizeDiagnosticPayload(value: unknown): unknown {
-  const seen = new WeakSet<object>();
-  return walk(value, seen);
+  return combinedWalk(value, { sanitizeNode: sanitizeNodeHook });
 }

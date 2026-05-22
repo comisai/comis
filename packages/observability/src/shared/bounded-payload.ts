@@ -35,8 +35,20 @@
  * (which has its own image-base64 / credential-key rules — see
  * `sanitize-diagnostic-payload.ts`).
  *
+ * **Phase 58 (DUP-CONS-02):** The recursive `walk` body, WeakSet allocation,
+ * and `isPlainObject` predicate were lifted into the shared
+ * `combined-walker.ts`. `limitPayloadValue` is now a one-line delegate
+ * invoking `combinedWalk` with the `boundCheckHook` only. The five
+ * canonical bounds (depth, string size, array length, object key count,
+ * cycle) are enforced inside `boundCheckHook` — the bounds constants
+ * (`PAYLOAD_BOUNDS`, `BOUNDED_PAYLOAD_REASONS`) and the `BoundedSentinel`
+ * shape are still owned here and consumed by the hook + downstream
+ * callers (config-audit, cache-trace, trajectory).
+ *
  * @module
  */
+
+import { combinedWalk, boundCheckHook } from "./combined-walker.js";
 
 /** Numeric thresholds. */
 export const PAYLOAD_BOUNDS = Object.freeze({
@@ -70,10 +82,6 @@ export interface BoundedSentinel {
   readonly originalKeyCount?: number;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * Per-key exemption overrides for the bounded-payload limiter.
  *
@@ -99,111 +107,18 @@ export interface PayloadBoundsOverrides {
   readonly arrayFieldExempt?: ReadonlySet<string>;
 }
 
-/** Top-level entry — bounds `value` against the five canonical limits. */
+/**
+ * Top-level entry — bounds `value` against the five canonical limits.
+ *
+ * Delegates to `combinedWalk` with the bound-check hook only (DUP-CONS-02).
+ * The walker scaffolding (WeakSet allocation, recursion, `isPlainObject`
+ * predicate) lives in `combined-walker.ts`; this function preserves the
+ * EXACT pre-fusion public signature for `@comis/infra`, `@comis/daemon`,
+ * trajectory, cache-trace, and config-audit consumers.
+ */
 export function limitPayloadValue(
   value: unknown,
   overrides?: PayloadBoundsOverrides,
 ): unknown {
-  const seen = new WeakSet<object>();
-  return walk(value, 0, seen, overrides, undefined);
-}
-
-function walk(
-  value: unknown,
-  depth: number,
-  seen: WeakSet<object>,
-  overrides: PayloadBoundsOverrides | undefined,
-  parentKey: string | undefined,
-): unknown {
-  // 1) Depth cap — strictly greater than maxDepth means the path went too deep.
-  if (depth > PAYLOAD_BOUNDS.maxDepth) {
-    const out: BoundedSentinel = {
-      __bounded__: BOUNDED_PAYLOAD_REASONS.depthLimit,
-    };
-    return out;
-  }
-
-  // 2) String size cap.
-  if (typeof value === "string") {
-    // Per-key exemption: when the immediate parent object's key is in
-    // overrides.stringFieldExempt, bypass the 32 KB cap. The exemption
-    // is on the slot, not on the value — nested strings inside an
-    // exempted parent are NOT automatically exempted (cap restored on
-    // descent because parentKey is reset to the child's own key).
-    if (
-      parentKey !== undefined &&
-      overrides?.stringFieldExempt?.has(parentKey) === true
-    ) {
-      return value;
-    }
-    if (value.length > PAYLOAD_BOUNDS.maxFieldSizeBytes) {
-      const out: BoundedSentinel = {
-        __bounded__: BOUNDED_PAYLOAD_REASONS.fieldSizeLimit,
-        originalBytes: value.length,
-      };
-      return out;
-    }
-    return value;
-  }
-
-  // 3) Array length cap.
-  if (Array.isArray(value)) {
-    // Per-key exemption for arrays — same semantics as strings.
-    const arrayExempt =
-      parentKey !== undefined &&
-      overrides?.arrayFieldExempt?.has(parentKey) === true;
-    if (!arrayExempt && value.length > PAYLOAD_BOUNDS.maxArrayLength) {
-      const out: BoundedSentinel = {
-        __bounded__: BOUNDED_PAYLOAD_REASONS.arrayLengthLimit,
-        originalLength: value.length,
-      };
-      return out;
-    }
-    if (seen.has(value)) {
-      const out: BoundedSentinel = {
-        __bounded__: BOUNDED_PAYLOAD_REASONS.cycleDetected,
-      };
-      return out;
-    }
-    seen.add(value);
-    // Propagate parentKey UNCHANGED into array elements — the exemption
-    // covers the array slot, not each element (the element key is the
-    // numeric index, which is meaningless to operator-named exemptions).
-    const mapped = value.map((entry) =>
-      walk(entry, depth + 1, seen, overrides, parentKey),
-    );
-    seen.delete(value);
-    return mapped;
-  }
-
-  // 4) Plain-object key cap.
-  if (isPlainObject(value)) {
-    const keys = Object.keys(value);
-    if (keys.length > PAYLOAD_BOUNDS.maxObjectKeys) {
-      const out: BoundedSentinel = {
-        __bounded__: BOUNDED_PAYLOAD_REASONS.objectKeyLimit,
-        originalKeyCount: keys.length,
-      };
-      return out;
-    }
-    if (seen.has(value)) {
-      const out: BoundedSentinel = {
-        __bounded__: BOUNDED_PAYLOAD_REASONS.cycleDetected,
-      };
-      return out;
-    }
-    seen.add(value);
-    const out: Record<string, unknown> = {};
-    for (const key of keys) {
-      // Pass the property key as parentKey for the child so the
-      // exemption check sees it. Resets at each object boundary — the
-      // exemption never tunnels deeper than one level.
-      out[key] = walk(value[key], depth + 1, seen, overrides, key);
-    }
-    seen.delete(value);
-    return out;
-  }
-
-  // 5) Other primitives — passthrough.
-  return value;
+  return combinedWalk(value, { boundCheck: boundCheckHook }, overrides);
 }
