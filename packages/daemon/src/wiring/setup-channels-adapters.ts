@@ -40,14 +40,6 @@ import { safePath } from "@comis/core";
 // Result type
 // ---------------------------------------------------------------------------
 
-/** Capability metadata for lifecycle reactor wiring. */
-export interface ChannelCapabilityInfo {
-  /** Whether the platform supports emoji reactions. */
-  supportsReactions: boolean;
-  /** Metadata key used to extract platform message ID from NormalizedMessage. */
-  replyToMetaKey: string;
-}
-
 /** Output of the adapter bootstrap phase. */
 export interface AdapterBootstrapResult {
   /** Channel adapters keyed by platform type (telegram, discord, etc.). */
@@ -56,9 +48,8 @@ export interface AdapterBootstrapResult {
   tgPlugin?: TelegramPluginHandle;
   /** LINE plugin handle (needed by media pipeline for resolver creation). */
   linePlugin?: LinePluginHandle;
-  /** Per-channel capability metadata for lifecycle reactor wiring. */
-  channelCapabilities: Map<string, ChannelCapabilityInfo>;
-  /** Full plugin objects keyed by channel type for capabilities RPC */
+  /** Full plugin objects keyed by channel type for capabilities RPC and
+   *  per-channel capability lookups (features.reactions, replyToMetaKey). */
   channelPlugins: Map<string, ChannelPluginPort>;
 }
 
@@ -81,7 +72,6 @@ export async function bootstrapAdapters(deps: {
   const channelConfig = container.config.channels;
 
   const adaptersByType = new Map<string, ChannelPort>();
-  const channelCapabilities = new Map<string, ChannelCapabilityInfo>();
   const channelPlugins = new Map<string, ChannelPluginPort>();
   let tgPlugin: TelegramPluginHandle | undefined;
   let linePlugin: LinePluginHandle | undefined;
@@ -117,7 +107,6 @@ export async function bootstrapAdapters(deps: {
         });
         tgPlugin = plugin as TelegramPluginHandle;
         adaptersByType.set("telegram", plugin.adapter);
-        channelCapabilities.set("telegram", { supportsReactions: true, replyToMetaKey: "telegramMessageId" });
         channelPlugins.set("telegram", plugin);
         channelsLogger.info({ channelType: "telegram", botUsername: validation.value.username }, "Channel adapter initialized");
       } else {
@@ -147,7 +136,6 @@ export async function bootstrapAdapters(deps: {
           ...(discordApiRoot ? { apiRoot: discordApiRoot } : {}),
         });
         adaptersByType.set("discord", plugin.adapter);
-        channelCapabilities.set("discord", { supportsReactions: true, replyToMetaKey: "discordMessageId" });
         channelPlugins.set("discord", plugin);
         channelsLogger.info({ channelType: "discord", botUsername: validation.value.username }, "Channel adapter initialized");
       } else {
@@ -189,7 +177,6 @@ export async function bootstrapAdapters(deps: {
           ...(slackApiRoot ? { apiRoot: slackApiRoot } : {}),
         });
         adaptersByType.set("slack", plugin.adapter);
-        channelCapabilities.set("slack", { supportsReactions: true, replyToMetaKey: "slackTs" });
         channelPlugins.set("slack", plugin);
         channelsLogger.info({ channelType: "slack", mode, botUserId: validation.value.userId }, "Channel adapter initialized");
       } else {
@@ -218,7 +205,6 @@ export async function bootstrapAdapters(deps: {
         ...(whatsappApiRoot ? { apiRoot: whatsappApiRoot } : {}),
       });
       adaptersByType.set("whatsapp", plugin.adapter);
-      channelCapabilities.set("whatsapp", { supportsReactions: true, replyToMetaKey: "whatsappMessageId" });
       channelPlugins.set("whatsapp", plugin);
       channelsLogger.info({ channelType: "whatsapp", isFirstRun: validation.value.isFirstRun }, "Channel adapter initialized");
     } else {
@@ -237,7 +223,6 @@ export async function bootstrapAdapters(deps: {
         logger: channelsLogger,
       });
       adaptersByType.set("signal", plugin.adapter);
-      channelCapabilities.set("signal", { supportsReactions: true, replyToMetaKey: "signalTimestamp" });
       channelPlugins.set("signal", plugin);
       channelsLogger.info({ channelType: "signal" }, "Channel adapter initialized");
     } else {
@@ -271,7 +256,6 @@ export async function bootstrapAdapters(deps: {
         });
         linePlugin = plugin as LinePluginHandle;
         adaptersByType.set("line", plugin.adapter);
-        channelCapabilities.set("line", { supportsReactions: false, replyToMetaKey: "lineMessageId" });
         channelPlugins.set("line", plugin);
         channelsLogger.info({ channelType: "line" }, "Channel adapter initialized");
       } else {
@@ -292,7 +276,6 @@ export async function bootstrapAdapters(deps: {
         logger: channelsLogger,
       });
       adaptersByType.set("imessage", plugin.adapter);
-      channelCapabilities.set("imessage", { supportsReactions: false, replyToMetaKey: "imsgMessageId" });
       channelPlugins.set("imessage", plugin);
       channelsLogger.info({ channelType: "imessage" }, "Channel adapter initialized");
     } else {
@@ -317,7 +300,6 @@ export async function bootstrapAdapters(deps: {
           logger: channelsLogger,
         });
         adaptersByType.set("irc", plugin.adapter);
-        channelCapabilities.set("irc", { supportsReactions: false, replyToMetaKey: "ircMessageId" });
         channelPlugins.set("irc", plugin);
         channelsLogger.info({ channelType: "irc", host, nick }, "Channel adapter initialized");
       } else {
@@ -373,7 +355,6 @@ export async function bootstrapAdapters(deps: {
           logger: channelsLogger,
         });
         adaptersByType.set("email", plugin.adapter);
-        channelCapabilities.set("email", { supportsReactions: false, replyToMetaKey: "emailMessageId" });
         channelPlugins.set("email", plugin);
         channelsLogger.info({ channelType: "email", address }, "Channel adapter initialized");
       } else {
@@ -391,5 +372,5 @@ export async function bootstrapAdapters(deps: {
   }
   } // end if (channelConfig)
 
-  return { adaptersByType, tgPlugin, linePlugin, channelCapabilities, channelPlugins };
+  return { adaptersByType, tgPlugin, linePlugin, channelPlugins };
 }

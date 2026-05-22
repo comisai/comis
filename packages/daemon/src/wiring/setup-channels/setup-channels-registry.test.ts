@@ -15,7 +15,6 @@ vi.mock("../setup-channels-adapters.js", () => ({
     adaptersByType: mockAdaptersByType,
     tgPlugin: undefined,
     linePlugin: undefined,
-    channelCapabilities: new Map(),
     channelPlugins: new Map(),
   })),
 }));

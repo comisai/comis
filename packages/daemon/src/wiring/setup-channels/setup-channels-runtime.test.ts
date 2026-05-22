@@ -39,7 +39,7 @@ describe("setup-channels-runtime", () => {
       linkRunner: true,
       deliveryService: true,
       adaptersByType: true,
-      channelCapabilities: true,
+      channelPlugins: true,
       preprocessMessageCallback: true,
       preflightFn: true,
       assembleToolsForAgent: true,

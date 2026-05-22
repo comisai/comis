@@ -54,13 +54,12 @@ export interface ChannelsResult {
   lifecycleReactors: LifecycleReactor[];
   /** Approval notifier for forwarding approval events to chat channels (optional -- undefined when no adapters enabled). */
   approvalNotifier?: ApprovalNotifier;
-  /** Full plugin objects keyed by channel type for capabilities RPC */
+  /** Full plugin objects keyed by channel type. Consumers read
+   *  `plugin.capabilities` for features.reactions (lifecycle reactor gate)
+   *  and replyToMetaKey (the platform-native message id used by the inbound
+   *  UUID resolver to translate daemon UUIDs back to native ids before
+   *  calling the channel adapter). */
   channelPlugins: Map<string, ChannelPluginPort>;
-  /** Per-channel capability info (notably `replyToMetaKey` — the metadata
-   *  field carrying the platform-native message id). Used by the inbound
-   *  UUID resolver so message.delete/edit/react can translate daemon UUIDs
-   *  back to native ids before calling the channel adapter. */
-  channelCapabilities: Map<string, import("../setup-channels-adapters.js").ChannelCapabilityInfo>;
   /** The command queue instance for parent session TTL extension during graph execution. */
   commandQueue?: CommandQueue;
   /** DeliveryService constructed once at the daemon composition root. Threaded
@@ -216,7 +215,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   });
 
   // Bootstrap enabled channel adapters from config
-  const { adaptersByType, tgPlugin, linePlugin, channelCapabilities, channelPlugins } = await bootstrapAdapters({ container, channelsLogger });
+  const { adaptersByType, tgPlugin, linePlugin, channelPlugins } = await bootstrapAdapters({ container, channelsLogger });
 
   // Assemble media pipeline (resolvers, preprocessor, preflight)
   const {
@@ -278,7 +277,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       linkRunner,
       deliveryService,
       adaptersByType,
-      channelCapabilities,
+      channelPlugins,
       preprocessMessageCallback,
       preflightFn,
       assembleToolsForAgent: deps.assembleToolsForAgent,
@@ -312,7 +311,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     lifecycleReactors,
     approvalNotifier,
     channelPlugins,
-    channelCapabilities,
     commandQueue,
     deliveryService,
   };

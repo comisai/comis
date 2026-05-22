@@ -41,7 +41,6 @@ import {
 } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { TTSPort, QueueConfig } from "@comis/core";
-import type { ChannelCapabilityInfo } from "../setup-channels-adapters.js";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 
 /**
@@ -58,7 +57,9 @@ export interface ChannelManagerBuildDeps {
   linkRunner: LinkRunner;
   deliveryService: DeliveryService;
   adaptersByType: Map<string, ChannelPort>;
-  channelCapabilities: Map<string, ChannelCapabilityInfo>;
+  /** Per-channel plugin map; consumers read `plugin.capabilities` for
+   *  features.reactions, replyToMetaKey, etc. */
+  channelPlugins: Map<string, ChannelPluginPort>;
   preprocessMessageCallback: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package is not re-exported; pass-through matches setup-channels-media.ts
   preflightFn?: (msg: NormalizedMessage) => Promise<any>;
@@ -119,7 +120,7 @@ export async function buildAndStartChannelManager(
     ssrfFetcher,
     deliveryService,
     adaptersByType,
-    channelCapabilities,
+    channelPlugins,
     preprocessMessageCallback,
     preflightFn,
   } = deps;
@@ -496,8 +497,9 @@ export async function buildAndStartChannelManager(
     // -----------------------------------------------------------------------
     if (lifecycleEnabled) {
       for (const [channelType, adapter] of adaptersByType) {
-        const caps = channelCapabilities.get(channelType);
-        if (!caps?.supportsReactions) {
+        const plugin = channelPlugins.get(channelType);
+        const caps = plugin?.capabilities;
+        if (!caps?.features.reactions) {
           channelsLogger.debug({ channelType }, "Lifecycle reactor skipped: reactions not supported");
           continue;
         }
@@ -506,6 +508,15 @@ export async function buildAndStartChannelManager(
         const perChannelConfig = lifecycleReactionsConfig.perChannel[channelType];
         if (perChannelConfig?.enabled === false) {
           channelsLogger.debug({ channelType }, "Lifecycle reactor skipped: per-channel disabled");
+          continue;
+        }
+
+        // replyToMetaKey is required by the lifecycle reactor to translate
+        // the inbound message's platform id back into a reply target. Skip
+        // any channel whose plugin does not declare one (e.g. echo today —
+        // Plan 56-05 adds it defensively).
+        if (!caps.replyToMetaKey) {
+          channelsLogger.debug({ channelType }, "Lifecycle reactor skipped: replyToMetaKey not declared in plugin capabilities");
           continue;
         }
 

@@ -384,7 +384,6 @@ export interface ChannelsHandle extends AgentsHandle {
   resolveAttachment: Awaited<ReturnType<typeof setupChannels>>["resolveAttachment"];
   lifecycleReactors: Awaited<ReturnType<typeof setupChannels>>["lifecycleReactors"];
   channelPlugins: Awaited<ReturnType<typeof setupChannels>>["channelPlugins"];
-  channelCapabilities: Awaited<ReturnType<typeof setupChannels>>["channelCapabilities"];
   commandQueue: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
   deliveryService: Awaited<ReturnType<typeof setupChannels>>["deliveryService"];
   inboundMessageIdResolver: InboundMessageIdResolver;
