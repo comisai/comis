@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { emitBootstrapConfigObserveRecords } from "./stages/foundation-helpers.js";
+import { emitBootstrapConfigObserveRecords } from "./config/bootstrap-observe.js";
 import { readConfigFileObservation } from "./config/read-config-file-observation.js";
 import { ConfigObserveAuditRecordSchema } from "@comis/observability";
 
