@@ -404,9 +404,7 @@ export class IcMessageCenter extends LitElement {
 
     try {
       // Load channel list, capabilities, and channel config in parallel
-      if (!this.rpcClient) {
-        throw new Error("RPC client not available");
-      }
+      // (rpcClient guarded above at the function entry)
       const rpc = this.rpcClient;
       const [listResult, capResult, configResult] = await Promise.allSettled([
         rpc.call<{ channels: Array<{ channelType: string; channelId?: string; status: string }>; total: number }>("channels.list").then((r) => r?.channels ?? []),
