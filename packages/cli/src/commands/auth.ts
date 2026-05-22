@@ -536,7 +536,8 @@ export function registerAuthCommand(program: Command): void {
       if (storage === "encrypted") {
         await requireDaemonOrExit();
         try {
-          // callTyped enforces AuthLogoutContract under the VALIDATE gate.
+          // callTyped always enforces AuthLogoutContract request/response
+          // schemas (no env gating; daemon already always parses).
           const result = await withClient(async (client) =>
             callTyped(client, AuthLogoutContract, {
               profileId: opts.profile,
@@ -620,7 +621,8 @@ export function registerAuthCommand(program: Command): void {
       if (storage === "encrypted") {
         await requireDaemonOrExit();
         try {
-          // callTyped enforces AuthListContract under the VALIDATE gate.
+          // callTyped always enforces AuthListContract request/response
+          // schemas (no env gating; daemon already always parses).
           // The contract response shape (RedactedOAuthProfileSchema) is
           // assignable to DisplayProfile (same fields plus structural
           // optionality on email + displayName).
