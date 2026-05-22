@@ -127,7 +127,7 @@ export interface ChannelsDeps {
   /** Embedding queue for new memory entries (optional). */
   embeddingQueue?: { enqueue(id: string, content: string): void };
   /** Optional callback for suspicious-content detection (CRIT-01). Forwarded from the
-   *  daemon's AgentsHandle.onSuspiciousContent into buildMediaPipeline so media
+   *  daemon's BootContext.onSuspiciousContent into buildMediaPipeline so media
    *  handlers fire the callback when wrapExternalContent detects injection patterns. */
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /** Queue configuration for per-session serialization. When enabled, creates a CommandQueue for the ChannelManager. */

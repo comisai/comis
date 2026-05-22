@@ -3,11 +3,18 @@
 /**
  * Daemon Entry Point: thin orchestrator calling setupXxx() factories in sequence.
  *
- * Helpers live in `./stages/` (5 modules + 1 barrel); Handle interfaces and
- * SessionStoreBridge live in `./daemon-types.ts`. This file is the
- * composition root: 5 stage* orchestrators + main() + 4 small helpers
- * (DEFAULT_CONFIG_PATHS / applyInspectDefaultsForLogging /
- * hardenDataDirPermissions / runPreflightDoctor).
+ * Helpers live in `./stages/` (5 modules + 1 barrel); BootContext lives in
+ * `./daemon-types.ts`. This file is the composition root: 5 boot* helpers
+ * (bootFoundation/bootAgents/bootChannels/bootGateway/bootShutdown) +
+ * main() + 4 small helpers (DEFAULT_CONFIG_PATHS /
+ * applyInspectDefaultsForLogging / hardenDataDirPermissions /
+ * runPreflightDoctor).
+ *
+ * Phase 59 REFACTOR-01 part 1: the 4-handle chain
+ * (Foundation → Agents → Channels → Gateway handles) was collapsed into a
+ * single BootContext. Each boot* helper now takes
+ * `boot: BootContext` and mutates it via Object.assign; main() constructs
+ * `boot` via createEmptyBootContext() and chains the 5 helpers in order.
  *
  * @module
  */
@@ -66,7 +73,8 @@ import { detectSandboxProvider } from "@comis/skills";
 import { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js";
 import { createWakeCoalescer, createSystemEventQueue, type WakeReasonKind } from "@comis/scheduler";
 import { createTokenRegistry } from "./api/token-handlers.js";
-import type { DaemonInstance, DaemonOverrides, FoundationHandle, AgentsHandle, ChannelsHandle, GatewayHandle, PermissionCorrection, SessionStoreBridge } from "./daemon-types.js";
+import type { DaemonInstance, DaemonOverrides, BootContext, PermissionCorrection, SessionStoreBridge } from "./daemon-types.js";
+import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
@@ -258,7 +266,7 @@ export async function runPreflightDoctor(
 // ---------------------------------------------------------------------------
 
 /**
- * stageFoundation — daemon-process foundation startup. Owns:
+ * bootFoundation — daemon-process foundation startup. Owns:
  *   - data directory + .env load + permission hardening
  *   - secret decryption + env merge + process.env scrub
  *   - bootstrap (core container) + config-secret-ref resolution
@@ -272,14 +280,17 @@ export async function runPreflightDoctor(
  *   - background task system + deferred channel/notification refs
  *   - bundled skill-creator seeding (idempotent)
  *
- * Hard cap: ≤200 lines AST-measured. Per-line-source order preserved so
- * daemon-lifecycle.test.ts log-sequence assertions remain green.
+ * Mutates `boot` with all Group A foundation fields. Per-line-source order
+ * preserved so daemon-lifecycle.test.ts log-sequence assertions remain green.
  */
-async function stageFoundation(input: {
-  overrides: DaemonOverrides;
-  startupStartMs: number;
-  instanceId: string;
-}): Promise<FoundationHandle> {
+async function bootFoundation(
+  boot: BootContext,
+  input: {
+    overrides: DaemonOverrides;
+    startupStartMs: number;
+    instanceId: string;
+  },
+): Promise<void> {
   const { overrides, startupStartMs, instanceId } = input;
   const _bootstrap = overrides.bootstrap ?? bootstrap;
   const _setupSecrets = overrides.setupSecrets ?? _setupSecretsImpl;
@@ -449,7 +460,13 @@ async function stageFoundation(input: {
   // 6.5.9. Seed bundled skill-creator into user data dir (version-aware)
   seedBundledSkillCreator({ dataDir, agentLogger });
 
-  return {
+  // Mutate boot with all Group A foundation fields. The 2 forward-ref slots
+  // (channelPluginsRef, bgNotifyRef) were eagerly initialized by
+  // createEmptyBootContext(); here we wire the bgNotifyFn closure that reads
+  // bgNotifyRef.ref at call time (populated later by bootChannels).
+  boot.channelPluginsRef = channelPluginsRef;
+  boot.bgNotifyRef = bgNotifyRef;
+  Object.assign(boot, {
     container, dataDir, configPaths, envPath,
     clock, env, timers,
     secretStore, secretsCrypto, secretsDb, permissionCorrections,
@@ -467,8 +484,8 @@ async function stageFoundation(input: {
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
     geminiCacheManager,
-    channelPluginsRef, backgroundTaskManager, bgNotifyRef, bgNotifyFn,
-  };
+    backgroundTaskManager, bgNotifyFn,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -476,7 +493,7 @@ async function stageFoundation(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * stageAgents — agent-runtime startup. Owns:
+ * bootAgents — agent-runtime startup. Owns:
  *   - agents config map + default agent/workspace resolution
  *   - mcpClientManager (constructed BEFORE setupAgents per ordering constraint)
  *   - setupAgents (executors, costTrackers, skillRegistries, OAuth store, etc.)
@@ -488,18 +505,23 @@ async function stageFoundation(input: {
  *   - approvalGate + restoreApprovalState (extracted helper)
  *   - setupDeliveryQueue (+ channelAdaptersRef placeholder)
  *
- * Hard cap: ≤200 lines AST-measured. Per-line-source order preserved so
- * daemon-lifecycle.test.ts log-sequence assertions remain green ("Agent
- * executor initialized", "Per-agent CronScheduler started").
+ * Mutates `boot` with all Group B agent fields. Per-line-source order
+ * preserved so daemon-lifecycle.test.ts log-sequence assertions remain green
+ * ("Agent executor initialized", "Per-agent CronScheduler started").
  *
  * mcpClientManager construction order is a production-correctness
  * constraint: it must be constructed BEFORE setupAgents — do not invert.
  */
-async function stageAgents(input: {
-  overrides: DaemonOverrides;
-  foundation: FoundationHandle;
-}): Promise<AgentsHandle> {
-  const { overrides, foundation } = input;
+async function bootAgents(
+  boot: BootContext,
+  input: {
+    overrides: DaemonOverrides;
+  },
+): Promise<void> {
+  const { overrides } = input;
+  // Alias `boot` as `foundation` for body-readability — Group A fields are
+  // already populated by bootFoundation, destructuring from boot is equivalent.
+  const foundation = boot;
   const {
     container, dataDir,
     clock, env, timers,
@@ -673,8 +695,7 @@ async function stageAgents(input: {
     db, config: container.config, eventBus: container.eventBus, logger: daemonLogger, channelAdapters: channelAdaptersRef,
   });
 
-  return {
-    ...foundation,
+  Object.assign(boot, {
     defaultAgentId, defaultWorkspaceDir, agentsConfig,
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters, skillWatcherHandles, skillRegistries, lockCleanupTimer,
@@ -688,7 +709,7 @@ async function stageAgents(input: {
     rpcCall, wireDispatch, approvalGate,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
     cronWakeCallbackRef, trajectoryRegistry,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -696,7 +717,7 @@ async function stageAgents(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * stageChannels — channel-runtime startup. Owns:
+ * bootChannels — channel-runtime startup. Owns:
  *   - channel adapters + composite media resolution + delivery service
  *   - inbound message id resolver
  *   - notification system + background completion runner
@@ -710,13 +731,29 @@ async function stageAgents(input: {
  *   - cronWakeCallbackRef populated (cross-stage handoff)
  *   - agent management runtime state (suspended set, model catalog, channel cfg)
  *
- * Hard cap: ≤200 lines AST-measured. Per-line-source order preserved so
- * daemon-lifecycle.test.ts log-sequence assertions remain green.
+ * Mutates `boot` with all Group C channel fields. Per-line-source order
+ * preserved so daemon-lifecycle.test.ts log-sequence assertions remain green.
  */
-async function stageChannels(input: {
-  agents: AgentsHandle;
-}): Promise<ChannelsHandle> {
-  const { agents: handle } = input;
+async function bootChannels(boot: BootContext): Promise<void> {
+  // Alias `boot` as `handle` to preserve readability of the body destructure
+  // pattern — bootChannels reads many fields populated by bootAgents +
+  // bootFoundation. Both names refer to the same object; mutations to `handle`
+  // are mutations to `boot`.
+  const handle = boot as BootContext & Required<Pick<BootContext,
+    | "defaultAgentId" | "defaultWorkspaceDir" | "agentsConfig"
+    | "executors" | "workspaceDirs" | "sessionManager"
+    | "activeRunRegistry" | "sessionResolver" | "approvalGate"
+    | "getExecutor" | "piSessionAdapters" | "costTrackers"
+    | "skillRegistries" | "skillWatcherHandles" | "toolCapabilityPorts"
+    | "linkRunner" | "ssrfFetcher" | "transcriber" | "ttsAdapter"
+    | "audioConverter" | "mediaTempManager" | "mediaSemaphore" | "fileExtractor"
+    | "rpcCall" | "wireDispatch" | "continuationTracker" | "subprocessEnv" | "execToolEnv"
+    | "systemEventQueue" | "cronSchedulers" | "executionTrackers" | "browserServices"
+    | "sessionTrackerRegistry" | "auditAggregator" | "onSuspiciousContent"
+    | "mcpClientManager" | "singleAgentDeps" | "providerHealth"
+    | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
+    | "shutdownDeliveryQueue" | "cronWakeCallbackRef" | "trajectoryRegistry"
+  >>;
   // Names consumed by stageChannels body itself; helper functions
   // re-destructure from `handle` directly so closure deps are explicit.
   const {
@@ -754,7 +791,7 @@ async function stageChannels(input: {
   // the composition root can route .shutdown() through ShutdownDeps. The
   // eventBus.on("system:shutdown", ...) subscribers previously here are
   // deleted in channels-helpers.ts; shutdownDeliveryQueue + shutdownMirror
-  // remain reachable via handle (they were always in AgentsHandle).
+  // remain reachable via boot (they were always part of the agents/foundation groups).
   const { outputRetentionHandle } = await wirePostChannelsLifecycle({
     adaptersByType,
     channelAdaptersRef: handle.channelAdaptersRef,
@@ -867,8 +904,7 @@ async function stageChannels(input: {
     ).map(([k, v]) => [k, { enabled: !!(v as Record<string, unknown>).enabled }]),
   );
 
-  return {
-    ...handle,
+  Object.assign(boot, {
     adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins,
     commandQueue, deliveryService,
     inboundMessageIdResolver, channelHealthMonitor, stopChannelHealthMonitor,
@@ -883,7 +919,7 @@ async function stageChannels(input: {
     // CRIT-03: teardown handles surfaced for ShutdownDeps wiring.
     shutdownBackgroundProcesses, proxyTypingCleanup, approvalNotifier,
     outputRetentionHandle,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -891,27 +927,49 @@ async function stageChannels(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * stageGateway -- gateway-runtime startup. Owns:
+ * bootGateway -- gateway-runtime startup. Owns:
  *   token registry + session store bridge + shutdown ref + hot-add/hot-remove
  *   closures + RPC dispatch deps assembly + gateway server + deferred gateway
  *   attachment wiring + gatewaySendRef.ref population + restart continuation
  *   replay.
- * Inputs: ChannelsHandle (yields foundation + agents + channels) + overrides.
  *
- * Hard cap ≤200 lines AST-measured. Five helpers extracted to fit
- * (resolveGatewayTokens, createHotAdd, createHotRemove,
- * buildRpcDispatchDeps, replayContinuationsIfAny).
- *
- * Log-sequence: "Gateway server started" emits inside setupGateway here in
- * source order; daemon-lifecycle.test.ts assertions remain unchanged.
+ * Reads Group A/B/C fields populated by bootFoundation/bootAgents/bootChannels;
+ * mutates `boot` with Group D gateway fields. Per-source-order:
+ * "Gateway server started" emits inside setupGateway here in source order;
+ * daemon-lifecycle.test.ts assertions remain unchanged.
  */
-async function stageGateway(input: {
-  overrides: DaemonOverrides;
-  channels: ChannelsHandle;
-  startupStartMs: number;
-  instanceId: string;
-}): Promise<GatewayHandle> {
-  const { overrides, channels, startupStartMs, instanceId } = input;
+async function bootGateway(
+  boot: BootContext,
+  input: {
+    overrides: DaemonOverrides;
+    startupStartMs: number;
+    instanceId: string;
+  },
+): Promise<void> {
+  const { overrides, startupStartMs, instanceId } = input;
+  // Alias `boot` as `channels` for body-readability — Group A/B/C fields are
+  // already populated by bootFoundation/bootAgents/bootChannels.
+  const channels = boot as BootContext & Required<Pick<BootContext,
+    | "defaultAgentId" | "defaultWorkspaceDir" | "agentsConfig"
+    | "executors" | "workspaceDirs" | "costTrackers" | "budgetGuards" | "stepCounters"
+    | "piSessionAdapters" | "skillWatcherHandles" | "skillRegistries" | "toolCapabilityPorts"
+    | "singleAgentDeps" | "providerHealth" | "oauthCredentialStore"
+    | "activeRunRegistry" | "mcpClientManager"
+    | "subAgentRunner" | "crossSessionSender" | "channelManager" | "deliveryService"
+    | "adaptersByType" | "channelPlugins" | "inboundMessageIdResolver"
+    | "graphCoordinator" | "namedGraphStore" | "nodeTypeRegistry"
+    | "channelHealthMonitor" | "notificationContext"
+    | "modelCatalog" | "channelConfig" | "suspendedAgents"
+    | "approvalGate" | "wakeCoalescer"
+    | "cronSchedulers" | "executionTrackers" | "getAgentCronScheduler" | "getAgentBrowserService"
+    | "memoryApi" | "memoryAdapter" | "embeddingQueue" | "continuationTracker"
+    | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
+    | "resolveAttachment" | "deliveryQueue"
+    | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig"
+    | "getExecutor" | "rpcCall" | "wireDispatch"
+    | "assembleToolsForAgent" | "preprocessMessageText"
+    | "gatewaySendRef"
+  >>;
   const {
     container, configPaths, sessionStore,
     daemonLogger, gatewayLogger,
@@ -1049,12 +1107,11 @@ async function stageGateway(input: {
   // load -> mcp-status -> per-record inject).
   await replayContinuationsIfAny({ channels });
 
-  return {
-    ...channels,
+  Object.assign(boot, {
     tokenRegistry, runtimeTokens, removedTokenIds, resolvedGatewayTokens,
     sessionStoreBridge, shutdownRef, hotAdd, hotRemove, rpcDispatchDeps,
     gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,20 +1119,64 @@ async function stageGateway(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * stageShutdown -- final stage. Constructs the shutdown handle, populates
+ * bootShutdown -- final stage. Constructs the shutdown handle, populates
  * gateway.shutdownRef.value (cross-stage deferred-ref pattern), wires the
  * health-metrics event-bus subscription, emits the startup banner, snapshots
  * last-known-good config, and returns the DaemonInstance to main()'s callers.
  *
- * Hard cap: ≤200 lines AST-measured.
+ * Reads Group A-D fields populated by the prior 4 boot* helpers; returns
+ * `DaemonInstance` (unlike the other boot* helpers which return void) so
+ * main()'s contract is preserved.
  */
-async function stageShutdown(input: {
-  overrides: DaemonOverrides;
-  gateway: GatewayHandle;
-  startupStartMs: number;
-  instanceId: string;
-}): Promise<DaemonInstance> {
-  const { overrides, gateway, startupStartMs, instanceId } = input;
+async function bootShutdown(
+  boot: BootContext,
+  input: {
+    overrides: DaemonOverrides;
+    startupStartMs: number;
+    instanceId: string;
+  },
+): Promise<DaemonInstance> {
+  const { overrides, startupStartMs, instanceId } = input;
+  // Alias `boot` as `gateway` for body-readability — all 4 prior boot* helpers
+  // have populated Group A-D fields.
+  const gateway = boot as BootContext & Required<Pick<BootContext,
+    | "defaultAgentId" | "defaultWorkspaceDir" | "agentsConfig"
+    | "executors" | "workspaceDirs" | "costTrackers" | "budgetGuards" | "stepCounters"
+    | "piSessionAdapters" | "skillWatcherHandles" | "skillRegistries" | "toolCapabilityPorts"
+    | "singleAgentDeps" | "providerHealth" | "oauthCredentialStore"
+    | "activeRunRegistry" | "mcpClientManager"
+    | "subAgentRunner" | "crossSessionSender" | "channelManager" | "deliveryService"
+    | "adaptersByType" | "channelPlugins" | "inboundMessageIdResolver"
+    | "graphCoordinator" | "namedGraphStore" | "nodeTypeRegistry"
+    | "channelHealthMonitor" | "notificationContext"
+    | "modelCatalog" | "channelConfig" | "suspendedAgents"
+    | "approvalGate" | "wakeCoalescer"
+    | "cronSchedulers" | "resetSchedulers" | "executionTrackers" | "browserServices"
+    | "getAgentCronScheduler" | "getAgentBrowserService"
+    | "memoryApi" | "memoryAdapter" | "embeddingQueue" | "continuationTracker"
+    | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
+    | "resolveAttachment" | "deliveryQueue" | "deadLetterQueue"
+    | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig"
+    | "getExecutor" | "rpcCall" | "wireDispatch"
+    | "assembleToolsForAgent" | "preprocessMessageText"
+    | "gatewaySendRef" | "channelAdaptersRef" | "cronWakeCallbackRef"
+    | "drainAndStartDeliveryPrune" | "shutdownDeliveryQueue"
+    | "tokenRegistry" | "runtimeTokens" | "removedTokenIds" | "resolvedGatewayTokens"
+    | "sessionStoreBridge" | "shutdownRef" | "hotAdd" | "hotRemove" | "rpcDispatchDeps"
+    | "activeExecutions" | "getActiveConnectionCount" | "wsConnections"
+    | "heartbeatRunner" | "duplicateDetector" | "perAgentRunner"
+    | "stopChannelHealthMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
+    | "approvalNotifier" | "outputRetentionHandle"
+    | "bgCompletionRunnerContext" | "trajectoryRegistry"
+    | "auditAggregator" | "onSuspiciousContent"
+    | "sessionManager"
+    | "subprocessEnv" | "execToolEnv" | "systemEventQueue"
+    | "sessionTrackerRegistry" | "promptTimeoutTimestamps"
+    | "lifecycleReactors" | "commandQueue"
+    | "sandboxProvider" | "getCapabilityPortForAgent"
+    | "audioConverter" | "mediaTempManager" | "mediaSemaphore" | "ssrfFetcher"
+    | "lockCleanupTimer"
+  >>;
   const {
     container, dataDir, configPaths,
     logger, logLevelManager, daemonLogger, daemonVersion,
@@ -1098,7 +1199,7 @@ async function stageShutdown(input: {
     sessionStoreBridge, shutdownRef, gatewayHandle,
     activeExecutions, getActiveConnectionCount,
     trajectoryRegistry,
-    // CRIT-03: 9 new teardown handles surfaced through ChannelsHandle.
+    // CRIT-03: 9 new teardown handles surfaced through BootContext.
     shutdownBackgroundProcesses, proxyTypingCleanup, approvalNotifier,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
     bgCompletionRunnerContext, stopChannelHealthMonitor, mcpClientManager,
@@ -1216,30 +1317,35 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
   await (overrides.preflightDoctor ?? ((fn) => runPreflightDoctor(fn)))(exitFn);
 
+  // Phase 59 (REFACTOR-01 part 1): the 4-handle chain collapsed into a single
+  // BootContext that the 5 boot* helpers populate in sequence. main() owns
+  // the single `boot` variable; helpers mutate it via Object.assign.
+  const boot: BootContext = createEmptyBootContext();
+
   // Stage 1: foundation. Owns data-dir + secrets + bootstrap + logging +
   // observability + memory + obs-persistence + context store + session
   // mirroring + Gemini cache + background tasks + deferred refs.
-  const foundation = await stageFoundation({ overrides, startupStartMs, instanceId });
+  await bootFoundation(boot, { overrides, startupStartMs, instanceId });
 
   // Stage 2: agents. Owns agent executors + mcpClientManager + schedulers +
   // media + RPC bridge + approval gate (with restore) + delivery queue.
-  const agents = await stageAgents({ overrides, foundation });
+  await bootAgents(boot, { overrides });
 
   // Stage 3: channels. Owns channel adapters + notifications + bg completion
   // runner + sandbox/image-gen + tools + cross-session + graph + monitoring +
   // heartbeat + wake coalescer + agent runtime state.
-  const channels = await stageChannels({ agents });
+  await bootChannels(boot);
 
   // Stage 4: gateway. Owns token registry + session store bridge + shutdown
   // ref slot + hot-add/hot-remove closures + RPC dispatch deps assembly +
   // gateway server + restart continuation replay.
-  const gateway = await stageGateway({ overrides, channels, startupStartMs, instanceId });
+  await bootGateway(boot, { overrides, startupStartMs, instanceId });
 
   // Stage 5: shutdown. Constructs shutdown handle, populates
-  // gateway.shutdownRef.value (cross-stage deferred-ref), wires health
-  // logging, emits the startup banner ("Comis daemon started"), and returns
-  // the DaemonInstance.
-  return await stageShutdown({ overrides, gateway, startupStartMs, instanceId });
+  // boot.shutdownRef.value (cross-stage deferred-ref), wires health logging,
+  // emits the startup banner ("Comis daemon started"), and returns the
+  // DaemonInstance.
+  return await bootShutdown(boot, { overrides, startupStartMs, instanceId });
 }
 
 // Only run when invoked directly (not imported).
