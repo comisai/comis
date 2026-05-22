@@ -51,7 +51,6 @@ import {
   runToolingFill,
   type PromptIO,
 } from "../tooling-fill/index.js";
-import * as readline from "node:readline/promises";
 import {
   formatDate,
   readHintKeysForInspect,
@@ -628,7 +627,7 @@ export function registerConfigCommand(program: Command): void {
   // on tooling capability hints via the live Comis daemon. The orchestrator
   // owns the full state machine; this callback is the composition root
   // (AGENTS.md §2.4) — it builds the OrchestratorOpts bag, instantiates the
-  // readline-backed PromptIO, and routes the result's exitCode into
+  // confirm-helper-backed PromptIO, and routes the result's exitCode into
   // process.exit.
   //
   // Wiring boundary: ALL discovery, AST mutation, fs I/O, daemon probing,
@@ -687,27 +686,19 @@ export function registerConfigCommand(program: Command): void {
           kind?: string;
         },
       ) => {
-        // Build readline-backed PromptIO. Even when not used (--yes
-        // --restart on a TTY), we still need to construct it so the
-        // orchestrator's PromptIO contract is satisfied. The interface
-        // is closed at action-callback exit via rl.close().
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-        });
+        // PromptIO thin facade: each confirm is a one-shot p.confirm via
+        // the central helper. No shared rl — p.confirm allocates its own
+        // interactive session per call. The PromptIO interface shape is
+        // preserved so runToolingFill({prompts}) is unchanged.
         const prompts: PromptIO = {
           confirmValues: async (diff: string): Promise<boolean> => {
             process.stdout.write(diff + "\n");
-            const ans = await rl.question("Apply these values? [y/N] ");
-            const norm = ans.trim().toLowerCase();
-            return norm === "y" || norm === "yes";
+            return await confirm({ message: "Apply these values?" });
           },
           confirmRestart: async (s): Promise<boolean> => {
-            const ans = await rl.question(
-              `Stop and restart daemon (${s.kind})? [y/N] `,
-            );
-            const norm = ans.trim().toLowerCase();
-            return norm === "y" || norm === "yes";
+            return await confirm({
+              message: `Stop and restart daemon (${s.kind})?`,
+            });
           },
         };
 
@@ -750,7 +741,6 @@ export function registerConfigCommand(program: Command): void {
           prompts,
           clock: () => new Date(),
         });
-        rl.close();
 
         if (result.exitCode === 0) {
           success(result.summary);
