@@ -28,11 +28,11 @@
  *
  * 4. **Internal DB-row schemas** — schemas matching file-internal
  *    snake_case DB row shapes used by observability-store,
- *    oauth-profile-store-encrypted, credential-mapping-store,
- *    delivery-mirror-adapter, delivery-queue-adapter,
- *    embedding-cache-sqlite. The source interfaces are file-internal
- *    (no `export`); these schemas become the single-source-of-truth that
- *    consumers retarget to (via `z.infer<typeof XxxRowSchema>`).
+ *    oauth-profile-store-encrypted, delivery-mirror-adapter,
+ *    delivery-queue-adapter, embedding-cache-sqlite. The source
+ *    interfaces are file-internal (no `export`); these schemas become
+ *    the single-source-of-truth that consumers retarget to
+ *    (via `z.infer<typeof XxxRowSchema>`).
  *
  * ## Conventions
  *
@@ -592,22 +592,6 @@ export const OAuthProfileRowSchema = z.strictObject({
   updated_at: z.number(),
 });
 export type OAuthProfileRowFromSchema = z.infer<typeof OAuthProfileRowSchema>;
-
-// --- Credential mapping (packages/memory/src/credential-mapping-store.ts:20) ---
-
-/**
- * Schema for the `credential_mappings` table.
- * SSOT for the file-internal `CredentialMappingRow` interface in credential-mapping-store.ts.
- */
-export const CredentialMappingRowSchema = z.strictObject({
-  id: z.string(),
-  secret_name: z.string(),
-  injection_type: z.string(),
-  injection_key: z.string().nullable(),
-  url_pattern: z.string(),
-  tool_name: z.string().nullable(),
-});
-export type CredentialMappingRowFromSchema = z.infer<typeof CredentialMappingRowSchema>;
 
 // --- Delivery mirror (packages/memory/src/delivery-mirror-adapter.ts:23) ---
 

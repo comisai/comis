@@ -17,7 +17,7 @@
  *    matches the interface exactly.
  *
  * 2. **Runtime-parse tests** — for schemas whose source interface is
- *    file-internal (TokenUsageDbRow, OAuthProfileRow, CredentialMappingRow,
+ *    file-internal (TokenUsageDbRow, OAuthProfileRow,
  *    DeliveryMirrorDbRow, DeliveryQueueDbRow, BatchCacheRow,
  *    and observability *DbRow types). The schema IS the single source of
  *    truth (interfaces are `z.infer<typeof XxxRowSchema>`); we prove the
@@ -79,7 +79,6 @@ import {
   DeliveryStatsDbRowSchema,
   SystemPromptReportDbRowSchema,
   OAuthProfileRowSchema,
-  CredentialMappingRowSchema,
   DeliveryMirrorDbRowSchema,
   DeliveryQueueDbRowSchema,
   BatchCacheRowSchema,
@@ -383,18 +382,6 @@ describe("row-schemas — internal DB row runtime parses", () => {
       updated_at: 1700001000000,
     };
     expect(OAuthProfileRowSchema.safeParse(sample).success).toBe(true);
-  });
-
-  it("CredentialMappingRowSchema parses a credential_mappings row with nullable fields", () => {
-    const sample = {
-      id: "map-1",
-      secret_name: "GITHUB_TOKEN",
-      injection_type: "bearer",
-      injection_key: null,
-      url_pattern: "https://api.github.com/*",
-      tool_name: null,
-    };
-    expect(CredentialMappingRowSchema.safeParse(sample).success).toBe(true);
   });
 
   it("DeliveryMirrorDbRowSchema parses a delivery_mirror row with acknowledged_at null", () => {

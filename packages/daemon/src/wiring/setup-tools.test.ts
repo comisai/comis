@@ -53,10 +53,6 @@ const mockCreateProcessRegistry = vi.hoisted(() => vi.fn(() => ({
 const mockCreateMediaPersistenceService = vi.hoisted(() => vi.fn(() => ({
   persist: vi.fn(),
 })));
-const mockCreateCredentialInjector = vi.hoisted(() => vi.fn(() => ({
-  createInjectedFetch: vi.fn(),
-  getMappings: vi.fn(() => []),
-})));
 const mockMcpToolsToAgentTools = vi.hoisted(() => vi.fn(() => [{ name: "mcp:server/tool" }]));
 const mockSanitizeImageForApi = vi.hoisted(() => vi.fn());
 const mockCreateFileStateTracker = vi.hoisted(() => vi.fn(() => ({
@@ -86,8 +82,8 @@ const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
 // ---------------------------------------------------------------------------
 
 // Daemon imports from THREE @comis/skills subpaths.
-// - "." subpath: policy, pipeline, MCP bridge, credential injector (no longer
-//   includes the 38+ platform-tool factories -- those live in the registry).
+// - "." subpath: policy, pipeline, MCP bridge (no longer includes the 38+
+//   platform-tool factories -- those live in the registry).
 // - "./tools" subpath: exec/process/apply-patch + helpers (media-persistence,
 //   image sanitizer, file-state tracker).
 // - "./platform-tools" subpath: createPlatformToolRegistry -- the descriptor
@@ -98,7 +94,6 @@ const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
 
 vi.mock("@comis/skills", () => ({
   assembleToolPipeline: mockAssembleToolPipeline,
-  createCredentialInjector: mockCreateCredentialInjector,
   mcpToolsToAgentTools: mockMcpToolsToAgentTools,
   TOOL_PROFILES: {
     minimal: ["exec", "read", "write"],
@@ -589,49 +584,7 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 7. Credential injection when store has mappings
-  // -------------------------------------------------------------------------
-
-  it("creates credential injector when store has mappings", async () => {
-    const credentialMappingStore = {
-      listAll: vi.fn(() => ({
-        ok: true,
-        value: [{ id: "cred-1", secretName: "API_KEY", strategy: "header" }],
-      })),
-    } as any;
-
-    const deps = createMinimalDeps({ credentialMappingStore });
-    const setupTools = await getSetupTools();
-    const { assembleToolsForAgent } = setupTools(deps);
-    await assembleToolsForAgent("agent-1");
-
-    expect(mockCreateCredentialInjector).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mappings: [{ id: "cred-1", secretName: "API_KEY", strategy: "header" }],
-        agentId: "agent-1",
-      }),
-    );
-
-    // Verify credentialInjector is passed to assembleToolPipeline
-    const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
-    expect(pipelineArgs.credentialInjector).toBeDefined();
-  });
-
-  // -------------------------------------------------------------------------
-  // 8. Credential injection skipped when no store
-  // -------------------------------------------------------------------------
-
-  it("skips credential injection when store is absent", async () => {
-    const deps = createMinimalDeps({ credentialMappingStore: undefined });
-    const setupTools = await getSetupTools();
-    const { assembleToolsForAgent } = setupTools(deps);
-    await assembleToolsForAgent("agent-1");
-
-    expect(mockCreateCredentialInjector).not.toHaveBeenCalled();
-  });
-
-  // -------------------------------------------------------------------------
-  // 9. preprocessMessageText delegates to linkRunner
+  // 7. preprocessMessageText delegates to linkRunner
   // -------------------------------------------------------------------------
 
   it("preprocessMessageText delegates to linkRunner.processMessage", async () => {
@@ -859,27 +812,7 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 16. Credential injection skipped when listAll returns empty
-  // -------------------------------------------------------------------------
-
-  it("skips credential injector when credential store has no mappings", async () => {
-    const credentialMappingStore = {
-      listAll: vi.fn(() => ({
-        ok: true,
-        value: [],
-      })),
-    } as any;
-
-    const deps = createMinimalDeps({ credentialMappingStore });
-    const setupTools = await getSetupTools();
-    const { assembleToolsForAgent } = setupTools(deps);
-    await assembleToolsForAgent("agent-1");
-
-    expect(mockCreateCredentialInjector).not.toHaveBeenCalled();
-  });
-
-  // -------------------------------------------------------------------------
-  // 17. Tool group filtering
+  // 16. Tool group filtering
   // -------------------------------------------------------------------------
 
   describe("tool group filtering", () => {

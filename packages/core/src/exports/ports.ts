@@ -99,7 +99,6 @@ export type {
   OutputGuardResult,
   SecretStorePort,
   SecretMetadata,
-  CredentialMappingPort,
   OAuthCredentialStorePort,
   OAuthProfile,
   DeliveryQueuePort,

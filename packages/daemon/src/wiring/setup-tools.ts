@@ -7,7 +7,7 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
-import type { AppContainer, SkillsConfig, ApprovalGate, CredentialMappingPort, WrapExternalContentOptions, SessionKey, ToolCapabilityPort } from "@comis/core";
+import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -37,12 +37,10 @@ import {
   TOOL_GROUPS,
   assembleToolPipeline,
   mcpToolsToAgentTools,
-  createCredentialInjector,
   type LinkRunner,
   type McpClientManager,
   type ToolSourceProfile,
   type PlatformToolProvider,
-  type CredentialInjector,
 } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
 
@@ -111,8 +109,6 @@ export interface ToolsDeps {
   approvalGate?: ApprovalGate;
   /** Filtered environment for subprocess spawning. */
   subprocessEnv?: Record<string, string>;
-  /** Optional credential mapping store for per-agent credential injection */
-  credentialMappingStore?: CredentialMappingPort;
   /** Optional callback for suspicious content detection in external content */
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /**
@@ -217,7 +213,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     linkRunner,
     approvalGate,
     subprocessEnv,
-    credentialMappingStore,
     onSuspiciousContent,
     mcpClientManager,
     sandboxProvider,
@@ -555,20 +550,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       return tools;
     };
 
-    // Credential injection -- create injector from credential mappings
-    let credentialInjector: CredentialInjector | undefined;
-    if (credentialMappingStore) {
-      const mappingsResult = credentialMappingStore.listAll();
-      if (mappingsResult.ok && mappingsResult.value.length > 0) {
-        credentialInjector = createCredentialInjector({
-          secretManager,
-          mappings: mappingsResult.value,
-          eventBus,
-          agentId,
-        });
-      }
-    }
-
     // Determine platform tool provider based on options
     let platformToolProvider: PlatformToolProvider | undefined;
     if (!includePlatform) {
@@ -658,7 +639,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       eventBus: undefined,
       logger: skillsLogger,
       agentId,
-      credentialInjector,
       onSuspiciousContent,
       readOnlyPaths,
       toolSourceProfiles,

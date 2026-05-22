@@ -961,13 +961,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     reason: "@allow-throw boundary: gateway HTTP media-routes; throws caught by Hono framework error-handler boundary per AGENTS.md §2.1 web exception.",
     removedIn: "permanent",
   },
-  // ----- memory package (7 files) -----
-  {
-    file: "packages/memory/src/credential-mapping-store.ts",
-    lineRanges: [[91, 91]],
-    reason: "@allow-throw boundary: validation throw inside tryCatch() port wrapper; consumed by daemon RPC handlers (Decision 2 transitive).",
-    removedIn: "permanent",
-  },
+  // ----- memory package (6 files) -----
   {
     file: "packages/memory/src/memory-api.ts",
     lineRanges: [[188, 188]],
