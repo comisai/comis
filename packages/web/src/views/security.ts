@@ -431,20 +431,6 @@ export class IcSecurityView extends LitElement {
         };
         this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
       },
-      "secret:modified": (data) => {
-        const d = data as Record<string, unknown>;
-        const secretName = (d.secretName as string) ?? "unknown";
-        const action = (d.action as string) ?? "modified";
-        const evt: SecurityEvent = {
-          id: `sec-${systemNowMs()}-${Math.random().toString(36).slice(2, 6)}`,
-          type: "secret_access",
-          severity: "medium",
-          message: `Secret '${secretName}' ${action}`,
-          details: { secretName, action },
-          timestamp: systemNowMs(),
-        };
-        this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
-      },
       "provider:degraded": (data) => {
         const d = data as Record<string, unknown>;
         const provider = (d.provider as string) ?? "";
