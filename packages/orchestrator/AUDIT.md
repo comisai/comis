@@ -1,15 +1,15 @@
 # ChannelManagerDeps Audit
 
 **Generated:** 2026-05-11
-**Interface source:** `packages/orchestrator/src/channel-manager.ts:78–218` (48-field interface)
+**Interface source:** `packages/orchestrator/src/channel-manager.ts:78–218` (37-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-channels.ts:739` (single site — `createChannelManager({`)
-**Field count:** 48 (7 required + 41 optional + 0 stale-fallback)
+**Field count:** 37 (7 required + 30 optional + 0 stale-fallback)
 
 This file is co-located with the orchestrator package. `files: ["dist"]` in `packages/orchestrator/package.json` excludes it from the npm tarball.
 
 ## Audit Result
 
-Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path that fires in that omission. None of the 13 fields that the daemon never wires are dead code; each has at least one `if (deps.X)` or `deps.X?.method()` site in the orchestrator production source whose absent branch IS the production behavior.
+Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path that fires in that omission. After Phase 56 trims (Plans 56-05 and 56-06), the previously-14-field unwired set has been narrowed: 12 fields deleted entirely (inFlightSends in Plan 56-05; ackReactionConfig, debounceBuffer, followupConfig, followupTrigger, getDmScopeConfig, getUserInvocableSkillNames, greetingGenerator, groupHistoryBuffer, identityResolver, loadPromptSkill, sessionLabelStore in Plan 56-06), and channelRegistry is now wired from the daemon (DUP-CONS-13 in Plan 56-05).
 
 The architecture-test invariants enforced by `packages/orchestrator/src/__tests__/architecture.test.ts` hold: bidirectional set equality between this table and `ChannelManagerDeps`; every classification is `required` or `optional`; classification matches the interface's `?` marker; every row has a non-empty evidence-link cell.
 
@@ -32,23 +32,12 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | autoReplyEngineConfig | optional | all messages activate the agent | packages/orchestrator/src/channel-manager.ts:95 |
 | sendPolicyConfig | optional | all sends are allowed | packages/orchestrator/src/channel-manager.ts:97 |
 | getResetTriggers | optional | no trigger-phrase detection | packages/orchestrator/src/channel-manager.ts:99 |
-| identityResolver | optional | senderId used directly | packages/orchestrator/src/channel-manager.ts:101 |
-| getDmScopeConfig | optional | defaults to per-channel-peer (current behavior) | packages/orchestrator/src/channel-manager.ts:103 |
 | retryEngine | optional | sends use adapter.sendMessage directly | packages/orchestrator/src/channel-manager.ts:105 |
 | deliveryQueue | optional | agent responses skip queue | packages/orchestrator/src/channel-manager.ts:107 |
 | deliveryService | required | — | packages/orchestrator/src/channel-manager.ts:111 |
-| debounceBuffer | optional | messages go directly to CommandQueue | packages/orchestrator/src/channel-manager.ts:113 |
-| groupHistoryBuffer | optional | group history injection is disabled | packages/orchestrator/src/channel-manager.ts:115 |
-| followupTrigger | optional | no follow-up runs are triggered | packages/orchestrator/src/channel-manager.ts:117 |
-| followupConfig | optional | defaults used from FollowupTrigger | packages/orchestrator/src/channel-manager.ts:119 |
 | queueConfig | optional | default queue behavior used | packages/orchestrator/src/channel-manager.ts:121 |
 | getElevatedReplyConfig | optional | no elevated routing | packages/orchestrator/src/channel-manager.ts:123 |
-| sessionLabelStore | optional | labels not included in group history output | packages/orchestrator/src/channel-manager.ts:125 |
-| ackReactionConfig | optional | no ack reactions are sent | packages/orchestrator/src/channel-manager.ts:127 |
-| loadPromptSkill | optional | skill commands pass through as plain text | packages/orchestrator/src/channel-manager.ts:129 |
-| getUserInvocableSkillNames | optional | no skill-command matching | packages/orchestrator/src/channel-manager.ts:131 |
 | assembleToolsForAgent | optional | executor receives no tools (undefined) | packages/orchestrator/src/channel-manager.ts:138 |
-| greetingGenerator | optional | static "Session reset." is sent | packages/orchestrator/src/channel-manager.ts:140 |
 | audioPreflight | optional | voice messages are forwarded to the agent as-is (no pre-mention transcription) | packages/orchestrator/src/channel-manager.ts:142 |
 | voiceResponsePipeline | optional | voice response is disabled | packages/orchestrator/src/channel-manager.ts:144 |
 | parseOutboundMedia | optional | MEDIA: directives are not parsed | packages/orchestrator/src/channel-manager.ts:146 |
@@ -70,16 +59,11 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback)
 
-**None.** Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path. The audit verified this empirically by counting `deps.<field>` references across `packages/orchestrator/src/{channel-manager.ts, inbound/*.ts, execution/*.ts}` for each of the 14 candidate fields that the daemon never wires; every candidate had at least one production reference whose absent-branch IS the production behavior. Examples:
-
-- `debounceBuffer`: 7 production usages; daemon never wires it (`inbound-route.ts:93` `if (!isDebounced && deps.debounceBuffer)` selects the no-debounce path in production).
-- `groupHistoryBuffer`: 8 production usages; daemon never wires it (group-history injection is disabled in production).
-- `loadPromptSkill` / `getUserInvocableSkillNames`: 2 usages each (`inbound-gate.ts:344` `if (... && deps.loadPromptSkill && deps.getUserInvocableSkillNames)`); daemon never wires either, so skill commands pass through as plain text in production.
-- `ackReactionConfig`, `followupConfig`, `followupTrigger`, `getDmScopeConfig`, `greetingGenerator`, `identityResolver`, `sessionLabelStore`: all follow the same pattern — declared optional, daemon does not wire, absent-mode is the production code path. (`inFlightSends` was previously listed here as a 14th test-only injection point; Plan 56-05 moved the Set inside `DeliveryService` and deleted the deps slot, so it no longer appears in `ChannelManagerDeps`. `channelRegistry` was previously in this list; Plan 56-05 wires it from `setup-channels-runtime.ts` against the `channelPlugins` Map so it now flows through production deps and the absent-mode applies only to unit-test fixtures.)
+**None.** Phase 56 finished the audit's narrowing recommendation: 12 of the original 14 daemon-unwired fields were deleted across Plans 56-05 and 56-06. channelRegistry is now wired (Plan 56-05 DUP-CONS-13). Every remaining field is either required, or optional-with-real-absent-mode where the absent branch is the production code path.
 
 ## Summary
 
-- **Total fields:** 48 (7 required + 41 optional)
+- **Total fields:** 37 (7 required + 30 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value)
 

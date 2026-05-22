@@ -7,7 +7,6 @@
  * - Adapter lifecycle (startAll / stopAll)
  * - Closure state (activePacers, sendOverrides, adaptersByType)
  * - Session expiry cleanup
- * - Debounce flush handler registration
  *
  * Pipeline modules:
  * - execution-pipeline.ts: outbound delivery (executeAndDeliver)
@@ -24,13 +23,10 @@ import type { SessionLifecycle } from "@comis/agent";
 // Queue types live in orchestrator. Relative path used because the
 // orchestrator package cannot import its own published name.
 import type { CommandQueue } from "./queue/command-queue.js";
-import type { DebounceBuffer } from "./queue/debounce-buffer.js";
-import type { FollowupTrigger } from "./queue/followup-trigger.js";
-import type { SessionLabelStore } from "@comis/agent";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
-import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig, AckReactionConfig } from "@comis/core";
+import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
 import { formatSessionKey } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
@@ -46,7 +42,6 @@ import { createSendOverrideStore } from "@comis/channels";
 import type { SendOverrideStore } from "@comis/channels";
 import type { PreflightResult } from "@comis/channels";
 import type { RetryEngine } from "@comis/core";
-import type { GroupHistoryBuffer } from "@comis/channels";
 import type { VoiceResponsePipelineDeps } from "@comis/channels";
 
 // inbound-pipeline.ts lives in @comis/orchestrator. Channels cannot import
@@ -97,10 +92,6 @@ export interface ChannelManagerDeps {
   sendPolicyConfig?: SendPolicyConfig;
   /** Optional reset trigger phrases per agent. When absent, no trigger phrase detection. */
   getResetTriggers?: (agentId: string) => string[];
-  /** Optional identity link resolver for cross-platform user recognition. When absent, senderId is used directly. */
-  identityResolver?: { resolve(provider: string, providerUserId: string): string | undefined };
-  /** Optional DM scope config callback per agent. When absent, defaults to per-channel-peer (current behavior). */
-  getDmScopeConfig?: (agentId: string) => { mode?: string; threadIsolation?: boolean } | undefined;
   /** Optional retry engine for resilient message delivery. When absent, sends use adapter.sendMessage directly. */
   retryEngine?: RetryEngine;
   /** Delivery queue for crash-safe message persistence. Optional -- when absent, agent responses skip queue. */
@@ -109,26 +100,10 @@ export interface ChannelManagerDeps {
    *  (setup-channels.ts). Threaded into the inbound pipeline via
    *  pipelineDeps spread. */
   deliveryService: DeliveryService;
-  /** Optional ingress debounce buffer for coalescing rapid messages before queue entry. When absent, messages go directly to CommandQueue. */
-  debounceBuffer?: DebounceBuffer;
-  /** Optional group history buffer for context injection in group chats. When absent, group history injection is disabled. */
-  groupHistoryBuffer?: GroupHistoryBuffer;
-  /** Optional follow-up trigger for re-enqueueing after tool/compaction results. When absent, no follow-up runs are triggered. */
-  followupTrigger?: FollowupTrigger;
-  /** Optional follow-up config for depth limits. When absent, defaults used from FollowupTrigger. */
-  followupConfig?: { maxFollowupRuns: number };
   /** Optional queue config. When absent, default queue behavior used. */
   queueConfig?: QueueConfig;
   /** Optional callback to get elevated reply config for an agent. When absent, no elevated routing. */
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
-  /** Optional session label store for label-aware group history. When absent, labels are not included in group history output. */
-  sessionLabelStore?: SessionLabelStore;
-  /** Optional ack reaction config for sending emoji reactions when processing starts. When absent, no ack reactions are sent. */
-  ackReactionConfig?: AckReactionConfig;
-  /** Optional prompt skill loader for /skill:name detection. Returns pre-expanded skill content string and allowed tools. When absent, skill commands pass through as plain text. */
-  loadPromptSkill?: (name: string, args?: string) => Promise<Result<{ content: string; allowedTools: string[]; skillName: string }, Error>>;
-  /** Optional callback to get user-invocable skill names for command matching. When absent, no skill command matching occurs. */
-  getUserInvocableSkillNames?: () => Set<string>;
   /** Optional tool assembler for resolving agent tools before execution. When absent, executor receives no tools (undefined).
    *  The optional `options` object carries per-call wiring -- currently used to thread the inbound session's
    *  structural SessionKey so the assembled tools resolve the session-lifetime FileStateTracker via
@@ -136,8 +111,6 @@ export interface ChannelManagerDeps {
    *  to preserve the channels -> daemon dependency direction. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assembleToolsForAgent?: (agentId: string, options?: { sessionKey?: SessionKey }) => Promise<any[]>;
-  /** Optional greeting generator for persona-appropriate session reset messages. When absent, static "Session reset." is sent. */
-  greetingGenerator?: { generate(agentName: string): Promise<Result<string, Error>> };
   /** Optional audio preflight for transcribing voice before mention gate. */
   audioPreflight?: (msg: NormalizedMessage) => Promise<PreflightResult>;
   /** Optional voice response pipeline deps for auto-TTS voice reply. When absent, voice response is disabled. */
@@ -248,11 +221,9 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
    */
   const pipelineDeps: ChannelManagerDeps = deps;
 
-  // Clean up stale overrides, debounce entries, and group history when sessions expire
+  // Clean up stale send overrides when sessions expire
   deps.eventBus.on("session:expired", (ev) => {
     sendOverrides.delete(formatSessionKey(ev.sessionKey));
-    deps.debounceBuffer?.clear(ev.sessionKey);
-    deps.groupHistoryBuffer?.clear(formatSessionKey(ev.sessionKey));
   });
 
   return {
@@ -263,37 +234,9 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
         : [];
       const allAdapters = [...(deps.adapters ?? []), ...registryAdapters];
 
-      // Populate adapter lookup map for debounce flush handler routing
+      // Populate adapter lookup map for inject-message routing
       for (const adapter of allAdapters) {
         adaptersByType.set(adapter.channelType, adapter);
-      }
-
-      // Register debounce flush handler (one-time, before adapter message handlers)
-      if (deps.debounceBuffer) {
-        deps.debounceBuffer.onFlush((sessionKey, messages, channelType) => {
-          const adapter = adaptersByType.get(channelType);
-          if (!adapter) return;
-          // Create a synthetic message from the coalesced result with isDebounced flag
-          // to skip the debounce buffer on re-entry into processInboundMessage.
-          const coalesced = messages[0]!;
-          const syntheticMsg: NormalizedMessage = {
-            ...coalesced,
-            metadata: { ...coalesced.metadata, isDebounced: true },
-          };
-          // Fire-and-forget: processInboundMessage is async but the flush callback is sync.
-          // Errors are caught by the onMessage error handler.
-          void deps.processInboundMessage(pipelineDeps, adapter, syntheticMsg, activePacers, sendOverrides).catch((error) => {
-            deps.logger.error(
-              {
-                err: error instanceof Error ? error : new Error(String(error)),
-                channelType,
-                hint: "Check debounce flush handler and inbound pipeline for unhandled errors",
-                errorKind: "internal" as const,
-              },
-              "Debounce flush handler error",
-            );
-          });
-        });
       }
 
       for (const adapter of allAdapters) {
@@ -363,11 +306,6 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
     },
 
     async stopAll(): Promise<void> {
-      // Flush and shutdown debounce buffer before draining queue
-      if (deps.debounceBuffer) {
-        deps.debounceBuffer.shutdown();
-      }
-
       // Drain command queue before stopping adapters (if queue is provided)
       if (deps.commandQueue) {
         await deps.commandQueue.shutdown();
