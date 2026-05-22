@@ -18,10 +18,10 @@
 import { statSync } from "node:fs";
 import { emitDockerRestartPolicyWarn } from "../setup-docker-restart-warn.js";
 import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "../wiring/oauth-preflight.js";
-import type { GatewayHandle } from "../daemon-types.js";
+import type { BootContext } from "../daemon-types.js";
 
 /** Read DB file + WAL file sizes (best-effort; returns undefined fields on failure). */
-export function readDbSizeMetrics(db: GatewayHandle["db"]): {
+export function readDbSizeMetrics(db: BootContext["db"]): {
   memoryDbSizeBytes?: number;
   memoryDbWalSizeBytes?: number;
 } {
@@ -44,9 +44,9 @@ export function readDbSizeMetrics(db: GatewayHandle["db"]): {
  * Returns { activeSubAgentRuns, stuckSubAgentRuns, stuckKilledThisTick } counters.
  */
 export function computeAndKillStuckSubAgents(deps: {
-  container: GatewayHandle["container"];
-  daemonLogger: GatewayHandle["daemonLogger"];
-  subAgentRunner: GatewayHandle["subAgentRunner"];
+  container: BootContext["container"];
+  daemonLogger: BootContext["daemonLogger"];
+  subAgentRunner: NonNullable<BootContext["subAgentRunner"]>;
 }): { activeSubAgentRuns: number; stuckSubAgentRuns: number; stuckKilledThisTick: number } {
   const { container, daemonLogger, subAgentRunner } = deps;
   const stuckKillThresholdMs = container.config.security.agentToAgent.subagentContext?.stuckKillThresholdMs ?? 180_000;
@@ -84,17 +84,17 @@ export function computeAndKillStuckSubAgents(deps: {
  * and emits the canonical "Daemon health" DEBUG line.
  */
 export function wireHealthLogging(deps: {
-  container: GatewayHandle["container"];
-  daemonLogger: GatewayHandle["daemonLogger"];
-  db: GatewayHandle["db"];
-  maintenanceTick: GatewayHandle["maintenanceTick"];
-  subAgentRunner: GatewayHandle["subAgentRunner"];
-  promptTimeoutTimestamps: GatewayHandle["promptTimeoutTimestamps"];
-  activeExecutions: GatewayHandle["activeExecutions"];
-  getActiveConnectionCount: GatewayHandle["getActiveConnectionCount"];
-  deadLetterQueue: GatewayHandle["deadLetterQueue"];
-  providerHealth: GatewayHandle["providerHealth"];
-  deliveryQueue: GatewayHandle["deliveryQueue"];
+  container: BootContext["container"];
+  daemonLogger: BootContext["daemonLogger"];
+  db: BootContext["db"];
+  maintenanceTick: BootContext["maintenanceTick"];
+  subAgentRunner: NonNullable<BootContext["subAgentRunner"]>;
+  promptTimeoutTimestamps: NonNullable<BootContext["promptTimeoutTimestamps"]>;
+  activeExecutions: NonNullable<BootContext["activeExecutions"]>;
+  getActiveConnectionCount: NonNullable<BootContext["getActiveConnectionCount"]>;
+  deadLetterQueue: BootContext["deadLetterQueue"];
+  providerHealth: NonNullable<BootContext["providerHealth"]>;
+  deliveryQueue: NonNullable<BootContext["deliveryQueue"]>;
 }): void {
   const {
     container, daemonLogger, db, maintenanceTick, subAgentRunner,
@@ -136,13 +136,13 @@ export function wireHealthLogging(deps: {
  */
 /** Build the startup-banner manifest sub-object (secrets/memory/agents/skills/gateway). */
 export function buildStartupBannerManifest(deps: {
-  container: GatewayHandle["container"];
-  agents: GatewayHandle["agentsConfig"];
-  db: GatewayHandle["db"];
-  secretStore: GatewayHandle["secretStore"];
-  cachedPort: GatewayHandle["cachedPort"];
-  ttsAdapter: GatewayHandle["ttsAdapter"];
-  visionRegistry: GatewayHandle["visionRegistry"];
+  container: BootContext["container"];
+  agents: NonNullable<BootContext["agentsConfig"]>;
+  db: BootContext["db"];
+  secretStore: BootContext["secretStore"];
+  cachedPort: BootContext["cachedPort"];
+  ttsAdapter: BootContext["ttsAdapter"];
+  visionRegistry: BootContext["visionRegistry"];
 }): Record<string, unknown> {
   const { container, agents, db, secretStore, cachedPort, ttsAdapter, visionRegistry } = deps;
   const gwConfig = container.config.gateway;
@@ -166,17 +166,17 @@ export function buildStartupBannerManifest(deps: {
 }
 
 export function emitStartupBanner(deps: {
-  container: GatewayHandle["container"];
-  daemonLogger: GatewayHandle["daemonLogger"];
-  daemonVersion: GatewayHandle["daemonVersion"];
-  agents: GatewayHandle["agentsConfig"];
-  adaptersByType: GatewayHandle["adaptersByType"];
-  configPaths: GatewayHandle["configPaths"];
-  db: GatewayHandle["db"];
-  secretStore: GatewayHandle["secretStore"];
-  cachedPort: GatewayHandle["cachedPort"];
-  ttsAdapter: GatewayHandle["ttsAdapter"];
-  visionRegistry: GatewayHandle["visionRegistry"];
+  container: BootContext["container"];
+  daemonLogger: BootContext["daemonLogger"];
+  daemonVersion: BootContext["daemonVersion"];
+  agents: NonNullable<BootContext["agentsConfig"]>;
+  adaptersByType: NonNullable<BootContext["adaptersByType"]>;
+  configPaths: BootContext["configPaths"];
+  db: BootContext["db"];
+  secretStore: BootContext["secretStore"];
+  cachedPort: BootContext["cachedPort"];
+  ttsAdapter: BootContext["ttsAdapter"];
+  visionRegistry: BootContext["visionRegistry"];
   startupStartMs: number;
   instanceId: string;
 }): void {

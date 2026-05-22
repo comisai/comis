@@ -11,8 +11,8 @@
  * cycle (helpers accept narrow Pick<BootContext> subsets; daemon.ts composes
  * BootContext into the DaemonInstance return).
  *
- * Phase 59 REFACTOR-01 part 1: replaced the 4-Handle chain
- * (`FoundationHandle` → `AgentsHandle` → `ChannelsHandle` → `GatewayHandle`)
+ * Phase 59 REFACTOR-01 part 1: replaced the prior 4-handle chain
+ * (Foundation → Agents → Channels → Gateway handles, composed via `extends`)
  * with a single `BootContext` interface. Group A (foundation) fields are
  * strict; Groups B/C/D (agents/channels/gateway) fields are optional.
  *
@@ -260,8 +260,8 @@ export type SessionStoreBridge = {
  * `test/integration/daemon-lifecycle.test.ts:89-99` (5 log lines emit in
  * source order).
  *
- * Phase 59 (REFACTOR-01 part 1): replaces the 4-handle chain
- * `FoundationHandle → AgentsHandle → ChannelsHandle → GatewayHandle`.
+ * Phase 59 (REFACTOR-01 part 1): replaces the prior 4-handle chain
+ * (foundation → agents → channels → gateway handles, composed via `extends`).
  *
  * The 6 true forward-ref slots (`channelPluginsRef`, `bgNotifyRef`,
  * `cronWakeCallbackRef`, `gatewaySendRef`, `shutdownRef`,
@@ -542,6 +542,16 @@ export function createEmptyBootContext(): BootContext {
 /**
  * Pre-dispatch slice used by buildRpcDispatchDeps to pass through gateway-local
  * data not yet on the broader BootContext at wireDispatch time.
+ *
+ * Each field is wrapped in `NonNullable<>` because bootGateway guarantees they
+ * are populated by the time buildRpcDispatchDeps runs — even though the
+ * underlying BootContext fields are declared `?` (uninitialized pre-bootGateway).
  */
-export type GatewayPreDispatchSlice = Pick<BootContext,
-  "tokenRegistry" | "runtimeTokens" | "removedTokenIds" | "sessionStoreBridge" | "hotAdd" | "hotRemove">;
+export type GatewayPreDispatchSlice = {
+  tokenRegistry: NonNullable<BootContext["tokenRegistry"]>;
+  runtimeTokens: NonNullable<BootContext["runtimeTokens"]>;
+  removedTokenIds: NonNullable<BootContext["removedTokenIds"]>;
+  sessionStoreBridge: NonNullable<BootContext["sessionStoreBridge"]>;
+  hotAdd: NonNullable<BootContext["hotAdd"]>;
+  hotRemove: NonNullable<BootContext["hotRemove"]>;
+};

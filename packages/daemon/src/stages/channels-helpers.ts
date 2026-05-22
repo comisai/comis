@@ -26,8 +26,27 @@ import {
   createImageGenRateLimiter,
   type ImageGenRateLimiter,
 } from "@comis/skills";
-import type { AgentsHandle, ChannelsHandle } from "../daemon-types.js";
+import type { BootContext } from "../daemon-types.js";
 import type { InboundMessageIdResolver } from "../wiring/inbound-message-id-resolver.js";
+
+/**
+ * Internal alias: a "post-agents BootContext" — Group A foundation + Group B
+ * agents fields are known to be populated. Used by helpers in this file that
+ * run inside bootChannels after bootFoundation + bootAgents have completed.
+ * Plan 59-03 will inline these helpers into daemon.ts where direct
+ * local-variable references replace this alias.
+ */
+type PostAgentsBootContext = BootContext & Required<Pick<BootContext,
+  | "defaultAgentId" | "defaultWorkspaceDir" | "agentsConfig"
+  | "executors" | "workspaceDirs" | "sessionManager"
+  | "activeRunRegistry" | "sessionResolver" | "approvalGate"
+  | "getExecutor" | "piSessionAdapters" | "costTrackers" | "executionTrackers"
+  | "linkRunner" | "ssrfFetcher" | "transcriber" | "ttsAdapter"
+  | "audioConverter" | "mediaTempManager" | "mediaSemaphore" | "fileExtractor"
+  | "rpcCall" | "continuationTracker" | "onSuspiciousContent"
+  | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
+  | "shutdownDeliveryQueue"
+>>;
 import {
   setupDeliveryQueueLogging,
 } from "../observability/delivery-queue-logger.js";
@@ -49,7 +68,7 @@ import type { createGraphCoordinator, createNodeTypeRegistry } from "../graph/in
  * verbatim by `setupChannels(...)`; no inline mutation here.
  */
 export function buildChannelManagerDeps(deps: {
-  agents: AgentsHandle;
+  agents: PostAgentsBootContext;
   toolAssemblerRef: { ref?: (agentId: string, options?: import("../wiring/setup-tools.js").AssembleToolsOptions) => Promise<unknown[]> };
   inboundMessageIdResolverRef: { ref?: InboundMessageIdResolver };
   sessionTrackerRef: { ref?: import("../notification/session-tracker.js").SessionTracker };
@@ -106,7 +125,7 @@ export function buildChannelManagerDeps(deps: {
  * body small.
  */
 export function buildGraphCoordinatorDeps(deps: {
-  agents: AgentsHandle;
+  agents: PostAgentsBootContext;
   channels: {
     subAgentRunner: ReturnType<typeof setupCrossSession>["subAgentRunner"];
     sendToChannel: ReturnType<typeof setupCrossSession>["sendToChannel"];
@@ -149,9 +168,9 @@ export function buildGraphCoordinatorDeps(deps: {
  * buildGraphCoordinatorDeps to keep both helpers small.
  */
 export function buildGraphPreWarm(deps: {
-  agentsConfig: AgentsHandle["agentsConfig"];
+  agentsConfig: NonNullable<BootContext["agentsConfig"]>;
   defaultAgentId: string;
-  secretManager: AgentsHandle["container"]["secretManager"];
+  secretManager: BootContext["container"]["secretManager"];
 }): NonNullable<Parameters<typeof createGraphCoordinator>[0]["preWarm"]> | undefined {
   const { agentsConfig, defaultAgentId, secretManager } = deps;
   const agentCfg = agentsConfig[defaultAgentId];
@@ -180,7 +199,7 @@ export function buildGraphPreWarm(deps: {
 export function setupChannelHealthMonitor(deps: {
   adaptersByType: Awaited<ReturnType<typeof setupChannels>>["adaptersByType"];
   daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-  container: AgentsHandle["container"];
+  container: BootContext["container"];
 }): { monitor: ChannelHealthMonitor | undefined; stop: (() => void) | undefined } {
   const { adaptersByType, daemonLogger, container } = deps;
   const healthCheckConfig = container.config.channels?.healthCheck;
@@ -241,15 +260,15 @@ export function createCapabilityPortResolver(
  */
 export async function wirePostChannelsLifecycle(deps: {
   adaptersByType: Awaited<ReturnType<typeof setupChannels>>["adaptersByType"];
-  channelAdaptersRef: AgentsHandle["channelAdaptersRef"];
-  drainAndStartDeliveryPrune: AgentsHandle["drainAndStartDeliveryPrune"];
-  shutdownDeliveryQueue: AgentsHandle["shutdownDeliveryQueue"];
-  startMirrorPrune: AgentsHandle["startMirrorPrune"];
-  shutdownMirror: AgentsHandle["shutdownMirror"];
+  channelAdaptersRef: NonNullable<BootContext["channelAdaptersRef"]>;
+  drainAndStartDeliveryPrune: NonNullable<BootContext["drainAndStartDeliveryPrune"]>;
+  shutdownDeliveryQueue: NonNullable<BootContext["shutdownDeliveryQueue"]>;
+  startMirrorPrune: BootContext["startMirrorPrune"];
+  shutdownMirror: BootContext["shutdownMirror"];
   daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-  container: AgentsHandle["container"];
+  container: BootContext["container"];
   defaultWorkspaceDir: string;
-  outputRetentionConfig: AgentsHandle["container"]["config"]["outputRetention"];
+  outputRetentionConfig: BootContext["container"]["config"]["outputRetention"];
 }): Promise<{ outputRetentionHandle?: ReturnType<typeof setupOutputRetention> }> {
   const { adaptersByType, channelAdaptersRef, drainAndStartDeliveryPrune,
     startMirrorPrune, daemonLogger, container, defaultWorkspaceDir,
@@ -258,7 +277,7 @@ export async function wirePostChannelsLifecycle(deps: {
   await drainAndStartDeliveryPrune();
   // CRIT-03: eventBus.on("system:shutdown", ...) subscribers deleted —
   // shutdownDeliveryQueue, shutdownMirror, and outputRetentionHandle.shutdown
-  // are surfaced through AgentsHandle / wirePostChannelsLifecycle return
+  // are surfaced through BootContext / wirePostChannelsLifecycle return
   // shape so the composition root invokes them directly via ShutdownDeps.
   startMirrorPrune();
   setupDeliveryQueueLogging({ eventBus: container.eventBus, logger: daemonLogger });
@@ -282,12 +301,12 @@ export async function wirePostChannelsLifecycle(deps: {
  * Extracted to keep stageChannels small.
  */
 export function buildImageGenBundle(deps: {
-  container: AgentsHandle["container"];
+  container: BootContext["container"];
   skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
 }): {
-  imageGenProvider: ChannelsHandle["imageGenProvider"];
+  imageGenProvider: BootContext["imageGenProvider"];
   imageGenRateLimiter: ImageGenRateLimiter | undefined;
-  imageGenConfig: ChannelsHandle["imageGenConfig"];
+  imageGenConfig: NonNullable<BootContext["imageGenConfig"]>;
 } {
   const { container, skillsLogger } = deps;
   const imageGenConfig = container.config.integrations.media.imageGeneration;

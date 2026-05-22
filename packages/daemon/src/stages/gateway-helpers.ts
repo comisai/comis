@@ -32,14 +32,42 @@ import {
 import { setupSingleAgent } from "../wiring/setup-agents/index.js";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
-import type { ChannelsHandle, GatewayPreDispatchSlice } from "../daemon-types.js";
+import type { BootContext, GatewayPreDispatchSlice } from "../daemon-types.js";
+
+/**
+ * Internal alias: a "post-channels BootContext" where Group B/C fields are
+ * known to be populated. The 5 boot* helpers run in sequence; helpers in this
+ * file are called only after bootChannels has completed, so the optional
+ * Group B/C/D fields they touch are non-undefined. Using `Required<Pick<>>`
+ * for the touched subset preserves type-safety without forcing the caller to
+ * narrow each access. Plan 59-03 will inline these helpers into daemon.ts
+ * where direct local-variable references replace this alias.
+ */
+type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
+  | "defaultAgentId" | "defaultWorkspaceDir" | "agentsConfig"
+  | "executors" | "workspaceDirs" | "costTrackers" | "budgetGuards" | "stepCounters"
+  | "piSessionAdapters" | "skillWatcherHandles" | "skillRegistries" | "toolCapabilityPorts"
+  | "singleAgentDeps" | "providerHealth" | "oauthCredentialStore"
+  | "activeRunRegistry" | "mcpClientManager"
+  | "subAgentRunner" | "crossSessionSender" | "channelManager" | "deliveryService"
+  | "adaptersByType" | "channelPlugins" | "inboundMessageIdResolver"
+  | "graphCoordinator" | "namedGraphStore" | "nodeTypeRegistry"
+  | "channelHealthMonitor" | "notificationContext"
+  | "modelCatalog" | "channelConfig" | "suspendedAgents"
+  | "approvalGate" | "wakeCoalescer"
+  | "cronSchedulers" | "executionTrackers" | "getAgentCronScheduler" | "getAgentBrowserService"
+  | "memoryApi" | "memoryAdapter" | "embeddingQueue" | "continuationTracker"
+  | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
+  | "resolveAttachment" | "deliveryQueue"
+  | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig"
+>>;
 
 /**
  * Resolve gateway tokens from config (config -> env -> auto-generated).
  */
 export function resolveGatewayTokens(deps: {
-  container: ChannelsHandle["container"];
-  daemonLogger: ChannelsHandle["daemonLogger"];
+  container: BootContext["container"];
+  daemonLogger: BootContext["daemonLogger"];
 }): Array<{ id: string; secret: string; scopes: string[] }> {
   const { container, daemonLogger } = deps;
   const resolved: Array<{ id: string; secret: string; scopes: string[] }> = [];
@@ -76,7 +104,7 @@ export function resolveGatewayTokens(deps: {
  */
 // @allow-throw: hot-add agent closure throws during shutdown; consumed at daemon bootstrap catch boundary.
 export function createHotAdd(deps: {
-  channels: ChannelsHandle;
+  channels: PostChannelsBootContext;
   shutdownRef: { value?: { readonly isShuttingDown: boolean } };
 }): (agentId: string, config: PerAgentConfig) => Promise<void> {
   const { channels, shutdownRef } = deps;
@@ -111,7 +139,7 @@ export function createHotAdd(deps: {
  * Factory: hot-remove agent closure. Mirror of createHotAdd.
  */
 export function createHotRemove(deps: {
-  channels: ChannelsHandle;
+  channels: PostChannelsBootContext;
 }): (agentId: string) => Promise<void> {
   const {
     activeRunRegistry, daemonLogger, skillWatcherHandles, executors, workspaceDirs,
@@ -157,7 +185,7 @@ export function createHotRemove(deps: {
  * limiter wired in stageChannels).
  */
 export function buildImageHandlerDeps(deps: {
-  channels: ChannelsHandle;
+  channels: PostChannelsBootContext;
 }): import("../api/rpc-dispatch.js").ApiDispatchDeps["imageHandlerDeps"] {
   const { imageGenProvider, imageGenRateLimiter, imageGenConfig, skillsLogger, adaptersByType } = deps.channels;
   if (!imageGenProvider || !imageGenRateLimiter) return undefined;
@@ -195,7 +223,7 @@ export function buildTokenStoreMutators(deps: {
  * Build the context-engine config used by the RPC dispatch's context handlers.
  * Reads the default agent's contextEngine sub-tree with fallbacks.
  */
-export function buildContextEngineConfig(channels: ChannelsHandle): { maxRecallsPerDay: number; maxExpandTokens: number; recallTimeoutMs: number } {
+export function buildContextEngineConfig(channels: PostChannelsBootContext): { maxRecallsPerDay: number; maxExpandTokens: number; recallTimeoutMs: number } {
   const { agentsConfig: agents, defaultAgentId } = channels;
   return {
     maxRecallsPerDay: agents[defaultAgentId]?.contextEngine?.maxRecallsPerDay ?? 10,
@@ -210,7 +238,7 @@ export function buildContextEngineConfig(channels: ChannelsHandle): { maxRecalls
  * field name MUST match the ApiDispatchDeps aggregator in api/types.ts.
  */
 export function buildRpcDispatchDeps(deps: {
-  channels: ChannelsHandle;
+  channels: PostChannelsBootContext;
   startupStartMs: number;
   gateway: GatewayPreDispatchSlice;
   defaultConfigPaths: string[];
@@ -300,7 +328,7 @@ export function buildSyntheticRestartMessage(deps: {
  * `buildSyntheticRestartMessage`.
  */
 export async function replayContinuationsIfAny(deps: {
-  channels: ChannelsHandle;
+  channels: PostChannelsBootContext;
 }): Promise<void> {
   const { container, dataDir, daemonLogger, mcpClientManager, continuationTracker, channelManager } = deps.channels;
   const continuationFilePath = safePath(container.config.dataDir || dataDir, "restart-continuations.json");
