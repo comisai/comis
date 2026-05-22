@@ -22,7 +22,6 @@ export type {
   MemoryPort,
   MemorySearchOptions,
   MemorySearchResult,
-  MemoryUpdateFields,
   EmbeddingPort,
   ContextStorePort,
   CtxConversationRow,

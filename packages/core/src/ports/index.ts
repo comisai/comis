@@ -17,7 +17,6 @@ export type {
   MemoryPort,
   MemorySearchOptions,
   MemorySearchResult,
-  MemoryUpdateFields,
 } from "./memory.js";
 export type { EmbeddingPort } from "./embedding.js";
 export type { ContextStorePort } from "./context-store.js";

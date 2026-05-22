@@ -39,7 +39,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         embeddingModel: "text-embedding-3-small",
         embeddingDimensions: 1536,
         compaction: { enabled: false, threshold: 1000, targetSize: 500 },
-        retention: { maxAgeDays: 0, maxEntries: 0 },
+        retention: { maxAgeDays: 0 },
       },
       embedding: {
         enabled: false,

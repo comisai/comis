@@ -20,8 +20,6 @@ export const CompactionConfigSchema = z.strictObject({
 export const RetentionConfigSchema = z.strictObject({
     /** Maximum age of entries in days (0 = no limit) */
     maxAgeDays: z.number().int().nonnegative().default(0),
-    /** Maximum total entries (0 = no limit) */
-    maxEntries: z.number().int().nonnegative().default(0),
   });
 
 export const MemoryConfigSchema = z.strictObject({

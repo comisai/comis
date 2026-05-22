@@ -30,7 +30,7 @@ const testConfig: MemoryConfig = {
   embeddingModel: "test-model",
   embeddingDimensions: 4,
   compaction: { enabled: false, threshold: 1000, targetSize: 500 },
-  retention: { maxAgeDays: 0, maxEntries: 0 },
+  retention: { maxAgeDays: 0 },
 };
 
 const sessionKey: SessionKey = {
@@ -236,36 +236,9 @@ describe("SqliteMemoryAdapter — branch-gap coverage", () => {
     });
   });
 
-  // ---- update / delete / clear vec-available + has_embedding ------------
-
-  describe("update with embedding when vec is available", () => {
-    it("deletes old vec row before inserting new when has_embedding is already 1", async () => {
-      if (!isVecAvailable()) return;
-      const e = makeEntry({ embedding: [0.1, 0.2, 0.3, 0.4] });
-      await adapter.store(e);
-      const updateResult = await adapter.update(e.id, { embedding: [0.4, 0.3, 0.2, 0.1] });
-      expect(updateResult.ok).toBe(true);
-      // Verify the new embedding is in place
-      const retrieved = await adapter.retrieve(e.id);
-      expect(retrieved.ok).toBe(true);
-      if (retrieved.ok && retrieved.value && retrieved.value.embedding) {
-        expect(retrieved.value.embedding[0]).toBeCloseTo(0.4, 4);
-      }
-    });
-
-    it("inserts new vec row without deleting when has_embedding is 0", async () => {
-      if (!isVecAvailable()) return;
-      const e = makeEntry(); // no embedding initially
-      await adapter.store(e);
-      const updateResult = await adapter.update(e.id, { embedding: [0.5, 0.5, 0.5, 0.5] });
-      expect(updateResult.ok).toBe(true);
-      const retrieved = await adapter.retrieve(e.id);
-      expect(retrieved.ok).toBe(true);
-      if (retrieved.ok && retrieved.value && retrieved.value.embedding) {
-        expect(retrieved.value.embedding[0]).toBeCloseTo(0.5, 4);
-      }
-    });
-  });
+  // NOTE: describe("update with embedding when vec is available") was removed in
+  // Plan 51.02 PORT-TRIM-05 along with the adapter.update method. Vec-row update
+  // semantics no longer exist on the MemoryPort surface.
 
   // ---- vec-unavailable branch in vector-only search (line 184) ----------
 
@@ -328,40 +301,10 @@ describe("SqliteMemoryAdapter — branch-gap coverage", () => {
       }
     });
 
-    it("wraps non-Error throws into Error inside retrieve() catch", async () => {
-      const db = adapter.getDb();
-      vi.spyOn(db, "prepare").mockImplementationOnce(() => {
-        throw "non-error-in-retrieve";
-      });
-      const result = await adapter.retrieve("any-id");
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error).toBeInstanceOf(Error);
-        expect(result.error.message).toBe("non-error-in-retrieve");
-      }
-    });
-
-    it("wraps non-Error throws into Error inside update() catch", async () => {
-      const e = makeEntry();
-      await adapter.store(e);
-      const db = adapter.getDb();
-      let callCount = 0;
-      const origPrepare = db.prepare.bind(db);
-      vi.spyOn(db, "prepare").mockImplementation((sql: string) => {
-        callCount++;
-        if (callCount === 1) {
-          // First prepare: return real stmt so existing check works
-          return origPrepare(sql);
-        }
-        throw "non-error-in-update";
-      });
-      const result = await adapter.update(e.id, { content: "fresh" });
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error).toBeInstanceOf(Error);
-        expect(result.error.message).toBe("non-error-in-update");
-      }
-    });
+    // NOTE: retrieve/update/clear catch-branch tests were removed in Plan 51.02
+    // PORT-TRIM-05 along with the corresponding methods. The surviving store +
+    // search + delete catch branches (above and below) cover the same
+    // non-Error-throw wrapping pattern.
 
     it("wraps non-Error throws into Error inside delete() catch", async () => {
       const db = adapter.getDb();
@@ -373,19 +316,6 @@ describe("SqliteMemoryAdapter — branch-gap coverage", () => {
       if (!result.ok) {
         expect(result.error).toBeInstanceOf(Error);
         expect(result.error.message).toBe("non-error-in-delete");
-      }
-    });
-
-    it("wraps non-Error throws into Error inside clear() catch", async () => {
-      const db = adapter.getDb();
-      vi.spyOn(db, "prepare").mockImplementationOnce(() => {
-        throw "non-error-in-clear";
-      });
-      const result = await adapter.clear(sessionKey);
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error).toBeInstanceOf(Error);
-        expect(result.error.message).toBe("non-error-in-clear");
       }
     });
 
