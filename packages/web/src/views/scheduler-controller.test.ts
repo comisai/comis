@@ -104,7 +104,7 @@ describe("SchedulerController", () => {
     expect(calls[1]?.params).toEqual({ jobId: "j1", _agentId: "alpha" });
   });
 
-  it("setConfig: forwards section + path + value to config.set", async () => {
+  it("setConfig: forwards section + key + value to config.set (canonical shape)", async () => {
     const host = makeHost();
     const seen: unknown[] = [];
     const rpc = createMockRpcClient(async (...args: unknown[]) => {
@@ -116,7 +116,7 @@ describe("SchedulerController", () => {
     expect((seen[0] as unknown[])[0]).toBe("config.set");
     expect((seen[0] as unknown[])[1]).toEqual({
       section: "scheduler",
-      path: "heartbeat.enabled",
+      key: "heartbeat.enabled",
       value: true,
     });
   });

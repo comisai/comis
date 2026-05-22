@@ -68,7 +68,7 @@ export interface SchedulerController extends ReactiveController {
   /** Remove a cron job (cron.remove). */
   removeJob(jobId: string, agentId: string): Promise<void>;
   /** Set a single config key (config.set). */
-  setConfig(section: string, path: string, value: unknown): Promise<void>;
+  setConfig(section: string, key: string, value: unknown): Promise<void>;
   /** Manually trigger a cron job (cron.run). */
   runJob(jobName: string, agentId: string): Promise<void>;
   /** Manually trigger an agent's heartbeat (heartbeat.trigger). */
@@ -144,8 +144,8 @@ export function createSchedulerController(
       });
     },
 
-    async setConfig(section: string, path: string, value: unknown): Promise<void> {
-      await rpcClient.call("config.set", { section, path, value });
+    async setConfig(section: string, key: string, value: unknown): Promise<void> {
+      await rpcClient.call("config.set", { section, key, value });
     },
 
     async runJob(jobName: string, agentId: string): Promise<void> {

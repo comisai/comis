@@ -237,14 +237,12 @@ export function createRpcAdapters(
     "config.set": async (params) => {
       try {
         const p = params as Record<string, unknown> | undefined;
-        // Accept "path" as alias for "key" (web UI scheduler sends "path")
-        const key = typeof p?.key === "string" ? p.key : typeof p?.path === "string" ? p.path : undefined;
-        if (!p || typeof p.section !== "string" || typeof key !== "string") {
+        if (!p || typeof p.section !== "string" || typeof p.key !== "string") {
           return { error: "Missing required parameters: section (string), key (string)" };
         }
         return await deps.setConfig({
           section: p.section as string,
-          key,
+          key: p.key as string,
           value: p.value,
         });
       } catch (err) {
