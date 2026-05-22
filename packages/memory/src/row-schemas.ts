@@ -29,7 +29,7 @@
  * 4. **Internal DB-row schemas** — schemas matching file-internal
  *    snake_case DB row shapes used by observability-store,
  *    oauth-profile-store-encrypted, credential-mapping-store,
- *    delivery-mirror-adapter, delivery-queue-adapter, identity-link-store,
+ *    delivery-mirror-adapter, delivery-queue-adapter,
  *    embedding-cache-sqlite. The source interfaces are file-internal
  *    (no `export`); these schemas become the single-source-of-truth that
  *    consumers retarget to (via `z.infer<typeof XxxRowSchema>`).
@@ -665,21 +665,6 @@ export const DeliveryQueueDbRowSchema = z.strictObject({
   trace_id: z.string().nullable(),
 });
 export type DeliveryQueueDbRowFromSchema = z.infer<typeof DeliveryQueueDbRowSchema>;
-
-// --- Identity link store (packages/memory/src/identity-link-store.ts:46) ---
-
-/**
- * Schema for the `identity_links` table.
- * SSOT for the file-internal `IdentityLinkRow` interface in identity-link-store.ts.
- */
-export const IdentityLinkRowSchema = z.strictObject({
-  canonical_id: z.string(),
-  provider: z.string(),
-  provider_user_id: z.string(),
-  display_name: z.string().nullable(),
-  linked_at: z.number(),
-});
-export type IdentityLinkRowFromSchema = z.infer<typeof IdentityLinkRowSchema>;
 
 // --- Embedding cache SQLite (packages/memory/src/embedding-cache-sqlite.ts:81) ---
 

@@ -18,7 +18,7 @@
  *
  * 2. **Runtime-parse tests** — for schemas whose source interface is
  *    file-internal (TokenUsageDbRow, OAuthProfileRow, CredentialMappingRow,
- *    DeliveryMirrorDbRow, DeliveryQueueDbRow, IdentityLinkRow, BatchCacheRow,
+ *    DeliveryMirrorDbRow, DeliveryQueueDbRow, BatchCacheRow,
  *    and observability *DbRow types). The schema IS the single source of
  *    truth (interfaces are `z.infer<typeof XxxRowSchema>`); we prove the
  *    schema parses representative rows + rejects malformed ones.
@@ -82,7 +82,6 @@ import {
   CredentialMappingRowSchema,
   DeliveryMirrorDbRowSchema,
   DeliveryQueueDbRowSchema,
-  IdentityLinkRowSchema,
   BatchCacheRowSchema,
   IdProjectionRowSchema,
   CountProjectionRowSchema,
@@ -440,17 +439,6 @@ describe("row-schemas — internal DB row runtime parses", () => {
       trace_id: null,
     };
     expect(DeliveryQueueDbRowSchema.safeParse(sample).success).toBe(true);
-  });
-
-  it("IdentityLinkRowSchema parses an identity_links row", () => {
-    const sample = {
-      canonical_id: "canonical-1",
-      provider: "github",
-      provider_user_id: "gh-1",
-      display_name: "Alice",
-      linked_at: 1700000000000,
-    };
-    expect(IdentityLinkRowSchema.safeParse(sample).success).toBe(true);
   });
 
   it("BatchCacheRowSchema parses an embedding_cache batch row with Buffer embedding", () => {
