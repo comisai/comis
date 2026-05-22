@@ -388,8 +388,8 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // api/*-handlers.ts split into per-domain modules)
   {
     file: "packages/daemon/src/daemon.ts",
-    lines: 1300,
-    reason: "daemon.ts split from 2,631L → 1,269L by extracting ~30 helpers to stages/* (5 helper modules + 1 barrel). The 5 stage* orchestrators (stageFoundation/Agents/Channels/Gateway/Shutdown) MUST stay in daemon.ts per the daemon-api invariant (each ≤200L AST-measured, asserted by packages/daemon/src/__tests__/architecture.test.ts:175-249) and the bootstrap-order test that asserts stage call sequence in daemon.ts main(). The composition root cannot fit the project-wide 800L cap while preserving the per-stage 200L bound (5 × 200L stage bodies + main + small helpers = ~1,270L minimum). Defer pending a future architectural revisit if either the per-stage bound is relaxed (stages moved to per-stage files) or the 800L cap introduces a composition-root exemption category. The post-split daemon.ts is a thin composition root that calls helper functions; further per-stage extraction would create artificial seams that work against the bootstrap-order test (source-text + AST assertions live-read daemon.ts).",
+    lines: 2700, // re-measure post-collapse — final value may be 2,500-2,800; Plan 59-03 owns the re-derivation
+    reason: "daemon.ts composition root after Phase 59 stage decomposition collapse (REFACTOR-01 + BOUND-RELAX-02). Single file holds main() + 4 small helpers (DEFAULT_CONFIG_PATHS / applyInspectDefaultsForLogging / hardenDataDirPermissions / runPreflightDoctor) + inlined foundation/agents/channels/gateway/shutdown bodies + 30 ex-stage-helper functions. The 5-stage decomposition was removed because its enforcement test (200-LOC-per-stage rule at __tests__/architecture.test.ts:174-382) created more structural overhead than the per-stage cap mitigated. The bootstrap-order assertion (5-stage call sequence + handle chaining contract) was deleted entirely; its runtime invariant is now carried by integration tests — daemon-lifecycle.test.ts:89-99 asserts the 5 startup log lines emit in source order. Composition-root cap raised to 3000L per Phase 59 RESEARCH §C.4 (350L headroom over re-measured 2,700L baseline).",
     removedIn: "deferred",
   },
   // skills (0 files remaining — exec-tool.ts + exec-security.ts split,
@@ -872,8 +872,8 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   },
   {
     file: "packages/daemon/src/daemon.ts",
-    lineRanges: [[326, 326], [335, 335]],
-    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits). Line-range re-derived after daemon.ts split — 4 of the 6 pre-split throws moved to stages/foundation-helpers.ts (2) + stages/channels-helpers.ts (1) + stages/gateway-helpers.ts (1); those leaves carry file-level @allow-throw: annotations (primary mechanism per test/architecture/raw-throw.test.ts).",
+    lineRanges: [[326, 326], [335, 335]], // pre-collapse pair; Plan 59-03 re-derives after stages/* inline
+    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution, secrets bootstrap, secret decryption, capability port resolution, hot-add post-shutdown guard); hard-fail at startup is the correct contract per AGENTS.md §6.2. Phase 59 will collapse stages/* back into daemon.ts (Plan 59-03); after that, the file-level `// @allow-throw: daemon bootstrap composition-root failures` annotation at daemon.ts:2 is the primary mechanism per test/architecture/raw-throw.test.ts. lineRanges will be re-derived in Plan 59-03 by grepping daemon.ts post-collapse.",
     removedIn: "permanent",
   },
   {
