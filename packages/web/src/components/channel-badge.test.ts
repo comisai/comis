@@ -54,9 +54,9 @@ describe("IcChannelBadge", () => {
 
   // --- Status dot colors ---
 
-  it("shows correct status dot color for connected", async () => {
+  it("shows correct status dot color for healthy (canonical connected state)", async () => {
     const el = await createElement<IcChannelBadge>("ic-channel-badge", {
-      status: "connected",
+      status: "healthy",
     });
     const dot = el.shadowRoot?.querySelector(".status-dot") as HTMLElement;
     const style = dot?.getAttribute("style") ?? "";
@@ -72,9 +72,9 @@ describe("IcChannelBadge", () => {
     expect(style).toContain("var(--ic-text-dim)");
   });
 
-  it("shows correct status dot color for error", async () => {
+  it("shows correct status dot color for errored (canonical error state)", async () => {
     const el = await createElement<IcChannelBadge>("ic-channel-badge", {
-      status: "error",
+      status: "errored",
     });
     const dot = el.shadowRoot?.querySelector(".status-dot") as HTMLElement;
     const style = dot?.getAttribute("style") ?? "";
@@ -123,10 +123,10 @@ describe("IcChannelBadge", () => {
 
   // --- Uptime display ---
 
-  it("renders uptime when > 0 and status is connected", async () => {
+  it("renders uptime when > 0 and status is healthy", async () => {
     const el = await createElement<IcChannelBadge>("ic-channel-badge", {
       uptime: 3600,
-      status: "connected",
+      status: "healthy",
     });
     const uptimeEl = el.shadowRoot?.querySelector(".uptime");
     expect(uptimeEl).not.toBeNull();
@@ -136,7 +136,7 @@ describe("IcChannelBadge", () => {
   it("formats uptime correctly: 86400 -> '1d 0h'", async () => {
     const el = await createElement<IcChannelBadge>("ic-channel-badge", {
       uptime: 86400,
-      status: "connected",
+      status: "healthy",
     });
     const uptimeEl = el.shadowRoot?.querySelector(".uptime");
     expect(uptimeEl?.textContent?.trim()).toBe("1d 0h");
@@ -145,7 +145,7 @@ describe("IcChannelBadge", () => {
   it("formats uptime correctly: 300 -> '5m'", async () => {
     const el = await createElement<IcChannelBadge>("ic-channel-badge", {
       uptime: 300,
-      status: "connected",
+      status: "healthy",
     });
     const uptimeEl = el.shadowRoot?.querySelector(".uptime");
     expect(uptimeEl?.textContent?.trim()).toBe("5m");

@@ -65,9 +65,9 @@ describe("IcChannelCard", () => {
 
   // --- Status dot colors ---
 
-  it("shows green status dot for connected", async () => {
+  it("shows green status dot for healthy (canonical connected state)", async () => {
     const el = await createElement<IcChannelCard>("ic-channel-card", {
-      status: "connected",
+      status: "healthy",
     });
     const dot = el.shadowRoot?.querySelector(".status-dot") as HTMLElement;
     const style = dot?.getAttribute("style") ?? "";
@@ -83,9 +83,9 @@ describe("IcChannelCard", () => {
     expect(style).toContain("var(--ic-text-dim)");
   });
 
-  it("shows red status dot for error", async () => {
+  it("shows red status dot for errored (canonical error state)", async () => {
     const el = await createElement<IcChannelCard>("ic-channel-card", {
-      status: "error",
+      status: "errored",
     });
     const dot = el.shadowRoot?.querySelector(".status-dot") as HTMLElement;
     const style = dot?.getAttribute("style") ?? "";
@@ -94,7 +94,7 @@ describe("IcChannelCard", () => {
 
   it("shows yellow status dot when stale", async () => {
     const el = await createElement<IcChannelCard>("ic-channel-card", {
-      status: "connected",
+      status: "healthy",
       isStale: true,
     });
     const dot = el.shadowRoot?.querySelector(".status-dot") as HTMLElement;
@@ -116,9 +116,9 @@ describe("IcChannelCard", () => {
     expect(values?.[msgIdx]?.textContent?.trim()).toBe("1,234");
   });
 
-  it("renders uptime when connected and > 0", async () => {
+  it("renders uptime when healthy and > 0", async () => {
     const el = await createElement<IcChannelCard>("ic-channel-card", {
-      status: "connected",
+      status: "healthy",
       uptime: 3600,
     });
     const labels = el.shadowRoot?.querySelectorAll(".metric-label");
@@ -141,7 +141,7 @@ describe("IcChannelCard", () => {
 
   it("formats uptime correctly: 86400 -> '1d 0h'", async () => {
     const el = await createElement<IcChannelCard>("ic-channel-card", {
-      status: "connected",
+      status: "healthy",
       uptime: 86400,
     });
     const labels = el.shadowRoot?.querySelectorAll(".metric-label");
@@ -153,7 +153,7 @@ describe("IcChannelCard", () => {
 
   it("formats uptime correctly: 300 -> '5m'", async () => {
     const el = await createElement<IcChannelCard>("ic-channel-card", {
-      status: "connected",
+      status: "healthy",
       uptime: 300,
     });
     const labels = el.shadowRoot?.querySelectorAll(".metric-label");

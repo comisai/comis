@@ -506,4 +506,86 @@ describe("createApiClient", () => {
       expect(result).toEqual([]);
     });
   });
+
+  /* --------------------------------------------------------------------- */
+  /* listSessions tight mapping (BC-REM-15)                                 */
+  /*                                                                        */
+  /* Asserts the pass-through shape: listSessions returns SessionListItem[] */
+  /* with exactly the 9 contract fields — no invented extras, no aliases.   */
+  /* Tightens session.list RPC mapping per Plan 55-03 Task 1.               */
+  /* --------------------------------------------------------------------- */
+  describe("listSessions tight mapping", () => {
+    const EXPECTED_KEYS = [
+      "agentId",
+      "channelId",
+      "createdAt",
+      "kind",
+      "messageCount",
+      "sessionKey",
+      "totalTokens",
+      "updatedAt",
+      "userId",
+    ];
+
+    const CONTRACT_ITEM = {
+      sessionKey: "s1",
+      agentId: "a",
+      userId: "u",
+      channelId: "c",
+      kind: "discord",
+      messageCount: 2,
+      totalTokens: 100,
+      updatedAt: 1000,
+      createdAt: 500,
+    } as const;
+
+    function makeRpcCall(): {
+      rpcCall: <T>(method: string, params?: unknown) => Promise<T>;
+      calls: Array<{ method: string; params: unknown }>;
+    } {
+      const calls: Array<{ method: string; params: unknown }> = [];
+      const rpcCall = <T>(method: string, params?: unknown): Promise<T> => {
+        calls.push({ method, params });
+        return Promise.resolve({
+          sessions: [CONTRACT_ITEM],
+          total: 1,
+        } as unknown as T);
+      };
+      return { rpcCall, calls };
+    }
+
+    it("returns items with EXACTLY the 9 contract fields (set equality)", async () => {
+      const { rpcCall } = makeRpcCall();
+      const rpcClient = createApiClient(BASE_URL, TOKEN, rpcCall);
+
+      const result = await rpcClient.listSessions();
+      expect(result).toHaveLength(1);
+      const keys = Object.keys(result[0]!).sort();
+      expect(keys).toEqual(EXPECTED_KEYS);
+    });
+
+    it("does NOT include invented fields (inputTokens, toolCalls, resetCount, lastActiveAt, ...)", async () => {
+      const { rpcCall } = makeRpcCall();
+      const rpcClient = createApiClient(BASE_URL, TOKEN, rpcCall);
+
+      const result = await rpcClient.listSessions();
+      const item = result[0]! as Record<string, unknown>;
+      expect(item).not.toHaveProperty("inputTokens");
+      expect(item).not.toHaveProperty("outputTokens");
+      expect(item).not.toHaveProperty("toolCalls");
+      expect(item).not.toHaveProperty("compactions");
+      expect(item).not.toHaveProperty("resetCount");
+      expect(item).not.toHaveProperty("lastActiveAt");
+      expect(item).not.toHaveProperty("channelType");
+      expect(item).not.toHaveProperty("key");
+    });
+
+    it("passes through contract field values verbatim (no aliasing, no parsing)", async () => {
+      const { rpcCall } = makeRpcCall();
+      const rpcClient = createApiClient(BASE_URL, TOKEN, rpcCall);
+
+      const result = await rpcClient.listSessions();
+      expect(result[0]).toEqual(CONTRACT_ITEM);
+    });
+  });
 });

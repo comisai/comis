@@ -112,18 +112,6 @@ export const HEALTH_STATUS: Readonly<Record<ChannelHealthState, HealthVisual>> =
 /** Set of valid health states for O(1) membership checks. */
 const VALID_STATES = new Set<string>(Object.keys(HEALTH_STATUS));
 
-/**
- * Legacy/transport status aliases mapped to canonical health states.
- * These handle values that may come from older backends or transport layers.
- */
-const LEGACY_ALIASES: Readonly<Record<string, ChannelHealthState>> = {
-  connected: "healthy",
-  running: "healthy",
-  error: "errored",
-  stopped: "disconnected",
-  reconnecting: "healthy",
-};
-
 // ---------------------------------------------------------------------------
 // Functions
 // ---------------------------------------------------------------------------
@@ -132,14 +120,17 @@ const LEGACY_ALIASES: Readonly<Record<string, ChannelHealthState>> = {
  * Normalize a raw status string to a canonical ChannelHealthState.
  *
  * Handles:
- * - Valid health states pass through unchanged
- * - Legacy aliases ("connected" -> "healthy", "error" -> "errored", etc.)
- * - Unknown strings map to "unknown"
+ * - Valid health states pass through unchanged (lowercased + trimmed)
+ * - Any other string maps to "unknown"
+ *
+ * Backend emits canonical states only (healthy / idle / stale / startup-grace /
+ * stuck / errored / disconnected / unknown); the prior legacy-alias dictionary
+ * was dead code.
  */
 export function normalizeChannelStatus(raw: string): ChannelHealthState {
   const lower = raw.toLowerCase().trim();
   if (VALID_STATES.has(lower)) return lower as ChannelHealthState;
-  return LEGACY_ALIASES[lower] ?? "unknown";
+  return "unknown";
 }
 
 /**
