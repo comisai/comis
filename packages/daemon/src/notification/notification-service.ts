@@ -206,8 +206,6 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
         channelId,
         tenantId: deps.tenantId,
         origin,
-        formatApplied: false,
-        chunkingApplied: false,
         maxAttempts: 3,
         createdAt: now,
         scheduledAt,

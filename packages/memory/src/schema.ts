@@ -278,8 +278,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
       tenant_id TEXT NOT NULL DEFAULT 'default',
       options_json TEXT NOT NULL DEFAULT '{}',
       origin TEXT NOT NULL DEFAULT 'unknown',
-      format_applied INTEGER NOT NULL DEFAULT 0,
-      chunking_applied INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'pending'
         CHECK(status IN ('pending', 'in_flight', 'delivered', 'failed', 'expired')),
       attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -290,8 +288,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
       last_attempt_at INTEGER,
       next_retry_at INTEGER,
       last_error TEXT,
-      markdown_fallback_applied INTEGER NOT NULL DEFAULT 0,
-      delivered_message_id TEXT,
       trace_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_dq_status_scheduled

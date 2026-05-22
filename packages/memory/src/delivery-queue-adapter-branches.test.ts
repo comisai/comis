@@ -37,8 +37,6 @@ describe("SqliteDeliveryQueueAdapter — branch-gap coverage", () => {
       tenantId: "default",
       optionsJson: "{}",
       origin: "agent",
-      formatApplied: false,
-      chunkingApplied: false,
       maxAttempts: 5,
       createdAt: now,
       scheduledAt: now,
@@ -170,9 +168,9 @@ describe("SqliteDeliveryQueueAdapter — branch-gap coverage", () => {
     function insertWithStatus(status: string, channelType = "telegram") {
       db.prepare(
         `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
-                                       format_applied, chunking_applied, status, attempt_count, max_attempts,
+                                       status, attempt_count, max_attempts,
                                        created_at, scheduled_at, expire_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         `id-${status}-${channelType}-${Math.random()}`,
         "t",
@@ -181,8 +179,6 @@ describe("SqliteDeliveryQueueAdapter — branch-gap coverage", () => {
         "default",
         "{}",
         "agent",
-        0,
-        0,
         status,
         0,
         5,
@@ -241,9 +237,9 @@ describe("SqliteDeliveryQueueAdapter — branch-gap coverage", () => {
       expect(() => {
         db.prepare(
           `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
-                                         format_applied, chunking_applied, status, attempt_count, max_attempts,
+                                         status, attempt_count, max_attempts,
                                          created_at, scheduled_at, expire_at)
-           VALUES ('weird-id', 't', 'tg', 'c1', 'def', '{}', 'agent', 0, 0, 'mystery_status', 0, 5, ?, ?, ?)`,
+           VALUES ('weird-id', 't', 'tg', 'c1', 'def', '{}', 'agent', 'mystery_status', 0, 5, ?, ?, ?)`,
         ).run(now, now, now + 60_000);
       }).toThrow(/CHECK constraint failed/);
     });

@@ -921,8 +921,6 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(enqueueArg.channelType).toBe("telegram");
       expect(enqueueArg.channelId).toBe("chat-1");
       expect(enqueueArg.origin).toBe("test");
-      expect(enqueueArg.formatApplied).toBe(true);
-      expect(enqueueArg.chunkingApplied).toBe(true);
       expect(enqueueArg.maxAttempts).toBe(5);
       expect(typeof enqueueArg.createdAt).toBe("number");
       expect(typeof enqueueArg.scheduledAt).toBe("number");

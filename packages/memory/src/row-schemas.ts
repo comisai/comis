@@ -630,10 +630,6 @@ export const DeliveryQueueDbRowSchema = z.strictObject({
   /** JSON-encoded options shape. */
   options_json: z.string(),
   origin: z.string(),
-  /** 0 or 1. */
-  format_applied: z.number(),
-  /** 0 or 1. */
-  chunking_applied: z.number(),
   status: z.string(),
   attempt_count: z.number(),
   max_attempts: z.number(),
@@ -643,9 +639,6 @@ export const DeliveryQueueDbRowSchema = z.strictObject({
   last_attempt_at: z.number().nullable(),
   next_retry_at: z.number().nullable(),
   last_error: z.string().nullable(),
-  /** 0 or 1. */
-  markdown_fallback_applied: z.number(),
-  delivered_message_id: z.string().nullable(),
   trace_id: z.string().nullable(),
 });
 export type DeliveryQueueDbRowFromSchema = z.infer<typeof DeliveryQueueDbRowSchema>;

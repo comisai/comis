@@ -356,8 +356,6 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               tenantId,
               optionsJson: JSON.stringify(sendOpts),
               origin: options?.origin ?? "unknown",
-              formatApplied: true,
-              chunkingApplied: true,
               maxAttempts: 5,
               createdAt: systemNowMs(),
               scheduledAt: systemNowMs(),

@@ -46,8 +46,6 @@ function rowToEntry(row: DeliveryQueueDbRow): DeliveryQueueEntry {
     tenantId: row.tenant_id,
     optionsJson: row.options_json,
     origin: row.origin,
-    formatApplied: row.format_applied !== 0,
-    chunkingApplied: row.chunking_applied !== 0,
     status: row.status as DeliveryQueueEntry["status"],
     attemptCount: row.attempt_count,
     maxAttempts: row.max_attempts,
@@ -57,8 +55,6 @@ function rowToEntry(row: DeliveryQueueDbRow): DeliveryQueueEntry {
     lastAttemptAt: row.last_attempt_at,
     nextRetryAt: row.next_retry_at,
     lastError: row.last_error,
-    markdownFallbackApplied: row.markdown_fallback_applied !== 0,
-    deliveredMessageId: row.delivered_message_id,
     traceId: row.trace_id,
   };
 }
@@ -85,15 +81,15 @@ export function createSqliteDeliveryQueue(
   const insertStmt = db.prepare(`
     INSERT INTO delivery_queue (
       id, text, channel_type, channel_id, tenant_id, options_json, origin,
-      format_applied, chunking_applied, status, attempt_count, max_attempts,
+      status, attempt_count, max_attempts,
       created_at, scheduled_at, expire_at, last_attempt_at, next_retry_at,
-      last_error, markdown_fallback_applied, delivered_message_id, trace_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, NULL, NULL, NULL, 0, NULL, ?)
+      last_error, trace_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, NULL, NULL, NULL, ?)
   `);
 
   const ackStmt = db.prepare(`
     UPDATE delivery_queue
-    SET status = 'delivered', delivered_message_id = ?
+    SET status = 'delivered'
     WHERE id = ?
   `);
 
@@ -127,10 +123,10 @@ export function createSqliteDeliveryQueue(
   const insertInFlightStmt = db.prepare(`
     INSERT INTO delivery_queue (
       id, text, channel_type, channel_id, tenant_id, options_json, origin,
-      format_applied, chunking_applied, status, attempt_count, max_attempts,
+      status, attempt_count, max_attempts,
       created_at, scheduled_at, expire_at, last_attempt_at, next_retry_at,
-      last_error, markdown_fallback_applied, delivered_message_id, trace_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_flight', 0, ?, ?, ?, ?, NULL, NULL, NULL, 0, NULL, ?)
+      last_error, trace_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'in_flight', 0, ?, ?, ?, ?, NULL, NULL, NULL, ?)
   `);
 
   const recoverInFlightStmt = db.prepare(`
@@ -167,8 +163,6 @@ export function createSqliteDeliveryQueue(
           entry.tenantId,
           entry.optionsJson,
           entry.origin,
-          entry.formatApplied ? 1 : 0,
-          entry.chunkingApplied ? 1 : 0,
           entry.maxAttempts,
           entry.createdAt,
           entry.scheduledAt,
@@ -200,8 +194,6 @@ export function createSqliteDeliveryQueue(
           entry.tenantId,
           entry.optionsJson,
           entry.origin,
-          entry.formatApplied ? 1 : 0,
-          entry.chunkingApplied ? 1 : 0,
           entry.maxAttempts,
           entry.createdAt,
           entry.scheduledAt,
@@ -222,9 +214,9 @@ export function createSqliteDeliveryQueue(
       }
     },
 
-    ack(id: string, messageId: string): Promise<Result<void, Error>> {
+    ack(id: string, _messageId: string): Promise<Result<void, Error>> {
       try {
-        ackStmt.run(messageId, id);
+        ackStmt.run(id);
         return Promise.resolve(ok(undefined));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
