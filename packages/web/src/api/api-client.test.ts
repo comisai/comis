@@ -16,20 +16,6 @@ function mockJsonResponse(data: unknown, status = 200): Promise<Response> {
   } as Response);
 }
 
-class MockEventSource {
-  url: string;
-  onmessage: ((ev: MessageEvent) => void) | null = null;
-  onerror: (() => void) | null = null;
-  close = vi.fn();
-  addEventListener = vi.fn();
-  constructor(url: string) {
-    this.url = url;
-    MockEventSource.lastInstance = this;
-  }
-  static lastInstance: MockEventSource | null = null;
-}
-vi.stubGlobal("EventSource", MockEventSource);
-
 // -- Tests --
 
 const BASE_URL = "http://localhost:3000";
@@ -40,15 +26,13 @@ describe("createApiClient", () => {
 
   beforeEach(() => {
     mockFetch.mockReset();
-    MockEventSource.lastInstance = null;
     client = createApiClient(BASE_URL, TOKEN);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    // Re-stub after restoreAllMocks since we need them for subsequent tests
+    // Re-stub after restoreAllMocks since we need it for subsequent tests
     vi.stubGlobal("fetch", mockFetch);
-    vi.stubGlobal("EventSource", MockEventSource);
   });
 
   describe("fetchJson (via public methods)", () => {
@@ -351,131 +335,6 @@ describe("createApiClient", () => {
 
       const result = await client.health();
       expect(result).toEqual(healthData);
-    });
-  });
-
-  describe("subscribeEvents()", () => {
-    it("creates EventSource with token in URL", () => {
-      const handler = vi.fn();
-      client.subscribeEvents(handler);
-
-      expect(MockEventSource.lastInstance).not.toBeNull();
-      expect(MockEventSource.lastInstance!.url).toBe(
-        `${BASE_URL}/api/events?token=${encodeURIComponent(TOKEN)}`,
-      );
-    });
-
-    it("returns a close function", () => {
-      const handler = vi.fn();
-      const close = client.subscribeEvents(handler);
-      expect(typeof close).toBe("function");
-    });
-
-    it("calling close function calls source.close()", () => {
-      const handler = vi.fn();
-      const close = client.subscribeEvents(handler);
-
-      close();
-      expect(MockEventSource.lastInstance!.close).toHaveBeenCalledTimes(1);
-    });
-
-    it("registers typed event listeners for known event types", () => {
-      const handler = vi.fn();
-      client.subscribeEvents(handler);
-
-      const instance = MockEventSource.lastInstance!;
-      const registeredEvents = instance.addEventListener.mock.calls.map(
-        (call: unknown[]) => call[0],
-      );
-
-      expect(registeredEvents).toContain("message:received");
-      expect(registeredEvents).toContain("message:sent");
-      expect(registeredEvents).toContain("ping");
-      expect(registeredEvents).toContain("system:error");
-    });
-  });
-
-  describe("subscribeEvents handler invocation", () => {
-    it("onmessage handler parses valid JSON and calls handler with parsed data", () => {
-      const handler = vi.fn();
-      client.subscribeEvents(handler);
-
-      const instance = MockEventSource.lastInstance!;
-      const payload = { event: "agent:response", payload: { text: "hello" } };
-      instance.onmessage!({ data: JSON.stringify(payload) } as MessageEvent);
-
-      expect(handler).toHaveBeenCalledWith("message", payload);
-    });
-
-    it("onmessage handler falls back to raw data when JSON parsing fails", () => {
-      const handler = vi.fn();
-      client.subscribeEvents(handler);
-
-      const instance = MockEventSource.lastInstance!;
-      instance.onmessage!({ data: "not valid json" } as MessageEvent);
-
-      expect(handler).toHaveBeenCalledWith("message", "not valid json");
-    });
-
-    it("onerror handler calls handler with error event", () => {
-      const handler = vi.fn();
-      client.subscribeEvents(handler);
-
-      const instance = MockEventSource.lastInstance!;
-      instance.onerror!();
-
-      expect(handler).toHaveBeenCalledWith("error", { message: "SSE connection error" });
-    });
-
-    it("typed event listener parses JSON and dispatches with correct event type", () => {
-      const handler = vi.fn();
-      client.subscribeEvents(handler);
-
-      const instance = MockEventSource.lastInstance!;
-
-      // Find the listener registered for "message:received"
-      const messageReceivedCall = instance.addEventListener.mock.calls.find(
-        (call: unknown[]) => call[0] === "message:received",
-      );
-      expect(messageReceivedCall).toBeDefined();
-
-      const listener = messageReceivedCall![1] as (ev: MessageEvent) => void;
-      const payload = { userId: "u1", text: "hi" };
-      listener({ data: JSON.stringify(payload) } as MessageEvent);
-
-      expect(handler).toHaveBeenCalledWith("message:received", payload);
-    });
-
-    it("typed event listener falls back to raw data on JSON parse failure", () => {
-      const handler = vi.fn();
-      client.subscribeEvents(handler);
-
-      const instance = MockEventSource.lastInstance!;
-
-      const pingCall = instance.addEventListener.mock.calls.find(
-        (call: unknown[]) => call[0] === "ping",
-      );
-      expect(pingCall).toBeDefined();
-
-      const listener = pingCall![1] as (ev: MessageEvent) => void;
-      listener({ data: "not json" } as MessageEvent);
-
-      expect(handler).toHaveBeenCalledWith("ping", "not json");
-    });
-
-    it("typed event listener handles empty data as empty object", () => {
-      const handler = vi.fn();
-      client.subscribeEvents(handler);
-
-      const instance = MockEventSource.lastInstance!;
-
-      const pingCall = instance.addEventListener.mock.calls.find(
-        (call: unknown[]) => call[0] === "ping",
-      );
-      const listener = pingCall![1] as (ev: MessageEvent) => void;
-      listener({ data: "" } as MessageEvent);
-
-      expect(handler).toHaveBeenCalledWith("ping", {});
     });
   });
 

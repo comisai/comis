@@ -93,8 +93,6 @@ export interface ApiClient {
   getChatHistory(): Promise<ChatHistoryMessage[]>;
   /** Check API health */
   health(): Promise<{ status: string; timestamp: string }>;
-  /** Subscribe to SSE events. Returns a close function. */
-  subscribeEvents(handler: SseEventHandler): () => void;
 
   // --- Memory management methods ---
 
@@ -306,54 +304,6 @@ export function createApiClient(
       // Health endpoint does not require auth
       const res = await fetch(`${baseUrl}/api/health`);
       return res.json() as Promise<{ status: string; timestamp: string }>;
-    },
-
-    subscribeEvents(handler: SseEventHandler): () => void {
-      const url = `${baseUrl}/api/events?token=${encodeURIComponent(token)}`;
-      const source = new EventSource(url);
-
-      source.onmessage = (ev: MessageEvent) => {
-        try {
-          const data = JSON.parse(ev.data as string);
-          handler("message", data);
-        } catch {
-          handler("message", ev.data);
-        }
-      };
-
-      // Listen to typed events
-      const eventTypes = [
-        "message:received",
-        "message:sent",
-        "message:streaming",
-        "session:created",
-        "session:expired",
-        "audit:event",
-        "skill:executed",
-        "scheduler:job_completed",
-        "scheduler:heartbeat_check",
-        "system:error",
-        "ping",
-      ];
-
-      for (const eventType of eventTypes) {
-        source.addEventListener(eventType, ((ev: MessageEvent) => {
-          try {
-            const data = ev.data ? JSON.parse(ev.data as string) : {};
-            handler(eventType, data);
-          } catch {
-            handler(eventType, ev.data);
-          }
-        }) as EventListener);
-      }
-
-      source.onerror = () => {
-        handler("error", { message: "SSE connection error" });
-      };
-
-      return () => {
-        source.close();
-      };
     },
 
     // --- Memory management methods ---
