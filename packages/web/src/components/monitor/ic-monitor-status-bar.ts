@@ -17,6 +17,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles } from "../../styles/shared.js";
+import { formatElapsed } from "../../utils/format-elapsed.js";
 
 // ---------------------------------------------------------------------------
 // Component
@@ -153,7 +154,7 @@ export class IcMonitorStatusBar extends LitElement {
     return html`
       <div class="bar">
         <span class=${badgeClass} role="status">${this.graphStatus}</span>
-        <span class="elapsed">${this._formatElapsed(this.elapsedMs)}</span>
+        <span class="elapsed">${formatElapsed(this.elapsedMs)}</span>
         <span class="progress">${this.stats.completed}/${this.stats.total} nodes complete</span>
         <span class="tokens">N/A</span>
         ${this.isTerminal
@@ -176,18 +177,6 @@ export class IcMonitorStatusBar extends LitElement {
   }
 
   // -- Helpers --------------------------------------------------------------
-
-  /** Format elapsed milliseconds into human-readable "Xm YYs" or "Xs". */
-  private _formatElapsed(ms: number): string {
-    const totalSeconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-
-    if (minutes > 0) {
-      return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
-    }
-    return `${seconds}s`;
-  }
 
   /** Dispatch cancel event. */
   private _onCancel(): void {
