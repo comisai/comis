@@ -424,7 +424,7 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
     toolCapabilityPort: createCapabilityPortStub(),
     // Required deps for clock, env, and timers.
     clock: { now: () => Date.now(), nowDate: () => new Date() },
-    env: { get: (k: string) => undefined, snapshot: () => Object.freeze({}) },
+    env: { get: (k: string) => undefined },
     timers: {
       setTimeout: (cb: () => void, ms: number) => {
         const t = setTimeout(cb, ms);

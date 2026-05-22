@@ -694,7 +694,6 @@ describe("clock / env / timer ports", () => {
     };
     const _env: _Env = {
       get: () => undefined,
-      snapshot: () => Object.freeze({}),
     };
     const _h: _Handle = {
       get cancelled() {
