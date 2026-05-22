@@ -36,7 +36,6 @@ import { registerMessageHandler } from "./telegram-inbound.js";
 import {
   deleteMessage,
   editMessage,
-  fetchMessages,
   platformAction,
   reactToMessage,
   removeReaction,
@@ -114,9 +113,6 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
 
     deleteMessage: (chatId, messageId) =>
       deleteMessage(state, deps, chatId, messageId),
-
-    fetchMessages: (channelId, options) =>
-      fetchMessages(state, deps, channelId, options),
 
     sendAttachment: (chatId, attachment, options) =>
       sendAttachment(state, deps, chatId, attachment, options),

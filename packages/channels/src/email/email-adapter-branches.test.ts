@@ -238,58 +238,27 @@ describe("createEmailAdapter sendMessage failure paths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Unsupported operations all return err with descriptive message
+// Unsupported operations are now omitted from the adapter (PORT-TRIM-14).
+// The capability gate (features.{editMessages,reactions,deleteMessages,fetchHistory})
+// in daemon/api/message-handlers.ts blocks the call before it reaches the adapter,
+// so the previous `return err("not supported")` stubs have been deleted.
 // ---------------------------------------------------------------------------
 
-describe("createEmailAdapter unsupported operations", () => {
-  it("editMessage returns err with descriptive 'cannot be edited' message", async () => {
+describe("createEmailAdapter omits stub methods (PORT-TRIM-14)", () => {
+  it("does not implement editMessage / reactToMessage / removeReaction / deleteMessage / fetchMessages", async () => {
     const { createEmailAdapter } = await import("./email-adapter.js");
     const adapter = createEmailAdapter(makeDeps());
-    const result = await adapter.editMessage("C1", "m1", "text");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.message).toContain("does not support editing");
-    }
+    expect(adapter.editMessage).toBeUndefined();
+    expect(adapter.reactToMessage).toBeUndefined();
+    expect(adapter.removeReaction).toBeUndefined();
+    expect(adapter.deleteMessage).toBeUndefined();
+    expect(adapter.fetchMessages).toBeUndefined();
   });
 
-  it("reactToMessage returns err with descriptive 'reactions' message", async () => {
+  it("retains real sendAttachment (SMTP nodemailer)", async () => {
     const { createEmailAdapter } = await import("./email-adapter.js");
     const adapter = createEmailAdapter(makeDeps());
-    const result = await adapter.reactToMessage("C1", "m1", "👍");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.message).toContain("reactions");
-    }
-  });
-
-  it("removeReaction returns err with descriptive 'reactions' message", async () => {
-    const { createEmailAdapter } = await import("./email-adapter.js");
-    const adapter = createEmailAdapter(makeDeps());
-    const result = await adapter.removeReaction("C1", "m1", "👍");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.message).toContain("reactions");
-    }
-  });
-
-  it("deleteMessage returns err with descriptive 'deleting' message", async () => {
-    const { createEmailAdapter } = await import("./email-adapter.js");
-    const adapter = createEmailAdapter(makeDeps());
-    const result = await adapter.deleteMessage("C1", "m1");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.message).toContain("does not support deleting");
-    }
-  });
-
-  it("fetchMessages returns err with descriptive 'fetching message history' message", async () => {
-    const { createEmailAdapter } = await import("./email-adapter.js");
-    const adapter = createEmailAdapter(makeDeps());
-    const result = await adapter.fetchMessages("C1");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.message).toContain("fetching message history");
-    }
+    expect(typeof adapter.sendAttachment).toBe("function");
   });
 });
 

@@ -474,15 +474,9 @@ describe("createWhatsAppAdapter connected operations", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("fetchMessages always returns err (not supported on WhatsApp)", async () => {
+  it("omits fetchMessages (PORT-TRIM-14: capability gate features.fetchHistory blocks)", async () => {
     const adapter = await setupConnected();
-
-    const result = await adapter.fetchMessages("C123");
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.message).toContain("not supported on WhatsApp");
-    }
+    expect(adapter.fetchMessages).toBeUndefined();
   });
 });
 

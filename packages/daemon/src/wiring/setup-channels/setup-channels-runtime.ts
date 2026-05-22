@@ -348,6 +348,22 @@ export async function buildAndStartChannelManager(
           const nodeId = leafOutputFile.replace(/-output\.md$/, "");
           const caption = `Full report — ${nodeId} (graph ${graphId.slice(0, 8)})`;
 
+          // PORT-TRIM-14: sendAttachment is now optional on ChannelPort. Adapters
+          // whose platform lacks attachments (e.g. IRC) omit the method; degrade
+          // gracefully by sending a text message that references the caption.
+          if (typeof adapter.sendAttachment !== "function") {
+            await adapter.sendMessage(
+              channelId,
+              `${caption}\n(attachment not supported on this channel — full report at ${filePath})`,
+              threadId ? { extra: { threadId } } : undefined,
+            );
+            channelsLogger.debug(
+              { graphId, nodeId, channelId, hint: "channel lacks sendAttachment; sent caption + path text" },
+              "Graph report delivered as text (no attachment capability)",
+            );
+            return;
+          }
+
           await adapter.sendAttachment(channelId, {
             type: "file",
             url: filePath,

@@ -83,12 +83,16 @@ export interface ChannelPort {
   /**
    * Edit a previously sent message.
    *
+   * Optional capability. Adapters whose platform doesn't support edits omit the method;
+   * the capability gate (`features.editMessages` at daemon/api/message-handlers.ts:113-128)
+   * blocks the call before it reaches the adapter.
+   *
    * @param channelId - Target channel/chat/room identifier
    * @param messageId - The platform-specific ID of the message to edit
    * @param text - Updated message content
    * @returns void on success, or an error
    */
-  editMessage(channelId: string, messageId: string, text: string): Promise<Result<void, Error>>;
+  editMessage?(channelId: string, messageId: string, text: string): Promise<Result<void, Error>>;
 
   /**
    * Register a handler for incoming messages.
@@ -99,21 +103,30 @@ export interface ChannelPort {
   /**
    * Add a reaction emoji to a message.
    *
+   * Optional capability. Adapters whose platform doesn't support reactions omit the method;
+   * the capability gate (`features.reactions` at daemon/api/message-handlers.ts:113-128)
+   * blocks the call before it reaches the adapter.
+   *
    * Platform notes:
    * - Telegram: Uses Bot API setMessageReaction (limited emoji set)
    * - Discord: Supports Unicode emoji and custom guild emoji
    * - Slack: Uses reaction short names (e.g. "thumbsup"), not Unicode
    * - WhatsApp: Supports Unicode emoji reactions
+   * - IRC, iMessage, LINE, Email, Echo: method omitted -- capability gate (features.reactions) blocks the call
    *
    * @param channelId - Target channel/chat identifier
    * @param messageId - The platform-specific ID of the message to react to
    * @param emoji - The emoji to react with (Unicode or platform-specific format)
    * @returns void on success, or an error
    */
-  reactToMessage(channelId: string, messageId: string, emoji: string): Promise<Result<void, Error>>;
+  reactToMessage?(channelId: string, messageId: string, emoji: string): Promise<Result<void, Error>>;
 
   /**
    * Remove a reaction emoji from a message.
+   *
+   * Optional capability. Adapters whose platform doesn't support reactions omit the method;
+   * the capability gate (`features.reactions` at daemon/api/message-handlers.ts:113-128)
+   * blocks the call before it reaches the adapter.
    *
    * Platform notes:
    * - Telegram: Clears all bot reactions by setting empty reaction array
@@ -121,46 +134,53 @@ export interface ChannelPort {
    * - Slack: Uses reactions.remove API with stripped emoji short name
    * - WhatsApp: Sends react with empty text to remove the reaction
    * - Signal: Uses sendReaction with remove: true flag
-   * - IRC, iMessage, LINE, Echo: Return err() -- reactions not supported
+   * - IRC, iMessage, LINE, Email, Echo: method omitted -- capability gate (features.reactions) blocks the call
    *
    * @param channelId - Target channel/chat identifier
    * @param messageId - The platform-specific ID of the message to remove reaction from
    * @param emoji - The emoji to remove (Unicode or platform-specific format)
    * @returns void on success, or an error
    */
-  removeReaction(channelId: string, messageId: string, emoji: string): Promise<Result<void, Error>>;
+  removeReaction?(channelId: string, messageId: string, emoji: string): Promise<Result<void, Error>>;
 
   /**
    * Delete a message from the channel.
+   *
+   * Optional capability. Adapters whose platform doesn't support delete omit the method;
+   * the capability gate (`features.deleteMessages` at daemon/api/message-handlers.ts:113-128)
+   * blocks the call before it reaches the adapter.
    *
    * Platform notes:
    * - Telegram: Bot can delete own messages and messages in groups (with admin rights)
    * - Discord: Bot can delete own messages and others' in guilds (with Manage Messages permission)
    * - Slack: Bot can delete own messages; deleting others' requires admin scope
    * - WhatsApp: Bot can only delete own messages (fromMe: true)
+   * - IRC, iMessage, LINE, Email: method omitted -- capability gate (features.deleteMessages) blocks the call
    *
    * @param channelId - Target channel/chat identifier
    * @param messageId - The platform-specific ID of the message to delete
    * @returns void on success, or an error
    */
-  deleteMessage(channelId: string, messageId: string): Promise<Result<void, Error>>;
+  deleteMessage?(channelId: string, messageId: string): Promise<Result<void, Error>>;
 
   /**
    * Fetch recent messages from a channel's history.
    *
+   * Optional capability. Adapters whose platform doesn't expose history omit the method;
+   * the capability gate (`features.fetchHistory` at daemon/api/message-handlers.ts:113-128)
+   * blocks the call before it reaches the adapter.
+   *
    * Platform notes:
-   * - Telegram: Not supported -- bots cannot access message history via Bot API.
-   *   Returns an error with "not supported" message.
    * - Discord: Fetches from channel message history (requires Read Message History permission)
    * - Slack: Uses conversations.history API
-   * - WhatsApp: Not supported -- no message history API available.
-   *   Returns an error with "not supported" message.
+   * - iMessage: Reads from local `chats.messages` SQLite store
+   * - Telegram, WhatsApp, Signal, LINE, IRC, Email: method omitted -- no history API; capability gate (features.fetchHistory) blocks the call
    *
    * @param channelId - Target channel/chat identifier
    * @param options - Pagination and limit options
-   * @returns Array of fetched messages, or an error (including "not supported")
+   * @returns Array of fetched messages, or an error
    */
-  fetchMessages(
+  fetchMessages?(
     channelId: string,
     options?: FetchMessagesOptions,
   ): Promise<Result<FetchedMessage[], Error>>;
@@ -168,18 +188,26 @@ export interface ChannelPort {
   /**
    * Send a file or media attachment to a channel.
    *
+   * Optional capability. Adapters whose platform doesn't support attachments omit the method;
+   * the capability gate (`features.attachments` at daemon/api/message-handlers.ts:113-128)
+   * blocks the call before it reaches the adapter.
+   *
    * Platform notes:
    * - Telegram: Dispatches to sendPhoto/sendAudio/sendVideo/sendDocument based on type
    * - Discord: Sends as file attachment with optional caption as message content
    * - Slack: Uses files.uploadV2 API
    * - WhatsApp: Sends via Baileys with type-specific message payload
+   * - Email: Sends as SMTP attachment (nodemailer)
+   * - LINE: Uses sendAttachmentAsLineMessage helper
+   * - iMessage: Native imsg attachment send
+   * - IRC: method omitted -- no attachment API; capability gate (features.attachments) blocks the call
    *
    * @param channelId - Target channel/chat identifier
    * @param attachment - The attachment payload (type, url, optional metadata)
    * @param options - Additional send options (e.g. replyTo)
    * @returns The platform-specific message ID, or an error
    */
-  sendAttachment(
+  sendAttachment?(
     channelId: string,
     attachment: AttachmentPayload,
     options?: SendMessageOptions,
