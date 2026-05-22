@@ -331,14 +331,6 @@ describe("EventMap Payload Coverage", () => {
         alertsRaised: 1,
         timestamp: NOW,
       },
-      "scheduler:task_extracted": {
-        taskId: "task-001",
-        title: "Send weekly report",
-        priority: "high",
-        confidence: 0.92,
-        sessionKey: "tenant:user:ch",
-        timestamp: NOW,
-      },
     } satisfies Partial<EventMap>;
 
     for (const [eventName, payload] of Object.entries(EVENTS)) {

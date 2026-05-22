@@ -117,7 +117,6 @@ function priv(el: IcSchedulerView) {
     _heartbeatDeliveries: Array<{ agentId: string; channelType: string; outcome: string; level: string; durationMs: number; timestamp: number }>;
     _heartbeatEnabled: boolean;
     _heartbeatIntervalMs: number;
-    _extractedTasks: Array<{ taskId: string; title: string; status: string; priority: string }>;
     _editorOpen: boolean;
     _editingJob: unknown;
     _editorError: string;
@@ -137,7 +136,7 @@ afterEach(() => {
 /* ------------------------------------------------------------------ */
 
 describe("IcSchedulerView", () => {
-  it("renders ic-tabs with 3 tab elements inside the IcSchedulerView shadow-DOM", async () => {
+  it("renders ic-tabs with 2 tab elements inside the IcSchedulerView shadow-DOM", async () => {
     const rpc = createSchedulerMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
@@ -145,8 +144,8 @@ describe("IcSchedulerView", () => {
     const tabs = el.shadowRoot?.querySelector("ic-tabs");
     expect(tabs).toBeTruthy();
     const tabDefs = (tabs as any).tabs;
-    expect(tabDefs).toHaveLength(3);
-    expect(tabDefs.map((t: { id: string }) => t.id)).toEqual(["cron-jobs", "heartbeat", "extracted-tasks"]);
+    expect(tabDefs).toHaveLength(2);
+    expect(tabDefs.map((t: { id: string }) => t.id)).toEqual(["cron-jobs", "heartbeat"]);
   });
 
   it("2 - shows loading state initially", async () => {
@@ -353,64 +352,6 @@ describe("IcSchedulerView", () => {
     expect(priv(el)._executions).toHaveLength(1);
     expect(priv(el)._executions[0].success).toBe(true);
     expect(priv(el)._executions[0].durationMs).toBe(500);
-  });
-
-  it("16 - SSE task_extracted event adds task to extracted tasks tab", async () => {
-    const rpc = createSchedulerMockRpcClient();
-    const mockDispatcher = createMockEventDispatcher();
-    const el = await createElement({ rpcClient: rpc, eventDispatcher: mockDispatcher });
-    await flush(el);
-
-    mockDispatcher._fire("scheduler:task_extracted", {
-      taskId: "task-001",
-      title: "Summarize meeting",
-      priority: "high",
-      confidence: 0.9,
-      sessionKey: "agent:default",
-      timestamp: Date.now(),
-    });
-    await (el as any).updateComplete;
-
-    expect(priv(el)._extractedTasks).toHaveLength(1);
-    expect(priv(el)._extractedTasks[0].title).toBe("Summarize meeting");
-    expect(priv(el)._extractedTasks[0].status).toBe("pending");
-
-    // Switch to extracted tasks tab and verify rendering
-    priv(el)._activeTab = "extracted-tasks";
-    await (el as any).updateComplete;
-
-    const taskTable = el.shadowRoot?.querySelector(".task-grid");
-    expect(taskTable).toBeTruthy();
-    const taskText = taskTable?.textContent ?? "";
-    expect(taskText).toContain("Summarize meeting");
-  });
-
-  it("17 - extracted task mark-complete updates status", async () => {
-    const rpc = createSchedulerMockRpcClient();
-    const mockDispatcher = createMockEventDispatcher();
-    const el = await createElement({ rpcClient: rpc, eventDispatcher: mockDispatcher });
-    await flush(el);
-
-    // Add a task via SSE
-    mockDispatcher._fire("scheduler:task_extracted", {
-      taskId: "task-002",
-      title: "Fix bug",
-      priority: "medium",
-      timestamp: Date.now(),
-    });
-    await (el as any).updateComplete;
-
-    // Switch to tasks tab
-    priv(el)._activeTab = "extracted-tasks";
-    await (el as any).updateComplete;
-
-    // Click complete button
-    const completeBtn = el.shadowRoot?.querySelector(".btn-complete") as HTMLElement;
-    expect(completeBtn).toBeTruthy();
-    completeBtn.click();
-    await (el as any).updateComplete;
-
-    expect(priv(el)._extractedTasks[0].status).toBe("completed");
   });
 
   it("18 - delete button calls cron.remove RPC", async () => {

@@ -302,16 +302,6 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  /** Scheduler: task extracted from conversation */
-  "scheduler:task_extracted": {
-    taskId: string;
-    title: string;
-    priority: string;
-    confidence: number;
-    sessionKey: string;
-    timestamp: number;
-  };
-
   // -------------------------------------------------------------------------
   // Process metrics and system events
   // -------------------------------------------------------------------------

@@ -270,7 +270,7 @@ describe("IcActivityFeed", () => {
       const chips = el.shadowRoot?.querySelector("ic-filter-chips") as any;
       expect(chips).not.toBeNull();
       // The options property should have the same number of entries as EVENT_CONFIG
-      expect(chips.options.length).toBe(14); // 14 event types in EVENT_CONFIG
+      expect(chips.options.length).toBe(13); // 13 event types in EVENT_CONFIG
       const values = chips.options.map((o: { value: string }) => o.value);
       expect(values).toContain("message:received");
       expect(values).toContain("system:error");

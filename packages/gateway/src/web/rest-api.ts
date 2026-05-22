@@ -75,7 +75,6 @@ const ACTIVITY_EVENTS: ReadonlyArray<keyof EventMap> = [
   "scheduler:job_started",
   "scheduler:job_completed",
   "scheduler:heartbeat_check",
-  "scheduler:task_extracted",
   "system:error",
 ];
 

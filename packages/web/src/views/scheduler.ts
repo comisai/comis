@@ -74,16 +74,6 @@ interface HeartbeatRecord {
   timestamp: number;
 }
 
-interface ExtractedTask {
-  taskId: string;
-  title: string;
-  priority: string;
-  confidence: number;
-  sessionKey: string;
-  timestamp: number;
-  status: "pending" | "completed" | "dismissed";
-}
-
 interface HeartbeatAgentCard {
   agentId: string;
   enabled: boolean;
@@ -123,7 +113,6 @@ interface HeartbeatDeliveryRecord {
 const TAB_DEFS: TabDef[] = [
   { id: "cron-jobs", label: "Cron Jobs" },
   { id: "heartbeat", label: "Heartbeat" },
-  { id: "extracted-tasks", label: "Extracted Tasks" },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -192,12 +181,12 @@ function jobToCronInput(job: SchedulerCronJob): CronJobInput {
 /* ------------------------------------------------------------------ */
 
 /**
- * Scheduler dashboard view with 3 tabs: Cron Jobs, Heartbeat, Extracted Tasks.
+ * Scheduler dashboard view with 2 tabs: Cron Jobs, Heartbeat.
  *
  * Loads job data via cron.list RPC. Supports create/edit via ic-cron-editor overlay
  * (cron.add / cron.update RPC), delete via cron.remove RPC, heartbeat toggle via
- * config.read / config.set RPC, and real-time SSE updates for execution history,
- * heartbeat checks, and extracted tasks.
+ * config.read / config.set RPC, and real-time SSE updates for execution history
+ * and heartbeat checks.
  */
 @customElement("ic-scheduler-view")
 export class IcSchedulerView extends LitElement {
@@ -570,41 +559,6 @@ export class IcSchedulerView extends LitElement {
         font-weight: 600;
       }
 
-      /* Extracted tasks grid table */
-      .task-grid {
-        display: grid;
-        grid-template-columns: minmax(150px, 3fr) 100px 100px auto;
-        width: 100%;
-      }
-
-      .task-grid .grid-header .cell,
-      .task-grid .grid-row .cell {
-        /* Inherit from .grid-header/.grid-row above */
-      }
-
-      .priority-tag {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 9999px;
-        font-size: var(--ic-text-xs);
-        font-weight: 500;
-      }
-
-      .priority-tag--high {
-        background: rgba(239, 68, 68, 0.15);
-        color: #ef4444;
-      }
-
-      .priority-tag--medium {
-        background: rgba(234, 179, 8, 0.15);
-        color: #eab308;
-      }
-
-      .priority-tag--low {
-        background: rgba(34, 197, 94, 0.15);
-        color: #22c55e;
-      }
-
       .btn-sm {
         background: transparent;
         border: 1px solid var(--ic-border);
@@ -620,11 +574,6 @@ export class IcSchedulerView extends LitElement {
       .btn-sm:hover {
         color: var(--ic-text);
         border-color: var(--ic-text-muted);
-      }
-
-      .task-actions {
-        display: flex;
-        gap: var(--ic-space-xs);
       }
 
       /* Editor overlay */
@@ -732,7 +681,6 @@ export class IcSchedulerView extends LitElement {
   @state() private _heartbeats: HeartbeatRecord[] = [];
   @state() private _heartbeatEnabled = false;
   @state() private _heartbeatIntervalMs = 300_000;
-  @state() private _extractedTasks: ExtractedTask[] = [];
   @state() private _editorOpen = false;
   @state() private _editingJob: SchedulerCronJob | null = null;
   @state() private _editorError = "";
@@ -874,19 +822,6 @@ export class IcSchedulerView extends LitElement {
         };
         this._heartbeatAlerts = [record, ...this._heartbeatAlerts].slice(0, 50);
         this._updateAgentFromAlert(record);
-      },
-      "scheduler:task_extracted": (data) => {
-        const d = data as { taskId?: string; title?: string; priority?: string; confidence?: number; sessionKey?: string; timestamp?: number };
-        const task: ExtractedTask = {
-          taskId: d.taskId ?? `task-${systemNowMs()}`,
-          title: d.title ?? "Untitled task",
-          priority: d.priority ?? "medium",
-          confidence: d.confidence ?? 0,
-          sessionKey: d.sessionKey ?? "",
-          timestamp: d.timestamp ?? systemNowMs(),
-          status: "pending",
-        };
-        this._extractedTasks = [task, ...this._extractedTasks];
       },
     });
   }
@@ -1108,18 +1043,6 @@ export class IcSchedulerView extends LitElement {
       this._heartbeatEnabled = !newValue;
       this._error = err instanceof Error ? err.message : "Failed to toggle heartbeat";
     }
-  }
-
-  private _handleCompleteTask(taskId: string): void {
-    this._extractedTasks = this._extractedTasks.map((t) =>
-      t.taskId === taskId ? { ...t, status: "completed" as const } : t,
-    );
-  }
-
-  private _handleDismissTask(taskId: string): void {
-    this._extractedTasks = this._extractedTasks.map((t) =>
-      t.taskId === taskId ? { ...t, status: "dismissed" as const } : t,
-    );
   }
 
   private async _handleRunJob(jobName: string): Promise<void> {
@@ -1516,53 +1439,6 @@ export class IcSchedulerView extends LitElement {
     `;
   }
 
-  private _renderExtractedTasksTab() {
-    if (this._extractedTasks.length === 0) {
-      return html`
-        <ic-empty-state
-          icon="scheduler"
-          message="No extracted tasks"
-          description="Tasks will appear when agents extract them from conversations."
-        ></ic-empty-state>
-      `;
-    }
-
-    return html`
-      <div class="task-grid" role="table">
-        <div class="grid-header" role="row">
-          <div class="cell" role="columnheader">Title</div>
-          <div class="cell" role="columnheader">Priority</div>
-          <div class="cell" role="columnheader">Status</div>
-          <div class="cell" role="columnheader">Actions</div>
-        </div>
-        ${this._extractedTasks.map((task) => this._renderTaskRow(task))}
-      </div>
-    `;
-  }
-
-  private _renderTaskRow(task: ExtractedTask) {
-    const priorityClass = `priority-tag priority-tag--${task.priority}`;
-    return html`
-      <div class="grid-row" role="row">
-        <div class="cell" role="cell">${task.title}</div>
-        <div class="cell" role="cell">
-          <span class=${priorityClass}>${task.priority}</span>
-        </div>
-        <div class="cell" role="cell">${task.status}</div>
-        <div class="cell" role="cell">
-          ${task.status === "pending"
-            ? html`
-                <div class="task-actions">
-                  <button class="btn-sm btn-complete" @click=${() => this._handleCompleteTask(task.taskId)}>Complete</button>
-                  <button class="btn-sm btn-dismiss" @click=${() => this._handleDismissTask(task.taskId)}>Dismiss</button>
-                </div>
-              `
-            : nothing}
-        </div>
-      </div>
-    `;
-  }
-
   private _renderEditorOverlay() {
     if (!this._editorOpen) return nothing;
 
@@ -1600,7 +1476,6 @@ export class IcSchedulerView extends LitElement {
       >
         <div slot="cron-jobs">${this._renderCronJobsTab()}</div>
         <div slot="heartbeat">${this._renderHeartbeatTab()}</div>
-        <div slot="extracted-tasks">${this._renderExtractedTasksTab()}</div>
       </ic-tabs>
 
       ${this._renderEditorOverlay()}

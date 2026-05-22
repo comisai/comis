@@ -40,7 +40,6 @@ export const SSE_EVENT_TYPES = [
   "scheduler:heartbeat_check",
   "scheduler:heartbeat_alert",
   "scheduler:heartbeat_delivered",
-  "scheduler:task_extracted",
   "system:error",
   "approval:requested",
   "approval:resolved",

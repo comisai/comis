@@ -196,7 +196,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/web/src/views/scheduler.ts",
     lines: 1615,
-    reason: "Lit web view; RPC orchestration extracted via scheduler-controller.ts (cron.list/status/add/update/remove/run, config.read/set, heartbeat.states/trigger moved out). Residual ≤1620L is dominated by 3 tab renderers (cron jobs, heartbeat, extracted tasks), the embedded ic-cron-editor overlay wiring, SSE event handling for scheduler:job_started/job_completed/heartbeat_delivered/heartbeat_alert/scheduler:task_extracted, optimistic-update edit/delete flows, and detailed per-job/per-heartbeat row templates with relative-time formatting.",
+    reason: "Lit web view; RPC orchestration extracted via scheduler-controller.ts (cron.list/status/add/update/remove/run, config.read/set, heartbeat.states/trigger moved out). Residual size is dominated by 2 tab renderers (cron jobs, heartbeat), the embedded ic-cron-editor overlay wiring, SSE event handling for scheduler:job_started/job_completed/heartbeat_delivered/heartbeat_alert, optimistic-update edit/delete flows, and detailed per-job/per-heartbeat row templates with relative-time formatting.",
     removedIn: "deferred",
   },
   {

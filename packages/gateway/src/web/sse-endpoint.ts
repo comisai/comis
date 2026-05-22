@@ -43,7 +43,6 @@ const SSE_EVENTS: ReadonlyArray<keyof EventMap> = [
   "diagnostic:billing_snapshot",
   "scheduler:heartbeat_delivered",
   "scheduler:heartbeat_alert",
-  "scheduler:task_extracted",
   "skill:loaded",
   "skill:registry_reset",
   "model:catalog_loaded",
