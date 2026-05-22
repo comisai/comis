@@ -148,7 +148,6 @@ Skill lifecycle, tool execution, audit logging, observability (tokens and latenc
 | `security:memory_tainted` | timestamp, agentId, originalTrustLevel, adjustedTrustLevel, patterns, blocked |
 | `sender:trust_resolved` | agentId, senderId, trustLevel, displayMode, sessionKey, timestamp |
 | `sep:plan_extracted` | agentId, sessionKey, stepCount, timestamp |
-| `sep:plan_completed` | agentId, sessionKey, stepsPlanned, stepsCompleted, stepsSkipped, nudgeTriggered, durationMs, timestamp |
 | `skill:created` | skillName, scope, agentId, timestamp |
 | `skill:executed` | skillName, durationMs, success, timestamp |
 | `skill:failed` | skillName, error, phase, agentId, timestamp |

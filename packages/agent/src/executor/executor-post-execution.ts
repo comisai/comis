@@ -499,7 +499,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // avoid over-counting (the LLM's numbered plan often has 2-3× more
   // items than logical steps — e.g., "11 steps" for a 4-tool task).
   if (executionPlanRef.current?.active) {
-    const plan = executionPlanRef.current;
     const toolCalls = result.stepsExecuted ?? 0;
     result.plannerMetrics = {
       stepsPlanned: toolCalls,
@@ -507,16 +506,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       stepsSkipped: 0,
       planExtractionTurn: 1,
     };
-
-    deps.eventBus.emit("sep:plan_completed", {
-      agentId: effectiveAgentId,
-      sessionKey: formattedKey,
-      stepsPlanned: toolCalls,
-      stepsCompleted: toolCalls,
-      stepsSkipped: 0,
-      durationMs: deps.clock.now() - plan.createdAtMs,
-      timestamp: deps.clock.now(),
-    });
   }
 
   // Record timestamp after successful execution for TTL guard.

@@ -109,7 +109,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "graph:completed",
   "graph:driver_lifecycle",
   "sep:plan_extracted",
-  "sep:plan_completed",
   "cache:graph_prefix_written",
 
   // -------------------------------------------------------------------
