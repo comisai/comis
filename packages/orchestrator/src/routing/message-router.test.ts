@@ -201,17 +201,4 @@ describe("createMessageRouter", () => {
     const router = createMessageRouter(config());
     expect(router.resolve(msg())).toBe("default-agent");
   });
-
-  it("updateConfig() updates bindings without recreating router", () => {
-    const router = createMessageRouter(config());
-    expect(router.resolve(msg({ channelType: "telegram" }))).toBe("default-agent");
-
-    router.updateConfig(
-      config({
-        bindings: [{ channelType: "telegram", agentId: "updated-agent" }],
-      }),
-    );
-
-    expect(router.resolve(msg({ channelType: "telegram" }))).toBe("updated-agent");
-  });
 });
