@@ -14,7 +14,7 @@ import chalk from "chalk";
 import { GatewayStatusContract, ConfigReadContract } from "@comis/core";
 import { callTyped, withClient } from "../client/rpc-client.js";
 import { json } from "../output/format.js";
-import { renderTable, renderKeyValue } from "../output/table.js";
+import { renderFindings, type Section } from "../util/render-findings.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -197,10 +197,12 @@ async function fetchSystemStatus(): Promise<SystemStatus> {
 
 /**
  * Render system status in table format to stdout.
+ *
+ * Composes 4 sections (Daemon kv, Gateway kv, Channels table, Agents table)
+ * and delegates the layout work to the shared `renderFindings` helper.
  */
 function renderStatusTable(status: SystemStatus): void {
-  // Daemon section
-  console.log(chalk.bold("\n  Daemon"));
+  // Daemon section (kv)
   const daemonPairs: [string, string][] = [
     ["  Status", colorStatus(status.daemon.status)],
   ];
@@ -213,10 +215,8 @@ function renderStatusTable(status: SystemStatus): void {
   if (status.daemon.details["version"]) {
     daemonPairs.push(["  Version", String(status.daemon.details["version"])]);
   }
-  renderKeyValue(daemonPairs);
 
-  // Gateway section
-  console.log(chalk.bold("\n  Gateway"));
+  // Gateway section (kv)
   const gwPairs: [string, string][] = [
     ["  Status", colorStatus(status.gateway.status)],
   ];
@@ -228,34 +228,31 @@ function renderStatusTable(status: SystemStatus): void {
   if (status.gateway.details["connections"] !== undefined) {
     gwPairs.push(["  Connections", String(status.gateway.details["connections"])]);
   }
-  renderKeyValue(gwPairs);
 
-  // Channels section
-  console.log(chalk.bold("\n  Channels"));
-  if (status.channels.length === 0) {
-    console.log(chalk.dim("    No channels configured"));
-  } else {
-    renderTable(
-      ["Type", "Enabled", "Status"],
-      status.channels.map((ch) => [
+  const sections: Section[] = [
+    { kind: "kv", title: "Daemon", pairs: daemonPairs },
+    { kind: "kv", title: "Gateway", pairs: gwPairs },
+    {
+      kind: "table",
+      title: "Channels",
+      headers: ["Type", "Enabled", "Status"],
+      rows: status.channels.map((ch) => [
         ch.type,
         ch.enabled ? chalk.green("yes") : chalk.yellow("no"),
         colorStatus(ch.status),
       ]),
-    );
-  }
+      emptyMessage: "No channels configured",
+    },
+    {
+      kind: "table",
+      title: "Agents",
+      headers: ["Name", "Provider", "Model", "Bindings"],
+      rows: status.agents.map((a) => [a.name, a.provider, a.model, a.bindings]),
+      emptyMessage: "No agents configured",
+    },
+  ];
 
-  // Agents section
-  console.log(chalk.bold("\n  Agents"));
-  if (status.agents.length === 0) {
-    console.log(chalk.dim("    No agents configured"));
-  } else {
-    renderTable(
-      ["Name", "Provider", "Model", "Bindings"],
-      status.agents.map((a) => [a.name, a.provider, a.model, a.bindings]),
-    );
-  }
-
+  renderFindings({ kind: "sections", sections });
   console.log("");
 }
 

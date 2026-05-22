@@ -25,6 +25,10 @@ import { gatewayHealthCheck } from "../doctor/checks/gateway-health.js";
 import { channelHealthCheck } from "../doctor/checks/channel-health.js";
 import { workspaceHealthCheck } from "../doctor/checks/workspace-health.js";
 import type { DoctorContext, DoctorFinding } from "../doctor/types.js";
+import {
+  renderFindings,
+  type NormalizedFinding,
+} from "../util/render-findings.js";
 
 /** All doctor checks in execution order (same as doctor command). */
 const ALL_CHECKS = [
@@ -100,61 +104,36 @@ function buildHealthContext(configPaths: string[]): DoctorContext {
 }
 
 /**
- * Group findings by category.
+ * Build a human-readable footer for the health summary line.
  *
- * Returns a Map of category name to findings array, preserving
- * insertion order (first-seen category order).
+ * Mirrors the pre-fusion behavior:
+ *   - "All checks passed" when no fail/warn findings exist
+ *   - "{total} issue(s) found ({n} error(s), {n} warning(s))" otherwise
  */
-function groupByCategory(findings: readonly DoctorFinding[]): Map<string, DoctorFinding[]> {
-  const groups = new Map<string, DoctorFinding[]>();
-  for (const finding of findings) {
-    const existing = groups.get(finding.category);
-    if (existing) {
-      existing.push(finding);
-    } else {
-      groups.set(finding.category, [finding]);
-    }
+function buildHealthFooter(failCount: number, warnCount: number): string {
+  const total = failCount + warnCount;
+  if (total === 0) {
+    return chalk.green("All checks passed");
   }
-  return groups;
+  const parts: string[] = [];
+  if (failCount > 0) parts.push(`${failCount} error${failCount !== 1 ? "s" : ""}`);
+  if (warnCount > 0) parts.push(`${warnCount} warning${warnCount !== 1 ? "s" : ""}`);
+  return `${total} issue${total !== 1 ? "s" : ""} found (${parts.join(", ")})`;
 }
 
 /**
- * Render grouped health findings to stdout in table format.
- *
- * Each category is shown as a bold header, followed by findings with
- * colored status indicators. Suggestions are shown in gray below each issue.
+ * Map filtered doctor findings to the unified NormalizedFinding shape consumed
+ * by renderFindings. Preserves first-seen category ordering by category-stable
+ * iteration of the input array (callers are responsible for upstream filtering).
  */
-function renderHealthTable(
-  grouped: Map<string, DoctorFinding[]>,
-  failCount: number,
-  warnCount: number,
-): void {
-  for (const [category, findings] of grouped) {
-    console.log();
-    console.log(chalk.bold(category));
-
-    for (const finding of findings) {
-      const icon = finding.status === "fail" ? chalk.red("x") : chalk.yellow("!");
-      const msg = finding.status === "fail" ? chalk.red(finding.message) : chalk.yellow(finding.message);
-      console.log(`  ${icon} ${msg}`);
-
-      if (finding.suggestion) {
-        console.log(`    ${chalk.gray(finding.suggestion)}`);
-      }
-    }
-  }
-
-  console.log();
-
-  const total = failCount + warnCount;
-  if (total === 0) {
-    console.log(chalk.green("All checks passed"));
-  } else {
-    const parts: string[] = [];
-    if (failCount > 0) parts.push(`${failCount} error${failCount !== 1 ? "s" : ""}`);
-    if (warnCount > 0) parts.push(`${warnCount} warning${warnCount !== 1 ? "s" : ""}`);
-    console.log(`${total} issue${total !== 1 ? "s" : ""} found (${parts.join(", ")})`);
-  }
+function mapHealthFindings(findings: readonly DoctorFinding[]): NormalizedFinding[] {
+  return findings.map((f) => ({
+    status: f.status,
+    category: f.category,
+    title: f.check,
+    message: f.message,
+    hint: f.suggestion,
+  }));
 }
 
 /**
@@ -189,8 +168,16 @@ export function registerHealthCommand(program: Command): void {
         if (options.format === "json") {
           json(filtered);
         } else {
-          const grouped = groupByCategory(filtered);
-          renderHealthTable(grouped, result.failCount, result.warnCount);
+          const findings = mapHealthFindings(filtered);
+          const summary = {
+            total: findings.length,
+            counts: { fail: result.failCount, warn: result.warnCount },
+            footer: buildHealthFooter(result.failCount, result.warnCount),
+          };
+          renderFindings(
+            { kind: "findings", findings, summary },
+            { renderMode: "compact", groupBy: "category" },
+          );
         }
 
         // Exit with code 1 if any fail-status findings exist (for CI usage)
