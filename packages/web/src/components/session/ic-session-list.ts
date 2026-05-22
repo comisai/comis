@@ -56,7 +56,9 @@ const SESSION_COLUMNS: DataTableColumn<SessionListItem>[] = [
     },
   },
   {
-    key: "createdAt",
+    // Synthetic key — render() owns the source field (row.updatedAt via
+    // computeSessionStatus). `sortable: false` so ordering is unaffected.
+    key: "status",
     label: "Status",
     sortable: false,
     render: (_value: unknown, row: SessionListItem) => {
