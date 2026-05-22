@@ -3,7 +3,6 @@ import { PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type Gate
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { ComisLogger } from "@comis/infra";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { LatencyRecorder } from "./observability/latency-recorder.js";
 import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";
 import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
@@ -201,16 +200,6 @@ function createMockTokenTracker(): TokenTracker {
   };
 }
 
-function createMockLatencyRecorder(): LatencyRecorder {
-  return {
-    startTimer: vi.fn().mockReturnValue(() => 0),
-    record: vi.fn(),
-    getStats: vi.fn().mockReturnValue({ count: 0, mean: 0, min: 0, max: 0, p50: 0, p99: 0 }),
-    reset: vi.fn(),
-    prune: vi.fn().mockReturnValue(0),
-  };
-}
-
 function createMockProcessMonitor(): ProcessMonitor {
   return {
     start: vi.fn(),
@@ -260,7 +249,6 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
   const logger = createMockLogger();
   const logLevelManager = createMockLogLevelManager();
   const tokenTracker = createMockTokenTracker();
-  const latencyRecorder = createMockLatencyRecorder();
   const processMonitor = createMockProcessMonitor();
   const shutdownHandle = createMockShutdownHandle();
   const gatewayHandle = createMockGatewayHandle();
@@ -283,10 +271,6 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
       callOrder.push("createTokenTracker");
       return tokenTracker;
     }),
-    createLatencyRecorder: vi.fn().mockImplementation(() => {
-      callOrder.push("createLatencyRecorder");
-      return latencyRecorder;
-    }),
     createProcessMonitor: vi.fn().mockImplementation(() => {
       callOrder.push("createProcessMonitor");
       return processMonitor;
@@ -306,7 +290,6 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
       logger,
       logLevelManager,
       tokenTracker,
-      latencyRecorder,
       processMonitor,
       shutdownHandle,
       gatewayHandle,
@@ -339,7 +322,6 @@ describe("daemon main()", () => {
       "createTracingLogger",
       "createLogLevelManager",
       "createTokenTracker",
-      "createLatencyRecorder",
       "createProcessMonitor",
     ]);
   });
@@ -357,7 +339,6 @@ describe("daemon main()", () => {
       "createTracingLogger",
       "createLogLevelManager",
       "createTokenTracker",
-      "createLatencyRecorder",
       "createProcessMonitor",
       "createGatewayServer",
     ]);
@@ -373,7 +354,6 @@ describe("daemon main()", () => {
     expect(instance.logger).toBe(mocks.logger);
     expect(instance.logLevelManager).toBe(mocks.logLevelManager);
     expect(instance.tokenTracker).toBe(mocks.tokenTracker);
-    expect(instance.latencyRecorder).toBe(mocks.latencyRecorder);
     expect(instance.processMonitor).toBe(mocks.processMonitor);
     // Post-52-03 (DUP-CONS-03): shutdownHandle is constructed inline by
     // setupShutdown rather than injected via the `_registerGracefulShutdown`

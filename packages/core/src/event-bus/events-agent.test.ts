@@ -245,27 +245,6 @@ describe("AgentEvents payload structure", () => {
     expect(received.cost.total).toBe(0.018);
   });
 
-  it("observability:latency delivers operation union", () => {
-    const bus = new TypedEventBus();
-    const handler = vi.fn();
-
-    for (const operation of ["llm_call", "tool_execution", "memory_search"] as const) {
-      const payload: EventMap["observability:latency"] = {
-        operation,
-        durationMs: 100,
-        timestamp: Date.now(),
-      };
-      bus.on("observability:latency", handler);
-      bus.emit("observability:latency", payload);
-      bus.removeAllListeners("observability:latency");
-    }
-
-    expect(handler).toHaveBeenCalledTimes(3);
-    expect(handler.mock.calls[0]![0].operation).toBe("llm_call");
-    expect(handler.mock.calls[1]![0].operation).toBe("tool_execution");
-    expect(handler.mock.calls[2]![0].operation).toBe("memory_search");
-  });
-
   it("model:fallback_attempt delivers fromProvider/toProvider and attemptNumber", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();

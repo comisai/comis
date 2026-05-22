@@ -69,7 +69,6 @@ import { createWakeCoalescer, createSystemEventQueue, type WakeReasonKind } from
 import { createTokenRegistry } from "./api/token-handlers.js";
 import type { DaemonInstance, DaemonOverrides, FoundationHandle, AgentsHandle, ChannelsHandle, GatewayHandle, PermissionCorrection, SessionStoreBridge } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
-import { createLatencyRecorder } from "./observability/latency-recorder.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager } from "./observability/log-infra.js";
@@ -288,7 +287,6 @@ async function stageFoundation(input: {
   const _createTracingLogger = overrides.createTracingLogger ?? createTracingLogger;
   const _createLogLevelManager = overrides.createLogLevelManager ?? createLogLevelManager;
   const _createTokenTracker = overrides.createTokenTracker ?? createTokenTracker;
-  const _createLatencyRecorder = overrides.createLatencyRecorder ?? createLatencyRecorder;
   const _createProcessMonitor = overrides.createProcessMonitor ?? createProcessMonitor;
 
   // 0. Resolve data directory, then load secrets from <dataDir>/.env.
@@ -356,9 +354,9 @@ async function stageFoundation(input: {
 
   // 4. Observability
   const {
-    tokenTracker, latencyRecorder, sharedCostTracker,
+    tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-  } = setupObservability({ eventBus: container.eventBus, _createTokenTracker, _createLatencyRecorder, logger: logLevelManager.getLogger("observability"), dataDir });
+  } = setupObservability({ eventBus: container.eventBus, _createTokenTracker, logger: logLevelManager.getLogger("observability"), dataDir });
   const contextPipelineCollector = createContextPipelineCollector({
     eventBus: container.eventBus,
     logger: logLevelManager.getLogger("context-pipeline"),
@@ -459,7 +457,7 @@ async function stageFoundation(input: {
     execGit, configGitManager,
     logger, logLevelManager, daemonLogger, gatewayLogger, channelsLogger, agentLogger,
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,
-    tokenTracker, latencyRecorder, sharedCostTracker,
+    tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
     contextPipelineCollector,
     processMonitor,
@@ -1084,7 +1082,7 @@ async function stageShutdown(input: {
   const {
     container, dataDir, configPaths,
     logger, logLevelManager, daemonLogger, daemonVersion,
-    tokenTracker, latencyRecorder, processMonitor,
+    tokenTracker, processMonitor,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
     contextPipelineCollector, backgroundIndexingPromise, db,
     disposeEmbedding, cachedPort, maintenanceTick, obsPersistence,
@@ -1185,7 +1183,7 @@ async function stageShutdown(input: {
   }
 
   return {
-    container, logger, logLevelManager, tokenTracker, latencyRecorder,
+    container, logger, logLevelManager, tokenTracker,
     processMonitor, shutdownHandle, cronSchedulers, resetSchedulers,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
     // Expose the delivery-queue-side adapter map and the queue port itself so

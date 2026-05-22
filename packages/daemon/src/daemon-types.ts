@@ -26,7 +26,6 @@ import type {
 } from "@comis/scheduler";
 import type { BrowserService, SandboxProvider, ImageGenRateLimiter } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
-import type { LatencyRecorder } from "./observability/latency-recorder.js";
 import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";
 import type { DiagnosticCollector } from "./observability/diagnostic-collector.js";
@@ -61,7 +60,6 @@ import type { createFileStateTracker, createImageGenProvider } from "@comis/skil
 import type { createTracingLogger } from "./observability/trace-logger.js";
 import type { createLogLevelManager } from "./observability/log-infra.js";
 import type { createTokenTracker } from "./observability/token-tracker.js";
-import type { createLatencyRecorder } from "./observability/latency-recorder.js";
 import type { createProcessMonitor } from "./process/process-monitor.js";
 import type { setupMedia } from "./wiring/setup-media.js";
 import type {
@@ -122,7 +120,6 @@ export interface DaemonInstance {
   readonly logger: ComisLogger;
   readonly logLevelManager: LogLevelManager;
   readonly tokenTracker: TokenTracker;
-  readonly latencyRecorder: LatencyRecorder;
   readonly processMonitor: ProcessMonitor;
   readonly shutdownHandle: ShutdownHandle;
   readonly cronSchedulers: Map<string, CronScheduler>;
@@ -188,8 +185,6 @@ export interface DaemonOverrides {
   createLogLevelManager?: typeof createLogLevelManager;
   /** Override createTokenTracker. */
   createTokenTracker?: typeof createTokenTracker;
-  /** Override createLatencyRecorder. */
-  createLatencyRecorder?: typeof createLatencyRecorder;
   /** Override createProcessMonitor. */
   createProcessMonitor?: typeof createProcessMonitor;
   /** Override createGatewayServer. */
@@ -258,9 +253,8 @@ export interface FoundationHandle {
   skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
   memoryLogger: ReturnType<typeof setupLogging>["memoryLogger"];
   daemonVersion: string;
-  // Observability (8 fields)
+  // Observability (7 fields)
   tokenTracker: ReturnType<typeof setupObservability>["tokenTracker"];
-  latencyRecorder: ReturnType<typeof setupObservability>["latencyRecorder"];
   sharedCostTracker: ReturnType<typeof setupObservability>["sharedCostTracker"];
   diagnosticCollector: ReturnType<typeof setupObservability>["diagnosticCollector"];
   billingEstimator: ReturnType<typeof setupObservability>["billingEstimator"];
