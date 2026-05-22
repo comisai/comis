@@ -26,6 +26,10 @@ afterEach(() => {
 
 /**
  * Helper to create a Hono app with rate limiting for testing.
+ *
+ * The synthetic auth middleware that set clientId from a query param has been
+ * deleted along with the dead `c.get("clientId")` derivation in the rate
+ * limiter; tests drive key variation through `mockGetConnInfo` instead.
  */
 function createTestApp(
   maxRequests: number,
@@ -34,15 +38,6 @@ function createTestApp(
   logger?: { warn(obj: Record<string, unknown>, msg: string): void },
 ) {
   const app = new Hono();
-
-  // Simulated auth middleware: set clientId from query param
-  app.use("*", async (c, next) => {
-    const clientId = c.req.query("clientId");
-    if (clientId) {
-      c.set("clientId", clientId);
-    }
-    await next();
-  });
 
   // Apply rate limiter
   app.use("*", createRateLimiter({ windowMs, maxRequests, trustedProxies }, logger));
@@ -55,27 +50,29 @@ function createTestApp(
 
 describe("createRateLimiter", () => {
   it("allows requests under the limit", async () => {
+    mockGetConnInfo.mockReturnValue({ remote: { address: "10.0.0.1" } });
     const app = createTestApp(5);
 
-    const res = await app.request("/rpc?clientId=client-a", { method: "POST" });
+    const res = await app.request("/rpc", { method: "POST" });
     expect(res.status).toBe(200);
 
     const body = await res.json();
     expect(body.result).toBe("ok");
   });
 
-  it("returns 429 when limit is exceeded", async () => {
+  it("returns 429 when limit is exceeded for a single IP", async () => {
+    mockGetConnInfo.mockReturnValue({ remote: { address: "10.0.0.2" } });
     const app = createTestApp(2);
 
     // First two requests should succeed
-    const res1 = await app.request("/rpc?clientId=flood-client", { method: "POST" });
+    const res1 = await app.request("/rpc", { method: "POST" });
     expect(res1.status).toBe(200);
 
-    const res2 = await app.request("/rpc?clientId=flood-client", { method: "POST" });
+    const res2 = await app.request("/rpc", { method: "POST" });
     expect(res2.status).toBe(200);
 
     // Third request should be rate limited
-    const res3 = await app.request("/rpc?clientId=flood-client", { method: "POST" });
+    const res3 = await app.request("/rpc", { method: "POST" });
     expect(res3.status).toBe(429);
 
     const body = await res3.json();
@@ -85,26 +82,28 @@ describe("createRateLimiter", () => {
     expect(body.id).toBeNull();
   });
 
-  it("tracks different clients independently", async () => {
+  it("tracks different IPs independently", async () => {
     const app = createTestApp(1);
 
-    // Client A uses their 1 allowed request
-    const resA = await app.request("/rpc?clientId=client-x", { method: "POST" });
+    // IP A uses their 1 allowed request
+    mockGetConnInfo.mockReturnValue({ remote: { address: "192.168.1.10" } });
+    const resA = await app.request("/rpc", { method: "POST" });
     expect(resA.status).toBe(200);
 
-    // Client A is now rate limited
-    const resA2 = await app.request("/rpc?clientId=client-x", { method: "POST" });
+    // IP A is now rate limited
+    const resA2 = await app.request("/rpc", { method: "POST" });
     expect(resA2.status).toBe(429);
 
-    // Client B should still have their own quota
-    const resB = await app.request("/rpc?clientId=client-y", { method: "POST" });
+    // IP B should still have their own quota
+    mockGetConnInfo.mockReturnValue({ remote: { address: "192.168.1.20" } });
+    const resB = await app.request("/rpc", { method: "POST" });
     expect(resB.status).toBe(200);
   });
 
-  it("falls back to anonymous key when no clientId", async () => {
+  it("falls back to 'unknown' key when no IP is resolvable", async () => {
+    // mockGetConnInfo throws by default (see afterEach); no x-real-ip header.
     const app = createTestApp(1);
 
-    // No clientId — falls back to anonymous/IP
     const res1 = await app.request("/rpc", { method: "POST" });
     expect(res1.status).toBe(200);
 
@@ -113,20 +112,21 @@ describe("createRateLimiter", () => {
   });
 
   it("logs WARN when rate limit is exceeded with logger provided", async () => {
+    mockGetConnInfo.mockReturnValue({ remote: { address: "10.0.0.3" } });
     const mockLogger = { warn: vi.fn() };
     const app = createTestApp(1, 60_000, undefined, mockLogger);
 
     // First request succeeds
-    await app.request("/rpc?clientId=flood-test", { method: "POST" });
+    await app.request("/rpc", { method: "POST" });
 
     // Second request triggers rate limit
-    const res = await app.request("/rpc?clientId=flood-test", { method: "POST" });
+    const res = await app.request("/rpc", { method: "POST" });
     expect(res.status).toBe(429);
 
     // Verify logger.warn was called with expected fields
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
-        clientIp: expect.any(String),
+        clientIp: "10.0.0.3",
         requestCount: 1,
         hint: expect.stringContaining("1 requests"),
         errorKind: "resource",
@@ -136,13 +136,14 @@ describe("createRateLimiter", () => {
   });
 
   it("does not throw when rate limit exceeded without logger", async () => {
+    mockGetConnInfo.mockReturnValue({ remote: { address: "10.0.0.4" } });
     const app = createTestApp(1);
 
     // First request succeeds
-    await app.request("/rpc?clientId=no-logger-test", { method: "POST" });
+    await app.request("/rpc", { method: "POST" });
 
     // Second request triggers rate limit — should not throw despite no logger
-    const res = await app.request("/rpc?clientId=no-logger-test", { method: "POST" });
+    const res = await app.request("/rpc", { method: "POST" });
     expect(res.status).toBe(429);
 
     const body = await res.json();
