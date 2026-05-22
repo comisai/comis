@@ -291,9 +291,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
           timestamp:
             typeof msg.timestamp === "number"
               ? msg.timestamp
-              : typeof msg.created_at === "string"
-                ? Date.parse(msg.created_at) || systemNowMs()
-                : systemNowMs(),
+              : systemNowMs(),
         }),
       );
 
