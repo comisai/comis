@@ -31,15 +31,9 @@
  */
 
 import { appendRegularFile } from "../shared/fs-safe.js";
-import { safeJsonStringify } from "../shared/safe-json-stringify.js";
-import { sanitizeForPersistence } from "../redact/redact-secrets.js";
 import { systemDateFrom, systemNowMs } from "@comis/core";
 
-import {
-  redactConfigAuditArgv,
-  CONFIG_AUDIT_ARGV_CAP,
-} from "./argv-redactor.js";
-import { emitSerializationErrorSentinel } from "./serialization-sentinel.js";
+import { encodeAuditRecord } from "./encode-record.js";
 import { detectSuspicious } from "./suspicious.js";
 import {
   DEFAULT_KEEP_ROTATED,
@@ -237,33 +231,6 @@ export function createConfigObserveAuditRecord(
 }
 
 /**
- * Serialize the observe record for on-disk persistence. Mirrors the
- * write-side `encodeRecord` shape: argv goes through the dedicated
- * `redactConfigAuditArgv`, the rest of the record goes through
- * `sanitizeForPersistence`, then `safeJsonStringify` produces the
- * final line. The two redactors are NOT composed — see `append.ts`
- * encodeRecord header for the rationale.
- */
-function encodeObserveRecord(record: ConfigObserveAuditRecord): string {
-  const argvRedacted = redactConfigAuditArgv(record.argv).slice(
-    0,
-    CONFIG_AUDIT_ARGV_CAP,
-  );
-  const withoutArgv: Record<string, unknown> = { ...record };
-  delete (withoutArgv as { argv?: unknown }).argv;
-  const sanitized = sanitizeForPersistence(withoutArgv) as Record<
-    string,
-    unknown
-  >;
-  sanitized.argv = argvRedacted;
-  const json = safeJsonStringify(sanitized);
-  if (json === undefined) {
-    return emitSerializationErrorSentinel();
-  }
-  return json + "\n";
-}
-
-/**
  * Append a `ConfigObserveAuditRecord` to the daemon-wide audit log.
  * Uses the same parent-dir + rotation invariants the write-side does
  * (via the exported helpers in `append.ts`).
@@ -279,7 +246,7 @@ export async function appendConfigObserveAuditRecord(
   const keepRotated = params.keepRotated ?? DEFAULT_KEEP_ROTATED;
 
   try {
-    const encoded = encodeObserveRecord(params.record);
+    const encoded = encodeAuditRecord(params.record as unknown as Record<string, unknown>);
     const bytes = Buffer.byteLength(encoded, "utf8");
 
     ensureConfigAuditParentDir(params.filePath);
