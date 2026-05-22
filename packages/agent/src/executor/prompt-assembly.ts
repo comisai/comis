@@ -26,6 +26,7 @@ import type {
   DeliveryMirrorPort,
   ModelOperationType,
   ToolCapabilityPort,
+  TrustLevel,
 } from "@comis/core";
 import {
   wrapExternalContent,
@@ -646,7 +647,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
       if (searchResults.ok && searchResults.value.length > 0) {
         // Post-filter by allowed trust levels
-        const allowedTrustLevels = new Set<import("@comis/core").TrustLevel>(config.rag.includeTrustLevels);
+        const allowedTrustLevels = new Set<TrustLevel>(config.rag.includeTrustLevels);
         const filtered = searchResults.value.filter(r => allowedTrustLevels.has(r.entry.trustLevel));
 
         // Deduplicate near-identical content

@@ -304,7 +304,6 @@ import { createCapabilityPortStub } from "../../../../core/src/ports/__test-help
 import { repairOrphanedMessages } from "../../session/orphaned-message-repair.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../../bootstrap/index.js";
-import { createRagRetriever } from "../../rag/rag-retriever.js";
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createAgentSession } from "@earendil-works/pi-coding-agent";
@@ -1843,7 +1842,8 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-rag");
 
-      // Task 229: Now uses hybrid memory injector instead of createRagRetriever
+      // RAG retrieval now resolves results via MemoryPort.search and the
+      // hybrid memory injector (createRagRetriever factory removed in Phase 53).
       expect(mockMemoryPort.search).toHaveBeenCalledWith(
         testSessionKey,
         "hello world",

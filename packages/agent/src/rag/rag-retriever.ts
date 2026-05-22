@@ -1,43 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RAG Retriever -- Retrieves relevant memories for system prompt injection.
+ * RAG memory formatters: pure helpers consumed by hybrid-memory-injector
+ * and prompt-assembly. The factory createRagRetriever was removed in
+ * Phase 53; HybridMemoryInjector (createHybridMemoryInjector) is now the
+ * canonical retrieval entry point.
  *
- * Searches long-term memory, filters by trust level, formats with
- * provenance annotations, enforces token budget, and sanitizes content
- * against prompt injection before injection into the LLM system prompt.
+ * @module
  */
 
-import type {
-  MemoryPort,
-  MemorySearchResult,
-  SessionKey,
-  RagConfig,
-  TrustLevel,
-  WrapExternalContentOptions,
-} from "@comis/core";
-import { wrapExternalContent, systemNowMs, systemDateFrom } from "@comis/core";
-import type { ComisLogger } from "@comis/core";
+import type { MemorySearchResult, WrapExternalContentOptions } from "@comis/core";
+import { systemDateFrom, wrapExternalContent } from "@comis/core";
 import { sanitizeToolOutput } from "../safety/tool-output-safety.js";
-
-/**
- * RAG retriever interface -- produces formatted memory sections
- * suitable for system prompt injection.
- */
-export interface RagRetriever {
-  retrieve(query: string, sessionKey: SessionKey, options?: { agentId?: string }): Promise<string[]>;
-}
-
-/**
- * Dependencies for creating a RAG retriever.
- */
-export interface RagRetrieverDeps {
-  memoryPort: MemoryPort;
-  config: RagConfig;
-  /** Optional callback for suspicious content detection in external content. */
-  onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
-  /** Logger for RAG search observability. */
-  logger?: ComisLogger;
-}
 
 /**
  * Format a list of memory search results into a single annotated section.
@@ -125,101 +98,4 @@ export function deduplicateResults(results: MemorySearchResult[]): MemorySearchR
   }
   // Preserve original score order by filtering the input array
   return results.filter((r) => seen.get(r.entry.content.slice(0, 200).trim().toLowerCase()) === r);
-}
-
-/**
- * Create a RAG retriever instance.
- *
- * When disabled (config.enabled = false), retrieve() returns [] immediately.
- * Otherwise, searches memory, filters by trust level, formats with
- * provenance annotations, and enforces character budget.
- *
- * @param deps - Memory port and RAG configuration
- * @returns A RagRetriever instance
- */
-export function createRagRetriever(deps: RagRetrieverDeps): RagRetriever {
-  return {
-    async retrieve(query: string, sessionKey: SessionKey, options?: { agentId?: string }): Promise<string[]> {
-      // Short-circuit when RAG is disabled
-      if (!deps.config.enabled) {
-        return [];
-      }
-
-      const startMs = systemNowMs();
-      deps.logger?.debug(
-        { query: query.slice(0, 100), agentId: options?.agentId },
-        "RAG search started",
-      );
-
-      // Search memory
-      const results = await deps.memoryPort.search(sessionKey, query, {
-        limit: deps.config.maxResults,
-        minScore: deps.config.minScore,
-        agentId: options?.agentId,
-      });
-
-      // Handle search errors gracefully
-      if (!results.ok) {
-        deps.logger?.warn(
-          {
-            err: results.error,
-            query: query.slice(0, 100),
-            agentId: options?.agentId,
-            hint: "Memory search failed; RAG context will be empty for this execution",
-            errorKind: "dependency" as const,
-          },
-          "RAG search error",
-        );
-        return [];
-      }
-
-      // No results found
-      if (results.value.length === 0) {
-        deps.logger?.debug(
-          { resultCount: 0, durationMs: systemNowMs() - startMs, agentId: options?.agentId },
-          "RAG search complete",
-        );
-        return [];
-      }
-
-      // Post-filter by allowed trust levels
-      const allowedTrustLevels = new Set<TrustLevel>(deps.config.includeTrustLevels);
-      const filtered = results.value.filter((r) => allowedTrustLevels.has(r.entry.trustLevel));
-
-      if (filtered.length === 0) {
-        return [];
-      }
-
-      // Deduplicate near-identical content (e.g., repeated cron instructions)
-      const deduped = deduplicateResults(filtered);
-
-      if (deduped.length === 0) {
-        deps.logger?.debug(
-          { resultCount: 0, durationMs: systemNowMs() - startMs, agentId: options?.agentId },
-          "RAG search complete",
-        );
-        return [];
-      }
-
-      deps.logger?.debug(
-        {
-          resultCount: deduped.length,
-          rawCount: results.value.length,
-          filteredCount: filtered.length,
-          durationMs: systemNowMs() - startMs,
-          agentId: options?.agentId,
-        },
-        "RAG search complete",
-      );
-
-      // Format and enforce budget
-      const section = formatMemorySection(deduped, deps.config.maxContextChars, deps.onSuspiciousContent);
-
-      if (section === "") {
-        return [];
-      }
-
-      return [section];
-    },
-  };
 }
