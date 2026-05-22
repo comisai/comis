@@ -229,7 +229,6 @@ describe("setupObsPersistence", () => {
       insertDelivery: vi.fn(),
       insertDiagnostic: vi.fn(),
       insertChannelSnapshot: vi.fn(),
-      queryTokenUsage: vi.fn(),
       queryDelivery: vi.fn(),
       queryDiagnostics: vi.fn(),
       latestChannelSnapshots: vi.fn(),

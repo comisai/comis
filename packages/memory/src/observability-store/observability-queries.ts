@@ -10,7 +10,6 @@
 
 import type Database from "better-sqlite3";
 import {
-  tokenUsageMapper,
   deliveryMapper,
   diagnosticMapper,
   channelSnapshotMapper,
@@ -20,14 +19,11 @@ import {
   hourlyBucketMapper,
   deliveryStatsMapper,
   systemPromptReportMapper,
-  tokenUsageFromRow,
   deliveryFromRow,
   diagnosticFromRow,
   snapshotFromRow,
   systemPromptReportFromRow,
   type ObservabilityStore,
-  type TokenUsageRow,
-  type TokenUsageQueryParams,
   type DeliveryRow,
   type DeliveryQueryParams,
   type DiagnosticRow,
@@ -44,7 +40,6 @@ import {
 /** Shape of the subset of ObservabilityStore implemented by this module. */
 export type ObservabilityQueries = Pick<
   ObservabilityStore,
-  | "queryTokenUsage"
   | "aggregateByProvider"
   | "aggregateByAgent"
   | "aggregateBySession"
@@ -165,38 +160,6 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
   `);
 
   // --- Bound methods ---
-
-  function queryTokenUsage(params?: TokenUsageQueryParams): TokenUsageRow[] {
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-
-    if (params?.sinceMs != null) {
-      conditions.push("timestamp >= ?");
-      values.push(params.sinceMs);
-    }
-    if (params?.agentId != null) {
-      conditions.push("agent_id = ?");
-      values.push(params.agentId);
-    }
-    if (params?.provider != null) {
-      conditions.push("provider = ?");
-      values.push(params.provider);
-    }
-    if (params?.sessionKey != null) {
-      conditions.push("session_key = ?");
-      values.push(params.sessionKey);
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const limit = params?.limit ?? 1000;
-    const sql = `SELECT * FROM obs_token_usage ${where} ORDER BY timestamp DESC LIMIT ?`;
-    values.push(limit);
-
-    const parsed = tokenUsageMapper.parseRows(db.prepare(sql).all(...values));
-    // Degrade-on-validation-error: observability query -> empty result.
-    const rows = parsed.ok ? parsed.value : [];
-    return rows.map(tokenUsageFromRow);
-  }
 
   function aggregateByProvider(sinceMs?: number): ProviderAggregation[] {
     const raw = sinceMs != null
@@ -382,7 +345,6 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
   }
 
   return {
-    queryTokenUsage,
     aggregateByProvider,
     aggregateByAgent,
     aggregateBySession,

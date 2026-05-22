@@ -19,7 +19,6 @@ import { systemNowMs } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
 import {
   DeliveryQueueDbRowSchema,
-  CountProjectionRowSchema,
 } from "./row-schemas.js";
 
 // ---------------------------------------------------------------------------
@@ -30,7 +29,6 @@ type DeliveryQueueDbRow = z.infer<typeof DeliveryQueueDbRowSchema>;
 
 // Row mappers
 const deliveryQueueMapper = createRowMapper(DeliveryQueueDbRowSchema);
-const countProjectionMapper = createRowMapper(CountProjectionRowSchema);
 const statusCountMapper = createRowMapper(
   z.strictObject({ status: z.string(), count: z.number() }),
 );
@@ -139,11 +137,6 @@ export function createSqliteDeliveryQueue(
     UPDATE delivery_queue
     SET status = 'pending', last_error = NULL
     WHERE status = 'in_flight'
-  `);
-
-  const depthStmt = db.prepare(`
-    SELECT COUNT(*) as count FROM delivery_queue
-    WHERE status IN ('pending', 'in_flight')
   `);
 
   // Two distinct statements (no channelType filter vs. with filter) because
@@ -274,20 +267,6 @@ export function createSqliteDeliveryQueue(
       try {
         const result = pruneStmt.run(systemNowMs());
         return Promise.resolve(ok(result.changes));
-      } catch (e) {
-        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
-      }
-    },
-
-    depth(): Promise<Result<number, Error>> {
-      try {
-        const parsed = countProjectionMapper.parseOptionalRow(depthStmt.get());
-        if (!parsed.ok) {
-          return Promise.resolve(
-            err(new Error(`Row validation failed: ${parsed.error.message}`)),
-          );
-        }
-        return Promise.resolve(ok(parsed.value?.count ?? 0));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
       }

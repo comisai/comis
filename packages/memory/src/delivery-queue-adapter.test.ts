@@ -48,6 +48,18 @@ describe("SqliteDeliveryQueueAdapter", () => {
     queue = createSqliteDeliveryQueue(db, eventBus);
   });
 
+  /**
+   * Helper that reads active delivery_queue depth via direct SQL. Replaces the
+   * deleted queue.depth() port method (removed in Plan 51.02 PORT-TRIM-06);
+   * the count semantics — pending + in_flight — are preserved verbatim.
+   */
+  function readDepth(): number {
+    const row = db
+      .prepare("SELECT COUNT(*) as count FROM delivery_queue WHERE status IN ('pending', 'in_flight')")
+      .get() as { count: number };
+    return row.count;
+  }
+
   // -----------------------------------------------------------------------
   // enqueue
   // -----------------------------------------------------------------------
@@ -65,11 +77,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
 
     it("increments depth to 1 after enqueue", async () => {
       await queue.enqueue(makeEntry());
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(1);
-      }
+      expect(readDepth()).toBe(1);
     });
 
     it("persists all fields correctly", async () => {
@@ -114,11 +122,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
       const ackResult = await queue.ack(enqResult.value, "msg-telegram-42");
       expect(ackResult.ok).toBe(true);
 
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(0);
-      }
+      expect(readDepth()).toBe(0);
     });
   });
 
@@ -153,11 +157,8 @@ describe("SqliteDeliveryQueueAdapter", () => {
 
       await queue.nack(enqResult.value, "err", now + 60_000);
 
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(1);
-      }
+      // Depth should be 1 (nacked still in pending)
+      expect(readDepth()).toBe(1);
     });
   });
 
@@ -185,11 +186,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
       expect(row.last_error).toBe("permanent: channel not found");
 
       // Depth should be 0 (failed entries excluded)
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(0);
-      }
+      expect(readDepth()).toBe(0);
     });
   });
 
@@ -254,11 +251,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
         expect(result.value).toBe(1);
       }
 
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(0);
-      }
+      expect(readDepth()).toBe(0);
     });
 
     it("does NOT prune delivered entries even if expired", async () => {
@@ -290,37 +283,9 @@ describe("SqliteDeliveryQueueAdapter", () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // depth
-  // -----------------------------------------------------------------------
-
-  describe("depth", () => {
-    it("counts pending and in_flight entries only", async () => {
-      // 2 pending entries
-      await queue.enqueue(makeEntry({ text: "a" }));
-      await queue.enqueue(makeEntry({ text: "b" }));
-      // 1 entry acked (delivered)
-      const ackResult = await queue.enqueue(makeEntry({ text: "c" }));
-      if (ackResult.ok) await queue.ack(ackResult.value, "msg-c");
-      // 1 entry failed
-      const failResult = await queue.enqueue(makeEntry({ text: "d" }));
-      if (failResult.ok) await queue.fail(failResult.value, "permanent");
-
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(2); // only the 2 pending entries
-      }
-    });
-
-    it("returns 0 on empty queue", async () => {
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(0);
-      }
-    });
-  });
+  // NOTE: describe("depth") was removed in Plan 51.02 PORT-TRIM-06 along with
+  // the queue.depth() port method. The status-counting semantics live on
+  // queue.statusCounts() (pending + in_flight equivalents).
 
   // -----------------------------------------------------------------------
   // enqueue eventBus emission (SPEC-R5)

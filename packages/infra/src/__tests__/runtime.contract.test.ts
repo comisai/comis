@@ -60,14 +60,9 @@ describe("createSystemEnv contract", () => {
     expect(e.get("MISSING")).toBeUndefined();
   });
 
-  it("snapshot([…]) returns a frozen readonly record with requested keys", () => {
-    const e = createSystemEnv({ A: "1", B: undefined });
-    const snap = e.snapshot(["A", "B", "C"]);
-    expect(Object.isFrozen(snap)).toBe(true);
-    expect(snap["A"]).toBe("1");
-    expect(snap["B"]).toBeUndefined();
-    expect(snap["C"]).toBeUndefined();
-  });
+  // NOTE: snapshot([…]) contract test was removed in Plan 51.02 PORT-TRIM-08
+  // along with EnvPort.snapshot. The get(key) contract above covers the
+  // surviving env-read surface.
 
   it("default source is process.env when no source argument passed", () => {
     // We don't assert specific keys — just that the adapter doesn't throw

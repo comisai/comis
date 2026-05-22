@@ -571,7 +571,7 @@ describe("clock / env / timer ports", () => {
     ).toMatch(/export\s+type\s+\{\s*ClockPort\s*\}\s+from\s+"\.\/clock\.js"/);
   });
 
-  it("EnvPort interface lives in core/src/ports/env.ts with get() + snapshot() and is re-exported from index.ts", () => {
+  it("EnvPort interface lives in core/src/ports/env.ts with get() and is re-exported from index.ts", () => {
     const portFile = resolve(PORTS_DIR_P39, "env.ts");
     expect(
       existsSync(portFile),
@@ -585,13 +585,12 @@ describe("clock / env / timer ports", () => {
     expect(source, "EnvPort must declare get(key: string)").toMatch(
       /\bget\s*\(\s*key\s*:\s*string\s*\)/,
     );
-    expect(source, "EnvPort.snapshot must accept readonly string[]").toMatch(
-      /\bsnapshot\s*\(\s*keys\s*:\s*readonly\s+string\[\]\s*\)/,
+    // NOTE: EnvPort.snapshot was removed in Plan 51.02 PORT-TRIM-08
+    // (zero production callers; JSDoc admitted "useful for config-bootstrap paths"
+    // but the method was never wired). Only get() survives.
+    expect(source, "EnvPort.snapshot must NOT appear in env.ts").not.toMatch(
+      /\bsnapshot\s*\(/,
     );
-    expect(
-      source,
-      "EnvPort.snapshot must return Readonly<Record<string, string | undefined>>",
-    ).toMatch(/Readonly<Record<string,\s*string\s*\|\s*undefined>>/);
 
     const indexSource = readFileSync(INDEX_PATH_P39, "utf8");
     expect(

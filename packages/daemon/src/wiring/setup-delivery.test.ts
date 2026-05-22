@@ -865,9 +865,11 @@ describe("setupDeliveryQueue", () => {
       }
 
       // Sanity: queue depth = 200 (pending + in_flight)
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) expect(depth.value).toBe(200);
+      // Direct SQL read; queue.depth() was removed in Plan 51.02 PORT-TRIM-06
+      const depthRow = db
+        .prepare("SELECT COUNT(*) as count FROM delivery_queue WHERE status IN ('pending', 'in_flight')")
+        .get() as { count: number };
+      expect(depthRow.count).toBe(200);
 
       // Spy adapter that records every entryId it was asked to send.
       const sentIds: string[] = [];

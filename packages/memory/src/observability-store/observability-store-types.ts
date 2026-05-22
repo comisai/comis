@@ -205,15 +205,6 @@ export interface ResetResult {
 /** Alias for ResetResult (same shape). */
 export type PruneResult = ResetResult;
 
-/** Query parameters for token usage queries. */
-export interface TokenUsageQueryParams {
-  sinceMs?: number;
-  agentId?: string;
-  provider?: string;
-  sessionKey?: string;
-  limit?: number;
-}
-
 /** Query parameters for delivery queries. */
 export interface DeliveryQueryParams {
   sinceMs?: number;
@@ -235,7 +226,6 @@ export interface DiagnosticQueryParams {
 export interface ObservabilityStore extends CacheStatsQueriesSlice {
   // Token usage
   insertTokenUsage(entry: TokenUsageRow): void;
-  queryTokenUsage(params?: TokenUsageQueryParams): TokenUsageRow[];
   aggregateByProvider(sinceMs?: number): ProviderAggregation[];
   aggregateByAgent(sinceMs?: number): AgentAggregation[];
   aggregateBySession(sessionKey: string, sinceMs?: number): SessionAggregation;
