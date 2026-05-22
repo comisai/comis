@@ -92,13 +92,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL;
   `);
 
-  // --- Migration: add agent_id column for multi-agent memory isolation ---
-  try {
-    db.exec(`ALTER TABLE memories ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'default'`);
-  } catch {
-    // Column already exists -- safe to ignore (SQLite throws on duplicate ADD COLUMN)
-  }
-
   // Index for agent-scoped queries
   db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agent_id);`);
 
@@ -203,22 +196,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_obs_token_provider ON obs_token_usage(provider, timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_token_session ON obs_token_usage(session_key, timestamp);
   `);
-
-  // --- Migration: add cache cost columns to obs_token_usage ---
-  try {
-    db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cost_cache_read REAL NOT NULL DEFAULT 0`);
-  } catch { /* Column already exists */ }
-  try {
-    db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cost_cache_write REAL NOT NULL DEFAULT 0`);
-  } catch { /* Column already exists */ }
-  try {
-    db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cache_saved REAL NOT NULL DEFAULT 0`);
-  } catch { /* Column already exists */ }
-
-  // --- Migration: add cache_retention column to obs_token_usage ---
-  try {
-    db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cache_retention TEXT DEFAULT NULL`);
-  } catch { /* Column already exists */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS obs_delivery (
