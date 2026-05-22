@@ -3,11 +3,11 @@
  * Agent Routing Resolution Integration Tests
  *
  * Tests resolveAgent() pure function specificity scoring and
- * createMessageRouter() stateful factory via direct package API imports.
+ * createMessageRouter() factory via direct package API imports.
  *
- * Covers ROUTE-01 through ROUTE-09: specificity scoring, pre-sorted resolve,
- * updateConfig live reconfiguration, multi-field AND logic, binding field
- * mapping (peerId -> senderId), default agent fallback, per-platform routing,
+ * Covers ROUTE-01, ROUTE-02, and ROUTE-04 through ROUTE-09: specificity
+ * scoring, pre-sorted resolve, multi-field AND logic, binding field mapping
+ * (peerId -> senderId), default agent fallback, per-platform routing,
  * per-user VIP routing, and compound guildId+channelType routing.
  *
  * No daemon needed -- all tests use direct API imports.
@@ -164,70 +164,6 @@ describe("ROUTE-02: createMessageRouter() factory stateful resolve with pre-sort
     router.resolve(msg());
 
     expect(router).toBe(ref1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// ROUTE-03: updateConfig() live reconfiguration without router recreation
-// ---------------------------------------------------------------------------
-
-describe("ROUTE-03: updateConfig() live reconfiguration without router recreation", () => {
-  it("ROUTE-03: updateConfig changes binding from agent-A to agent-B", () => {
-    const router = createMessageRouter(
-      routingConfig({
-        bindings: [{ channelType: "echo", agentId: "agent-A" }],
-      }),
-    );
-
-    expect(router.resolve(msg({ channelType: "echo" }))).toBe("agent-A");
-
-    router.updateConfig(
-      routingConfig({
-        bindings: [{ channelType: "echo", agentId: "agent-B" }],
-      }),
-    );
-
-    expect(router.resolve(msg({ channelType: "echo" }))).toBe("agent-B");
-  });
-
-  it("ROUTE-03: updateConfig with empty bindings falls back to defaultAgentId", () => {
-    const router = createMessageRouter(
-      routingConfig({
-        bindings: [{ channelType: "echo", agentId: "agent-A" }],
-      }),
-    );
-
-    expect(router.resolve(msg({ channelType: "echo" }))).toBe("agent-A");
-
-    router.updateConfig(routingConfig({ bindings: [] }));
-
-    expect(router.resolve(msg({ channelType: "echo" }))).toBe("default-agent");
-  });
-
-  it("ROUTE-03: updateConfig changing defaultAgentId uses new default", () => {
-    const router = createMessageRouter(routingConfig({ bindings: [] }));
-
-    expect(router.resolve(msg())).toBe("default-agent");
-
-    router.updateConfig(
-      routingConfig({ defaultAgentId: "new-default", bindings: [] }),
-    );
-
-    expect(router.resolve(msg())).toBe("new-default");
-  });
-
-  it("ROUTE-03: same router instance after updateConfig (no recreation)", () => {
-    const router = createMessageRouter(routingConfig({ bindings: [] }));
-    const ref = router;
-
-    router.updateConfig(
-      routingConfig({
-        bindings: [{ channelType: "echo", agentId: "updated" }],
-      }),
-    );
-
-    expect(router).toBe(ref);
-    expect(router.resolve(msg({ channelType: "echo" }))).toBe("updated");
   });
 });
 

@@ -8,7 +8,7 @@
  * resolve by config order (first match wins).
  *
  * Pure function `resolveAgent()` for direct use; `createMessageRouter()`
- * factory for stateful usage with `updateConfig()`.
+ * factory wraps a pre-sorted binding list around the pure function.
  *
  * @module
  */
@@ -31,13 +31,11 @@ export interface RoutableMessage {
 }
 
 /**
- * Stateful message router with live config updates.
+ * Message router. Pre-sorts bindings once at construction; immutable after that.
  */
 export interface MessageRouter {
   /** Resolve which agent should handle a message. */
   resolve(msg: RoutableMessage): string;
-  /** Update routing config without recreating the router. */
-  updateConfig(config: RoutingConfig): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,14 +130,14 @@ export function resolveAgent(msg: RoutableMessage, config: RoutingConfig): strin
 }
 
 /**
- * Factory: create a stateful MessageRouter with live config updates.
+ * Factory: create a MessageRouter with pre-sorted bindings.
  *
- * Pre-sorts bindings at creation time (and on each updateConfig call)
- * so that resolve() only iterates the sorted list.
+ * Pre-sorts bindings at creation time so that resolve() only iterates
+ * the sorted list.
  */
 export function createMessageRouter(initialConfig: RoutingConfig): MessageRouter {
-  let sortedBindings = sortBySpecificity(initialConfig.bindings);
-  let defaultAgentId = initialConfig.defaultAgentId;
+  const sortedBindings = sortBySpecificity(initialConfig.bindings);
+  const defaultAgentId = initialConfig.defaultAgentId;
 
   return {
     resolve(msg: RoutableMessage): string {
@@ -149,11 +147,6 @@ export function createMessageRouter(initialConfig: RoutingConfig): MessageRouter
         }
       }
       return defaultAgentId;
-    },
-
-    updateConfig(config: RoutingConfig): void {
-      sortedBindings = sortBySpecificity(config.bindings);
-      defaultAgentId = config.defaultAgentId;
     },
   };
 }
