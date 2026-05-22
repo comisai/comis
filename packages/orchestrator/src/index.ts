@@ -10,10 +10,9 @@
 
 // Inbound pipeline
 export * from "./inbound/inbound-pipeline.js";
-export * from "./inbound/inbound-route.js";
+export * from "./inbound/setup-and-route.js";
 export * from "./inbound/resolve-and-preprocess.js";
 export * from "./inbound/inbound-gate.js";
-export * from "./inbound/inbound-setup.js";
 
 // Execution coordination — execution-deliver and execution-policy travel
 // with execution-pipeline (same ownership bucket).

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Branch-gap tests for routeInboundMessage (inbound-route.ts).
+ * Branch coverage for setup-and-route.ts.
  *
- * The existing inbound-route.test.ts is a source-grep gate only. This file
- * exercises the runtime branches: debounce buffering, group history
- * injection, steer+followup routing, queue-mediated path, direct execution
- * fallback, and lane assignment.
+ * Merged from inbound-setup-branches.test.ts (typing-mode matrix) and
+ * inbound-route-branches.test.ts (routing matrix) as part of Phase 59
+ * REFACTOR-02 Plan 59-05. All pre-collapse assertions preserved verbatim;
+ * the only changes are call-signature adjustments to invoke the merged
+ * setupAndRoute() instead of the former setupInboundExecution() /
+ * routeInboundMessage() pair.
  *
  * @module
  */
@@ -19,11 +21,12 @@ import type {
 import type { AgentExecutor } from "@comis/agent";
 import { ok } from "@comis/shared";
 
-import { routeInboundMessage } from "./inbound-route.js";
-import type { RouteDeps } from "./inbound-route.js";
+import { setupAndRoute, type SetupAndRouteDeps } from "./setup-and-route.js";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers (union of the two source-test helper sets; the route-side adapter
+// + msg + sessionKey factories are the more complete versions and subsume
+// the setup-side equivalents.)
 // ---------------------------------------------------------------------------
 
 function makeAdapter(channelType = "telegram"): ChannelPort {
@@ -53,7 +56,7 @@ function makeMsg(overrides?: Partial<NormalizedMessage>): NormalizedMessage {
     text: "hello",
     timestamp: Date.now(),
     attachments: [],
-    metadata: { telegramMessageId: "42", telegramChatType: "private" },
+    metadata: { telegramMessageId: 42, telegramChatType: "private" },
     ...overrides,
   };
 }
@@ -99,7 +102,7 @@ function makeExecutor(): AgentExecutor {
   } as unknown as AgentExecutor;
 }
 
-function makeMinimalDeps(overrides?: Partial<RouteDeps>): RouteDeps {
+function makeMinimalDeps(overrides?: Partial<SetupAndRouteDeps>): SetupAndRouteDeps {
   const eventBus = {
     emit: vi.fn(() => true),
     on: vi.fn().mockReturnThis(),
@@ -126,19 +129,276 @@ function makeMinimalDeps(overrides?: Partial<RouteDeps>): RouteDeps {
     deliveryService: makeFakeDeliveryService(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ...(overrides as any),
-  } as RouteDeps;
+  } as SetupAndRouteDeps;
 }
+
+// ===========================================================================
+// SETUP-SIDE: Typing controller branches
+// (preserved verbatim from inbound-setup-branches.test.ts, with calls
+// retargeted to setupAndRoute and the route-side deps stubbed via the
+// shared makeMinimalDeps factory above)
+// ===========================================================================
+
+// "setupInboundExecution ack reaction dispatch" describe block deleted in
+// Plan 56-06: ackReactionConfig deps slot removed from ChannelManagerDeps /
+// InboundPipelineDeps / SetupDeps. The ack-reaction-fire-and-forget code path
+// in inbound-setup.ts is gone; lifecycle reactor handles ack reactions when
+// enabled (production absent-mode).
+
+describe("setupAndRoute typing controller (formerly setupInboundExecution)", () => {
+  it("forces typingMode 'never' on IRC channel even when streamingConfig default is thinking", async () => {
+    // Pass no streamingConfig — resolveStreamingConfig falls back to typingMode: "thinking" default
+    const eventBus = {
+      emit: vi.fn(() => true),
+      on: vi.fn().mockReturnThis(),
+      off: vi.fn().mockReturnThis(),
+      once: vi.fn().mockReturnThis(),
+      removeAllListeners: vi.fn().mockReturnThis(),
+      listenerCount: vi.fn(() => 0),
+      setMaxListeners: vi.fn().mockReturnThis(),
+    };
+    const deps = makeMinimalDeps({ eventBus: eventBus as never });
+    const adapter = makeAdapter("irc");
+
+    await setupAndRoute(
+      deps,
+      adapter,
+      makeMsg({ channelType: "irc" }),
+      makeMsg({ channelType: "irc" }),
+      makeSessionKey(),
+      "agent-1",
+      makeExecutor(),
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+    );
+
+    // Typing controller never started -> no typing:started event emitted
+    const typingEmits = eventBus.emit.mock.calls.filter(
+      (call) => call[0] === "typing:started",
+    );
+    expect(typingEmits.length).toBe(0);
+  });
+
+  it("forces typingMode 'never' on Echo channel even when streamingConfig default is thinking", async () => {
+    const eventBus = {
+      emit: vi.fn(() => true),
+      on: vi.fn().mockReturnThis(),
+      off: vi.fn().mockReturnThis(),
+      once: vi.fn().mockReturnThis(),
+      removeAllListeners: vi.fn().mockReturnThis(),
+      listenerCount: vi.fn(() => 0),
+      setMaxListeners: vi.fn().mockReturnThis(),
+    };
+    const deps = makeMinimalDeps({ eventBus: eventBus as never });
+    const adapter = makeAdapter("echo");
+
+    await setupAndRoute(
+      deps,
+      adapter,
+      makeMsg({ channelType: "echo" }),
+      makeMsg({ channelType: "echo" }),
+      makeSessionKey(),
+      "agent-1",
+      makeExecutor(),
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+    );
+
+    const typingEmits = eventBus.emit.mock.calls.filter(
+      (call) => call[0] === "typing:started",
+    );
+    expect(typingEmits.length).toBe(0);
+  });
+
+  it("suppresses typing controller on heartbeat-originated messages", async () => {
+    const eventBus = {
+      emit: vi.fn(() => true),
+      on: vi.fn().mockReturnThis(),
+      off: vi.fn().mockReturnThis(),
+      once: vi.fn().mockReturnThis(),
+      removeAllListeners: vi.fn().mockReturnThis(),
+      listenerCount: vi.fn(() => 0),
+      setMaxListeners: vi.fn().mockReturnThis(),
+    };
+    const deps = makeMinimalDeps({ eventBus: eventBus as never });
+    const adapter = makeAdapter("telegram");
+
+    await setupAndRoute(
+      deps,
+      adapter,
+      makeMsg({ metadata: { isHeartbeat: true } }),
+      makeMsg({ metadata: { isHeartbeat: true } }),
+      makeSessionKey(),
+      "agent-1",
+      makeExecutor(),
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+    );
+
+    const typingEmits = eventBus.emit.mock.calls.filter(
+      (call) => call[0] === "typing:started",
+    );
+    expect(typingEmits.length).toBe(0);
+  });
+
+  it("starts typing immediately when typingMode is 'instant'", async () => {
+    const eventBus = {
+      emit: vi.fn(() => true),
+      on: vi.fn().mockReturnThis(),
+      off: vi.fn().mockReturnThis(),
+      once: vi.fn().mockReturnThis(),
+      removeAllListeners: vi.fn().mockReturnThis(),
+      listenerCount: vi.fn(() => 0),
+      setMaxListeners: vi.fn().mockReturnThis(),
+    };
+    // Stub commandQueue with no-op enqueue so routing short-circuits at the
+    // queue-mediated path; the setup-side typing assertion is what matters here.
+    const noopEnqueue = vi.fn(async () => ok(undefined));
+    const deps = makeMinimalDeps({
+      eventBus: eventBus as never,
+      commandQueue: { enqueue: noopEnqueue } as never,
+      streamingConfig: {
+        defaultMode: "instant",
+        perChannel: {
+          telegram: {
+            typingMode: "instant",
+            typingRefreshMs: 4000,
+            typingCircuitBreakerThreshold: 3,
+            typingTtlMs: 30000,
+          },
+        },
+      } as never,
+    });
+    const adapter = makeAdapter("telegram");
+
+    await setupAndRoute(
+      deps,
+      adapter,
+      makeMsg(),
+      makeMsg(),
+      makeSessionKey(),
+      "agent-1",
+      makeExecutor(),
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+    );
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "typing:started",
+      expect.objectContaining({ mode: "instant" }),
+    );
+  });
+
+  it("suppresses typing in group chat when bot is not mentioned", async () => {
+    const eventBus = {
+      emit: vi.fn(() => true),
+      on: vi.fn().mockReturnThis(),
+      off: vi.fn().mockReturnThis(),
+      once: vi.fn().mockReturnThis(),
+      removeAllListeners: vi.fn().mockReturnThis(),
+      listenerCount: vi.fn(() => 0),
+      setMaxListeners: vi.fn().mockReturnThis(),
+    };
+    const deps = makeMinimalDeps({ eventBus: eventBus as never });
+    const adapter = makeAdapter("telegram");
+
+    await setupAndRoute(
+      deps,
+      adapter,
+      makeMsg({ metadata: { telegramChatType: "group", isBotMentioned: false } }),
+      makeMsg({ metadata: { telegramChatType: "group", isBotMentioned: false } }),
+      makeSessionKey(),
+      "agent-1",
+      makeExecutor(),
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+    );
+
+    const typingEmits = eventBus.emit.mock.calls.filter(
+      (call) => call[0] === "typing:started",
+    );
+    expect(typingEmits.length).toBe(0);
+  });
+
+  it("enables typing in group chat when bot is mentioned (instant mode emits typing:started)", async () => {
+    const eventBus = {
+      emit: vi.fn(() => true),
+      on: vi.fn().mockReturnThis(),
+      off: vi.fn().mockReturnThis(),
+      once: vi.fn().mockReturnThis(),
+      removeAllListeners: vi.fn().mockReturnThis(),
+      listenerCount: vi.fn(() => 0),
+      setMaxListeners: vi.fn().mockReturnThis(),
+    };
+    // Stub commandQueue with no-op enqueue so routing short-circuits at the
+    // queue-mediated path; the setup-side typing assertion is what matters here.
+    const noopEnqueue = vi.fn(async () => ok(undefined));
+    const deps = makeMinimalDeps({
+      eventBus: eventBus as never,
+      commandQueue: { enqueue: noopEnqueue } as never,
+      streamingConfig: {
+        defaultMode: "instant",
+        perChannel: {
+          telegram: {
+            typingMode: "instant",
+            typingRefreshMs: 4000,
+            typingCircuitBreakerThreshold: 3,
+            typingTtlMs: 30000,
+          },
+        },
+      } as never,
+    });
+    const adapter = makeAdapter("telegram");
+
+    await setupAndRoute(
+      deps,
+      adapter,
+      makeMsg({
+        metadata: { telegramChatType: "group", isBotMentioned: true },
+      }),
+      makeMsg({
+        metadata: { telegramChatType: "group", isBotMentioned: true },
+      }),
+      makeSessionKey(),
+      "agent-1",
+      makeExecutor(),
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+    );
+
+    // Mentioned in group + instant mode -> typing:started should be emitted
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "typing:started",
+      expect.objectContaining({ mode: "instant" }),
+    );
+  });
+});
+
+// ===========================================================================
+// ROUTE-SIDE: Steer + follow-up routing branches
+// (preserved verbatim from inbound-route-branches.test.ts, with calls
+// retargeted to setupAndRoute; setup-side deps default to undefined
+// streamingConfig so typing path is a no-op for these assertions)
+// ===========================================================================
 
 // "routeInboundMessage debounce buffer gate" + "routeInboundMessage group history
 // injection" describe blocks deleted in Plan 56-06: debounceBuffer +
 // groupHistoryBuffer + sessionLabelStore deps slots removed. Production absent-mode
 // is direct routing through CommandQueue without coalescing or history injection.
 
-// ---------------------------------------------------------------------------
-// Steer + follow-up routing — sessionResolver branch matrix
-// ---------------------------------------------------------------------------
-
-describe("routeInboundMessage steer+followup routing", () => {
+describe("setupAndRoute steer+followup routing (formerly routeInboundMessage)", () => {
   function makeRunHandle(
     overrides?: Partial<{
       isStreaming: boolean;
@@ -200,7 +460,7 @@ describe("routeInboundMessage steer+followup routing", () => {
     const adapter = makeAdapter();
     const msg = makeMsg();
 
-    await routeInboundMessage(
+    await setupAndRoute(
       deps,
       adapter,
       msg,
@@ -208,12 +468,9 @@ describe("routeInboundMessage steer+followup routing", () => {
       makeSessionKey(),
       "agent-1",
       makeExecutor(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      {} as any,
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
-      undefined,
       undefined,
     );
 
@@ -245,7 +502,7 @@ describe("routeInboundMessage steer+followup routing", () => {
     const adapter = makeAdapter();
     const msg = makeMsg();
 
-    await routeInboundMessage(
+    await setupAndRoute(
       deps,
       adapter,
       msg,
@@ -253,12 +510,9 @@ describe("routeInboundMessage steer+followup routing", () => {
       makeSessionKey(),
       "agent-1",
       makeExecutor(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      {} as any,
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
-      undefined,
       undefined,
     );
 
@@ -291,7 +545,7 @@ describe("routeInboundMessage steer+followup routing", () => {
     const adapter = makeAdapter();
     const msg = makeMsg();
 
-    await routeInboundMessage(
+    await setupAndRoute(
       deps,
       adapter,
       msg,
@@ -299,12 +553,9 @@ describe("routeInboundMessage steer+followup routing", () => {
       makeSessionKey(),
       "agent-1",
       makeExecutor(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      {} as any,
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
-      undefined,
       undefined,
     );
 
@@ -343,7 +594,7 @@ describe("routeInboundMessage steer+followup routing", () => {
     const adapter = makeAdapter();
     const msg = makeMsg();
 
-    await routeInboundMessage(
+    await setupAndRoute(
       deps,
       adapter,
       msg,
@@ -351,12 +602,9 @@ describe("routeInboundMessage steer+followup routing", () => {
       makeSessionKey(),
       "agent-1",
       makeExecutor(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      {} as any,
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
-      undefined,
       undefined,
     );
 
@@ -389,7 +637,7 @@ describe("routeInboundMessage steer+followup routing", () => {
     const adapter = makeAdapter();
     const msg = makeMsg();
 
-    await routeInboundMessage(
+    await setupAndRoute(
       deps,
       adapter,
       msg,
@@ -397,12 +645,9 @@ describe("routeInboundMessage steer+followup routing", () => {
       makeSessionKey(),
       "agent-1",
       makeExecutor(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      {} as any,
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
-      undefined,
       undefined,
     );
 
@@ -426,7 +671,7 @@ describe("routeInboundMessage steer+followup routing", () => {
     const adapter = makeAdapter();
     const msg = makeMsg();
 
-    await routeInboundMessage(
+    await setupAndRoute(
       deps,
       adapter,
       msg,
@@ -434,12 +679,9 @@ describe("routeInboundMessage steer+followup routing", () => {
       makeSessionKey(),
       "agent-1",
       makeExecutor(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      {} as any,
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
-      undefined,
       undefined,
     );
 
@@ -449,11 +691,11 @@ describe("routeInboundMessage steer+followup routing", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Command queue routing
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// ROUTE-SIDE: Command queue routing
+// ===========================================================================
 
-describe("routeInboundMessage command-queue routing", () => {
+describe("setupAndRoute command-queue routing (formerly routeInboundMessage)", () => {
   it("logs warning when command queue rejects enqueue with overflow policy", async () => {
     const enqueue = vi.fn(async () => ({
       ok: false as const,
@@ -475,7 +717,7 @@ describe("routeInboundMessage command-queue routing", () => {
     const adapter = makeAdapter();
     const msg = makeMsg();
 
-    await routeInboundMessage(
+    await setupAndRoute(
       deps,
       adapter,
       msg,
@@ -483,12 +725,9 @@ describe("routeInboundMessage command-queue routing", () => {
       makeSessionKey(),
       "agent-1",
       makeExecutor(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      {} as any,
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
-      undefined,
       undefined,
     );
 

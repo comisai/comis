@@ -1,44 +1,83 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Inbound Pipeline — Message Routing stage.
+ * Inbound Pipeline Phase 3: Pre-Execution Setup + Message Routing.
  *
- * Handles debounce buffering, group history injection, steer+followup
- * routing (SDK-native), command queue routing, and direct execution
- * fallback.
+ * Merged from inbound-setup.ts + inbound-route.ts as part of Phase 59
+ * REFACTOR-02 (5-phase → 3-phase collapse). Resolves typing lifecycle +
+ * streaming config, then routes through steer/followup, queue, or direct
+ * execution.
  *
  * @module
  */
 
-import type { ChannelPort, NormalizedMessage, SessionKey } from "@comis/core";
+import type {
+  ChannelPort,
+  NormalizedMessage,
+  SessionKey,
+  PerChannelStreamingConfig,
+} from "@comis/core";
 import { formatSessionKey, systemNowMs } from "@comis/core";
 import type { AgentExecutor } from "@comis/agent";
-import type { PerChannelStreamingConfig } from "@comis/core";
 
 import type { InboundPipelineDeps } from "./inbound-pipeline.js";
+import {
+  createTypingController,
+  createTypingLifecycleController,
+  isGroupMessage,
+  isBotMentioned,
+} from "@comis/channels";
 import type {
-  BlockPacer,
+  TypingController,
   TypingLifecycleController,
+  BlockPacer,
   SendOverrideStore,
 } from "@comis/channels";
-import { executeAndDeliver } from "../execution/execution-pipeline.js";
+import { resolveStreamingConfig, executeAndDeliver } from "../execution/execution-pipeline.js";
+
+// ---------------------------------------------------------------------------
+// Per-platform typing refresh defaults
+// ---------------------------------------------------------------------------
+
+/**
+ * Optimal typing indicator refresh intervals per platform.
+ * Each value is set with margin before the platform's natural expiry.
+ * IRC and Echo are intentionally omitted -- they default to typingMode "never".
+ */
+export const PLATFORM_TYPING_DEFAULTS: Record<string, number> = {
+  telegram: 4000,   // 1s margin before 5s expiry
+  discord:  8000,   // 2s margin before 10s expiry
+  whatsapp: 8000,   // ~10s expiry
+  signal:   4000,   // ~5s expiry
+  line:     15000,  // 20s expiry (showLoadingAnimation)
+  imessage: 4000,   // ~5s process-based expiry
+};
 
 // ---------------------------------------------------------------------------
 // Deps narrowing
 // ---------------------------------------------------------------------------
 
-/** Minimal deps needed for the routing phase. */
-export type RouteDeps = Pick<
+/**
+ * Minimal deps for the setup-and-route phase.
+ *
+ * 21 unique fields: 4 shared between the former setup + route Pick<>s
+ * (logger / eventBus / channelRegistry / streamingConfig), 1 unique to setup
+ * (lifecycleReactionsEnabled), and 16 unique to route.
+ */
+export type SetupAndRouteDeps = Pick<
   InboundPipelineDeps,
+  // From inbound-setup.ts (5 fields; 4 shared with route):
   | "logger"
   | "eventBus"
+  | "channelRegistry"
+  | "lifecycleReactionsEnabled"
+  | "streamingConfig"
+  // From inbound-route.ts (20 fields; 4 shared with setup):
   | "commandQueue"
   | "queueConfig"
   | "activeRunRegistry"
   | "sessionResolver"
-  | "streamingConfig"
   | "sendPolicyConfig"
   | "getElevatedReplyConfig"
-  | "channelRegistry"
   | "retryEngine"
   | "deliveryQueue"
   | "deliveryService"
@@ -52,30 +91,124 @@ export type RouteDeps = Pick<
 >;
 
 // ---------------------------------------------------------------------------
-// Stage function
+// Helper functions (lifted verbatim from inbound-setup.ts:79-87)
 // ---------------------------------------------------------------------------
 
 /**
- * Route an inbound message through debounce, group history, steer+followup,
- * or command queue. Falls back to direct execution when no queue is present.
+ * Determine if typing indicators should be shown in the current context.
  *
- * This function handles the final routing decision and may call
- * `executeAndDeliver` directly or enqueue for later execution.
+ * In DMs, always show typing. In group chats, only show typing when the
+ * bot was mentioned or replied to (prevents unnecessary typing noise).
  */
-export async function routeInboundMessage(
-  deps: RouteDeps,
+function shouldShowTypingInGroup(msg: NormalizedMessage): boolean {
+  if (!isGroupMessage(msg)) return true; // Not a group -- show typing
+  return isBotMentioned(msg); // In group -- only if mentioned
+}
+
+/** Check if this execution was triggered by a heartbeat (suppress typing). */
+function isHeartbeatExecution(msg: NormalizedMessage): boolean {
+  return msg.metadata?.isHeartbeat === true;
+}
+
+// ---------------------------------------------------------------------------
+// Phase function
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve typing lifecycle + streaming config, then route the inbound message
+ * through steer/followup, queue, or direct execution.
+ *
+ * This function is the merged Phase 3 of the inbound pipeline (formerly the
+ * setupInboundExecution + routeInboundMessage sequence). The two sub-phases
+ * are sequential: Phase 3A computes streamCfg + typingLifecycle from the
+ * processed message; Phase 3B uses both to route through the appropriate
+ * execution path.
+ */
+export async function setupAndRoute(
+  deps: SetupAndRouteDeps,
   adapter: ChannelPort,
   processedMsg: NormalizedMessage,
   originalMsg: NormalizedMessage,
   sessionKey: SessionKey,
   agentId: string,
   executor: AgentExecutor,
-  streamCfg: PerChannelStreamingConfig,
   activePacers: Set<BlockPacer>,
   sendOverrides: SendOverrideStore,
-  typingLifecycle: TypingLifecycleController | undefined,
   directives: Record<string, unknown> | undefined,
 ): Promise<void> {
+  // ===== Phase 3A: Resolve typing lifecycle + streaming config =====
+  // Lifted from inbound-setup.ts:101-173. The local vars `streamCfg` and
+  // `typingLifecycle` flow into Phase 3B below instead of being returned.
+  //
+  // Ack reactions are handled by the lifecycle reactor (when enabled); the
+  // ackReactionConfig deps slot was removed in Plan 56-06 since no ack reactions
+  // were sent through this stage in production.
+
+  const streamCfg: PerChannelStreamingConfig = resolveStreamingConfig(
+    adapter.channelType,
+    deps.streamingConfig,
+  );
+
+  // IRC and Echo default to typingMode "never" (no typing API) unless explicitly overridden
+  const effectiveTypingMode =
+    (adapter.channelType === "irc" || adapter.channelType === "echo") && streamCfg.typingMode === "thinking"
+      ? "never" as const
+      : streamCfg.typingMode;
+
+  // Determine if typing indicators should activate
+  let typingCtrl: TypingController | undefined;
+  const shouldType =
+    effectiveTypingMode !== "never" &&
+    !isHeartbeatExecution(processedMsg) &&
+    shouldShowTypingInGroup(originalMsg);
+
+  if (shouldType) {
+    const threadIdForTyping = processedMsg.metadata?.telegramThreadId != null
+      ? String(processedMsg.metadata.telegramThreadId)
+      : undefined;
+
+    // Resolve per-platform refresh interval, falling back to per-channel config
+    const refreshMs = PLATFORM_TYPING_DEFAULTS[adapter.channelType] ?? streamCfg.typingRefreshMs;
+
+    typingCtrl = createTypingController(
+      {
+        mode: effectiveTypingMode,
+        refreshMs,
+        circuitBreakerThreshold: streamCfg.typingCircuitBreakerThreshold,
+        ttlMs: streamCfg.typingTtlMs,
+      },
+      async (chatId: string) => {
+        await adapter.platformAction("sendTyping", { chatId, threadId: threadIdForTyping });
+      },
+      { warn: (obj, message) => deps.logger.warn(obj, message) },
+    );
+  }
+
+  // Wrap the raw TypingController in a lifecycle controller
+  let typingLifecycle: TypingLifecycleController | undefined;
+  if (typingCtrl) {
+    typingLifecycle = createTypingLifecycleController(typingCtrl, {
+      graceMs: 10_000,
+      logger: { warn: (obj, message) => deps.logger.warn(obj, message) },
+    });
+
+    // 'instant' mode: start typing immediately before queue/execution
+    if (streamCfg.typingMode === "instant") {
+      typingLifecycle.controller.start(processedMsg.channelId);
+      deps.eventBus.emit("typing:started", {
+        channelId: adapter.channelId,
+        chatId: processedMsg.channelId,
+        mode: streamCfg.typingMode,
+        timestamp: systemNowMs(),
+      });
+    }
+  }
+
+  // ===== Phase 3B: Route via steer/followup, queue, or direct execution =====
+  // Lifted from inbound-route.ts:79-242. The parameters `streamCfg` and
+  // `typingLifecycle` are now locals from Phase 3A above instead of incoming
+  // function parameters.
+
   const msg = processedMsg;
 
   // Debounce buffer + group history injection deps slots (debounceBuffer,
