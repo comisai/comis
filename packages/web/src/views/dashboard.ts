@@ -15,10 +15,6 @@ import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { systemClearInterval, systemClearTimeout, systemSetInterval, systemSetTimeout } from "@comis/core";
-import {
-  createDashboardController,
-  type DashboardController,
-} from "./dashboard-controller.js";
 // Import sub-components (side-effect registrations)
 import "../components/data/ic-stat-card.js";
 import "../components/data/ic-sparkline.js";
@@ -117,6 +113,18 @@ interface ContextSummary {
   budgetUtilization: number;
   totalEvictions: number;
   reReads: number;
+}
+
+/** Billing total RPC response (obs.billing.total / obs.billing.byAgent). */
+interface BillingTotalResult {
+  totalCost?: number;
+  totalTokens?: number;
+}
+
+/** Per-hour token-usage histogram entry (obs.billing.usage24h). */
+interface BillingHourlyEntry {
+  hour: number;
+  tokens: number;
 }
 
 /**
@@ -470,38 +478,11 @@ export class IcDashboard extends LitElement {
   private _reloadDebounce: ReturnType<typeof setTimeout> | null = null;
   private _rpcStatusUnsub: (() => void) | null = null;
 
-  /** Controller owns RPC orchestration (thin façade — view keeps @state + render + SSE). */
-  private _controller: DashboardController | null = null;
-
-  /** Captured rpcClient reference -- if `this.rpcClient` is reassigned to a
-   *  different instance (logout→login while mounted, hot-reload, test-time
-   *  reassignment), the helper recreates the controller so it never calls
-   *  the stale captured client. */
-  private _capturedRpcClient: RpcClient | null = null;
-
-  /** Lazily instantiate (and rebind) the controller. Allows test-time
-   *  `priv(el).rpcClient = mock` direct assignment (bypassing Lit's reactive
-   *  update cycle) to still construct the controller, AND rebinds when the
-   *  rpcClient reference changes. */
-  private _ensureController(): DashboardController | null {
-    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
-      this.removeController(this._controller);
-      this._controller = null;
-      this._capturedRpcClient = null;
-    }
-    if (!this._controller && this.rpcClient) {
-      this._capturedRpcClient = this.rpcClient;
-      this._controller = createDashboardController(this, this.rpcClient);
-    }
-    return this._controller;
-  }
-
   override connectedCallback(): void {
     super.connectedCallback();
     // Note: _loadData() and _startRpcRefresh() are NOT called here --
     // apiClient/rpcClient are typically null at this point. The updated()
     // callback handles loading once the client properties are set.
-    this._ensureController();
     this._initSse();
   }
 
@@ -517,9 +498,6 @@ export class IcDashboard extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has("rpcClient")) {
-      this._ensureController();
-    }
     if (changed.has("apiClient") && this.apiClient) {
       this._loadData();
     }
@@ -732,12 +710,10 @@ export class IcDashboard extends LitElement {
   // ---------------------------------------------------------------------------
 
   private async _loadCostSparkline(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller) return;
-
+    if (!this.rpcClient) return;
     const dayMs = 86_400_000;
     const calls = Array.from({ length: 7 }, (_, i) =>
-      controller.getBillingTotal(dayMs * (i + 1)),
+      this.rpcClient!.call<BillingTotalResult>("obs.billing.total", { sinceMs: dayMs * (i + 1) }),
     );
     const results = await Promise.allSettled(calls);
 
@@ -755,12 +731,11 @@ export class IcDashboard extends LitElement {
   // ---------------------------------------------------------------------------
 
   private async _loadSparklineData(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller || !this.rpcClient || this.rpcClient.status !== "connected") return;
+    if (!this.rpcClient || this.rpcClient.status !== "connected") return;
 
     await Promise.allSettled([
       (async () => {
-        const usage24h = await controller.getUsage24h();
+        const usage24h = await this.rpcClient!.call<BillingHourlyEntry[]>("obs.billing.usage24h");
         this._tokenSparklineData = usage24h.map((d) => d.tokens);
       })(),
       this._loadCostSparkline(),
@@ -772,12 +747,11 @@ export class IcDashboard extends LitElement {
   // ---------------------------------------------------------------------------
 
   private async _loadAgentBilling(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller || this._agents.length === 0) return;
+    if (!this.rpcClient || this._agents.length === 0) return;
 
     const results = await Promise.allSettled(
       this._agents.slice(0, 20).map((agent) =>
-        controller.getBillingByAgent(agent.id),
+        this.rpcClient!.call<BillingTotalResult>("obs.billing.byAgent", { agentId: agent.id }),
       ),
     );
 

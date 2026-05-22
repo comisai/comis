@@ -3,7 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { RpcClient } from "../../api/rpc-client.js";
-import type { PipelineListEntry, PipelineNode } from "../../api/types/index.js";
+import type { PipelineListEntry, PipelineNode, SavedGraphSummary } from "../../api/types/index.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/nav/ic-breadcrumb.js";
 import type { BreadcrumbItem } from "../../components/nav/ic-breadcrumb.js";
@@ -13,10 +13,6 @@ import "../../components/feedback/ic-toast.js";
 import "../../components/feedback/ic-empty-state.js";
 import { extractVariables, substituteVariables } from "../../utils/extract-variables.js";
 import { systemDateFrom, systemNowMs } from "@comis/core";
-import {
-  createPipelineListController,
-  type PipelineListController,
-} from "./pipeline-list-controller.js";
 import "../../components/feedback/ic-loading.js";
 import "../../components/shell/ic-skeleton-view.js";
 import "../../components/display/ic-icon.js";
@@ -385,35 +381,6 @@ export class IcPipelineList extends LitElement {
     return [{ label: "Pipelines" }];
   }
 
-  /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
-  private _controller: PipelineListController | null = null;
-
-  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
-  private _capturedRpcClient: RpcClient | null = null;
-
-  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
-   *  Wave-4 pattern, with rpcClient-swap detection. */
-  private _ensureController(): PipelineListController | null {
-    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
-      this.removeController(this._controller);
-      this._controller = null;
-      this._capturedRpcClient = null;
-    }
-    if (!this._controller && this.rpcClient) {
-      this._capturedRpcClient = this.rpcClient;
-      this._controller = createPipelineListController(this, this.rpcClient);
-    }
-    return this._controller;
-  }
-
-  override connectedCallback(): void {
-    super.connectedCallback();
-    // Note: _loadPipelines() is NOT called here -- rpcClient is typically
-    // null or not yet connected at this point. The updated() callback
-    // handles loading once rpcClient is set and connected.
-    this._ensureController();
-  }
-
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     this._rpcStatusUnsub?.();
@@ -422,7 +389,6 @@ export class IcPipelineList extends LitElement {
 
   override updated(changed: Map<string, unknown>): void {
     if (changed.has("rpcClient") && this.rpcClient) {
-      this._ensureController();
       this._rpcStatusUnsub?.();
       if (this.rpcClient.status === "connected") {
         this._loadPipelines();
@@ -447,12 +413,12 @@ export class IcPipelineList extends LitElement {
     let savedEntries: PipelineListEntry[] = [];
     let executedEntries: PipelineListEntry[] = [];
 
-    const controller = this._ensureController();
-    if (controller) {
+    if (this.rpcClient) {
+      const rpc = this.rpcClient;
       // Fire both independent RPC calls in parallel
       const [savedResult, executedResult] = await Promise.allSettled([
-        controller.listGraphs(100),
-        controller.getGraphStatus(),
+        rpc.call<{ entries?: SavedGraphSummary[]; total?: number }>("graph.list", { limit: 100 }),
+        rpc.call<{ graphs?: Array<{ graphId: string; label?: string; status: string; startedAt?: number; completedAt?: number }> }>("graph.status", {}),
       ]);
 
       // Source 1: server-saved named graphs
@@ -590,8 +556,7 @@ export class IcPipelineList extends LitElement {
     e: Event,
   ): Promise<void> {
     e.stopPropagation();
-    const controller = this._ensureController();
-    if (!controller) {
+    if (!this.rpcClient) {
       IcToast.show("Not connected to daemon", "error");
       return;
     }
@@ -601,7 +566,7 @@ export class IcPipelineList extends LitElement {
     let graphData: { nodes: Array<{ nodeId: string; id?: string; task: string; agentId?: string; dependsOn: string[]; maxSteps?: number; timeoutMs?: number; barrierMode?: string }>; settings: { label: string; onFailure: string; timeoutMs?: number; budget?: { maxTokens?: number; maxCost?: number } } } | null = null;
 
     try {
-      const serverGraph = (await controller.loadGraph(pipeline.id)) as unknown as {
+      const serverGraph = (await this.rpcClient.call("graph.load", { id: pipeline.id })) as unknown as {
         nodes: Array<{ nodeId: string; id?: string; task: string; agentId?: string; dependsOn: string[]; maxSteps?: number; timeoutMs?: number; barrierMode?: string }>;
         settings: { label: string; onFailure: string; timeoutMs?: number; budget?: { maxTokens?: number; maxCost?: number } };
       };
@@ -634,8 +599,7 @@ export class IcPipelineList extends LitElement {
     this._showVariablePrompt = false;
     const graphData = this._pendingExecuteData;
     this._pendingExecuteData = null;
-    const controller = this._ensureController();
-    if (!graphData || !controller) return;
+    if (!graphData || !this.rpcClient) return;
 
     const substitutedTasks = graphData.nodes.map((n) =>
       substituteVariables(n.task, e.detail.values),
@@ -649,8 +613,8 @@ export class IcPipelineList extends LitElement {
     graphData: NonNullable<typeof this._pendingExecuteData>,
     taskTexts: string[],
   ): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
+    const rpc = this.rpcClient;
 
     try {
       const payload: Record<string, unknown> = {
@@ -681,7 +645,7 @@ export class IcPipelineList extends LitElement {
       );
       if (hasApprovalGate) {
         try {
-          const channelData = await controller.getAllChannels();
+          const channelData = await rpc.call<{ channels: Array<{ channelId: string; channelType: string }> } | Array<{ channelId: string; channelType: string }>>("obs.channels.all");
           const channels = Array.isArray(channelData) ? channelData : channelData?.channels ?? [];
           if (channels.length > 0) {
             payload._callerChannelType = channels[0]!.channelType;
@@ -690,7 +654,7 @@ export class IcPipelineList extends LitElement {
         } catch { /* best-effort - server will reject if still missing */ }
       }
 
-      const result = await controller.executeGraph(payload);
+      const result = await rpc.call<{ graphId?: string }>("graph.execute", payload);
 
       if (result?.graphId) {
         IcToast.show("Pipeline started", "success");
@@ -710,8 +674,7 @@ export class IcPipelineList extends LitElement {
   private async _handleDuplicate(pipeline: PipelineListEntry, e: Event): Promise<void> {
     e.stopPropagation();
 
-    const controller = this._ensureController();
-    if (!controller) {
+    if (!this.rpcClient) {
       IcToast.show("Not connected to daemon", "error");
       return;
     }
@@ -721,7 +684,7 @@ export class IcPipelineList extends LitElement {
     let settings: import("../../api/types/index.js").GraphSettings;
 
     try {
-      const serverGraph = (await controller.loadGraph(pipeline.id)) as {
+      const serverGraph = (await this.rpcClient.call("graph.load", { id: pipeline.id })) as {
         nodes: import("../../api/types/index.js").PipelineNode[];
         edges: import("../../api/types/index.js").PipelineEdge[];
         settings: import("../../api/types/index.js").GraphSettings;
@@ -739,7 +702,7 @@ export class IcPipelineList extends LitElement {
     const newSettings = { ...settings, label: newLabel };
 
     try {
-      await controller.saveGraph({
+      await this.rpcClient.call("graph.save", {
         id: newId,
         label: newLabel,
         nodes,
@@ -766,11 +729,10 @@ export class IcPipelineList extends LitElement {
 
     const target = this._deleteTarget;
     this._deleteTarget = null;
-    const controller = this._ensureController();
 
     try {
-      if (controller) {
-        await controller.deleteGraph(target.id);
+      if (this.rpcClient) {
+        await this.rpcClient.call("graph.delete", { id: target.id });
       }
       IcToast.show(`Deleted "${target.label}"`, "success");
     } catch (err) {

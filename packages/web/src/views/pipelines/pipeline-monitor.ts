@@ -29,10 +29,6 @@ import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/nav/ic-breadcrumb.js";
 import type { BreadcrumbItem } from "../../components/nav/ic-breadcrumb.js";
 import { systemClearInterval, systemSetInterval, systemSetTimeout } from "@comis/core";
-import {
-  createPipelineMonitorController,
-  type PipelineMonitorController,
-} from "./pipeline-monitor-controller.js";
 import "../../components/graph/ic-graph-canvas.js";
 import "../../components/monitor/ic-monitor-status-bar.js";
 import "../../components/monitor/ic-node-detail-panel.js";
@@ -278,37 +274,12 @@ export class IcPipelineMonitor extends LitElement {
   private _containerHeight = 600;
   private _resizeObserver: ResizeObserver | null = null;
 
-  /** Controller owns RPC orchestration (thin façade — view keeps @state +
-   *  render + createMonitorState consumer pattern, matching the
-   *  pipeline-builder precedent). */
-  private _controller: PipelineMonitorController | null = null;
-
-  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
-  private _capturedRpcClient: RpcClient | null = null;
-
-  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
-   *  pattern, with rpcClient-swap detection. */
-  private _ensureController(): PipelineMonitorController | null {
-    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
-      this.removeController(this._controller);
-      this._controller = null;
-      this._capturedRpcClient = null;
-    }
-    if (!this._controller && this.rpcClient) {
-      this._capturedRpcClient = this.rpcClient;
-      this._controller = createPipelineMonitorController(this, this.rpcClient);
-    }
-    return this._controller;
-  }
-
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
 
   override connectedCallback(): void {
     super.connectedCallback();
-
-    this._ensureController();
 
     // Create monitor state
     this._monitorState = createMonitorState();
@@ -326,10 +297,8 @@ export class IcPipelineMonitor extends LitElement {
     this._initMonitor();
   }
 
-  override updated(changed: Map<string, unknown>): void {
-    if (changed.has("rpcClient")) {
-      this._ensureController();
-    }
+  override updated(_changed: Map<string, unknown>): void {
+    // No-op — rpcClient changes are handled inline in each RPC call site.
   }
 
   override firstUpdated(): void {
@@ -365,15 +334,15 @@ export class IcPipelineMonitor extends LitElement {
   // ---------------------------------------------------------------------------
 
   private async _initMonitor(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller || !this.rpcClient || !this.graphId || !this._monitorState) return;
+    if (!this.rpcClient || !this.graphId || !this._monitorState) return;
+    const rpc = this.rpcClient;
 
     let nodeDefinitions: PipelineNode[] = [];
     let edges: PipelineEdge[] = [];
 
     // Try loading saved graph from server to get nodes with positions
     try {
-      const saved = await controller.loadGraph(this.graphId);
+      const saved = await rpc.call<{ nodes: Array<Record<string, unknown>>; edges?: PipelineEdge[]; settings?: Record<string, unknown> }>("graph.load", { id: this.graphId });
 
       if (saved?.nodes?.length) {
         // Transform server nodes to canvas format (handle nodeId->id, agent->agentId)
@@ -427,7 +396,7 @@ export class IcPipelineMonitor extends LitElement {
     // This handles graphs executed via CLI/API without ever being saved through the GUI.
     if (nodeDefinitions.length === 0) {
       try {
-        const response = await controller.getGraphStatus(this.graphId);
+        const response = await rpc.call<{ executionOrder: string[] }>("graph.status", { graphId: this.graphId });
 
         // Build minimal PipelineNode stubs
         const stubNodes: PipelineNode[] = response.executionOrder.map((nodeId) => ({
@@ -662,11 +631,10 @@ export class IcPipelineMonitor extends LitElement {
 
   private async _onCancelConfirm(): Promise<void> {
     this._showCancelConfirm = false;
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
 
     try {
-      await controller.cancelGraph(this.graphId);
+      await this.rpcClient.call("graph.cancel", { graphId: this.graphId });
       IcToast.show("Pipeline cancelled", "warning");
     } catch (err: unknown) {
       IcToast.show(
@@ -677,11 +645,10 @@ export class IcPipelineMonitor extends LitElement {
   }
 
   private async _onSteer(e: CustomEvent<{ runId: string; message: string }>): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
 
     try {
-      await controller.steerSubagent({
+      await this.rpcClient.call("subagent.steer", {
         target: e.detail.runId,
         message: e.detail.message,
       });

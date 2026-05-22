@@ -13,10 +13,6 @@ import type { RpcClient } from "../api/rpc-client.js";
 import type { ApiClient } from "../api/api-client.js";
 import type { SttTestResult, TtsTestResult, VisionTestResult, DocumentTestResult, VideoTestResult, LinkTestResult, MediaProvidersInfo } from "../api/types/media-types.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
-import {
-  createMediaTestController,
-  type MediaTestController,
-} from "./media-test-controller.js";
 
 // Side-effect imports for sub-components
 import "../components/nav/ic-tabs.js";
@@ -337,37 +333,9 @@ export class IcMediaTestView extends LitElement {
   /** Object URL for vision image preview (revoked on cleanup). */
   private _imagePreviewUrl: string | null = null;
 
-  /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
-  private _controller: MediaTestController | null = null;
-
-  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
-  private _capturedRpcClient: RpcClient | null = null;
-
-  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
-   *  Wave-4 pattern, with rpcClient-swap detection. */
-  private _ensureController(): MediaTestController | null {
-    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
-      this.removeController(this._controller);
-      this._controller = null;
-      this._capturedRpcClient = null;
-    }
-    if (!this._controller && this.rpcClient) {
-      this._capturedRpcClient = this.rpcClient;
-      this._controller = createMediaTestController(this, this.rpcClient);
-    }
-    return this._controller;
-  }
-
   override connectedCallback(): void {
     super.connectedCallback();
-    this._ensureController();
     this._loadProviders();
-  }
-
-  override updated(changed: Map<string, unknown>): void {
-    if (changed.has("rpcClient")) {
-      this._ensureController();
-    }
   }
 
   override disconnectedCallback(): void {
@@ -384,10 +352,9 @@ export class IcMediaTestView extends LitElement {
 
   /** Attempt to load provider availability. Degrades gracefully when handler is missing. */
   private async _loadProviders(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
     try {
-      const res = await controller.getProviders();
+      const res = await this.rpcClient.call<MediaProvidersInfo>("media.providers");
       this._providers = res;
     } catch {
       // media.providers handler may not exist -- degrade gracefully
@@ -410,15 +377,14 @@ export class IcMediaTestView extends LitElement {
       return;
     }
 
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
     this._processing = true;
     this._sttResult = null;
 
     try {
       const buffer = await file.arrayBuffer();
       const base64 = arrayBufferToBase64(buffer);
-      const res = await controller.testStt({
+      const res = await this.rpcClient.call<SttTestResult>("media.test.stt", {
         audio: base64,
         mimeType: file.type || "audio/wav",
       });
@@ -437,8 +403,7 @@ export class IcMediaTestView extends LitElement {
 
   private async _handleTtsSynthesize(): Promise<void> {
     if (!this._ttsText.trim()) return;
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
 
     this._processing = true;
     this._ttsResult = null;
@@ -450,7 +415,7 @@ export class IcMediaTestView extends LitElement {
     }
 
     try {
-      const res = await controller.testTts({
+      const res = await this.rpcClient.call<TtsTestResult>("media.test.tts", {
         text: this._ttsText,
         voice: this._ttsVoice || undefined,
       });
@@ -491,8 +456,7 @@ export class IcMediaTestView extends LitElement {
     }
     this._imagePreviewUrl = URL.createObjectURL(file);
 
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
     this._processing = true;
     this._visionResult = null;
     this.requestUpdate();
@@ -500,7 +464,7 @@ export class IcMediaTestView extends LitElement {
     try {
       const buffer = await file.arrayBuffer();
       const base64 = arrayBufferToBase64(buffer);
-      const res = await controller.testVision({
+      const res = await this.rpcClient.call<VisionTestResult>("media.test.vision", {
         image: base64,
         mimeType: file.type || "image/jpeg",
         prompt: this._visionPrompt || undefined,
@@ -530,15 +494,14 @@ export class IcMediaTestView extends LitElement {
       return;
     }
 
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
     this._processing = true;
     this._documentResult = null;
 
     try {
       const buffer = await file.arrayBuffer();
       const base64 = arrayBufferToBase64(buffer);
-      const res = await controller.testDocument({
+      const res = await this.rpcClient.call<DocumentTestResult>("media.test.document", {
         file: base64,
         mimeType: file.type || "application/octet-stream",
         fileName: file.name,
@@ -568,15 +531,14 @@ export class IcMediaTestView extends LitElement {
       return;
     }
 
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
     this._processing = true;
     this._videoResult = null;
 
     try {
       const buffer = await file.arrayBuffer();
       const base64 = arrayBufferToBase64(buffer);
-      const res = await controller.testVideo({
+      const res = await this.rpcClient.call<VideoTestResult>("media.test.video", {
         video: base64,
         mimeType: file.type || "video/mp4",
         prompt: this._videoPrompt || undefined,
@@ -597,14 +559,13 @@ export class IcMediaTestView extends LitElement {
 
   private async _handleLinkTest(): Promise<void> {
     if (!this._linkUrl.trim()) return;
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
 
     this._processing = true;
     this._linkResult = null;
 
     try {
-      const res = await controller.testLink({
+      const res = await this.rpcClient.call<LinkTestResult>("media.test.link", {
         url: this._linkUrl,
       });
       this._linkResult = res;

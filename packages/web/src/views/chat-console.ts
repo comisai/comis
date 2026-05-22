@@ -9,7 +9,6 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { parseSessionKeyString, formatSessionDisplayName } from "../utils/session-key-parser.js";
 import { stripSilentTokens, stripUserSystemContext } from "../utils/message-content.js";
 import { systemClearInterval, systemNowMs, systemSetInterval, systemSetTimeout } from "@comis/core";
-import { createChatConsoleController, type ChatConsoleController } from "./chat-console-controller.js";
 
 // Side-effect imports to register child components
 import "../components/domain/ic-chat-message.js";
@@ -253,31 +252,8 @@ export class IcChatConsole extends LitElement {
   private _audioChunks: Blob[] = [];
   private _recordingTimer: ReturnType<typeof setInterval> | null = null;
 
-  @state() private _controller: ChatConsoleController | null = null;
-
-  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
-  private _capturedRpcClient: RpcClient | null = null;
-
-  /** Lazily instantiate (and rebind) controller; mirrors `dashboard.ts:_ensureController()`
-   *  so call sites can use `const ctrl = this._ensureController(); if (!ctrl) return;`
-   *  pattern instead of unsafe `this._controller!` non-null assertions. Detects
-   *  rpcClient swaps and recreates so the controller never holds a stale client. */
-  private _ensureController(): ChatConsoleController | null {
-    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
-      this.removeController(this._controller);
-      this._controller = null;
-      this._capturedRpcClient = null;
-    }
-    if (!this._controller && this.rpcClient) {
-      this._capturedRpcClient = this.rpcClient;
-      this._controller = createChatConsoleController(this, this.rpcClient);
-    }
-    return this._controller;
-  }
-
   override connectedCallback(): void {
     super.connectedCallback();
-    this._ensureController();
     this._setupEventListeners();
   }
 
@@ -310,7 +286,6 @@ export class IcChatConsole extends LitElement {
     }
     // Load data when rpcClient becomes available (handles late property binding)
     if (changed.has("rpcClient") && this.rpcClient) {
-      this._ensureController();
       this._rpcStatusUnsub?.();
       if (this.rpcClient.status === "connected") {
         this._initialLoad();
@@ -456,8 +431,7 @@ export class IcChatConsole extends LitElement {
   }
 
   private async _loadSessions(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller) {
+    if (!this.rpcClient) {
       this._loading = false;
       return;
     }
@@ -465,7 +439,17 @@ export class IcChatConsole extends LitElement {
       // Closed-union retype: session.list returns kind ∈
       // {"dm", "group", "sub-agent"} per session-handlers.ts:413-417 derivation
       // (parentSessionKey -> "sub-agent" | guildId -> "group" | else "dm").
-      const sessions = await controller.listSessions();
+      const result = await this.rpcClient.call<{
+        sessions: Array<{
+          sessionKey: string;
+          agentId: string;
+          channelId: string;
+          kind: "dm" | "group" | "sub-agent";
+          messageCount?: number;
+          updatedAt: number;
+        }>;
+      }>("session.list", { kind: "dm" });
+      const sessions = result?.sessions ?? [];
       this._sessions = sessions.map((s) => ({
         key: s.sessionKey,
         agentId: s.agentId,
@@ -490,10 +474,19 @@ export class IcChatConsole extends LitElement {
   }
 
   private async _loadSessionHistory(): Promise<void> {
-    if (!this._controller || !this._activeSession) return;
+    if (!this.rpcClient || !this._activeSession) return;
     this._loading = true;
     try {
-      const rawMessages = await this._controller.loadSessionHistory(this._activeSession);
+      const result = await this.rpcClient.call<{
+        messages: Array<{
+          id?: string;
+          role: "user" | "assistant" | "error" | "system" | "tool";
+          content: string;
+          timestamp?: number;
+          toolCalls?: unknown[];
+        }>;
+      }>("session.history", { session_key: this._activeSession });
+      const rawMessages = result?.messages ?? [];
       this._messages = rawMessages
         .map((m): ChatMessageData => ({
           id: m.id ?? crypto.randomUUID(),
@@ -520,7 +513,7 @@ export class IcChatConsole extends LitElement {
   }
 
   private async _loadBudgetData(): Promise<void> {
-    if (!this._controller || !this._activeSession) {
+    if (!this.rpcClient || !this._activeSession) {
       this._budgetSegments = [];
       this._budgetTotal = 0;
       return;
@@ -529,7 +522,15 @@ export class IcChatConsole extends LitElement {
     const sessionInfo = this._sessions.find((s) => s.key === this._activeSession);
     const agentId = sessionInfo?.agentId ?? "default";
     try {
-      const snap = await this._controller.loadLatestPipelineSnapshot(agentId);
+      const result = await this.rpcClient.call<{
+        snapshots: Array<{
+          tokensLoaded?: number;
+          tokensEvicted?: number;
+          tokensMasked?: number;
+          budgetUtilization?: number;
+        }>;
+      }>("obs.context.pipeline", { agentId, limit: 1 });
+      const snap = result?.snapshots?.[0] ?? null;
       if (!snap) {
         this._budgetSegments = [];
         this._budgetTotal = 0;
@@ -726,8 +727,7 @@ export class IcChatConsole extends LitElement {
   }
 
   private async _transcribeBlob(blob: Blob): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller) {
+    if (!this.rpcClient) {
       IcToast.show("Transcription unavailable -- not connected", "error");
       return;
     }
@@ -736,7 +736,11 @@ export class IcChatConsole extends LitElement {
       const bytes = new Uint8Array(await blob.arrayBuffer());
       let binary = "";
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const text = await controller.transcribeAudio(btoa(binary), "webm");
+      const result = await this.rpcClient.call<{ text: string }>(
+        "audio.transcribe",
+        { audio: btoa(binary), format: "webm" },
+      );
+      const text = result?.text ?? "";
       if (text) this._inputValue += (this._inputValue ? " " : "") + text;
     } catch {
       IcToast.show("Transcription failed", "error");
@@ -862,9 +866,9 @@ export class IcChatConsole extends LitElement {
         await this._createNewSession();
         break;
       case "/reset":
-        if (this._activeSession && this._controller) {
+        if (this._activeSession && this.rpcClient) {
           try {
-            await this._controller.resetSession(this._activeSession);
+            await this.rpcClient.call("session.reset", { session_key: this._activeSession });
             IcToast.show("Session reset", "success");
             await this._loadSessionHistory();
           } catch {
@@ -873,9 +877,13 @@ export class IcChatConsole extends LitElement {
         }
         break;
       case "/export":
-        if (this._activeSession && this._controller) {
+        if (this._activeSession && this.rpcClient) {
           try {
-            const data = await this._controller.exportSession(this._activeSession);
+            const result = await this.rpcClient.call<{ data: string }>(
+              "session.export",
+              { session_key: this._activeSession },
+            );
+            const data = result?.data ?? "";
             if (data) {
               const blob = new Blob([data], { type: "application/jsonl" });
               const url = URL.createObjectURL(blob);
@@ -891,9 +899,9 @@ export class IcChatConsole extends LitElement {
         }
         break;
       case "/compact":
-        if (this._activeSession && this._controller) {
+        if (this._activeSession && this.rpcClient) {
           try {
-            await this._controller.compactSession(this._activeSession);
+            await this.rpcClient.call("session.compact", { session_key: this._activeSession });
             IcToast.show("Session compacted", "success");
           } catch {
             IcToast.show("Failed to compact session", "error");

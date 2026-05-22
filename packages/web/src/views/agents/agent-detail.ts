@@ -9,11 +9,15 @@ import type { EventDispatcher } from "../../state/event-dispatcher.js";
 import { SseController } from "../../state/sse-controller.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
-import {
-  createAgentDetailController,
-  type AgentDetailController,
-  type DiscoveredSkill,
-} from "./agent-detail-controller.js";
+
+/** Skill description returned by the skills.list RPC. */
+interface DiscoveredSkill {
+  name: string;
+  description: string;
+  location: string;
+  source?: "bundled" | "workspace" | "local";
+  disableModelInvocation?: boolean;
+}
 
 // Side-effect imports to register custom elements used in template
 import "../../components/nav/ic-breadcrumb.js";
@@ -398,40 +402,15 @@ export class IcAgentDetail extends LitElement {
   @state() private _actionPending = false;
   @state() private _heartbeatState: HeartbeatAgentStateDto | null = null;
 
-  /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
-  private _controller: AgentDetailController | null = null;
-
-  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
-  private _capturedRpcClient: RpcClient | null = null;
-
-  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
-   *  Wave-4 pattern, with rpcClient-swap detection. */
-  private _ensureController(): AgentDetailController | null {
-    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
-      this.removeController(this._controller);
-      this._controller = null;
-      this._capturedRpcClient = null;
-    }
-    if (!this._controller && this.rpcClient) {
-      this._capturedRpcClient = this.rpcClient;
-      this._controller = createAgentDetailController(this, this.rpcClient);
-    }
-    return this._controller;
-  }
-
   override connectedCallback(): void {
     super.connectedCallback();
     // Note: _loadData() is NOT called here -- rpcClient is typically
     // null at this point. The updated() callback handles loading once
     // the client property is set.
-    this._ensureController();
     this._initSse();
   }
 
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has("rpcClient")) {
-      this._ensureController();
-    }
     if ((changed.has("agentId") || changed.has("rpcClient")) && this.agentId && this.rpcClient) {
       this._loadData();
     }
@@ -466,24 +445,23 @@ export class IcAgentDetail extends LitElement {
 
   async _loadData(): Promise<void> {
     if (!this.rpcClient || !this.agentId) return;
-    const controller = this._ensureController();
-    if (!controller) return;
+    const rpc = this.rpcClient;
 
     this._loadState = "loading";
     this._error = "";
 
     try {
       // Load primary agent data first to unblock the skeleton
-      const raw = await controller.getAgent(this.agentId);
+      const raw = await rpc.call<{ agentId: string; config: Record<string, unknown>; suspended?: boolean }>("agents.get", { agentId: this.agentId });
       this._agent = this._mapToAgentDetail(raw);
       this._loadState = "loaded";
 
       // Enrich with billing, skills, and heartbeat in the background
       const aid = this.agentId;
       Promise.allSettled([
-        controller.getAgentBilling(aid),
-        controller.listSkills(aid).then((r) => r.skills ?? []),
-        controller.getHeartbeatStates().then((r) => (r.agents ?? []).find(a => a.agentId === aid) ?? null),
+        rpc.call<AgentBilling>("obs.billing.byAgent", { agentId: aid }),
+        rpc.call<{ skills?: DiscoveredSkill[] }>("skills.list", { agentId: aid }).then((r) => r.skills ?? []),
+        rpc.call<{ agents?: HeartbeatAgentStateDto[] }>("heartbeat.states", {}).then((r) => (r.agents ?? []).find(a => a.agentId === aid) ?? null),
       ]).then(([billing, skills, heartbeat]) => {
         this._billing = billing.status === "fulfilled" ? billing.value : null;
         this._skills = skills.status === "fulfilled" && Array.isArray(skills.value) ? skills.value : [];
@@ -568,8 +546,7 @@ export class IcAgentDetail extends LitElement {
   }
 
   private async _handleSuspendResume(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller || !this._agent || this._actionPending) return;
+    if (!this.rpcClient || !this._agent || this._actionPending) return;
 
     this._actionPending = true;
     const isSuspended = this._agent.status === "suspended";
@@ -577,9 +554,9 @@ export class IcAgentDetail extends LitElement {
 
     try {
       if (isSuspended) {
-        await controller.resumeAgent(this.agentId);
+        await this.rpcClient.call("agents.resume", { agentId: this.agentId });
       } else {
-        await controller.suspendAgent(this.agentId);
+        await this.rpcClient.call("agents.suspend", { agentId: this.agentId });
       }
       IcToast.show(`Agent ${this.agentId} ${label}`, "success");
       await this._loadData();
@@ -594,12 +571,11 @@ export class IcAgentDetail extends LitElement {
   }
 
   private async _handleDelete(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller || this._actionPending) return;
+    if (!this.rpcClient || this._actionPending) return;
 
     this._actionPending = true;
     try {
-      await controller.deleteAgent(this.agentId);
+      await this.rpcClient.call("agents.delete", { agentId: this.agentId });
       IcToast.show(`Agent ${this.agentId} deleted`, "success");
       this._navigate("agents");
     } catch (err) {
