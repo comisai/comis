@@ -114,21 +114,47 @@ describe("web controller-view boundary", () => {
   // (Controllers own RPC orchestration; views render snapshot data.)
   // ----------------------------------------------------------------------
   //
-  // PRE_EXTRACTION_ALLOWLIST contains the out-of-scope files that
-  // legitimately call `rpcClient.call(...)` today. They are below the 800L
-  // cap and were not part of the original controller-extraction inventory,
-  // so they stay in this Set permanently as the architectural baseline.
-  // Any future work that decides to extract controllers for these files
-  // would drain them at that time.
+  // PRE_EXTRACTION_ALLOWLIST contains the files that legitimately call
+  // `rpcClient.call(...)` today. Two cohorts:
+  //   (a) 5 files that were out-of-scope at Phase 44's controller-extraction
+  //       wave and were never extracted (below the 800L cap; baseline).
+  //   (b) 21 files inlined back into views in Phase 57 BOUND-RELAX-01 after
+  //       the trivial 1:1 RPC-façade controller pattern was deemed not worth
+  //       the indirection cost. The 21 corresponding `<name>-controller.ts`
+  //       and `<name>-controller.test.ts` files were deleted.
+  // The Set is the architectural baseline; further work that re-extracts
+  // any of these into a controller drains the entry at that time.
   //
   const PRE_EXTRACTION_ALLOWLIST = new Set<string>([
-    // Each verified to have `grep -cE '\b(this\.)?rpcClient!?\.call\b'` > 0.
-    // These files are <800L and were never in the extraction inventory.
+    // Pre-existing 5 (out-of-scope at Phase 44, never extracted).
     "packages/web/src/views/channel-list.ts",
     "packages/web/src/views/context-dag-browser.ts",
     "packages/web/src/views/media-config.ts",
     "packages/web/src/views/session-list.ts",
     "packages/web/src/views/subagents.ts",
+    // Phase 57 BOUND-RELAX-01 — 21 newly-inlined views (formerly delegated
+    // RPC calls through a <name>-controller.ts façade; controllers deleted).
+    "packages/web/src/components/graph/ic-node-editor.ts",
+    "packages/web/src/views/agents/agent-detail.ts",
+    "packages/web/src/views/agents/agent-editor.ts",
+    "packages/web/src/views/agents/agent-list.ts",
+    "packages/web/src/views/agents/workspace-manager.ts",
+    "packages/web/src/views/channel-detail.ts",
+    "packages/web/src/views/chat-console.ts",
+    "packages/web/src/views/config-editor.ts",
+    "packages/web/src/views/dashboard.ts",
+    "packages/web/src/views/mcp-management.ts",
+    "packages/web/src/views/media-test.ts",
+    "packages/web/src/views/memory-inspector.ts",
+    "packages/web/src/views/message-center.ts",
+    "packages/web/src/views/models.ts",
+    "packages/web/src/views/observe-view.ts",
+    "packages/web/src/views/pipelines/pipeline-builder.ts",
+    "packages/web/src/views/pipelines/pipeline-list.ts",
+    "packages/web/src/views/pipelines/pipeline-monitor.ts",
+    "packages/web/src/views/scheduler.ts",
+    "packages/web/src/views/security.ts",
+    "packages/web/src/views/session-detail.ts",
   ]);
 
   it("views do not call rpcClient.call directly (controllers own RPC)", () => {
