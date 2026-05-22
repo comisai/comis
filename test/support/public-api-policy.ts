@@ -140,6 +140,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // policy entry.
       "SessionLifecycleOptions",
       "createSessionLabelStore",
+      // SessionLabelStore type: pair of createSessionLabelStore (already in this
+      // baseline). The only in-repo consumer (ChannelManagerDeps.sessionLabelStore
+      // field) was deleted in Plan 56-06 DEPS-TRIM-01 alongside 10 other unwired
+      // deps fields. Pair the type and factory in the baseline until a future
+      // plan removes both as a unit (separate dead-module cleanup).
+      "SessionLabelStore",
       "ScopedSessionKeyParams",
       "withSessionLock",
       "LockedSessionStoreOptions",
@@ -508,6 +514,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createTypingLifecycleController",
       "TypingLifecycleController",
       "TypingLifecycleOptions",
+      // GroupHistoryBuffer: the only in-repo consumer
+      // (InboundPipelineDeps.groupHistoryBuffer field, plus its mirror on
+      // ChannelManagerDeps) was deleted in Plan 56-06 DEPS-TRIM-01 — the deps
+      // slot was never wired by the daemon and the absent-mode (no group history
+      // injection) IS the production code path. Type stays exported on the
+      // documented public surface until a future plan removes the implementation
+      // module as a dead-code unit (separate cleanup).
+      "GroupHistoryBuffer",
       // deliverToChannel, DeliverToChannelDeps, DeliveryResult,
       // ChunkDeliveryResult, resolveChunkLimit, and QUEUE_BACKOFF_SCHEDULE_MS
       // were removed from @comis/channels exports when
@@ -938,6 +952,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ChannelConfig",
       "ChannelEntry",
       "ChannelHealthCheckConfig",
+      // AckReactionConfig: the only in-repo consumer
+      // (ChannelManagerDeps.ackReactionConfig field, plus its mirror on
+      // InboundPipelineDeps and SetupDeps) was deleted in Plan 56-06
+      // DEPS-TRIM-01 — the deps slot was never wired by the daemon and the
+      // absent-mode (no ack reactions sent through inbound setup; lifecycle
+      // reactor owns the reaction surface when enabled) IS the production code
+      // path. Schema + type stay on the public surface (AckReactionConfigSchema
+      // is operator-facing YAML) until a future plan consolidates the schema
+      // under the lifecycle-reactor section.
+      "AckReactionConfig",
       "CompactionConfig",
       "RetentionConfig",
       "SecurityConfig",

@@ -15,7 +15,7 @@ import type {
   NormalizedMessage,
   SessionKey,
 } from "@comis/core";
-import { ok, err } from "@comis/shared";
+import { ok } from "@comis/shared";
 
 import { setupInboundExecution } from "./inbound-setup.js";
 import type { SetupDeps } from "./inbound-setup.js";
@@ -92,178 +92,11 @@ function makeDeps(overrides?: Partial<SetupDeps>): SetupDeps {
   } as SetupDeps;
 }
 
-// ---------------------------------------------------------------------------
-// Ack reaction dispatch
-// ---------------------------------------------------------------------------
-
-describe("setupInboundExecution ack reaction dispatch", () => {
-  it("invokes adapter.reactToMessage when ackReactionConfig enabled and channel supports reactions", async () => {
-    const channelRegistry = {
-      getCapabilities: vi.fn(() => ({
-        features: { reactions: true },
-        replyToMetaKey: "telegramMessageId",
-      })),
-      getChannelPlugins: vi.fn(() => []),
-      register: vi.fn(),
-      getByType: vi.fn(),
-      getAllAdapters: vi.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any;
-    const deps = makeDeps({
-      ackReactionConfig: { enabled: true, emoji: "👀" },
-      channelRegistry,
-    });
-    const adapter = makeAdapter();
-    setupInboundExecution(deps, adapter, makeMsg(), makeMsg(), makeSessionKey());
-
-    expect(adapter.reactToMessage).toHaveBeenCalledWith(
-      "chat-1",
-      "42",
-      "👀",
-    );
-  });
-
-  it("skips ack reaction when ackReactionConfig.enabled is false", async () => {
-    const channelRegistry = {
-      getCapabilities: vi.fn(() => ({
-        features: { reactions: true },
-        replyToMetaKey: "telegramMessageId",
-      })),
-      getChannelPlugins: vi.fn(() => []),
-      register: vi.fn(),
-      getByType: vi.fn(),
-      getAllAdapters: vi.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any;
-    const deps = makeDeps({
-      ackReactionConfig: { enabled: false, emoji: "👀" },
-      channelRegistry,
-    });
-    const adapter = makeAdapter();
-    setupInboundExecution(deps, adapter, makeMsg(), makeMsg(), makeSessionKey());
-
-    expect(adapter.reactToMessage).not.toHaveBeenCalled();
-  });
-
-  it("skips ack reaction when lifecycleReactionsEnabled is true (lifecycle reactor handles it)", async () => {
-    const channelRegistry = {
-      getCapabilities: vi.fn(() => ({
-        features: { reactions: true },
-        replyToMetaKey: "telegramMessageId",
-      })),
-      getChannelPlugins: vi.fn(() => []),
-      register: vi.fn(),
-      getByType: vi.fn(),
-      getAllAdapters: vi.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any;
-    const deps = makeDeps({
-      ackReactionConfig: { enabled: true, emoji: "👀" },
-      lifecycleReactionsEnabled: true,
-      channelRegistry,
-    });
-    const adapter = makeAdapter();
-    setupInboundExecution(deps, adapter, makeMsg(), makeMsg(), makeSessionKey());
-
-    expect(adapter.reactToMessage).not.toHaveBeenCalled();
-  });
-
-  it("skips ack reaction when channel does not support reactions", async () => {
-    const channelRegistry = {
-      getCapabilities: vi.fn(() => ({
-        features: { reactions: false },
-        replyToMetaKey: "telegramMessageId",
-      })),
-      getChannelPlugins: vi.fn(() => []),
-      register: vi.fn(),
-      getByType: vi.fn(),
-      getAllAdapters: vi.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any;
-    const deps = makeDeps({
-      ackReactionConfig: { enabled: true, emoji: "👀" },
-      channelRegistry,
-    });
-    const adapter = makeAdapter();
-    setupInboundExecution(deps, adapter, makeMsg(), makeMsg(), makeSessionKey());
-
-    expect(adapter.reactToMessage).not.toHaveBeenCalled();
-  });
-
-  it("skips ack reaction when platform message ID is missing from metadata", async () => {
-    const channelRegistry = {
-      getCapabilities: vi.fn(() => ({
-        features: { reactions: true },
-        replyToMetaKey: "telegramMessageId",
-      })),
-      getChannelPlugins: vi.fn(() => []),
-      register: vi.fn(),
-      getByType: vi.fn(),
-      getAllAdapters: vi.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any;
-    const deps = makeDeps({
-      ackReactionConfig: { enabled: true, emoji: "👀" },
-      channelRegistry,
-    });
-    const adapter = makeAdapter();
-    // metadata.telegramMessageId is missing
-    setupInboundExecution(
-      deps,
-      adapter,
-      makeMsg({ metadata: {} }),
-      makeMsg(),
-      makeSessionKey(),
-    );
-
-    expect(adapter.reactToMessage).not.toHaveBeenCalled();
-  });
-
-  it("logs warning when ack reaction returns err result", async () => {
-    const channelRegistry = {
-      getCapabilities: vi.fn(() => ({
-        features: { reactions: true },
-        replyToMetaKey: "telegramMessageId",
-      })),
-      getChannelPlugins: vi.fn(() => []),
-      register: vi.fn(),
-      getByType: vi.fn(),
-      getAllAdapters: vi.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any;
-    const logger = {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-      fatal: vi.fn(),
-      trace: vi.fn(),
-      child: vi.fn().mockReturnThis(),
-    };
-    const deps = makeDeps({
-      ackReactionConfig: { enabled: true, emoji: "👀" },
-      channelRegistry,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      logger: logger as any,
-    });
-    const adapter = makeAdapter();
-    (adapter.reactToMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
-      err(new Error("reaction-failed")),
-    );
-
-    setupInboundExecution(deps, adapter, makeMsg(), makeMsg(), makeSessionKey());
-
-    // Allow the fire-and-forget promise to resolve
-    await new Promise((r) => setTimeout(r, 10));
-
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        hint: expect.stringContaining("reactions"),
-      }),
-      "Ack reaction failed",
-    );
-  });
-});
+// "setupInboundExecution ack reaction dispatch" describe block deleted in
+// Plan 56-06: ackReactionConfig deps slot removed from ChannelManagerDeps /
+// InboundPipelineDeps / SetupDeps. The ack-reaction-fire-and-forget code path
+// in inbound-setup.ts is gone; lifecycle reactor handles ack reactions when
+// enabled (production absent-mode).
 
 // ---------------------------------------------------------------------------
 // Typing controller branches
