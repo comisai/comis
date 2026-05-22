@@ -74,7 +74,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 **None.** Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path. The audit verified this empirically by counting `deps.<field>` references across `packages/orchestrator/src/{channel-manager.ts, inbound/*.ts, execution/*.ts}` for each of the 14 candidate fields that the daemon never wires; every candidate had at least one production reference whose absent-branch IS the production behavior. Examples:
 
-- `debounceBuffer`: 7 production usages; daemon never wires it (`inbound-route.ts:130` `if (!isDebounced && deps.debounceBuffer)` selects the no-debounce path in production).
+- `debounceBuffer`: 7 production usages; daemon never wires it (`inbound-route.ts:93` `if (!isDebounced && deps.debounceBuffer)` selects the no-debounce path in production).
 - `groupHistoryBuffer`: 8 production usages; daemon never wires it (group-history injection is disabled in production).
 - `loadPromptSkill` / `getUserInvocableSkillNames`: 2 usages each (`inbound-gate.ts:344` `if (... && deps.loadPromptSkill && deps.getUserInvocableSkillNames)`); daemon never wires either, so skill commands pass through as plain text in production.
 - `inFlightSends`: 3 usages; the interface JSDoc documents this as a test-only injection point; the factory creates its own per-instance Set when absent (the production path, `channel-manager.ts:273`).
