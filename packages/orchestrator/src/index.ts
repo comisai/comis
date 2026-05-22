@@ -14,13 +14,14 @@ export * from "./inbound/setup-and-route.js";
 export * from "./inbound/resolve-and-preprocess.js";
 export * from "./inbound/inbound-gate.js";
 
-// Execution coordination — execution-deliver and execution-policy travel
-// with execution-pipeline (same ownership bucket).
+// Execution coordination — execution-deliver travels with
+// execution-pipeline (same ownership bucket). The former
+// execution-policy phase was inlined into execution-pipeline in Phase 59
+// REFACTOR-02.
 export * from "./execution/execution-pipeline.js";
 export * from "./execution/execution-execute.js";
 export * from "./execution/execution-filter.js";
 export * from "./execution/execution-deliver.js";
-export * from "./execution/execution-policy.js";
 
 // Channel manager lifecycle.
 // Exports: createChannelManager (factory), ChannelManager (interface),

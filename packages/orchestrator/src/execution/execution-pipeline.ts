@@ -2,11 +2,17 @@
 /**
  * Execution Pipeline: Thin orchestrator for outbound delivery.
  *
- * Delegates to 4 focused phase modules:
- *   1. execution-policy  — send policy gate, trust level, elevated reply routing
- *   2. execution-execute — LLM execution with timeout, thinking filter, abort
- *   3. execution-filter  — response sanitization, filtering, media, voice, prefix
- *   4. execution-deliver — chunking, coalescing, block pacing, delivery
+ * Delegates to 3 focused phase modules (Phase 59 REFACTOR-02 inlined the
+ * former execution-policy phase directly into the executeAndDeliver body —
+ * 5 PolicyDeps fields already lived on ExecutionPipelineDeps, so the seam
+ * was pure cosmetic):
+ *   1. execution-execute — LLM execution with timeout, thinking filter, abort
+ *   2. execution-filter  — response sanitization, filtering, media, voice, prefix
+ *   3. execution-deliver — chunking, coalescing, block pacing, delivery
+ *
+ * The pre-execute send-policy gate, sender trust resolution, and elevated
+ * reply routing are now an inline block at the head of executeAndDeliver
+ * (Stage 1 marker below).
  *
  * @module
  */
@@ -25,17 +31,24 @@ import type { CommandDirectives } from "../commands/index.js";
 // Relative path used because orchestrator cannot import its own published name.
 import type { CommandQueue } from "../queue/command-queue.js";
 
+import { isGroupMessage, evaluateSendPolicy, applySessionOverride } from "@comis/channels";
 import type {
   BlockPacer,
   TypingLifecycleController,
   ChannelRegistry,
   SendOverrideStore,
+  SendPolicyContext,
   VoiceResponsePipelineDeps,
 } from "@comis/channels";
 import type { RetryEngine } from "@comis/core";
 
 // Pipeline-stage imports
-import { evaluateExecutionPolicy } from "./execution-policy.js";
+// Note: Phase 59 REFACTOR-02 inlined the former send-policy phase body
+// (formerly a sibling source file exporting one phase function +
+// PolicyDeps + PolicyResult) directly into executeAndDeliver below. The
+// 5 deps fields (eventBus, logger, sendPolicyConfig,
+// getElevatedReplyConfig, channelRegistry) already live on
+// ExecutionPipelineDeps — no interface change required.
 import { executeLlm } from "./execution-execute.js";
 import { filterExecutionResponse } from "./execution-filter.js";
 import { deliverExecutionResponse } from "./execution-deliver.js";
@@ -219,37 +232,137 @@ export async function executeAndDeliver(
     );
   }
 
+  // ===================================================================
   // Stage 1: Send policy gate, trust level, elevated reply routing
-  const policy = evaluateExecutionPolicy(
-    deps, adapter, effectiveMsg, originalMsg, sessionKey, agentId, sendOverrides,
-  );
+  // (Inlined from the former send-policy phase module in Phase 59
+  // REFACTOR-02 — 5 deps fields already lived on ExecutionPipelineDeps.)
+  // ===================================================================
 
-  if (!policy.allowed) {
-    // Still execute the agent (for session history), just skip sending
-    const policyResult = await runWithContext({
-      traceId: randomUUID(),
-      tenantId: sessionKey.tenantId,
-      userId: sessionKey.userId,
-      sessionKey: formatSessionKey(sessionKey),
-      startedAt: systemNowMs(),
-      trustLevel: policy.trustLevel,
+  // Capability-driven config lookup (falls back to hardcoded maps)
+  const caps = deps.channelRegistry?.getCapabilities(adapter.channelType);
+  const metaKey = caps?.replyToMetaKey;
+  // In DMs, skip reply-to -- quoting the user's own message adds noise in 1-on-1 chats.
+  const replyTo =
+    isGroupMessage(originalMsg) && metaKey && originalMsg.metadata?.[metaKey]
+      ? String(originalMsg.metadata[metaKey])
+      : undefined;
+
+  // Resolve sender trust level from elevatedReply config (defaults to "user")
+  let trustLevel: "guest" | "user" | "admin" = "user";
+  if (deps.getElevatedReplyConfig) {
+    const elevCfg = deps.getElevatedReplyConfig(agentId);
+    if (elevCfg?.enabled) {
+      const senderId = effectiveMsg.senderId;
+      const mapped = elevCfg.senderTrustMap[senderId] ?? elevCfg.defaultTrustLevel;
+      if (mapped === "admin" || mapped === "user" || mapped === "guest") {
+        trustLevel = mapped;
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // SEND POLICY GATE (checked once before any delivery path)
+  // -------------------------------------------------------------------
+  if (deps.sendPolicyConfig?.enabled) {
+    const policyCtx: SendPolicyContext = {
+      channelId: adapter.channelId,
       channelType: adapter.channelType,
-      deliveryOrigin: createDeliveryOrigin({
+      chatType: originalMsg.chatType ?? "dm",
+    };
+    let policyDecision = evaluateSendPolicy(policyCtx, deps.sendPolicyConfig);
+
+    // Apply per-session override
+    const overrideKey = formatSessionKey(sessionKey);
+    const override = sendOverrides.get(overrideKey);
+    policyDecision = applySessionOverride(policyDecision, override);
+
+    if (!policyDecision.allowed) {
+      deps.eventBus.emit("sendpolicy:denied", {
+        channelId: adapter.channelId,
         channelType: adapter.channelType,
-        channelId: effectiveMsg.channelId,
-        userId: sessionKey.userId,
-        threadId: effectiveMsg.metadata?.threadId as string | undefined,
+        chatType: policyCtx.chatType,
+        reason: policyDecision.reason,
+        timestamp: systemNowMs(),
+      });
+      deps.logger.info(
+        { channelId: adapter.channelId, reason: policyDecision.reason },
+        "Send policy denied outbound message",
+      );
+
+      // Still execute the agent (for session history), just skip sending.
+      // (Silent-execute path preserved verbatim from pre-inline pipeline —
+      // one of two executor.execute call sites; see RESEARCH §B.4 + §LM-15.)
+      const policyResult = await runWithContext({
+        traceId: randomUUID(),
         tenantId: sessionKey.tenantId,
-      }),
-    }, () => executor.execute(effectiveMsg, sessionKey, tools, undefined, agentId, directives as CommandDirectives | undefined, undefined, { operationType: "interactive" as const }));
-    emitDiagnostic(policyResult.tokensUsed.total, policyResult.cost.total, policyResult.finishReason);
-    return;
+        userId: sessionKey.userId,
+        sessionKey: formatSessionKey(sessionKey),
+        startedAt: systemNowMs(),
+        trustLevel,
+        channelType: adapter.channelType,
+        deliveryOrigin: createDeliveryOrigin({
+          channelType: adapter.channelType,
+          channelId: effectiveMsg.channelId,
+          userId: sessionKey.userId,
+          threadId: effectiveMsg.metadata?.threadId as string | undefined,
+          tenantId: sessionKey.tenantId,
+        }),
+      }, () => executor.execute(effectiveMsg, sessionKey, tools, undefined, agentId, directives as CommandDirectives | undefined, undefined, { operationType: "interactive" as const }));
+      emitDiagnostic(policyResult.tokensUsed.total, policyResult.cost.total, policyResult.finishReason);
+      return;
+    }
+
+    deps.eventBus.emit("sendpolicy:allowed", {
+      channelId: adapter.channelId,
+      channelType: adapter.channelType,
+      chatType: policyCtx.chatType,
+      reason: policyDecision.reason,
+      timestamp: systemNowMs(),
+    });
+  }
+
+  // -------------------------------------------------------------------
+  // ELEVATED REPLY MODE (mutates effectiveMsg via parameter rebind)
+  // -------------------------------------------------------------------
+  if (deps.getElevatedReplyConfig) {
+    const elevConfig = deps.getElevatedReplyConfig(agentId);
+    if (elevConfig?.enabled) {
+      const senderId = effectiveMsg.senderId;
+      const tl = elevConfig.senderTrustMap[senderId] ?? elevConfig.defaultTrustLevel;
+      const modelRoute = elevConfig.trustModelRoutes[tl];
+      if (modelRoute) {
+        deps.eventBus.emit("elevated:model_routed", {
+          sessionKey: formatSessionKey(sessionKey),
+          senderTrustLevel: tl,
+          modelRoute,
+          agentId,
+          timestamp: systemNowMs(),
+        });
+        effectiveMsg = {
+          ...effectiveMsg,
+          metadata: {
+            ...(effectiveMsg.metadata ?? {}),
+            modelRoute,
+          },
+        };
+      }
+      const promptOverride = elevConfig.trustPromptOverrides[tl];
+      if (promptOverride) {
+        effectiveMsg = {
+          ...effectiveMsg,
+          metadata: {
+            ...(effectiveMsg.metadata ?? {}),
+            systemPromptOverride: promptOverride,
+          },
+        };
+      }
+    }
   }
 
   // Stage 2: LLM execution with timeout, thinking filter, abort signal
   const execResult = await executeLlm(
-    deps, adapter, policy.effectiveMsg, sessionKey, agentId, executor,
-    policy.trustLevel, blockStreamCfg, policy.replyTo, typingLifecycle,
+    deps, adapter, effectiveMsg, sessionKey, agentId, executor,
+    trustLevel, blockStreamCfg, replyTo, typingLifecycle,
     tools, directives,
   );
 
@@ -266,8 +379,8 @@ export async function executeAndDeliver(
 
     // Stage 3: Response sanitization, filtering, media, voice, prefix
     const filterResult = await filterExecutionResponse(
-      deps, adapter, policy.effectiveMsg, originalMsg, sessionKey, agentId,
-      execResult.result, execResult.accumulated, policy.replyTo,
+      deps, adapter, effectiveMsg, originalMsg, sessionKey, agentId,
+      execResult.result, execResult.accumulated, replyTo,
       execResult.resourceAborted, execResult.abortReason, execResult.finishReason,
     );
 
@@ -284,14 +397,14 @@ export async function executeAndDeliver(
 
     // Stage 4: Chunking, coalescing, block pacing, delivery
     await deliverExecutionResponse(
-      deps, adapter, policy.effectiveMsg, filterResult.text,
-      blockStreamCfg, activePacers, policy.replyTo,
+      deps, adapter, effectiveMsg, filterResult.text,
+      blockStreamCfg, activePacers, replyTo,
       execResult.deliverySignal, typingLifecycle,
     );
 
     // Emit message:sent event with the cleaned response content
     deps.eventBus.emit("message:sent", {
-      channelId: policy.effectiveMsg.channelId,
+      channelId: effectiveMsg.channelId,
       messageId: "block-delivery",
       content: filterResult.text,
     });
@@ -310,7 +423,7 @@ export async function executeAndDeliver(
       if (wasActive) {
         deps.eventBus.emit("typing:stopped", {
           channelId: adapter.channelId,
-          chatId: policy.effectiveMsg.channelId,
+          chatId: effectiveMsg.channelId,
           durationMs: systemNowMs() - startedAt,
           timestamp: systemNowMs(),
         });
