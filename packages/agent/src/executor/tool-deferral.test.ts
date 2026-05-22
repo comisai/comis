@@ -1109,6 +1109,41 @@ describe("DEFERRAL_RULES", () => {
   });
 });
 
+describe("CHANNEL_TOOL_GATES (structural -- REFACTOR-08)", () => {
+  it("generates 4 channel rules in stable order: discord, telegram, slack, whatsapp", () => {
+    // CHANNEL_TOOL_GATES is private to tool-deferral.ts -- assert structure via DEFERRAL_RULES tail.
+    const channelRules = DEFERRAL_RULES.slice(1);
+    expect(channelRules).toHaveLength(4);
+    expect(channelRules.map((r) => r.namespace)).toEqual([
+      "discord",
+      "telegram",
+      "slack",
+      "whatsapp",
+    ]);
+  });
+
+  it("each generated rule's activeWhen returns TRUE only for its own channelType (closure-capture exclusivity)", () => {
+    const channelRules = DEFERRAL_RULES.slice(1);
+    const channelTypes = ["discord", "telegram", "slack", "whatsapp"] as const;
+
+    for (const rule of channelRules) {
+      const ownChannel = rule.namespace; // namespace === channelType by table contract
+      for (const candidate of channelTypes) {
+        const ctx = makeContext({
+          trustLevel: "user",
+          channelType: candidate,
+          toolNames: [],
+        });
+        const expected = candidate === ownChannel;
+        expect(
+          rule.activeWhen(ctx),
+          `rule for ${ownChannel} should ${expected ? "accept" : "reject"} channelType=${candidate}`,
+        ).toBe(expected);
+      }
+    }
+  });
+});
+
 describe("CORE_TOOLS", () => {
   it("contains essential file/exec/memory/web tools", () => {
     const expected = [
