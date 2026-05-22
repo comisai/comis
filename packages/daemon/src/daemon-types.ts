@@ -274,6 +274,13 @@ export type SessionStoreBridge = {
  * inside `bootChannels` as locals; Plan 59-03 will eliminate them entirely
  * by reordering construction.
  */
+// @optional-field-count: BootContext is the composition-root accumulator for
+// the 5 boot* helpers (Phase 59 REFACTOR-01 part 1). Group B/C/D fields are
+// optional by design — they exist on the type but are unpopulated until the
+// matching boot* helper runs. The integration test
+// test/integration/daemon-lifecycle.test.ts:89-99 (5 log lines in source
+// order) is the runtime invariant gate that replaces the prior compile-time
+// 4-handle chain enforcement.
 export interface BootContext {
   // ===========================================================================
   // Group A: foundation (strict, populated by bootFoundation)
