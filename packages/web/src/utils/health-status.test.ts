@@ -4,7 +4,7 @@
  *
  * Covers normalize/getHealthVisual/showUptime + the HEALTH_STATUS map. Pure logic — no
  * DOM dependencies. Every branch in normalizeChannelStatus is exercised: valid state
- * pass-through, legacy alias resolution, and unknown-string fallback.
+ * pass-through (case-insensitive, trimmed) and unknown-string fallback.
  *
  * @module
  */
@@ -98,24 +98,15 @@ describe("normalizeChannelStatus", () => {
     expect(normalizeChannelStatus("\nidle\n")).toBe("idle");
   });
 
-  it("maps legacy alias 'connected' to canonical 'healthy' state for old backends", () => {
-    expect(normalizeChannelStatus("connected")).toBe("healthy");
-  });
-
-  it("maps legacy alias 'running' to canonical 'healthy' state for old transports", () => {
-    expect(normalizeChannelStatus("running")).toBe("healthy");
-  });
-
-  it("maps legacy alias 'error' (singular) to canonical 'errored' state", () => {
-    expect(normalizeChannelStatus("error")).toBe("errored");
-  });
-
-  it("maps legacy alias 'stopped' to canonical 'disconnected' state", () => {
-    expect(normalizeChannelStatus("stopped")).toBe("disconnected");
-  });
-
-  it("maps legacy alias 'reconnecting' to canonical 'healthy' (optimistic)", () => {
-    expect(normalizeChannelStatus("reconnecting")).toBe("healthy");
+  it("returns 'unknown' for former legacy alias strings that are no longer remapped", () => {
+    // Plan 55-03 deleted the LEGACY_ALIASES dictionary. Backends emit canonical
+    // states only; the prior aliases (connected / running / error / stopped /
+    // reconnecting) now fall through to "unknown" — the documented safe state.
+    expect(normalizeChannelStatus("connected")).toBe("unknown");
+    expect(normalizeChannelStatus("running")).toBe("unknown");
+    expect(normalizeChannelStatus("error")).toBe("unknown");
+    expect(normalizeChannelStatus("stopped")).toBe("unknown");
+    expect(normalizeChannelStatus("reconnecting")).toBe("unknown");
   });
 
   it("returns 'unknown' for arbitrary unrecognized status strings as safe fallback", () => {
@@ -134,10 +125,11 @@ describe("getHealthVisual", () => {
     expect(visual.icon).toBe("check-circle");
   });
 
-  it("returns the HealthVisual for legacy aliased state via normalization round-trip", () => {
+  it("returns the unknown HealthVisual for former legacy alias inputs (aliases removed)", () => {
+    // Plan 55-03 deleted LEGACY_ALIASES — "connected" no longer maps to "healthy".
     const visual = getHealthVisual("connected");
-    expect(visual.severity).toBe("green");
-    expect(visual.label).toBe("Healthy");
+    expect(visual.severity).toBe("gray");
+    expect(visual.label).toBe("Unknown");
   });
 
   it("returns the unknown HealthVisual when raw status is unrecognized", () => {
