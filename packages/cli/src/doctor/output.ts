@@ -3,29 +3,18 @@
  * Doctor diagnostic output rendering.
  *
  * Provides table and JSON output formatters for doctor results.
- * Table format uses chalk for status coloring with npm-doctor style
- * pass/fail listing. JSON format uses the standard json() helper.
+ * Table output is delegated to the shared `renderFindings` helper in
+ * `util/render-findings.ts`; JSON output uses the standard json() helper.
  *
  * @module
  */
 
-import chalk from "chalk";
-import type { DoctorResult, DoctorStatus } from "./types.js";
+import type { DoctorResult } from "./types.js";
 import { json } from "../output/format.js";
-
-/** Map status to a colored icon. */
-function statusIcon(status: DoctorStatus): string {
-  switch (status) {
-    case "pass":
-      return chalk.green("v");
-    case "fail":
-      return chalk.red("X");
-    case "warn":
-      return chalk.yellow("!");
-    case "skip":
-      return chalk.gray("-");
-  }
-}
+import {
+  renderFindings,
+  type NormalizedFinding,
+} from "../util/render-findings.js";
 
 /**
  * Render doctor results as a formatted table to stdout.
@@ -37,37 +26,33 @@ function statusIcon(status: DoctorStatus): string {
  * @param result - The aggregated doctor result to render
  */
 export function renderDoctorTable(result: DoctorResult): void {
-  console.log("");
+  const findings: NormalizedFinding[] = result.findings.map((f) => ({
+    status: f.status,
+    category: f.category,
+    title: f.check,
+    message: f.message,
+    hint: f.suggestion,
+    badge: f.repairable ? "[repairable]" : undefined,
+  }));
 
-  if (result.findings.length === 0) {
-    console.log(chalk.green("  No findings.\n"));
-  } else {
-    for (const finding of result.findings) {
-      const icon = statusIcon(finding.status);
-      const repairable = finding.repairable ? chalk.cyan(" [repairable]") : "";
-      console.log(`  ${icon} ${chalk.bold(finding.category)} / ${finding.check}: ${finding.message}${repairable}`);
+  const summary = {
+    total: result.checksRun,
+    counts: {
+      pass: result.passCount,
+      fail: result.failCount,
+      warn: result.warnCount,
+      skip: result.skipCount,
+    },
+    footer:
+      result.repairableCount > 0
+        ? `${result.repairableCount} repairable. Run with --repair to fix.`
+        : undefined,
+  };
 
-      if (finding.suggestion) {
-        console.log(chalk.gray(`      ${finding.suggestion}`));
-      }
-    }
-  }
-
-  // Summary line
-  const parts = [
-    `${result.checksRun} checks`,
-    chalk.green(`${result.passCount} pass`),
-    chalk.red(`${result.failCount} fail`),
-    chalk.yellow(`${result.warnCount} warn`),
-    chalk.gray(`${result.skipCount} skip`),
-  ];
-  console.log(`\n  ${parts.join(", ")}.`);
-
-  if (result.repairableCount > 0) {
-    console.log(chalk.cyan(`  ${result.repairableCount} repairable. Run with --repair to fix.`));
-  }
-
-  console.log("");
+  renderFindings(
+    { kind: "findings", findings, summary },
+    { renderMode: "compact" },
+  );
 }
 
 /**

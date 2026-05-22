@@ -3,39 +3,28 @@
  * Security audit output rendering.
  *
  * Provides table and JSON output formatters for audit results.
- * Table format uses chalk for severity coloring; JSON format
- * uses the standard json() output helper.
+ * Table output is delegated to the shared `renderFindings` helper in
+ * `util/render-findings.ts`; JSON output uses the standard json() helper.
  *
  * @module
  */
 
-import chalk from "chalk";
-import type { AuditResult, Severity } from "./types.js";
-import { renderTable } from "../output/table.js";
+import type { AuditResult } from "./types.js";
 import { json } from "../output/format.js";
+import {
+  renderFindings,
+  type NormalizedFinding,
+  type NormalizedStatus,
+} from "../util/render-findings.js";
 
-/** Map severity to a colored display string. */
-function colorSeverity(severity: Severity): string {
-  switch (severity) {
-    case "critical":
-      return chalk.red.bold("CRITICAL");
-    case "warning":
-      return chalk.yellow("WARNING");
-    case "info":
-      return chalk.blue("INFO");
-  }
-}
-
-/** Map severity to an icon. */
-function severityIcon(severity: Severity): string {
-  switch (severity) {
-    case "critical":
-      return chalk.red("X");
-    case "warning":
-      return chalk.yellow("!");
-    case "info":
-      return chalk.blue("i");
-  }
+/**
+ * Map a security `Severity` to the unified `NormalizedStatus`.
+ *
+ * `"warning"` collapses to `"warn"`; `"critical"` and `"info"` carry through
+ * 1:1. The renderer's status-icon switch covers all 6 NormalizedStatus values.
+ */
+function severityToStatus(severity: AuditResult["findings"][number]["severity"]): NormalizedStatus {
+  return severity === "warning" ? "warn" : severity;
 }
 
 /**
@@ -47,34 +36,31 @@ function severityIcon(severity: Severity): string {
  * @param result - The aggregated audit result to render
  */
 export function renderAuditTable(result: AuditResult): void {
-  if (result.findings.length === 0) {
-    console.log(chalk.green("\n  No security findings.\n"));
-  } else {
-    const rows = result.findings.map((f) => [
-      severityIcon(f.severity),
-      colorSeverity(f.severity),
-      f.category,
-      f.message,
-      f.remediation,
-    ]);
+  const findings: NormalizedFinding[] = result.findings.map((f) => ({
+    status: severityToStatus(f.severity),
+    category: f.category,
+    title: f.code,
+    message: f.message,
+    hint: f.remediation,
+    badge: f.path ? `path=${f.path}` : undefined,
+  }));
 
-    renderTable(["", "Severity", "Category", "Message", "Remediation"], rows);
-  }
+  const summary = {
+    total: result.checksRun,
+    counts: {
+      critical: result.criticalCount,
+      warning: result.warningCount,
+      info: result.infoCount,
+    },
+    footer: result.passed
+      ? "Audit PASSED (no critical findings)"
+      : "Audit FAILED (critical findings detected)",
+  };
 
-  // Summary line
-  const parts = [
-    `${result.checksRun} checks run`,
-    chalk.red.bold(`${result.criticalCount} critical`),
-    chalk.yellow(`${result.warningCount} warnings`),
-    chalk.blue(`${result.infoCount} info`),
-  ];
-  console.log(`\n  ${parts.join(", ")}`);
-
-  if (result.passed) {
-    console.log(chalk.green("  Audit PASSED (no critical findings)\n"));
-  } else {
-    console.log(chalk.red.bold("  Audit FAILED (critical findings detected)\n"));
-  }
+  renderFindings(
+    { kind: "findings", findings, summary },
+    { renderMode: "table" },
+  );
 }
 
 /**
