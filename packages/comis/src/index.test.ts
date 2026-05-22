@@ -116,13 +116,13 @@ describe("comisai umbrella namespace re-exports — shape matches sub-package ba
     );
   });
 
-  it("exposes namespace 'observability' whose sentinel 'stableStringify' is identity-equal to @comis/observability.stableStringify", () => {
+  it("exposes namespace 'observability' whose sentinel 'sanitizeForPersistence' is identity-equal to @comis/observability.sanitizeForPersistence", () => {
     expect(typeof comis.observability).toBe("object");
-    expect(comis.observability).toHaveProperty("stableStringify");
+    expect(comis.observability).toHaveProperty("sanitizeForPersistence");
     expect(
-      (comis.observability as Record<string, unknown>).stableStringify,
+      (comis.observability as Record<string, unknown>).sanitizeForPersistence,
     ).toBe(
-      (directObservability as Record<string, unknown>).stableStringify,
+      (directObservability as Record<string, unknown>).sanitizeForPersistence,
     );
   });
 

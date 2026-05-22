@@ -49,6 +49,7 @@ import {
   redactConfigAuditArgv,
   CONFIG_AUDIT_ARGV_CAP,
 } from "./argv-redactor.js";
+import { emitSerializationErrorSentinel } from "./serialization-sentinel.js";
 import { detectSuspicious } from "./suspicious.js";
 import type {
   ConfigWriteAuditRecord,
@@ -415,34 +416,6 @@ export class ConfigAuditAppendError extends Error {
     super(message);
     this.code = code;
   }
-}
-
-/**
- * Sentinel emitted when `safeJsonStringify` returns undefined (BigInt,
- * circular reference, or other host-throw in JSON.stringify). The
- * sentinel is hand-crafted with only string + number primitives so it
- * is guaranteed to be JSON-serializable — `JSON.stringify` on the
- * sentinel can never itself fail.
- *
- * Downstream consumers (config.audit.list, scrubber, doctor) see a
- * parseable record they can recognize and skip / report. Compare to
- * the prior behavior, which wrote the literal string "undefined\n"
- * that broke every JSON.parse call on the affected line.
- */
-function emitSerializationErrorSentinel(): string {
-  // Hand-crafted to be unconditionally serializable. JSON.stringify here
-  // CANNOT return undefined — the non-null assertion is sound and is the
-  // boundary point where the writer guarantees a parseable JSONL line.
-  // Uses `ts` (ISO string) per design §9.2; `tsMs` was dropped in
-  // 260519-rrm deviation G.
-  const sentinel = {
-    traceSchema: "comis-config-audit" as const,
-    schemaVersion: 1 as const,
-    __serializationError: "record-not-serializable" as const,
-    ts: systemDateFrom(systemNowMs()).toISOString(),
-  };
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  return JSON.stringify(sentinel)! + "\n";
 }
 
 /**
