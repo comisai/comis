@@ -165,7 +165,6 @@ export interface PostExecutionParams {
   getTurnBudgetSummary: () => { turnsExceeded: number; totalBudgetTruncatedChars: number };
   // State
   executionPlanRef: { current: ExecutionPlan | undefined };
-  sepEnabled: boolean;
   isOnboarding: boolean;
   geminiCacheHit: boolean;
   geminiCachedTokens: number;

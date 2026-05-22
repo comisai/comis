@@ -1414,7 +1414,7 @@ async function runSessionLocked(
       bridge, unsubscribe,
       contextEngineRef, ceSetup, streamSetup,
       getTruncationSummary, getTurnBudgetSummary,
-      executionPlanRef, sepEnabled, isOnboarding,
+      executionPlanRef, isOnboarding,
       geminiCacheHit, geminiCachedTokens, modelTier,
       provider: resolvedModel?.provider ?? config.provider,
       providerFamily: resolveProviderCapabilities(resolvedModel?.provider ?? config.provider).providerFamily,
