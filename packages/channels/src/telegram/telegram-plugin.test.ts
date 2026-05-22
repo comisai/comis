@@ -129,13 +129,13 @@ describe("createTelegramPlugin", () => {
     expect(plugin.adapter.channelType).toBe("telegram");
   });
 
-  it("capabilities declare threads: true and forum chatType", () => {
+  it("capabilities declare expected feature flags", () => {
     const plugin = createTelegramPlugin(makeDeps());
     const caps = plugin.capabilities;
 
-    expect(caps.features.threads).toBe(true);
-    expect(caps.chatTypes).toContain("forum");
-    expect(caps.threading.supported).toBe(true);
-    expect(caps.threading.threadType).toBe("native");
+    expect(caps.features.reactions).toBe(true);
+    expect(caps.features.editMessages).toBe(true);
+    expect(caps.features.attachments).toBe(true);
+    expect(caps.replyToMetaKey).toBe("telegramMessageId");
   });
 });

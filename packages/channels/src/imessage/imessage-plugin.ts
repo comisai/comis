@@ -17,32 +17,15 @@ import { createIMessageAdapter, type IMessageAdapterDeps } from "./imessage-adap
 
 /** iMessage platform capabilities (self-declared, validated at registration). */
 const CAPABILITIES: ChannelCapability = {
-  chatTypes: ["dm", "group"],
   features: {
     reactions: false,
     editMessages: false,
     deleteMessages: false,
     fetchHistory: true,
     attachments: true,
-    threads: false,
-    mentions: false,
-    formatting: [],
-    buttons: false,
-    cards: false,
-    effects: false,
   },
   limits: {
     maxMessageChars: 20000,
-    maxAttachmentSizeMb: 16,
-  },
-  streaming: {
-    supported: false,
-    throttleMs: 300,
-    method: "none",
-  },
-  threading: {
-    supported: false,
-    threadType: "none",
   },
   replyToMetaKey: "imsgMessageId",
 };

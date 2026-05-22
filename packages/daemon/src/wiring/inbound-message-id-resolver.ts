@@ -80,8 +80,9 @@ export function createInboundMessageIdResolver(
       const metaKey = opts.metaKeyByChannel.get(channelType);
       if (!metaKey) return;
       const meta = msg.metadata as Record<string, unknown> | undefined;
-      // metaKey comes from our internal channelCapabilities map (set at adapter
-      // bootstrap, not user-controlled), so dynamic access is safe.
+      // metaKey comes from plugin.capabilities.replyToMetaKey (declared in
+      // plugin metadata at compile time, not user-controlled), so dynamic
+      // access is safe.
       // eslint-disable-next-line security/detect-object-injection
       const raw = meta?.[metaKey];
       if (raw == null) return;

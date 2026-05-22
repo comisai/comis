@@ -18,31 +18,15 @@ import { createIrcAdapter, type IrcAdapterDeps } from "./irc-adapter.js";
 
 /** IRC platform capabilities (self-declared, validated at registration). */
 const CAPABILITIES: ChannelCapability = {
-  chatTypes: ["dm", "channel"],
   features: {
     reactions: false,
     editMessages: false,
     deleteMessages: false,
     fetchHistory: false,
     attachments: false,
-    threads: false,
-    mentions: true,
-    formatting: ["irc-control-codes"],
-    buttons: false,
-    cards: false,
-    effects: false,
   },
   limits: {
     maxMessageChars: 512,
-  },
-  streaming: {
-    supported: false,
-    throttleMs: 300,
-    method: "none",
-  },
-  threading: {
-    supported: false,
-    threadType: "none",
   },
   replyToMetaKey: "ircMessageId",
 };

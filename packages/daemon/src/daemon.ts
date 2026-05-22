@@ -733,17 +733,20 @@ async function stageChannels(input: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches assembleToolsForAgent signature from setup-tools.ts
   const toolAssemblerRef: { ref?: (agentId: string, options?: import("./wiring/setup-tools.js").AssembleToolsOptions) => Promise<any[]> } = {};
   // `{ ref?: T }` indirection captured by onMessageReceived lambda;
-  // populated below once channelCapabilities is available.
+  // populated below once channelPlugins is available.
   const inboundMessageIdResolverRef: { ref?: InboundMessageIdResolver } = {};
 
   // 6.6.8. Channels (lifted from main()'s setupChannels; deps via helper)
-  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, channelCapabilities, commandQueue, deliveryService, approvalNotifier } = await setupChannels(
+  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, commandQueue, deliveryService, approvalNotifier } = await setupChannels(
     buildChannelManagerDeps({ agents: handle, toolAssemblerRef, inboundMessageIdResolverRef, sessionTrackerRef }),
   );
   channelPluginsRef.ref = channelPlugins;
   const inboundMessageIdResolver = (() => {
     const metaKeyByChannel = new Map<string, string>();
-    for (const [type, cap] of channelCapabilities) metaKeyByChannel.set(type, cap.replyToMetaKey);
+    for (const [type, plugin] of channelPlugins) {
+      const metaKey = plugin.capabilities.replyToMetaKey;
+      if (metaKey) metaKeyByChannel.set(type, metaKey);
+    }
     return createInboundMessageIdResolver({ metaKeyByChannel });
   })();
   inboundMessageIdResolverRef.ref = inboundMessageIdResolver;
@@ -867,7 +870,7 @@ async function stageChannels(input: {
   return {
     ...handle,
     adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins,
-    channelCapabilities, commandQueue, deliveryService,
+    commandQueue, deliveryService,
     inboundMessageIdResolver, channelHealthMonitor, stopChannelHealthMonitor,
     notificationContext, bgCompletionRunnerContext,
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,

@@ -14,34 +14,15 @@ import { createDiscordAdapter, type DiscordAdapterDeps } from "./discord-adapter
 
 /** Discord platform capabilities (self-declared, validated at registration). */
 const CAPABILITIES: ChannelCapability = {
-  chatTypes: ["dm", "group", "thread", "channel", "forum"],
   features: {
     reactions: true,
     editMessages: true,
     deleteMessages: true,
     fetchHistory: true,
     attachments: true,
-    threads: true,
-    mentions: true,
-    formatting: ["markdown"],
-    buttons: true,
-    cards: true,
-    effects: true,
   },
   limits: {
     maxMessageChars: 2000,
-    maxAttachmentSizeMb: 25,
-  },
-  streaming: {
-    supported: true,
-    throttleMs: 500,
-    maxChars: 2000,
-    method: "edit",
-  },
-  threading: {
-    supported: true,
-    threadType: "native",
-    maxDepth: 1,
   },
   replyToMetaKey: "discordMessageId",
 };

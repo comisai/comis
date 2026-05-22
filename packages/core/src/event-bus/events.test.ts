@@ -84,23 +84,14 @@ describe("EventMap composition", () => {
       channelType: "discord",
       pluginId: "discord-01",
       capabilities: {
-        chatTypes: ["dm", "group"],
         features: {
           reactions: true,
           editMessages: true,
           deleteMessages: true,
           fetchHistory: false,
           attachments: true,
-          threads: false,
-          mentions: true,
-          formatting: ["markdown"],
-          buttons: false,
-          cards: false,
-          effects: false,
         },
         limits: { maxMessageChars: 2000 },
-        streaming: { supported: false, throttleMs: 300, method: "none" },
-        threading: { supported: false, threadType: "none" },
       },
       timestamp: Date.now(),
     };

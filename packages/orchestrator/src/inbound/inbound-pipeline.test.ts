@@ -602,11 +602,8 @@ describe("ack reaction bypass with lifecycleReactionsEnabled", () => {
       lifecycleReactionsEnabled: true,
       channelRegistry: {
         getCapabilities: vi.fn(() => ({
-          chatTypes: ["dm"],
-          features: { reactions: true, editMessages: true, deleteMessages: true, fetchHistory: false, attachments: true, threads: false, mentions: true, formatting: [], buttons: false, cards: false, effects: false },
-          limits: { maxMessageChars: 4096, maxAttachmentSizeMb: 50 },
-          streaming: { supported: true, throttleMs: 300, maxChars: 4096, method: "edit" as const },
-          threading: { supported: false, threadType: "none" as const },
+          features: { reactions: true, editMessages: true, deleteMessages: true, fetchHistory: false, attachments: true },
+          limits: { maxMessageChars: 4096 },
           replyToMetaKey: "telegramMessageId",
         })),
         getAdapter: vi.fn(),
@@ -630,11 +627,8 @@ describe("ack reaction bypass with lifecycleReactionsEnabled", () => {
       lifecycleReactionsEnabled: false,
       channelRegistry: {
         getCapabilities: vi.fn(() => ({
-          chatTypes: ["dm"],
-          features: { reactions: true, editMessages: true, deleteMessages: true, fetchHistory: false, attachments: true, threads: false, mentions: true, formatting: [], buttons: false, cards: false, effects: false },
-          limits: { maxMessageChars: 4096, maxAttachmentSizeMb: 50 },
-          streaming: { supported: true, throttleMs: 300, maxChars: 4096, method: "edit" as const },
-          threading: { supported: false, threadType: "none" as const },
+          features: { reactions: true, editMessages: true, deleteMessages: true, fetchHistory: false, attachments: true },
+          limits: { maxMessageChars: 4096 },
           replyToMetaKey: "telegramMessageId",
         })),
         getAdapter: vi.fn(),

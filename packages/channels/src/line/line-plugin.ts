@@ -33,32 +33,15 @@ export interface LinePluginHandle extends ChannelPluginPort {
 
 /** LINE platform capabilities (self-declared, validated at registration). */
 const CAPABILITIES: ChannelCapability = {
-  chatTypes: ["dm", "group"],
   features: {
     reactions: false,
     editMessages: false,
     deleteMessages: false,
     fetchHistory: false,
     attachments: true,
-    threads: false,
-    mentions: false,
-    formatting: ["flex"],
-    buttons: false,
-    cards: false,
-    effects: false,
   },
   limits: {
     maxMessageChars: 5000,
-    maxAttachmentSizeMb: 200,
-  },
-  streaming: {
-    supported: false,
-    throttleMs: 0,
-    method: "none",
-  },
-  threading: {
-    supported: false,
-    threadType: "none",
   },
   replyToMetaKey: "lineMessageId",
 };
@@ -70,11 +53,9 @@ const CAPABILITIES: ChannelCapability = {
  * to adapter.stop(), while declaring accurate platform capabilities.
  *
  * LINE capabilities:
- * - chatTypes: dm, group (LINE also has "room" but maps to group semantically)
  * - No reactions, edit, delete, or fetch history support
  * - Flex Messages for rich content (not HTML/Markdown)
- * - No streaming (LINE has no edit API for progressive updates)
- * - 5000 char message limit, 200MB attachment limit
+ * - 5000 char message limit, attachments supported
  */
 export function createLinePlugin(deps: LineAdapterDeps): LinePluginHandle {
   const adapter = createLineAdapter(deps);
