@@ -3,7 +3,7 @@
  * Mirror file smoke test for `packages/comis/src/observability.ts`.
  *
  * Asserts shape + identity parity with the `@comis/observability` barrel:
- * the mirror exports the same key set, the sentinel `stableStringify`
+ * the mirror exports the same key set, the sentinel `sanitizeForPersistence`
  * is a function, and the mirror re-export is identity-equal (`===`) to
  * the direct import. Catches `prepack.js` bundling regressions and
  * silent re-export shadowing.
@@ -23,15 +23,15 @@ describe("comisai/observability mirror file — shape parity with @comis/observa
     expect(mirrorKeys).toEqual(directKeys);
   });
 
-  it("exposes stableStringify as a function (sentinel value-export typeof check)", () => {
+  it("exposes sanitizeForPersistence as a function (sentinel value-export typeof check)", () => {
     expect(
-      typeof (mirrorObservability as Record<string, unknown>).stableStringify,
+      typeof (mirrorObservability as Record<string, unknown>).sanitizeForPersistence,
     ).toBe("function");
   });
 
-  it("preserves re-export identity: mirror.stableStringify === @comis/observability.stableStringify", () => {
-    expect((mirrorObservability as Record<string, unknown>).stableStringify).toBe(
-      (directObservability as Record<string, unknown>).stableStringify,
+  it("preserves re-export identity: mirror.sanitizeForPersistence === @comis/observability.sanitizeForPersistence", () => {
+    expect((mirrorObservability as Record<string, unknown>).sanitizeForPersistence).toBe(
+      (directObservability as Record<string, unknown>).sanitizeForPersistence,
     );
   });
 });

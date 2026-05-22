@@ -53,8 +53,6 @@ export {
   PathEscapeError,
 } from "./shared/path-guards.js";
 
-export { stableStringify } from "./shared/stable-stringify.js";
-
 export { safeJsonStringify } from "./shared/safe-json-stringify.js";
 
 // File-snapshot helper — sha256 + POSIX stat in one pass. Used by the
