@@ -7,7 +7,7 @@ import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";
 import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
-import { main, type DaemonOverrides, hardenDataDirPermissions, runPreflightDoctor, applyInspectDefaultsForLogging } from "./daemon.js";
+import { main, type DaemonOverrides, type DaemonInstance, hardenDataDirPermissions, runPreflightDoctor, applyInspectDefaultsForLogging } from "./daemon.js";
 import type { MediaResult } from "./wiring/setup-media.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -303,19 +303,44 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
 
 describe("daemon main()", () => {
   const originalEnv = process.env;
+  // Each main() instantiates real OAuth + skill chokidar watchers via
+  // setupSingleAgent — without per-test shutdown these accumulate as
+  // active FSWatcher handles on the vitest worker process and prevent
+  // the worker from terminating cleanly at file teardown (manifests as
+  // `[vitest-pool]: Timeout terminating forks worker for test files
+  // .../config-handlers.test.ts` because the leaky worker is later
+  // reused for that file).
+  const instances: DaemonInstance[] = [];
 
   beforeEach(() => {
     process.env = { ...originalEnv };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Trigger full shutdown on every captured instance so OAuth file
+    // watchers, skill watchers, and any other handles created during
+    // setupSingleAgent are closed before the next test/file runs.
+    while (instances.length > 0) {
+      const inst = instances.shift()!;
+      try {
+        await inst.shutdownHandle.trigger("test-cleanup");
+      } catch {
+        // Best-effort: don't let a single bad teardown mask the test's
+        // actual outcome.
+      }
+      try {
+        inst.shutdownHandle.dispose();
+      } catch {
+        /* idempotent */
+      }
+    }
     process.env = originalEnv;
   });
 
   it("completes full startup sequence in correct order (gateway disabled)", async () => {
     const { overrides, callOrder } = buildOverrides();
 
-    await main(overrides);
+    instances.push(await main(overrides));
 
     expect(callOrder).toEqual([
       "bootstrap",
@@ -332,7 +357,7 @@ describe("daemon main()", () => {
       tokens: [{ id: "test", secret: "s3cret", scopes: ["rpc"] }],
     });
 
-    await main(overrides);
+    instances.push(await main(overrides));
 
     expect(callOrder).toEqual([
       "bootstrap",
@@ -348,6 +373,7 @@ describe("daemon main()", () => {
     const { overrides, mocks } = buildOverrides();
 
     const instance = await main(overrides);
+    instances.push(instance);
 
     // container is spread-cloned during SecretRef resolution, so identity differs
     expect(instance.container.config).toStrictEqual(mocks.container.config);
@@ -361,9 +387,6 @@ describe("daemon main()", () => {
     expect(instance.shutdownHandle).toBeDefined();
     expect(typeof instance.shutdownHandle.trigger).toBe("function");
     expect(typeof instance.shutdownHandle.dispose).toBe("function");
-    // Dispose the handle so the spy-registered signal listeners don't leak
-    // between tests.
-    instance.shutdownHandle.dispose();
   });
 
   it("returns gatewayHandle when gateway is enabled", async () => {
@@ -373,6 +396,7 @@ describe("daemon main()", () => {
     });
 
     const instance = await main(overrides);
+    instances.push(instance);
 
     expect(instance.gatewayHandle).toBe(mocks.gatewayHandle);
     expect(mocks.gatewayHandle.start).toHaveBeenCalledTimes(1);
@@ -382,6 +406,7 @@ describe("daemon main()", () => {
     const { overrides } = buildOverrides();
 
     const instance = await main(overrides);
+    instances.push(instance);
 
     expect(instance.gatewayHandle).toBeUndefined();
     expect(overrides.createGatewayServer).not.toHaveBeenCalled();
@@ -398,7 +423,7 @@ describe("daemon main()", () => {
   it("starts process monitor after creation", async () => {
     const { overrides, mocks } = buildOverrides();
 
-    await main(overrides);
+    instances.push(await main(overrides));
 
     expect(mocks.processMonitor.start).toHaveBeenCalledTimes(1);
   });
@@ -406,7 +431,7 @@ describe("daemon main()", () => {
   it("logs startup complete message with structured banner", async () => {
     const { overrides, mocks } = buildOverrides();
 
-    await main(overrides);
+    instances.push(await main(overrides));
 
     // Startup banner goes through daemonLogger (module-bound logger from logLevelManager)
     const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
@@ -424,7 +449,7 @@ describe("daemon main()", () => {
     process.env["COMIS_CONFIG_PATHS"] = "/custom/a.yaml:/custom/b.yaml";
     const { overrides } = buildOverrides();
 
-    await main(overrides);
+    instances.push(await main(overrides));
 
     // Non-existent paths are filtered out by existsSync before bootstrap.
     // bootstrap now receives mergedEnv (process.env when no secret store).
@@ -445,7 +470,7 @@ describe("daemon main()", () => {
     const { overrides } = buildOverrides();
 
     try {
-      await main(overrides);
+      instances.push(await main(overrides));
     } finally {
       if (prevVitest !== undefined) process.env["VITEST"] = prevVitest;
     }
@@ -504,7 +529,7 @@ describe("daemon main()", () => {
   it("emits no orphan PROVIDER_OVERRIDES WARNs at boot against the live pi-ai catalog", async () => {
     const { overrides, mocks } = buildOverrides();
 
-    await main(overrides);
+    instances.push(await main(overrides));
 
     // The mock LogLevelManager returns the same mock logger for every
     // getLogger() call -- assert that no warn carrying the validator's
