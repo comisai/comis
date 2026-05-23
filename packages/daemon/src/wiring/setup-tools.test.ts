@@ -28,6 +28,7 @@ const mockCreateExtractDocumentTool = vi.hoisted(() => vi.fn(() => ({ name: "ext
 const mockCreateGatewayTool = vi.hoisted(() => vi.fn(() => ({ name: "gateway" })));
 const mockCreateBrowserTool = vi.hoisted(() => vi.fn(() => ({ name: "browser" })));
 const mockCreateAgentsManageTool = vi.hoisted(() => vi.fn(() => ({ name: "agents_manage" })));
+const mockCreateBackgroundTasksTool = vi.hoisted(() => vi.fn(() => ({ name: "background_tasks" })));
 const mockCreateObsQueryTool = vi.hoisted(() => vi.fn(() => ({ name: "obs_query" })));
 const mockCreateSessionsManageTool = vi.hoisted(() => vi.fn(() => ({ name: "sessions_manage" })));
 const mockCreateModelsManageTool = vi.hoisted(() => vi.fn(() => ({ name: "models_manage" })));
