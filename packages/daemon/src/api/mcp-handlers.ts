@@ -139,6 +139,38 @@ async function persistMcpServers(
   // PHASE 3: finalize audit JSONL + return outcome.
   if (persistResult.ok) {
     appendConfigAuditWithOutcome(auditBase, { kind: "rename" }, deps.persistDeps.logger);
+
+    // D-07/D-08/PERSIST-08: in-memory atomic swap. The disk write
+    // succeeded; now refresh `container.config.integrations` so concurrent
+    // readers (obs_query, mcp.list RPC, observability dashboards) see the
+    // new entry without waiting for a daemon restart. Per D-08, clone the
+    // FULL integrations subtree (NOT just .mcp.servers) so mid-update
+    // readers observe either the pre-state OR the post-state, never a
+    // partial array. Per RESEARCH.md Plan-time risk #7, optional-chain on
+    // `deps.container?.config` — existing test fixtures construct deps
+    // without a container field. Node 22 ships `structuredClone`
+    // built-in; no polyfill required.
+    if (deps.container?.config) {
+      // Treat the subtree as a mutable record shape — IntegrationsConfigSchema
+      // applies its strict-object defaults at config-load time, so by the
+      // time this code runs in production `integrations.mcp` is always
+      // present. Tests that pass through this path provide at least
+      // `{ integrations: { mcp: { servers } } }`. We use a record shape
+      // (not the IntegrationsConfig type) so the structuredClone result is
+      // freely reassignable through the same key paths.
+      type MutableIntegrations = Record<string, Record<string, unknown>>;
+      const cloned = structuredClone(
+        (deps.container.config.integrations ?? {}) as MutableIntegrations,
+      );
+      if (!cloned.mcp) cloned.mcp = {};
+      cloned.mcp.servers = servers;
+      // Atomic single-property write. Readers reach `.integrations` via a
+      // single property access on `container.config`; this assignment is
+      // a single write, so JS's single-threaded execution model guarantees
+      // observers see pre-OR-post, never partial.
+      (deps.container.config as { integrations: unknown }).integrations = cloned;
+    }
+
     return { persistence: "persisted" };
   } else {
     appendConfigAuditWithOutcome(

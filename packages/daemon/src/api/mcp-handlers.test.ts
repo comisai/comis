@@ -960,6 +960,155 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
+  // ===========================================================================
+  // Phase 62-09 R7 in-memory state effect (D-07/D-08/PERSIST-08)
+  //
+  // The orphan-branch persistMcpServers wrote to disk but did NOT update
+  // container.config.integrations.mcp.servers. CONTEXT.md D-07 locks the
+  // in-memory refresh into Phase 62. After a successful persist, the
+  // container.config.integrations subtree is structuredClone'd, .mcp.servers
+  // is overwritten with the new array, and the whole subtree is atomically
+  // swapped onto container.config.integrations.
+  // ===========================================================================
+
+  describe("Phase 62-09 R7 in-memory state effect — container.config refresh after persist (D-07/D-08)", () => {
+    it("connect: container.config.integrations.mcp.servers reflects the new entry after persist", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      // R7: post-call in-memory state has the new entry.
+      expect(container.config.integrations.mcp.servers).toHaveLength(1);
+      expect(container.config.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({ name: "ctx7", transport: "stdio", command: "npx", enabled: true }),
+      );
+    });
+
+    it("disconnect: container.config.integrations.mcp.servers reflects the filtered array after persist", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+        { name: "other", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.disconnect"]({ server_name: "yfinance" });
+
+      // R7: post-call in-memory state has only "other".
+      expect(container.config.integrations.mcp.servers).toHaveLength(1);
+      expect(container.config.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({ name: "other" }),
+      );
+    });
+
+    it("D-08 atomic swap: post-persist integrations object identity differs from the pre-call object", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      // Capture the pre-call integrations object identity. After a successful
+      // persist, D-08 requires the swap to replace the .integrations subtree
+      // with a structuredClone'd copy (NOT mutate the original in place) —
+      // so a reader holding the prior reference observes the pre-state.
+      const preIntegrations = container.config.integrations;
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      // Different object identity: structuredClone produced a new subtree.
+      expect(container.config.integrations).not.toBe(preIntegrations);
+      // The OLD reference still holds the PRE-state servers array (its .mcp
+      // subtree was never mutated in place).
+      expect(preIntegrations.mcp.servers).toEqual([
+        expect.objectContaining({ name: "yfinance" }),
+      ]);
+      // The NEW reference holds the POST-state servers array.
+      expect(container.config.integrations.mcp.servers).toEqual([
+        expect.objectContaining({ name: "yfinance" }),
+        expect.objectContaining({ name: "ctx7" }),
+      ]);
+    });
+
+    it("does NOT throw and skips the swap when deps.container is absent (existing test fixture invariant)", async () => {
+      // persistDeps is still wired so persistToConfig runs; container is OMITTED.
+      // The orphan-branch test fixtures construct deps without container and
+      // the swap MUST optional-chain away cleanly per RESEARCH.md Plan-time
+      // risk #7.
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        // NO container field
+      } as any);
+
+      // Must not throw.
+      const result = await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      expect(result.persistence).toBe("persisted");
+    });
+
+    it("does NOT mutate container.config.integrations when persistToConfig returns err (refresh is gated on success)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      // Make the disk write fail; the in-memory swap must NOT happen.
+      mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "EACCES" } as never);
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      // The handler still returns runtime_only + warning, but the in-memory
+      // state remains the PRE-call value — refresh is gated on persist success.
+      expect(result.persistence).toBe("runtime_only");
+      expect(container.config.integrations.mcp.servers).toHaveLength(1);
+      expect(container.config.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({ name: "yfinance" }),
+      );
+    });
+  });
+
   describe("Phase 47-04 D-02 per-field — reconnect-override-rejection fires for every override field independently", () => {
     // Plan 47-02 covered the `transport` override; 47-04 adds explicit coverage
     // for command, args, url, headers, env so every D-02 override surface is
