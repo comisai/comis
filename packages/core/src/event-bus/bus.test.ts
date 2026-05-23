@@ -3,12 +3,10 @@ import { describe, it, expect, vi } from "vitest";
 import type { EventMap } from "./events.js";
 import { TypedEventBus } from "./bus.js";
 
-// CRIT-03 / EVENT-CLEAN-01: this file used "system:shutdown" as its
-// canonical sample event for bus-API coverage. That EventMap entry was
-// deleted in Phase 50 Plan 01; we retarget to "system:error" (next
-// surviving infra-event, same payload-category) for assertions that
-// require a typed payload and "config:patched" / "session:created" /
-// "audit:event" for tests that already used a different event.
+// This file uses "system:error" as its canonical sample event for bus-API
+// coverage when a typed payload is required, plus "config:patched" /
+// "session:created" / "audit:event" for tests that already used a
+// different event.
 
 describe("TypedEventBus", () => {
   it("emit triggers on handler with correct payload", () => {

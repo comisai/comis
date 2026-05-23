@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * RAG memory formatters: pure helpers consumed by hybrid-memory-injector
- * and prompt-assembly. The factory createRagRetriever was removed in
- * Phase 53; HybridMemoryInjector (createHybridMemoryInjector) is now the
- * canonical retrieval entry point.
+ * and prompt-assembly. HybridMemoryInjector (createHybridMemoryInjector)
+ * is the canonical retrieval entry point.
  *
  * @module
  */

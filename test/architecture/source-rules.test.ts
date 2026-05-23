@@ -448,7 +448,7 @@ describe("source-rules -- [REDACTED] literal forbidden in production source", ()
 
 describe("source-rules -- ContextStorePort row-DTO residency", () => {
   it("every Ctx*Row referenced from ContextEngineStore + ContextAdminStore method signatures is exported from context-store-types.ts (TS-compiler-API walker)", () => {
-    // Phase 60-02 (REFACTOR-04): the original 38-method ContextStorePort
+    // The original 38-method ContextStorePort
     // interface was split into ContextEngineStore (34 methods, in
     // `context-engine-store.ts`) + ContextAdminStore (4 methods, in
     // `context-admin-store.ts`). ContextStorePort itself is now a type

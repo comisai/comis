@@ -235,7 +235,7 @@ describe("createIMessageAdapter", () => {
     });
   });
 
-  describe("unsupported operations (PORT-TRIM-14: omitted on adapter)", () => {
+  describe("unsupported operations (capability-gated: omitted on adapter)", () => {
     it("omits editMessage / reactToMessage / removeReaction / deleteMessage (capability gate blocks)", () => {
       const adapter = createIMessageAdapter({ logger: mockLogger });
       expect(adapter.editMessage).toBeUndefined();

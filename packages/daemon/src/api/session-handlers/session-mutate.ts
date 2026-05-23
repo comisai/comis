@@ -77,11 +77,11 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const spawnAgentId = params.agent ?? deps.defaultAgentId;
       const maxSteps = params.max_steps;
 
-      // After Phase 52 Plan 04 (BC-REM-12 sub-D), session.spawn is async-only.
-      // The poll-until-complete branch was deleted (CHANGELOG: callers
-      // passing `async: false` are now treated as async; pre-v2.3 callers
-      // must update to expect the async-running response shape immediately).
-      // Pre-deletion grep gates verified 0 callers in packages/*/src/ or
+      // session.spawn is async-only. The poll-until-complete branch was
+      // deleted (CHANGELOG: callers passing `async: false` are now
+      // treated as async; pre-v2.3 callers must update to expect the
+      // async-running response shape immediately). Pre-deletion grep
+      // gates verified 0 callers in packages/*/src/ or
       // packages/skills/src/ pass `async: false`.
       deps.logger?.info({
         method: "session.spawn",

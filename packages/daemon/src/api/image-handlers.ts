@@ -94,7 +94,7 @@ export function createImageHandlers(
 
       if (channelType && channelId) {
         const adapter = deps.getChannelAdapter(channelType);
-        // PORT-TRIM-14: sendAttachment is now optional on ChannelPort. When the
+        // sendAttachment is now optional on ChannelPort. When the
         // adapter omits it (e.g., IRC), skip direct delivery and fall through
         // to the base64 fallback. This is a Class B call site (no capability
         // gate runs before image-handlers reaches the adapter).

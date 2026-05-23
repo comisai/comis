@@ -200,7 +200,7 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // Context-engine internals — granular pipeline signals; the
   // turn-level summary lands in prompt.submitted instead. NOTE:
   // `context:pipeline` itself was lifted into TRAJECTORY_BRIDGE_MAPPING
-  // (→ `context.compiled`) per 260519-tlx Gap COV. The post-LLM patch
+  // (→ `context.compiled`). The post-LLM patch
   // event `context:pipeline:cache` stays internal — its cache fields
   // are folded into the pre-LLM `context:pipeline` snapshot the
   // trajectory captures.

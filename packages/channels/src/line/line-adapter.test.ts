@@ -566,7 +566,7 @@ describe("createLineAdapter", () => {
   // Unsupported operations
   // -----------------------------------------------------------------------
 
-  describe("unsupported operations (PORT-TRIM-14: omitted on adapter)", () => {
+  describe("unsupported operations (capability-gated: omitted on adapter)", () => {
     it("omits editMessage / reactToMessage / removeReaction / deleteMessage / fetchMessages", () => {
       const adapter = createLineAdapter(makeDeps());
       expect(adapter.editMessage).toBeUndefined();

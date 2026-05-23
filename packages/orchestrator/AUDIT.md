@@ -9,7 +9,7 @@ This file is co-located with the orchestrator package. `files: ["dist"]` in `pac
 
 ## Audit Result
 
-Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path that fires in that omission. After Phase 56 trims (Plans 56-05 and 56-06), the previously-14-field unwired set has been narrowed: 12 fields deleted entirely (inFlightSends in Plan 56-05; ackReactionConfig, debounceBuffer, followupConfig, followupTrigger, getDmScopeConfig, getUserInvocableSkillNames, greetingGenerator, groupHistoryBuffer, identityResolver, loadPromptSkill, sessionLabelStore in Plan 56-06), and channelRegistry is now wired from the daemon (DUP-CONS-13 in Plan 56-05).
+Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path that fires in that omission. After the recent trims, the previously-14-field unwired set has been narrowed: 12 fields deleted entirely (inFlightSends; ackReactionConfig, debounceBuffer, followupConfig, followupTrigger, getDmScopeConfig, getUserInvocableSkillNames, greetingGenerator, groupHistoryBuffer, identityResolver, loadPromptSkill, sessionLabelStore), and channelRegistry is now wired from the daemon.
 
 The architecture-test invariants enforced by `packages/orchestrator/src/__tests__/architecture.test.ts` hold: bidirectional set equality between this table and `ChannelManagerDeps`; every classification is `required` or `optional`; classification matches the interface's `?` marker; every row has a non-empty evidence-link cell.
 
@@ -59,7 +59,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback)
 
-**None.** Phase 56 finished the audit's narrowing recommendation: 12 of the original 14 daemon-unwired fields were deleted across Plans 56-05 and 56-06. channelRegistry is now wired (Plan 56-05 DUP-CONS-13). Every remaining field is either required, or optional-with-real-absent-mode where the absent branch is the production code path.
+**None.** The audit's narrowing recommendation is complete: 12 of the original 14 daemon-unwired fields were deleted. channelRegistry is now wired. Every remaining field is either required, or optional-with-real-absent-mode where the absent branch is the production code path.
 
 ## Summary
 

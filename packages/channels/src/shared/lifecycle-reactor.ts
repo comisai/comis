@@ -113,7 +113,7 @@ export function extractChannelId(sessionKey: string | SessionKey | undefined): s
 export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleReactor {
   const { eventBus, adapter, channelType, replyToMetaKey, config, logger } = deps;
 
-  // Construction-time invariant (PORT-TRIM-14): the reactor is created only for
+  // Construction-time invariant: the reactor is created only for
   // adapters whose capability gate says `features.reactions: true` (see
   // setup-channels-runtime.ts ~L500). After ChannelPort.reactToMessage/removeReaction
   // were made optional, narrow the adapter shape locally so the body can call the

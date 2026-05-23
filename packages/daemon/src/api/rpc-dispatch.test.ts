@@ -173,16 +173,15 @@ vi.mock("./provider-handlers.js", () => ({
 // ---------------------------------------------------------------------------
 
 describe("classifyRpcError", () => {
-  // Per Phase 52 Plan 04 (BC-REM-12 sub-E), the 5 substring-match
-  // fallbacks (`errMsg.includes("immutable") | "Admin access required" |
-  // "Unknown RPC method" | "not found" | "validation failed" | "Invalid input"`)
-  // were deleted alongside their pinning tests per PATTERNS.md §"Track 8"
-  // rule. Handlers still throwing bare `Error("Admin access required" | ...)`
-  // now classify as `internal`/`error` until they migrate to typed errors
-  // (deferred: see 52-04-SUMMARY.md§"Deferred — typed-error migration").
+  // The 5 substring-match fallbacks (`errMsg.includes("immutable") |
+  // "Admin access required" | "Unknown RPC method" | "not found" |
+  // "validation failed" | "Invalid input"`) were deleted alongside their
+  // pinning tests per PATTERNS.md §"Track 8" rule. Handlers still
+  // throwing bare `Error("Admin access required" | ...)` now classify as
+  // `internal`/`error` until they migrate to typed errors (deferred).
 
   it("classifies bare Error with any message as internal error (error level)", () => {
-    // Post-BC-REM-12-sub-E: only typed errors short-circuit to warn. Bare
+    // Only typed errors short-circuit to warn. Bare
     // `new Error(...)` always lands at the typed-classifier's default.
     const result = classifyRpcError(new Error("Something unexpected went wrong"));
     expect(result.errorKind).toBe("internal");
@@ -309,13 +308,13 @@ describe("createRpcDispatch", () => {
     expect(logObj.method).toBe("cron.add");
     expect(logObj.hint).toBeTruthy();
     expect(logObj.errorKind).toBe("internal");
-    // Fix C: params now joins the payload so operator debugging doesn't
+    // params now joins the payload so operator debugging doesn't
     // need a separate grep against the request log.
     expect("params" in logObj).toBe(true);
   });
 
   // -----------------------------------------------------------------------
-  // Fix C (log-review): severity-aware dispatcher
+  // Severity-aware dispatcher
   // -----------------------------------------------------------------------
 
   it("PreconditionError → logger.warn (NOT .error), errorKind=precondition, params on payload", async () => {

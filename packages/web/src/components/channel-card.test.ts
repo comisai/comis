@@ -260,7 +260,7 @@ describe("IcChannelCard", () => {
 
   it("status dot uses design token CSS variables", async () => {
     const el = await createElement<IcChannelCard>("ic-channel-card", {
-      status: "healthy", // canonical green; LEGACY_ALIASES deleted in Plan 55-03
+      status: "healthy", // canonical green; LEGACY_ALIASES deleted
     });
     const dot = el.shadowRoot?.querySelector(".status-dot") as HTMLElement;
     const style = dot?.getAttribute("style") ?? "";

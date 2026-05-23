@@ -2436,12 +2436,12 @@ describe("createPiEventBridge", () => {
     });
 
     // ---------------------------------------------------------------------
-    // 260520-wcf: cost-correction surfacing migrates from per-call DEBUG
+    // Cost-correction surfacing migrates from per-call DEBUG
     // logs to the observability:token_usage event payload, and the
     // per-call "Cache write TTL breakdown" DEBUG line is replaced by a
     // one-shot INFO notice fired once per daemon process.
     // ---------------------------------------------------------------------
-    describe("260520-wcf cost-correction event payload + one-shot SDK notice", () => {
+    describe("cost-correction event payload + one-shot SDK notice", () => {
       it("does not emit the per-call cost-correction DEBUG log when delta is non-zero anymore", async () => {
         const ttlSplit = { cacheWrite5mTokens: 858, cacheWrite1hTokens: 23400 };
         deps = createMockDeps({
@@ -2555,12 +2555,12 @@ describe("createPiEventBridge", () => {
     });
 
     // ---------------------------------------------------------------------
-    // 260520-wcf: warmupTurn + pendingCacheInvestmentUsd on the
+    // warmupTurn + pendingCacheInvestmentUsd on the
     // observability:token_usage event payload. Identifies first-cache-write
     // turns so dashboards can keep "cache savings rate is -91%" off
     // regression alerts.
     // ---------------------------------------------------------------------
-    describe("260520-wcf warmupTurn and pendingCacheInvestmentUsd on token_usage payload", () => {
+    describe("warmupTurn and pendingCacheInvestmentUsd on token_usage payload", () => {
       it("flags warmupTurn=true when cacheReadTokens is 0 and cacheWriteTokens is positive on the first cache-write turn", async () => {
         deps = createMockDeps({
           provider: "anthropic",
@@ -2650,8 +2650,8 @@ describe("createPiEventBridge", () => {
         expect(result.totalPendingCacheInvestmentUsd).toBeGreaterThan(0);
       });
 
-      // 260521-0bn: cumulative cost-correction delta accumulator.
-      it("accumulates totalCostCorrectionDeltaUsd across multiple turns (260521-0bn)", () => {
+      // Cumulative cost-correction delta accumulator.
+      it("accumulates totalCostCorrectionDeltaUsd across multiple turns", () => {
         const ttlSplit = { cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 };
         deps = createMockDeps({
           provider: "anthropic",
@@ -2681,7 +2681,7 @@ describe("createPiEventBridge", () => {
         );
       });
 
-      it("does NOT accumulate totalCostCorrectionDeltaUsd when ttlSplit has no 1h tokens (260521-0bn)", () => {
+      it("does NOT accumulate totalCostCorrectionDeltaUsd when ttlSplit has no 1h tokens", () => {
         const ttlSplit = { cacheWrite5mTokens: 10_000, cacheWrite1hTokens: 0 };
         deps = createMockDeps({
           provider: "anthropic",

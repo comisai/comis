@@ -9,11 +9,10 @@
  * - Multi-agent session isolation (separate SessionStores yield separate
  *   session data)
  *
- * After Phase 53 the canonical retrieval entry point is HybridMemoryInjector
- * (createHybridMemoryInjector). The previous createRagRetriever factory was
- * deleted — the splitter operates per-call on caller-supplied results, so
- * per-agent isolation now holds by construction (the injector itself has no
- * MemoryPort dependency and no shared state).
+ * The canonical retrieval entry point is HybridMemoryInjector
+ * (createHybridMemoryInjector). The splitter operates per-call on
+ * caller-supplied results, so per-agent isolation holds by construction
+ * (the injector itself has no MemoryPort dependency and no shared state).
  */
 
 import type { MemorySearchResult, SessionKey } from "@comis/core";
@@ -178,7 +177,7 @@ function delay(ms: number): Promise<void> {
 // -- Multi-agent memory isolation
 // ---------------------------------------------------------------------------
 //
-// Post-Phase-53 architecture: createHybridMemoryInjector is the canonical
+// Architecture: createHybridMemoryInjector is the canonical
 // retrieval-formatting entry point. It takes pre-resolved
 // MemorySearchResult[] arrays from the caller (production wiring resolves
 // the array via the per-agent MemoryPort.search() upstream) and splits them

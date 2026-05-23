@@ -32,8 +32,8 @@ describe("cleanupServerFromAllTrackers", () => {
   });
 
   it("removes matching `mcp__serverName--*` entries from all session trackers", () => {
-    // 260520-e8z-01: the runtime MCP tool name format is `mcp__<server>--<tool>`
-    // (e.g. `mcp__yfinance--get_stock_price`). Pre-flip,
+    // The runtime MCP tool name format is `mcp__<server>--<tool>`
+    // (e.g. `mcp__yfinance--get_stock_price`). Previously,
     // `cleanupServerFromAllTrackers` searched for the dead `mcp:<server>/`
     // prefix, which never matched a real tool name. After the fix the
     // function uses `mcp__<server>--` so real disconnect events actually
@@ -175,8 +175,8 @@ describe("wireMcpDisconnectCleanup", () => {
   it("on disconnected, cleans matching tools from all trackers", () => {
     const key = uniqueKey("disconnect");
     const tracker = getOrCreateDiscoveryTracker(key, true);
-    // 260520-e8z-01: inputs use the canonical `mcp__<server>--<tool>` runtime
-    // format that `cleanupServerFromAllTrackers` actually matches.
+    // Inputs use the canonical `mcp__<server>--<tool>` runtime format that
+    // `cleanupServerFromAllTrackers` actually matches.
     tracker.markDiscovered(["mcp__testserver--tool_a", "mcp__testserver--tool_b", "bash"]);
 
     // Capture handlers

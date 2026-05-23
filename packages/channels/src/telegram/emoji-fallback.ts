@@ -44,7 +44,7 @@ export async function reactWithFallback(
   messageId: string,
   primaryEmoji: string,
 ): Promise<Result<void, Error>> {
-  // ChannelPort.reactToMessage is optional post-PORT-TRIM-14, but this helper
+  // ChannelPort.reactToMessage is optional, but this helper
   // is wired only for telegram (real impl) by the lifecycle reactor. Surface a
   // loud error if a caller bypasses the capability gate to avoid a silent miss.
   // @allow-throw: Construction-time invariant — capability-gate bypass is a

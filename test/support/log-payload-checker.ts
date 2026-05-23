@@ -33,8 +33,8 @@ import * as ts from "typescript";
 /**
  * Closed `ErrorKind` union — exactly 10 members per AGENTS.md §2.1. Any
  * literal in `errorKind:` position not in this set is reported as a
- * violation by the walker. `precondition` was added by quick-260520-i5b
- * (log-review Fix C) so RPC handlers can throw `PreconditionError` and
+ * violation by the walker. `precondition` was added so RPC handlers can
+ * throw `PreconditionError` and
  * the dispatcher classifies caller-state mismatches at warn-level
  * (errorKind: "precondition") rather than escalating to error/internal.
  */
@@ -73,10 +73,10 @@ interface CacheEntry {
  * cache poisoning.
  */
 interface CacheFile {
-  // Bumped 1 → 2 when `precondition` joined the closed ErrorKind union
-  // (quick-260520-i5b Fix C). v1 caches contain stale flags for files
-  // that legitimately use the new literal — drop them on read so the
-  // next walker pass recomputes against the updated VALID_ERROR_KINDS.
+  // Bumped 1 → 2 when `precondition` joined the closed ErrorKind union.
+  // v1 caches contain stale flags for files that legitimately use the
+  // new literal — drop them on read so the next walker pass recomputes
+  // against the updated VALID_ERROR_KINDS.
   readonly version: 2;
   readonly entries: Record<string, CacheEntry>;
 }

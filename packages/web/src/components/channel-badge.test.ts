@@ -163,7 +163,7 @@ describe("IcChannelBadge", () => {
   it("does NOT render uptime when uptime is 0", async () => {
     const el = await createElement<IcChannelBadge>("ic-channel-badge", {
       uptime: 0,
-      status: "healthy", // canonical green; LEGACY_ALIASES deleted in Plan 55-03
+      status: "healthy", // canonical green; LEGACY_ALIASES deleted
     });
     const uptimeEl = el.shadowRoot?.querySelector(".uptime");
     expect(uptimeEl).toBeNull();
@@ -234,7 +234,7 @@ describe("IcChannelBadge", () => {
 
   it("uses design token CSS variables in shadow DOM", async () => {
     const el = await createElement<IcChannelBadge>("ic-channel-badge", {
-      status: "healthy", // canonical green; LEGACY_ALIASES deleted in Plan 55-03
+      status: "healthy", // canonical green; LEGACY_ALIASES deleted
     });
     // Verify status dot uses design tokens via inline style attribute
     const dot = el.shadowRoot?.querySelector(".status-dot") as HTMLElement;

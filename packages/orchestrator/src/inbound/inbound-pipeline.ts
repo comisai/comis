@@ -2,9 +2,7 @@
 /**
  * Inbound Pipeline: Thin orchestrator for message reception and routing.
  *
- * Delegates to 3 focused phase modules (target 5 → 3 collapse achieved by
- * Phase 59 REFACTOR-02: Plan 59-04 merged resolve + preprocess; Plan 59-05
- * merged setup + route):
+ * Delegates to 3 focused phase modules:
  *   1. resolve-and-preprocess — agent resolution, session key, audio preflight,
  *                                media preprocessing, compression
  *   2. inbound-gate           — auto-reply, slash commands, reset triggers, skills
@@ -144,7 +142,7 @@ export function matchesResetTrigger(text: string, triggers: string[]): boolean {
 /**
  * Process an inbound message through the full pipeline.
  *
- * Orchestrates 3 phases (target post-collapse shape):
+ * Orchestrates 3 phases:
  *   1. resolveAndPreprocess
  *   2. evaluateInboundGate
  *   3. setupAndRoute
@@ -172,7 +170,7 @@ export async function processInboundMessage(
     return;
   }
 
-  // Phase 1: Resolve agent + preprocess (merged in Phase 59 REFACTOR-02 Plan 59-04)
+  // Phase 1: Resolve agent + preprocess
   const resolved = await resolveAndPreprocess(deps, adapter, msg);
   if (!resolved) return; // No executor -- early exit
   const { agentId, executor, sessionKey, processedMsg } = resolved;
@@ -181,7 +179,7 @@ export async function processInboundMessage(
   const gate = await evaluateInboundGate(deps, adapter, processedMsg, sessionKey, agentId, sendOverrides);
   if (gate.action === "handled" || gate.action === "skip") return;
 
-  // Phase 3: Setup + route (merged in Phase 59 REFACTOR-02 Plan 59-05)
+  // Phase 3: Setup + route
   await setupAndRoute(
     deps, adapter, gate.processedMsg, msg, sessionKey, agentId,
     executor, activePacers, sendOverrides, gate.directives,

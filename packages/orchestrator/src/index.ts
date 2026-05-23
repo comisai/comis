@@ -16,8 +16,7 @@ export * from "./inbound/inbound-gate.js";
 
 // Execution coordination — execution-deliver travels with
 // execution-pipeline (same ownership bucket). The former
-// execution-policy phase was inlined into execution-pipeline in Phase 59
-// REFACTOR-02.
+// execution-policy phase was inlined into execution-pipeline.
 export * from "./execution/execution-pipeline.js";
 export * from "./execution/execution-execute.js";
 export * from "./execution/execution-filter.js";

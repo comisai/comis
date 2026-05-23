@@ -135,7 +135,7 @@ export function createTokenTracker(eventBus: TypedEventBus): TokenTracker {
         sessionKey: "",                                    // record() callers don't have sessionKey
         savedVsUncached: entry.savedVsUncached ?? 0,
         cacheEligible: entry.cacheEligible ?? false,
-        // 260520-wcf: token-tracker's record() path is a synthetic
+        // token-tracker's record() path is a synthetic
         // replay (legacy callers that pre-date the warmup-turn signal).
         // Default to false/0 so the schema requirement is satisfied
         // without inventing a warmup signal we cannot accurately derive

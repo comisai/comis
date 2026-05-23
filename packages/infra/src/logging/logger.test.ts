@@ -632,19 +632,18 @@ describe("createLogger", () => {
   });
 
   // ---------------------------------------------------------------------
-  // CRIT-04: CREDENTIAL_KEYS-driven redaction
+  // CREDENTIAL_KEYS-driven redaction
   //
   // These tests exercise the PRODUCTION `DEFAULT_REDACT_PATHS` exported
   // from `./logger.js` (NOT the hand-coded list in `createTestLogger`).
   // The pre-fix `DEFAULT_REDACT_PATHS` is a 64-entry hand-table missing
   // every snake_case OAuth key + bare `auth` + `client_secret`; post-fix
   // it is generated from `@comis/observability`'s `CREDENTIAL_KEYS` Set,
-  // which Phase 50.02 widens to include BOTH snake_case AND camelCase
-  // forms (Pino redact.paths is case-sensitive — see RESEARCH Pitfall 3
-  // / Open Q #4 RESOLVED). The regression suite below proves the
-  // camelCase coverage is preserved across the swap.
+  // which widens to include BOTH snake_case AND camelCase forms (Pino
+  // redact.paths is case-sensitive). The regression suite below proves
+  // the camelCase coverage is preserved across the swap.
   // ---------------------------------------------------------------------
-  describe("CREDENTIAL_KEYS-driven redaction (CRIT-04)", () => {
+  describe("CREDENTIAL_KEYS-driven redaction", () => {
     // Build a Pino logger using the PRODUCTION `DEFAULT_REDACT_PATHS`
     // imported from `./logger.js`. Writes to an in-memory stream so
     // the test stays in-process (no worker-thread transport).
@@ -758,7 +757,7 @@ describe("createLogger", () => {
 
     for (const key of CAMEL_CASE_KEYS) {
       for (const depth of [0, 1, 2, 3] as const) {
-        it(`(regression — Open Q #4 RESOLVED) redacts camelCase ${key} at depth ${depth}`, async () => {
+        it(`(regression) redacts camelCase ${key} at depth ${depth}`, async () => {
           const result = await redactAtDepth(
             key,
             "SHOULD-BE-REDACTED",

@@ -237,8 +237,8 @@ describe("SqliteMemoryAdapter — branch-gap coverage", () => {
   });
 
   // NOTE: describe("update with embedding when vec is available") was removed in
-  // Plan 51.02 PORT-TRIM-05 along with the adapter.update method. Vec-row update
-  // semantics no longer exist on the MemoryPort surface.
+  // a prior port-trim cleanup along with the adapter.update method. Vec-row
+  // update semantics no longer exist on the MemoryPort surface.
 
   // ---- vec-unavailable branch in vector-only search (line 184) ----------
 
@@ -301,9 +301,9 @@ describe("SqliteMemoryAdapter — branch-gap coverage", () => {
       }
     });
 
-    // NOTE: retrieve/update/clear catch-branch tests were removed in Plan 51.02
-    // PORT-TRIM-05 along with the corresponding methods. The surviving store +
-    // search + delete catch branches (above and below) cover the same
+    // NOTE: retrieve/update/clear catch-branch tests were removed in a prior
+    // port-trim cleanup along with the corresponding methods. The surviving
+    // store + search + delete catch branches (above and below) cover the same
     // non-Error-throw wrapping pattern.
 
     it("wraps non-Error throws into Error inside delete() catch", async () => {

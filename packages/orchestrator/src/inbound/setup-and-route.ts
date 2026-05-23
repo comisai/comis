@@ -2,10 +2,8 @@
 /**
  * Inbound Pipeline Phase 3: Pre-Execution Setup + Message Routing.
  *
- * Merged from inbound-setup.ts + inbound-route.ts as part of Phase 59
- * REFACTOR-02 (5-phase → 3-phase collapse). Resolves typing lifecycle +
- * streaming config, then routes through steer/followup, queue, or direct
- * execution.
+ * Resolves typing lifecycle + streaming config, then routes through
+ * steer/followup, queue, or direct execution.
  *
  * @module
  */
@@ -118,9 +116,8 @@ function isHeartbeatExecution(msg: NormalizedMessage): boolean {
  * Resolve typing lifecycle + streaming config, then route the inbound message
  * through steer/followup, queue, or direct execution.
  *
- * This function is the merged Phase 3 of the inbound pipeline (formerly the
- * setupInboundExecution + routeInboundMessage sequence). The two sub-phases
- * are sequential: Phase 3A computes streamCfg + typingLifecycle from the
+ * This function is Phase 3 of the inbound pipeline. The two sub-phases are
+ * sequential: Phase 3A computes streamCfg + typingLifecycle from the
  * processed message; Phase 3B uses both to route through the appropriate
  * execution path.
  */
@@ -137,12 +134,12 @@ export async function setupAndRoute(
   directives: Record<string, unknown> | undefined,
 ): Promise<void> {
   // ===== Phase 3A: Resolve typing lifecycle + streaming config =====
-  // Lifted from inbound-setup.ts:101-173. The local vars `streamCfg` and
-  // `typingLifecycle` flow into Phase 3B below instead of being returned.
+  // The local vars `streamCfg` and `typingLifecycle` flow into Phase 3B below
+  // instead of being returned.
   //
   // Ack reactions are handled by the lifecycle reactor (when enabled); the
-  // ackReactionConfig deps slot was removed in Plan 56-06 since no ack reactions
-  // were sent through this stage in production.
+  // ackReactionConfig deps slot was removed since no ack reactions were sent
+  // through this stage in production.
 
   const streamCfg: PerChannelStreamingConfig = resolveStreamingConfig(
     adapter.channelType,
@@ -205,16 +202,15 @@ export async function setupAndRoute(
   }
 
   // ===== Phase 3B: Route via steer/followup, queue, or direct execution =====
-  // Lifted from inbound-route.ts:79-242. The parameters `streamCfg` and
-  // `typingLifecycle` are now locals from Phase 3A above instead of incoming
-  // function parameters.
+  // The parameters `streamCfg` and `typingLifecycle` are locals from Phase 3A
+  // above instead of incoming function parameters.
 
   const msg = processedMsg;
 
   // Debounce buffer + group history injection deps slots (debounceBuffer,
   // groupHistoryBuffer, sessionLabelStore) were never wired by the daemon;
   // their absent-mode (direct routing without coalescing or history injection)
-  // IS the production code path. Deleted in Plan 56-06.
+  // IS the production code path. They have been removed.
 
   // Build narrow execution pipeline deps from the inbound pipeline deps
   const execDeps = {

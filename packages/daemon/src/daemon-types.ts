@@ -11,10 +11,10 @@
  * cycle (helpers accept narrow Pick<BootContext> subsets; daemon.ts composes
  * BootContext into the DaemonInstance return).
  *
- * Phase 59 REFACTOR-01 part 1: replaced the prior 4-handle chain
+ * `BootContext` replaces the prior 4-handle chain
  * (Foundation → Agents → Channels → Gateway handles, composed via `extends`)
- * with a single `BootContext` interface. Group A (foundation) fields are
- * strict; Groups B/C/D (agents/channels/gateway) fields are optional.
+ * with a single interface. Group A (foundation) fields are strict;
+ * Groups B/C/D (agents/channels/gateway) fields are optional.
  *
  * @module
  */
@@ -260,8 +260,8 @@ export type SessionStoreBridge = {
  * `test/integration/daemon-lifecycle.test.ts:89-99` (5 log lines emit in
  * source order).
  *
- * Phase 59 (REFACTOR-01 part 1): replaces the prior 4-handle chain
- * (foundation → agents → channels → gateway handles, composed via `extends`).
+ * Replaces the prior 4-handle chain (foundation → agents → channels →
+ * gateway handles, composed via `extends`).
  *
  * The 6 true forward-ref slots (`channelPluginsRef`, `bgNotifyRef`,
  * `cronWakeCallbackRef`, `gatewaySendRef`, `shutdownRef`,
@@ -271,16 +271,15 @@ export type SessionStoreBridge = {
  *
  * The 3 local-scope deferred refs (`sessionTrackerRef`, `toolAssemblerRef`,
  * `inboundMessageIdResolverRef`) are NOT declared on BootContext — they live
- * inside `bootChannels` as locals; Plan 59-03 will eliminate them entirely
- * by reordering construction.
+ * inside `bootChannels` as locals; a future refactor will eliminate them
+ * entirely by reordering construction.
  */
 // @optional-field-count: BootContext is the composition-root accumulator for
-// the 5 boot* helpers (Phase 59 REFACTOR-01 part 1). Group B/C/D fields are
-// optional by design — they exist on the type but are unpopulated until the
-// matching boot* helper runs. The integration test
-// test/integration/daemon-lifecycle.test.ts:89-99 (5 log lines in source
-// order) is the runtime invariant gate that replaces the prior compile-time
-// 4-handle chain enforcement.
+// the 5 boot* helpers. Group B/C/D fields are optional by design — they exist
+// on the type but are unpopulated until the matching boot* helper runs. The
+// integration test test/integration/daemon-lifecycle.test.ts:89-99 (5 log
+// lines in source order) is the runtime invariant gate that replaces the
+// prior compile-time 4-handle chain enforcement.
 export interface BootContext {
   // ===========================================================================
   // Group A: foundation (strict, populated by bootFoundation)
@@ -464,7 +463,7 @@ export interface BootContext {
   modelCatalog?: ReturnType<typeof createModelCatalog>;
   channelConfig?: Record<string, { enabled: boolean }>;
   promptTimeoutTimestamps?: number[];
-  // CRIT-03: teardown handles surfaced from bootChannels for ShutdownDeps wiring.
+  // Teardown handles surfaced from bootChannels for ShutdownDeps wiring.
   /** Drain per-agent background-process registries (from setupTools). */
   shutdownBackgroundProcesses?: ReturnType<typeof setupTools>["shutdownBackgroundProcesses"];
   /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
@@ -496,7 +495,7 @@ export interface BootContext {
   wsConnections?: WsConnectionManager;
 
   // ===========================================================================
-  // True forward refs (preserved as documented per RESEARCH §C.2)
+  // True forward refs (preserved as documented)
   // ===========================================================================
   // These cross-stage refs cannot be eliminated by reordering construction.
   // Each is a workaround for circular construction order between stages.

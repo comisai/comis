@@ -47,7 +47,7 @@ export interface CrossSessionResult {
   /**
    * Cleanup function for proxy-typing controllers + TTL sweep timer. Threaded
    * to the composition root for invocation via
-   * ShutdownDeps.proxyTypingCleanup (CRIT-03 — replaces eventBus.on(
+   * ShutdownDeps.proxyTypingCleanup (replaces eventBus.on(
    * "system:shutdown", ...) indirection that silently no-op'd in production).
    */
   proxyTypingCleanup: () => void;
@@ -342,7 +342,7 @@ export function setupCrossSession(deps: {
 
   // Register proxy typing event listeners (typing:proxy_start/stop + TTL
   // sweep). Returns a cleanup function the composition root threads into
-  // ShutdownDeps.proxyTypingCleanup (CRIT-03 — replaces the eventBus.on(
+  // ShutdownDeps.proxyTypingCleanup (replaces the eventBus.on(
   // "system:shutdown", ...) indirection that silently no-op'd in production).
   const proxyTypingCleanup = registerProxyTypingListeners({
     container,

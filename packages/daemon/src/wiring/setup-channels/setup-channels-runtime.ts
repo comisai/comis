@@ -194,8 +194,8 @@ export async function buildAndStartChannelManager(
     const retryConfig = RetryConfigSchema.parse({});
     const retryEngine = createRetryEngine(retryConfig, container.eventBus, channelsLogger);
 
-    // DUP-CONS-13 (Plan 56-05): lightweight read-only ChannelRegistry over
-    // the bootstrapped channelPlugins Map. Orchestrator reads
+    // Lightweight read-only ChannelRegistry over the bootstrapped
+    // channelPlugins Map. Orchestrator reads
     // `getCapabilities(...).replyToMetaKey` (REPLY_TO_META_KEY Record was
     // deleted). Channel lifecycle is owned by setup-channels-adapters.
     const channelRegistry: ChannelRegistry = buildReadOnlyChannelRegistry(channelPlugins);
@@ -358,7 +358,7 @@ export async function buildAndStartChannelManager(
           const nodeId = leafOutputFile.replace(/-output\.md$/, "");
           const caption = `Full report — ${nodeId} (graph ${graphId.slice(0, 8)})`;
 
-          // PORT-TRIM-14: sendAttachment is now optional on ChannelPort. Adapters
+          // sendAttachment is now optional on ChannelPort. Adapters
           // whose platform lacks attachments (e.g. IRC) omit the method; degrade
           // gracefully by sending a text message that references the caption.
           if (typeof adapter.sendAttachment !== "function") {
@@ -540,7 +540,7 @@ export async function buildAndStartChannelManager(
         // replyToMetaKey is required by the lifecycle reactor to translate
         // the inbound message's platform id back into a reply target. Skip
         // any channel whose plugin does not declare one (e.g. echo today —
-        // Plan 56-05 adds it defensively).
+        // added defensively).
         if (!caps.replyToMetaKey) {
           channelsLogger.debug({ channelType }, "Lifecycle reactor skipped: replyToMetaKey not declared in plugin capabilities");
           continue;
@@ -584,7 +584,7 @@ export async function buildAndStartChannelManager(
     approvalNotifier.start();
     channelsLogger.debug("Approval notifier started");
 
-    // CRIT-03: eventBus.on("system:shutdown", () => approvalNotifier?.stop())
+    // eventBus.on("system:shutdown", () => approvalNotifier?.stop())
     // subscriber deleted. The notifier handle is already in the return shape;
     // the composition root invokes its .stop() directly via
     // ShutdownDeps.approvalNotifierStop.

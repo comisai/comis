@@ -7,8 +7,8 @@
  * Packs the umbrella `comisai` package via `pnpm --filter comisai pack`,
  * extracts the resulting tarball, and asserts that every workspace package
  * declared in `packages/comis/package.json:bundledDependencies` (the single
- * source of truth — DUP-CONS-14) is bundled with a populated `dist/`
- * directory inside `package/node_modules/@comis/`.
+ * source of truth) is bundled with a populated `dist/` directory inside
+ * `package/node_modules/@comis/`.
  *
  * Assertions (4):
  *   1. The `node_modules/@comis/<pkg>` directory count matches the
@@ -56,10 +56,10 @@ const ok = (msg) => console.log(`OK: ${msg}`);
 
 // --- Step 1: Read expected packages from bundledDependencies (single source of truth) ---
 //
-// Per DUP-CONS-14 (Phase 55-07), `packages/comis/package.json:bundledDependencies`
-// is the canonical workspace-package list. This script reads it directly
-// (the prepack.js array — formerly the source — is now itself derived from
-// the same bundledDependencies field, so a regex parse over prepack.js would
+// `packages/comis/package.json:bundledDependencies` is the canonical
+// workspace-package list. This script reads it directly (the prepack.js
+// array — formerly the source — is now itself derived from the same
+// bundledDependencies field, so a regex parse over prepack.js would
 // be an indirection without added coverage).
 //
 // `bundledDependencies` also contains native-dep helpers (`bindings`,

@@ -121,9 +121,9 @@ function fileHash(filePath: string): { mtimeMs: number; sha256: string } {
  * are referenced transitively from method signatures (parameters and return
  * types) but NOT exported from `typesPath` as `export interface <Name> { ... }`.
  *
- * Phase 60-02 (REFACTOR-04) split the original 38-method `ContextStorePort`
- * interface into two narrower interfaces — `ContextEngineStore` (34 methods)
- * in `context-engine-store.ts` and `ContextAdminStore` (4 methods) in
+ * The original 38-method `ContextStorePort` interface was split into two
+ * narrower interfaces — `ContextEngineStore` (34 methods) in
+ * `context-engine-store.ts` and `ContextAdminStore` (4 methods) in
  * `context-admin-store.ts`. `ContextStorePort` itself is now a type alias
  * (`type ContextStorePort = ContextEngineStore & ContextAdminStore`). The
  * walker accepts a list of port files + a list of interface names so it

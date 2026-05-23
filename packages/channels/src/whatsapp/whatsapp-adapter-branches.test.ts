@@ -474,7 +474,7 @@ describe("createWhatsAppAdapter connected operations", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("omits fetchMessages (PORT-TRIM-14: capability gate features.fetchHistory blocks)", async () => {
+  it("omits fetchMessages (capability gate features.fetchHistory blocks)", async () => {
     const adapter = await setupConnected();
     expect(adapter.fetchMessages).toBeUndefined();
   });

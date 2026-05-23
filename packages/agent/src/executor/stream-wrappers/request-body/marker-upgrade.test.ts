@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `upgradeSdkMarkers` — the SDK 5m → 1h cache_control
- * marker upgrade with the 260520-wcf callCount gate.
+ * marker upgrade with the callCount gate.
  *
  * Tests cover:
  *  1. callCount gate suppresses promotion on first-turn writes (callCount=1)
  *  2. callCount gate allows promotion from turn 2 onward (callCount=2)
- *  3. callCount undefined preserves pre-260520-wcf behavior (promotion fires)
+ *  3. callCount undefined preserves legacy behavior (promotion fires)
  *  4. retention != "long" never promotes regardless of callCount
  *  5. skipCacheWrite suppresses promotion regardless of callCount
  *
@@ -58,7 +58,7 @@ function makeResultWithEphemeralSystemMarker(): Record<string, unknown> {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("upgradeSdkMarkers callCount gate (260520-wcf)", () => {
+describe("upgradeSdkMarkers callCount gate", () => {
   it("does not promote 5m markers to 1h on the first turn when callCount is 1", () => {
     const result = makeResultWithEphemeralSystemMarker();
     const logger = makeLogger();
@@ -108,7 +108,7 @@ describe("upgradeSdkMarkers callCount gate (260520-wcf)", () => {
     expect(toolCc.ttl).toBe("1h");
   });
 
-  it("preserves pre-260520-wcf behavior and promotes when callCount is undefined", () => {
+  it("preserves legacy behavior and promotes when callCount is undefined", () => {
     // When a caller has not been updated to thread callCount, the gate
     // must be skipped — silently disabling all promotions would be a
     // production regression.

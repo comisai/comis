@@ -48,7 +48,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
 
   /**
    * Helper that reads active delivery_queue depth via direct SQL. Replaces the
-   * deleted queue.depth() port method (removed in Plan 51.02 PORT-TRIM-06);
+   * deleted queue.depth() port method (removed in a prior port-trim cleanup);
    * the count semantics — pending + in_flight — are preserved verbatim.
    */
   function readDepth(): number {
@@ -275,7 +275,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
     });
   });
 
-  // NOTE: describe("depth") was removed in Plan 51.02 PORT-TRIM-06 along with
+  // NOTE: describe("depth") was removed in a prior port-trim cleanup along with
   // the queue.depth() port method. The status-counting semantics live on
   // queue.statusCounts() (pending + in_flight equivalents).
 

@@ -238,13 +238,13 @@ describe("createEmailAdapter sendMessage failure paths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Unsupported operations are now omitted from the adapter (PORT-TRIM-14).
+// Unsupported operations are now omitted from the adapter.
 // The capability gate (features.{editMessages,reactions,deleteMessages,fetchHistory})
 // in daemon/api/message-handlers.ts blocks the call before it reaches the adapter,
 // so the previous `return err("not supported")` stubs have been deleted.
 // ---------------------------------------------------------------------------
 
-describe("createEmailAdapter omits stub methods (PORT-TRIM-14)", () => {
+describe("createEmailAdapter omits stub methods (capability-gated)", () => {
   it("does not implement editMessage / reactToMessage / removeReaction / deleteMessage / fetchMessages", async () => {
     const { createEmailAdapter } = await import("./email-adapter.js");
     const adapter = createEmailAdapter(makeDeps());

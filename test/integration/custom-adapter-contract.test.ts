@@ -339,7 +339,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
 
       // Capabilities (ChannelCapability surface: features + limits +
       // optional replyToMetaKey — chatTypes/streaming/threading were
-      // removed in the PORT-TRIM-* refactor).
+      // removed in an earlier port refactor).
       expect(plugin.capabilities.limits.maxMessageChars).toBe(10000);
       expect(plugin.capabilities.features).toBeDefined();
 
@@ -372,7 +372,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
 
   describe("ChannelCapabilitySchema validation (CADPT-08 through CADPT-12)", () => {
     it("CADPT-08: valid capabilities pass schema validation with all fields", () => {
-      // Current schema surface (post PORT-TRIM): features (5 flags) +
+      // Current schema surface: features (5 flags) +
       // limits.maxMessageChars + optional replyToMetaKey. The removed
       // chatTypes/streaming/threading/extra-feature-flags would be
       // rejected by the strictObject schema.
@@ -416,8 +416,8 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
     });
 
     it("CADPT-10: removed-field 'chatTypes' rejected by strictObject", () => {
-      // chatTypes was removed in PORT-TRIM. strictObject must reject it
-      // rather than silently accept legacy shapes.
+      // chatTypes was removed from the schema. strictObject must reject
+      // it rather than silently accept legacy shapes.
       const invalid = {
         chatTypes: ["dm"],
         limits: { maxMessageChars: 4096 },
@@ -534,8 +534,8 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       expect(registerResult.ok).toBe(true);
 
       // Deactivate all — calls each plugin's `deactivate()` (no separate
-      // `activateAll` after PORT-TRIM-10; channel adapters self-start via
-      // their `start()` lifecycle when registered, not via plugin activate)
+      // `activateAll`; channel adapters self-start via their `start()`
+      // lifecycle when registered, not via plugin activate)
       const deactivateResult = await pluginRegistry.deactivateAll();
       expect(deactivateResult.ok).toBe(true);
 

@@ -83,15 +83,16 @@ const BASELINE_INTRA_PACKAGE_CYCLES: ReadonlySet<string> = new Set([
   "orchestrator/src/execution/execution-deliver.ts|orchestrator/src/execution/execution-pipeline.ts",
   "orchestrator/src/execution/execution-execute.ts|orchestrator/src/execution/execution-pipeline.ts",
   "orchestrator/src/execution/execution-filter.ts|orchestrator/src/execution/execution-pipeline.ts",
-  // Phase 59-06 inlined the former execution-policy body into
-  // execution-pipeline; the corresponding cycle entry
-  // (execution-pipeline|execution-policy) is removed — net shrink of 1.
+  // The former execution-policy body was inlined into execution-pipeline;
+  // the corresponding cycle entry (execution-pipeline|execution-policy)
+  // is removed — net shrink of 1.
   "orchestrator/src/inbound/inbound-gate.ts|orchestrator/src/inbound/inbound-pipeline.ts",
-  // Phase 59-04 merged inbound-resolve.ts + inbound-preprocess.ts -> resolve-and-preprocess.ts;
-  // the two pre-collapse cycle entries (inbound-pipeline|inbound-preprocess and
-  // inbound-pipeline|inbound-resolve) became the single entry below.
+  // inbound-resolve.ts + inbound-preprocess.ts were merged into
+  // resolve-and-preprocess.ts; the two pre-collapse cycle entries
+  // (inbound-pipeline|inbound-preprocess and inbound-pipeline|inbound-resolve)
+  // became the single entry below.
   "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/resolve-and-preprocess.ts",
-  // Phase 59-05 merged inbound-setup.ts + inbound-route.ts -> setup-and-route.ts;
+  // inbound-setup.ts + inbound-route.ts were merged into setup-and-route.ts;
   // the two pre-collapse cycle entries (inbound-pipeline|inbound-setup and
   // inbound-pipeline|inbound-route) became the single entry below.
   "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/setup-and-route.ts",

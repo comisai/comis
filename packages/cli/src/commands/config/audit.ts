@@ -244,7 +244,7 @@ export function registerConfigAuditCommand(configCmd: Command): void {
 function renderConfigAuditRecord(r: Record<string, unknown>): void {
   const ts = typeof r.ts === "string" ? r.ts : "(no-ts)";
   // Prefer the design §9.2 `callerSource`; fall back to legacy `source`
-  // when reading a pre-260519-rrm record (the daemon scrubber is the
+  // when reading an older record (the daemon scrubber is the
   // documented path to migrate those; this fallback keeps a transitional
   // log readable until scrub runs).
   const callerSource =

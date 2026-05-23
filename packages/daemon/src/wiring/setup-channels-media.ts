@@ -76,7 +76,7 @@ export interface MediaPipelineDeps {
   memoryAdapter?: MemoryPort;
   tenantId?: string;
   embeddingQueue?: { enqueue(id: string, content: string): void };
-  /** Optional callback for suspicious-content detection in media textPrefix wrap output (CRIT-01).
+  /** Optional callback for suspicious-content detection in media textPrefix wrap output.
    *  Threaded through to preprocessMessage's deps so audio/image/video handlers fire the callback
    *  when wrapExternalContent detects injection patterns. */
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];

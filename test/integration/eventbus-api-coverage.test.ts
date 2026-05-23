@@ -96,7 +96,7 @@ describe("EventMap Payload Coverage", () => {
         delta: "Hel",
         accumulated: "Hel",
       },
-      // NOTE: session:created is NOT yet emitted in production (research open question 1)
+      // NOTE: session:created is NOT yet emitted in production
       "session:created": {
         sessionKey: SESSION_KEY,
         timestamp: NOW,
@@ -105,7 +105,7 @@ describe("EventMap Payload Coverage", () => {
         sessionKey: SESSION_KEY,
         reason: "timeout",
       },
-      // NOTE: session:label_changed is NOT yet emitted in production (research open question 1)
+      // NOTE: session:label_changed is NOT yet emitted in production
       "session:label_changed": {
         sessionKey: SESSION_KEY,
         label: "New Label",
@@ -636,10 +636,10 @@ describe("EventMap Payload Coverage", () => {
         patchedBy: "rpc:admin",
         timestamp: NOW,
       },
-      // CRIT-03 / EVENT-CLEAN-01: "system:shutdown" deleted from EventMap
-      // in Phase 50 Plan 01 — the teardown wiring now flows through
-      // setupShutdown's ShutdownDeps directly. The remaining surviving
-      // infra event below ("system:error") provides shape coverage.
+      // "system:shutdown" was deleted from EventMap —
+      // the teardown wiring now flows through setupShutdown's ShutdownDeps
+      // directly. The remaining surviving infra event below ("system:error")
+      // provides shape coverage.
       "system:error": {
         error: new Error("test unhandled error"),
         source: "agent-executor",
@@ -919,11 +919,11 @@ describe("Behavioral Guarantees", () => {
     bus.removeAllListeners();
   });
 
-  // CRIT-03 / EVENT-CLEAN-01 retargeting: "system:shutdown" was deleted
-  // from EventMap in Phase 50 Plan 01. The following bus-API coverage
-  // tests retarget to "system:error" (its sibling infra-event with the
-  // same lifecycle semantics) and "background_task:cancelled" where a
-  // second distinct event is needed alongside "system:error".
+  // Retargeting: "system:shutdown" was deleted from
+  // EventMap. The following bus-API coverage tests retarget to "system:error"
+  // (its sibling infra-event with the same lifecycle semantics) and
+  // "background_task:cancelled" where a second distinct event is needed
+  // alongside "system:error".
   it("multi-listener fan-out delivers same payload reference to 5 handlers", () => {
     const payload = { error: new Error("test fan-out"), source: "unit-test" };
     const handlers = Array.from({ length: 5 }, () => vi.fn());

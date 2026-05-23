@@ -121,7 +121,7 @@ describe("SqliteMemoryAdapter", () => {
       });
 
       await adapter.store(entry);
-      // Direct SQL read (adapter.retrieve was removed in Plan 51.02 PORT-TRIM-05)
+      // Direct SQL read (adapter.retrieve was removed in a prior port-trim cleanup)
       const row = adapter
         .getDb()
         .prepare("SELECT * FROM memories WHERE id = ?")
@@ -205,7 +205,7 @@ describe("SqliteMemoryAdapter", () => {
       const entry = makeEntry({ expiresAt: expires });
       await adapter.store(entry);
 
-      // Direct SQL read (adapter.retrieve was removed in Plan 51.02 PORT-TRIM-05)
+      // Direct SQL read (adapter.retrieve was removed in a prior port-trim cleanup)
       const row = adapter
         .getDb()
         .prepare("SELECT expires_at FROM memories WHERE id = ?")
@@ -370,7 +370,7 @@ describe("SqliteMemoryAdapter", () => {
         expect(result.value).toBe(true);
       }
 
-      // Verify gone (direct SQL read; adapter.retrieve was removed in Plan 51.02 PORT-TRIM-05)
+      // Verify gone (direct SQL read; adapter.retrieve was removed in a prior port-trim cleanup)
       const row = adapter
         .getDb()
         .prepare("SELECT id FROM memories WHERE id = ?")
@@ -397,7 +397,7 @@ describe("SqliteMemoryAdapter", () => {
         expect(result.value).toBe(false);
       }
 
-      // Entry should still exist (direct SQL read; adapter.retrieve was removed in Plan 51.02 PORT-TRIM-05)
+      // Entry should still exist (direct SQL read; adapter.retrieve was removed in a prior port-trim cleanup)
       const row = adapter
         .getDb()
         .prepare("SELECT id FROM memories WHERE id = ? AND tenant_id = ?")
@@ -478,8 +478,8 @@ describe("SqliteMemoryAdapter", () => {
       await adapter.store(entry);
 
       // Check raw DB to verify agent_id column
-      // (adapter.retrieve was removed in Plan 51.02 PORT-TRIM-05; direct SQL is the
-      // canonical verification path now)
+      // (adapter.retrieve was removed in a prior port-trim cleanup; direct SQL is
+      // the canonical verification path now)
       const row = adapter
         .getDb()
         .prepare("SELECT agent_id FROM memories WHERE id = ?")
@@ -569,9 +569,10 @@ describe("SqliteMemoryAdapter", () => {
 
   describe("expiry filtering", () => {
     // NOTE: Tests for `adapter.retrieve()` expiry semantics (expired/future/null
-    // expiresAt) were removed in Plan 51.02 PORT-TRIM-05 along with the method
-    // itself. The expiry semantics live on the surviving `search` surface —
-    // exercised by the two `search excludes expired entries` tests below.
+    // expiresAt) were removed in a prior port-trim cleanup along with the
+    // method itself. The expiry semantics live on the surviving `search`
+    // surface — exercised by the two `search excludes expired entries` tests
+    // below.
 
     it("search excludes expired entries from text results", async () => {
       await adapter.store(
@@ -648,8 +649,9 @@ describe("SqliteMemoryAdapter", () => {
         expect(storeResult.error.message).toContain("not open");
       }
 
-      // (adapter.retrieve was removed in Plan 51.02 PORT-TRIM-05; the surviving
-      // store + search closed-DB error paths are exercised in this same test.)
+      // (adapter.retrieve was removed in a prior port-trim cleanup; the
+      // surviving store + search closed-DB error paths are exercised in this
+      // same test.)
 
       // Attempt to search -- should return err(), not crash
       const searchResult = await adapter.search(testSessionKey, "test");

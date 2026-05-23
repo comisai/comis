@@ -7,9 +7,9 @@
  *   - `env.list` -- enumerate secret NAMES (admin-only, read-only, values never returned)
  *
  * Storage backend: SecretStorePort (encrypted secrets.db via AES-256-GCM).
- * After Phase 52 Plan 04 (BC-REM-12 sub-C) the legacy .env-file fallback
- * is gone; env.set rejects with an actionable error when the daemon was
- * booted without SECRETS_MASTER_KEY (same posture as secrets-handlers.ts).
+ * The legacy .env-file fallback is gone; env.set rejects with an
+ * actionable error when the daemon was booted without
+ * SECRETS_MASTER_KEY (same posture as secrets-handlers.ts).
  *
  * Uses the `@comis/core` contract registry. Method keys are computed-
  * property names (`[EnvSetContract.method]:`) so the bidirectional 1:1
@@ -188,10 +188,10 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       EnvSetContract.request.parse(userParams);
 
       try {
-        // Write to storage backend. SecretStorePort is mandatory after Phase
-        // 52 Plan 04 (BC-REM-12 sub-C); the legacy `.env` file-append fallback
-        // was removed. Daemons without a master key (SECRETS_MASTER_KEY unset)
-        // reject env.set with an actionable error mirroring secrets-handlers.ts:196.
+        // Write to storage backend. SecretStorePort is mandatory; the
+        // legacy `.env` file-append fallback was removed. Daemons without
+        // a master key (SECRETS_MASTER_KEY unset) reject env.set with an
+        // actionable error mirroring secrets-handlers.ts:196.
         if (!deps.secretStore) {
           throw new Error(
             "Encrypted secrets store not configured (SECRETS_MASTER_KEY missing). " +
@@ -230,7 +230,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
         const result = {
           set: true as const,
           key,
-          // SecretStorePort is the only backend after BC-REM-12 sub-C.
+          // SecretStorePort is the only backend.
           storage: "encrypted" as const,
           restarting: true as const,
         };

@@ -167,7 +167,7 @@ export async function setupAgents(deps: {
    *  (the engine half of ContextStorePort) — the agent never calls admin
    *  methods (listConversations, cleanupExpiredGrants, deleteConversation,
    *  touchConversation), so the narrower view prevents structural misuse at
-   *  compile time. Phase 60-02 / REFACTOR-04 / T-60-07 mitigation. */
+   *  compile time. */
   contextStore?: import("@comis/core").ContextEngineStore;
   /** Raw better-sqlite3 database handle for DAG transactions */
   db?: unknown;

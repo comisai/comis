@@ -27,7 +27,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // search but the contract only allows kind/since_minutes). These are pre-
 // existing wrapper bugs orthogonal to this file's coverage objective; we
 // stub the validators to expose the rpcCall delegation branch underneath.
-// Post Plan 55-03: listSessions returns SessionListItem[] (9-field pass-through) —
+// listSessions returns SessionListItem[] (9-field pass-through) —
 // no aliasing, no parsing, no invented fields. Tests reflect that contract.
 vi.mock("./contracts.generated.js", () => ({
   validateRequest: () => true,
@@ -116,7 +116,7 @@ describe("createApiClient — session.list via rpcCall path", () => {
   });
 
   it("passes through SessionListItem rows verbatim from the contract response (no aliasing)", async () => {
-    // Plan 55-03: tight pass-through — the wrapper does NOT alias raw.key → sessionKey
+    // Tight pass-through — the wrapper does NOT alias raw.key → sessionKey
     // or compute agentId from the session-key prefix. The daemon-side handler is the
     // trust boundary; the client returns result.sessions unchanged.
     const rpc = makeRpc({

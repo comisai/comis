@@ -46,12 +46,12 @@
  * `limitPayloadValue` in the canonical chain
  * `redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value)))`.
  *
- * **Phase 58 (DUP-CONS-02):** The recursive `walk` body, WeakSet allocation,
- * and `isPlainObject` predicate were lifted into the shared
- * `combined-walker.ts`. `sanitizeDiagnosticPayload` is now a one-line
- * delegate invoking `combinedWalk` with `sanitizeNodeHook` only.
- * `sanitizeString` and `maybeRewriteImageObject` remain here (sanitize-
- * stage knowledge); they are narrow-exported for the combined walker.
+ * The recursive `walk` body, WeakSet allocation, and `isPlainObject`
+ * predicate live in the shared `combined-walker.ts`.
+ * `sanitizeDiagnosticPayload` is a one-line delegate invoking
+ * `combinedWalk` with `sanitizeNodeHook` only. `sanitizeString` and
+ * `maybeRewriteImageObject` remain here (sanitize-stage knowledge);
+ * they are narrow-exported for the combined walker.
  *
  * @module
  */
@@ -67,8 +67,8 @@ import { combinedWalk, sanitizeNodeHook } from "./combined-walker.js";
  * `isCredentialFieldName`).
  *
  * **EXPORTED** because the same Set drives `@comis/infra`'s Pino
- * `redact.paths` generator (Phase 50.02). Pino's path matcher is
- * CASE-SENSITIVE — so the Set deliberately contains THREE lanes:
+ * `redact.paths` generator. Pino's path matcher is CASE-SENSITIVE — so
+ * the Set deliberately contains THREE lanes:
  *
  *   1. **bare/single-word** entries (`auth`, `token`, `secret`, …) —
  *      lower-case ASCII words, only one form needed.
@@ -77,8 +77,7 @@ import { combinedWalk, sanitizeNodeHook } from "./combined-walker.js";
  *   3. **camelCase** forms (`apiKey`, `botToken`, …) — required to
  *      preserve the legacy hand-table's camelCase coverage. Removing
  *      the hand-table without these would silently regress production
- *      `apiKey`/`botToken`/... redaction (RESEARCH Pitfall 3, Open
- *      Q #4 RESOLVED).
+ *      `apiKey`/`botToken`/... redaction (RESEARCH Pitfall 3).
  *
  * The duplication is intentional and cheap (~27 entries). The
  * `isCredentialFieldName` predicate (below) lowercases its input
@@ -96,9 +95,9 @@ export const CREDENTIAL_KEYS = new Set<string>([
   "password",
   "secret",
   "cookie",
-  "key",                  // CRIT-04 widening (Open Q #1 RESOLVED — false-positives mitigated by CREDENTIAL_ALLOWLIST)
-  "passphrase",           // CRIT-04 widening
-  "credentials",          // CRIT-04 widening
+  "key",                  // widening (false-positives mitigated by CREDENTIAL_ALLOWLIST)
+  "passphrase",           // widening
+  "credentials",          // widening
   "credential",           // singular form (preserves prior coverage)
   "authorization",
   // -------------------------------------------------------------------
@@ -119,7 +118,7 @@ export const CREDENTIAL_KEYS = new Set<string>([
   // so the lowercased forms above do NOT redact a field named
   // `apiKey`. Removing the legacy hand-table without preserving these
   // would silently regress production redaction. See RESEARCH
-  // Pitfall 3 + Open Q #4 RESOLVED.)
+  // Pitfall 3.)
   //
   // The sanitizer's `isCredentialFieldName` predicate (below) uses
   // lowercase-compare and is unaffected by the duplication.
@@ -152,10 +151,9 @@ export const CREDENTIAL_KEYS = new Set<string>([
  * Allowlist of names that LOOK like credentials but are configuration
  * metadata and must be preserved.
  *
- * Phase 50.02 extension: adding the bare `key` token to CREDENTIAL_KEYS
- * triggers false-positives on operational fields like `keyName`,
- * `cacheKey`, `sessionKey`, `eventKey`. The 10 entries below mitigate
- * those (RESEARCH Pitfall 4 / Open Q #1 RESOLVED).
+ * Adding the bare `key` token to CREDENTIAL_KEYS triggers false-positives
+ * on operational fields like `keyName`, `cacheKey`, `sessionKey`,
+ * `eventKey`. The 10 entries below mitigate those (RESEARCH Pitfall 4).
  */
 const CREDENTIAL_ALLOWLIST = new Set<string>([
   "passwordfile",
@@ -172,7 +170,7 @@ const CREDENTIAL_ALLOWLIST = new Set<string>([
   "cookie_name",
   "secretref",
   "secret_ref",
-  // CRIT-04 `key` false-positive mitigations (Phase 50.02; Open Q #1 RESOLVED)
+  // `key` false-positive mitigations
   "keyname",
   "key_name",
   "keypath",
@@ -282,11 +280,11 @@ export function sanitizeString(input: string): string {
 /**
  * Sanitize a diagnostic payload.
  *
- * Delegates to `combinedWalk` with the sanitize-node hook only
- * (DUP-CONS-02). The walker scaffolding (WeakSet allocation, recursion,
- * `isPlainObject` predicate, per-string regex pass, image-shape rewrite
- * sequencing) lives in `combined-walker.ts`; the per-key credential-drop
- * and name/value-pair decision logic is encapsulated in `sanitizeNodeHook`.
+ * Delegates to `combinedWalk` with the sanitize-node hook only.
+ * The walker scaffolding (WeakSet allocation, recursion, `isPlainObject`
+ * predicate, per-string regex pass, image-shape rewrite sequencing)
+ * lives in `combined-walker.ts`; the per-key credential-drop and
+ * name/value-pair decision logic is encapsulated in `sanitizeNodeHook`.
  *
  * @param value - any JavaScript value
  * @returns a new value with credential fields stripped, images replaced

@@ -92,9 +92,9 @@ describe("@comis/core -- architecture invariants", () => {
   });
 
   it("exports ContextStorePort (interface or alias) + ContextEngineStore + ContextAdminStore from core/src/ports/", () => {
-    // Phase 60-02: ContextStorePort split into ContextEngineStore (34
-    // per-session read/write methods) + ContextAdminStore (4 admin/cleanup
-    // methods). ContextStorePort is now declared as an intersection type
+    // ContextStorePort was split into ContextEngineStore (34 per-session
+    // read/write methods) + ContextAdminStore (4 admin/cleanup methods).
+    // ContextStorePort is now declared as an intersection type
     // alias: `export type ContextStorePort = ContextEngineStore &
     // ContextAdminStore`. This assertion accepts BOTH the legacy interface
     // form AND the post-split type-alias form to remain stable across the
@@ -359,9 +359,9 @@ describe("port-DTO residency text-level checks", () => {
     // This regex check additionally catches Ctx*Row names mentioned in
     // comments or non-method-signature positions.
     //
-    // Phase 60-02 (REFACTOR-04) split ContextStorePort into two narrower
-    // ports — ContextEngineStore (34 methods) + ContextAdminStore (4
-    // methods). The Ctx*Row references moved out of `context-store.ts`
+    // A prior refactor split ContextStorePort into two narrower ports —
+    // ContextEngineStore (34 methods) + ContextAdminStore (4 methods).
+    // The Ctx*Row references moved out of `context-store.ts`
     // (now a ~30-line intersection-alias file with no DTO references) and
     // into the two new port files. The residency check now unions the
     // names across all three files.
@@ -581,9 +581,9 @@ describe("clock / env / timer ports", () => {
     expect(source, "EnvPort must declare get(key: string)").toMatch(
       /\bget\s*\(\s*key\s*:\s*string\s*\)/,
     );
-    // NOTE: EnvPort.snapshot was removed in Plan 51.02 PORT-TRIM-08
-    // (zero production callers; JSDoc admitted "useful for config-bootstrap paths"
-    // but the method was never wired). Only get() survives.
+    // NOTE: EnvPort.snapshot was removed previously (zero production
+    // callers; JSDoc admitted "useful for config-bootstrap paths" but the
+    // method was never wired). Only get() survives.
     expect(source, "EnvPort.snapshot must NOT appear in env.ts").not.toMatch(
       /\bsnapshot\s*\(/,
     );

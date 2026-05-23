@@ -52,7 +52,7 @@ export interface ProxyTypingListenerDeps {
  *
  * Returns a cleanup function the composition root (daemon.ts →
  * setupShutdown) invokes on graceful shutdown via
- * ShutdownDeps.proxyTypingCleanup (CRIT-03). The cleanup function clears
+ * ShutdownDeps.proxyTypingCleanup. The cleanup function clears
  * the TTL sweep timer and stops every active proxy controller. Previously
  * this lived in an eventBus.on("system:shutdown", ...) subscriber that
  * silently no-op'd in production.
@@ -131,7 +131,7 @@ export function registerProxyTypingListeners(deps: ProxyTypingListenerDeps): () 
   }, PROXY_SWEEP_INTERVAL_MS);
   proxySweepTimer.unref(); // Do not prevent process exit
 
-  // CRIT-03: Shutdown cleanup function — stops all proxy controllers and
+  // Shutdown cleanup function — stops all proxy controllers and
   // clears the TTL sweep timer. Previously invoked via eventBus.on(
   // "system:shutdown", ...) which silently no-op'd in production because
   // no production code emitted the event. Now returned directly to the

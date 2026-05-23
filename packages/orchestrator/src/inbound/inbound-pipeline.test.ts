@@ -25,9 +25,8 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: text.length,
       });
     }),
-    // TEST-PUB-01 (Plan 56-05): DeliveryService gained drainInFlight().
-    // Default fake returns empty drain telemetry; tests that exercise drain
-    // semantics override this field.
+    // DeliveryService provides drainInFlight(). Default fake returns empty
+    // drain telemetry; tests that exercise drain semantics override this field.
     drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
@@ -598,9 +597,9 @@ describe("/approve and /deny command interception", () => {
   });
 });
 
-// "ack reaction bypass with lifecycleReactionsEnabled" describe block deleted
-// in Plan 56-06: ackReactionConfig deps slot was removed; the ack-reaction
-// code path that conditionally fired based on lifecycleReactionsEnabled is gone.
+// "ack reaction bypass with lifecycleReactionsEnabled" describe block deleted:
+// ackReactionConfig deps slot was removed; the ack-reaction code path that
+// conditionally fired based on lifecycleReactionsEnabled is gone.
 
 // ---------------------------------------------------------------------------
 // General slash command interception

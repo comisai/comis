@@ -532,7 +532,7 @@ describe("createIrcAdapter", () => {
   // Unsupported operations
   // -------------------------------------------------------------------------
 
-  describe("unsupported operations (PORT-TRIM-14: all six capability-gated methods omitted)", () => {
+  describe("unsupported operations (all six capability-gated methods omitted)", () => {
     it("omits editMessage, reactToMessage, removeReaction, deleteMessage, fetchMessages, sendAttachment", () => {
       const adapter = createIrcAdapter(makeDeps());
       expect(adapter.editMessage).toBeUndefined();

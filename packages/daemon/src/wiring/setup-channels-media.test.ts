@@ -215,10 +215,10 @@ describe("buildMediaPipeline", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // CRIT-01: onSuspiciousContent forwarding into preprocessMessage deps
+  // onSuspiciousContent forwarding into preprocessMessage deps
   // ---------------------------------------------------------------------------
 
-  it("forwards onSuspiciousContent into preprocessMessage deps when provided (CRIT-01)", async () => {
+  it("forwards onSuspiciousContent into preprocessMessage deps when provided", async () => {
     const callback = vi.fn();
     mockCompositeResolver.resolve.mockResolvedValueOnce({ ok: true, value: { buffer: Buffer.from("d") } });
     const deps = makeDeps({ onSuspiciousContent: callback });
@@ -243,7 +243,7 @@ describe("buildMediaPipeline", () => {
     );
   });
 
-  it("forwards undefined onSuspiciousContent when not provided (CRIT-01)", async () => {
+  it("forwards undefined onSuspiciousContent when not provided", async () => {
     mockCompositeResolver.resolve.mockResolvedValueOnce({ ok: true, value: { buffer: Buffer.from("d") } });
     const deps = makeDeps(); // no onSuspiciousContent
 

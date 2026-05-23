@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DUP-CONS-13 (Plan 56-05): build a lightweight read-only ChannelRegistry
- * over the bootstrapped `channelPlugins` Map.
+ * Build a lightweight read-only ChannelRegistry over the bootstrapped
+ * `channelPlugins` Map.
  *
  * The orchestrator reads `replyToMetaKey` and other capability metadata via
  * `deps.channelRegistry?.getCapabilities(channelType)` since the

@@ -75,10 +75,10 @@ export interface HookRunner {
 /**
  * Options for creating a hook runner.
  *
- * EVENT-CLEAN-07 (Phase 52 Plan 02): the `hook:executed` observability
- * event was removed (zero non-test subscribers). The `eventBus` option
- * remains for the live `audit:event` emission via `emitAuditEvent` which
- * fires when modifying hooks alter agent prompts or delivery payloads.
+ * The `hook:executed` observability event was removed (zero non-test
+ * subscribers). The `eventBus` option remains for the live `audit:event`
+ * emission via `emitAuditEvent` which fires when modifying hooks alter
+ * agent prompts or delivery payloads.
  */
 export interface HookRunnerOptions {
   /** Catch and log hook handler errors instead of propagating (default: true). */

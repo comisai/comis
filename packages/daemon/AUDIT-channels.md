@@ -31,12 +31,12 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field corresponds to a feature-gate documented above. `inboundMessageIdResolver` is a compat path for tests; `wsConnections` is set after gateway init via a mutable ref so it is optional during early dispatcher construction; `deliveryQueue` / `healthMonitor` are configurable subsystems whose absence triggers explicit fallback paths. `channelPlugins` was promoted from optional to required in Phase 52 Plan 04 (BC-REM-12 sub-A / BC-REM-07) — setup-channels-adapters.ts always wires ≥9 plugin entries before `buildRpcDispatchDeps`.
+**None.** Every optional field corresponds to a feature-gate documented above. `inboundMessageIdResolver` is a compat path for tests; `wsConnections` is set after gateway init via a mutable ref so it is optional during early dispatcher construction; `deliveryQueue` / `healthMonitor` are configurable subsystems whose absence triggers explicit fallback paths. `channelPlugins` was promoted from optional to required — setup-channels-adapters.ts always wires ≥9 plugin entries before `buildRpcDispatchDeps`.
 
 ## Summary
 
 - **Pre-audit count:** 15
-- **Final count:** 15 (9 required + 6 optional, post-BC-REM-07 promotion of `channelPlugins`)
+- **Final count:** 15 (9 required + 6 optional, after promoting `channelPlugins` to required)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

@@ -208,7 +208,7 @@ describe("createEmailAdapter", () => {
     expect(imapLifecycleMock.onNewMessage).toHaveBeenCalled();
   });
 
-  it("omits editMessage / reactToMessage / removeReaction / deleteMessage / fetchMessages (PORT-TRIM-14 — features gated)", async () => {
+  it("omits editMessage / reactToMessage / removeReaction / deleteMessage / fetchMessages (capability-gated)", async () => {
     const { createEmailAdapter } = await getModule();
     const adapter = createEmailAdapter(makeDeps());
     expect(adapter.editMessage).toBeUndefined();

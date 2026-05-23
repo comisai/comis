@@ -27,8 +27,8 @@ export interface ImageGenOutput {
  * Image generation port — concrete hexagonal boundary for image-generation
  * adapters (OpenAI gpt-image-1, fal.ai, etc.).
  *
- * Plan 51.02 SPEC-ABS-01 inlined the previous `Provider<TInput, TOutput>`
- * generic into this concrete interface: the generic had a single consumer
+ * Inlined the previous `Provider<TInput, TOutput>` generic into this
+ * concrete interface: the generic had a single consumer
  * (`ImageGenerationPort`), and the optional `estimateCost` field had zero
  * production callers.
  */

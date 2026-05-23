@@ -48,8 +48,7 @@ describe("initSecretSchema", () => {
     expect(columnNames).toContain("created_at");
     expect(columnNames).toContain("updated_at");
 
-    // Should have exactly 10 columns (last_used_at + usage_count removed in
-    // Phase 51.03 SCHEMA-TRIM-03 + PORT-TRIM-04)
+    // Should have exactly 10 columns (last_used_at + usage_count removed)
     expect(columns).toHaveLength(10);
 
     // Verify BLOB types for encrypted fields

@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the surviving rag-retriever helpers after Phase 53 deletion:
+ * Tests for the rag-retriever helpers:
  * - formatMemorySection (consumed by hybrid-memory-injector + prompt-assembly)
  * - deduplicateResults (consumed by prompt-assembly)
  *
- * The createRagRetriever factory + RagRetriever / RagRetrieverDeps interfaces
- * were removed in Phase 53. HybridMemoryInjector is the canonical retrieval
- * entry point; see hybrid-memory-injector.test.ts for the factory test suite.
+ * HybridMemoryInjector is the canonical retrieval entry point; see
+ * hybrid-memory-injector.test.ts for the factory test suite.
  */
 
 import type { MemorySearchResult } from "@comis/core";

@@ -43,7 +43,7 @@ vi.mock("./graph-prewarm.js", () => ({
 // ---------------------------------------------------------------------------
 // Module mock for node:fs (captures writeFileSync calls for transcript tests).
 //
-// Phase 48 OBS-HARD-03 migrated the graph-* writers to the fs-safe
+// The graph-* writers were migrated to the fs-safe
 // substrate (`writeRegularFile`), which uses fs.openSync + fs.writeSync +
 // fs.fchmodSync internally rather than fs.writeFileSync. To keep these
 // tests' content-introspection assertions working, we ALSO mock

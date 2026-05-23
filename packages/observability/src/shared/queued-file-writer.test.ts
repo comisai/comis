@@ -234,7 +234,7 @@ describe("QueuedFileWriter — failure introspection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Defensive 0o700 chmod on existing parent dir (OBS-REVIEW-01 fix).
+// Defensive 0o700 chmod on existing parent dir.
 //
 // Non-observability subsystems (pino-roll, pi-mono) create the artifact
 // parent dirs FIRST under default umask (0o755). mkdir's `mode` arg is

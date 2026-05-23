@@ -92,7 +92,7 @@ describe("config-audit/suspicious", () => {
   });
 
   // entryScript carve-out for the non-comis-argv heuristic. Closes
-  // the pm2 false-positive surfaced in log review (260520-wcf):
+  // the pm2 false-positive surfaced in log review:
   // `node ProcessContainerFork.js` is a legitimate pm2-supervised
   // daemon launch but argv[0..1] does NOT contain "comis", so the
   // heuristic was flagging every config-audit record. Caller now

@@ -1,8 +1,7 @@
-# Comis Test Configuration — Daemon Shutdown Teardowns (CRIT-03 / EVENT-CLEAN-01)
+# Comis Test Configuration — Daemon Shutdown Teardowns
 #
 # Variant of config.test-daemon-shutdown.yaml that enables the maximal set of
-# subsystems required to exercise all 9 ShutdownDeps teardown components
-# introduced by Phase 50 Plan 01:
+# subsystems required to exercise all 9 ShutdownDeps teardown components:
 #   1. background-processes (setup-tools shutdownBackgroundProcesses)
 #   2. mcp-client-manager (setup-tools mcpClientManagerDisconnectAll)
 #   3. background-completion-runner (setup-background-completion-runner)

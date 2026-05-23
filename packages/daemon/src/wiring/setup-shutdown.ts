@@ -4,9 +4,9 @@
  * SIGINT/SIGUSR2 handler registration, the `shuttingDown` re-entrancy
  * guard, the 30s hard timeout, the per-step 5s timeout (`STEP_TIMEOUT_MS`),
  * logger.flush, exit-code dispatch, the `process.on("exit", ...)` safety
- * net, and the ordered teardown of all 30+ subsystems. Phase 52 Plan 03
- * (DUP-CONS-03) inlined `process/graceful-shutdown.ts` into this file so
- * the entire chain is legible in one place.
+ * net, and the ordered teardown of all 30+ subsystems. Inlines the
+ * `process/graceful-shutdown.ts` body into this file so the entire chain
+ * is legible in one place.
  * @module
  */
 
@@ -32,7 +32,7 @@ import type { DeliveryTracer } from "../observability/delivery-tracer.js";
 /**
  * Handle for the daemon shutdown orchestrator. `isShuttingDown` exposes
  * the closure-scoped re-entrancy flag. `trigger(signal)` runs the shutdown
- * body programmatically (used by Phase 50 integration tests). `dispose()`
+ * body programmatically (used by integration tests). `dispose()`
  * removes the SIGTERM/SIGINT listeners (test cleanup).
  */
 export interface ShutdownHandle {
@@ -131,15 +131,14 @@ export interface ShutdownDeps {
    */
   trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
   // ---------------------------------------------------------------------
-  // Lifted teardowns (CRIT-03 / EVENT-CLEAN-01)
+  // Lifted teardowns
   // Previously these ran via container.eventBus.on("system:shutdown", …)
   // subscribers, but no production emitter existed — they silently
   // no-op'd in production. They are now direct fields invoked by this
   // composition root.
   //
   // 8 production subscribers expand to 9 fields because setup-tools.ts's
-  // single closure splits into background-processes + mcp-client-manager
-  // (RESEARCH Open Question #2 RESOLVED).
+  // single closure splits into background-processes + mcp-client-manager.
   // ---------------------------------------------------------------------
   /** Drain per-agent background-process registries (from setupTools). */
   shutdownBackgroundProcesses?: () => Promise<void>;
@@ -248,7 +247,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     obsPersistence,
     geminiCacheManager,
     trajectoryRegistry,
-    // CRIT-03: 9 new teardown handles lifted from system:shutdown subscribers.
+    // 9 new teardown handles lifted from system:shutdown subscribers.
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll,
     bgCompletionRunnerShutdown,
@@ -260,7 +259,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     stopChannelHealthMonitor,
   } = deps;
 
-  // Inlined graceful-shutdown body (Phase 52-03 / DUP-CONS-03): SIGTERM/
+  // Inlined graceful-shutdown body: SIGTERM/
   // SIGINT/SIGUSR2 handler registration, shuttingDown re-entrancy guard,
   // 30s hard timeout, logger.flush, and exit-code dispatch.
   const hardTimeoutMs = deps.timeoutMs ?? 30_000;
@@ -325,7 +324,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         }, "sub-agent-runner", daemonLogger);
       }
 
-      // CRIT-03: Drain background-completion-runner before stopping
+      // Drain background-completion-runner before stopping
       // subsystems it might enqueue into. Previously this ran inside an
       // eventBus.on("system:shutdown", ...) subscriber in daemon.ts that
       // silently no-op'd in production.
@@ -374,7 +373,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           if (dataDir) {
             const serialized = approvalGate.serializePending();
             if (serialized.length > 0) {
-              // OBS-HARD-03: route through the fs-safe substrate so the
+              // Route through the fs-safe substrate so the
               // restart-approvals hand-off lands at mode `0o600` per
               // §1.4. Best-effort contract preserved — Result.err is
               // logged + shutdown continues so a write failure does NOT
@@ -405,7 +404,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           if (dataDir) {
             const cachedApprovals = approvalGate.serializeApprovalCache();
             if (cachedApprovals.length > 0) {
-              // OBS-HARD-03: same fs-safe routing for the approval-cache
+              // Same fs-safe routing for the approval-cache
               // sentinel; mode `0o600`, best-effort write contract.
               const result = writeRegularFile({
                 path: safePath(dataDir, "restart-approval-cache.json"),
@@ -475,7 +474,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           const captured = continuationTracker.capture(
             safePath(dataDir, "restart-continuations.json"),
             5 * 60_000, // sessions active in last 5 minutes
-            // OBS-HARD-03: confinement base for the fs-safe substrate.
+            // Confinement base for the fs-safe substrate.
             dataDir,
             daemonLogger,
           );
@@ -503,7 +502,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "channel-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "channel-manager", daemonLogger);
       }
-      // CRIT-03: Stop proxy typing controllers + sweep timer. Previously
+      // Stop proxy typing controllers + sweep timer. Previously
       // hosted in a system:shutdown subscriber inside
       // registerProxyTypingListeners that silently no-op'd in production.
       if (proxyTypingCleanup) {
@@ -513,7 +512,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "proxy-typing", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "proxy-typing", daemonLogger);
       }
-      // CRIT-03: Stop the approval notifier — replaces the
+      // Stop the approval notifier — replaces the
       // system:shutdown subscriber that previously called
       // approvalNotifier?.stop() in setup-channels-runtime.ts.
       if (approvalNotifierStop) {
@@ -523,7 +522,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "approval-notifier", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "approval-notifier", daemonLogger);
       }
-      // CRIT-03: Stop the channel health monitor — replaces the
+      // Stop the channel health monitor — replaces the
       // system:shutdown subscriber in daemon.ts.
       if (stopChannelHealthMonitor) {
         const stopMs = systemNowMs();
@@ -553,7 +552,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "wake-coalescer", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "wake-coalescer", daemonLogger);
       }
-      // CRIT-03: Drain the delivery queue, delivery mirror, and output
+      // Drain the delivery queue, delivery mirror, and output
       // retention housekeeper. Each replaces a system:shutdown subscriber
       // previously installed in channels-helpers.ts:258 / :260 / :266 that
       // silently no-op'd in production.
@@ -593,10 +592,10 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "media-temp-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "media-temp-manager", daemonLogger);
       }
-      // CRIT-03: Drain per-agent background-process registries + disconnect
+      // Drain per-agent background-process registries + disconnect
       // MCP servers. Previously these ran inside a single
-      // eventBus.on("system:shutdown", ...) closure in setup-tools.ts; per
-      // RESEARCH Open Question #2 (RESOLVED) they are now two independent
+      // eventBus.on("system:shutdown", ...) closure in setup-tools.ts;
+      // they are now two independent
       // ShutdownDeps fields. Background processes go before
       // obs-persistence because subprocess cleanup may emit observability
       // events into the still-running write buffer.
@@ -745,7 +744,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
   }
 
   // Register SIGTERM/SIGINT handlers + the process.on("exit") safety-net
-  // log (preserved verbatim per Phase 52 RESEARCH Open Question #4).
+  // log (preserved verbatim).
   const sigterm = (): void => { void shutdown("SIGTERM"); };
   const sigint = (): void => { void shutdown("SIGINT"); };
   const onExit = (code: number): void => {
@@ -759,7 +758,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
 
   // dispose() removes SIGTERM/SIGINT only — preserves the original
   // graceful-shutdown.ts contract (the `exit` listener stays because the
-  // process is exiting anyway and Phase 50 tests depend on it).
+  // process is exiting anyway and tests depend on it).
   const shutdownHandle: ShutdownHandle = {
     get isShuttingDown(): boolean { return shuttingDown; },
     trigger: shutdown,

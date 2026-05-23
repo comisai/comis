@@ -1843,7 +1843,7 @@ describe("PiExecutor", () => {
       await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-rag");
 
       // RAG retrieval now resolves results via MemoryPort.search and the
-      // hybrid memory injector (createRagRetriever factory removed in Phase 53).
+      // hybrid memory injector (createRagRetriever factory removed).
       expect(mockMemoryPort.search).toHaveBeenCalledWith(
         testSessionKey,
         "hello world",
@@ -6265,7 +6265,7 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     const formattedKeyIdx = src.indexOf(
       "const formattedKey = formatSessionKey(sessionKey)",
     );
-    // Post-260519-rrm the recorder may come from the registry's
+    // The recorder may come from the registry's
     // getOrCreate OR the legacy per-turn createTrajectoryRecorder fall-
     // back path. Either expression appears AFTER formattedKey lands.
     const registryIdx = src.indexOf(
@@ -6304,11 +6304,11 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(src).toMatch(/deps\.trajectoryConfig\?\.maxFileBytes/);
   });
 
-  it("trajectory_init_includes_sessionFile_from_sessionAdapter (260519-tlx Gap D2 — pointer sidecar)", async () => {
+  it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
     // Per design §6.1, the pointer file <sessionFile>.trajectory-path.json
     // is written by createTrajectoryRecorder ONLY when init.sessionFile
-    // is provided. The recorder writer is already wired up via 260519-rrm
-    // Task 2 — this site is the missing production caller. Threading
+    // is provided. The recorder writer is already wired up
+    // — this site is the missing production caller. Threading
     // sessionAdapter.getSessionPath(sessionKey) into trajectoryInit makes
     // the pointer sidecar land on disk for every live session.
     const src = await readPiExecutorSrc();

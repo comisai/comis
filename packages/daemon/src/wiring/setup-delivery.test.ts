@@ -860,7 +860,7 @@ describe("setupDeliveryQueue", () => {
       }
 
       // Sanity: queue depth = 200 (pending + in_flight)
-      // Direct SQL read; queue.depth() was removed in Plan 51.02 PORT-TRIM-06
+      // Direct SQL read; queue.depth() was removed during port-surface trimming.
       const depthRow = db
         .prepare("SELECT COUNT(*) as count FROM delivery_queue WHERE status IN ('pending', 'in_flight')")
         .get() as { count: number };

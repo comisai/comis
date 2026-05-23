@@ -126,7 +126,7 @@ export interface ChannelsDeps {
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
   embeddingQueue?: { enqueue(id: string, content: string): void };
-  /** Optional callback for suspicious-content detection (CRIT-01). Forwarded from the
+  /** Optional callback for suspicious-content detection. Forwarded from the
    *  daemon's BootContext.onSuspiciousContent into buildMediaPipeline so media
    *  handlers fire the callback when wrapExternalContent detects injection patterns. */
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];

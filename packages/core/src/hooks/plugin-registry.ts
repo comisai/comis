@@ -29,13 +29,12 @@ export interface PluginRegistry {
 /**
  * Options for creating a plugin registry.
  *
- * EVENT-CLEAN-07 (Phase 52 Plan 02): the `eventBus` parameter was
- * removed because the only two events emitted (`plugin:registered`,
- * `plugin:deactivated`) had zero non-test subscribers. Tests that
- * inspect plugin lifecycle now poll PluginRegistry state directly via
- * the surviving accessor surface.
+ * The `eventBus` parameter was removed because the only two events emitted
+ * (`plugin:registered`, `plugin:deactivated`) had zero non-test subscribers.
+ * Tests that inspect plugin lifecycle now poll PluginRegistry state directly
+ * via the surviving accessor surface.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- reserved for future option keys; intentionally empty post-EVENT-CLEAN-07 (Phase 52)
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- reserved for future option keys; intentionally empty
 export interface PluginRegistryOptions {}
 
 /**

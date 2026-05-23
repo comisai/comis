@@ -498,7 +498,7 @@ describe("MemoryApi", () => {
     });
   });
 
-  // NOTE: describe("enforceGuardrails") was removed in Plan 51.02 PORT-TRIM-12
+  // NOTE: describe("enforceGuardrails") was removed in a prior port-trim cleanup
   // along with the MemoryApi.enforceGuardrails method + GuardrailResult interface
   // + RetentionConfigSchema.maxEntries Zod field. Retention is now governed only
   // by RetentionConfigSchema.maxAgeDays (whose enforcement path lives elsewhere).

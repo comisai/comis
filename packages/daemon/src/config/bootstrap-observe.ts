@@ -2,10 +2,10 @@
 /**
  * Bootstrap-time config observe emitters.
  * Extracted from packages/daemon/src/daemon.ts (originally part of the
- * deleted stage-helpers layer) as part of Phase 59 REFACTOR-01 stage
- * decomposition collapse. These 3 ConfigObserve symbols live here because
- * they are the ONLY external test consumer of any former stage-helper
- * (consumed by daemon-config-observe.test.ts).
+ * deleted stage-helpers layer) during stage decomposition collapse.
+ * These 3 ConfigObserve symbols live here because they are the ONLY
+ * external test consumer of any former stage-helper (consumed by
+ * daemon-config-observe.test.ts).
  */
 
 import {
@@ -19,10 +19,10 @@ import { fileURLToPath } from "node:url";
 import { readConfigFileObservation, type ConfigFileObservation } from "./read-config-file-observation.js";
 
 // ---------------------------------------------------------------------------
-// OBS-REVIEW-03 + 260520-uh0: emit config.observe records at daemon bootstrap
-// config-read path. Each record carries the full design-§9.2 forensics shape
-// (file-stat + LKG + backup + recovery). Dispatch model: `Promise.allSettled`
-// so a single append failure cannot abort daemon boot.
+// Emit config.observe records at daemon bootstrap config-read path. Each
+// record carries the full design-§9.2 forensics shape (file-stat + LKG +
+// backup + recovery). Dispatch model: `Promise.allSettled` so a single
+// append failure cannot abort daemon boot.
 // ---------------------------------------------------------------------------
 
 /** Parameters for `emitBootstrapConfigObserveRecords`. */

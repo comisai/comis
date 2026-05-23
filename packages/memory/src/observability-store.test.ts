@@ -19,10 +19,11 @@ describe("ObservabilityStore", () => {
   // Token usage CRUD
   // -----------------------------------------------------------------------
 
-  // NOTE: describe("token usage") was removed in Plan 51.02 PORT-TRIM-13 along
-  // with the ObservabilityStore.queryTokenUsage method. The insertTokenUsage
-  // surface is still exercised via the prune/resetAll/resetTable tests below
-  // (which insert rows and verify row counts via SQL directly).
+  // NOTE: describe("token usage") was removed in a prior port-trim cleanup
+  // along with the ObservabilityStore.queryTokenUsage method. The
+  // insertTokenUsage surface is still exercised via the prune/resetAll/
+  // resetTable tests below (which insert rows and verify row counts via SQL
+  // directly).
 
   // -----------------------------------------------------------------------
   // Aggregations
@@ -471,7 +472,7 @@ describe("ObservabilityStore", () => {
       expect(result.channels).toBe(1);
 
       // Verify recent rows survive (direct SQL read; queryTokenUsage was removed
-      // in Plan 51.02 PORT-TRIM-13)
+      // in a prior port-trim cleanup)
       const tokenRow = db.prepare("SELECT COUNT(*) as count FROM obs_token_usage").get() as { count: number };
       expect(tokenRow.count).toBe(1);
       expect(store.queryDelivery()).toHaveLength(1);
@@ -524,7 +525,7 @@ describe("ObservabilityStore", () => {
       expect(result.channels).toBe(1);
 
       // All tables should be empty (direct SQL read; queryTokenUsage was removed
-      // in Plan 51.02 PORT-TRIM-13)
+      // in a prior port-trim cleanup)
       const tokenRow = db.prepare("SELECT COUNT(*) as count FROM obs_token_usage").get() as { count: number };
       expect(tokenRow.count).toBe(0);
       expect(store.queryDelivery()).toHaveLength(0);
@@ -570,7 +571,7 @@ describe("ObservabilityStore", () => {
       expect(count).toBe(1);
 
       // Only token_usage should be empty (direct SQL read; queryTokenUsage was
-      // removed in Plan 51.02 PORT-TRIM-13)
+      // removed in a prior port-trim cleanup)
       const tokenRow = db.prepare("SELECT COUNT(*) as count FROM obs_token_usage").get() as { count: number };
       expect(tokenRow.count).toBe(0);
       // Other tables should still have data
@@ -626,7 +627,7 @@ describe("ObservabilityStore", () => {
         cacheSaved: 0,
         latencyMs: 100,
       });
-      // Direct SQL read; queryTokenUsage was removed in Plan 51.02 PORT-TRIM-13
+      // Direct SQL read; queryTokenUsage was removed in a prior port-trim cleanup
       const tokenRow = db.prepare("SELECT COUNT(*) as count FROM obs_token_usage").get() as { count: number };
       expect(tokenRow.count).toBe(1);
     });

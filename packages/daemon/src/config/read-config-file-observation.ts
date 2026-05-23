@@ -55,7 +55,7 @@ export interface ConfigFileObservation {
  *
  * `/home/user/.comis/config.yaml` → `/home/user/.comis/config.bak.yaml`
  *
- * The backup writer does not exist in-tree today (260520-uh0). This
+ * The backup writer does not exist in-tree today. This
  * helper reserves the slot so the eventual writer ships against a
  * stable convention and `readConfigFileObservation` does not need a
  * schema bump when the file starts appearing on disk.

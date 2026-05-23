@@ -9,7 +9,7 @@
  * `vi.mock` `@comis/infra` -- keeps the test deterministic and isolated.
  *
  * One additional behavior test (the "two-probe" block) drives the
- * Plan 55-06 retarget of `defaultIsDocker` from `@comis/infra` (single-probe
+ * retarget of `defaultIsDocker` from `@comis/infra` (single-probe
  * `/.dockerenv` only) to `@comis/core` (two-probe `/.dockerenv` +
  * `/proc/1/cgroup` regex). It mocks `node:fs` so the marker file is
  * absent BUT the cgroup contains a docker pattern -- behavior diverges
@@ -67,10 +67,10 @@ describe("emitDockerRestartPolicyWarn", () => {
 });
 
 /**
- * Behavior gate for Plan 55-06 (DUP-CONS-01): the daemon's default
- * `isDocker` probe MUST be core's two-probe impl (`/.dockerenv` + cgroup
- * regex). Infra's deprecated single-probe (`/.dockerenv` only) misses
- * rootless / minimal images that lack the marker file.
+ * Behavior gate: the daemon's default `isDocker` probe MUST be core's
+ * two-probe impl (`/.dockerenv` + cgroup regex). Infra's deprecated
+ * single-probe (`/.dockerenv` only) misses rootless / minimal images
+ * that lack the marker file.
  *
  * We mock `node:fs` so that:
  *   - `existsSync("/.dockerenv")` returns false (marker absent)
@@ -87,7 +87,7 @@ describe("emitDockerRestartPolicyWarn", () => {
  * Uses `vi.doMock` + `vi.resetModules` + dynamic import to avoid affecting
  * the static-imported instance used by the tests above.
  */
-describe("emitDockerRestartPolicyWarn default isDocker probe (Plan 55-06)", () => {
+describe("emitDockerRestartPolicyWarn default isDocker probe", () => {
   it("uses two-probe isDocker by default (detects via /proc/1/cgroup when /.dockerenv missing)", async () => {
     vi.resetModules();
     vi.doMock("node:fs", () => ({

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Daemon bootstrap config.observe wiring test (OBS-REVIEW-03 fix).
+ * Daemon bootstrap config.observe wiring test.
  *
  * Smoke-tests that on daemon startup, the bootstrap config-read path
  * emits exactly one `event: "config.observe"` audit record per

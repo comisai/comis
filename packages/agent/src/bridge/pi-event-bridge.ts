@@ -75,10 +75,10 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * One-shot latch (260520-wcf) gating the SDK-breakdown notice. The notice
+ * One-shot latch gating the SDK-breakdown notice. The notice
  * states that pi-ai does NOT expose `usage.cacheCreation.{shortTtl,longTtl}`
- * and that Comis estimates the per-TTL split via marker counting. Prior to
- * 260520-wcf the bridge logged this fact at DEBUG on every turn that wrote
+ * and that Comis estimates the per-TTL split via marker counting. Previously
+ * the bridge logged this fact at DEBUG on every turn that wrote
  * cache tokens, stacking thousands of identical lines under normal load.
  *
  * The notice now fires exactly once per daemon process (at the first
@@ -285,7 +285,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
   // Internal accumulation state (managed by bridge-metrics module)
   const m = createBridgeMetrics();
 
-  // 260520-wcf one-shot SDK-breakdown notice. Fires exactly once per
+  // One-shot SDK-breakdown notice. Fires exactly once per
   // daemon process — the latch is module-scoped so multiple bridge
   // constructions (per-execution / test harnesses) share it. The notice
   // is INFO because it's a one-time operator-relevant fact, not a
@@ -954,7 +954,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               ? { shortTtl: (rawUsage.cacheCreation as any).shortTtl ?? 0, longTtl: (rawUsage.cacheCreation as any).longTtl ?? 0 }
               : undefined;
 
-            // 260520-wcf: per-call DEBUG breakdown log removed. The fact
+            // Per-call DEBUG breakdown log removed. The fact
             // that pi-ai does not expose the per-TTL split is now stated
             // once at construction time via the module-level
             // _sdkBreakdownNoticeEmitted latch above. cacheCreation
@@ -997,8 +997,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Accumulate corrected cost
             m.totalCost += cost.total;
 
-            // 260521-0bn: accumulate per-turn cost-correction delta (>0
-            // only — matches the 260520-wcf invariant that negative
+            // Accumulate per-turn cost-correction delta (>0
+            // only — matches the invariant that negative
             // correction is suppressed; see costCorrectionField gate at
             // line ~1106). Surfaced via buildBridgeResult on the
             // "Execution complete" log.
@@ -1006,7 +1006,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               m.totalCostCorrectionDeltaUsd += costCorrectionDelta;
             }
 
-            // 260520-wcf: per-call DEBUG cost-correction log removed. The
+            // Per-call DEBUG cost-correction log removed. The
             // costCorrection breadcrumb now rides on the
             // observability:token_usage event payload below — operators
             // already query that event for cost forensics, so moving the
@@ -1057,7 +1057,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Accumulate cache savings across turns
             m.totalCacheSaved += savedVsUncached;
 
-            // 260520-wcf: warmup-turn signal. Identifies the first
+            // Warmup-turn signal. Identifies the first
             // cache-write turn in a session (writes-without-prior-reads).
             // Per-call cache math is correct, but reporting cacheSavedUsd
             // as a negative dollar value on this turn is misleading
@@ -1108,7 +1108,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             );
 
             // Emit observability event
-            // 260520-wcf: include costCorrection breadcrumb when the SDK
+            // Include costCorrection breadcrumb when the SDK
             // total was bumped to cover 1h-rate underpricing. Omitted
             // when delta === 0 — operators can filter on
             // `costCorrection != null` to surface only corrected turns.
@@ -1150,7 +1150,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               cacheEligible: getCacheProviderInfo(deps.provider, deps.getCurrentModel?.() ?? deps.model).cacheEligible,
               responseId,
               cacheCreation: effectiveCacheCreation,
-              // 260520-wcf: warmup-turn flag + deferred investment
+              // Warmup-turn flag + deferred investment
               // dollar value. Both included unconditionally so consumers
               // can pivot/filter without conditional schemas.
               warmupTurn,

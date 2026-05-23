@@ -55,8 +55,8 @@ function makeFakeDeliveryService(): DeliveryService {
 /**
  * Test-only DeliveryService that exposes a controllable in-flight tracker.
  * Use in tests that need to assert drain ordering or hung-send timing
- * without leaking the Set through production deps (TEST-PUB-01 removed
- * the `inFlightSends` deps slot from `ChannelManagerDeps`).
+ * without leaking the Set through production deps (the `inFlightSends`
+ * deps slot was removed from `ChannelManagerDeps`).
  *
  * Returns `{ service, track }`. Call `track(promise)` to add a promise to
  * the tracker; the service's `drainInFlight(deadlineMs)` races
@@ -175,7 +175,7 @@ function makeSessionManager(): SessionLifecycle {
 }
 
 /**
- * DUP-CONS-13 (Plan 56-05): the orchestrator now reads `replyToMetaKey` via
+ * The orchestrator reads `replyToMetaKey` via
  * `deps.channelRegistry?.getCapabilities(channelType)`. The hardcoded
  * REPLY_TO_META_KEY Record fallback was deleted, so tests that previously
  * relied on the implicit telegram/discord/slack/whatsapp fallback must
@@ -231,10 +231,10 @@ function makeDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManagerDeps {
     // to adapter.sendMessage so the existing assertions remain valid
     // (assertions observe adapter call shape, not the in-between layer).
     deliveryService: makeFakeDeliveryService(),
-    // DUP-CONS-13: orchestrator reads replyToMetaKey via this registry; the
-    // fake mirrors plugin CAPABILITIES for the 10 channel types so tests
-    // that exercise the inbound replyTo extraction path keep their
-    // assertions valid after the REPLY_TO_META_KEY Record was deleted.
+    // Orchestrator reads replyToMetaKey via this registry; the fake mirrors
+    // plugin CAPABILITIES for the 10 channel types so tests that exercise
+    // the inbound replyTo extraction path keep their assertions valid after
+    // the REPLY_TO_META_KEY Record was deleted.
     channelRegistry: makeFakeChannelRegistry(),
     // processInboundMessage is injected. Default wires the REAL
     // implementation so existing test assertions on executor.execute /
@@ -1225,9 +1225,9 @@ describe("createChannelManager", () => {
     it("awaits in-flight sendMessage before calling adapter.stop()", async () => {
       const callOrder: string[] = [];
       let resolveSend: () => void = () => {};
-      // TEST-PUB-01: stage an in-flight promise via the tracker helper.
-      // The Set lives inside the test-only `makeFakeDeliveryServiceWithTracker`
-      // — production deps no longer expose an `inFlightSends` injection slot.
+      // Stage an in-flight promise via the tracker helper. The Set lives
+      // inside the test-only `makeFakeDeliveryServiceWithTracker` —
+      // production deps no longer expose an `inFlightSends` injection slot.
       const { service: deliveryService, track } = makeFakeDeliveryServiceWithTracker();
       const sendPromise = new Promise<void>((r) => {
         resolveSend = r;
@@ -1260,10 +1260,9 @@ describe("createChannelManager", () => {
     it("enforces 5s deadline on hung sends", async () => {
       vi.useFakeTimers();
       try {
-        // TEST-PUB-01: stage the hung send via the tracker helper.
-        // `drainInFlight(5000)` races allSettled against a setTimeout(5000)
-        // — vi.useFakeTimers + advanceTimersByTimeAsync drive the deadline
-        // deterministically.
+        // Stage the hung send via the tracker helper. `drainInFlight(5000)`
+        // races allSettled against a setTimeout(5000) — vi.useFakeTimers +
+        // advanceTimersByTimeAsync drive the deadline deterministically.
         const { service: deliveryService, track } = makeFakeDeliveryServiceWithTracker();
         const hung = new Promise<void>(() => {});
         track(hung);
@@ -1323,10 +1322,10 @@ describe("createChannelManager", () => {
     });
   });
 
-  // "prompt skill detection" describe block deleted in Plan 56-06:
-  // loadPromptSkill + getUserInvocableSkillNames deps slots removed from
-  // ChannelManagerDeps. Production-absent-mode: skill commands now pass
-  // through as plain text to the agent.
+  // "prompt skill detection" describe block removed: loadPromptSkill +
+  // getUserInvocableSkillNames deps slots removed from ChannelManagerDeps.
+  // Production-absent-mode: skill commands now pass through as plain text
+  // to the agent.
 
   describe("command queue enqueue failure logging", () => {
     function makeCommandQueue(enqueueResult: ReturnType<typeof ok> | ReturnType<typeof err>): CommandQueue {

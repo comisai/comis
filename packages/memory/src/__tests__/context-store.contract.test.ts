@@ -6,7 +6,7 @@
  * the impl match the `Ctx*Row` DTOs in
  * `@comis/core/src/ports/context-store-types.ts`.
  *
- * Phase 60-02 (REFACTOR-04): ContextStorePort is now an intersection alias
+ * ContextStorePort is an intersection alias
  * `type ContextStorePort = ContextEngineStore & ContextAdminStore`. The
  * contract test gates parity across all three names — the intersection
  * alias AND each half — so a future classification miss (a method moved

@@ -116,9 +116,9 @@ describe("web controller-view boundary", () => {
   //
   // PRE_EXTRACTION_ALLOWLIST contains the files that legitimately call
   // `rpcClient.call(...)` today. Two cohorts:
-  //   (a) 5 files that were out-of-scope at Phase 44's controller-extraction
+  //   (a) 5 files that were out-of-scope at the controller-extraction
   //       wave and were never extracted (below the 800L cap; baseline).
-  //   (b) 21 files inlined back into views in Phase 57 BOUND-RELAX-01 after
+  //   (b) 21 files inlined back into views after
   //       the trivial 1:1 RPC-façade controller pattern was deemed not worth
   //       the indirection cost. The 21 corresponding `<name>-controller.ts`
   //       and `<name>-controller.test.ts` files were deleted.
@@ -126,13 +126,13 @@ describe("web controller-view boundary", () => {
   // any of these into a controller drains the entry at that time.
   //
   const PRE_EXTRACTION_ALLOWLIST = new Set<string>([
-    // Pre-existing 5 (out-of-scope at Phase 44, never extracted).
+    // Pre-existing 5 (never extracted).
     "packages/web/src/views/channel-list.ts",
     "packages/web/src/views/context-dag-browser.ts",
     "packages/web/src/views/media-config.ts",
     "packages/web/src/views/session-list.ts",
     "packages/web/src/views/subagents.ts",
-    // Phase 57 BOUND-RELAX-01 — 21 newly-inlined views (formerly delegated
+    // 21 newly-inlined views (formerly delegated
     // RPC calls through a <name>-controller.ts façade; controllers deleted).
     "packages/web/src/components/graph/ic-node-editor.ts",
     "packages/web/src/views/agents/agent-detail.ts",

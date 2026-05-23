@@ -208,12 +208,12 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       const sessionKeyStr = formatSessionKey(sessionKey);
 
       return withSessionLock(deps.fileLock, deps.lockDir, sessionKeyStr, async () => {
-        // Ensure the directory tree exists for new sessions. Migrated to
-        // `ensureContainedDir` (Phase 48 OBS-HARD-03) to honor design §1.4
-        // mode invariant — every artifact dir under ~/.comis/ must be
-        // `0o700`. Result.err is logged at WARN per AGENTS.md §2.1; the
-        // contract is best-effort (SdkSessionManager.open below surfaces
-        // real errors via its own throw path).
+        // Ensure the directory tree exists for new sessions. Uses
+        // `ensureContainedDir` to honor design §1.4 mode invariant — every
+        // artifact dir under ~/.comis/ must be `0o700`. Result.err is logged
+        // at WARN per AGENTS.md §2.1; the contract is best-effort
+        // (SdkSessionManager.open below surfaces real errors via its own
+        // throw path).
         const dirResult = ensureContainedDir({
           dir: dirname(sessionPath),
           mode: 0o700,
@@ -265,8 +265,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       // "(session) ended → session.ended" fires here, NOT on per-turn
       // agent_end. Counters are zero placeholders — the session manager
       // doesn't accumulate per-session totals; the `exitReason:"destroyed"`
-      // discriminator distinguishes from a normal end-of-turn close. See
-      // 260519-tlx PLAN §F.4 note for the rationale.
+      // discriminator distinguishes from a normal end-of-turn close.
       if (deps.eventBus !== undefined) {
         deps.eventBus.emit("session:ended", {
           agentId: "",
@@ -342,10 +341,10 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           ...(metadata.sessionEnd && { sessionEnd: metadata.sessionEnd }),
           lastUpdated: systemNowDate().toISOString(),
         };
-        // Migrated to `writeRegularFile` (Phase 48 OBS-HARD-03) so the
-        // sentinel metadata file lands at mode `0o600` per design §1.4.
-        // Fire-and-forget contract preserved — Result.err is logged at
-        // WARN but never propagates to the caller.
+        // Uses `writeRegularFile` so the sentinel metadata file lands at
+        // mode `0o600` per design §1.4. Fire-and-forget contract preserved
+        // — Result.err is logged at WARN but never propagates to the
+        // caller.
         const writeResult = writeRegularFile({
           path: metadataPath,
           content: JSON.stringify(merged, null, 2) + "\n",

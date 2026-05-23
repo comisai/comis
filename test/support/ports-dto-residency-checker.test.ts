@@ -2,10 +2,10 @@
 /**
  * Unit tests for the ContextStorePort row-DTO residency walker.
  *
- * Phase 60-02 (REFACTOR-04): the original 38-method ContextStorePort
- * interface was split into ContextEngineStore (34 methods, in
- * `context-engine-store.ts`) + ContextAdminStore (4 methods, in
- * `context-admin-store.ts`). ContextStorePort itself is now a type alias
+ * The original 38-method ContextStorePort interface was split into
+ * ContextEngineStore (34 methods, in `context-engine-store.ts`) +
+ * ContextAdminStore (4 methods, in `context-admin-store.ts`).
+ * ContextStorePort itself is now a type alias
  * (`type ContextStorePort = ContextEngineStore & ContextAdminStore`).
  *
  * The walker now accepts arrays of port-file paths + interface names so it

@@ -184,14 +184,14 @@ export interface AgentEvents {
       longTtl: number;
     };
     /**
-     * Cost-correction breadcrumb (260520-wcf). When the pi-ai SDK
-     * underprices 1h cache writes at the 5m rate, the bridge surfaces
-     * the correction here as a forensics aid for operators querying
-     * token_usage events. `delta` is signed (`corrected - sdkRaw`),
-     * `sdkRaw` is the SDK-reported total before correction, `corrected`
-     * is the post-correction total ultimately recorded by the
-     * costTracker. The field is OMITTED when delta === 0 — the absence
-     * is the "no correction was needed" signal, not a zero delta.
+     * Cost-correction breadcrumb. When the pi-ai SDK underprices 1h
+     * cache writes at the 5m rate, the bridge surfaces the correction
+     * here as a forensics aid for operators querying token_usage
+     * events. `delta` is signed (`corrected - sdkRaw`), `sdkRaw` is the
+     * SDK-reported total before correction, `corrected` is the
+     * post-correction total ultimately recorded by the costTracker. The
+     * field is OMITTED when delta === 0 — the absence is the "no
+     * correction was needed" signal, not a zero delta.
      */
     costCorrection?: {
       delta: number;
@@ -199,13 +199,13 @@ export interface AgentEvents {
       corrected: number;
     };
     /**
-     * Warmup-turn flag (260520-wcf). True when this turn wrote cache
-     * tokens without reading any (`cacheReadTokens === 0 &&
-     * cacheWriteTokens > 0`) — the first cache-write turn of a session.
-     * Reporting `cacheSavedUsd: -X, cacheSavingsRate: -91%` on this
-     * turn is misleading because the "loss" is a deferred investment,
-     * not a regression. Consumers should filter `warmupTurn === true`
-     * out of cost-regression dashboards. Always populated.
+     * Warmup-turn flag. True when this turn wrote cache tokens without
+     * reading any (`cacheReadTokens === 0 && cacheWriteTokens > 0`) —
+     * the first cache-write turn of a session. Reporting
+     * `cacheSavedUsd: -X, cacheSavingsRate: -91%` on this turn is
+     * misleading because the "loss" is a deferred investment, not a
+     * regression. Consumers should filter `warmupTurn === true` out of
+     * cost-regression dashboards. Always populated.
      */
     warmupTurn: boolean;
     /**

@@ -1947,12 +1947,11 @@ describe("setupCrossSession", () => {
     });
 
     it("proxyTypingCleanup cleanup function stops every active controller and clears the map", async () => {
-      // CRIT-03 / EVENT-CLEAN-01: registerProxyTypingListeners used to
-      // subscribe to eventBus.on("system:shutdown", ...) which silently
-      // no-op'd in production. It now returns a cleanup function the
-      // composition root invokes directly via
-      // ShutdownDeps.proxyTypingCleanup. This test exercises that returned
-      // function directly (no event-bus indirection).
+      // registerProxyTypingListeners used to subscribe to
+      // eventBus.on("system:shutdown", ...) which silently no-op'd in
+      // production. It now returns a cleanup function the composition root
+      // invokes directly via ShutdownDeps.proxyTypingCleanup. This test
+      // exercises that returned function directly (no event-bus indirection).
       const setupCrossSession = await getSetupCrossSession();
       const { deps, eventBus } = createProxyDeps();
 

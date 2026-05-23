@@ -2,12 +2,9 @@
 /**
  * Branch coverage for setup-and-route.ts.
  *
- * Merged from inbound-setup-branches.test.ts (typing-mode matrix) and
- * inbound-route-branches.test.ts (routing matrix) as part of Phase 59
- * REFACTOR-02 Plan 59-05. All pre-collapse assertions preserved verbatim;
- * the only changes are call-signature adjustments to invoke the merged
- * setupAndRoute() instead of the former setupInboundExecution() /
- * routeInboundMessage() pair.
+ * Covers the typing-mode matrix and the routing matrix. The call signatures
+ * invoke the merged setupAndRoute() (formerly setupInboundExecution() /
+ * routeInboundMessage()).
  *
  * @module
  */
@@ -82,9 +79,8 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: 0,
       }),
     ),
-    // TEST-PUB-01 (Plan 56-05): DeliveryService gained drainInFlight().
-    // Default fake returns empty drain telemetry; tests that exercise drain
-    // semantics override this field.
+    // DeliveryService provides drainInFlight(). Default fake returns empty
+    // drain telemetry; tests that exercise drain semantics override this field.
     drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
@@ -139,8 +135,8 @@ function makeMinimalDeps(overrides?: Partial<SetupAndRouteDeps>): SetupAndRouteD
 // shared makeMinimalDeps factory above)
 // ===========================================================================
 
-// "setupInboundExecution ack reaction dispatch" describe block deleted in
-// Plan 56-06: ackReactionConfig deps slot removed from ChannelManagerDeps /
+// "setupInboundExecution ack reaction dispatch" describe block deleted:
+// ackReactionConfig deps slot removed from ChannelManagerDeps /
 // InboundPipelineDeps / SetupDeps. The ack-reaction-fire-and-forget code path
 // in inbound-setup.ts is gone; lifecycle reactor handles ack reactions when
 // enabled (production absent-mode).
@@ -394,9 +390,9 @@ describe("setupAndRoute typing controller (formerly setupInboundExecution)", () 
 // ===========================================================================
 
 // "routeInboundMessage debounce buffer gate" + "routeInboundMessage group history
-// injection" describe blocks deleted in Plan 56-06: debounceBuffer +
-// groupHistoryBuffer + sessionLabelStore deps slots removed. Production absent-mode
-// is direct routing through CommandQueue without coalescing or history injection.
+// injection" describe blocks deleted: debounceBuffer + groupHistoryBuffer +
+// sessionLabelStore deps slots removed. Production absent-mode is direct
+// routing through CommandQueue without coalescing or history injection.
 
 describe("setupAndRoute steer+followup routing (formerly routeInboundMessage)", () => {
   function makeRunHandle(

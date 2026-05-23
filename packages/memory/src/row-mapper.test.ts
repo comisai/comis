@@ -537,10 +537,10 @@ describe("whitelist exports", () => {
 // ── createRowMapper — generic factory ───────────────────────────────
 
 describe("createRowMapper — generic factory", () => {
-  // NOTE: 2 it() tests for parseRow (singular) were removed in Plan 51.02
-  // PORT-TRIM-11 along with the method itself. parseOptionalRow and parseRows
-  // cover the surviving surface; the row-validation-failed path is still
-  // exercised below.
+  // NOTE: 2 it() tests for parseRow (singular) were removed in a prior
+  // port-trim cleanup along with the method itself. parseOptionalRow and
+  // parseRows cover the surviving surface; the row-validation-failed path is
+  // still exercised below.
 
   it("createRowMapper parseRows surfaces row index in error path on per-row failures", () => {
     const schema = z.strictObject({ id: z.string() });

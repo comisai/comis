@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-HARD-10 — observability mode-invariants source rule.
+ * Observability mode-invariants source rule.
  *
  * Strict-literal AST walker over `packages/**\/src/**\/*.ts` flagging any
  * bare `fs.mkdirSync` / `fs.writeFileSync` / `fs.promises.mkdir` /
@@ -64,9 +64,8 @@ interface ModeViolation {
  * `// fs-safe-allowed: <reason>` opt-out comment on the line
  * immediately above the call.
  *
- * Post-Plan-48 sweep (48-05 / 48-05b / 48-06 / 48-06b), this allowlist
- * is single-entry: the substrate itself. Any additional entry is a
- * regression and must be re-migrated.
+ * This allowlist is single-entry: the substrate itself. Any additional
+ * entry is a regression and must be re-migrated.
  */
 const MODE_INVARIANT_ALLOWLIST: ReadonlyArray<string> = [
   "packages/observability/src/shared/fs-safe.ts",
@@ -75,19 +74,17 @@ const MODE_INVARIANT_ALLOWLIST: ReadonlyArray<string> = [
 /**
  * Production-source scan scope: observability-adjacent packages.
  *
- * Per SPEC.md OBS-HARD-10 acceptance language ("fs-safe caller") and the
- * Phase 48 sweep history (48-05 / 48-05b / 48-06 / 48-06b targeted these
- * three package trees), the production-source rule covers exactly the
- * packages where the substrate is the canonical write path. Other
- * packages (`packages/cli/`, `packages/skills/`, `packages/scheduler/`,
- * `packages/channels/`, `packages/core/`, `packages/orchestrator/`,
- * `packages/web/`, `packages/memory/`) are out of scope per SPEC §
- * "Out of scope" — they write to user-supplied paths, browser-tool
- * download directories, workspace dirs, temp dirs, etc., which are
- * NOT `~/.comis/` artifacts and never participated in the substrate
- * migration. Future work could extend this scope; until then the rule
- * stays focused on its design-§1.4-anchored regression-prevention
- * mandate.
+ * Per the acceptance language ("fs-safe caller"), the
+ * production-source rule covers exactly the packages where the substrate
+ * is the canonical write path. Other packages (`packages/cli/`,
+ * `packages/skills/`, `packages/scheduler/`, `packages/channels/`,
+ * `packages/core/`, `packages/orchestrator/`, `packages/web/`,
+ * `packages/memory/`) are out of scope per SPEC § "Out of scope" — they
+ * write to user-supplied paths, browser-tool download directories,
+ * workspace dirs, temp dirs, etc., which are NOT `~/.comis/` artifacts
+ * and never participated in the substrate migration. Future work could
+ * extend this scope; until then the rule stays focused on its
+ * design-§1.4-anchored regression-prevention mandate.
  */
 const SCANNED_PACKAGES: ReadonlyArray<string> = [
   "agent",
@@ -344,7 +341,7 @@ describe("observability-mode-invariants — classifier fixture-negative", () => 
         suggestedFix:
           "Adjust the classifier so the named CLEAN case is no longer matched. " +
           "Negative fixtures pin the boundary of classifier correctness.",
-        designRef: ".planning/design/observability-stack-workstream-a.md §1.4",
+        designRef: "observability stack design notes §1.4",
       }),
     ).toEqual([]);
   });
@@ -380,7 +377,7 @@ describe("observability-mode-invariants — production source", () => {
           "(e.g., ephemeral test-fixture state outside ~/.comis/), add an " +
           "inline `// fs-safe-allowed: <reason>` comment on the line above " +
           "the call.",
-        designRef: ".planning/design/observability-stack-workstream-a.md §1.4",
+        designRef: "observability stack design notes §1.4",
         allowlistRef:
           "MODE_INVARIANT_ALLOWLIST in test/architecture/observability-mode-invariants.test.ts",
       }),

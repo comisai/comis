@@ -60,7 +60,7 @@ describe("createSystemEnv contract", () => {
     expect(e.get("MISSING")).toBeUndefined();
   });
 
-  // NOTE: snapshot([…]) contract test was removed in Plan 51.02 PORT-TRIM-08
+  // NOTE: snapshot([…]) contract test was removed in a prior port-trim cleanup
   // along with EnvPort.snapshot. The get(key) contract above covers the
   // surviving env-read surface.
 

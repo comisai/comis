@@ -130,7 +130,7 @@ export async function deliverOutboundMedia(
     };
 
     if (typeof deps.adapter.sendAttachment !== "function") {
-      // Defensive: PORT-TRIM-14 made sendAttachment optional on ChannelPort.
+      // Defensive: sendAttachment is optional on ChannelPort.
       // Adapters whose platform lacks attachments (e.g. IRC) omit the method;
       // the capability gate (features.attachments) should normally have blocked
       // outbound-media earlier in the pipeline. If we reach here the gate was

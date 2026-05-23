@@ -4,8 +4,8 @@
  *
  * Extracted from byte-identical-modulo-shape copies in append.ts
  * (`encodeRecord`), append-observe.ts (`encodeObserveRecord`), and
- * scrub.ts (`reEncodeRecord` body) — REFACTOR-03 successor to
- * DUP-CONS-11 sentinel extraction.
+ * scrub.ts (`reEncodeRecord` body) — successor to the earlier
+ * sentinel extraction.
  *
  * Argv goes through the dedicated `redactConfigAuditArgv` (which knows
  * `--flag=value` shape); the rest of the record goes through

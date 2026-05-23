@@ -191,7 +191,7 @@ export function createMemoryApi(
         throw new Error(
           "MemoryApi.clear() requires at least one scope field. " +
             "Pass tenantId or sessionKey to scope the wipe " +
-            "(adapter.clear was removed in Plan 51.02 PORT-TRIM-05).",
+            "(adapter.clear was removed in a prior port-trim cleanup).",
         );
       }
 

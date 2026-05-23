@@ -97,8 +97,8 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
 
   it("Test 2: returned shape matches the deliverToChannel + drainInFlight interface", () => {
     const service = createDeliveryService(makeDeps());
-    // After TEST-PUB-01 the service exposes both `deliverToChannel` (per-call
-    // outbound delivery) and `drainInFlight` (shutdown drain). Ordering is
+    // The service exposes both `deliverToChannel` (per-call outbound
+    // delivery) and `drainInFlight` (shutdown drain). Ordering is
     // factory-emission order — assert on the Set so iteration order is
     // irrelevant.
     expect(new Set(Object.keys(service))).toEqual(new Set(["deliverToChannel", "drainInFlight"]));
@@ -1393,7 +1393,7 @@ describe("DeliveryService — full pipeline behavior", () => {
   });
 
   // -------------------------------------------------------------------------
-  // drainInFlight (TEST-PUB-01 — internal Set ownership)
+  // drainInFlight (internal Set ownership)
   // -------------------------------------------------------------------------
 
   describe("DeliveryService.drainInFlight", () => {
@@ -1494,11 +1494,11 @@ describe("DeliveryService — full pipeline behavior", () => {
     });
 
     it("createDeliveryService no longer accepts an inFlightSends deps field", () => {
-      // Type-level assertion via @ts-expect-error: after TEST-PUB-01,
-      // DeliveryServiceDeps does NOT declare inFlightSends. Tests that try
-      // to pass one must fail at compile time. The runtime call still
-      // succeeds (extra properties are erased at the structural-type seam),
-      // but the @ts-expect-error directive is the load-bearing assertion.
+      // Type-level assertion via @ts-expect-error: DeliveryServiceDeps
+      // does NOT declare inFlightSends. Tests that try to pass one must
+      // fail at compile time. The runtime call still succeeds (extra
+      // properties are erased at the structural-type seam), but the
+      // @ts-expect-error directive is the load-bearing assertion.
       const deps = {
         hookRunner: makeNoopHookRunner(),
         deliveryQueue: createNoOpDeliveryQueue(),

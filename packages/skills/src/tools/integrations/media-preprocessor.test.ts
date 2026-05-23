@@ -1801,10 +1801,10 @@ describe("preprocessMessage", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CRIT-01: onSuspiciousContent forwarding into per-handler deps
+  // onSuspiciousContent forwarding into per-handler deps
   // -------------------------------------------------------------------------
 
-  describe("onSuspiciousContent forwarding (CRIT-01)", () => {
+  describe("onSuspiciousContent forwarding", () => {
     function makeVideoAttachmentLocal(url = "tg-file://video-sus"): Attachment {
       return { type: "video", url, mimeType: "video/mp4", sizeBytes: 5_000_000 };
     }

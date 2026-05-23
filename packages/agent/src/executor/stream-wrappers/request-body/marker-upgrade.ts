@@ -33,7 +33,7 @@ export interface UpgradeSdkMarkersParams {
    * otherwise pay the 1h premium for nothing.
    *
    * When undefined (caller has no counter wired), the gate is skipped
-   * to preserve pre-260520-wcf behavior — promotion fires as before.
+   * to preserve legacy behavior — promotion fires as before.
    */
   callCount?: number;
   logger: ComisLogger;
@@ -56,10 +56,10 @@ function upgradeMarkers(blocks: Array<Record<string, unknown>>): void {
  *   - `needsCacheBreakpoints && resolvedRetention === "long" && !effectiveSkipCacheWrite`
  *   - AND `callCount === undefined || callCount >= 2`.
  *
- * The callCount gate (260520-wcf) prevents paying the 1h premium on
- * first-turn writes that may be evicted server-side before a second
- * turn even fires. When the caller does not supply callCount, the
- * gate is skipped (pre-260520-wcf behavior preserved).
+ * The callCount gate prevents paying the 1h premium on first-turn writes
+ * that may be evicted server-side before a second turn even fires. When
+ * the caller does not supply callCount, the gate is skipped (legacy
+ * behavior preserved).
  *
  * Mutates `result.system` and `result.tools` in place.
  */
@@ -77,7 +77,7 @@ export function upgradeSdkMarkers(params: UpgradeSdkMarkersParams): void {
 
   if (!needsCacheBreakpoints || resolvedRetention !== "long" || effectiveSkipCacheWrite) return;
 
-  // 260520-wcf gate: promote only from turn 2 onward.
+  // callCount gate: promote only from turn 2 onward.
   // First-turn writes that get evicted server-side would otherwise pay
   // the 1h premium for nothing. The gate is skipped when callCount is
   // undefined to preserve behavior for callers that have not been

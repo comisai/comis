@@ -35,15 +35,15 @@
  * (which has its own image-base64 / credential-key rules — see
  * `sanitize-diagnostic-payload.ts`).
  *
- * **Phase 58 (DUP-CONS-02):** The recursive `walk` body, WeakSet allocation,
- * and `isPlainObject` predicate were lifted into the shared
- * `combined-walker.ts`. `limitPayloadValue` is now a one-line delegate
- * invoking `combinedWalk` with the `boundCheckHook` only. The five
- * canonical bounds (depth, string size, array length, object key count,
- * cycle) are enforced inside `boundCheckHook` — the bounds constants
- * (`PAYLOAD_BOUNDS`, `BOUNDED_PAYLOAD_REASONS`) and the `BoundedSentinel`
- * shape are still owned here and consumed by the hook + downstream
- * callers (config-audit, cache-trace, trajectory).
+ * The recursive `walk` body, WeakSet allocation, and `isPlainObject`
+ * predicate live in the shared `combined-walker.ts`. `limitPayloadValue`
+ * is a one-line delegate invoking `combinedWalk` with the
+ * `boundCheckHook` only. The five canonical bounds (depth, string size,
+ * array length, object key count, cycle) are enforced inside
+ * `boundCheckHook` — the bounds constants (`PAYLOAD_BOUNDS`,
+ * `BOUNDED_PAYLOAD_REASONS`) and the `BoundedSentinel` shape are still
+ * owned here and consumed by the hook + downstream callers
+ * (config-audit, cache-trace, trajectory).
  *
  * @module
  */
@@ -92,15 +92,15 @@ export interface BoundedSentinel {
  * field name only — it does not propagate into nested children of the
  * exempted value.
  *
- * Use case (260520-wcf, cache-trace): when the operator opts in to
- * `includeSystem` / `includeMessages` on the cache-trace runtime, the
- * `system` / `messages` payload slots must carry full SDK content even
- * when it exceeds 32 KB. Without exemption the limiter replaced the
- * payload with the `bounded-payload-field-size-limit` sentinel,
- * silently defeating the opt-in.
+ * Use case (cache-trace): when the operator opts in to `includeSystem`
+ * / `includeMessages` on the cache-trace runtime, the `system` /
+ * `messages` payload slots must carry full SDK content even when it
+ * exceeds 32 KB. Without exemption the limiter replaced the payload
+ * with the `bounded-payload-field-size-limit` sentinel, silently
+ * defeating the opt-in.
  *
  * Both sets are READ-ONLY and OPTIONAL. Default behavior (no overrides
- * argument) is identical to pre-260520-wcf — every string is capped.
+ * argument) caps every string.
  */
 export interface PayloadBoundsOverrides {
   readonly stringFieldExempt?: ReadonlySet<string>;
@@ -110,7 +110,7 @@ export interface PayloadBoundsOverrides {
 /**
  * Top-level entry — bounds `value` against the five canonical limits.
  *
- * Delegates to `combinedWalk` with the bound-check hook only (DUP-CONS-02).
+ * Delegates to `combinedWalk` with the bound-check hook only.
  * The walker scaffolding (WeakSet allocation, recursion, `isPlainObject`
  * predicate) lives in `combined-walker.ts`; this function preserves the
  * EXACT pre-fusion public signature for `@comis/infra`, `@comis/daemon`,

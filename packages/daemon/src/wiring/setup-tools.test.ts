@@ -649,11 +649,11 @@ describe("setupTools", () => {
   // -------------------------------------------------------------------------
   // 11. shutdownBackgroundProcesses drains per-agent process registries
   //
-  // CRIT-03 / EVENT-CLEAN-01: setupTools used to subscribe to
-  // eventBus.on("system:shutdown", ...) for cleanup; that subscriber
-  // silently no-op'd in production because no production code emits the
-  // event. ToolsResult.shutdownBackgroundProcesses now exposes the same
-  // cleanup as a directly-invoked function called from setupShutdown.
+  // setupTools used to subscribe to eventBus.on("system:shutdown", ...)
+  // for cleanup; that subscriber silently no-op'd in production because no
+  // production code emits the event. ToolsResult.shutdownBackgroundProcesses
+  // now exposes the same cleanup as a directly-invoked function called
+  // from setupShutdown.
   // -------------------------------------------------------------------------
 
   it("shutdownBackgroundProcesses drains per-agent process registries when invoked", async () => {
@@ -697,13 +697,12 @@ describe("setupTools", () => {
   // -------------------------------------------------------------------------
   // 12. MCP servers disconnect at composition root, not via event bus
   //
-  // CRIT-03 / EVENT-CLEAN-01: the old eventBus.on("system:shutdown", ...)
-  // subscriber bundled mcpClientManager.disconnectAll into the same closure
-  // as the per-agent process-registry drain. That single closure is now
-  // split into two ShutdownDeps fields (RESEARCH Open Question #2 RESOLVED):
-  // setupTools.shutdownBackgroundProcesses (drain registries) and the
-  // composition root binding mcpClientManagerDisconnectAll directly off the
-  // mcpClientManager handle (daemon.ts wires
+  // The old eventBus.on("system:shutdown", ...) subscriber bundled
+  // mcpClientManager.disconnectAll into the same closure as the per-agent
+  // process-registry drain. That single closure is now split into two
+  // ShutdownDeps fields: setupTools.shutdownBackgroundProcesses (drain
+  // registries) and the composition root binding mcpClientManagerDisconnectAll
+  // directly off the mcpClientManager handle (daemon.ts wires
   // mcpClientManager.disconnectAll.bind into ShutdownDeps).
   //
   // setupTools NO LONGER calls disconnectAll itself; the responsibility

@@ -110,9 +110,9 @@ export function setupObservability(deps: {
   if (deps.dataDir && deps.logger) {
     const diffWriter = createCacheBreakDiffWriter({
       outputDir: `${deps.dataDir}/cache-breaks`,
-      // OBS-HARD-02: confinement base for the fs-safe substrate — the
-      // resolved real path of every diff artifact must stay inside the
-      // operator's data root (closes the ancestor-symlink escape).
+      // Confinement base for the fs-safe substrate — the resolved real
+      // path of every diff artifact must stay inside the operator's data
+      // root (closes the ancestor-symlink escape).
       dataDir: deps.dataDir,
       logger: deps.logger as { warn: (obj: Record<string, unknown>, msg: string) => void },
     });

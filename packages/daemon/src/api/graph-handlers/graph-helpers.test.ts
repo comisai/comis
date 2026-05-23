@@ -3,7 +3,7 @@
  * Tests for graph-helpers.ts — focused on transformNodes() field forwarding.
  *
  * These tests exist as a regression guard against the dropped-mcpServers bug
- * (yfinance trace, plan 260520-e9x): the daemon RPC pipeline.execute path
+ * (yfinance trace): the daemon RPC pipeline.execute path
  * runs every node through transformNodes() before parseExecutionGraph(), and
  * any field NOT explicitly forwarded here is silently lost. The pipeline
  * tool already emits mcpServers as a camelCase field; the only thing

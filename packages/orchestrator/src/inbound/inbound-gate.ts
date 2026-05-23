@@ -128,7 +128,7 @@ export async function evaluateInboundGate(
       );
 
       // Group history injection was disabled in production (groupHistoryBuffer
-      // deps slot was never wired); removed in Plan 56-06.
+      // deps slot was never wired); the slot has been removed.
 
       // Route history injection through command queue for serialization
       if (deps.commandQueue) {
@@ -319,15 +319,16 @@ export async function evaluateInboundGate(
       sessionKey,
       reason: "auto-reset:trigger-phrase",
     });
-    // greetingGenerator deps slot deleted in Plan 56-06; static reset message
-    // matches the production absent-mode behavior documented in AUDIT.md.
+    // greetingGenerator deps slot has been deleted; static reset message
+    // matches the production absent-mode behavior.
     await deps.deliveryService.deliverToChannel(adapter, msg.channelId, "Session reset.", { skipChunking: true });
     return { action: "handled" }; // Do not route to agent
   }
 
-  // Prompt skill detection (loadPromptSkill + getUserInvocableSkillNames deps slots)
-  // was removed in Plan 56-06. Both fields were never wired by the daemon; skill
-  // commands now pass through as plain text to the agent (production absent-mode).
+  // Prompt skill detection (loadPromptSkill + getUserInvocableSkillNames deps
+  // slots) has been removed. Both fields were never wired by the daemon; skill
+  // commands now pass through as plain text to the agent (production
+  // absent-mode).
 
   // Extract command directives from metadata (set by general slash command interception above)
   const directives = msg.metadata?._commandDirectives as Record<string, unknown> | undefined;

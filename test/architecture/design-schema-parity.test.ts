@@ -1,22 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-HARD-12 — design ↔ schema default parity for diagnostics.* fields.
+ * Design ↔ schema default parity for diagnostics.* fields.
  *
- * Asserts field-by-field default parity between the §12 Zod block in
- * `.planning/design/observability-stack-workstream-a.md` (after Plan 48-04
- * sweep) and the runtime `DiagnosticsConfigSchema` in
- * `packages/core/src/config/schema-diagnostics.ts` (after Plan 48-02
- * extension).
+ * Asserts field-by-field default parity between the §12 Zod block in the
+ * observability-stack design notes and the runtime
+ * `DiagnosticsConfigSchema` in
+ * `packages/core/src/config/schema-diagnostics.ts`.
  *
- * Implementation strategy (per CONTEXT.md "Claude's Discretion"):
- * hard-coded expected-defaults table approach. Simpler than parsing
- * the Markdown fence; equally effective at SPEC.md OBS-HARD-12's
- * acceptance criterion ("flipping a default in code without updating
- * the design doc fails the test"). The table itself documents the
- * expected-value contract — a code-only flip will fail the assertion
- * against the table, and updating the table requires a same-PR edit
- * to the design doc (enforced by code review per the threat-model
- * T-48-38 mitigation).
+ * Implementation strategy: hard-coded expected-defaults table approach.
+ * Simpler than parsing the Markdown fence; equally effective at the
+ * acceptance criterion ("flipping a default in code
+ * without updating the design doc fails the test"). The table itself
+ * documents the expected-value contract — a code-only flip will fail
+ * the assertion against the table, and updating the table requires a
+ * same-PR edit to the design doc (enforced by code review per the
+ * threat-model mitigation).
  *
  * The 10 fields covered are exactly the 10 documented defaults in
  * design §12:
@@ -30,7 +28,7 @@ import { describe, it, expect } from "vitest";
 import { AppConfigSchema } from "@comis/core";
 
 /**
- * Expected defaults — must match `.planning/design/observability-stack-workstream-a.md` §12.
+ * Expected defaults — must match the observability-stack design notes §12.
  *
  * The DESIGN doc is the contract; this table mirrors it. The runtime
  * `DiagnosticsConfigSchema` (in

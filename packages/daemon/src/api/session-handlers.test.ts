@@ -1146,11 +1146,11 @@ describe("createSessionHandlers - session management", () => {
   });
 
   // -------------------------------------------------------------------------
-  // session.spawn (async-only after BC-REM-12 sub-D; dedup propagation)
+  // session.spawn (async-only; dedup propagation)
   // -------------------------------------------------------------------------
   //
-  // The sync-wait poll-until-complete branch was deleted in Phase 52 Plan 04
-  // BC-REM-12 sub-D (CHANGELOG: callers passing `async: false` are now
+  // The sync-wait poll-until-complete branch was deleted
+  // (CHANGELOG: callers passing `async: false` are now
   // treated as async). The async response no longer carries the
   // multi-line `note` field that the legacy sync-timeout branch produced —
   // the `noteType: "background_running"` field IS the canonical signal.

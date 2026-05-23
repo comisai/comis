@@ -355,9 +355,9 @@ describe("daemon main()", () => {
     expect(instance.logLevelManager).toBe(mocks.logLevelManager);
     expect(instance.tokenTracker).toBe(mocks.tokenTracker);
     expect(instance.processMonitor).toBe(mocks.processMonitor);
-    // Post-52-03 (DUP-CONS-03): shutdownHandle is constructed inline by
-    // setupShutdown rather than injected via the `_registerGracefulShutdown`
-    // factory seam. Assert the shape (the integration tests cover behavior).
+    // shutdownHandle is constructed inline by setupShutdown rather than
+    // injected via a `_registerGracefulShutdown` factory seam. Assert the
+    // shape (the integration tests cover behavior).
     expect(instance.shutdownHandle).toBeDefined();
     expect(typeof instance.shutdownHandle.trigger).toBe("function");
     expect(typeof instance.shutdownHandle.dispose).toBe("function");
@@ -387,9 +387,9 @@ describe("daemon main()", () => {
     expect(overrides.createGatewayServer).not.toHaveBeenCalled();
   });
 
-  // Phase 52-03 (DUP-CONS-03): the `_registerGracefulShutdown` factory seam
-  // is gone, so the "passes onShutdown callback" assertions that previously
-  // inspected the factory call are obsolete here. Coverage moves to:
+  // The `_registerGracefulShutdown` factory seam is gone, so the
+  // "passes onShutdown callback" assertions that previously inspected the
+  // factory call are obsolete here. Coverage moves to:
   //   - packages/daemon/src/wiring/setup-shutdown.test.ts (per-component
   //     teardown invocation)
   //   - test/integration/daemon-shutdown*.test.ts (real-signal trigger end-
@@ -484,7 +484,7 @@ describe("daemon main()", () => {
     await expect(main(overrides)).rejects.toThrow("Bootstrap failed: Config file not found");
   });
 
-  // Phase 52-03 (DUP-CONS-03): the two assertions previously here checked
+  // The two assertions previously here checked
   // `overrides.registerGracefulShutdown.toHaveBeenCalledWith(...)` to verify
   // that container/processMonitor/exit flowed through the factory seam. After
   // inlining, the seam is gone and the same wiring is exercised by:

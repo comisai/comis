@@ -78,16 +78,14 @@ import { createProviderHandlers } from "./provider-handlers.js";
  * (preconditions, validation) are warn-level via typed-class throws;
  * unmatched cases fall through to `error/internal`.
  *
- * Per Phase 52 Plan 04 (BC-REM-12 sub-E), the legacy
- * message-pattern (substring-match) fallbacks were deleted. Handlers
- * that still `throw new Error("Admin access required" | "immutable" | ...)`
- * will now classify as `internal`/`error` until they are migrated to
- * `throw new PreconditionError(...)` / `throw new ValidationError(...)`.
- * Phase 52 Plan 04 audit found N=76 such handlers in packages/daemon/src/api/;
- * the typed-error migration is deferred to a follow-on phase (see
- * 52-04-SUMMARY.md§"Deferred — typed-error migration"). The deletion
- * is intentional per AGENTS.md §2.9 — keeping the substring fallbacks
- * was the BC shim; the migration is incremental hardening.
+ * The legacy message-pattern (substring-match) fallbacks were deleted.
+ * Handlers that still `throw new Error("Admin access required" |
+ * "immutable" | ...)` will now classify as `internal`/`error` until they
+ * are migrated to `throw new PreconditionError(...)` /
+ * `throw new ValidationError(...)`. The typed-error migration of the
+ * remaining bare-Error handlers in packages/daemon/src/api/ is deferred.
+ * The deletion is intentional per AGENTS.md §2.9 — keeping the substring
+ * fallbacks was the BC shim; the migration is incremental hardening.
  */
 export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: string; level: "warn" | "error" } {
   // Typed errors: instanceof checks. Add new typed classes here as
@@ -255,10 +253,10 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // agent/provider handlers above. When undefined the validator becomes
       // a no-op.
       secretManager: deps.container?.secretManager,
-      // Phase 47: thread persistDeps so mcp.connect/disconnect can route
-      // through persistToConfig. Mirrors the heartbeat-handlers wiring at
+      // Thread persistDeps so mcp.connect/disconnect can route through
+      // persistToConfig. Mirrors the heartbeat-handlers wiring at
       // :280-290. When deps.container is missing (test harnesses) persist
-      // is short-circuited to persistence:"skipped" per D-04.
+      // is short-circuited to persistence:"skipped".
       persistDeps: deps.container ? {
         container: deps.container,
         configPaths: deps.configPaths,
@@ -341,7 +339,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     try {
       return await handler(params);
     } catch (err) {
-      // Fix C: classify by raw object (instanceof) and severity-dispatch
+      // Classify by raw object (instanceof) and severity-dispatch
       // warn vs error. `params` joins the payload so subsequent
       // operator debugging (e.g., `context.expand id=abc-123`) doesn't
       // need a separate grep — the offending input is on the same log line.

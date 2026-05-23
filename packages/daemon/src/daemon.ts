@@ -3,12 +3,12 @@
 /**
  * Daemon Entry Point: composition root for the entire daemon process.
  *
- * Phase 59 REFACTOR-01 closure: the 5 `stages/*-helpers.ts` files plus the
- * `stages/index.ts` barrel were inlined back into this file. 23 helpers
- * either became top-level functions here (the ones called from multiple
- * sites or large enough to warrant naming) or were inlined directly at
- * their single call site (the ones whose only purpose was keeping the
- * old per-stage cap under 200L).
+ * The 5 `stages/*-helpers.ts` files plus the `stages/index.ts` barrel
+ * were inlined back into this file. 23 helpers either became top-level
+ * functions here (the ones called from multiple sites or large enough to
+ * warrant naming) or were inlined directly at their single call site
+ * (the ones whose only purpose was keeping the old per-stage cap under
+ * 200L).
  *
  * BootContext lives in `./daemon-types.ts`; the only out-of-file lifted
  * helper is `emitBootstrapConfigObserveRecords` (+ kin) which moved to
@@ -34,14 +34,12 @@
  *  11.  main()
  *  12.  Direct-run guard block
  *
- * Phase 59 REFACTOR-01 part 1 (Plan 59-02): the 4-handle chain
- * (Foundation → Agents → Channels → Gateway handles) was collapsed into a
- * single BootContext. Each boot* helper now takes `boot: BootContext` and
- * mutates it via Object.assign; main() constructs `boot` via
- * createEmptyBootContext() and chains the 5 helpers in order.
+ * The 4-handle chain (Foundation → Agents → Channels → Gateway handles)
+ * was collapsed into a single BootContext. Each boot* helper now takes
+ * `boot: BootContext` and mutates it via Object.assign; main() constructs
+ * `boot` via createEmptyBootContext() and chains the 5 helpers in order.
  *
- * Phase 59 REFACTOR-01 part 2 (Plan 59-03 — this file's current shape):
- * the 3 eliminable local-scope deferred-ref slots inside bootChannels
+ * The 3 eliminable local-scope deferred-ref slots inside bootChannels
  * (session-tracker, tool-assembler, inbound-message-id-resolver) are
  * GONE — setupTools is hoisted before setupChannels (so
  * assembleToolsForAgent is a direct value, not a deferred ref) and the
@@ -51,8 +49,7 @@
  * shutdownRef, channelAdaptersRef) persist on BootContext.
  *
  * The 23 helpers that were extracted into the stages/* layer by an earlier
- * decomposition pass are now back here in two forms per the Plan 59-03
- * decision table:
+ * decomposition pass are now back here in two forms:
  *
  *   - **Top-level functions** (12 of 23): helpers called from inside a
  *     single boot* function but whose body is large enough to deserve a
@@ -469,8 +466,7 @@ function bootstrapSecretsAndEnv(deps: {
 // session:expired → registry release + Gemini cache cleanup + MCP
 // disconnect cleanup; returns the per-session FileStateTracker pool).
 // Three other helpers (setupMcpManager, buildAuditBundle,
-// buildDeferredCronWakeCallback) were inlined directly into bootAgents
-// per the Plan 59-03 decision table.
+// buildDeferredCronWakeCallback) were inlined directly into bootAgents.
 // ---------------------------------------------------------------------------
 
 /**
@@ -572,8 +568,8 @@ function wirePostAgentsCleanup(deps: {
 // ---------------------------------------------------------------------------
 // Helpers consumed by `bootChannels`. Top-level functions:
 //   - buildChannelManagerDeps — assembles the wide `setupChannels` deps
-//     literal. Plan 59-03 removed the 3 deferred-ref slots that used to
-//     live here; the lambda payload (onMessageReceived / onMessageProcessed)
+//     literal. The 3 deferred-ref slots that used to live here are gone;
+//     the lambda payload (onMessageReceived / onMessageProcessed)
 //     now reads its dynamic deps via accessor closures supplied by the
 //     caller (bootChannels owns the local `let` slots and refreshes them
 //     after setupChannels returns).
@@ -587,10 +583,10 @@ function wirePostAgentsCleanup(deps: {
 //     channelAdapters map, drains + starts prune timer, mirrors prune
 //     lifecycle, wires delivery-queue logging, and starts the output
 //     retention housekeeper (when defaultWorkspaceDir is present).
-// Inlined helpers (per Plan 59-03 decision table): createCapabilityPortResolver
-// (the resolver factory becomes a direct `const get… = (agentId) => …` at
-// the call site) and buildImageGenBundle (provider + rate limiter + config
-// triplet wired inline in bootChannels before setupTools needs them).
+// Inlined helpers: createCapabilityPortResolver (the resolver factory
+// becomes a direct `const get… = (agentId) => …` at the call site) and
+// buildImageGenBundle (provider + rate limiter + config triplet wired
+// inline in bootChannels before setupTools needs them).
 // ---------------------------------------------------------------------------
 
 /**
@@ -611,10 +607,10 @@ type PostAgentsBootContext = BootContext & Required<Pick<BootContext,
 >>;
 
 /**
- * Build the deps object passed to `setupChannels`. After Plan 59-03 the
- * tool-assembler / session-tracker / inbound-message-id-resolver
- * indirection slots are gone — callers pass `assembleToolsForAgent` directly
- * (setupTools is hoisted before setupChannels) and pass `sessionTracker` /
+ * Build the deps object passed to `setupChannels`. The tool-assembler /
+ * session-tracker / inbound-message-id-resolver indirection slots are
+ * gone — callers pass `assembleToolsForAgent` directly (setupTools is
+ * hoisted before setupChannels) and pass `sessionTracker` /
  * `inboundMessageIdResolver` accessor closures that read local-`let` slots
  * captured at message-arrival time.
  */
@@ -786,7 +782,7 @@ async function wirePostChannelsLifecycle(deps: {
     outputRetentionConfig } = deps;
   for (const [type, adapter] of adaptersByType) channelAdaptersRef.set(type, adapter);
   await drainAndStartDeliveryPrune();
-  // CRIT-03: eventBus.on("system:shutdown", ...) subscribers deleted —
+  // eventBus.on("system:shutdown", ...) subscribers deleted —
   // shutdownDeliveryQueue, shutdownMirror, and outputRetentionHandle.shutdown
   // are surfaced through BootContext / wirePostChannelsLifecycle return
   // shape so the composition root invokes them directly via ShutdownDeps.
@@ -1811,7 +1807,7 @@ async function bootAgents(
  *   - sandbox + image generation providers
  *   - per-agent ToolCapabilityPort resolver (inlined factory)
  *   - tools assembly + message preprocessing (setupTools HOISTED above
- *     setupChannels per Plan 59-03 — eliminates the tool-assembler indirection)
+ *     setupChannels — eliminates the tool-assembler indirection)
  *   - channel adapters + composite media resolution + delivery service
  *   - inbound message id resolver (local-let; lambda reads at call time)
  *   - notification system + background completion runner
@@ -1823,12 +1819,12 @@ async function bootAgents(
  *   - cronWakeCallbackRef populated (cross-stage handoff)
  *   - agent management runtime state (suspended set, model catalog, channel cfg)
  *
- * Plan 59-03 reorder: setupTools is constructed BEFORE setupChannels (every
- * setupTools input was already foundation/agents-stage output or
- * constructed inline before setupChannels). sandbox/imageGen providers
- * remain before setupChannels (unchanged). This eliminates the
- * tool-assembler indirection: `assembleToolsForAgent` is now passed
- * directly into `buildChannelManagerDeps`. The remaining 2 eliminable refs
+ * setupTools is constructed BEFORE setupChannels (every setupTools input
+ * was already foundation/agents-stage output or constructed inline before
+ * setupChannels). sandbox/imageGen providers remain before setupChannels
+ * (unchanged). This eliminates the tool-assembler indirection:
+ * `assembleToolsForAgent` is now passed directly into
+ * `buildChannelManagerDeps`. The remaining 2 eliminable refs
  * (sessionTracker / inboundMessageIdResolver) are local `let` slots
  * captured by accessor closures that read at message-arrival time.
  *
@@ -1868,8 +1864,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     deliveryQueue, cronWakeCallbackRef, singleAgentDeps,
   } = handle;
 
-  // Plan 59-03: the 3 eliminable local-scope refs (session-tracker,
-  // tool-assembler, inbound-message-id-resolver) are GONE.
+  // The 3 eliminable local-scope refs (session-tracker, tool-assembler,
+  // inbound-message-id-resolver) are GONE.
   //   - assembleToolsForAgent is now a direct value (setupTools hoisted below).
   //   - sessionTracker / inboundMessageIdResolver use a `const {current?: T}`
   //     container pattern: the binding is `const` (satisfies prefer-const)
@@ -1902,8 +1898,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     );
   }
 
-  // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels per
-  // Plan 59-03 LM-12. assembleToolsForAgent is now passed directly into
+  // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.
+  // assembleToolsForAgent is now passed directly into
   // buildChannelManagerDeps; the tool-assembler indirection is GONE.
   // Inlined createCapabilityPortResolver — factory: resolve a
   // ToolCapabilityPort for an agentId; falls back to the default agent's
@@ -1917,7 +1913,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     }
     return port;
   };
-  // CRIT-03: shutdownBackgroundProcesses returned from setupTools — the
+  // shutdownBackgroundProcesses returned from setupTools — the
   // previous eventBus.on("system:shutdown", ...) inline closure is now a
   // hoisted function threaded through ShutdownDeps.
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses } = setupTools({
@@ -1954,7 +1950,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   })();
   // Local alias for the BootContext-bound publication below.
   const inboundMessageIdResolver = inboundMessageIdResolverSlot.current;
-  // CRIT-03: wirePostChannelsLifecycle now returns outputRetentionHandle so
+  // wirePostChannelsLifecycle now returns outputRetentionHandle so
   // the composition root can route .shutdown() through ShutdownDeps. The
   // eventBus.on("system:shutdown", ...) subscribers previously here are
   // deleted; shutdownDeliveryQueue + shutdownMirror remain reachable via
@@ -1986,7 +1982,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
     maxBackgroundHops: bgConfigForRunner.maxBackgroundHops, logger: daemonLogger,
   });
-  // CRIT-03: eventBus.on("system:shutdown", () =>
+  // eventBus.on("system:shutdown", () =>
   //   bgCompletionRunnerContext.runner.shutdown()) deleted — runner.shutdown
   // is threaded directly into setupShutdown via
   // ShutdownDeps.bgCompletionRunnerShutdown.
@@ -1995,13 +1991,13 @@ async function bootChannels(boot: BootContext): Promise<void> {
 
   // Channel health monitor (start + stop produced by helper).
   const { monitor: channelHealthMonitor, stop: stopChannelHealthMonitor } = setupChannelHealthMonitor({ adaptersByType, daemonLogger, container });
-  // CRIT-03: eventBus.on("system:shutdown", () => stopChannelHealthMonitor?.())
+  // eventBus.on("system:shutdown", () => stopChannelHealthMonitor?.())
   // deleted — stopChannelHealthMonitor is threaded directly into setupShutdown
   // via ShutdownDeps.stopChannelHealthMonitor.
   setupChannelHealthLogging({ eventBus: container.eventBus, logger: daemonLogger });
 
   // 6.6.9. Cross-session sender + sub-agent runner
-  // CRIT-03: proxyTypingCleanup returned from setupCrossSession — replaces
+  // proxyTypingCleanup returned from setupCrossSession — replaces
   // the eventBus.on("system:shutdown", ...) subscriber inside
   // registerProxyTypingListeners that silently no-op'd in production.
   const gatewaySendRef: { ref?: (channelId: string, text: string) => boolean } = {};
@@ -2061,7 +2057,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     heartbeatRunner, duplicateDetector, perAgentRunner, wakeCoalescer,
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
     suspendedAgents, modelCatalog, channelConfig, promptTimeoutTimestamps,
-    // CRIT-03: teardown handles surfaced for ShutdownDeps wiring.
+    // Teardown handles surfaced for ShutdownDeps wiring.
     shutdownBackgroundProcesses, proxyTypingCleanup, approvalNotifier,
     outputRetentionHandle,
   });
@@ -2328,7 +2324,7 @@ async function bootShutdown(
     sessionStoreBridge, shutdownRef, gatewayHandle,
     activeExecutions, getActiveConnectionCount,
     trajectoryRegistry,
-    // CRIT-03: 9 new teardown handles surfaced through BootContext.
+    // 9 new teardown handles surfaced through BootContext.
     shutdownBackgroundProcesses, proxyTypingCleanup, approvalNotifier,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
     bgCompletionRunnerContext, stopChannelHealthMonitor, mcpClientManager,
@@ -2337,9 +2333,9 @@ async function bootShutdown(
   // Override-derived locals -- only consumed by setupShutdown below.
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
 
-  // 8. Graceful shutdown (Phase 52-03: signal-handler registration +
-  //    teardown ordering both owned by setupShutdown; the previous
-  //    `_registerGracefulShutdown` factory seam is gone).
+  // 8. Graceful shutdown: signal-handler registration + teardown ordering
+  //    both owned by setupShutdown; the previous
+  //    `_registerGracefulShutdown` factory seam is gone.
   const { shutdownHandle } = setupShutdown({
     logger, daemonLogger, processMonitor, container, exitFn,
     tokenTracker, startupTimestamp: startupStartMs,
@@ -2360,9 +2356,9 @@ async function bootShutdown(
     obsPersistence,  // drain write buffers before db.close
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
-    // CRIT-03: 9 new teardown fields (8 production subscribers + setup-tools
-    // split into background-processes + mcp-client-manager per RESEARCH Open
-    // Question #2 RESOLVED). Each was previously a silent no-op subscriber.
+    // 9 new teardown fields (8 production subscribers + setup-tools
+    // split into background-processes + mcp-client-manager).
+    // Each was previously a silent no-op subscriber.
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll: () => mcpClientManager.disconnectAll(),
     bgCompletionRunnerShutdown: () => bgCompletionRunnerContext.runner.shutdown(),
@@ -2446,9 +2442,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
   await (overrides.preflightDoctor ?? ((fn) => runPreflightDoctor(fn)))(exitFn);
 
-  // Phase 59 REFACTOR-01: the 4-handle chain collapsed into a single
-  // BootContext that the 5 boot* helpers populate in sequence. main() owns
-  // the single `boot` variable; helpers mutate it via Object.assign.
+  // The 4-handle chain collapsed into a single BootContext that the 5
+  // boot* helpers populate in sequence. main() owns the single `boot`
+  // variable; helpers mutate it via Object.assign.
   const boot: BootContext = createEmptyBootContext();
 
   // Stage 1: foundation. Owns data-dir + secrets + bootstrap + logging +

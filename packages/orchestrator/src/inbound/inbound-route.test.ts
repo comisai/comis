@@ -7,11 +7,10 @@ import { describe, it, expect } from "vitest";
 describe("setup-and-route uses BackgroundSessionResolver for active-session lookup", () => {
   it("source-grep: imports the resolver and does NOT directly call activeRunRegistry.get(", () => {
     const here = dirname(fileURLToPath(import.meta.url));
-    // Phase 59-05: this gate previously read inbound-route.ts; that file was
-    // merged into setup-and-route.ts in Plan 59-05. The regex below is
-    // preserved verbatim — it guards against any future regression that
-    // replaces resolveActiveSession / BackgroundSessionResolver usage with
-    // a direct activeRunRegistry.get( call in the merged file.
+    // This gate previously read inbound-route.ts; that file was merged into
+    // setup-and-route.ts. The regex below guards against any future regression
+    // that replaces resolveActiveSession / BackgroundSessionResolver usage
+    // with a direct activeRunRegistry.get( call in the merged file.
     const src = readFileSync(resolve(here, "setup-and-route.ts"), "utf-8");
     // Strip block + line comments so the gate cannot be self-invalidated.
     const stripped = src

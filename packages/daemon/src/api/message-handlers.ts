@@ -129,7 +129,7 @@ function assertCapability(
 }
 
 /**
- * Assert that an optional ChannelPort method (PORT-TRIM-14) is implemented on
+ * Assert that an optional ChannelPort method is implemented on
  * the resolved adapter, and return a bound, non-undefined reference for direct
  * invocation. The production sentinel is `assertCapability()` which runs first
  * — this helper exists ONLY so TypeScript stops treating the now-optional

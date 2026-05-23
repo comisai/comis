@@ -284,11 +284,10 @@ export const McpConnectContract = defineContract({
     status: McpConnectionStatusEnum,
     toolCount: z.number(),
     tools: z.array(z.string()),
-    // Phase 47 (D-04): outcome of the persistToConfig call that
-    // accompanies mcp.connect. "persisted" = config.yaml updated.
-    // "runtime_only" = connected in memory but config write failed
-    // (warning carries the persistToConfig error). "skipped" =
-    // persistDeps was not wired (test harness).
+    // Outcome of the persistToConfig call that accompanies mcp.connect.
+    // "persisted" = config.yaml updated. "runtime_only" = connected in
+    // memory but config write failed (warning carries the persistToConfig
+    // error). "skipped" = persistDeps was not wired (test harness).
     persistence: z.enum(["persisted", "runtime_only", "skipped"]).optional(),
     warning: z.string().optional(),
   }),
@@ -321,8 +320,8 @@ export const McpDisconnectContract = defineContract({
   response: z.object({
     name: z.string(),
     status: z.literal("disconnected"),
-    // Phase 47 (D-04): outcome of the persistToConfig call that
-    // accompanies mcp.disconnect. Same semantics as McpConnectContract.
+    // Outcome of the persistToConfig call that accompanies mcp.disconnect.
+    // Same semantics as McpConnectContract.
     persistence: z.enum(["persisted", "runtime_only", "skipped"]).optional(),
     warning: z.string().optional(),
   }),

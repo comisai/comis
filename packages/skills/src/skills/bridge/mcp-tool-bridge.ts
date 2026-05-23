@@ -273,7 +273,7 @@ export function mcpToolsToAgentTools(
             textParts = truncated;
           }
 
-          // CRIT-01: wrap AFTER cap so SECURITY NOTICE boilerplate is preserved
+          // Wrap AFTER cap so SECURITY NOTICE boilerplate is preserved
           // (wrap-then-cap would truncate the closing <<<END_UNTRUSTED_xxx>>>
           // marker mid-content). Fixed ~150-byte wrapper boilerplate sits beyond
           // the per-source maxChars budget — the cap governs content size, not

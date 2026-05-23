@@ -45,13 +45,11 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  // EVENT-CLEAN-07: three plugin / hook lifecycle event-bus events were
-  // deleted from this map in Phase 52 Plan 02. They had zero non-test
-  // subscribers (verified via grep against packages/*/src/ excluding
-  // *.test.ts); the only emit sites were inside PluginRegistry and
-  // HookRunner themselves. Plugin lifecycle is now consumed exclusively
-  // through the in-tree PluginRegistry interface (register / unregister /
-  // getHooksByName / deactivateAll).
+  // Three plugin / hook lifecycle event-bus events were removed from this
+  // map. They had zero non-test subscribers; the only emit sites were
+  // inside PluginRegistry and HookRunner themselves. Plugin lifecycle is
+  // now consumed exclusively through the in-tree PluginRegistry interface
+  // (register / unregister / getHooksByName / deactivateAll).
 
   // -------------------------------------------------------------------------
   // Auth events
@@ -496,15 +494,15 @@ export interface InfraEvents {
   // System lifecycle events
   // -------------------------------------------------------------------------
 
-  // CRIT-03 / EVENT-CLEAN-01: the "system:shutdown" event-bus event was
-  // deleted from this map in Phase 50 Plan 01. Its 8 production subscribers
-  // (across daemon.ts, channels-helpers.ts, setup-tools.ts,
-  // setup-channels-runtime.ts, setup-cross-session-events.ts) had ZERO
-  // production emitters — every teardown silently no-op'd in production
-  // until the systemd KillMode reaped the process. Teardowns now flow
-  // directly through setupShutdown's ShutdownDeps (no event-bus indirection).
-  // approval-gate.ts:156 + :339 retain the literal "system:shutdown" string
-  // as a denial-reason sentinel — that string is NOT this event.
+  // The "system:shutdown" event-bus event was removed from this map. Its
+  // production subscribers (across daemon.ts, channels-helpers.ts,
+  // setup-tools.ts, setup-channels-runtime.ts, setup-cross-session-events.ts)
+  // had ZERO production emitters — every teardown silently no-op'd in
+  // production until the systemd KillMode reaped the process. Teardowns now
+  // flow directly through setupShutdown's ShutdownDeps (no event-bus
+  // indirection). approval-gate.ts:156 + :339 retain the literal
+  // "system:shutdown" string as a denial-reason sentinel — that string is
+  // NOT this event.
 
   /** Unhandled error from a system component */
   "system:error": { error: Error; source: string };

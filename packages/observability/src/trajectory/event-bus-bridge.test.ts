@@ -522,12 +522,12 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- architecture-test surface", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["skill:prompt_invoked"]).toBe("skill.prompt_invoked");
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:enqueued"]).toBe("delivery.queued");
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:complete"]).toBe("delivery.dispatched");
-    // 260519-tlx Gap COV: context engine pipeline → context.compiled.
+    // Context engine pipeline → context.compiled.
     expect(TRAJECTORY_BRIDGE_MAPPING["context:pipeline"]).toBe("context.compiled");
   });
 });
 
-describe("attachTrajectoryToEventBus -- context engine (260519-tlx Gap COV)", () => {
+describe("attachTrajectoryToEventBus -- context engine", () => {
   it("context_pipeline_maps_to_context_compiled_with_pipeline_metrics_in_data", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();

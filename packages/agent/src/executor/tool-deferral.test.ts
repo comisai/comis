@@ -210,13 +210,13 @@ describe("applyToolDeferral - rule-based deferral", () => {
 // ---------------------------------------------------------------------------
 // Suite 4: applyToolDeferral -- MCP active by default for Anthropic/Google
 //
-// Contract flip (260520-e8z-01): MCP tools (`mcp__*`, `mcp:*` prefixes) are
-// ACTIVE BY DEFAULT for providers that support mid-turn tool injection
-// (`anthropic`, `google`). Empirically the model rarely invokes the
-// server-side discovery tool and falls back to `exec`/`web_fetch`, so
-// deferral pays a 0-discovery cost for no benefit. Operators who DO want
-// MCP deferral opt in via `config.deferredTools.alwaysDefer`. The
-// small-model rule (modelTier === "small") continues to defer MCP tools.
+// Contract: MCP tools (`mcp__*`, `mcp:*` prefixes) are ACTIVE BY DEFAULT
+// for providers that support mid-turn tool injection (`anthropic`,
+// `google`). Empirically the model rarely invokes the server-side
+// discovery tool and falls back to `exec`/`web_fetch`, so deferral pays a
+// 0-discovery cost for no benefit. Operators who DO want MCP deferral opt
+// in via `config.deferredTools.alwaysDefer`. The small-model rule
+// (modelTier === "small") continues to defer MCP tools.
 // ---------------------------------------------------------------------------
 
 describe("applyToolDeferral -- MCP active by default for Anthropic/Google", () => {
@@ -359,7 +359,7 @@ describe("applyToolDeferral -- MCP active by default for Anthropic/Google", () =
 // ---------------------------------------------------------------------------
 // Suite 4b: applyToolDeferral -- MCP active by default (new contract details)
 //
-// Covers items (1)-(5) from the 260520-e8z-01 plan:
+// Covers:
 //   1. anthropic + large + no alwaysDefer -> MCP active
 //   2. google   + large + no alwaysDefer -> MCP active
 //   3. alwaysDefer is the operator opt-in for selective deferral
@@ -1109,7 +1109,7 @@ describe("DEFERRAL_RULES", () => {
   });
 });
 
-describe("CHANNEL_TOOL_GATES (structural -- REFACTOR-08)", () => {
+describe("CHANNEL_TOOL_GATES (structural)", () => {
   it("generates 4 channel rules in stable order: discord, telegram, slack, whatsapp", () => {
     // CHANNEL_TOOL_GATES is private to tool-deferral.ts -- assert structure via DEFERRAL_RULES tail.
     const channelRules = DEFERRAL_RULES.slice(1);
@@ -1998,10 +1998,10 @@ describe("buildDeferredToolsContext", () => {
   });
 
   it("instruction names both discovery tools for MCP-only listings", () => {
-    // Contract flip (260520-e8z-01): the deferred-tools instruction now names
-    // BOTH `tool_search_tool_regex` (Anthropic Sonnet/Opus 4.x server-side
-    // path) and `discover_tools` (everything else / client-side path), so the
-    // model has a concrete next step instead of a vague pointer.
+    // Contract: the deferred-tools instruction now names BOTH
+    // `tool_search_tool_regex` (Anthropic Sonnet/Opus 4.x server-side
+    // path) and `discover_tools` (everything else / client-side path), so
+    // the model has a concrete next step instead of a vague pointer.
     const entries: DeferredToolEntry[] = [
       { name: "mcp__srv--tool", description: "desc", original: makeTool("mcp__srv--tool") },
     ];
@@ -2076,16 +2076,15 @@ describe("buildDeferredToolsContext", () => {
 // ---------------------------------------------------------------------------
 // Suite 17c: buildDeferredToolsContext -- instruction names the discovery tool
 //
-// Items (6) and (7) from the 260520-e8z-01 plan: the deferred-tools
-// instruction must name `tool_search_tool_regex` AND `discover_tools` so the
-// model has a concrete tool to call instead of "the discovery mechanism
-// available in your active toolspace".
+// The deferred-tools instruction must name `tool_search_tool_regex` AND
+// `discover_tools` so the model has a concrete tool to call instead of
+// "the discovery mechanism available in your active toolspace".
 // ---------------------------------------------------------------------------
 
 describe("buildDeferredToolsContext -- instruction names the discovery tool", () => {
   it("output contains both `tool_search_tool_regex` and `discover_tools` and NOT the vague pointer", () => {
-    // Item (6): the rendered XML block names both discovery tools and the
-    // vague pre-flip phrase must not appear.
+    // The rendered XML block names both discovery tools and the vague
+    // legacy phrase must not appear.
     const entries: DeferredToolEntry[] = [
       { name: "mcp__yfinance--get_stock_price", description: "Get stock price", original: makeTool("mcp__yfinance--get_stock_price") },
     ];
@@ -2334,11 +2333,10 @@ describe("discover_tools -- co-discovery", () => {
 // ---------------------------------------------------------------------------
 // Suite 20: applyToolDeferral - provider-aware MCP deferral
 //
-// Post 260520-e8z-01 flip: MCP tools are ACTIVE BY DEFAULT for every
-// providerFamily. The pre-flip "Anthropic/Google defer, others do not"
-// asymmetry is gone -- both branches now match. Operator-driven deferral
-// (via `alwaysDefer`) and the small-model rule are the only remaining
-// MCP-deferral sources.
+// MCP tools are ACTIVE BY DEFAULT for every providerFamily. The legacy
+// "Anthropic/Google defer, others do not" asymmetry is gone -- both
+// branches now match. Operator-driven deferral (via `alwaysDefer`) and
+// the small-model rule are the only remaining MCP-deferral sources.
 // ---------------------------------------------------------------------------
 
 describe("applyToolDeferral - provider-aware MCP deferral", () => {
@@ -2400,7 +2398,7 @@ describe("applyToolDeferral - provider-aware MCP deferral", () => {
     expect(result.activeTools.map(t => t.name)).toContain("mcp__xai--tool_b");
   });
 
-  it("keeps MCP tools active by default when providerFamily is 'anthropic' (post 260520-e8z-01)", () => {
+  it("keeps MCP tools active by default when providerFamily is 'anthropic'", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
@@ -2424,7 +2422,7 @@ describe("applyToolDeferral - provider-aware MCP deferral", () => {
     expect(result.activeTools.map(t => t.name)).toContain("mcp:small_tool");
   });
 
-  it("keeps MCP tools active by default when providerFamily is 'google' (post 260520-e8z-01)", () => {
+  it("keeps MCP tools active by default when providerFamily is 'google'", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),

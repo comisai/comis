@@ -328,9 +328,9 @@ export function createRequestBodyInjector(
           // Upgrade SDK auto-placed 5m markers to 1h when retention is long.
           // callCount comes from the cache-break detector (incremented by
           // onPayloadForCacheDetection above) so the gate sees the
-          // post-increment value for THIS turn. The 260520-wcf gate
-          // suppresses promotion when callCount < 2 to avoid paying the
-          // 1h premium on first-turn writes that may be evicted server-side.
+          // post-increment value for THIS turn. The gate suppresses
+          // promotion when callCount < 2 to avoid paying the 1h premium
+          // on first-turn writes that may be evicted server-side.
           const callCountForUpgrade = config.getCallCount?.();
           upgradeSdkMarkers({
             result,

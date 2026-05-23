@@ -603,8 +603,8 @@ async function runSessionLocked(
       // calls writeTrajectoryPointerFileBestEffort when sessionFile is
       // set, producing <sessionFile>.trajectory-path.json next to the
       // per-session JSONL transcript. The pointer is best-effort
-      // (symlinked parents / unwritable dirs no-op silently). 260519-tlx
-      // Gap D2: the registry's first-init-wins contract means the
+      // (symlinked parents / unwritable dirs no-op silently).
+      // The registry's first-init-wins contract means the
       // pointer is written exactly once at recorder creation, which is
       // the correct moment per design §6.1.
       // sessionAdapter.getSessionPath is sync + pure (safePath under
@@ -1179,9 +1179,9 @@ async function runSessionLocked(
     },
     getSessionJsonlPath: () => sessionAdapter.getSessionPath(sessionKey),
     // Forward the session-scoped registry so the bridge's `agent_start`
-    // case can suppress per-turn `session:started` re-emits (260519-tlx
-    // Gap F, design §6.4). When undefined (non-daemon callers), the
-    // bridge falls back to the legacy unconditional emit.
+    // case can suppress per-turn `session:started` re-emits (design §6.4).
+    // When undefined (non-daemon callers), the bridge falls back to the
+    // legacy unconditional emit.
     ...(deps.trajectoryRegistry !== undefined ? { trajectoryRegistry: deps.trajectoryRegistry } : {}),
     perExecutionBudgetCap: config.budgets?.perExecution,
     budgetWarningRef,

@@ -2,10 +2,8 @@
 /**
  * Inbound Pipeline Phase 1: Agent Resolution + Media Preprocessing.
  *
- * Merged from inbound-resolve.ts + inbound-preprocess.ts as part of Phase 59
- * REFACTOR-02 (5-phase → 3-phase collapse). Resolves agent identity,
- * constructs scoped session key, then runs audio preflight + media
- * preprocessing on the resolved message.
+ * Resolves agent identity, constructs scoped session key, then runs audio
+ * preflight + media preprocessing on the resolved message.
  *
  * @module
  */
@@ -48,7 +46,7 @@ export type ResolveAndPreprocessDeps = Pick<
 // Result type
 // ---------------------------------------------------------------------------
 
-/** Resolved + preprocessed agent context from merged Phase 1. */
+/** Resolved + preprocessed agent context from Phase 1. */
 export interface ResolveAndPreprocessResult {
   agentId: string;
   executor: AgentExecutor;

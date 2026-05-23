@@ -3,8 +3,8 @@
  * ContextStorePort: the full surface consumed by the daemon context-handlers
  * (engine + admin halves combined).
  *
- * Phase 60-02 (REFACTOR-04) split the original 38-method interface into two
- * narrower ports and redefined this name as an intersection type alias:
+ * The original 38-method interface was split into two narrower ports, and
+ * this name is now an intersection type alias:
  *   - ContextEngineStore (34 methods) — per-session read/write
  *   - ContextAdminStore  (4 methods)  — admin/cleanup
  *
@@ -14,8 +14,7 @@
  *
  * Memory's `createContextStore` factory returns `ContextStorePort` (= the
  * intersection). The frozen object the factory returns structurally
- * satisfies both interfaces — zero adapter changes required (RESEARCH §B.4
- * Option A).
+ * satisfies both interfaces — zero adapter changes required.
  *
  * Historical note: memory pkg previously declared its own `ContextStore`
  * type (interface, then alias). The terminal state — no `ContextStore`

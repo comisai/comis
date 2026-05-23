@@ -214,10 +214,9 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
   /**
    * Pipeline deps for processInboundMessage at all three call sites
    * (debounce flush handler, normal onMessage handler, injectMessage).
-   * In-flight outbound `Promise` tracking has moved INSIDE DeliveryService
-   * after TEST-PUB-01 (Plan 56-05) — drainInFlight() replaces the inline
-   * Promise.race in stopAll() below; the seam no longer threads through
-   * pipelineDeps.
+   * In-flight outbound `Promise` tracking lives INSIDE DeliveryService —
+   * drainInFlight() replaces the inline Promise.race in stopAll() below;
+   * the seam no longer threads through pipelineDeps.
    */
   const pipelineDeps: ChannelManagerDeps = deps;
 
@@ -319,10 +318,10 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       // Await in-flight outbound sends with a 5s deadline so SIGUSR2 cannot
       // tear down adapters mid-HTTP-response (which would orphan the SQLite
       // delivery-queue ack and trigger a duplicate retry on the next instance).
-      // Drain logic lives inside DeliveryService since TEST-PUB-01 (Plan 56-05);
-      // empty-Set fast path inside `drainInFlight` returns `{drained: 0,
-      // remaining: 0, durationMs: 0}` with no setTimeout/Promise.race so
-      // shutdown latency is preserved when nothing is in flight.
+      // Drain logic lives inside DeliveryService; empty-Set fast path inside
+      // `drainInFlight` returns `{drained: 0, remaining: 0, durationMs: 0}`
+      // with no setTimeout/Promise.race so shutdown latency is preserved when
+      // nothing is in flight.
       const drainResult = await deps.deliveryService.drainInFlight(5000);
       if (drainResult.drained > 0 || drainResult.remaining > 0) {
         deps.logger.info(

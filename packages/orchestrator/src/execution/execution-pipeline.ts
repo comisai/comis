@@ -2,10 +2,10 @@
 /**
  * Execution Pipeline: Thin orchestrator for outbound delivery.
  *
- * Delegates to 3 focused phase modules (Phase 59 REFACTOR-02 inlined the
- * former execution-policy phase directly into the executeAndDeliver body —
- * 5 PolicyDeps fields already lived on ExecutionPipelineDeps, so the seam
- * was pure cosmetic):
+ * Delegates to 3 focused phase modules (the former execution-policy phase
+ * was inlined directly into the executeAndDeliver body — its 5 PolicyDeps
+ * fields already lived on ExecutionPipelineDeps, so the seam was pure
+ * cosmetic):
  *   1. execution-execute — LLM execution with timeout, thinking filter, abort
  *   2. execution-filter  — response sanitization, filtering, media, voice, prefix
  *   3. execution-deliver — chunking, coalescing, block pacing, delivery
@@ -43,12 +43,11 @@ import type {
 import type { RetryEngine } from "@comis/core";
 
 // Pipeline-stage imports
-// Note: Phase 59 REFACTOR-02 inlined the former send-policy phase body
-// (formerly a sibling source file exporting one phase function +
-// PolicyDeps + PolicyResult) directly into executeAndDeliver below. The
-// 5 deps fields (eventBus, logger, sendPolicyConfig,
-// getElevatedReplyConfig, channelRegistry) already live on
-// ExecutionPipelineDeps — no interface change required.
+// Note: the former send-policy phase body (formerly a sibling source file
+// exporting one phase function + PolicyDeps + PolicyResult) was inlined
+// directly into executeAndDeliver below. The 5 deps fields (eventBus,
+// logger, sendPolicyConfig, getElevatedReplyConfig, channelRegistry)
+// already live on ExecutionPipelineDeps — no interface change required.
 import { executeLlm } from "./execution-execute.js";
 import { filterExecutionResponse } from "./execution-filter.js";
 import { deliverExecutionResponse } from "./execution-deliver.js";
@@ -137,14 +136,11 @@ export function resolveStreamingConfig(
   // No global streaming config provided — return the per-channel schema defaults.
   // (Schema is the SSOT per AGENTS.md §6.4; no inline literals.)
   //
-  // Documented deviation (CRIT-05): ROADMAP Phase 50 Success Criterion #3 and
-  // REQUIREMENTS.md both phrase the fix as "routes through
-  // `StreamingConfigSchema.parse({})` and `PerChannelStreamingConfigSchema.parse({})`".
-  // The `StreamingConfigSchema.parse({})` lane is satisfied at AppConfig parse
-  // time (operator YAML → AppConfig in packages/core/src/config); inside this
-  // resolver we only use `PerChannelStreamingConfigSchema.parse({})` because
-  // the resolver's return type is `PerChannelStreamingConfig`, not
-  // `StreamingConfig` (see RESEARCH Anti-Pattern §3).
+  // Documented deviation: the `StreamingConfigSchema.parse({})` lane is
+  // satisfied at AppConfig parse time (operator YAML → AppConfig in
+  // packages/core/src/config); inside this resolver we only use
+  // `PerChannelStreamingConfigSchema.parse({})` because the resolver's
+  // return type is `PerChannelStreamingConfig`, not `StreamingConfig`.
   if (!streamingConfig) {
     return PerChannelStreamingConfigSchema.parse({});
   }
@@ -158,13 +154,13 @@ export function resolveStreamingConfig(
     ...PerChannelStreamingConfigSchema.parse({}),
     enabled: streamingConfig.enabled,
     chunkMode: streamingConfig.defaultChunkMode,
-    chunkMinChars: streamingConfig.defaultChunkMinChars,                                  // CRIT-05
+    chunkMinChars: streamingConfig.defaultChunkMinChars,
     deliveryTiming: streamingConfig.defaultDeliveryTiming,
     coalescer: streamingConfig.defaultCoalescer,
     typingMode: streamingConfig.defaultTypingMode,
     typingRefreshMs: streamingConfig.defaultTypingRefreshMs,
-    typingCircuitBreakerThreshold: streamingConfig.defaultTypingCircuitBreakerThreshold,  // CRIT-05
-    typingTtlMs: streamingConfig.defaultTypingTtlMs,                                      // CRIT-05
+    typingCircuitBreakerThreshold: streamingConfig.defaultTypingCircuitBreakerThreshold,
+    typingTtlMs: streamingConfig.defaultTypingTtlMs,
     useMarkdownIR: streamingConfig.defaultUseMarkdownIR,
     tableMode: streamingConfig.defaultTableMode,
     replyMode: streamingConfig.defaultReplyMode,
@@ -234,8 +230,8 @@ export async function executeAndDeliver(
 
   // ===================================================================
   // Stage 1: Send policy gate, trust level, elevated reply routing
-  // (Inlined from the former send-policy phase module in Phase 59
-  // REFACTOR-02 — 5 deps fields already lived on ExecutionPipelineDeps.)
+  // (Inlined from the former send-policy phase module — 5 deps fields
+  // already lived on ExecutionPipelineDeps.)
   // ===================================================================
 
   // Capability-driven config lookup (falls back to hardcoded maps)
@@ -291,7 +287,7 @@ export async function executeAndDeliver(
 
       // Still execute the agent (for session history), just skip sending.
       // (Silent-execute path preserved verbatim from pre-inline pipeline —
-      // one of two executor.execute call sites; see RESEARCH §B.4 + §LM-15.)
+      // one of two executor.execute call sites.)
       const policyResult = await runWithContext({
         traceId: randomUUID(),
         tenantId: sessionKey.tenantId,

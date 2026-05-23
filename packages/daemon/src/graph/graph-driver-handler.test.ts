@@ -461,14 +461,13 @@ describe("executeDriverAction passes discoveredDeferredTools for mcpServers node
 
 // ---------------------------------------------------------------------------
 // graph-driver-handler honors §1.4 mode invariants on substrate-routed writes
-// (OBS-HARD-03, Plan 48-06)
 //
 // The driver-handler's three `${nodeId}-output.md` write sites
 // (failure-recovery, timeout-recovery, complete-action) are now routed
 // through `writeRegularFile`. The substrate's chmod-by-fd primitive
 // guarantees mode 0o600 regardless of the surrounding error envelope.
 // ---------------------------------------------------------------------------
-describe("graph-driver-handler honors §1.4 file mode invariant (OBS-HARD-03, Plan 48-06)", () => {
+describe("graph-driver-handler honors §1.4 file mode invariant", () => {
   it("write_regular_file_substrate_produces_node_output_md_at_mode_0o600", async () => {
     // Direct substrate-level test mirroring the migrated driver-handler
     // call shape. The substrate's `fs.fchmodSync(fd, 0o600)` runs

@@ -367,11 +367,11 @@ describe("createApiClient", () => {
   });
 
   /* --------------------------------------------------------------------- */
-  /* listSessions tight mapping (BC-REM-15)                                 */
+  /* listSessions tight mapping                                             */
   /*                                                                        */
   /* Asserts the pass-through shape: listSessions returns SessionListItem[] */
   /* with exactly the 9 contract fields — no invented extras, no aliases.   */
-  /* Tightens session.list RPC mapping per Plan 55-03 Task 1.               */
+  /* Tightens session.list RPC mapping.                                     */
   /* --------------------------------------------------------------------- */
   describe("listSessions tight mapping", () => {
     const EXPECTED_KEYS = [

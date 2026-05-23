@@ -9,10 +9,9 @@
  *
  * Method groups (34 total): Conversations (3), Messages (5), Message Parts (3),
  * Summaries (5), Summary Links (5), Context Items (2), Large Files (3),
- * Expansion Grants (6), Quota (1), FTS5 Search (2). Classification per
- * .planning/phases/60-config-audit-emitters-contextstoreport-split-tool-deferral-t/60-RESEARCH.md
- * §B.1 (the 4 methods classified Admin — listConversations, cleanupExpiredGrants,
- * deleteConversation, touchConversation — live in context-admin-store.ts).
+ * Expansion Grants (6), Quota (1), FTS5 Search (2). The 4 methods classified
+ * Admin — listConversations, cleanupExpiredGrants, deleteConversation,
+ * touchConversation — live in context-admin-store.ts.
  *
  * Row DTOs (`Ctx*Row`) live in the sibling type-only carrier
  * `context-store-types.ts`; every row-DTO reference resolves through the

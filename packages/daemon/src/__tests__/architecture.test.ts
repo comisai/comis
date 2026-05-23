@@ -171,13 +171,12 @@ describe("@comis/daemon -- architecture invariants", () => {
   });
 
   it("daemon.ts total line count enforced (hard cap ≤ 3000)", () => {
-    // Phase 59 (REFACTOR-01): post-collapse daemon.ts is a single composition
-    // root containing main() + 4 small helpers + inlined foundation/agents/
-    // channels/gateway/shutdown bodies + 30 ex-stage-helper functions. The
-    // pre-collapse per-stage 200L caps were removed when the 4-handle chain
-    // collapsed to BootContext. This single hard-cap is the architectural
-    // budget — if daemon.ts grows past 3000L, refactor a helper into
-    // wiring/main-helpers.ts.
+    // Post-collapse daemon.ts is a single composition root containing main()
+    // + 4 small helpers + inlined foundation/agents/channels/gateway/shutdown
+    // bodies + 30 ex-stage-helper functions. The pre-collapse per-stage 200L
+    // caps were removed when the 4-handle chain collapsed to BootContext.
+    // This single hard-cap is the architectural budget — if daemon.ts grows
+    // past 3000L, refactor a helper into wiring/main-helpers.ts.
     const sourceText = readFileSync(DAEMON_TS_PATH, "utf8");
     const lineCount = sourceText.split("\n").length;
     expect(

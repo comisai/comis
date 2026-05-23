@@ -12,8 +12,7 @@
  *   - Config D — sections (status / channel shape)
  *
  * Module ./render-findings.js does not yet exist when this file is committed
- * (RED state); Task 2 implements it (GREEN state). Drives DUP-CONS-08 STRETCH
- * per user decision D-01.
+ * (RED state); Task 2 implements it (GREEN state).
  *
  * @module
  */

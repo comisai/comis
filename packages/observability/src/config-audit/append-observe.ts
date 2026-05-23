@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Config-OBSERVE audit record writer (read-side counterpart to
- * `append.ts`'s write-side helpers). Closes OBS-REVIEW-03: the
- * daemon's bootstrap config-read path now produces one
- * `event: "config.observe"` JSONL record per resolved configPath
- * entry, so operators can reconstruct "what config was read at boot"
- * from `~/.comis/logs/config-audit.jsonl` alone.
+ * `append.ts`'s write-side helpers). The daemon's bootstrap
+ * config-read path produces one `event: "config.observe"` JSONL
+ * record per resolved configPath entry, so operators can reconstruct
+ * "what config was read at boot" from
+ * `~/.comis/logs/config-audit.jsonl` alone.
  *
  * Two entry points:
  *
@@ -107,12 +107,13 @@ export interface CreateObserveRecordParams {
    */
   readonly recovery?: ObserveRecovery;
   /**
-   * 260521-0bn: Caller's own module path (typically `fileURLToPath(import.meta.url)`)
+   * Caller's own module path (typically `fileURLToPath(import.meta.url)`)
    * — forwarded into `detectSuspicious` so the observe-side audit
    * record's `suspicious` flag set parity-matches the write-side
-   * (which already accepts `entryScript` via `createConfigWriteAuditRecordBase`
-   * as of 260520-wcf). When omitted, `detectSuspicious` falls back to its
-   * argv/execArgv-only heuristic (existing behavior).
+   * (which already accepts `entryScript` via
+   * `createConfigWriteAuditRecordBase`). When omitted,
+   * `detectSuspicious` falls back to its argv/execArgv-only
+   * heuristic (existing behavior).
    */
   readonly entryScript?: string;
 }

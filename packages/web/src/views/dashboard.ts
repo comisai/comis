@@ -31,7 +31,7 @@ type LoadState = "loading" | "loaded" | "error";
 /** Auto-refresh interval for RPC data in milliseconds. */
 const RPC_REFRESH_INTERVAL_MS = 60_000;
 
-/** Navigation target constants -- avoids inline route strings (research anti-pattern). */
+/** Navigation target constants -- avoids inline route strings. */
 const NAV_TARGETS = {
   agents: "agents",
   sessions: "sessions",
@@ -821,8 +821,8 @@ export class IcDashboard extends LitElement {
   // this adapter just bridges per-type listeners to the single-handler shape
   // expected by `activity-feed.ts:267`.
   //
-  // Inline (Option A per 57-RESEARCH.md §DUP-CONS-04 / YAGNI per AGENTS.md
-  // §2.3) — single consumer, no cross-file reuse warrants an exported helper.
+  // Inline (YAGNI per AGENTS.md §2.3) — single consumer, no cross-file reuse
+  // warrants an exported helper.
   // ---------------------------------------------------------------------------
 
   private _getSseSubscriber(): ((handler: SseEventHandler) => () => void) | null {

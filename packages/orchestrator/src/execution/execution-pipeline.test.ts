@@ -136,9 +136,9 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: text.length,
       });
     }),
-    // TEST-PUB-01 (Plan 56-05): DeliveryService gained drainInFlight().
-    // Default fake returns empty drain telemetry; tests that exercise drain
-    // semantics override this field.
+    // DeliveryService exposes drainInFlight(). Default fake returns empty
+    // drain telemetry; tests that exercise drain semantics override this
+    // field.
     drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
@@ -298,8 +298,8 @@ describe("resolveStreamingConfig", () => {
   });
 });
 
-describe("resolveStreamingConfig + StreamingConfigSchema defaults (CRIT-05)", () => {
-  describe("schema-level defaults (Pitfall 5: schema invariant)", () => {
+describe("resolveStreamingConfig + StreamingConfigSchema defaults", () => {
+  describe("schema-level defaults", () => {
     it("StreamingConfigSchema.parse({}) returns defaultChunkMinChars === 100", () => {
       const config = StreamingConfigSchema.parse({});
       expect(config.defaultChunkMinChars).toBe(100);
@@ -333,7 +333,7 @@ describe("resolveStreamingConfig + StreamingConfigSchema defaults (CRIT-05)", ()
     });
   });
 
-  describe("global branch — YAML defaultChunkMinChars: 50 propagates through resolver (Pitfall 5: runtime invariant)", () => {
+  describe("global branch — YAML defaultChunkMinChars: 50 propagates through resolver", () => {
     it("defaultChunkMinChars: 50 propagates to chunkMinChars on resolved per-channel", () => {
       const config = StreamingConfigSchema.parse({
         defaultChunkMinChars: 50,
@@ -881,7 +881,7 @@ describe("executeAndDeliver", () => {
   });
 
   // -------------------------------------------------------------------
-  // chunkForDelivery integration (492-04)
+  // chunkForDelivery integration
   // -------------------------------------------------------------------
   describe("chunkForDelivery integration", () => {
     it("uses chunkForDelivery for chunking (blocks match expected output)", async () => {
@@ -1028,7 +1028,7 @@ describe("executeAndDeliver", () => {
   });
 
   // -------------------------------------------------------------------
-  // Pipeline timeout (471-02)
+  // Pipeline timeout
   // -------------------------------------------------------------------
   describe("pipeline timeout", () => {
     it("sends canned error message on execution timeout", async () => {
@@ -1152,7 +1152,7 @@ describe("executeAndDeliver", () => {
   });
 
   // -------------------------------------------------------------------
-  // Thread propagation (480-01)
+  // Thread propagation
   // -------------------------------------------------------------------
   describe("thread propagation", () => {
     it("sends threadId in sendOpts for all blocks (not just first)", async () => {
@@ -1221,10 +1221,11 @@ describe("executeAndDeliver", () => {
       expect(sendOpts.threadId).toBeUndefined();
     });
 
-    // followupTrigger-based tests deleted in Plan 56-06: the followupTrigger
-    // and followupConfig deps slots + handleFollowupTrigger helper were removed
-    // from the execution pipeline. createFollowupMessage cross-reference moved
-    // to dedicated unit tests in queue/followup-trigger.test.ts (when needed).
+    // followupTrigger-based tests were removed: the followupTrigger and
+    // followupConfig deps slots + handleFollowupTrigger helper were removed
+    // from the execution pipeline. createFollowupMessage cross-reference
+    // moved to dedicated unit tests in queue/followup-trigger.test.ts
+    // (when needed).
   });
 
   // -------------------------------------------------------------------

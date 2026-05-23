@@ -2,7 +2,7 @@
 /**
  * Forward-protective umbrella-bundling alignment test.
  *
- * Per DUP-CONS-14 (Phase 55-07), `packages/comis/package.json:bundledDependencies`
+ * `packages/comis/package.json:bundledDependencies`
  * is the SINGLE SOURCE OF TRUTH for the workspace-package list. This test
  * derives `ALL_BUNDLED_PACKAGES` / `NAMESPACED_PACKAGES` from that source
  * and cross-checks FIVE INDEPENDENT dimensions:
@@ -18,7 +18,7 @@
  *   5. `packages/<name>/` directory listing — must equal `ALL_BUNDLED_PACKAGES`
  *      (filesystem dimension)
  *
- * Per Pitfall 5 in 55-RESEARCH.md, we deliberately do NOT assert
+ * We deliberately do NOT assert
  * `bundledDependencies === bundledDependencies` (the tautological pattern).
  * The five dimensions above each vary independently from the canonical
  * source, so a developer who edits `bundledDependencies` without touching
@@ -132,26 +132,26 @@ describe("umbrella-bundling -- bidirectional 5-way alignment vs bundledDependenc
         ],
         suggestedFix:
           "Add the new package to packages/comis/package.json:bundledDependencies AND to exports AND to mirror file AND to namespace re-export AND to the packages/ tree. All 5 surfaces or none.",
-        designRef: "umbrella-bundling — DUP-CONS-14 single source of truth",
+        designRef: "umbrella-bundling — single source of truth",
       }),
     ).toEqual({ onlyInDirs: [], onlyInExpected: [] });
   });
 
   // Dimension 1 — prepack.js consolidation contract.
   //
-  // After DUP-CONS-14, prepack.js no longer carries a literal
-  // `WORKSPACE_PACKAGES` array — it reads `bundledDependencies` at runtime.
-  // This assertion preserves the dimension by checking that prepack.js
-  // source still references `bundledDependencies` and that the literal
-  // array form has NOT been reintroduced. This is non-tautological because
-  // prepack.js is independent code that could regress.
+  // prepack.js no longer carries a literal `WORKSPACE_PACKAGES` array — it
+  // reads `bundledDependencies` at runtime. This assertion preserves the
+  // dimension by checking that prepack.js source still references
+  // `bundledDependencies` and that the literal array form has NOT been
+  // reintroduced. This is non-tautological because prepack.js is independent
+  // code that could regress.
   it("prepack.js reads bundledDependencies (no literal WORKSPACE_PACKAGES array)", () => {
     const source = readPrepackSource();
     const referencesBundledDeps = /bundledDependencies/.test(source);
     const hasLiteralArray = /const\s+WORKSPACE_PACKAGES\s*=\s*\[\s*"/.test(source);
     expect(
       { referencesBundledDeps, hasLiteralArray },
-      "prepack.js must derive WORKSPACE_PACKAGES from bundledDependencies (DUP-CONS-14) — not a hand-rolled literal array.",
+      "prepack.js must derive WORKSPACE_PACKAGES from bundledDependencies — not a hand-rolled literal array.",
     ).toEqual({ referencesBundledDeps: true, hasLiteralArray: false });
   });
 

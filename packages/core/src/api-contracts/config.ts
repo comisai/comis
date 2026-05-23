@@ -549,9 +549,9 @@ export const EnvSetContract = defineContract({
   response: z.object({
     set: z.literal(true),
     key: z.string(),
-    // After Phase 52 Plan 04 (BC-REM-12 sub-C) the only storage backend
-    // is the encrypted SecretStorePort. The legacy "envfile" mode was
-    // removed alongside the .env-file fallback in env-handlers.ts.
+    // The only storage backend is the encrypted SecretStorePort. The
+    // legacy "envfile" mode was removed alongside the .env-file fallback
+    // in env-handlers.ts.
     storage: z.literal("encrypted"),
     restarting: z.literal(true),
   }),

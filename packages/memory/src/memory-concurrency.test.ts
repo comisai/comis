@@ -219,7 +219,7 @@ describe("WAL concurrency tests", () => {
       }
 
       // Verify data integrity via direct SQL read (adapter.retrieve was removed
-      // in Plan 51.02 PORT-TRIM-05)
+      // in a prior port-trim cleanup)
       for (let i = 0; i < 10; i++) {
         const row = adapter1
           .getDb()

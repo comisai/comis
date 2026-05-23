@@ -99,7 +99,7 @@ describe("normalizeChannelStatus", () => {
   });
 
   it("returns 'unknown' for former legacy alias strings that are no longer remapped", () => {
-    // Plan 55-03 deleted the LEGACY_ALIASES dictionary. Backends emit canonical
+    // The LEGACY_ALIASES dictionary was deleted. Backends emit canonical
     // states only; the prior aliases (connected / running / error / stopped /
     // reconnecting) now fall through to "unknown" — the documented safe state.
     expect(normalizeChannelStatus("connected")).toBe("unknown");
@@ -126,7 +126,7 @@ describe("getHealthVisual", () => {
   });
 
   it("returns the unknown HealthVisual for former legacy alias inputs (aliases removed)", () => {
-    // Plan 55-03 deleted LEGACY_ALIASES — "connected" no longer maps to "healthy".
+    // LEGACY_ALIASES was deleted — "connected" no longer maps to "healthy".
     const visual = getHealthVisual("connected");
     expect(visual.severity).toBe("gray");
     expect(visual.label).toBe("Unknown");

@@ -47,8 +47,7 @@ export interface PluginPort {
  * Provides a type-safe way for plugins to register hook handlers with
  * optional priority ordering. `registerHook` is the only surviving
  * registration entrypoint — tool / HTTP route / config-schema registration
- * surfaces were removed in Phase 52 (PORT-TRIM-09) as they had zero
- * in-tree callers.
+ * surfaces were removed as they had zero in-tree callers.
  */
 export interface PluginRegistryApi {
   /**

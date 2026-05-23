@@ -92,8 +92,8 @@ export function bindConfigWriteHandlers(
       const startMs = systemNowMs();
       // Bespoke pre-Zod: require `section` BEFORE contract parse so the
       // error message is more actionable than Zod's. Legacy `path: "a.b.c"`
-      // shape was removed in Phase 52 Plan 04 (BC-REM-12 sub-B); callers
-      // must send the canonical {section, key, value} shape.
+      // shape was removed; callers must send the canonical
+      // {section, key, value} shape.
       const section = rawParams.section as string | undefined;
       if (!section) {
         throw new Error('Missing required parameter "section" for config.patch');
@@ -122,10 +122,10 @@ export function bindConfigWriteHandlers(
         deps.auditEnabled === false ? undefined : buildConfigAuditBase(localPathForAudit);
       let wroteFile = false;
       let writeError: { code?: string; message?: string } | undefined;
-      // Fix D1 (log-review): track the validator's rejection message so
-      // the `finally` block can thread it into the audit outcome. Pre-fix
-      // the message was scoped to the `catch` block and the `rejected`
-      // audit record carried no reason.
+      // Track the validator's rejection message so the `finally` block
+      // can thread it into the audit outcome. Previously the message was
+      // scoped to the `catch` block and the `rejected` audit record
+      // carried no reason.
       let rejectionMessage: string | undefined;
 
       try {
@@ -334,7 +334,7 @@ export function bindConfigWriteHandlers(
       } catch (e: unknown) {
         const durationMs = systemNowMs() - startMs;
         const errMsg = e instanceof Error ? e.message : String(e);
-        // Fix D1: surface the rejection reason to the `finally` block so
+        // Surface the rejection reason to the `finally` block so
         // the audit outcome carries it.
         rejectionMessage = errMsg;
 
@@ -359,7 +359,7 @@ export function bindConfigWriteHandlers(
         throw e;
       } finally {
         // Emit a JSONL config-audit record alongside the EventBus audit:event.
-        // Fix D1: thread rejectionMessage (set in the catch block) so the
+        // Thread rejectionMessage (set in the catch block) so the
         // persisted `errorMessage` field carries the validator's rejection text.
         const outcome = wroteFile
           ? ({ kind: "rename" } as const)

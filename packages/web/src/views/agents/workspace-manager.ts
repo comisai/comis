@@ -7,7 +7,7 @@ import type { RpcClient } from "../../api/rpc-client.js";
 import { systemDateFrom } from "@comis/core";
 
 /* ------------------------------------------------------------------ */
-/*  RPC response shapes (inlined per Phase 57 BOUND-RELAX-01)         */
+/*  RPC response shapes (inlined)                                     */
 /* ------------------------------------------------------------------ */
 
 interface WorkspaceStatusDto {

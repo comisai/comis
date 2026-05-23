@@ -170,7 +170,7 @@ describe("limitPayloadValue — recursion preserves under-cap structure", () => 
 });
 
 // ---------------------------------------------------------------------------
-// 260520-wcf: per-key exemption overrides (PayloadBoundsOverrides).
+// Per-key exemption overrides (PayloadBoundsOverrides).
 // Opt-in carve-outs for slots the operator has explicitly chosen to surface
 // in full (e.g., cache-trace `system` / `messages` when includeSystem /
 // includeMessages is true).

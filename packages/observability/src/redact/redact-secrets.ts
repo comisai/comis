@@ -27,15 +27,15 @@
  * drops credential-keyed fields and rewrites image objects, and finally
  * redact masks any credential bodies that survived (e.g., inside
  * free-text fields). Reversing this order risks a truncated-prefix leak
- * of oversize credentials (RESEARCH §LM-1).
+ * of oversize credentials.
  *
  * Pure function — no I/O, no clock, no fs.
  *
- * **Phase 58 (DUP-CONS-02):** The pre-fusion implementation composed
- * three full-graph walks (`redactSecrets(sanitizeDiagnosticPayload(
- * limitPayloadValue(value)))`). Each walk allocated its own WeakSet,
- * its own `isPlainObject` predicate copy, and its own value-graph
- * allocation. Post-fusion, `sanitizeForPersistence` is a single
+ * The pre-fusion implementation composed three full-graph walks
+ * (`redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value)))`).
+ * Each walk allocated its own WeakSet, its own `isPlainObject` predicate
+ * copy, and its own value-graph allocation. Post-fusion,
+ * `sanitizeForPersistence` is a single
  * `combinedWalk(value, {boundCheck, sanitizeNode, redactNode}, overrides)`
  * call — ONE WeakSet, ONE descent, ONE value-graph allocation. Public
  * signatures (`redactSecrets`, `sanitizeForPersistence`) are UNCHANGED.
@@ -54,7 +54,7 @@ import { type PayloadBoundsOverrides } from "../shared/bounded-payload.js";
 /**
  * Apply the structured-walk redactor to `value`.
  *
- * Delegates to `combinedWalk` with the redact-node hook only (DUP-CONS-02).
+ * Delegates to `combinedWalk` with the redact-node hook only.
  * The result is a NEW value graph (input is not mutated). Credential-keyed
  * fields are masked at the value level; string bodies are scanned for
  * embedded credentials; cycles are flagged with `"[Circular]"`.
@@ -73,16 +73,16 @@ export function redactSecrets<T = unknown>(value: T): unknown {
  * config-audit, cache-trace) before writing a diagnostic payload.
  *
  * The optional `overrides` argument is forwarded to the bounded-payload
- * stage so callers (cache-trace runtime, 260520-wcf) can opt specific
- * payload slots out of the 32 KB / 64-item caps. See
+ * stage so callers (cache-trace runtime) can opt specific payload slots
+ * out of the 32 KB / 64-item caps. See
  * {@link PayloadBoundsOverrides} for the per-key exemption contract.
- * Default behavior (no overrides) is identical to pre-260520-wcf.
+ * Default behavior (no overrides) is identical.
  *
  * **Hook order at every node** is `boundCheck → sanitizeNode → redactNode`
- * (LM-1: bounding BEFORE redacting prevents truncated-prefix leak of
+ * (bounding BEFORE redacting prevents truncated-prefix leak of
  * oversize credentials). Cycles emit the record-shape sentinel
  * `{__bounded__: 'bounded-payload-cycle-detected'}` because `boundCheck`
- * is active (LM-2).
+ * is active.
  *
  * @param value - arbitrary JavaScript value
  * @param overrides - optional per-key exemption overrides

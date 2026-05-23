@@ -299,7 +299,7 @@ describe("mcp-domain contracts", () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  // Phase 47 (D-04): mcp.connect persistence + warning response fields (additive)
+  // mcp.connect persistence + warning response fields (additive)
   // ───────────────────────────────────────────────────────────────────────
 
   it("mcp.connect: response accepts persistence:'persisted' (no warning)", () => {
@@ -406,7 +406,7 @@ describe("mcp-domain contracts", () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  // Phase 47 (D-04): mcp.disconnect persistence + warning response fields (additive)
+  // mcp.disconnect persistence + warning response fields (additive)
   // ───────────────────────────────────────────────────────────────────────
 
   it("mcp.disconnect: response accepts persistence:'persisted' (no warning)", () => {

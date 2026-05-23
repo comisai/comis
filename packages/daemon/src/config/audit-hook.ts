@@ -16,7 +16,7 @@
  *     (`buildConfigAuditBase` + `appendConfigAuditWithOutcome`, required
  *     by `config-write.ts:120-369` because the YAML write is interleaved
  *     with validator pre-checks between the two calls). Both former
- *     modules are now superseded by this file (Phase 60 REFACTOR-03).
+ *     modules are now superseded by this file.
  *
  * Three public shapes are provided:
  *

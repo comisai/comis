@@ -78,9 +78,8 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: 0,
       }),
     ),
-    // TEST-PUB-01 (Plan 56-05): DeliveryService gained drainInFlight().
-    // Default fake returns empty drain telemetry; tests that exercise drain
-    // semantics override this field.
+    // DeliveryService provides drainInFlight(). Default fake returns empty
+    // drain telemetry; tests that exercise drain semantics override this field.
     drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
@@ -462,14 +461,14 @@ describe("evaluateInboundGate reset trigger phrase gate", () => {
     );
   });
 
-  // greetingGenerator-based tests deleted in Plan 56-06: the greetingGenerator
-  // deps slot was removed; the reset path now always sends static "Session reset."
+  // greetingGenerator-based tests deleted: the greetingGenerator deps slot was
+  // removed; the reset path now always sends static "Session reset."
   // (production absent-mode).
 });
 
-// "evaluateInboundGate prompt skill detection" describe block deleted in
-// Plan 56-06: loadPromptSkill + getUserInvocableSkillNames deps slots removed;
-// skill commands now pass through as plain text to the agent.
+// "evaluateInboundGate prompt skill detection" describe block deleted:
+// loadPromptSkill + getUserInvocableSkillNames deps slots removed; skill
+// commands now pass through as plain text to the agent.
 
 // ---------------------------------------------------------------------------
 // handleSlashCommand directive branch

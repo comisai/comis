@@ -142,9 +142,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createSessionLabelStore",
       // SessionLabelStore type: pair of createSessionLabelStore (already in this
       // baseline). The only in-repo consumer (ChannelManagerDeps.sessionLabelStore
-      // field) was deleted in Plan 56-06 DEPS-TRIM-01 alongside 10 other unwired
-      // deps fields. Pair the type and factory in the baseline until a future
-      // plan removes both as a unit (separate dead-module cleanup).
+      // field) was deleted alongside 10 other unwired deps fields. Pair the type
+      // and factory in the baseline until a future cleanup removes both as a
+      // unit (separate dead-module cleanup).
       "SessionLabelStore",
       "ScopedSessionKeyParams",
       "withSessionLock",
@@ -516,11 +516,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TypingLifecycleOptions",
       // GroupHistoryBuffer: the only in-repo consumer
       // (InboundPipelineDeps.groupHistoryBuffer field, plus its mirror on
-      // ChannelManagerDeps) was deleted in Plan 56-06 DEPS-TRIM-01 — the deps
-      // slot was never wired by the daemon and the absent-mode (no group history
-      // injection) IS the production code path. Type stays exported on the
-      // documented public surface until a future plan removes the implementation
-      // module as a dead-code unit (separate cleanup).
+      // ChannelManagerDeps) was deleted — the deps slot was never wired by the
+      // daemon and the absent-mode (no group history injection) IS the
+      // production code path. Type stays exported on the documented public
+      // surface until a future cleanup removes the implementation module as a
+      // dead-code unit (separate cleanup).
       "GroupHistoryBuffer",
       // deliverToChannel, DeliverToChannelDeps, DeliveryResult,
       // ChunkDeliveryResult, resolveChunkLimit, and QUEUE_BACKOFF_SCHEDULE_MS
@@ -666,27 +666,26 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PROFILE_ID_RE",
       // ContextStorePort is declared but not yet consumed by agent —
       // tracked as a planned-orphan policy entry mirrored from the
-      // FileLockPort pattern. Phase 60-02 (REFACTOR-04) preserved this
-      // entry through the split: ContextStorePort is now a type alias
+      // FileLockPort pattern. Preserved this entry through the split:
+      // ContextStorePort is now a type alias
       // (`type ContextStorePort = ContextEngineStore & ContextAdminStore`)
       // and remains an in-codebase symbol consumed primarily by the
       // daemon's context-handlers + the memory contract test.
       "ContextStorePort",
-      // ContextEngineStore (34 per-session read/write methods) — Phase
-      // 60-02 (REFACTOR-04). Consumed by the agent context-engine + the
-      // executor injection-deps types; the public-export-consumers test
-      // resolves the consumer files (so a runtime consumer entry is not
-      // required here for Engine). Tracked alongside ContextAdminStore
-      // for documentation symmetry.
-      // ContextAdminStore (4 admin/cleanup methods) — Phase 60-02
-      // (REFACTOR-04). The admin half of ContextStorePort. No production
-      // consumer imports this name as a value-typed annotation today —
-      // the daemon's context-handlers + api/types.ts consume the wider
-      // intersection alias `ContextStorePort` (which still resolves
-      // structurally through the alias to the union of Engine + Admin
-      // methods). Tracked as a planned-orphan policy entry mirroring the
-      // ContextStorePort pattern above; the memory contract test gates
-      // the type contract via `.toExtend<ContextAdminStore>()`.
+      // ContextEngineStore (34 per-session read/write methods). Consumed
+      // by the agent context-engine + the executor injection-deps types;
+      // the public-export-consumers test resolves the consumer files (so
+      // a runtime consumer entry is not required here for Engine).
+      // Tracked alongside ContextAdminStore for documentation symmetry.
+      // ContextAdminStore (4 admin/cleanup methods). The admin half of
+      // ContextStorePort. No production consumer imports this name as a
+      // value-typed annotation today — the daemon's context-handlers +
+      // api/types.ts consume the wider intersection alias
+      // `ContextStorePort` (which still resolves structurally through
+      // the alias to the union of Engine + Admin methods). Tracked as a
+      // planned-orphan policy entry mirroring the ContextStorePort
+      // pattern above; the memory contract test gates the type contract
+      // via `.toExtend<ContextAdminStore>()`.
       "ContextAdminStore",
       // Row DTOs for ContextStorePort moved from @comis/memory into
       // core/src/ports/context-store-types.ts. The 2 link-table types
@@ -738,8 +737,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RewrittenOAuthError",
       "FileExtractionErrorKind",
       // RagConfig: surface-only export. The createRagRetriever factory in
-      // packages/agent/src/rag/rag-retriever.ts was deleted in Phase 53
-      // Plan 01 (DEAD-MOD-08); the canonical post-deletion consumer is
+      // packages/agent/src/rag/rag-retriever.ts was deleted; the canonical
+      // post-deletion consumer is
       // packages/agent/src/executor/prompt-assembly.ts:649 which reads
       // `config.rag.includeTrustLevels` off the PerAgentConfig.rag slot
       // typed via the schema. No production code carries `RagConfig` as a
@@ -974,13 +973,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ChannelHealthCheckConfig",
       // AckReactionConfig: the only in-repo consumer
       // (ChannelManagerDeps.ackReactionConfig field, plus its mirror on
-      // InboundPipelineDeps and SetupDeps) was deleted in Plan 56-06
-      // DEPS-TRIM-01 — the deps slot was never wired by the daemon and the
-      // absent-mode (no ack reactions sent through inbound setup; lifecycle
-      // reactor owns the reaction surface when enabled) IS the production code
-      // path. Schema + type stay on the public surface (AckReactionConfigSchema
-      // is operator-facing YAML) until a future plan consolidates the schema
-      // under the lifecycle-reactor section.
+      // InboundPipelineDeps and SetupDeps) was deleted — the deps slot was
+      // never wired by the daemon and the absent-mode (no ack reactions sent
+      // through inbound setup; lifecycle reactor owns the reaction surface
+      // when enabled) IS the production code path. Schema + type stay on the
+      // public surface (AckReactionConfigSchema is operator-facing YAML)
+      // until a future cleanup consolidates the schema under the
+      // lifecycle-reactor section.
       "AckReactionConfig",
       "CompactionConfig",
       "RetentionConfig",
@@ -1400,11 +1399,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // the public-export-consumers AST walker excludes `test/**` and
     // ignores dynamic `require("@comis/daemon")` patterns (it walks
     // only static `import`/`export from` declarations outside the
-    // package). Per Phase 52 Plan 04 (BC-REM-12 sub-A) Path B disposition:
-    // each surviving re-export has a documented test caller; no further
-    // deletion is safe without retargeting those consumers.
+    // package). Per the Path B disposition: each surviving re-export has a
+    // documented test caller; no further deletion is safe without
+    // retargeting those consumers.
     //
-    // Consumer audit (2026-05-21, Phase 52 Plan 04):
+    // Consumer audit (2026-05-21):
     //   - createAnnouncementDeadLetterQueue / AnnouncementDeadLetterQueue / DeadLetterEntry
     //     → test/integration/resilience-e2e-dead-letter.test.ts:22 (static import)
     //   - createContextHandlers / ContextHandlerDeps

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `combinedWalk` snapshot-parity corpus + LM-1 / LM-2 ordering pins.
+ * `combinedWalk` snapshot-parity corpus + cycle/ordering pins.
  *
  * RED test: drives the GREEN implementation of
- * `packages/observability/src/shared/combined-walker.ts` (DUP-CONS-02).
+ * `packages/observability/src/shared/combined-walker.ts`.
  *
  * Four parity configurations:
  *   1. {boundCheck: only}    ≡ pre-fusion `limitPayloadValue`
@@ -227,10 +227,10 @@ describe("sanitizeForPersistence — oversize inputs (bounding stage)", () => {
   });
 });
 
-// --- LM-1 / LM-2 ordering pins (security-relevant) -------------------------
+// --- Ordering pins (security-relevant) -------------------------
 
 describe("sanitizeForPersistence — security-relevant ordering pins", () => {
-  it("LM-1: bounds BEFORE redacts — oversize credential string drops apiKey, NOT a partial mask", () => {
+  it("bounds BEFORE redacts — oversize credential string drops apiKey, NOT a partial mask", () => {
     const oversizeCred = "x".repeat(50 * 1024); // 50 KB > 32 KB cap
     const out = sanitizeForPersistence({ apiKey: oversizeCred }) as Record<
       string,
@@ -247,7 +247,7 @@ describe("sanitizeForPersistence — security-relevant ordering pins", () => {
     expect(serialized).not.toMatch(/x{4}…x{4}/);
   });
 
-  it("LM-2: preserves bounded-payload record-shape cycle sentinel via sanitizeForPersistence", () => {
+  it("preserves bounded-payload record-shape cycle sentinel via sanitizeForPersistence", () => {
     const cyclic: Record<string, unknown> = { name: "root" };
     cyclic["self"] = cyclic;
     const out = sanitizeForPersistence(cyclic) as Record<string, unknown>;

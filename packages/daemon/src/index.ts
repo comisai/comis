@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // @comis/daemon - production daemon entry point
 //
-// Test-only root re-exports policy (Phase 52 Plan 04 audit, BC-REM-12 sub-A):
+// Test-only root re-exports policy:
 // The four `createXxx`/`createYyy`/etc. re-exports below all have real
 // in-repo test consumers — each line carries a per-consumer breadcrumb.
 // They survive the BC-shim sweep because:
 //   1. Tests live under test/**, which the public-export-consumers AST
 //      walker explicitly excludes — so the entries appear as "orphans"
-//      to the walker but ARE consumed (Path B preserve-with-docs per
-//      Phase 52 Plan 04 RESEARCH Open Question #1).
+//      to the walker but ARE consumed (Path B preserve-with-docs).
 //   2. The test/support/public-api-policy.ts entry for `@comis/daemon`
 //      tracks these four symbols + their consumer file paths.
 // Do NOT delete these re-exports without retargeting the consumers

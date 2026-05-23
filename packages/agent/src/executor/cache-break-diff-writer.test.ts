@@ -9,7 +9,7 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 // Mock the @comis/observability fs-safe substrate so the structural
 // tests (ensureContainedDir-call recorded, file-write recorded, rotation
 // pruning, fault-tolerance contract on EPERM, etc.) keep their existing
-// call-recording shape after the Phase 48 migration. The mocked
+// call-recording shape after the fs-safe migration. The mocked
 // `ensureContainedDir` and `writeRegularFile` return Result.ok by
 // default; the fault-tolerance test flips them to Result.err to drive
 // the existing logger.warn assertion.
@@ -781,7 +781,7 @@ describe("cache-break-diff-writer", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // breakpointPressureRatio (260520-wcf): fraction of the SDK's 4-breakpoint
+  // breakpointPressureRatio: fraction of the SDK's 4-breakpoint
   // ceiling consumed at break time. Clamped to [0, 1].
   // ---------------------------------------------------------------------------
   describe("breakpointPressureRatio in serialized diff records", () => {
@@ -858,15 +858,15 @@ describe("cache-break-diff-writer", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 48 OBS-HARD-02: Mode-invariant tests (tmpdir-scoped, real fs).
+// Mode-invariant tests (tmpdir-scoped, real fs).
 //
-// Per Plan 48-05 D-03, every migrated writer ships a co-located test
-// that drives the real fs-safe substrate end-to-end and asserts the
-// §1.4 dir-mode `0o700` + file-mode `0o600` invariants on every
-// newly-written artifact. These tests route through the SAME mocks as
-// the structural tests above, but the mocks delegate to the REAL
-// substrate implementations (preserving the call-recording surface
-// while exercising real fs). Tests run against a tmpdir scoped per-test.
+// Every migrated writer ships a co-located test that drives the real
+// fs-safe substrate end-to-end and asserts the §1.4 dir-mode `0o700` +
+// file-mode `0o600` invariants on every newly-written artifact. These
+// tests route through the SAME mocks as the structural tests above,
+// but the mocks delegate to the REAL substrate implementations
+// (preserving the call-recording surface while exercising real fs).
+// Tests run against a tmpdir scoped per-test.
 // ---------------------------------------------------------------------------
 
 describe("cache-break-diff-writer honors §1.4 mode invariants", () => {

@@ -22,7 +22,7 @@
  * Both shapes match the design §9.2 record schemas verbatim:
  *
  *   - `event` is the discriminant ("config.write" | "config.observe"),
- *     NOT `phase` (renamed in 260519-rrm deviation G fix).
+ *     NOT `phase` (renamed in the deviation G fix).
  *   - `source` is the fixed literal `"config-io"` per the design table.
  *     The pre-fix four-value enum (last-known-good-save / restore /
  *     config-patch-rpc / cli-sync-tooling) is preserved verbatim in
@@ -78,8 +78,8 @@ const ConfigWriteResultSchema = z.enum([
 export type ConfigWriteResult = z.infer<typeof ConfigWriteResultSchema>;
 
 /**
- * Caller-provenance source — preserves the pre-260519-rrm four-value
- * enum (last-known-good-save / -restore, config-patch-rpc,
+ * Caller-provenance source — preserves the original four-value enum
+ * (last-known-good-save / -restore, config-patch-rpc,
  * cli-sync-tooling) as the new `callerSource` field. Kept open
  * (`z.string()`) so additional call sites can extend without a
  * schema change; the daemon writes one of the four canonical values
@@ -93,8 +93,8 @@ export type ConfigWriteSource = string;
  * `snapshotStat` helper in `append.ts` returns this shape and the
  * `finalize`/`createBase` helpers flatten it into the record's flat
  * fields (no nested object on disk). Kept as a plain type interface
- * (not a Zod schema) because the nested object never lands on disk
- * post-260519-rrm; the schema isn't reusable as a parser anymore.
+ * (not a Zod schema) because the nested object never lands on disk;
+ * the schema isn't reusable as a parser anymore.
  */
 export interface FileStatSnapshot {
   readonly dev: string | null;

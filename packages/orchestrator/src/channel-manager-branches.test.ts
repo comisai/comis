@@ -64,7 +64,7 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: 0,
       }),
     ),
-    // TEST-PUB-01 (Plan 56-05): channel-manager.stopAll() drains via
+    // channel-manager.stopAll() drains via
     // deps.deliveryService.drainInFlight(5000). Default fake returns empty
     // drain telemetry so this test suite's stopAll() exercises complete
     // cleanly when no sends are tracked.
@@ -324,8 +324,8 @@ describe("createChannelManager injectMessage early-exit branches", () => {
 // ---------------------------------------------------------------------------
 // stopAll() shutdown ordering
 // ---------------------------------------------------------------------------
-// Plan 56-06 deleted debounceBuffer + groupHistoryBuffer + sessionLabelStore
-// from ChannelManagerDeps. The session:expired listener no longer clears those
+// debounceBuffer + groupHistoryBuffer + sessionLabelStore were removed from
+// ChannelManagerDeps. The session:expired listener no longer clears those
 // buffers (only sendOverrides), and the debounce flush handler registration
 // was removed from startAll(). Tests covering those code paths are gone.
 

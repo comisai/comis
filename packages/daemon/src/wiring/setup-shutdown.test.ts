@@ -9,8 +9,8 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 // ---------------------------------------------------------------------------
 // Test helpers
 //
-// Phase 52-03 (DUP-CONS-03): the previous test scaffolding captured the
-// `onShutdown` callback via the `_registerGracefulShutdown` factory seam.
+// The previous test scaffolding captured the `onShutdown` callback via
+// the `_registerGracefulShutdown` factory seam.
 // After inlining, the seam is gone and tests drive teardown by calling
 // `result.shutdownHandle.trigger("SIGTERM")` directly. The inlined
 // `shutdown(signal)` does processMonitor.stop() → onShutdown() →
@@ -102,7 +102,7 @@ describe("setupShutdown", () => {
     expect(result.shutdownHandle).toBeDefined();
 
     // Drive the inlined shutdown body directly via the public handle
-    // (Phase 52-03: factory seam removed).
+    // (factory seam removed).
     await result.shutdownHandle.trigger("SIGTERM");
 
     // Verify cost summary logged (use closeTo for floating point)
@@ -321,8 +321,8 @@ describe("setupShutdown", () => {
     expect(sigusr1Call).toBeDefined();
 
     // Spy on the inlined trigger so the SIGUSR2 handler invocation is
-    // observable (Phase 52-03: trigger is now the real shutdown fn,
-    // not a vi.fn() returned by the dead factory seam). Override the
+    // observable (trigger is now the real shutdown fn, not a vi.fn()
+    // returned by the dead factory seam). Override the
     // implementation to a no-op so the SIGUSR2 handler doesn't run the
     // full teardown chain during this unit test.
     const triggerSpy = vi
@@ -629,9 +629,9 @@ describe("setupShutdown", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 48 OBS-HARD-03: Mode-invariant tests (tmpdir-scoped, real fs).
+// Mode-invariant tests (tmpdir-scoped, real fs).
 //
-// Per Plan 48-05 D-03, the two writeFileSync sites in setup-shutdown
+// The two writeFileSync sites in setup-shutdown
 // (restart-approvals.json + restart-approval-cache.json) MUST produce
 // files at mode `0o600` post-migration. These tests drive the actual
 // onShutdown callback against a real tmpdir with a `dataDir`,

@@ -3,9 +3,9 @@ import { describe, it, expect } from "vitest";
 import type { ImageGenerationPort, ImageGenInput } from "./provider.js";
 
 describe("ImageGenerationPort interface", () => {
-  // NOTE: Plan 51.02 SPEC-ABS-01 inlined the previous Provider<TInput, TOutput>
-  // generic into ImageGenerationPort and dropped the optional estimateCost
-  // field (zero production callers). Tests that exercised estimateCost or the
+  // NOTE: Inlined the previous Provider<TInput, TOutput> generic into
+  // ImageGenerationPort and dropped the optional estimateCost field
+  // (zero production callers). Tests that exercised estimateCost or the
   // generic-as-Provider shape were dropped in the same commit.
 
   /**

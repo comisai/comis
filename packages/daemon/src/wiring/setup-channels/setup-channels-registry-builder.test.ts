@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for buildReadOnlyChannelRegistry (DUP-CONS-13, Plan 56-05).
+ * Tests for buildReadOnlyChannelRegistry.
  *
  * The helper builds a lightweight read-only ChannelRegistry over the
  * bootstrapped `channelPlugins` Map; the orchestrator uses it as the

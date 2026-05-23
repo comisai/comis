@@ -230,17 +230,17 @@ describe("env.set handler", () => {
   });
 
   // -----------------------------------------------------------------------
-  // SecretStore mandatory (BC-REM-12 sub-C — legacy .env-file fallback gone)
+  // SecretStore mandatory (legacy .env-file fallback gone)
   // -----------------------------------------------------------------------
   //
-  // Pre-Phase 52 Plan 04 this section tested the legacy `else { writeToEnvFile(...) }`
+  // Previously this section tested the legacy `else { writeToEnvFile(...) }`
   // fallback (`storage: "envfile"`). The pinning tests for `.env file backend` were
   // deleted alongside the production code per PATTERNS.md §"Track 8" rule
   // (delete dead branch + pinning test in same atomic commit). The new
   // contract: when `secretStore` is undefined, env.set throws the same
   // actionable error message as secrets-handlers.ts:196.
 
-  it("rejects env.set when secretStore is undefined (BC-REM-12 sub-C)", async () => {
+  it("rejects env.set when secretStore is undefined", async () => {
     const deps = makeDeps({ secretStore: undefined });
     const handlers = createEnvHandlers(deps);
 

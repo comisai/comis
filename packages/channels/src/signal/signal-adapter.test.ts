@@ -186,7 +186,7 @@ describe("createSignalAdapter", () => {
     });
   });
 
-  describe("editMessage / fetchMessages (PORT-TRIM-14: omitted on adapter)", () => {
+  describe("editMessage / fetchMessages (capability-gated: omitted on adapter)", () => {
     it("omits editMessage and fetchMessages (capability gate features.{editMessages,fetchHistory} blocks)", () => {
       const adapter = createSignalAdapter(makeDeps());
       expect(adapter.editMessage).toBeUndefined();

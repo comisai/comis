@@ -8,11 +8,10 @@
  *
  *   Bootstrap AppContainer Wiring (singleton bus, shutdown cleanup)
  *
- * EVENT-CLEAN-07 (Phase 52 Plan 02): the previous "Plugin Lifecycle
- * Events" group was deleted alongside the `plugin:registered`,
- * `plugin:deactivated`, and `hook:executed` events (zero non-test
- * subscribers). Cross-module hook execution is now covered by the unit
- * tests in packages/core/src/hooks/.
+ * The previous "Plugin Lifecycle Events" group was deleted
+ * alongside the `plugin:registered`, `plugin:deactivated`, and
+ * `hook:executed` events (zero non-test subscribers). Cross-module hook
+ * execution is now covered by the unit tests in packages/core/src/hooks/.
  *
  * All imports come from built dist/ packages via vitest aliases --
  * this is integration testing, not unit testing.

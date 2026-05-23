@@ -3,12 +3,11 @@
  * ContextAdminStore: admin/cleanup methods (cross-session list, expired-grant
  * cleanup, conversation-scope deletion, conversation touch).
  *
- * Carved out of ContextStorePort (Phase 60-02, REFACTOR-04). Currently
- * consumed only by the daemon's context-handlers (context.conversations admin
- * RPC + the recall-path cleanupExpiredGrants finally hook). Reserved for
- * admin RPCs.
+ * Carved out of ContextStorePort. Currently consumed only by the daemon's
+ * context-handlers (context.conversations admin RPC + the recall-path
+ * cleanupExpiredGrants finally hook). Reserved for admin RPCs.
  *
- * Method classification per .planning/phases/60-.../60-RESEARCH.md §B.1:
+ * Method classification:
  *   - `listConversations`     — cross-session list (admin RPC)
  *   - `cleanupExpiredGrants`  — recall-path lifecycle cleanup
  *   - `deleteConversation`    — bulk conversation-scope deletion
@@ -54,9 +53,9 @@ export interface ContextAdminStore {
   deleteConversation(conversationId: string): void;
 
   /**
-   * Lifecycle: touch a conversation's updatedAt timestamp. Border case per
-   * RESEARCH §B.1 row 5 — kept in Admin because there is no current
-   * production caller; treated as a defensive admin-side contract surface.
+   * Lifecycle: touch a conversation's updatedAt timestamp. Border case —
+   * kept in Admin because there is no current production caller; treated
+   * as a defensive admin-side contract surface.
    */
   touchConversation(conversationId: string): void;
 }

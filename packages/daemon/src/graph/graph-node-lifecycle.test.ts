@@ -433,14 +433,13 @@ describe("spawnNode: mcpServers pre-seeding", () => {
 
 // ---------------------------------------------------------------------------
 // graph-node-lifecycle honors §1.4 mode invariants on substrate-routed writes
-// (OBS-HARD-03, Plan 48-06)
 //
 // The node-lifecycle's two write sites — the `${nodeId}-output.md`
 // auto-persist (line 605) and the `persistArtifacts` filename loop
 // (line 780) — are now routed through `writeRegularFile`. The substrate's
 // chmod-by-fd primitive enforces mode 0o600 on every successful open.
 // ---------------------------------------------------------------------------
-describe("graph-node-lifecycle honors §1.4 file mode invariant (OBS-HARD-03, Plan 48-06)", () => {
+describe("graph-node-lifecycle honors §1.4 file mode invariant", () => {
   it("write_regular_file_substrate_produces_artifact_with_mode_0o600", async () => {
     // Direct substrate-level test mirroring the migrated node-lifecycle
     // call shape (both auto-persist and persistArtifacts use the same

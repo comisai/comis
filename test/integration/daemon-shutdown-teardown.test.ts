@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Daemon shutdown teardown integration test (CRIT-03 / EVENT-CLEAN-01).
+ * Daemon shutdown teardown integration test.
  *
- * Asserts that each of the 9 ShutdownDeps teardown components introduced by
- * Phase 50 Plan 01 runs exactly once on simulated SIGTERM and SIGUSR2 (restart
- * path), and that double-shutdown is idempotent.
+ * Asserts that each of the 9 ShutdownDeps teardown components runs exactly
+ * once on simulated SIGTERM and SIGUSR2 (restart path), and that
+ * double-shutdown is idempotent.
  *
- * Per RESEARCH Open Question #2 (RESOLVED): the 8 production
- * `eventBus.on("system:shutdown", ...)` subscribers map to 9 ShutdownDeps
- * fields because setup-tools.ts's single closure splits into two independent
- * concerns (background-processes + mcp-client-manager).
+ * The 8 production `eventBus.on("system:shutdown", ...)` subscribers map to
+ * 9 ShutdownDeps fields because setup-tools.ts's single closure splits into
+ * two independent concerns (background-processes + mcp-client-manager).
  *
  * @module
  */
@@ -34,10 +33,10 @@ const TEARDOWN_CONFIG_PATH = resolve(
 /**
  * Expected teardown component names — these are the values that the
  * `daemonLogger.info({ component: "..." }, "Component stopped")` log lines
- * carry in the setup-shutdown.ts block bodies (CRIT-03 wiring).
+ * carry in the setup-shutdown.ts block bodies.
  *
  * 9 components total, derived from the 8 production
- * `system:shutdown` subscribers + the setup-tools split (RESEARCH Open Q #2).
+ * `system:shutdown` subscribers + the setup-tools split.
  *
  * 8 of the 9 wire INDEPENDENTLY of channel adapter presence — those are
  * asserted unconditionally. The 9th, `approval-notifier`, only wires when
@@ -69,7 +68,7 @@ function countComponentStops(entries: LogEntry[], component: string): number {
   ).length;
 }
 
-describe("Daemon shutdown teardowns (CRIT-03)", () => {
+describe("Daemon shutdown teardowns", () => {
   it("SIGTERM invokes the 8 always-wired teardown components exactly once", async () => {
     const logCapture = createLogCapture();
     const handle = await startTestDaemon({
@@ -114,7 +113,7 @@ describe("Daemon shutdown teardowns (CRIT-03)", () => {
       expect(
         missing,
         `Components missing teardown invocation on SIGTERM:\n${missing.join("\n")}\n` +
-          `These teardowns are silently no-op'd today because the system:shutdown event has zero production emitters (CRIT-03).`,
+          `These teardowns are silently no-op'd today because the system:shutdown event has zero production emitters.`,
       ).toEqual([]);
 
       expect(

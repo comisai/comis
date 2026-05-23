@@ -86,10 +86,9 @@ describe("InfraEvents payload structure", () => {
     expect(handler.mock.calls[1]![0].key).toBeUndefined();
   });
 
-  // EVENT-CLEAN-07 (Phase 52 Plan 02): the "plugin:registered" and
-  // "hook:executed" payload-shape tests were deleted alongside the events.
-  // The events had zero non-test subscribers; tests that needed plugin
-  // lifecycle now query PluginRegistry state directly.
+  // The "plugin:registered" and "hook:executed" payload-shape tests were
+  // deleted alongside the events. The events had zero non-test subscribers;
+  // tests that needed plugin lifecycle now query PluginRegistry state directly.
 
   it("auth:token_rotated delivers provider and expiresAtMs", () => {
     const bus = new TypedEventBus();
@@ -333,11 +332,10 @@ describe("InfraEvents payload structure", () => {
     expect(received.activeHandles).toBe(42);
   });
 
-  // CRIT-03 / EVENT-CLEAN-01: the "system:shutdown" event was deleted from
-  // InfraEvents in Phase 50 Plan 01 — it had 8 production subscribers and
-  // zero production emitters, so every teardown silently no-op'd until
-  // systemd KillMode reaped the process. The teardown wiring now flows
-  // directly through setupShutdown's ShutdownDeps (see
+  // The "system:shutdown" event was removed from InfraEvents — it had
+  // production subscribers but zero production emitters, so every teardown
+  // silently no-op'd until systemd KillMode reaped the process. Teardown
+  // wiring now flows directly through setupShutdown's ShutdownDeps (see
   // packages/daemon/src/wiring/setup-shutdown.ts). The payload-shape test
   // that used to live here was deleted with the event declaration.
 

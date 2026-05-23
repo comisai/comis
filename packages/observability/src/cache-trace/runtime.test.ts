@@ -219,7 +219,7 @@ describe("createCacheTrace -- digest + redaction + payload-gating", () => {
     expect(json).not.toContain("sk-abc123secret");
   });
 
-  // 260520-wcf: when includeSystem is true, the system slot must round-trip
+  // When includeSystem is true, the system slot must round-trip
   // verbatim past the default 32 KB bounded-payload cap. Without the
   // per-key exemption, the runtime silently replaced the system payload
   // with a `bounded-payload-field-size-limit` sentinel, defeating the
@@ -467,12 +467,12 @@ describe("createCacheTrace -- write-failures sentinel", () => {
   });
 });
 
-describe("cache_trace.write_failures sentinel (Plan 48-03)", () => {
-  // Per Plan 48-03 D-10 / D-11: cache-trace runtime emits an inline
-  // sentinel on the FIRST queued-writer failure detection inside
-  // recordStage (latched once-per-session) AND a summary sentinel at
-  // flushAndClose when failureCount > 0. The two-sentinel-per-cap-hit
-  // model means a session that exceeds the cap produces exactly 2
+describe("cache_trace.write_failures sentinel", () => {
+  // The cache-trace runtime emits an inline sentinel on the FIRST
+  // queued-writer failure detection inside recordStage (latched
+  // once-per-session) AND a summary sentinel at flushAndClose when
+  // failureCount > 0. The two-sentinel-per-cap-hit model means a
+  // session that exceeds the cap produces exactly 2
   // cache_trace.write_failures lines: one mid-stream, one at file tail.
   // Sessions that never hit the cap produce 0 sentinels.
 
@@ -542,7 +542,7 @@ describe("cache_trace.write_failures sentinel (Plan 48-03)", () => {
   });
 
   it("inline_sentinel_latched_at_most_once_per_session", async () => {
-    // Per D-11: exactly 1 inline + 1 summary = 2 total sentinels per
+    // Exactly 1 inline + 1 summary = 2 total sentinels per
     // cap-hit session. The latch ensures only 1 inline fires even when
     // multiple recordStage calls observe failureCount > 0; the summary
     // always fires on flushAndClose when failures > 0.
@@ -587,12 +587,12 @@ describe("cache_trace.write_failures sentinel (Plan 48-03)", () => {
 
     const events = readJsonlEvents(filePath);
     const sentinelsCount = countSentinels(events);
-    // Per D-11: 1 inline + 1 summary = 2 total.
+    // 1 inline + 1 summary = 2 total.
     expect(sentinelsCount).toBe(2);
   });
 
   it("summary_sentinel_carries_session_lifetime_ms", async () => {
-    // Per D-11: summary sentinel at flushAndClose carries
+    // Summary sentinel at flushAndClose carries
     // sessionLifetimeMs (= systemNowMs() - state.sessionStartedAt),
     // droppedEvents (renamed from `count`), and totalDroppedBytes
     // (renamed from `rejectedBytes`).

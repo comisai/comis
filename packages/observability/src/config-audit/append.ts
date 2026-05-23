@@ -64,7 +64,7 @@ export const DEFAULT_KEEP_ROTATED = 5;
  * everything that can be captured BEFORE the write. The "next" half
  * of the record is filled by `finalizeConfigWriteAuditRecord`.
  *
- * `callerSource` is the pre-260519-rrm `source` enum value (e.g.,
+ * `callerSource` is the original `source` enum value (e.g.,
  * "last-known-good-save", "config-patch-rpc", "cli-sync-tooling") —
  * stored under `callerSource` on the persisted record so the design
  * §9.2 top-level `source` slot is reserved for the fixed literal
@@ -413,8 +413,7 @@ export class ConfigAuditAppendError extends Error {
 
 /**
  * Ensure the parent dir exists with mode 0o700, including for the
- * existing-parent case (OBS-REVIEW-01 fix; Phase 48 OBS-HARD-01
- * substrate migration).
+ * existing-parent case (via the OBS-HARD substrate migration).
  *
  * Delegates to the shared `ensureContainedDir` substrate, which owns
  * the canonical `mkdir + lstat-gated chmod` pattern with
@@ -440,12 +439,12 @@ export class ConfigAuditAppendError extends Error {
  */
 export function ensureConfigAuditParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
-  // Delegate to the shared `ensureContainedDir` substrate (Phase 48
-  // OBS-HARD-01). The substrate owns the mkdir + lstat-gated chmod
-  // pattern with confused-deputy safety. Result is intentionally
-  // discarded — preserves the existing best-effort contract; the
-  // subsequent appendRegularFile call surfaces real errors via its
-  // own Result.err branch.
+  // Delegate to the shared `ensureContainedDir` substrate. The
+  // substrate owns the mkdir + lstat-gated chmod pattern with
+  // confused-deputy safety. Result is intentionally discarded —
+  // preserves the existing best-effort contract; the subsequent
+  // appendRegularFile call surfaces real errors via its own Result.err
+  // branch.
   ensureContainedDir({ dir, mode: 0o700 });
 }
 

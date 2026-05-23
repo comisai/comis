@@ -263,16 +263,14 @@ describe("DiagnosticsConfigSchema.cacheTrace — fields and defaults", () => {
 });
 
 // ---------------------------------------------------------------------------
-// cacheTrace.maxFileBytes — operator-knob field (OBS-HARD-04 / Plan 48-02)
+// cacheTrace.maxFileBytes — operator-knob field
 // ---------------------------------------------------------------------------
 //
-// Phase 48 Plan 48-02 introduces `diagnostics.cacheTrace.maxFileBytes` as an
-// operator-tunable file cap for the cache-trace JSONL artifact. Default is
-// 50 MB — parity with `trajectory.maxFileBytes` so both diagnostics writers
-// share a single mental model. Plan 48-03 follows up by flipping the
-// runtime fallback constant (10 MB → 50 MB) inside `runtime.ts` and wiring
-// the sentinel state machine that depends on the cap; this plan ships only
-// the schema field + the pi-executor wiring.
+// `diagnostics.cacheTrace.maxFileBytes` is an operator-tunable file cap for
+// the cache-trace JSONL artifact. Default is 50 MB — parity with
+// `trajectory.maxFileBytes` so both diagnostics writers share a single
+// mental model. The runtime fallback constant is 50 MB inside `runtime.ts`,
+// and the sentinel state machine depends on the cap.
 
 describe("cacheTrace.maxFileBytes config field", () => {
   it("default_is_50_mb_when_unset", () => {

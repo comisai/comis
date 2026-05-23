@@ -151,7 +151,7 @@ describe("sanitizeDiagnosticPayload — in-string credential regex (passthrough)
   it("preserves diagnostic strings that match a case-sensitive ENV regex like 'Unrecognized key: \"llm\"'", () => {
     // The Comis case-sensitive ENV regex is uppercase-only (`[A-Z][A-Z0-9_]+`),
     // so lowercase keys ("llm") and the surrounding diagnostic must pass through
-    // unchanged — research §10 closing note.
+    // unchanged.
     const input = { msg: 'Unrecognized key: "llm"' };
     expect(sanitizeDiagnosticPayload(input)).toEqual(input);
   });
@@ -194,16 +194,16 @@ describe("sanitizeDiagnosticPayload — passthrough for non-credential / non-ima
   });
 });
 
-describe("CREDENTIAL_KEYS contract (CRIT-04)", () => {
-  it("(CRIT-04) CREDENTIAL_KEYS exports widened entries (ROADMAP + Open Q #4 RESOLVED)", () => {
-    // ROADMAP widening keys (bare/lowercased forms)
+describe("CREDENTIAL_KEYS contract", () => {
+  it("CREDENTIAL_KEYS exports widened entries", () => {
+    // Widening keys (bare/lowercased forms)
     expect(CREDENTIAL_KEYS.has("credentials")).toBe(true);
     expect(CREDENTIAL_KEYS.has("key")).toBe(true);
     expect(CREDENTIAL_KEYS.has("passphrase")).toBe(true);
-    // ROADMAP widening keys (snake_case forms — needed for Pino path)
+    // Widening keys (snake_case forms — needed for Pino path)
     expect(CREDENTIAL_KEYS.has("connection_string")).toBe(true);
     expect(CREDENTIAL_KEYS.has("access_key")).toBe(true);
-    // Open Q #4 RESOLVED: camelCase forms required for case-sensitive
+    // camelCase forms required for case-sensitive
     // Pino redact.paths (the load-bearing reason the Set is exported).
     expect(CREDENTIAL_KEYS.has("apiKey")).toBe(true);
     expect(CREDENTIAL_KEYS.has("botToken")).toBe(true);
@@ -214,7 +214,7 @@ describe("CREDENTIAL_KEYS contract (CRIT-04)", () => {
     expect(CREDENTIAL_KEYS.has("clientSecret")).toBe(true);
     expect(CREDENTIAL_KEYS.has("connectionString")).toBe(true);
     expect(CREDENTIAL_KEYS.has("accessKey")).toBe(true);
-    // snake_case OAuth keys (CRIT-04 core fix — these are what the
+    // snake_case OAuth keys (these are what the
     // pre-fix Pino hand-table was missing).
     expect(CREDENTIAL_KEYS.has("access_token")).toBe(true);
     expect(CREDENTIAL_KEYS.has("refresh_token")).toBe(true);
@@ -229,7 +229,7 @@ describe("CREDENTIAL_KEYS contract (CRIT-04)", () => {
     expect(CREDENTIAL_KEYS.size).toBeGreaterThanOrEqual(26);
   });
 
-  it("(CRIT-04) isCredentialFieldName allowlist mitigates `key` false-positives", () => {
+  it("isCredentialFieldName allowlist mitigates `key` false-positives", () => {
     // The bare `key` token is a credential.
     expect(isCredentialFieldName("key")).toBe(true);
     // The 10 allowlisted `key*` operational forms are NOT redacted.
@@ -245,7 +245,7 @@ describe("CREDENTIAL_KEYS contract (CRIT-04)", () => {
     expect(isCredentialFieldName("event_key")).toBe(false);
   });
 
-  it("(CRIT-04 regression) sanitizer correctly redacts new bare credentials and preserves allowlisted operational keys", () => {
+  it("(regression) sanitizer correctly redacts new bare credentials and preserves allowlisted operational keys", () => {
     // The new widening keys cause field-drop in the sanitizer.
     expect(sanitizeDiagnosticPayload({ keep: "ok", key: "API-KEY-VALUE" })).toEqual({
       keep: "ok",

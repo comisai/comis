@@ -8,11 +8,11 @@
  *   - `diagnostics.cacheTrace`  — cache-trace JSONL artifact knobs.
  *   - `diagnostics.configAudit` — `{enabled, rotateAtBytes, keepRotated}`.
  *
- * SCHEMA-TRIM-07 (Phase 52 Plan 02): the unused fourth subschema
- * (a placeholder slot for future redact knobs) was deleted. Runtime
- * redaction lives in `packages/infra/src/logging/logger.ts` (Pino
- * auto-redact) and the `daemon.logging` edge-keeping censor schema in
- * schema-daemon.ts — neither read this subschema.
+ * The unused fourth subschema (a placeholder slot for future redact
+ * knobs) was deleted. Runtime redaction lives in
+ * `packages/infra/src/logging/logger.ts` (Pino auto-redact) and the
+ * `daemon.logging` edge-keeping censor schema in schema-daemon.ts —
+ * neither read this subschema.
  *
  * Defaults are sticky: `.default({})` on each empty subschema so a
  * minimal AppConfig parse populates the whole tree without explicit
@@ -102,8 +102,8 @@ const CacheTraceConfigSchemaInner = z.object({
    * file reaches this size, additional appends are rejected by
    * `appendRegularFile` with `FileSizeLimitExceeded`; the cache-trace
    * runtime emits an inline `cache_trace.write_failures` sentinel at
-   * first rejection (Plan 48-03 D-10) and a summary sentinel at session
-   * `flushAndClose` (D-11). Default 50 MB matches `trajectory.maxFileBytes`.
+   * first rejection and a summary sentinel at session `flushAndClose`.
+   * Default 50 MB matches `trajectory.maxFileBytes`.
    */
   maxFileBytes: z.number().int().positive().default(50 * 1024 * 1024),
   includeMessages: z.boolean().default(false),

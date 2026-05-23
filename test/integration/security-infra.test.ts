@@ -132,10 +132,10 @@ describe("SEC-INF-04: Plugin Registry Security Model", () => {
 
     const result = registry.register(testPlugin);
     expect(result.ok).toBe(true);
-    // EVENT-CLEAN-07 (Phase 52 Plan 02): the prior assertion observed a
-    // `plugin:registered` event-bus event, which was removed alongside the
-    // other plugin-lifecycle events. The surviving observation is direct
-    // PluginRegistry state inspection via getHooksByName.
+    // The prior assertion observed a `plugin:registered`
+    // event-bus event, which was removed alongside the other plugin-lifecycle
+    // events. The surviving observation is direct PluginRegistry state
+    // inspection via getHooksByName.
     expect(registry.getHooksByName("before_agent_start")).toHaveLength(1);
     expect(registry.getHooksByName("session_start")).toHaveLength(1);
   });
