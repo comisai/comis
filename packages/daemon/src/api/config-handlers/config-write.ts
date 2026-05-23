@@ -76,23 +76,25 @@ export function bindConfigWriteHandlers(
         throw new Error("Admin access required for config modification");
       }
 
-      // Phase 47 (R9): Single-writer guard — integrations.mcp.servers is
-      // managed by mcp_manage. Fire before rate-limit consume + contract.parse
-      // so error precedence is: trust-check → routing-redirect → rate-limit.
-      // Mirrors immutable-paths precedent at :144-152 + section-registry
-      // redirect at section-registry.ts:322-348. The MUTABLE_CONFIG_OVERRIDES
-      // entry at immutable-keys.ts:38 STAYS so persistToConfig itself can
-      // still write — only the gateway-patch route is closed.
-      // The path derivation duplicates the post-guard `rawPath → section/key`
-      // extraction (necessary: R9 fires BEFORE the bespoke section-validation
-      // that throws "Missing required parameter section"). Block-scoped to
-      // avoid name collisions with the post-guard declarations.
+      // R9 single-writer guard (Phase 47): integrations.mcp.servers is managed
+      // by mcp_manage. Precedence: trust → R9 → rate-limit. MUTABLE_CONFIG_OVERRIDES
+      // at immutable-keys.ts:38 stays — only the gateway-patch route is closed.
+      // BL-01 (Phase 62): also catch parent-path shapes whose merged value lands
+      // on integrations.mcp.servers, e.g. { section:"integrations", key:"mcp",
+      // value:{servers:[]} } and the two `path:` variants.
       {
-        const rawPath = typeof rawParams.path === "string" ? rawParams.path : undefined;
-        const rawSection = (rawParams.section ?? (rawPath ? rawPath.split(".")[0] : undefined)) as string | undefined;
-        const rawKey = (rawParams.key ?? (rawPath && rawPath.includes(".") ? rawPath.slice(rawPath.indexOf(".") + 1) : undefined)) as string | undefined;
-        const fullPath = rawKey ? `${rawSection}.${rawKey}` : rawSection ?? "";
-        if (fullPath === "integrations.mcp.servers" || fullPath.startsWith("integrations.mcp.servers.")) {
+        const rp = typeof rawParams.path === "string" ? rawParams.path : undefined;
+        const sec = (rawParams.section ?? (rp ? rp.split(".")[0] : undefined)) as string | undefined;
+        const key = (rawParams.key ?? (rp && rp.includes(".") ? rp.slice(rp.indexOf(".") + 1) : undefined)) as string | undefined;
+        const fp = key ? `${sec}.${key}` : sec ?? "";
+        const v = rawParams.value as Record<string, unknown> | null | undefined;
+        const obj = v !== null && typeof v === "object";
+        if (
+          fp === "integrations.mcp.servers" || fp.startsWith("integrations.mcp.servers.") ||
+          (obj && fp === "integrations.mcp" && "servers" in v!) ||
+          (obj && fp === "integrations" && v!.mcp !== null && typeof v!.mcp === "object" &&
+           "servers" in (v!.mcp as Record<string, unknown>))
+        ) {
           throw new Error(
             "integrations.mcp.servers is managed by mcp_manage. " +
             "Use mcp_manage(action:'connect'|'disconnect') instead."

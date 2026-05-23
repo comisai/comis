@@ -1111,6 +1111,81 @@ describe("config.patch env var reference validation", () => {
       }),
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
+
+  // BL-01 from 62-REVIEW: parent-path bypass shapes must produce the
+  // mcp_manage redirect, not the generic "immutable path" message that
+  // arises if the patch slips past the R9 guard and into the
+  // isImmutableConfigPath check.
+
+  it("R9 BL-01: parent-path bypass via { section:'integrations', key:'mcp', value:{ servers:[...] } } returns the mcp_manage redirect", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp",
+        value: { servers: [] },
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
+
+  it("R9 BL-01: parent-path bypass via { section:'integrations', value:{ mcp:{ servers:[...] } } } returns the mcp_manage redirect", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        value: { mcp: { servers: [] } },
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
+
+  it("R9 BL-01: parent-path bypass via { path:'integrations.mcp', value:{ servers:[...] } } returns the mcp_manage redirect", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        path: "integrations.mcp",
+        value: { servers: [] },
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
+
+  it("R9 BL-01: parent-path bypass via { path:'integrations', value:{ mcp:{ servers:[...] } } } returns the mcp_manage redirect", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        path: "integrations",
+        value: { mcp: { servers: [] } },
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
+
+  it("R9 BL-01: parent-path NEGATIVE — { section:'integrations', value:{ media:{...} } } does NOT match (unrelated subtree)", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    // This patch touches integrations.media (which is mutable), not mcp.servers —
+    // R9 must NOT fire. Whether the patch ultimately succeeds depends on schema
+    // validation downstream; the assertion here is purely that the mcp_manage
+    // redirect is NOT raised.
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        value: { media: {} },
+        _trustLevel: "admin",
+      }),
+    ).rejects.not.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
 });
 
 // ---------------------------------------------------------------------------
