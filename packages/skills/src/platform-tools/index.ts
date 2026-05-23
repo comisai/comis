@@ -82,8 +82,6 @@ export { createCtxRecallTool } from "./tools/ctx-recall-tool.js";
 export { createCtxExpandTool } from "./tools/ctx-expand-tool.js";
 
 // Unified tools (action dispatch -- consolidates individual tools above)
-export { createUnifiedSessionTool } from "./tools/unified-session-tool.js";
-export { createUnifiedMemoryTool } from "./tools/unified-memory-tool.js";
 export { createUnifiedContextTool } from "./tools/unified-context-tool.js";
 
 // Notifications

@@ -85,8 +85,6 @@ describe("platform-tool registry parity", () => {
       "transcribe_audio",
       "tts",
       "unified_context",
-      "unified_memory",
-      "unified_session",
       "whatsapp_action",
     ]);
   });
