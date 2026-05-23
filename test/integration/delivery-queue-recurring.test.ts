@@ -179,19 +179,21 @@ describe("continuous delivery-queue drainer (integration)", () => {
       expect(response.error).toBeUndefined();
       expect(response.result?.success).toBe(true);
 
-      // Poll depth until zero or timeout.
+      // Poll pending-depth until zero or timeout.
+      // DeliveryQueuePort exposes statusCounts() (per-status breakdown);
+      // we check that the `pending` bucket has drained to 0.
       const deadline = Date.now() + 3_000;
-      let depth = -1;
+      let pending = -1;
       while (Date.now() < deadline) {
-        const result = await handle.daemon.deliveryQueue.depth();
+        const result = await handle.daemon.deliveryQueue.statusCounts();
         if (result.ok) {
-          depth = result.value;
-          if (depth === 0) break;
+          pending = result.value.pending;
+          if (pending === 0) break;
         }
         await new Promise((r) => setTimeout(r, 100));
       }
 
-      expect(depth).toBe(0);
+      expect(pending).toBe(0);
     },
     15_000,
   );

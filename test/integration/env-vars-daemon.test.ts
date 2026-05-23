@@ -147,6 +147,7 @@ describe("CLI env vars with running daemon", () => {
     // may have a different token.
     process.env["COMIS_GATEWAY_URL"] = `ws://localhost:8499/ws`;
     process.env["COMIS_GATEWAY_TOKEN"] = "env-test-secret-1234-padded-to-32ch";
+    process.env["COMIS_CLI_E2E"] = "true";
 
     try {
       // withClient should connect to the daemon via the URL env var
@@ -162,6 +163,7 @@ describe("CLI env vars with running daemon", () => {
     } finally {
       delete process.env["COMIS_GATEWAY_URL"];
       delete process.env["COMIS_GATEWAY_TOKEN"];
+      delete process.env["COMIS_CLI_E2E"];
     }
   });
 
@@ -169,6 +171,7 @@ describe("CLI env vars with running daemon", () => {
     // Set both env vars -- URL to find the daemon, token to authenticate
     process.env["COMIS_GATEWAY_URL"] = `ws://localhost:8499/ws`;
     process.env["COMIS_GATEWAY_TOKEN"] = "env-test-secret-1234-padded-to-32ch";
+    process.env["COMIS_CLI_E2E"] = "true";
 
     try {
       // withClient reads both env vars and connects + authenticates
@@ -187,6 +190,7 @@ describe("CLI env vars with running daemon", () => {
     } finally {
       delete process.env["COMIS_GATEWAY_URL"];
       delete process.env["COMIS_GATEWAY_TOKEN"];
+      delete process.env["COMIS_CLI_E2E"];
     }
   });
 });

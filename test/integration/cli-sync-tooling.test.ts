@@ -109,7 +109,10 @@ async function runCli(args: string[], opts: {
 }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   try {
     const r = await execFileAsync("node", [CLI_BINARY, ...args], {
-      env: { ...process.env, ...(opts.env ?? {}) },
+      // VITEST=true propagates to the child; the CLI's withClient refuses
+      // real WebSockets unless COMIS_CLI_E2E=true. Opt in so the
+      // daemon-active guard can actually probe the test daemon.
+      env: { ...process.env, COMIS_CLI_E2E: "true", ...(opts.env ?? {}) },
       timeout: opts.timeoutMs ?? 10_000,
       // Buffer up to 1 MB of output (more than the CLI ever produces).
       maxBuffer: 1024 * 1024,

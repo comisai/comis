@@ -93,7 +93,10 @@ describe("config-audit roundtrip integration", () => {
     expect(records).toHaveLength(1);
     const r = records[0]!;
     expect(r.result).toBe("rename");
-    expect(r.source).toBe("config-patch-rpc");
+    // `source` was refactored to a fixed marker ("config-io"); the
+    // caller's identity now lives in `callerSource`.
+    expect(r.source).toBe("config-io");
+    expect(r.callerSource).toBe("config-patch-rpc");
     expect(r.configPath).toBe(configPath);
     expect(r.existsBefore).toBe(true);
     // Hash diff: previousHash !== nextHash because the file content changed.

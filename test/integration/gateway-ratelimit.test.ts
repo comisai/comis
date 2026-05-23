@@ -33,22 +33,27 @@ const CONFIG_PATH = resolve(__dirname, "../config/config.test-gateway-ratelimit.
 function createTestApp(maxRequests: number, windowMs = 60_000) {
   const app = new Hono();
 
-  // Simulated auth middleware: set clientId from query param
-  app.use("*", async (c, next) => {
-    const clientId = c.req.query("clientId");
-    if (clientId) {
-      c.set("clientId", clientId);
-    }
-    await next();
-  });
-
-  // Apply rate limiter
+  // The rate limiter keys by client IP (`getClientIp`). In test
+  // environments without a real socket it falls back to the
+  // `x-real-ip` header — so we use that as the per-client key.
   app.use("*", createRateLimiter({ windowMs, maxRequests }));
 
   // Test endpoint
   app.post("/rpc", (c) => c.json({ result: "ok" }));
 
   return app;
+}
+
+/**
+ * Build a request init that pins a synthetic client IP via x-real-ip.
+ * `?clientId=` is preserved in the URL for visual continuity but is not
+ * load-bearing — the rate limiter ignores it.
+ */
+function reqInit(clientId: string): { method: string; headers: Record<string, string> } {
+  return {
+    method: "POST",
+    headers: { "x-real-ip": clientId },
+  };
 }
 
 // ===========================================================================
@@ -66,12 +71,12 @@ describe("Rate Limiter: Boundary, Reset, and Per-Client Keying", () => {
 
     // Send exactly maxRequests requests -- all should succeed
     for (let i = 0; i < maxRequests; i++) {
-      const res = await app.request("/rpc?clientId=boundary-client", { method: "POST" });
+      const res = await app.request("/rpc?clientId=boundary-client", reqInit("boundary-client"));
       expect(res.status).toBe(200);
     }
 
     // The (maxRequests + 1)th request should be rate limited
-    const limited = await app.request("/rpc?clientId=boundary-client", { method: "POST" });
+    const limited = await app.request("/rpc?clientId=boundary-client", reqInit("boundary-client"));
     expect(limited.status).toBe(429);
 
     // Verify the 429 body is a well-formed JSON-RPC error
@@ -93,12 +98,12 @@ describe("Rate Limiter: Boundary, Reset, and Per-Client Keying", () => {
 
     // Exhaust the rate limit
     for (let i = 0; i < maxRequests; i++) {
-      const res = await app.request("/rpc?clientId=reset-client", { method: "POST" });
+      const res = await app.request("/rpc?clientId=reset-client", reqInit("reset-client"));
       expect(res.status).toBe(200);
     }
 
     // Verify rate limited
-    const limited = await app.request("/rpc?clientId=reset-client", { method: "POST" });
+    const limited = await app.request("/rpc?clientId=reset-client", reqInit("reset-client"));
     expect(limited.status).toBe(429);
 
     // Wait for window to expire (windowMs + buffer)
@@ -106,7 +111,7 @@ describe("Rate Limiter: Boundary, Reset, and Per-Client Keying", () => {
 
     // Should succeed again after window reset
     // MemoryStore resets on next request after window expiry
-    const reset = await app.request("/rpc?clientId=reset-client", { method: "POST" });
+    const reset = await app.request("/rpc?clientId=reset-client", reqInit("reset-client"));
     expect(reset.status).toBe(200);
   });
 
@@ -120,30 +125,31 @@ describe("Rate Limiter: Boundary, Reset, and Per-Client Keying", () => {
 
     // Client-alpha exhausts its quota
     for (let i = 0; i < maxRequests; i++) {
-      const res = await app.request("/rpc?clientId=alpha", { method: "POST" });
+      const res = await app.request("/rpc?clientId=alpha", reqInit("alpha"));
       expect(res.status).toBe(200);
     }
 
     // Client-alpha is now rate limited
-    const alphaLimited = await app.request("/rpc?clientId=alpha", { method: "POST" });
+    const alphaLimited = await app.request("/rpc?clientId=alpha", reqInit("alpha"));
     expect(alphaLimited.status).toBe(429);
 
     // Client-beta should still have its own independent quota
-    const betaOk = await app.request("/rpc?clientId=beta", { method: "POST" });
+    const betaOk = await app.request("/rpc?clientId=beta", reqInit("beta"));
     expect(betaOk.status).toBe(200);
   });
 
-  it("requests without clientId share a single rate limit key", async () => {
+  it("requests without a distinct client IP share a single rate limit key", async () => {
     const maxRequests = 2;
     const app = createTestApp(maxRequests);
 
-    // Send 2 requests WITHOUT clientId -- both should succeed
+    // Send 2 requests WITHOUT an x-real-ip header -- both share the
+    // "unknown" key and should succeed
     for (let i = 0; i < maxRequests; i++) {
       const res = await app.request("/rpc", { method: "POST" });
       expect(res.status).toBe(200);
     }
 
-    // Third request without clientId should be rate limited (shared IP-based key)
+    // Third request also without header should be rate limited (shared key)
     const limited = await app.request("/rpc", { method: "POST" });
     expect(limited.status).toBe(429);
   });

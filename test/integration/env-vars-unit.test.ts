@@ -336,11 +336,15 @@ describe("CLI env var resolution", () => {
   it("withClient uses COMIS_GATEWAY_URL when set", async () => {
     const originalUrl = process.env["COMIS_GATEWAY_URL"];
     const originalToken = process.env["COMIS_GATEWAY_TOKEN"];
+    const originalE2E = process.env["COMIS_CLI_E2E"];
 
     try {
       // Point to a port nothing listens on
       process.env["COMIS_GATEWAY_URL"] = "ws://127.0.0.1:19999/ws";
       process.env["COMIS_GATEWAY_TOKEN"] = "test-token";
+      // Opt past the VITEST guard so the real connect is attempted; the
+      // assertions below depend on observing a real ECONNREFUSED.
+      process.env["COMIS_CLI_E2E"] = "true";
 
       await expect(
         withClient(async () => "done"),
@@ -372,6 +376,11 @@ describe("CLI env var resolution", () => {
         process.env["COMIS_GATEWAY_TOKEN"] = originalToken;
       } else {
         delete process.env["COMIS_GATEWAY_TOKEN"];
+      }
+      if (originalE2E !== undefined) {
+        process.env["COMIS_CLI_E2E"] = originalE2E;
+      } else {
+        delete process.env["COMIS_CLI_E2E"];
       }
     }
   });

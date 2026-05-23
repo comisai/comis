@@ -91,20 +91,14 @@ function createMockPlugin(opts: {
     channelType: opts.channelType,
   });
   const defaultCaps: ChannelCapability = {
-    chatTypes: ["dm"],
     features: {
       reactions: false,
       editMessages: false,
       deleteMessages: false,
       fetchHistory: false,
       attachments: false,
-      threads: false,
-      mentions: false,
-      formatting: [],
     },
     limits: { maxMessageChars: 4096 },
-    streaming: { supported: false, throttleMs: 300, method: "none" },
-    threading: { supported: false, threadType: "none" },
   };
   const mergedCaps = opts.capabilities
     ? { ...defaultCaps, ...opts.capabilities }
@@ -340,20 +334,15 @@ describe("Custom Adapter Wiring & Integration", () => {
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
 
       const richCaps: ChannelCapability = {
-        chatTypes: ["dm", "group", "thread"],
         features: {
           reactions: true,
           editMessages: true,
           deleteMessages: true,
           fetchHistory: true,
           attachments: true,
-          threads: true,
-          mentions: true,
-          formatting: ["bold", "italic"],
         },
         limits: { maxMessageChars: 8000 },
-        streaming: { supported: true, throttleMs: 100, method: "edit" },
-        threading: { supported: true, threadType: "native", maxDepth: 5 },
+        replyToMetaKey: "thread_ts",
       };
 
       const plugin: ChannelPluginPort = {
@@ -369,62 +358,52 @@ describe("Custom Adapter Wiring & Integration", () => {
 
       const caps = channelRegistry.getCapabilities("rich-channel");
       expect(caps).toBeDefined();
-      expect(caps!.chatTypes).toEqual(["dm", "group", "thread"]);
       expect(caps!.features.editMessages).toBe(true);
-      expect(caps!.features.threads).toBe(true);
-      expect(caps!.streaming.supported).toBe(true);
-      expect(caps!.streaming.method).toBe("edit");
-      expect(caps!.threading.supported).toBe(true);
-      expect(caps!.threading.threadType).toBe("native");
-      expect(caps!.threading.maxDepth).toBe(5);
+      expect(caps!.features.fetchHistory).toBe(true);
+      expect(caps!.features.attachments).toBe(true);
+      expect(caps!.features.deleteMessages).toBe(true);
+      expect(caps!.features.reactions).toBe(true);
+      expect(caps!.limits.maxMessageChars).toBe(8000);
+      expect(caps!.replyToMetaKey).toBe("thread_ts");
     });
 
-    it("capability-driven feature check: streaming support query", () => {
+    it("capability-driven feature check: attachment support query", () => {
       const eventBus = new TypedEventBus();
       const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
 
-      const streamYes = createMockPlugin({
-        channelType: "stream-yes",
+      const attachYes = createMockPlugin({
+        channelType: "attach-yes",
         capabilities: {
-          chatTypes: ["dm"],
           features: {
             reactions: false, editMessages: false, deleteMessages: false,
-            fetchHistory: false, attachments: false, threads: false,
-            mentions: false, formatting: [],
+            fetchHistory: false, attachments: true,
           },
           limits: { maxMessageChars: 4096 },
-          streaming: { supported: true, throttleMs: 100, method: "edit" },
-          threading: { supported: false, threadType: "none" },
         },
       });
-      const streamNo = createMockPlugin({
-        channelType: "stream-no",
+      const attachNo = createMockPlugin({
+        channelType: "attach-no",
         capabilities: {
-          chatTypes: ["dm"],
           features: {
             reactions: false, editMessages: false, deleteMessages: false,
-            fetchHistory: false, attachments: false, threads: false,
-            mentions: false, formatting: [],
+            fetchHistory: false, attachments: false,
           },
           limits: { maxMessageChars: 4096 },
-          streaming: { supported: false, throttleMs: 300, method: "none" },
-          threading: { supported: false, threadType: "none" },
         },
       });
 
-      channelRegistry.registerChannel(streamYes);
-      channelRegistry.registerChannel(streamNo);
+      channelRegistry.registerChannel(attachYes);
+      channelRegistry.registerChannel(attachNo);
 
-      // Helper function to check streaming support
-      function shouldStream(channelType: string): boolean {
+      function supportsAttachments(channelType: string): boolean {
         const caps = channelRegistry.getCapabilities(channelType);
-        return caps?.streaming.supported === true;
+        return caps?.features.attachments === true;
       }
 
-      expect(shouldStream("stream-yes")).toBe(true);
-      expect(shouldStream("stream-no")).toBe(false);
-      expect(shouldStream("nonexistent")).toBe(false);
+      expect(supportsAttachments("attach-yes")).toBe(true);
+      expect(supportsAttachments("attach-no")).toBe(false);
+      expect(supportsAttachments("nonexistent")).toBe(false);
     });
 
     it("capability-driven feature check: edit support determines operation availability", () => {
@@ -435,29 +414,21 @@ describe("Custom Adapter Wiring & Integration", () => {
       const editable = createMockPlugin({
         channelType: "editable",
         capabilities: {
-          chatTypes: ["dm"],
           features: {
             reactions: false, editMessages: true, deleteMessages: false,
-            fetchHistory: false, attachments: false, threads: false,
-            mentions: false, formatting: [],
+            fetchHistory: false, attachments: false,
           },
           limits: { maxMessageChars: 4096 },
-          streaming: { supported: false, throttleMs: 300, method: "none" },
-          threading: { supported: false, threadType: "none" },
         },
       });
       const readonly_ = createMockPlugin({
         channelType: "readonly",
         capabilities: {
-          chatTypes: ["dm"],
           features: {
             reactions: false, editMessages: false, deleteMessages: false,
-            fetchHistory: false, attachments: false, threads: false,
-            mentions: false, formatting: [],
+            fetchHistory: false, attachments: false,
           },
           limits: { maxMessageChars: 4096 },
-          streaming: { supported: false, throttleMs: 300, method: "none" },
-          threading: { supported: false, threadType: "none" },
         },
       });
 

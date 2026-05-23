@@ -85,9 +85,11 @@ describe("diagnostics.trajectory.eventTypes filter — end-to-end honor check", 
     );
     expect(piExecSrc).toMatch(/deps\.trajectoryConfig\?\.eventTypes/);
     // The filter is threaded into the attachTrajectoryToEventBus call.
-    // Verify the source contains both the eventTypes capture AND the
-    // `filter:` property name within the same attach call region.
-    expect(piExecSrc).toMatch(/attachTrajectoryToEventBus\(\{[\s\S]*?filter:\s*\(/);
+    // Verify the source contains both the eventTypes capture AND a
+    // `filter:` property assignment within the same attach call region.
+    // The body of `filter:` may be an inline arrow function or a named
+    // (and cast) identifier — either form is acceptable.
+    expect(piExecSrc).toMatch(/attachTrajectoryToEventBus\(\{[\s\S]*?filter:\s*[^\s]/);
   });
 
   it("trajectory JSONL contains only model.completed events when eventTypes: ['model.completed'] is set", async () => {
