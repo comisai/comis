@@ -15,10 +15,6 @@ export interface SecretMetadata {
   description?: string;
   /** Unix timestamp (ms) when this secret expires, or undefined if no expiry */
   expiresAt?: number;
-  /** Unix timestamp (ms) of the most recent decryption/access */
-  lastUsedAt?: number;
-  /** Number of times this secret has been accessed via getDecrypted() */
-  usageCount: number;
   /** Unix timestamp (ms) when the secret was first stored */
   createdAt: number;
   /** Unix timestamp (ms) when the secret was last updated */
@@ -76,14 +72,6 @@ export interface SecretStorePort {
   decryptAll(): Result<Map<string, string>, Error>;
 
   /**
-   * Check whether a secret exists (without decrypting).
-   *
-   * @param name - Secret identifier to check
-   * @returns true if the secret exists in the store
-   */
-  exists(name: string): boolean;
-
-  /**
    * List metadata for all stored secrets (without decrypting values).
    *
    * @returns Array of secret metadata, or Error on storage failure
@@ -97,15 +85,6 @@ export interface SecretStorePort {
    * @returns true if deleted, false if not found, or Error on storage failure
    */
   delete(name: string): Result<boolean, Error>;
-
-  /**
-   * Record that a secret was accessed (increments usageCount, updates lastUsedAt).
-   *
-   * Called by the runtime after successful secret injection into agent context.
-   *
-   * @param name - Secret identifier that was used
-   */
-  recordUsage(name: string): void;
 
   /**
    * Release resources (close database connections, clear caches).

@@ -20,10 +20,6 @@ import "../components/scheduler/ic-cron-editor.js";
 import type { CronJobInput } from "../components/scheduler/ic-cron-editor.js";
 import type { TabDef } from "../components/nav/ic-tabs.js";
 import { systemDateFrom, systemNowMs } from "@comis/core";
-import {
-  createSchedulerController,
-  type SchedulerController,
-} from "./scheduler-controller.js";
 
 /* ------------------------------------------------------------------ */
 /*  Local types -- DO NOT import from @comis/scheduler              */
@@ -74,16 +70,6 @@ interface HeartbeatRecord {
   timestamp: number;
 }
 
-interface ExtractedTask {
-  taskId: string;
-  title: string;
-  priority: string;
-  confidence: number;
-  sessionKey: string;
-  timestamp: number;
-  status: "pending" | "completed" | "dismissed";
-}
-
 interface HeartbeatAgentCard {
   agentId: string;
   enabled: boolean;
@@ -123,7 +109,6 @@ interface HeartbeatDeliveryRecord {
 const TAB_DEFS: TabDef[] = [
   { id: "cron-jobs", label: "Cron Jobs" },
   { id: "heartbeat", label: "Heartbeat" },
-  { id: "extracted-tasks", label: "Extracted Tasks" },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -192,12 +177,12 @@ function jobToCronInput(job: SchedulerCronJob): CronJobInput {
 /* ------------------------------------------------------------------ */
 
 /**
- * Scheduler dashboard view with 3 tabs: Cron Jobs, Heartbeat, Extracted Tasks.
+ * Scheduler dashboard view with 2 tabs: Cron Jobs, Heartbeat.
  *
  * Loads job data via cron.list RPC. Supports create/edit via ic-cron-editor overlay
  * (cron.add / cron.update RPC), delete via cron.remove RPC, heartbeat toggle via
- * config.read / config.set RPC, and real-time SSE updates for execution history,
- * heartbeat checks, and extracted tasks.
+ * config.read / config.set RPC, and real-time SSE updates for execution history
+ * and heartbeat checks.
  */
 @customElement("ic-scheduler-view")
 export class IcSchedulerView extends LitElement {
@@ -570,41 +555,6 @@ export class IcSchedulerView extends LitElement {
         font-weight: 600;
       }
 
-      /* Extracted tasks grid table */
-      .task-grid {
-        display: grid;
-        grid-template-columns: minmax(150px, 3fr) 100px 100px auto;
-        width: 100%;
-      }
-
-      .task-grid .grid-header .cell,
-      .task-grid .grid-row .cell {
-        /* Inherit from .grid-header/.grid-row above */
-      }
-
-      .priority-tag {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 9999px;
-        font-size: var(--ic-text-xs);
-        font-weight: 500;
-      }
-
-      .priority-tag--high {
-        background: rgba(239, 68, 68, 0.15);
-        color: #ef4444;
-      }
-
-      .priority-tag--medium {
-        background: rgba(234, 179, 8, 0.15);
-        color: #eab308;
-      }
-
-      .priority-tag--low {
-        background: rgba(34, 197, 94, 0.15);
-        color: #22c55e;
-      }
-
       .btn-sm {
         background: transparent;
         border: 1px solid var(--ic-border);
@@ -620,11 +570,6 @@ export class IcSchedulerView extends LitElement {
       .btn-sm:hover {
         color: var(--ic-text);
         border-color: var(--ic-text-muted);
-      }
-
-      .task-actions {
-        display: flex;
-        gap: var(--ic-space-xs);
       }
 
       /* Editor overlay */
@@ -732,7 +677,6 @@ export class IcSchedulerView extends LitElement {
   @state() private _heartbeats: HeartbeatRecord[] = [];
   @state() private _heartbeatEnabled = false;
   @state() private _heartbeatIntervalMs = 300_000;
-  @state() private _extractedTasks: ExtractedTask[] = [];
   @state() private _editorOpen = false;
   @state() private _editingJob: SchedulerCronJob | null = null;
   @state() private _editorError = "";
@@ -748,9 +692,6 @@ export class IcSchedulerView extends LitElement {
   private _sse: SseController | null = null;
   private _jobsLoaded = false;
 
-  /** Controller owns RPC orchestration (thin façade pattern — view keeps @state + SSE). */
-  private _controller: SchedulerController | null = null;
-
   /* ---- Lifecycle ---- */
 
   override connectedCallback(): void {
@@ -758,9 +699,6 @@ export class IcSchedulerView extends LitElement {
     // Note: _loadAll() is NOT called here -- rpcClient is typically
     // null at this point. The updated() callback handles loading once
     // the client property is set.
-    if (this.rpcClient) {
-      this._controller = createSchedulerController(this, this.rpcClient);
-    }
     this._initSse();
   }
 
@@ -775,9 +713,6 @@ export class IcSchedulerView extends LitElement {
   override updated(changed: Map<string, unknown>): void {
     // Retry data loading when rpcClient is set after initial render
     if (changed.has("rpcClient") && this.rpcClient && !this._jobsLoaded) {
-      if (!this._controller) {
-        this._controller = createSchedulerController(this, this.rpcClient);
-      }
       this._loadAll();
       const unsub = this.rpcClient.onStatusChange((status) => {
         if (status === "connected" && !this._jobsLoaded) {
@@ -875,19 +810,6 @@ export class IcSchedulerView extends LitElement {
         this._heartbeatAlerts = [record, ...this._heartbeatAlerts].slice(0, 50);
         this._updateAgentFromAlert(record);
       },
-      "scheduler:task_extracted": (data) => {
-        const d = data as { taskId?: string; title?: string; priority?: string; confidence?: number; sessionKey?: string; timestamp?: number };
-        const task: ExtractedTask = {
-          taskId: d.taskId ?? `task-${systemNowMs()}`,
-          title: d.title ?? "Untitled task",
-          priority: d.priority ?? "medium",
-          confidence: d.confidence ?? 0,
-          sessionKey: d.sessionKey ?? "",
-          timestamp: d.timestamp ?? systemNowMs(),
-          status: "pending",
-        };
-        this._extractedTasks = [task, ...this._extractedTasks];
-      },
     });
   }
 
@@ -910,13 +832,15 @@ export class IcSchedulerView extends LitElement {
   }
 
   private async _loadJobs(): Promise<void> {
-    if (!this._controller) {
+    if (!this.rpcClient) {
       this._loading = false;
       return;
     }
     try {
-      const result = (await this._controller.listJobs(this._selectedAgentId)) as
-        { jobs: SchedulerCronJob[] } | SchedulerCronJob[];
+      const result = (await this.rpcClient.call<{ jobs?: SchedulerCronJob[] } | SchedulerCronJob[]>(
+        "cron.list",
+        { _agentId: this._selectedAgentId || undefined },
+      ));
       this._jobs = Array.isArray(result) ? result : (result.jobs ?? []);
       this._jobsLoaded = true;
     } catch (err) {
@@ -933,9 +857,9 @@ export class IcSchedulerView extends LitElement {
   }
 
   private async _loadHeartbeatConfig(): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     try {
-      const config = await this._controller.readConfig("scheduler");
+      const config = await this.rpcClient.call<Record<string, unknown>>("config.read", { section: "scheduler" });
       const heartbeat = config?.heartbeat as { enabled?: boolean; intervalMs?: number } | undefined;
       if (heartbeat) {
         this._heartbeatEnabled = heartbeat.enabled ?? false;
@@ -947,9 +871,9 @@ export class IcSchedulerView extends LitElement {
   }
 
   private async _loadAgentIds(): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     try {
-      const config = await this._controller.readConfig("agents");
+      const config = await this.rpcClient.call<Record<string, unknown>>("config.read", { section: "agents" });
       if (config && typeof config === "object") {
         this._configAgentIds = Object.keys(config);
       }
@@ -962,9 +886,12 @@ export class IcSchedulerView extends LitElement {
   }
 
   private async _loadCronStatus(): Promise<void> {
-    if (!this._controller || !this._selectedAgentId) return;
+    if (!this.rpcClient || !this._selectedAgentId) return;
     try {
-      const result = await this._controller.getStatus(this._selectedAgentId);
+      const result = await this.rpcClient.call<{ running: boolean; jobCount: number }>(
+        "cron.status",
+        { _agentId: this._selectedAgentId || undefined },
+      );
       this._cronEnabled = result?.running ?? null;
       this._cronJobCount = result?.jobCount ?? 0;
     } catch {
@@ -973,10 +900,10 @@ export class IcSchedulerView extends LitElement {
   }
 
   private async _loadHeartbeatStates(): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     try {
-      const result = await this._controller.getHeartbeatStates();
-      this._heartbeatAgents = (result?.agents as HeartbeatAgentCard[] | undefined) ?? [];
+      const result = await this.rpcClient.call<{ agents?: HeartbeatAgentCard[] }>("heartbeat.states", {});
+      this._heartbeatAgents = result?.agents ?? [];
     } catch {
       // heartbeat.states may not exist in older daemons -- silently ignore
     }
@@ -1010,7 +937,7 @@ export class IcSchedulerView extends LitElement {
   /* ---- CRUD methods ---- */
 
   private async _handleEditorSave(e: CustomEvent<CronJobInput>): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     const jobData = e.detail;
     this._editorError = "";
 
@@ -1034,11 +961,13 @@ export class IcSchedulerView extends LitElement {
         this._jobs = updated;
       }
       try {
-        await this._controller.updateJob(
-          this._editingJob.id,
-          this._selectedAgentId,
-          jobData as unknown as Record<string, unknown>,
-        );
+        // Spread jobData FIRST so the positional jobId / _agentId arguments
+        // win over any same-named keys (defensive sanitization).
+        await this.rpcClient.call("cron.update", {
+          ...(jobData as unknown as Record<string, unknown>),
+          jobId: this._editingJob.id,
+          _agentId: this._selectedAgentId || undefined,
+        });
         this._editorOpen = false;
         this._editingJob = null;
       } catch (err) {
@@ -1061,10 +990,11 @@ export class IcSchedulerView extends LitElement {
       };
       this._jobs = [...this._jobs, tempJob];
       try {
-        const result = await this._controller.addJob(
-          this._selectedAgentId,
-          jobData as unknown as Record<string, unknown>,
-        );
+        const result = await this.rpcClient.call<{ jobId: string }>("cron.add", {
+          ...(jobData as unknown as Record<string, unknown>),
+          _agentId: this._selectedAgentId || undefined,
+          _deliveryTarget: jobData.deliveryTarget,
+        });
         // Update the temp job with the server-returned ID if different
         if (result?.jobId && result.jobId !== tempJob.id) {
           const idx = this._jobs.findIndex((j) => j.id === tempJob.id);
@@ -1084,14 +1014,17 @@ export class IcSchedulerView extends LitElement {
   }
 
   private async _handleDeleteJob(jobId: string): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     if (!window.confirm("Delete this job?")) return;
 
     const originalJobs = [...this._jobs];
     this._jobs = this._jobs.filter((j) => j.id !== jobId);
 
     try {
-      await this._controller.removeJob(jobId, this._selectedAgentId);
+      await this.rpcClient.call("cron.remove", {
+        jobId,
+        _agentId: this._selectedAgentId || undefined,
+      });
     } catch (err) {
       this._jobs = originalJobs;
       this._error = err instanceof Error ? err.message : "Failed to delete job";
@@ -1099,33 +1032,28 @@ export class IcSchedulerView extends LitElement {
   }
 
   private async _handleToggleHeartbeat(): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     const newValue = !this._heartbeatEnabled;
     this._heartbeatEnabled = newValue;
     try {
-      await this._controller.setConfig("scheduler", "heartbeat.enabled", newValue);
+      await this.rpcClient.call("config.set", {
+        section: "scheduler",
+        key: "heartbeat.enabled",
+        value: newValue,
+      });
     } catch (err) {
       this._heartbeatEnabled = !newValue;
       this._error = err instanceof Error ? err.message : "Failed to toggle heartbeat";
     }
   }
 
-  private _handleCompleteTask(taskId: string): void {
-    this._extractedTasks = this._extractedTasks.map((t) =>
-      t.taskId === taskId ? { ...t, status: "completed" as const } : t,
-    );
-  }
-
-  private _handleDismissTask(taskId: string): void {
-    this._extractedTasks = this._extractedTasks.map((t) =>
-      t.taskId === taskId ? { ...t, status: "dismissed" as const } : t,
-    );
-  }
-
   private async _handleRunJob(jobName: string): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     try {
-      await this._controller.runJob(jobName, this._selectedAgentId);
+      await this.rpcClient.call("cron.run", {
+        jobName,
+        _agentId: this._selectedAgentId || undefined,
+      });
       IcToast.show("Job triggered", "success");
     } catch (err) {
       this._error = err instanceof Error ? err.message : "Failed to run job";
@@ -1133,9 +1061,9 @@ export class IcSchedulerView extends LitElement {
   }
 
   private async _handleTriggerHeartbeat(agentId: string): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     try {
-      await this._controller.triggerHeartbeat(agentId);
+      await this.rpcClient.call("heartbeat.trigger", { agentId: agentId || undefined });
       IcToast.show("Heartbeat triggered for " + agentId, "success");
     } catch (err) {
       this._error = err instanceof Error ? err.message : "Failed to trigger heartbeat";
@@ -1516,53 +1444,6 @@ export class IcSchedulerView extends LitElement {
     `;
   }
 
-  private _renderExtractedTasksTab() {
-    if (this._extractedTasks.length === 0) {
-      return html`
-        <ic-empty-state
-          icon="scheduler"
-          message="No extracted tasks"
-          description="Tasks will appear when agents extract them from conversations."
-        ></ic-empty-state>
-      `;
-    }
-
-    return html`
-      <div class="task-grid" role="table">
-        <div class="grid-header" role="row">
-          <div class="cell" role="columnheader">Title</div>
-          <div class="cell" role="columnheader">Priority</div>
-          <div class="cell" role="columnheader">Status</div>
-          <div class="cell" role="columnheader">Actions</div>
-        </div>
-        ${this._extractedTasks.map((task) => this._renderTaskRow(task))}
-      </div>
-    `;
-  }
-
-  private _renderTaskRow(task: ExtractedTask) {
-    const priorityClass = `priority-tag priority-tag--${task.priority}`;
-    return html`
-      <div class="grid-row" role="row">
-        <div class="cell" role="cell">${task.title}</div>
-        <div class="cell" role="cell">
-          <span class=${priorityClass}>${task.priority}</span>
-        </div>
-        <div class="cell" role="cell">${task.status}</div>
-        <div class="cell" role="cell">
-          ${task.status === "pending"
-            ? html`
-                <div class="task-actions">
-                  <button class="btn-sm btn-complete" @click=${() => this._handleCompleteTask(task.taskId)}>Complete</button>
-                  <button class="btn-sm btn-dismiss" @click=${() => this._handleDismissTask(task.taskId)}>Dismiss</button>
-                </div>
-              `
-            : nothing}
-        </div>
-      </div>
-    `;
-  }
-
   private _renderEditorOverlay() {
     if (!this._editorOpen) return nothing;
 
@@ -1600,7 +1481,6 @@ export class IcSchedulerView extends LitElement {
       >
         <div slot="cron-jobs">${this._renderCronJobsTab()}</div>
         <div slot="heartbeat">${this._renderHeartbeatTab()}</div>
-        <div slot="extracted-tasks">${this._renderExtractedTasksTab()}</div>
       </ic-tabs>
 
       ${this._renderEditorOverlay()}

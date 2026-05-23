@@ -51,17 +51,13 @@ describe("createIMessagePlugin", () => {
     expect(plugin.channelType).toBe("imessage");
   });
 
-  it("has capabilities with expected chatTypes", () => {
+  it("has capabilities with expected features", () => {
     const plugin = createIMessagePlugin(makeDeps());
 
-    expect(plugin.capabilities.chatTypes).toContain("dm");
-    expect(plugin.capabilities.chatTypes).toContain("group");
-  });
-
-  it("has no streaming support", () => {
-    const plugin = createIMessagePlugin(makeDeps());
-
-    expect(plugin.capabilities.streaming?.supported).toBe(false);
+    expect(plugin.capabilities.features.fetchHistory).toBe(true);
+    expect(plugin.capabilities.features.attachments).toBe(true);
+    expect(plugin.capabilities.features.editMessages).toBe(false);
+    expect(plugin.capabilities.replyToMetaKey).toBe("imsgMessageId");
   });
 
   it("register() returns ok", () => {

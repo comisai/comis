@@ -142,7 +142,7 @@ export interface PiExecutorDeps {
   /** Documentation config from AppConfig. */
   documentationConfig?: import("@comis/core").DocumentationConfig;
   /** Context store for DAG mode. Optional -- only present when DAG tables exist. */
-  contextStore?: import("@comis/core").ContextStorePort;
+  contextStore?: import("@comis/core").ContextEngineStore;
   /** Raw database handle for DAG transactions. */
   db?: unknown;
   /** Tenant ID for conversation creation. */
@@ -218,9 +218,7 @@ export interface PiExecutorDeps {
     readonly filePath?: string;
     /**
      * Per-file byte cap for cache-trace JSONL. Defaults to the runtime's
-     * fallback constant when undefined (50 MB after Plan 48-03 lands; 10 MB
-     * until then — but in normal operation the schema default of 50 MB
-     * always wins, so the transient mismatch is moot).
+     * fallback constant (50 MB) when undefined.
      */
     readonly maxFileBytes?: number;
     readonly includeMessages?: boolean;

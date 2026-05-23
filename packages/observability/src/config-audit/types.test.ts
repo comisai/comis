@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Schema-shape tests for `ConfigWriteAuditRecordSchema` /
- * `ConfigObserveAuditRecordSchema` per design §9.2 (post-260519-rrm
- * deviation G fix).
+ * `ConfigObserveAuditRecordSchema` per design §9.2 (deviation G fix).
  *
  * New schema invariants:
  *   - `event` discriminant ("config.write" | "config.observe"), NOT

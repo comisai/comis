@@ -10,8 +10,6 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 const mockAssembleToolPipeline = vi.hoisted(() => vi.fn(async () => []));
 const mockCreateCronTool = vi.hoisted(() => vi.fn(() => ({ name: "cron" })));
-const mockCreateUnifiedMemoryTool = vi.hoisted(() => vi.fn(() => ({ name: "memory_tool" })));
-const mockCreateUnifiedSessionTool = vi.hoisted(() => vi.fn(() => ({ name: "session_tool" })));
 const mockCreateUnifiedContextTool = vi.hoisted(() => vi.fn(() => ({ name: "context_tool" })));
 const mockCreateMessageTool = vi.hoisted(() => vi.fn(() => ({ name: "message" })));
 const mockCreateDiscordActionTool = vi.hoisted(() => vi.fn(() => ({ name: "discord_action" })));
@@ -30,6 +28,7 @@ const mockCreateExtractDocumentTool = vi.hoisted(() => vi.fn(() => ({ name: "ext
 const mockCreateGatewayTool = vi.hoisted(() => vi.fn(() => ({ name: "gateway" })));
 const mockCreateBrowserTool = vi.hoisted(() => vi.fn(() => ({ name: "browser" })));
 const mockCreateAgentsManageTool = vi.hoisted(() => vi.fn(() => ({ name: "agents_manage" })));
+const mockCreateBackgroundTasksTool = vi.hoisted(() => vi.fn(() => ({ name: "background_tasks" })));
 const mockCreateObsQueryTool = vi.hoisted(() => vi.fn(() => ({ name: "obs_query" })));
 const mockCreateSessionsManageTool = vi.hoisted(() => vi.fn(() => ({ name: "sessions_manage" })));
 const mockCreateModelsManageTool = vi.hoisted(() => vi.fn(() => ({ name: "models_manage" })));
@@ -52,10 +51,6 @@ const mockCreateProcessRegistry = vi.hoisted(() => vi.fn(() => ({
 })));
 const mockCreateMediaPersistenceService = vi.hoisted(() => vi.fn(() => ({
   persist: vi.fn(),
-})));
-const mockCreateCredentialInjector = vi.hoisted(() => vi.fn(() => ({
-  createInjectedFetch: vi.fn(),
-  getMappings: vi.fn(() => []),
 })));
 const mockMcpToolsToAgentTools = vi.hoisted(() => vi.fn(() => [{ name: "mcp:server/tool" }]));
 const mockSanitizeImageForApi = vi.hoisted(() => vi.fn());
@@ -86,8 +81,8 @@ const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
 // ---------------------------------------------------------------------------
 
 // Daemon imports from THREE @comis/skills subpaths.
-// - "." subpath: policy, pipeline, MCP bridge, credential injector (no longer
-//   includes the 38+ platform-tool factories -- those live in the registry).
+// - "." subpath: policy, pipeline, MCP bridge (no longer includes the 38+
+//   platform-tool factories -- those live in the registry).
 // - "./tools" subpath: exec/process/apply-patch + helpers (media-persistence,
 //   image sanitizer, file-state tracker).
 // - "./platform-tools" subpath: createPlatformToolRegistry -- the descriptor
@@ -98,7 +93,6 @@ const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
 
 vi.mock("@comis/skills", () => ({
   assembleToolPipeline: mockAssembleToolPipeline,
-  createCredentialInjector: mockCreateCredentialInjector,
   mcpToolsToAgentTools: mockMcpToolsToAgentTools,
   TOOL_PROFILES: {
     minimal: ["exec", "read", "write"],
@@ -157,7 +151,6 @@ vi.mock("@comis/skills/platform-tools", () => ({
     { name: "memory_manage", category: "memory", build: (_ctx: any) => ({ name: "memory_manage" }) },
     { name: "memory_search", category: "memory", build: (_ctx: any) => ({ name: "memory_search" }) },
     { name: "memory_store", category: "memory", build: (_ctx: any) => ({ name: "memory_store" }) },
-    { name: "unified_memory", category: "memory", build: (ctx: any) => mockCreateUnifiedMemoryTool(ctx.rpcCall, ctx.approvalGate) },
     { name: "discord_action", category: "messaging", build: (ctx: any) => mockCreateDiscordActionTool(ctx.rpcCall, ctx.skillsLogger) },
     { name: "message", category: "messaging", build: (ctx: any) => mockCreateMessageTool(ctx.rpcCall) },
     { name: "notify", category: "messaging", build: (ctx: any) => mockCreateNotifyTool(ctx.rpcCall) },
@@ -177,7 +170,6 @@ vi.mock("@comis/skills/platform-tools", () => ({
     { name: "sessions_manage", category: "session", build: (ctx: any) => mockCreateSessionsManageTool(ctx.rpcCall, ctx.approvalGate) },
     { name: "sessions_send", category: "session", build: (ctx: any) => mockCreateSessionsSendTool(ctx.rpcCall) },
     { name: "sessions_spawn", category: "session", build: (ctx: any) => mockCreateSessionsSpawnTool(ctx.rpcCall) },
-    { name: "unified_session", category: "session", build: (ctx: any) => mockCreateUnifiedSessionTool(ctx.rpcCall) },
   ]),
 }));
 
@@ -386,18 +378,14 @@ describe("setupTools", () => {
 
     const tools = pipelineArgs.platformTools();
 
-    // Verify base tools are created (28 base tools + apply_patch = 29 without conditional ones)
+    // Verify base tools are created (26 base tools + apply_patch = 27 without conditional ones)
     expect(mockCreateCronTool).toHaveBeenCalled();
-    expect(mockCreateUnifiedMemoryTool).toHaveBeenCalled();
-    expect(mockCreateUnifiedSessionTool).toHaveBeenCalled();
     expect(mockCreateMessageTool).toHaveBeenCalled();
     expect(mockCreateApplyPatchTool).toHaveBeenCalled();
 
     // Tools should include all base platform tools
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).toContain("cron");
-    expect(toolNames).toContain("memory_tool");
-    expect(toolNames).toContain("session_tool");
     expect(toolNames).toContain("apply_patch");
     expect(toolNames).toContain("gateway");
     expect(toolNames).toContain("skills_manage");
@@ -589,49 +577,7 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 7. Credential injection when store has mappings
-  // -------------------------------------------------------------------------
-
-  it("creates credential injector when store has mappings", async () => {
-    const credentialMappingStore = {
-      listAll: vi.fn(() => ({
-        ok: true,
-        value: [{ id: "cred-1", secretName: "API_KEY", strategy: "header" }],
-      })),
-    } as any;
-
-    const deps = createMinimalDeps({ credentialMappingStore });
-    const setupTools = await getSetupTools();
-    const { assembleToolsForAgent } = setupTools(deps);
-    await assembleToolsForAgent("agent-1");
-
-    expect(mockCreateCredentialInjector).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mappings: [{ id: "cred-1", secretName: "API_KEY", strategy: "header" }],
-        agentId: "agent-1",
-      }),
-    );
-
-    // Verify credentialInjector is passed to assembleToolPipeline
-    const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
-    expect(pipelineArgs.credentialInjector).toBeDefined();
-  });
-
-  // -------------------------------------------------------------------------
-  // 8. Credential injection skipped when no store
-  // -------------------------------------------------------------------------
-
-  it("skips credential injection when store is absent", async () => {
-    const deps = createMinimalDeps({ credentialMappingStore: undefined });
-    const setupTools = await getSetupTools();
-    const { assembleToolsForAgent } = setupTools(deps);
-    await assembleToolsForAgent("agent-1");
-
-    expect(mockCreateCredentialInjector).not.toHaveBeenCalled();
-  });
-
-  // -------------------------------------------------------------------------
-  // 9. preprocessMessageText delegates to linkRunner
+  // 7. preprocessMessageText delegates to linkRunner
   // -------------------------------------------------------------------------
 
   it("preprocessMessageText delegates to linkRunner.processMessage", async () => {
@@ -701,10 +647,16 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 11. system:shutdown cleans up process registries
+  // 11. shutdownBackgroundProcesses drains per-agent process registries
+  //
+  // setupTools used to subscribe to eventBus.on("system:shutdown", ...)
+  // for cleanup; that subscriber silently no-op'd in production because no
+  // production code emits the event. ToolsResult.shutdownBackgroundProcesses
+  // now exposes the same cleanup as a directly-invoked function called
+  // from setupShutdown.
   // -------------------------------------------------------------------------
 
-  it("cleans up process registries on system:shutdown", async () => {
+  it("shutdownBackgroundProcesses drains per-agent process registries when invoked", async () => {
     const eventBus = createMockEventBus();
     const deps = createMinimalDeps({
       eventBus: eventBus as any,
@@ -721,7 +673,7 @@ describe("setupTools", () => {
     });
 
     const setupTools = await getSetupTools();
-    const { assembleToolsForAgent } = setupTools(deps);
+    const { assembleToolsForAgent, shutdownBackgroundProcesses } = setupTools(deps);
 
     // Assemble tools to create a process registry
     await assembleToolsForAgent("agent-1");
@@ -734,11 +686,8 @@ describe("setupTools", () => {
       registryMock.cleanup.mockResolvedValue(2);
     }
 
-    // Trigger shutdown
-    await eventBus.emit("system:shutdown", { reason: "test", graceful: true });
-
-    // Wait for async handler
-    await new Promise(resolve => setTimeout(resolve, 10));
+    // Trigger the cleanup directly (replaces the deleted event-bus subscriber).
+    await shutdownBackgroundProcesses();
 
     if (registryMock) {
       expect(registryMock.cleanup).toHaveBeenCalled();
@@ -746,10 +695,23 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 12. system:shutdown disconnects MCP
+  // 12. MCP servers disconnect at composition root, not via event bus
+  //
+  // The old eventBus.on("system:shutdown", ...) subscriber bundled
+  // mcpClientManager.disconnectAll into the same closure as the per-agent
+  // process-registry drain. That single closure is now split into two
+  // ShutdownDeps fields: setupTools.shutdownBackgroundProcesses (drain
+  // registries) and the composition root binding mcpClientManagerDisconnectAll
+  // directly off the mcpClientManager handle (daemon.ts wires
+  // mcpClientManager.disconnectAll.bind into ShutdownDeps).
+  //
+  // setupTools NO LONGER calls disconnectAll itself; the responsibility
+  // moved to daemon.ts. This test asserts the boundary: setupTools does
+  // NOT invoke mcpClientManager.disconnectAll at any point during its own
+  // lifecycle (including the new shutdownBackgroundProcesses path).
   // -------------------------------------------------------------------------
 
-  it("disconnects MCP servers on system:shutdown", async () => {
+  it("setupTools does not invoke mcpClientManager.disconnectAll itself (boundary owned by daemon.ts composition root)", async () => {
     const eventBus = createMockEventBus();
     const mcpClientManager = {
       getTools: vi.fn(() => []),
@@ -767,15 +729,12 @@ describe("setupTools", () => {
     });
 
     const setupTools = await getSetupTools();
-    setupTools(deps);
+    const { shutdownBackgroundProcesses } = setupTools(deps);
+    await shutdownBackgroundProcesses();
 
-    // Trigger shutdown
-    await eventBus.emit("system:shutdown", { reason: "test", graceful: true });
-
-    // Wait for async handler
-    await new Promise(resolve => setTimeout(resolve, 10));
-
-    expect(mcpClientManager.disconnectAll).toHaveBeenCalled();
+    // The composition root (daemon.ts) — not setupTools — is responsible
+    // for binding mcpClientManager.disconnectAll into ShutdownDeps.
+    expect(mcpClientManager.disconnectAll).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -845,27 +804,7 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 16. Credential injection skipped when listAll returns empty
-  // -------------------------------------------------------------------------
-
-  it("skips credential injector when credential store has no mappings", async () => {
-    const credentialMappingStore = {
-      listAll: vi.fn(() => ({
-        ok: true,
-        value: [],
-      })),
-    } as any;
-
-    const deps = createMinimalDeps({ credentialMappingStore });
-    const setupTools = await getSetupTools();
-    const { assembleToolsForAgent } = setupTools(deps);
-    await assembleToolsForAgent("agent-1");
-
-    expect(mockCreateCredentialInjector).not.toHaveBeenCalled();
-  });
-
-  // -------------------------------------------------------------------------
-  // 17. Tool group filtering
+  // 16. Tool group filtering
   // -------------------------------------------------------------------------
 
   describe("tool group filtering", () => {
@@ -997,7 +936,7 @@ describe("setupTools", () => {
 
       // Non-coding tools should be filtered out
       expect(toolNames).not.toContain("cron");
-      expect(toolNames).not.toContain("memory_tool");
+      expect(toolNames).not.toContain("memory_get");
       expect(toolNames).not.toContain("sessions_spawn");
       expect(toolNames).not.toContain("gateway");
     });
@@ -1017,7 +956,7 @@ describe("setupTools", () => {
 
       // Should include all base platform tools
       expect(toolNames).toContain("cron");
-      expect(toolNames).toContain("memory_tool");
+      expect(toolNames).toContain("memory_get");
       expect(toolNames).toContain("gateway");
       expect(toolNames).toContain("sessions_spawn");
     });
@@ -1037,7 +976,7 @@ describe("setupTools", () => {
 
       // full profile should return ALL base tools (same as no toolGroups)
       expect(toolNames).toContain("cron");
-      expect(toolNames).toContain("memory_tool");
+      expect(toolNames).toContain("memory_get");
       expect(toolNames).toContain("gateway");
       expect(toolNames).toContain("sessions_spawn");
     });
@@ -1110,7 +1049,7 @@ describe("setupTools", () => {
       const tools = pipelineArgs.platformTools();
       const toolNames = tools.map((t: any) => t.name);
       expect(toolNames).toContain("cron");
-      expect(toolNames).toContain("memory_tool");
+      expect(toolNames).toContain("memory_get");
     });
   });
 

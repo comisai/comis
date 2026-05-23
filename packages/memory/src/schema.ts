@@ -92,13 +92,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL;
   `);
 
-  // --- Migration: add agent_id column for multi-agent memory isolation ---
-  try {
-    db.exec(`ALTER TABLE memories ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'default'`);
-  } catch {
-    // Column already exists -- safe to ignore (SQLite throws on duplicate ADD COLUMN)
-  }
-
   // Index for agent-scoped queries
   db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agent_id);`);
 
@@ -169,30 +162,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
   `);
 
-  // --- Archives table (compaction service) ---
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS archives (
-      session_key TEXT NOT NULL,
-      messages TEXT NOT NULL,
-      archived_at INTEGER NOT NULL,
-      expires_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_archives_expires ON archives(expires_at);
-  `);
-
-  // --- Identity links table (cross-platform user recognition) ---
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS identity_links (
-      canonical_id TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      provider_user_id TEXT NOT NULL,
-      display_name TEXT,
-      linked_at INTEGER NOT NULL,
-      PRIMARY KEY (provider, provider_user_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_identity_canonical ON identity_links(canonical_id);
-  `);
-
   // --- Context store tables (DAG schema) ---
   initContextSchema(db);
 
@@ -204,7 +173,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
       trace_id TEXT NOT NULL,
       agent_id TEXT NOT NULL,
       channel_id TEXT DEFAULT '',
-      execution_id TEXT DEFAULT '',
       session_key TEXT DEFAULT '',
       provider TEXT NOT NULL,
       model TEXT NOT NULL,
@@ -227,22 +195,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_obs_token_provider ON obs_token_usage(provider, timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_token_session ON obs_token_usage(session_key, timestamp);
   `);
-
-  // --- Migration: add cache cost columns to obs_token_usage ---
-  try {
-    db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cost_cache_read REAL NOT NULL DEFAULT 0`);
-  } catch { /* Column already exists */ }
-  try {
-    db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cost_cache_write REAL NOT NULL DEFAULT 0`);
-  } catch { /* Column already exists */ }
-  try {
-    db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cache_saved REAL NOT NULL DEFAULT 0`);
-  } catch { /* Column already exists */ }
-
-  // --- Migration: add cache_retention column to obs_token_usage ---
-  try {
-    db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cache_retention TEXT DEFAULT NULL`);
-  } catch { /* Column already exists */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS obs_delivery (
@@ -325,8 +277,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
       tenant_id TEXT NOT NULL DEFAULT 'default',
       options_json TEXT NOT NULL DEFAULT '{}',
       origin TEXT NOT NULL DEFAULT 'unknown',
-      format_applied INTEGER NOT NULL DEFAULT 0,
-      chunking_applied INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'pending'
         CHECK(status IN ('pending', 'in_flight', 'delivered', 'failed', 'expired')),
       attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -337,8 +287,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
       last_attempt_at INTEGER,
       next_retry_at INTEGER,
       last_error TEXT,
-      markdown_fallback_applied INTEGER NOT NULL DEFAULT 0,
-      delivered_message_id TEXT,
       trace_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_dq_status_scheduled

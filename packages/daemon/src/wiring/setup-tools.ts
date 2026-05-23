@@ -7,7 +7,7 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
-import type { AppContainer, SkillsConfig, ApprovalGate, CredentialMappingPort, WrapExternalContentOptions, SessionKey, ToolCapabilityPort } from "@comis/core";
+import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -37,14 +37,12 @@ import {
   TOOL_GROUPS,
   assembleToolPipeline,
   mcpToolsToAgentTools,
-  createCredentialInjector,
-  type RpcCall,
   type LinkRunner,
   type McpClientManager,
   type ToolSourceProfile,
   type PlatformToolProvider,
-  type CredentialInjector,
 } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 
 // Tool capability adapters + factories live on the `./tools` subpath.
 // Exec / process / apply-patch tool factories, file-state tracker,
@@ -111,8 +109,6 @@ export interface ToolsDeps {
   approvalGate?: ApprovalGate;
   /** Filtered environment for subprocess spawning. */
   subprocessEnv?: Record<string, string>;
-  /** Optional credential mapping store for per-agent credential injection */
-  credentialMappingStore?: CredentialMappingPort;
   /** Optional callback for suspicious content detection in external content */
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /**
@@ -179,6 +175,14 @@ export interface ToolsResult {
   ) => Promise<Awaited<ReturnType<typeof assembleToolPipeline>>>;
   /** Preprocess message text through the link understanding pipeline. */
   preprocessMessageText: (text: string) => Promise<string>;
+  /**
+   * Drain per-agent background-process registries on shutdown. Returned from
+   * setupTools so the composition root (daemon.ts → setupShutdown) can
+   * invoke teardown directly via ShutdownDeps.shutdownBackgroundProcesses
+   * Replaces the previous eventBus.on("system:shutdown", ...) subscriber
+   * that silently no-op'd in production.
+   */
+  shutdownBackgroundProcesses: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +213,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     linkRunner,
     approvalGate,
     subprocessEnv,
-    credentialMappingStore,
     onSuspiciousContent,
     mcpClientManager,
     sandboxProvider,
@@ -302,6 +305,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       mcpClientManager.callTool.bind(mcpClientManager),
       toolSourceProfiles,
       skillsLogger,
+      onSuspiciousContent,
     );
     return agentMcpTools;
   }
@@ -403,6 +407,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         skillsLogger,
         approvalGate,
         eventBus,
+        onSuspiciousContent,
         imageGenProvider: deps.imageGenProvider,
         backgroundTaskManager: deps.backgroundTaskManager,
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
@@ -545,20 +550,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       return tools;
     };
 
-    // Credential injection -- create injector from credential mappings
-    let credentialInjector: CredentialInjector | undefined;
-    if (credentialMappingStore) {
-      const mappingsResult = credentialMappingStore.listAll();
-      if (mappingsResult.ok && mappingsResult.value.length > 0) {
-        credentialInjector = createCredentialInjector({
-          secretManager,
-          mappings: mappingsResult.value,
-          eventBus,
-          agentId,
-        });
-      }
-    }
-
     // Determine platform tool provider based on options
     let platformToolProvider: PlatformToolProvider | undefined;
     if (!includePlatform) {
@@ -648,7 +639,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       eventBus: undefined,
       logger: skillsLogger,
       agentId,
-      credentialInjector,
       onSuspiciousContent,
       readOnlyPaths,
       toolSourceProfiles,
@@ -700,8 +690,17 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     }, `Tool audit: ${event.toolName}${event.description ? ` (${event.description})` : ""} ${event.success ? "succeeded" : "failed"} (${Math.round(event.durationMs)}ms)${paramsPreview}`);
   });
 
-  // Cleanup all background processes on system shutdown
-  eventBus.on("system:shutdown", async () => {
+  // Drain per-agent background-process registries on shutdown.
+  // Previously this lived inside an eventBus.on("system:shutdown", ...)
+  // subscriber, but the event had zero production emitters — the cleanup
+  // silently no-op'd in production. The closure is now returned to the
+  // composition root (daemon.ts → setupShutdown) and invoked directly via
+  // ShutdownDeps.shutdownBackgroundProcesses.
+  //
+  // The original single closure splits into two ShutdownDeps fields: this
+  // function (background-processes) and mcpClientManagerDisconnectAll (bound
+  // at daemon.ts directly off the mcpClientManager handle).
+  async function shutdownBackgroundProcesses(): Promise<void> {
     let totalKilled = 0;
     for (const [agentId, registry] of processRegistries) {
       const cleanedCount = await registry.cleanup();
@@ -714,11 +713,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       skillsLogger.info({ totalKilled }, "All background processes cleaned up");
     }
     processRegistries.clear();
+  }
 
-    // Disconnect MCP servers on shutdown
-    await mcpClientManager.disconnectAll();
-    skillsLogger.info("MCP servers disconnected on shutdown");
-  });
-
-  return { assembleToolsForAgent, preprocessMessageText };
+  return { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses };
 }

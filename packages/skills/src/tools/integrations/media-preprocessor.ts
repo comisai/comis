@@ -224,16 +224,16 @@ export async function preprocessMessage(
     const kind = classifyAttachment(att);
 
     if (kind === "audio") {
-      const r = await processAudioAttachment(att, { transcriber: deps.transcriber, resolveAttachment, logger: deps.logger }, (a) => buildAttachmentHint("audio", a, "transcribe_audio"));
+      const r = await processAudioAttachment(att, { transcriber: deps.transcriber, resolveAttachment, logger: deps.logger, onSuspiciousContent: deps.onSuspiciousContent }, (a) => buildAttachmentHint("audio", a, "transcribe_audio"));
       if (r.textPrefix) textPrefixes.push(r.textPrefix);
       if (r.transcription) transcriptions.push(r.transcription);
     } else if (kind === "image") {
-      const r = await processImageAttachment(att, { imageAnalyzer: deps.imageAnalyzer, resolveAttachment, visionAvailable: deps.visionAvailable, sanitizeImage: deps.sanitizeImage, logger: deps.logger }, imageContents.length, (a) => buildAttachmentHint("image", a, "image_analyze"));
+      const r = await processImageAttachment(att, { imageAnalyzer: deps.imageAnalyzer, resolveAttachment, visionAvailable: deps.visionAvailable, sanitizeImage: deps.sanitizeImage, logger: deps.logger, onSuspiciousContent: deps.onSuspiciousContent }, imageContents.length, (a) => buildAttachmentHint("image", a, "image_analyze"));
       if (r.textPrefix) textPrefixes.push(r.textPrefix);
       if (r.analysis) analyses.push(r.analysis);
       if (r.imageContent) imageContents.push(r.imageContent);
     } else if (kind === "video") {
-      const r = await processVideoAttachment(att, { describeVideo: deps.describeVideo, resolveAttachment, maxVideoDescriptionChars: deps.maxVideoDescriptionChars, logger: deps.logger }, (a) => buildAttachmentHint("video", a, "describe_video"));
+      const r = await processVideoAttachment(att, { describeVideo: deps.describeVideo, resolveAttachment, maxVideoDescriptionChars: deps.maxVideoDescriptionChars, logger: deps.logger, onSuspiciousContent: deps.onSuspiciousContent }, (a) => buildAttachmentHint("video", a, "describe_video"));
       if (r.textPrefix) textPrefixes.push(r.textPrefix);
       if (r.videoDescription) videoDescriptions.push(r.videoDescription);
     } else if (kind === "document") {

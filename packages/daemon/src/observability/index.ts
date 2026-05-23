@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @comis/daemon/observability - trace logging, token tracking, latency metrics, log level control
+// @comis/daemon/observability - trace logging, token tracking, log level control
 
 import type { EventMap, EventHandler } from "@comis/core";
 
@@ -20,15 +20,6 @@ export type { LogLevelManager } from "./log-infra.js";
 // Token tracker: LLM usage with provider/model attribution
 export { createTokenTracker } from "./token-tracker.js";
 export type { TokenTracker, TokenUsageEntry, TokenAggregation } from "./token-tracker.js";
-
-// Latency recorder: operation timing with percentile statistics
-export { createLatencyRecorder } from "./latency-recorder.js";
-export type {
-  LatencyRecorder,
-  LatencyRecord,
-  LatencyStats,
-  OperationType,
-} from "./latency-recorder.js";
 
 // Billing estimator: CostTracker aggregation with time-windowed queries
 export { createBillingEstimator } from "./billing-estimator.js";

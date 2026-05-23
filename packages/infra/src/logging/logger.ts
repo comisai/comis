@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import pino from "pino";
 import type { TransportMultiOptions, TransportSingleOptions } from "pino";
 import type { ComisLogger as CoreComisLogger } from "@comis/core";
+import { CREDENTIAL_KEYS } from "@comis/observability";
 
 // `maskToken` is loaded via createRequire on the EDGE-KEEPING SUBPATH
 // (not the package barrel) to defeat the cyclic-package cycle detection
@@ -25,93 +26,60 @@ const _edgeKeeping = createRequire(import.meta.url)(
 const maskToken = _edgeKeeping.maskToken;
 
 /**
+ * Maximum nesting depth at which we apply redaction.
+ *
+ * Matches the CLAUDE.md "Logging" section guidance: "Pino auto-redacts
+ * credentials … up to 3 levels deep". Generates paths at depths 0..3
+ * inclusive (4 lanes total per credential key).
+ */
+const REDACT_MAX_DEPTH = 3;
+
+/**
+ * Build the Pino redact.paths array by generating one path per
+ * (depth, key) tuple. Runs once at module init.
+ *
+ * Coupling: keys come from `@comis/observability`'s `CREDENTIAL_KEYS`
+ * (single source of truth shared with the diagnostic-payload sanitizer
+ * via `isCredentialFieldName`). Any future credential key added to
+ * that Set auto-redacts at every nesting depth — there is nothing to
+ * keep in sync here.
+ *
+ * NOTE: Pino's `redact.paths` matcher is CASE-SENSITIVE. `CREDENTIAL_KEYS`
+ * therefore intentionally contains BOTH snake_case AND camelCase forms
+ * for every multi-word entry (see sanitize-diagnostic-payload.ts header
+ * comment on the Set's three-lane structure). The `isCredentialFieldName`
+ * predicate inside the sanitizer uses lowercase-compare and is
+ * unaffected by the duplication.
+ */
+function generateRedactPaths(
+  keys: ReadonlySet<string>,
+  maxDepth: number,
+): string[] {
+  const out: string[] = [];
+  for (let depth = 0; depth <= maxDepth; depth++) {
+    const prefix = "*.".repeat(depth);
+    for (const key of keys) {
+      out.push(`${prefix}${key}`);
+    }
+  }
+  return out;
+}
+
+/**
  * Default paths to redact from all log output.
  *
  * Uses Pino's fast-redact under the hood (compiled once, amortized O(1)).
- * Covers common credential field names at any nesting depth up to 4 levels.
+ * Covers every key in `@comis/observability`'s `CREDENTIAL_KEYS` set at
+ * every nesting depth up to {@link REDACT_MAX_DEPTH} levels.
+ *
+ * Exported (test affordance) so the end-to-end Pino redaction tests in
+ * `logger.test.ts` can exercise the production path list directly — keeps
+ * the test honest about what is actually wired into the factory.
  */
-const DEFAULT_REDACT_PATHS: string[] = [
-  // Top-level
-  "apiKey",
-  "token",
-  "password",
-  "secret",
-  "authorization",
-  "accessToken",
-  "refreshToken",
-  "botToken",
-  "privateKey",
-  "credential",
-  "credentials",
-  // Expanded credential patterns
-  "key",
-  "passphrase",
-  "connectionString",
-  "accessKey",
-  // HTTP cookies and webhook signing secrets
-  "cookie",
-  "webhookSecret",
-  // Nested one level (e.g., headers.authorization)
-  "*.apiKey",
-  "*.token",
-  "*.password",
-  "*.secret",
-  "*.authorization",
-  "*.accessToken",
-  "*.refreshToken",
-  "*.botToken",
-  "*.privateKey",
-  "*.credential",
-  "*.credentials",
-  // Expanded credential patterns
-  "*.key",
-  "*.passphrase",
-  "*.connectionString",
-  "*.accessKey",
-  // HTTP cookies and webhook signing secrets
-  "*.cookie",
-  "*.webhookSecret",
-  // Nested two levels (e.g., config.telegram.botToken)
-  "*.*.apiKey",
-  "*.*.token",
-  "*.*.password",
-  "*.*.secret",
-  "*.*.authorization",
-  "*.*.accessToken",
-  "*.*.refreshToken",
-  "*.*.botToken",
-  "*.*.privateKey",
-  "*.*.credential",
-  "*.*.credentials",
-  // Expanded credential patterns
-  "*.*.key",
-  "*.*.passphrase",
-  "*.*.connectionString",
-  "*.*.accessKey",
-  // HTTP cookies and webhook signing secrets
-  "*.*.cookie",
-  "*.*.webhookSecret",
-  // Nested three levels (e.g., response.config.channels.botToken)
-  "*.*.*.apiKey",
-  "*.*.*.token",
-  "*.*.*.password",
-  "*.*.*.secret",
-  "*.*.*.authorization",
-  "*.*.*.accessToken",
-  "*.*.*.refreshToken",
-  "*.*.*.botToken",
-  "*.*.*.privateKey",
-  "*.*.*.credential",
-  "*.*.*.credentials",
-  // Expanded credential patterns
-  "*.*.*.key",
-  "*.*.*.passphrase",
-  "*.*.*.connectionString",
-  "*.*.*.accessKey",
-  // HTTP cookies and webhook signing secrets
-  "*.*.*.cookie",
-  "*.*.*.webhookSecret",
-];
+export const DEFAULT_REDACT_PATHS: string[] = generateRedactPaths(
+  CREDENTIAL_KEYS,
+  REDACT_MAX_DEPTH,
+);
 
 /**
  * Options for creating an Comis logger.

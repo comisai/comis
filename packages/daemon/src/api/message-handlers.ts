@@ -91,8 +91,8 @@ type InboundMessageIdResolver = NonNullable<MessageHandlerDeps["inboundMessageId
 
 // ---------------------------------------------------------------------------
 // Capability guard — maps RPC methods to ChannelCapability feature flags.
-// When channelPlugins is provided, unsupported actions are rejected before
-// reaching the adapter, saving a tool call and producing a clear error.
+// Unsupported actions are rejected before reaching the adapter, saving a
+// tool call and producing a clear error.
 // ---------------------------------------------------------------------------
 
 /** Map from RPC method name to the ChannelCapability.features key it requires. */
@@ -106,15 +106,15 @@ const ACTION_CAPABILITY_MAP: Record<string, string> = {
 
 /**
  * Throw early if the channel does not support the requested action.
- * Gracefully skips the check when channelPlugins is not provided (backward
- * compat) or when the channel type has no registered plugin (unknown channel).
+ * Skip the check when the channel type has no registered plugin (unknown
+ * channel adapter). `plugins` is always supplied by the production
+ * composition root (setup-channels-adapters.ts wires ≥9 plugin entries).
  */
 function assertCapability(
   method: string,
   channelType: string,
-  plugins: Map<string, ChannelPluginPort> | undefined,
+  plugins: Map<string, ChannelPluginPort>,
 ): void {
-  if (!plugins) return;
   const featureKey = ACTION_CAPABILITY_MAP[method];
   if (!featureKey) return;
   const plugin = plugins.get(channelType);
@@ -126,6 +126,28 @@ function assertCapability(
       `Action "${action}" is not supported on ${channelType}. This channel does not support ${featureKey}.`,
     );
   }
+}
+
+/**
+ * Assert that an optional ChannelPort method is implemented on
+ * the resolved adapter, and return a bound, non-undefined reference for direct
+ * invocation. The production sentinel is `assertCapability()` which runs first
+ * — this helper exists ONLY so TypeScript stops treating the now-optional
+ * method as `undefined` after the gate has already passed. If the gate is
+ * wired incorrectly (capability says supported but adapter omits the method)
+ * we throw loudly here instead of crashing with TypeError later.
+ */
+function requireMethod<TMethod extends (...args: never[]) => unknown>(
+  adapter: { channelType: string },
+  methodName: string,
+  method: TMethod | undefined,
+): TMethod {
+  if (typeof method !== "function") {
+    throw new Error(
+      `Channel "${adapter.channelType}" does not implement adapter.${methodName} but its capability gate claims support — fix plugin CAPABILITIES or adapter implementation.`,
+    );
+  }
+  return method;
 }
 
 /**
@@ -203,7 +225,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageReactContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      const reactResult = await adapter.reactToMessage(channelId, messageId, emoji);
+      const reactToMessage = requireMethod(adapter, "reactToMessage", adapter.reactToMessage);
+      const reactResult = await reactToMessage(channelId, messageId, emoji);
       if (!reactResult.ok) throw reactResult.error;
       const result = { reacted: true as const, channelId, messageId, emoji };
       if (IS_DEV) MessageReactContract.response.parse(result);
@@ -224,8 +247,9 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageEditContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const editMessage = requireMethod(adapter, "editMessage", adapter.editMessage);
       const formatted = formatForChannel(text, channelType);
-      const editResult = await adapter.editMessage(channelId, messageId, formatted);
+      const editResult = await editMessage(channelId, messageId, formatted);
       if (!editResult.ok) throw editResult.error;
       const result = { edited: true as const, channelId, messageId };
       if (IS_DEV) MessageEditContract.response.parse(result);
@@ -243,7 +267,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageDeleteContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      const delResult = await adapter.deleteMessage(channelId, messageId);
+      const deleteMessage = requireMethod(adapter, "deleteMessage", adapter.deleteMessage);
+      const delResult = await deleteMessage(channelId, messageId);
       if (!delResult.ok) throw delResult.error;
       const result = { deleted: true as const, channelId, messageId };
       if (IS_DEV) MessageDeleteContract.response.parse(result);
@@ -262,7 +287,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageFetchContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      const fetchResult = await adapter.fetchMessages(channelId, { limit, before });
+      const fetchMessages = requireMethod(adapter, "fetchMessages", adapter.fetchMessages);
+      const fetchResult = await fetchMessages(channelId, { limit, before });
       if (!fetchResult.ok) throw fetchResult.error;
       const result = { messages: fetchResult.value as unknown as Record<string, unknown>[], channelId };
       if (IS_DEV) MessageFetchContract.response.parse(result);
@@ -374,7 +400,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
 
       // Non-gateway channel types use the adapter
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      const attachResult = await adapter.sendAttachment(channelId, {
+      const sendAttachment = requireMethod(adapter, "sendAttachment", adapter.sendAttachment);
+      const attachResult = await sendAttachment(channelId, {
         type: (rawParams.attachment_type as "image" | "file" | "audio" | "video") ?? "file",
         url: attachmentUrl,
         mimeType: rawParams.mime_type as string | undefined,

@@ -18,20 +18,18 @@ import type { AgentExecutor, createCostTracker, createBudgetGuard, createStepCou
 import type { SqliteMemoryAdapter, createSessionStore, createEmbeddingQueue, MemoryApi } from "@comis/memory";
 import type { HeartbeatRunner, CronScheduler, createExecutionTracker } from "@comis/scheduler";
 import type { GatewayServerHandle } from "@comis/gateway";
-import type { BrowserService, RpcCall, LinkRunner } from "@comis/skills";
+import type { BrowserService, LinkRunner } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import type { ChannelManager } from "@comis/orchestrator";
-import type { DeviceIdentity } from "@comis/core";
 
 import type { LogLevelManager } from "../observability/log-infra.js";
 import type { TokenTracker } from "../observability/token-tracker.js";
-import type { LatencyRecorder } from "../observability/latency-recorder.js";
 import type { DiagnosticCollector } from "../observability/diagnostic-collector.js";
 import type { BillingEstimator } from "../observability/billing-estimator.js";
 import type { ChannelActivityTracker } from "../observability/channel-activity-tracker.js";
 import type { DeliveryTracer } from "../observability/delivery-tracer.js";
 import type { ProcessMonitor } from "../process/process-monitor.js";
-import type { WatchdogHandle } from "../health/watchdog.js";
-import type { ShutdownHandle } from "../process/graceful-shutdown.js";
+import type { ShutdownHandle } from "./setup-shutdown.js";
 import type { createCrossSessionSender } from "@comis/orchestrator";
 import type { createSubAgentRunner } from "@comis/agent";
 
@@ -76,8 +74,6 @@ export interface DaemonContext {
 
   /** Token usage tracking across all agents. */
   tokenTracker: TokenTracker;
-  /** Latency recording for timed operations. */
-  latencyRecorder: LatencyRecorder;
   /** Shared cost tracker for cross-agent billing aggregation. */
   sharedCostTracker: ReturnType<typeof createCostTracker>;
   /** Diagnostic event collector. */
@@ -93,10 +89,6 @@ export interface DaemonContext {
 
   /** System resource monitoring (CPU, memory, event loop). */
   processMonitor: ProcessMonitor;
-  /** Systemd watchdog health gating handle. */
-  watchdogHandle: WatchdogHandle;
-  /** Device identity for pairing (optional -- warn on failure). */
-  deviceIdentity?: DeviceIdentity;
 
   // -- Memory / Embedding ----------------------------------------------------
 

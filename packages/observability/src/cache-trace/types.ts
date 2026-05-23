@@ -40,18 +40,18 @@ import { z } from "zod";
  *
  * The trailing `cache_trace.write_failures` is a control-plane sentinel
  * (not an application stage) emitted by the runtime on first queued
- * writer rejection (inline, Plan 48-03 D-10) AND by `flushAndClose`
- * (summary, D-11) when the underlying queued writer reports per-line
- * append failures. Mirrors trajectory's `trace.truncated` +
- * `trace.write_failures` precedent (both inside `TRAJECTORY_EVENT_TYPES`).
+ * writer rejection (inline) AND by `flushAndClose` (summary) when the
+ * underlying queued writer reports per-line append failures. Mirrors
+ * trajectory's `trace.truncated` + `trace.write_failures` precedent
+ * (both inside `TRAJECTORY_EVENT_TYPES`).
  *
  * Per-stage inline `// emitted by …` comments document the producer
  * call site for each stage. Adding a new stage requires (1) appending
  * to this literal, (2) writing the producer wiring, and (3) updating
  * the inline comment with the producer location — the comments are
  * load-bearing documentation for the architecture tests (see
- * `cache-trace-stages-known.test.ts`, Plan 48 OBS-HARD-11) that walk
- * `recordStage(<literal>, …)` call sites and enforce the closed union.
+ * `cache-trace-stages-known.test.ts`) that walk `recordStage(<literal>, …)`
+ * call sites and enforce the closed union.
  */
 export const CACHE_TRACE_STAGES = [
   "session:start",   // emitted by event-bus-bridge from session:started
@@ -64,7 +64,7 @@ export const CACHE_TRACE_STAGES = [
   "tool:before",     // emitted by event-bus-bridge from tool:started
   "tool:after",      // emitted by event-bus-bridge from tool:executed
   "session:after",   // emitted by pi-executor at turn end + terminal emit in flushAndClose
-  "cache_trace.write_failures",  // control-plane sentinel — inline (Plan 48-03 D-10) + flushAndClose summary (D-11)
+  "cache_trace.write_failures",  // control-plane sentinel — inline + flushAndClose summary
 ] as const;
 
 /** Closed string union of cache-trace stage names. */

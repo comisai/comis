@@ -156,8 +156,11 @@ export interface ChannelsApiDeps {
   deliveryService: import("@comis/core").DeliveryService;
   // Channel health monitor
   healthMonitor?: import("@comis/channels").ChannelHealthMonitor;
-  // Channel plugins for capabilities RPC
-  channelPlugins?: Map<string, import("@comis/core").ChannelPluginPort>;
+  // Channel plugins for capabilities RPC. Required: the production
+  // composition root (setup-channels-adapters.ts) always wires this Map
+  // with ≥9 plugin entries before `buildRpcDispatchDeps` runs. Tests must
+  // pass a Map (possibly empty) — see message-handlers.test.ts fixtures.
+  channelPlugins: Map<string, import("@comis/core").ChannelPluginPort>;
   /** message-handlers reads deps.defaultAgentId, deps.defaultWorkspaceDir,
    *  deps.workspaceDirs, deps.logger. channel-handlers reads deps.persistDeps. */
   defaultAgentId: string;

@@ -59,7 +59,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ComisLogger } from "@comis/core";
 import type { ContextLayer, TokenBudget } from "./types.js";
-import type { DriftCheck } from "../executor/replay-drift-detector.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -67,12 +66,6 @@ import type { DriftCheck } from "../executor/replay-drift-detector.js";
 
 /** Dependencies for `createSignatureReplayScrubber`. */
 export interface SignatureReplayScrubberDeps {
-  /** Kept on the deps shape for back-compat with existing wiring; unused
-   *  by this layer. The thinking cleaner's keepTurns override in
-   *  executor-context-engine-setup.ts still consults the same closure for
-   *  unrelated reasons, so leaving the field plumbed avoids a chain of
-   *  unrelated edits in callers. */
-  getReplayDriftMode?: () => DriftCheck | undefined;
   /** Optional callback invoked at the end of `apply()` with the scrub
    *  counts. Canonical field names: `blocksAffected` (signed thinking
    *  blocks removed) and `toolCallsAffected` (tool-call `thoughtSignature`

@@ -494,7 +494,7 @@ describe("writeRegularFile — confined-base-dir ancestor escape rejection", () 
 });
 
 // ---------------------------------------------------------------------------
-// ensureContainedDir — shared substrate primitive (OBS-HARD-01)
+// ensureContainedDir — shared substrate primitive
 //
 // The helper unifies the open-coded `mkdir + lstat-gated chmod` pattern
 // duplicated in `queued-file-writer.ts:ensureParentDir` and

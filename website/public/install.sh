@@ -694,13 +694,12 @@ install_build_tools_linux() {
         # python3-venv: agent exec tool needs venvs for pip installs
         # ffmpeg: media processing (TTS, audio/video)
         # bubblewrap: sandbox for secure command execution
-        # libsystemd-dev + pkg-config: sd-notify native addon (watchdog integration)
         # pipx, golang-go: agent exec sandbox toolchain coverage (pipx for Python CLIs
         #   that don't fit uvx's ephemeral-run model; golang-go for `go install`)
         # ca-certificates curl wget unzip xz-utils bzip2: required by language installers
         #   (rustup, pipx, go modules, npm tarballs, deno, bun) inside bwrap; missing any
         #   one of these causes silent TLS failures or mid-extraction crashes
-        local apt_pkgs="build-essential python3 python3-venv python3-pip pipx make g++ cmake pkg-config ffmpeg bubblewrap libsystemd-dev golang-go ca-certificates curl wget unzip xz-utils bzip2"
+        local apt_pkgs="build-essential python3 python3-venv python3-pip pipx make g++ cmake pkg-config ffmpeg bubblewrap golang-go ca-certificates curl wget unzip xz-utils bzip2"
         if is_root; then
             run_quiet_step "Updating package index" apt-get update || ui_warn "Package index update had errors (continuing)"
             run_quiet_step "Installing system packages" apt-get install -y -qq $apt_pkgs
@@ -3588,13 +3587,9 @@ StartLimitBurst=3
 StartLimitIntervalSec=60
 
 [Service]
-# Type=exec (not notify): systemd considers the service started once execve()
-# returns, eliminating the dependency on the sd-notify native addon for
-# startup. Type=notify hung the unit in 'activating (start)' on hosts where
-# sd-notify failed to compile (e.g. missing pkg-config / libsystemd-dev),
-# leading to a TimeoutStartSec respawn loop even though the daemon was
-# healthy. Watchdog liveness via WatchdogSec is intentionally also dropped
-# below for the same reason; per-process internal monitoring remains.
+# Type=exec: systemd considers the service started once execve() returns.
+# In-process liveness is handled by ProcessMonitor (event loop delay tracking);
+# crash recovery is handled by Restart=on-failure below.
 Type=exec
 ${user_line}
 ${group_line}
@@ -3615,13 +3610,6 @@ ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-f
 
 Restart=on-failure
 RestartSec=5s
-# WatchdogSec intentionally not set: it depends on the sd-notify native addon
-# being loadable in the daemon, which is best-effort. If the addon fails to
-# build at install time, WatchdogSec=30s kills the daemon every 30s with no
-# diagnostic. ProcessMonitor (event loop delay tracking) provides in-process
-# liveness signal; Restart=on-failure handles crash recovery. Operators who
-# want kernel-level watchdog can re-add WatchdogSec via a systemd drop-in
-# after confirming the sd-notify native addon loads in the daemon.
 TimeoutStopSec=45
 # The daemon self-restarts by trapping SIGUSR2, shutting down cleanly, and
 # exiting with code 42 (see packages/daemon/src/daemon.ts). Two settings work

@@ -45,7 +45,6 @@ describe("DaemonContext", () => {
       "daemonVersion",
       // Observability
       "tokenTracker",
-      "latencyRecorder",
       "sharedCostTracker",
       "diagnosticCollector",
       "billingEstimator",
@@ -53,8 +52,6 @@ describe("DaemonContext", () => {
       "deliveryTracer",
       // Process
       "processMonitor",
-      "watchdogHandle",
-      "deviceIdentity",
       // Memory
       "embeddingPort",
       "cachedPort",

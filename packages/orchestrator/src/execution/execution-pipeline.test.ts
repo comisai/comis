@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChannelPort, NormalizedMessage, SessionKey, DeliveryService } from "@comis/core";
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
+import { StreamingConfigSchema, PerChannelStreamingConfigSchema } from "@comis/core";
 import type { AgentExecutor } from "@comis/agent";
 // Queue types live in orchestrator. Relative paths used because orchestrator
 // cannot import its own published name.
-import type { FollowupTrigger } from "../queue/followup-trigger.js";
-import type { CommandQueue } from "../queue/command-queue.js";
 import { ok } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -137,6 +136,10 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: text.length,
       });
     }),
+    // DeliveryService exposes drainInFlight(). Default fake returns empty
+    // drain telemetry; tests that exercise drain semantics override this
+    // field.
+    drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
 
@@ -265,10 +268,13 @@ describe("resolveStreamingConfig", () => {
     const streamingConfig: StreamingConfig = {
       enabled: false,
       defaultChunkMode: "newline",
+      defaultChunkMinChars: 100,
       defaultDeliveryTiming: { mode: "custom", minMs: 500, maxMs: 1500, jitterMs: 200, firstBlockDelayMs: 0 },
       defaultCoalescer: { minChars: 0, maxChars: 500, idleMs: 1500, codeBlockPolicy: "standalone", adaptiveIdle: false },
       defaultTypingMode: "message",
       defaultTypingRefreshMs: 4000,
+      defaultTypingCircuitBreakerThreshold: 3,
+      defaultTypingTtlMs: 60000,
       defaultUseMarkdownIR: true,
       defaultTableMode: "split",
       defaultReplyMode: "first",
@@ -288,6 +294,92 @@ describe("resolveStreamingConfig", () => {
       useMarkdownIR: true,
       tableMode: "split",
       replyMode: "first",
+    });
+  });
+});
+
+describe("resolveStreamingConfig + StreamingConfigSchema defaults", () => {
+  describe("schema-level defaults", () => {
+    it("StreamingConfigSchema.parse({}) returns defaultChunkMinChars === 100", () => {
+      const config = StreamingConfigSchema.parse({});
+      expect(config.defaultChunkMinChars).toBe(100);
+    });
+
+    it("StreamingConfigSchema.parse({}) returns defaultTypingCircuitBreakerThreshold === 3", () => {
+      const config = StreamingConfigSchema.parse({});
+      expect(config.defaultTypingCircuitBreakerThreshold).toBe(3);
+    });
+
+    it("StreamingConfigSchema.parse({}) returns defaultTypingTtlMs === 60000", () => {
+      const config = StreamingConfigSchema.parse({});
+      expect(config.defaultTypingTtlMs).toBe(60000);
+    });
+  });
+
+  describe("default branch — no global streaming config provided", () => {
+    it("resolveStreamingConfig('telegram', undefined).chunkMinChars === 100", () => {
+      const resolved = resolveStreamingConfig("telegram", undefined);
+      expect(resolved.chunkMinChars).toBe(100);
+    });
+
+    it("resolveStreamingConfig('telegram', undefined).typingCircuitBreakerThreshold === 3", () => {
+      const resolved = resolveStreamingConfig("telegram", undefined);
+      expect(resolved.typingCircuitBreakerThreshold).toBe(3);
+    });
+
+    it("resolveStreamingConfig('telegram', undefined).typingTtlMs === 60000", () => {
+      const resolved = resolveStreamingConfig("telegram", undefined);
+      expect(resolved.typingTtlMs).toBe(60000);
+    });
+  });
+
+  describe("global branch — YAML defaultChunkMinChars: 50 propagates through resolver", () => {
+    it("defaultChunkMinChars: 50 propagates to chunkMinChars on resolved per-channel", () => {
+      const config = StreamingConfigSchema.parse({
+        defaultChunkMinChars: 50,
+      });
+      const resolved = resolveStreamingConfig("telegram", config);
+      expect(resolved.chunkMinChars).toBe(50);
+    });
+
+    it("defaultTypingCircuitBreakerThreshold: 5 propagates", () => {
+      const config = StreamingConfigSchema.parse({
+        defaultTypingCircuitBreakerThreshold: 5,
+      });
+      const resolved = resolveStreamingConfig("telegram", config);
+      expect(resolved.typingCircuitBreakerThreshold).toBe(5);
+    });
+
+    it("defaultTypingTtlMs: 90000 propagates", () => {
+      const config = StreamingConfigSchema.parse({
+        defaultTypingTtlMs: 90000,
+      });
+      const resolved = resolveStreamingConfig("telegram", config);
+      expect(resolved.typingTtlMs).toBe(90000);
+    });
+  });
+
+  describe("per-channel override branch — regression coverage", () => {
+    it("per-channel override wins over global defaults for chunkMinChars", () => {
+      const config = StreamingConfigSchema.parse({
+        defaultChunkMinChars: 50,
+        perChannel: {
+          telegram: PerChannelStreamingConfigSchema.parse({ chunkMinChars: 25 }),
+        },
+      });
+      const resolved = resolveStreamingConfig("telegram", config);
+      expect(resolved.chunkMinChars).toBe(25);
+    });
+
+    it("per-channel override wins over global defaults for typingCircuitBreakerThreshold", () => {
+      const config = StreamingConfigSchema.parse({
+        defaultTypingCircuitBreakerThreshold: 5,
+        perChannel: {
+          telegram: PerChannelStreamingConfigSchema.parse({ typingCircuitBreakerThreshold: 10 }),
+        },
+      });
+      const resolved = resolveStreamingConfig("telegram", config);
+      expect(resolved.typingCircuitBreakerThreshold).toBe(10);
     });
   });
 });
@@ -789,7 +881,7 @@ describe("executeAndDeliver", () => {
   });
 
   // -------------------------------------------------------------------
-  // chunkForDelivery integration (492-04)
+  // chunkForDelivery integration
   // -------------------------------------------------------------------
   describe("chunkForDelivery integration", () => {
     it("uses chunkForDelivery for chunking (blocks match expected output)", async () => {
@@ -936,7 +1028,7 @@ describe("executeAndDeliver", () => {
   });
 
   // -------------------------------------------------------------------
-  // Pipeline timeout (471-02)
+  // Pipeline timeout
   // -------------------------------------------------------------------
   describe("pipeline timeout", () => {
     it("sends canned error message on execution timeout", async () => {
@@ -1060,7 +1152,7 @@ describe("executeAndDeliver", () => {
   });
 
   // -------------------------------------------------------------------
-  // Thread propagation (480-01)
+  // Thread propagation
   // -------------------------------------------------------------------
   describe("thread propagation", () => {
     it("sends threadId in sendOpts for all blocks (not just first)", async () => {
@@ -1129,137 +1221,11 @@ describe("executeAndDeliver", () => {
       expect(sendOpts.threadId).toBeUndefined();
     });
 
-    it("followup message preserves thread metadata via extraMetadata", async () => {
-      const mockFollowupTrigger: FollowupTrigger = {
-        shouldFollowup: vi.fn(() => true),
-        createFollowupMessage: vi.fn((_sk, _ct, _ci, _r, _cid, _cd, _em) => ({
-          id: "followup-1",
-          channelId: "12345",
-          channelType: "telegram",
-          senderId: "system",
-          text: "[System: Continue processing.]",
-          timestamp: Date.now(),
-          attachments: [],
-          metadata: { isFollowup: true },
-        })),
-        getChainDepth: vi.fn(() => 0),
-        incrementChain: vi.fn(() => 1),
-        clearChain: vi.fn(),
-      };
-      const mockCommandQueue: CommandQueue = {
-        enqueue: vi.fn(async () => ok(undefined)),
-        getQueueDepth: vi.fn(() => 0),
-        isProcessing: vi.fn(() => false),
-        drain: vi.fn(async () => {}),
-        shutdown: vi.fn(async () => {}),
-      } as any;
-
-      const executor = makeExecutor({
-        execute: vi.fn(async () => ({
-          response: "Done",
-          sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
-          tokensUsed: { input: 100, output: 50, total: 150 },
-          cost: { total: 0.001 },
-          stepsExecuted: 0,
-          llmCalls: 1,
-          finishReason: "stop" as const,
-          metadata: { needs_followup: true },
-        })),
-      });
-
-      const deps = makeDeps({
-        followupTrigger: mockFollowupTrigger,
-        commandQueue: mockCommandQueue,
-        followupConfig: { maxFollowupRuns: 3 },
-      });
-      const msg = makeMessage({
-        metadata: {
-          telegramMessageId: 42,
-          telegramChatType: "private",
-          threadId: "42",
-          telegramThreadId: 42,
-          telegramIsForum: true,
-          telegramThreadScope: "forum",
-        },
-      });
-
-      await executeAndDeliver(
-        deps, makeAdapter(), msg, msg, executor, makeSessionKey(),
-        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
-      );
-
-      // createFollowupMessage should have been called with 7th argument containing thread keys
-      expect(mockFollowupTrigger.createFollowupMessage).toHaveBeenCalledWith(
-        expect.anything(), // sessionKey
-        "telegram",        // channelType
-        "12345",           // channelId
-        "tool_result",     // reason
-        expect.any(String), // chainId
-        1,                 // newDepth
-        {
-          threadId: "42",
-          telegramThreadId: 42,
-          telegramIsForum: true,
-          telegramThreadScope: "forum",
-        },
-      );
-    });
-
-    it("followup message has no extraMetadata when no thread context", async () => {
-      const mockFollowupTrigger: FollowupTrigger = {
-        shouldFollowup: vi.fn(() => true),
-        createFollowupMessage: vi.fn((_sk, _ct, _ci, _r, _cid, _cd, _em) => ({
-          id: "followup-1",
-          channelId: "12345",
-          channelType: "telegram",
-          senderId: "system",
-          text: "[System: Continue processing.]",
-          timestamp: Date.now(),
-          attachments: [],
-          metadata: { isFollowup: true },
-        })),
-        getChainDepth: vi.fn(() => 0),
-        incrementChain: vi.fn(() => 1),
-        clearChain: vi.fn(),
-      };
-      const mockCommandQueue: CommandQueue = {
-        enqueue: vi.fn(async () => ok(undefined)),
-        getQueueDepth: vi.fn(() => 0),
-        isProcessing: vi.fn(() => false),
-        drain: vi.fn(async () => {}),
-        shutdown: vi.fn(async () => {}),
-      } as any;
-
-      const executor = makeExecutor({
-        execute: vi.fn(async () => ({
-          response: "Done",
-          sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
-          tokensUsed: { input: 100, output: 50, total: 150 },
-          cost: { total: 0.001 },
-          stepsExecuted: 0,
-          llmCalls: 1,
-          finishReason: "stop" as const,
-          metadata: { needs_followup: true },
-        })),
-      });
-
-      const deps = makeDeps({
-        followupTrigger: mockFollowupTrigger,
-        commandQueue: mockCommandQueue,
-        followupConfig: { maxFollowupRuns: 3 },
-      });
-      // Message with no thread metadata
-      const msg = makeMessage();
-
-      await executeAndDeliver(
-        deps, makeAdapter(), msg, msg, executor, makeSessionKey(),
-        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
-      );
-
-      // createFollowupMessage should have been called with 7th argument as undefined
-      const createCall = vi.mocked(mockFollowupTrigger.createFollowupMessage).mock.calls[0];
-      expect(createCall[6]).toBeUndefined();
-    });
+    // followupTrigger-based tests were removed: the followupTrigger and
+    // followupConfig deps slots + handleFollowupTrigger helper were removed
+    // from the execution pipeline. createFollowupMessage cross-reference
+    // moved to dedicated unit tests in queue/followup-trigger.test.ts
+    // (when needed).
   });
 
   // -------------------------------------------------------------------

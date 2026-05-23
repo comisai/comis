@@ -241,7 +241,6 @@ describe("createOAuthTokenManager", () => {
     expect(events).toHaveLength(1);
     const event = events[0] as Record<string, unknown>;
     expect(event.provider).toBe("github-copilot");
-    expect(event.profileName).toBe("OAUTH_GITHUB_COPILOT");
     expect(event.expiresAtMs).toBe(newCreds.expires);
     expect(typeof event.timestamp).toBe("number");
 

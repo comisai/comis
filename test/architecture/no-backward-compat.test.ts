@@ -23,7 +23,7 @@
  *
  *  - text /backward.?compat|backcompat|legacy.?(alias|mode|fallback)/i
  *    outside `noBackwardCompatAllowlist` (line-pinned) and outside the
- *    in-file `BC_REM_02_PATH_TAIL_ALLOWLIST` (pre-existing-benign
+ *    in-file `PRE_EXISTING_BENIGN_PATH_TAIL_ALLOWLIST` (pre-existing-benign
  *    sub-allowlist; see comment block on the constant).
  *  - `@deprecated` JSDoc annotations (zero permitted; the v2.1 policy is
  *    no-deprecation-period: delete, don't deprecate).
@@ -45,7 +45,7 @@
  *   1. `noBackwardCompatAllowlist` (test/support/architecture-allowlist.ts)
  *      — line-pinned permanent-historical-reference entries.
  *
- *   2. `BC_REM_02_PATH_TAIL_ALLOWLIST` (this file, below) — pre-existing
+ *   2. `PRE_EXISTING_BENIGN_PATH_TAIL_ALLOWLIST` (this file, below) — pre-existing
  *      benign-text path-tails captured as the baseline. Each file in this
  *      list contains text that matches the BC regex but is NOT a live BC
  *      shim (documentation about absence/defaults/policy, OR pre-existing
@@ -95,7 +95,7 @@ const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
  * justification at PR review (the rule's failure mode catches additions
  * by surfacing the offending file path).
  */
-const BC_REM_02_PATH_TAIL_ALLOWLIST: readonly string[] = [
+const PRE_EXISTING_BENIGN_PATH_TAIL_ALLOWLIST: readonly string[] = [
   // ---------- Documentation / defaults / policy text (no live BC shim) ----------
   "packages/agent/src/bootstrap/workspace-loader.ts", // doc-string: "preserves backward-compatible behavior" describing opt-in flag semantics
   "packages/agent/src/bootstrap/system-prompt-assembler.ts", // doc-strings on "additional sections" field (RAG-memory etc.)
@@ -127,7 +127,6 @@ const BC_REM_02_PATH_TAIL_ALLOWLIST: readonly string[] = [
   "packages/skills/src/tools/builtin/exec-tool/exec-types.ts", // doc-string: "Backward compatibility is NOT preserved" — POLICY citation
   "packages/skills/src/tools/builtin/exec-tool/index.ts", // doc-string: "Backward compat NOT preserved (memory feedback_no_backward_compat)" — POLICY citation
   "packages/skills/src/tools/builtin/process-tool.ts", // doc-string: "Backward compatibility is NOT preserved" + "backward compat with the prior positional ..." — POLICY citations
-  "packages/skills/src/platform-tools/tools/browser-tool.ts", // RpcCall-or-deps-object signature; doc-comment describing the two-shape acceptance — out of current deletion scope
   "packages/skills/src/platform-tools/tools/agents-manage-tool.ts", // doc-string: "default-logger compat shim (per feedback_no_backward_compat.md)" — POLICY citation
   "packages/web/src/router.ts", // route-aliases-for-backward-compatibility — out of current deletion scope (web router consolidation tracked separately)
   "packages/web/src/utils/health-status.ts", // LEGACY_ALIASES channel-health map — out of current deletion scope (channel-status canonicalization tracked separately)
@@ -246,7 +245,7 @@ describe("no-backward-compat", () => {
     for (const file of allFiles) {
       const rel = repoRelative(file);
       // Path-tail benign allowlist — entire file is exempted (pre-existing).
-      if (BC_REM_02_PATH_TAIL_ALLOWLIST.some((tail) => rel.endsWith(tail))) {
+      if (PRE_EXISTING_BENIGN_PATH_TAIL_ALLOWLIST.some((tail) => rel.endsWith(tail))) {
         continue;
       }
       const hits = findLineHits(file, pattern);
@@ -260,14 +259,14 @@ describe("no-backward-compat", () => {
       violations,
       formatViolations({
         description:
-          "Production source under packages/*/src/ must not contain backward-compat / legacy-alias / legacy-mode / legacy-fallback text outside the noBackwardCompatAllowlist (line-pinned permanent historical references) and outside the BC_REM_02_PATH_TAIL_ALLOWLIST (pre-existing benign-text files). Scope is intentionally limited to npm-tarball-bundled source (the published @comis/* tarballs from packages/*/src/) — non-shipped paths (test/support/, root configs, scripts/, tools/, website/, packages/comis/ umbrella) are out of scope by design because they do not reach end-users.",
+          "Production source under packages/*/src/ must not contain backward-compat / legacy-alias / legacy-mode / legacy-fallback text outside the noBackwardCompatAllowlist (line-pinned permanent historical references) and outside the PRE_EXISTING_BENIGN_PATH_TAIL_ALLOWLIST (pre-existing benign-text files). Scope is intentionally limited to npm-tarball-bundled source (the published @comis/* tarballs from packages/*/src/) — non-shipped paths (test/support/, root configs, scripts/, tools/, website/, packages/comis/ umbrella) are out of scope by design because they do not reach end-users.",
         violations,
         suggestedFix:
-          "Delete the legacy code path and its compatibility comment (preferred). Alternatively, if the code is a permanent-historical-reference migration that must remain pending a future cleanup, add a {file, line, reason} entry to noBackwardCompatAllowlist in test/support/architecture-allowlist.ts and annotate the file with `@migration-since: <YYYY-MM-DD>; @remove-after: <milestone>`. Adding a new file to BC_REM_02_PATH_TAIL_ALLOWLIST is reserved for documented pre-existing benign text — not new BC code. If the offending text is outside packages/*/src/ it is outside this ratchet's scope by design — no allowlist entry needed.",
+          "Delete the legacy code path and its compatibility comment (preferred). Alternatively, if the code is a permanent-historical-reference migration that must remain pending a future cleanup, add a {file, line, reason} entry to noBackwardCompatAllowlist in test/support/architecture-allowlist.ts and annotate the file with `@migration-since: <YYYY-MM-DD>; @remove-after: <milestone>`. Adding a new file to PRE_EXISTING_BENIGN_PATH_TAIL_ALLOWLIST is reserved for documented pre-existing benign text — not new BC code. If the offending text is outside packages/*/src/ it is outside this ratchet's scope by design — no allowlist entry needed.",
         designRef:
           "no-backward-compat policy (see CLAUDE.md feedback_no_backward_compat)",
         allowlistRef:
-          "noBackwardCompatAllowlist (line-pinned) + BC_REM_02_PATH_TAIL_ALLOWLIST (in-file, this test). Scope: packages/*/src/ only (npm-tarball-bundled source).",
+          "noBackwardCompatAllowlist (line-pinned) + PRE_EXISTING_BENIGN_PATH_TAIL_ALLOWLIST (in-file, this test). Scope: packages/*/src/ only (npm-tarball-bundled source).",
       }),
     ).toEqual([]);
 

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Config-OBSERVE audit record writer (read-side counterpart to
- * `append.ts`'s write-side helpers). Closes OBS-REVIEW-03: the
- * daemon's bootstrap config-read path now produces one
- * `event: "config.observe"` JSONL record per resolved configPath
- * entry, so operators can reconstruct "what config was read at boot"
- * from `~/.comis/logs/config-audit.jsonl` alone.
+ * `append.ts`'s write-side helpers). The daemon's bootstrap
+ * config-read path produces one `event: "config.observe"` JSONL
+ * record per resolved configPath entry, so operators can reconstruct
+ * "what config was read at boot" from
+ * `~/.comis/logs/config-audit.jsonl` alone.
  *
  * Two entry points:
  *
@@ -31,14 +31,9 @@
  */
 
 import { appendRegularFile } from "../shared/fs-safe.js";
-import { safeJsonStringify } from "../shared/safe-json-stringify.js";
-import { sanitizeForPersistence } from "../redact/redact-secrets.js";
 import { systemDateFrom, systemNowMs } from "@comis/core";
 
-import {
-  redactConfigAuditArgv,
-  CONFIG_AUDIT_ARGV_CAP,
-} from "./argv-redactor.js";
+import { encodeAuditRecord } from "./encode-record.js";
 import { detectSuspicious } from "./suspicious.js";
 import {
   DEFAULT_KEEP_ROTATED,
@@ -112,12 +107,13 @@ export interface CreateObserveRecordParams {
    */
   readonly recovery?: ObserveRecovery;
   /**
-   * 260521-0bn: Caller's own module path (typically `fileURLToPath(import.meta.url)`)
+   * Caller's own module path (typically `fileURLToPath(import.meta.url)`)
    * — forwarded into `detectSuspicious` so the observe-side audit
    * record's `suspicious` flag set parity-matches the write-side
-   * (which already accepts `entryScript` via `createConfigWriteAuditRecordBase`
-   * as of 260520-wcf). When omitted, `detectSuspicious` falls back to its
-   * argv/execArgv-only heuristic (existing behavior).
+   * (which already accepts `entryScript` via
+   * `createConfigWriteAuditRecordBase`). When omitted,
+   * `detectSuspicious` falls back to its argv/execArgv-only
+   * heuristic (existing behavior).
    */
   readonly entryScript?: string;
 }
@@ -159,7 +155,7 @@ export function createConfigObserveAuditRecord(
   // no-restricted-syntax process.env rule is not enforced — but the
   // call still reads runtime process state, which is the intentional
   // semantics here (mirror-matches `process.pid` reads in
-  // packages/daemon/src/api/config-handlers/config-audit-hook.ts and
+  // packages/daemon/src/config/audit-hook.ts and
   // packages/daemon/src/config/last-known-good.ts).
   const pid = process.pid;
   const ppid = process.ppid;
@@ -236,47 +232,6 @@ export function createConfigObserveAuditRecord(
 }
 
 /**
- * Serialize the observe record for on-disk persistence. Mirrors the
- * write-side `encodeRecord` shape: argv goes through the dedicated
- * `redactConfigAuditArgv`, the rest of the record goes through
- * `sanitizeForPersistence`, then `safeJsonStringify` produces the
- * final line. The two redactors are NOT composed — see `append.ts`
- * encodeRecord header for the rationale.
- */
-function encodeObserveRecord(record: ConfigObserveAuditRecord): string {
-  const argvRedacted = redactConfigAuditArgv(record.argv).slice(
-    0,
-    CONFIG_AUDIT_ARGV_CAP,
-  );
-  const withoutArgv: Record<string, unknown> = { ...record };
-  delete (withoutArgv as { argv?: unknown }).argv;
-  const sanitized = sanitizeForPersistence(withoutArgv) as Record<
-    string,
-    unknown
-  >;
-  sanitized.argv = argvRedacted;
-  const json = safeJsonStringify(sanitized);
-  if (json === undefined) {
-    // Hand-crafted sentinel that always serializes. Matches the
-    // write-side fallback in `emitSerializationErrorSentinel` — we
-    // duplicate it here so the observe writer can stand alone.
-    const sentinel = {
-      traceSchema: "comis-config-audit" as const,
-      schemaVersion: 1 as const,
-      __serializationError: "record-not-serializable" as const,
-      ts: systemDateFrom(systemNowMs()).toISOString(),
-    };
-    // Sentinel is hand-crafted with only string + number literals so
-    // JSON.stringify cannot return undefined. The non-null assertion
-    // is a defense-in-depth contract: the caller never sees `undefined`
-    // come back from this fallback path.
-    const sentinelJson = JSON.stringify(sentinel);
-    return (sentinelJson ?? "{}") + "\n";
-  }
-  return json + "\n";
-}
-
-/**
  * Append a `ConfigObserveAuditRecord` to the daemon-wide audit log.
  * Uses the same parent-dir + rotation invariants the write-side does
  * (via the exported helpers in `append.ts`).
@@ -292,7 +247,7 @@ export async function appendConfigObserveAuditRecord(
   const keepRotated = params.keepRotated ?? DEFAULT_KEEP_ROTATED;
 
   try {
-    const encoded = encodeObserveRecord(params.record);
+    const encoded = encodeAuditRecord(params.record as unknown as Record<string, unknown>);
     const bytes = Buffer.byteLength(encoded, "utf8");
 
     ensureConfigAuditParentDir(params.filePath);

@@ -10,7 +10,7 @@ const VALID_BASE64_KEY = randomBytes(32).toString("base64"); // 44+ base64 chars
 
 describe("setupSecrets", () => {
   // -----------------------------------------------------------
-  // Branch 1: SECRETS_MASTER_KEY absent → ok(null) (legacy mode)
+  // Branch 1: SECRETS_MASTER_KEY absent → ok(null) (envfile mode)
   // -----------------------------------------------------------
   describe("when SECRETS_MASTER_KEY is absent", () => {
     it("returns ok(null) when env has no SECRETS_MASTER_KEY", () => {
@@ -81,7 +81,7 @@ describe("setupSecrets", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.message).toMatch(/hex.*64\+|base64.*44\+/i);
-        expect(result.error.message).toContain("legacy mode");
+        expect(result.error.message).toContain("envfile-only mode");
       }
     });
   });

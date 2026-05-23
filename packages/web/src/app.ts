@@ -41,7 +41,6 @@ const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
   "ic-diagnostics-view": () => import("./views/diagnostics-view.js"),
   "ic-subagents-view": () => import("./views/subagents.js"),
   "ic-security-view": () => import("./views/security.js"),
-  "ic-approvals-view": () => import("./views/approvals.js"),
   "ic-config-editor": () => import("./views/config-editor.js"),
   "ic-setup-wizard": () => import("./views/setup-wizard.js"),
   "ic-pipeline-list": () => import("./views/pipelines/pipeline-list.js"),
@@ -59,7 +58,7 @@ const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
  *
  * Handles authentication, routing, and provides the API client
  * to child views via property passing. Uses sidebar + topbar shell
- * layout with 14 navigation items and 27 parameterized routes.
+ * layout with 23 navigation items and 38 parameterized routes.
  *
  * Auth + polling + global-state + keyboard + command-palette
  * orchestration is owned by `app-controller.ts` (createAppController).
@@ -567,8 +566,6 @@ export class IcApp extends LitElement implements AppHost {
         return html`<ic-subagents-view .rpcClient=${this._rpcClient} .apiClient=${this._apiClient} .eventDispatcher=${this._eventDispatcher}></ic-subagents-view>`;
       case "ic-security-view":
         return html`<ic-security-view .rpcClient=${this._rpcClient} .apiClient=${this._apiClient} .eventDispatcher=${this._eventDispatcher}></ic-security-view>`;
-      case "ic-approvals-view":
-        return html`<ic-approvals-view .rpcClient=${this._rpcClient} .apiClient=${this._apiClient}></ic-approvals-view>`;
       case "ic-config-editor":
         return html`<ic-config-editor .rpcClient=${this._rpcClient}></ic-config-editor>`;
       case "ic-setup-wizard":

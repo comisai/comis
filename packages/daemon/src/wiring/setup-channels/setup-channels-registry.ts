@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -23,7 +23,8 @@ import type { VoiceResponsePipelineDeps, ApprovalNotifier, LifecycleReactor } fr
 import type { ChannelManager } from "@comis/orchestrator";
 import { initTelegramFileGuardConfig } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
-import type { SsrfGuardedFetcher, RpcCall, LinkRunner, AudioConverter, MediaTempManager, MediaSemaphore } from "@comis/skills";
+import type { SsrfGuardedFetcher, LinkRunner, AudioConverter, MediaTempManager, MediaSemaphore } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 import { bootstrapAdapters } from "../setup-channels-adapters.js";
 import { buildMediaPipeline } from "../setup-channels-media.js";
@@ -53,13 +54,12 @@ export interface ChannelsResult {
   lifecycleReactors: LifecycleReactor[];
   /** Approval notifier for forwarding approval events to chat channels (optional -- undefined when no adapters enabled). */
   approvalNotifier?: ApprovalNotifier;
-  /** Full plugin objects keyed by channel type for capabilities RPC */
+  /** Full plugin objects keyed by channel type. Consumers read
+   *  `plugin.capabilities` for features.reactions (lifecycle reactor gate)
+   *  and replyToMetaKey (the platform-native message id used by the inbound
+   *  UUID resolver to translate daemon UUIDs back to native ids before
+   *  calling the channel adapter). */
   channelPlugins: Map<string, ChannelPluginPort>;
-  /** Per-channel capability info (notably `replyToMetaKey` — the metadata
-   *  field carrying the platform-native message id). Used by the inbound
-   *  UUID resolver so message.delete/edit/react can translate daemon UUIDs
-   *  back to native ids before calling the channel adapter. */
-  channelCapabilities: Map<string, import("../setup-channels-adapters.js").ChannelCapabilityInfo>;
   /** The command queue instance for parent session TTL extension during graph execution. */
   commandQueue?: CommandQueue;
   /** DeliveryService constructed once at the daemon composition root. Threaded
@@ -126,6 +126,10 @@ export interface ChannelsDeps {
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
   embeddingQueue?: { enqueue(id: string, content: string): void };
+  /** Optional callback for suspicious-content detection. Forwarded from the
+   *  daemon's BootContext.onSuspiciousContent into buildMediaPipeline so media
+   *  handlers fire the callback when wrapExternalContent detects injection patterns. */
+  onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /** Queue configuration for per-session serialization. When enabled, creates a CommandQueue for the ChannelManager. */
   queueConfig?: QueueConfig;
   /** Delivery queue for crash-safe persistence */
@@ -141,8 +145,6 @@ export interface ChannelsDeps {
   sessionResolver?: BackgroundSessionResolver;
   /** RPC call dispatcher for /config chat commands (deferred dispatch -- safe to pass before wireDispatch). */
   rpcCall?: RpcCall;
-  /** Optional callback for task extraction after successful agent execution (gated by config.scheduler.tasks.enabled). */
-  onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
   /**
    * Optional callback fired BEFORE each inbound message is dispatched to the
    * executor. Used by the restart continuation tracker so the session is
@@ -213,7 +215,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   });
 
   // Bootstrap enabled channel adapters from config
-  const { adaptersByType, tgPlugin, linePlugin, channelCapabilities, channelPlugins } = await bootstrapAdapters({ container, channelsLogger });
+  const { adaptersByType, tgPlugin, linePlugin, channelPlugins } = await bootstrapAdapters({ container, channelsLogger });
 
   // Assemble media pipeline (resolvers, preprocessor, preflight)
   const {
@@ -239,6 +241,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     memoryAdapter: deps.memoryAdapter,
     tenantId: deps.tenantId,
     embeddingQueue: deps.embeddingQueue,
+    onSuspiciousContent: deps.onSuspiciousContent,
   });
 
   // Register cron-delivery event listeners (scheduler:job_result + scheduler:job_suspended).
@@ -274,7 +277,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       linkRunner,
       deliveryService,
       adaptersByType,
-      channelCapabilities,
+      channelPlugins,
       preprocessMessageCallback,
       preflightFn,
       assembleToolsForAgent: deps.assembleToolsForAgent,
@@ -287,7 +290,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       activeRunRegistry: deps.activeRunRegistry,
       sessionResolver: deps.sessionResolver,
       rpcCall: deps.rpcCall,
-      onTaskExtraction: deps.onTaskExtraction,
       onMessageReceived: deps.onMessageReceived,
       onMessageProcessed: deps.onMessageProcessed,
       approvalGate: deps.approvalGate,
@@ -309,7 +311,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     lifecycleReactors,
     approvalNotifier,
     channelPlugins,
-    channelCapabilities,
     commandQueue,
     deliveryService,
   };

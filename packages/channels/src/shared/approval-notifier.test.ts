@@ -33,6 +33,10 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: text.length,
       });
     }),
+    // DeliveryService gained drainInFlight(). Default fake returns empty
+    // drain telemetry; tests that exercise drain semantics override this
+    // field.
+    drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
 

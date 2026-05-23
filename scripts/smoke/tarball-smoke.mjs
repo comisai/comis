@@ -6,14 +6,15 @@
  *
  * Packs the umbrella `comisai` package via `pnpm --filter comisai pack`,
  * extracts the resulting tarball, and asserts that every workspace package
- * declared in `packages/comis/scripts/prepack.js` is bundled with a populated
- * `dist/` directory inside `package/node_modules/@comis/`.
+ * declared in `packages/comis/package.json:bundledDependencies` (the single
+ * source of truth) is bundled with a populated `dist/` directory inside
+ * `package/node_modules/@comis/`.
  *
  * Assertions (4):
  *   1. The `node_modules/@comis/<pkg>` directory count matches the
- *      WORKSPACE_PACKAGES entry count in prepack.js.
- *   2. The set of bundled directories equals the set of WORKSPACE_PACKAGES
- *      entries (every expected package present; no extras).
+ *      `@comis/*` entries in bundledDependencies.
+ *   2. The set of bundled directories equals the set of `@comis/*`
+ *      bundledDependencies entries (every expected package present; no extras).
  *   3. Every bundled `@comis/<pkg>` has a non-empty `dist/` subdirectory.
  *   4. `node_modules/@comis/orchestrator/dist/` exists (explicit check —
  *      guards against silent regression of the orchestrator extraction).
@@ -53,43 +54,34 @@ const fail = (msg) => {
 };
 const ok = (msg) => console.log(`OK: ${msg}`);
 
-// --- Step 1: Parse WORKSPACE_PACKAGES from prepack.js (cross-check source of truth) ---
+// --- Step 1: Read expected packages from bundledDependencies (single source of truth) ---
+//
+// `packages/comis/package.json:bundledDependencies` is the canonical
+// workspace-package list. This script reads it directly (the prepack.js
+// array — formerly the source — is now itself derived from the same
+// bundledDependencies field, so a regex parse over prepack.js would
+// be an indirection without added coverage).
+//
+// `bundledDependencies` also contains native-dep helpers (`bindings`,
+// `file-uri-to-path`) bundled via FORCE_BUNDLE in prepack.js step 4. The
+// `@comis/*` filter keeps only workspace packages as `expectedPackages`,
+// matching the consumer-facing surface of the tarball's
+// `node_modules/@comis/` directory.
 
-const prepackPath = join(repoRoot, "packages/comis/scripts/prepack.js");
-const prepackContent = readFileSync(prepackPath, "utf8");
-const match = prepackContent.match(/const WORKSPACE_PACKAGES = \[([\s\S]*?)\];/);
-if (!match) {
-  console.error("FAIL: could not locate WORKSPACE_PACKAGES array in prepack.js");
-  process.exit(1);
-}
-// Robust parse: strip line-level // comments per-line FIRST (so any literal
-// `]` inside a comment cannot fool the non-greedy regex above on a
-// follow-up read), then JSON.parse the cleaned array body. This is more
-// resilient than the previous split-on-comma + strip-quotes pipeline:
-//   - Tolerates trailing commas (common JS convention) via the trim/regex.
-//   - Treats the array elements as proper JSON strings, so commas inside
-//     a hypothetical name literal cannot split incorrectly.
-//   - Pre-strips //-line-end comments before JSON.parse sees them.
-let expectedPackages;
-try {
-  const cleaned = match[1]
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, "").trim())
-    .filter((line) => line.length > 0)
-    .join("")
-    // Drop a single trailing comma if present so JSON.parse accepts the
-    // array body (JSON does not allow trailing commas; JS code does).
-    .replace(/,\s*$/, "");
-  expectedPackages = JSON.parse(`[${cleaned}]`);
-  if (!Array.isArray(expectedPackages) || expectedPackages.some((p) => typeof p !== "string")) {
-    throw new Error("WORKSPACE_PACKAGES must be a string[]");
-  }
-} catch (e) {
-  console.error(`FAIL: could not parse WORKSPACE_PACKAGES from prepack.js: ${e.message}`);
+const comisPkgPath = join(repoRoot, "packages/comis/package.json");
+const comisPkg = JSON.parse(readFileSync(comisPkgPath, "utf8"));
+const expectedPackages = (comisPkg.bundledDependencies ?? [])
+  .filter((s) => typeof s === "string" && s.startsWith("@comis/"))
+  .map((s) => s.replace(/^@comis\//, ""));
+
+if (expectedPackages.length === 0) {
+  console.error(
+    "FAIL: bundledDependencies @comis/* entries empty in packages/comis/package.json",
+  );
   process.exit(1);
 }
 console.log(
-  `Expected ${expectedPackages.length} bundled packages (from WORKSPACE_PACKAGES): ` +
+  `Expected ${expectedPackages.length} bundled packages (from bundledDependencies): ` +
     `${expectedPackages.sort().join(", ")}`,
 );
 
@@ -164,7 +156,7 @@ try {
         `(${expectedPackages.sort().join(", ")})`,
     );
   } else {
-    ok(`bundled count matches WORKSPACE_PACKAGES (${bundled.length})`);
+    ok(`bundled count matches bundledDependencies (${bundled.length})`);
   }
 
   // Assertion 2 — set equality
@@ -178,7 +170,7 @@ try {
     fail(`bundled set has unexpected extras: ${extras.join(", ")}`);
   }
   if (missing.length === 0 && extras.length === 0) {
-    ok(`bundled set equals WORKSPACE_PACKAGES`);
+    ok(`bundled set equals bundledDependencies @comis/* entries`);
   }
 
   // Assertion 3 — every entry has a dist/ subdir
@@ -193,7 +185,7 @@ try {
       }
     }
   }
-  ok(`every WORKSPACE_PACKAGES entry has a populated dist/ subdirectory`);
+  ok(`every bundledDependencies @comis/* entry has a populated dist/ subdirectory`);
 
   // Assertion 4 — orchestrator/dist explicitly present
   const orchestratorDist = join(comisModulesDir, "orchestrator/dist");

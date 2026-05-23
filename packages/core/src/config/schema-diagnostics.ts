@@ -2,14 +2,17 @@
 /**
  * Diagnostics configuration scaffold.
  *
- * Top-level `diagnostics` section with four subschemas:
+ * Top-level `diagnostics` section with three subschemas:
  *
  *   - `diagnostics.trajectory`  — `{enabled, dir, maxFileBytes, eventTypes}`.
  *   - `diagnostics.cacheTrace`  — cache-trace JSONL artifact knobs.
  *   - `diagnostics.configAudit` — `{enabled, rotateAtBytes, keepRotated}`.
- *   - `diagnostics.redact`      — placeholder slot. Redact knobs live
- *     in the existing `daemon.logging` section (schema-daemon.ts), NOT
- *     here. This subschema remains empty for forward-compat.
+ *
+ * The unused fourth subschema (a placeholder slot for future redact
+ * knobs) was deleted. Runtime redaction lives in
+ * `packages/infra/src/logging/logger.ts` (Pino auto-redact) and the
+ * `daemon.logging` edge-keeping censor schema in schema-daemon.ts —
+ * neither read this subschema.
  *
  * Defaults are sticky: `.default({})` on each empty subschema so a
  * minimal AppConfig parse populates the whole tree without explicit
@@ -99,8 +102,8 @@ const CacheTraceConfigSchemaInner = z.object({
    * file reaches this size, additional appends are rejected by
    * `appendRegularFile` with `FileSizeLimitExceeded`; the cache-trace
    * runtime emits an inline `cache_trace.write_failures` sentinel at
-   * first rejection (Plan 48-03 D-10) and a summary sentinel at session
-   * `flushAndClose` (D-11). Default 50 MB matches `trajectory.maxFileBytes`.
+   * first rejection and a summary sentinel at session `flushAndClose`.
+   * Default 50 MB matches `trajectory.maxFileBytes`.
    */
   maxFileBytes: z.number().int().positive().default(50 * 1024 * 1024),
   includeMessages: z.boolean().default(false),
@@ -150,10 +153,6 @@ const ConfigAuditConfigSchema = z
     keepRotated: 5,
   });
 
-// Placeholder slot — redact knobs live in the existing daemon.logging section
-// (schema-daemon.ts), NOT here. This subschema remains empty for forward-compat.
-const DiagnosticsRedactConfigSchema = z.object({}).default({});
-
 /**
  * Root diagnostics configuration schema.
  *
@@ -169,7 +168,6 @@ const DiagnosticsConfigSchemaInner = z.object({
   trajectory: TrajectoryConfigSchema,
   cacheTrace: CacheTraceConfigSchema,
   configAudit: ConfigAuditConfigSchema,
-  redact: DiagnosticsRedactConfigSchema,
 });
 
 export const DiagnosticsConfigSchema = DiagnosticsConfigSchemaInner.default(() =>

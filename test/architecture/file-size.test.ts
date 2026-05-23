@@ -442,13 +442,13 @@ describe("file-size — per-file caps", () => {
     // scheduler.ts: RPC extraction completed via scheduler-controller.ts —
     // view contains 0 rpcClient.call sites and delegates all daemon I/O to
     // the controller (cron.list/status/add/update/remove/run, config.read/set,
-    // heartbeat.states/trigger moved out). The remaining ≤1620L is dominated
-    // by 3 tab renderers (cron jobs, heartbeat, extracted tasks), the
-    // embedded ic-cron-editor overlay wiring (preserved verbatim here), SSE
-    // event handling for scheduler:job_started/job_completed/
-    // heartbeat_delivered/heartbeat_alert/scheduler:task_extracted,
-    // optimistic-update edit/delete flows, and detailed per-job/per-heartbeat
-    // row templates with relative-time formatting.
+    // heartbeat.states/trigger moved out). The remaining residual size is
+    // dominated by 2 tab renderers (cron jobs, heartbeat), the embedded
+    // ic-cron-editor overlay wiring (preserved verbatim here), SSE event
+    // handling for scheduler:job_started/job_completed/
+    // heartbeat_delivered/heartbeat_alert, optimistic-update edit/delete
+    // flows, and detailed per-job/per-heartbeat row templates with
+    // relative-time formatting.
     "packages/web/src/views/scheduler.ts",
     // memory-inspector.ts: RPC extraction completed via
     // memory-inspector-controller.ts — view contains 0 rpcClient.call sites

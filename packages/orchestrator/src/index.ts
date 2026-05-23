@@ -10,19 +10,17 @@
 
 // Inbound pipeline
 export * from "./inbound/inbound-pipeline.js";
-export * from "./inbound/inbound-route.js";
-export * from "./inbound/inbound-resolve.js";
+export * from "./inbound/setup-and-route.js";
+export * from "./inbound/resolve-and-preprocess.js";
 export * from "./inbound/inbound-gate.js";
-export * from "./inbound/inbound-preprocess.js";
-export * from "./inbound/inbound-setup.js";
 
-// Execution coordination — execution-deliver and execution-policy travel
-// with execution-pipeline (same ownership bucket).
+// Execution coordination — execution-deliver travels with
+// execution-pipeline (same ownership bucket). The former
+// execution-policy phase was inlined into execution-pipeline.
 export * from "./execution/execution-pipeline.js";
 export * from "./execution/execution-execute.js";
 export * from "./execution/execution-filter.js";
 export * from "./execution/execution-deliver.js";
-export * from "./execution/execution-policy.js";
 
 // Channel manager lifecycle.
 // Exports: createChannelManager (factory), ChannelManager (interface),
@@ -55,13 +53,12 @@ export type { MessageRouter, RoutableMessage } from "./routing/message-router.js
 
 // Queue.
 // Per-session command serialization, debounce buffering, follow-up triggering,
-// priority scheduling, and overflow / coalescer utilities.
+// and overflow / coalescer utilities.
 // Named (not `export *`) to keep the public surface auditable.
 export {
   createCommandQueue,
   createDebounceBuffer,
   createFollowupTrigger,
-  createPriorityScheduler,
   applyOverflowPolicy,
   coalesceMessages,
 } from "./queue/index.js";
@@ -75,9 +72,6 @@ export type {
   DebounceBufferDeps,
   FollowupTrigger,
   FollowupTriggerDeps,
-  PriorityScheduler,
-  PrioritySchedulerDeps,
-  LaneStats,
 } from "./queue/index.js";
 
 // Session key builder. Builds scoped session keys for DM/group routing

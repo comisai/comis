@@ -182,7 +182,7 @@ const ConfigHistoryEntrySchema = z.object({
  * `env-handlers.ts:294-300`: legacy .env-file secrets carry only
  * `{ name, source: "envfile" }`; secrets backed by the
  * SecretStorePort carry the metadata bundle (provider, description,
- * timestamps, usageCount, expiresAt). The contract MUST NOT include
+ * timestamps, expiresAt). The contract MUST NOT include
  * a `value`-shaped field — env.list never returns values, and the
  * dev-mode `response.parse(...)` rejects any accidental
  * passthrough.
@@ -194,8 +194,6 @@ const EnvListEntrySchema = z.object({
   description: z.string().optional(),
   createdAt: z.number().optional(),
   updatedAt: z.number().optional(),
-  lastUsedAt: z.number().optional(),
-  usageCount: z.number().optional(),
   expiresAt: z.number().optional(),
 });
 
@@ -306,7 +304,6 @@ export const ConfigPatchContract = defineContract({
     section: z.string().optional(),
     key: z.string().optional(),
     value: ConfigValueSchema,
-    path: z.string().optional(),
   }),
   response: z.object({
     patched: z.literal(true),
@@ -552,7 +549,10 @@ export const EnvSetContract = defineContract({
   response: z.object({
     set: z.literal(true),
     key: z.string(),
-    storage: z.enum(["encrypted", "envfile"]),
+    // The only storage backend is the encrypted SecretStorePort. The
+    // legacy "envfile" mode was removed alongside the .env-file fallback
+    // in env-handlers.ts.
+    storage: z.literal("encrypted"),
     restarting: z.literal(true),
   }),
   scopes: ["admin"] as const,
@@ -568,10 +568,10 @@ export const EnvSetContract = defineContract({
  *
  * **CRITICAL: VALUES ARE NEVER RETURNED.** The contract response
  * schema enumerates only name + source + optional metadata
- * (provider, description, timestamps, usageCount, expiresAt). A
- * future leak that added `value`/`plaintext`/`secret`/`ciphertext`
- * to a row would fail dev-mode `response.parse(...)` (strict mode
- * is implicit — no `.passthrough()`). Mirrors the "value-leak
+ * (provider, description, timestamps, expiresAt). A future leak
+ * that added `value`/`plaintext`/`secret`/`ciphertext` to a row
+ * would fail dev-mode `response.parse(...)` (strict mode is
+ * implicit — no `.passthrough()`). Mirrors the "value-leak
  * canary" assertion in `env-handlers.test.ts:528-544`.
  *
  * Request: `{ filter?, limit? }`. `filter` is a glob pattern

@@ -48,41 +48,6 @@ export type RpcMethodHandler = SimpleJSONRPCMethod<RpcContext>;
  */
 export type RpcMethodMap = Partial<Record<RpcMethodName, RpcMethodHandler>>;
 
-/**
- * Create a JSON-RPC method router with scope-based authorization.
- *
- * Each method is registered with the json-rpc-2.0 JSONRPCServer and
- * wrapped with scope checking middleware. Unauthorized calls receive
- * a JSON-RPC error with code -32603.
- *
- * @param methods - Map of method names to handler functions
- * @returns A JSONRPCServer configured with scope-checking middleware
- */
-export function createMethodRouter(methods: RpcMethodMap): JSONRPCServer<RpcContext> {
-  const server = new JSONRPCServer<RpcContext>();
-
-  for (const [name, handler] of Object.entries(methods)) {
-    const methodName = name as RpcMethodName;
-    const requiredScope = METHOD_SCOPES[methodName];
-
-    if (!handler || !requiredScope) continue;
-
-    // Wrap handler with scope checking
-    server.addMethod(methodName, (params, context) => {
-      if (!checkScope(context.scopes, requiredScope)) {
-        throw new JSONRPCErrorException(`Insufficient scope: requires '${requiredScope}'`, -32603, {
-          clientId: context.clientId,
-          required: requiredScope,
-        });
-      }
-
-      return handler(params, context);
-    });
-  }
-
-  return server;
-}
-
 // ---------------------------------------------------------------------------
 // Dynamic method registration
 // ---------------------------------------------------------------------------
@@ -127,10 +92,10 @@ export interface MethodRouterLogger {
 /**
  * Create a dynamic JSON-RPC method router with runtime registration support.
  *
- * Unlike `createMethodRouter`, this router supports adding new methods after
- * construction via `registerMethod()`. New methods must use namespace prefixes
- * (e.g., "cron.list", "sessions.history"). Core methods are registered at
- * construction time from the provided `initialMethods` map.
+ * Supports adding new methods after construction via `registerMethod()`.
+ * New methods must use namespace prefixes (e.g., "cron.list",
+ * "sessions.history"). Core methods are registered at construction time
+ * from the provided `initialMethods` map.
  *
  * @param initialMethods - Optional initial method map (uses METHOD_SCOPES for scope lookup)
  * @param logger - Optional logger for debug tracing of RPC calls
@@ -260,45 +225,4 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
   }
 
   return { registerMethod, hasMethod, server };
-}
-
-/**
- * Create stub method handlers for all RPC methods.
- *
- * Returns placeholder implementations that return method name confirmation.
- * Used during development and integration testing before real adapters are wired.
- */
-export function createStubMethods(): Record<RpcMethodName, RpcMethodHandler> {
-  return {
-    "agent.execute": (params) => ({
-      stub: true,
-      method: "agent.execute",
-      params,
-    }),
-    "agent.stream": (params) => ({
-      stub: true,
-      method: "agent.stream",
-      params,
-    }),
-    "memory.search": (params) => ({
-      stub: true,
-      method: "memory.search",
-      params,
-    }),
-    "memory.inspect": (params) => ({
-      stub: true,
-      method: "memory.inspect",
-      params,
-    }),
-    "config.get": (params) => ({
-      stub: true,
-      method: "config.get",
-      params,
-    }),
-    "config.set": (params) => ({
-      stub: true,
-      method: "config.set",
-      params,
-    }),
-  };
 }

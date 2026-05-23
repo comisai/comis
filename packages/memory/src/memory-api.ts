@@ -68,12 +68,6 @@ export interface MemoryStats {
   oldestCreatedAt: number | null;
 }
 
-/** Result returned by enforceGuardrails when entries are removed. */
-export interface GuardrailResult {
-  entriesRemoved: number;
-  reason: string;
-}
-
 // ── MemoryApi Interface ──────────────────────────────────────────────
 
 /** Programmatic interface for memory management. */
@@ -92,9 +86,6 @@ export interface MemoryApi {
 
   /** Get aggregate statistics about the memory system. */
   stats(tenantId?: string, agentId?: string): MemoryStats;
-
-  /** Enforce entry limits. Returns null if no action needed. */
-  enforceGuardrails(tenantId?: string): GuardrailResult | null;
 }
 
 // ── Factory ──────────────────────────────────────────────────────────
@@ -109,8 +100,8 @@ export interface MemoryApi {
 export function createMemoryApi(
   db: Database.Database,
   adapter: SqliteMemoryAdapter,
-  sessionStore: SessionStorePort,
-  config: MemoryConfig,
+  _sessionStore: SessionStorePort,
+  _config: MemoryConfig,
 ): MemoryApi {
   return {
     // ── inspect ─────────────────────────────────────────────────
@@ -199,7 +190,8 @@ export function createMemoryApi(
       if (!hasScope) {
         throw new Error(
           "MemoryApi.clear() requires at least one scope field. " +
-            "Use adapter.clear(sessionKey) for blanket tenant wipe.",
+            "Pass tenantId or sessionKey to scope the wipe " +
+            "(adapter.clear was removed in a prior port-trim cleanup).",
         );
       }
 
@@ -317,70 +309,5 @@ export function createMemoryApi(
       };
     },
 
-    // ── enforceGuardrails ───────────────────────────────────────
-
-    enforceGuardrails(tenantId?: string): GuardrailResult | null {
-      const maxTotal = config.retention.maxEntries;
-
-      // If no limits configured, nothing to enforce
-      if (maxTotal <= 0) {
-        return null;
-      }
-
-      const tenantFilter = tenantId !== undefined;
-      const tenantClause = tenantFilter ? "WHERE tenant_id = ?" : "";
-      const tenantParams: unknown[] = tenantFilter ? [tenantId] : [];
-
-      // Check total entry count
-      const totalRow = db
-        .prepare(`SELECT COUNT(*) as count FROM memories ${tenantClause}`)
-        .get(...tenantParams) as { count: number };
-
-      if (totalRow.count <= maxTotal) {
-        return null; // Within limits
-      }
-
-      const excess = totalRow.count - maxTotal;
-
-      // Remove oldest non-system entries (system entries are protected)
-      const tenantAndSystem = tenantFilter
-        ? "WHERE tenant_id = ? AND trust_level != 'system'"
-        : "WHERE trust_level != 'system'";
-
-      // Get IDs of entries to remove (oldest first)
-      const idsToRemoveParsed = idProjectionMapper.parseRows(
-        db
-          .prepare(`SELECT id FROM memories ${tenantAndSystem} ORDER BY created_at ASC LIMIT ?`)
-          .all(...tenantParams, excess),
-      );
-      // Degrade-on-validation-error: eviction → empty list (eviction skipped).
-      const idsToRemove = idsToRemoveParsed.ok ? idsToRemoveParsed.value : [];
-
-      if (idsToRemove.length === 0) {
-        return null; // Only system entries remain, can't remove
-      }
-
-      // Delete from vec_memories first
-      try {
-        for (const { id } of idsToRemove) {
-          db.prepare("DELETE FROM vec_memories WHERE memory_id = ?").run(id);
-        }
-      } catch {
-        // vec_memories may not exist
-      }
-
-      // Delete from memories
-      const placeholders = idsToRemove.map(() => "?").join(",");
-      const deleteIds = idsToRemove.map((r) => r.id);
-
-      const result = db
-        .prepare(`DELETE FROM memories WHERE id IN (${placeholders})`)
-        .run(...deleteIds);
-
-      return {
-        entriesRemoved: result.changes,
-        reason: `Total entries (${totalRow.count}) exceeded maxEntries limit (${maxTotal}). Removed ${result.changes} oldest non-system entries.`,
-      };
-    },
   };
 }

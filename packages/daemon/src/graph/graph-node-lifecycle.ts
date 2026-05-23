@@ -600,7 +600,7 @@ export function handleSubAgentCompleted(
 
   gs.nodeOutputs.set(nodeId, output);
 
-  // 5c. Auto-persist full output via fs-safe substrate (Phase 48 OBS-HARD-03).
+  // 5c. Auto-persist full output via fs-safe substrate.
   if (gs.sharedDir && output) {
     try {
       void writeRegularFile({ path: safePath(gs.sharedDir, `${nodeId}-output.md`), content: output, confinedBaseDir: gs.sharedDir });
@@ -778,7 +778,7 @@ export function persistArtifacts(
       );
       continue;
     }
-    // Persist via fs-safe substrate (Phase 48 OBS-HARD-03); WARN on Result.err.
+    // Persist via fs-safe substrate; WARN on Result.err.
     const writeResult = writeRegularFile({ path: safeResult.value, content: a.content, confinedBaseDir: gs.sharedDir });
     if (!writeResult.ok) {
       deps.logger?.warn(

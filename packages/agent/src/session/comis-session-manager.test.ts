@@ -81,7 +81,7 @@ describe("destroySession", () => {
   });
 });
 
-describe("destroySession — session:ended emit + trajectoryRegistry close (Gap F, design §6.4)", () => {
+describe("destroySession — session:ended emit + trajectoryRegistry close (design §6.4)", () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const d of dirs) {
@@ -122,7 +122,7 @@ describe("destroySession — session:ended emit + trajectoryRegistry close (Gap 
     expect(typeof payload.sessionKey).toBe("string");
     expect(payload.exitReason).toBe("destroyed");
     // The session manager doesn't accumulate per-session totals — payload
-    // zeros are the documented placeholder shape (plan §F.4 note).
+    // zeros are the documented placeholder shape.
     expect(payload.totalTurns).toBe(0);
     expect(payload.totalInputTokens).toBe(0);
     expect(payload.totalOutputTokens).toBe(0);
@@ -227,7 +227,7 @@ describe("destroySession — session:ended emit + trajectoryRegistry close (Gap 
   });
 });
 
-describe("comis-session-manager honors §1.4 mode invariants on substrate-routed writes (OBS-HARD-03, Plan 48-06)", () => {
+describe("comis-session-manager honors §1.4 mode invariants on substrate-routed writes", () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const d of dirs) {
@@ -238,8 +238,8 @@ describe("comis-session-manager honors §1.4 mode invariants on substrate-routed
 
   it("with_session_creates_per_channel_dir_with_mode_0o700", async () => {
     // withSession routes the per-channel directory creation through
-    // ensureContainedDir (Phase 48 OBS-HARD-03) so design §1.4's `0o700`
-    // invariant holds for every artifact dir under ~/.comis/agents/.
+    // ensureContainedDir so design §1.4's `0o700` invariant holds for every
+    // artifact dir under ~/.comis/agents/.
     const baseDir = makeTmpDir();
     const lockDir = makeTmpDir();
     dirs.push(baseDir, lockDir);
@@ -259,8 +259,8 @@ describe("comis-session-manager honors §1.4 mode invariants on substrate-routed
 
   it("write_session_metadata_writes_companion_file_with_mode_0o600", async () => {
     // writeSessionMetadata routes the sentinel JSON write through
-    // writeRegularFile (Phase 48 OBS-HARD-03) so design §1.4's `0o600`
-    // invariant holds for the `_session-metadata.json` companion file.
+    // writeRegularFile so design §1.4's `0o600` invariant holds for the
+    // `_session-metadata.json` companion file.
     const baseDir = makeTmpDir();
     const lockDir = makeTmpDir();
     dirs.push(baseDir, lockDir);

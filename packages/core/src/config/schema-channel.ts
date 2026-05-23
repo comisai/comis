@@ -19,7 +19,7 @@ export const AckReactionConfigSchema = z.strictObject({
 
 export type AckReactionConfig = z.infer<typeof AckReactionConfigSchema>;
 
-/** Per-channel media processing toggles. All default to true for backward compatibility. */
+/** Per-channel media processing toggles. All default to true (opt-out per-channel). */
 export const MediaProcessingSchema = z.strictObject({
   /** Enable voice transcription (STT) for inbound audio attachments */
   transcribeAudio: z.boolean().default(true),

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { GatewayConfig, TypedEventBus, HookRunner, HookGatewayStartContext, HookGatewayStopContext } from "@comis/core";
+import type { GatewayConfig, TypedEventBus } from "@comis/core";
 import { tryGetContext, systemNowDate } from "@comis/core";
 import type { WSContext, WSEvents } from "hono/ws";
 import type { JSONRPCServer } from "json-rpc-2.0";
@@ -11,7 +11,6 @@ import { randomUUID } from "node:crypto";
 import { createServer as createHttpsServer } from "node:https";
 import type { RpcContext } from "../rpc/method-router.js";
 import type { RpcAdapterDeps } from "../rpc/rpc-adapters.js";
-import type { HmacAlgorithm } from "../webhook/hmac-verifier.js";
 import { validateCertificates } from "../auth/mtls-verifier.js";
 import { extractBearerToken, type TokenStore } from "../auth/token-auth.js";
 import { getConnInfo } from "@hono/node-server/conninfo";
@@ -20,12 +19,6 @@ import { createWsHandler, WsConnectionManager } from "../rpc/ws-handler.js";
 import { createRestApi, ActivityRingBuffer, subscribeActivityBuffer } from "../web/rest-api.js";
 import { createSseEndpoint } from "../web/sse-endpoint.js";
 import { createStaticMiddleware } from "../web/static-middleware.js";
-import { createWebhookEndpoint, type WebhookHandler } from "../webhook/webhook-endpoint.js";
-import {
-  createOAuthCallbackRoute,
-  type PendingFlow,
-} from "../oauth/oauth-callback-route.js";
-import type { OAuthCredentialStorePort } from "@comis/core";
 import type { GatewayLogger } from "./gateway-logger.js";
 
 export type { GatewayLogger };
@@ -44,27 +37,6 @@ export interface GatewayServerDeps {
   readonly rpcServer: JSONRPCServer<RpcContext>;
   /** WebSocket connection lifecycle tracker */
   readonly wsConnections: WsConnectionManager;
-  /** Optional webhook configuration (mount only if provided) */
-  readonly webhookDeps?: {
-    secret: string;
-    onWebhook: WebhookHandler;
-    algorithm?: HmacAlgorithm;
-    headerName?: string;
-  };
-  /**
-   * Optional OAuth callback deps. When provided, the gateway mounts
-   * GET /oauth/callback/:provider for browser-redirect OAuth flows
-   * (web-UI-initiated logins). Pending-flow map is owned by the caller
-   * (e.g., setup-gateway.ts) so daemon restart cleanly drops all in-flight
-   * states.
-   */
-  readonly oauthCallbackDeps?: {
-    credentialStore: OAuthCredentialStorePort;
-    eventBus: TypedEventBus;
-    pendingFlows: Map<string, PendingFlow>;
-  };
-  /** Optional hook runner for lifecycle hooks (no-op when absent) */
-  readonly hookRunner?: HookRunner;
   /** Optional web dashboard deps (mount REST/SSE/static when provided) */
   readonly webDeps?: {
     /** Event bus for SSE streaming and activity buffer */
@@ -107,7 +79,6 @@ export interface GatewayServerHandle {
  * Routes:
  * - GET /health — health check (always available)
  * - GET /ws — WebSocket with token auth + rate limiting
- * - POST /hooks/webhook — HMAC-verified webhook endpoint (if webhookDeps provided)
  * - GET /api/* — REST API + SSE endpoints (if webDeps provided)
  * - GET /app/* — Static web dashboard files (if webDeps.webDistPath provided)
  */
@@ -221,25 +192,6 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
       );
     }),
   );
-
-  // Mount webhook endpoint (if configured)
-  if (deps.webhookDeps) {
-    const webhookApp = createWebhookEndpoint(deps.webhookDeps);
-    app.route("/hooks", webhookApp);
-  }
-
-  // Mount OAuth callback at GET /oauth/callback/:provider
-  if (deps.oauthCallbackDeps) {
-    const oauthApp = createOAuthCallbackRoute({
-      ...deps.oauthCallbackDeps,
-      logger,
-    });
-    app.route("/oauth", oauthApp);
-    logger.debug(
-      { submodule: "oauth-callback" },
-      "OAuth callback route mounted at /oauth/callback/:provider",
-    );
-  }
 
   // Mount web dashboard routes (if configured)
   let unsubscribeActivity: (() => void) | undefined;
@@ -373,23 +325,9 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
 
       logger.info({ host, port }, `Gateway listening on http://${host}:${port} (dev mode)`);
     }
-
-    // Run gateway_start hook -- observability for server startup
-    // Hook errors are caught internally by the runner (catchErrors: true)
-    await deps.hookRunner?.runGatewayStart(
-      { port, host, tls: !!tls },
-      {} as HookGatewayStartContext,
-    );
   }
 
   async function stop(): Promise<void> {
-    // Run gateway_stop hook before shutdown
-    // Hook errors are caught internally by the runner (catchErrors: true)
-    await deps.hookRunner?.runGatewayStop(
-      { reason: "shutdown" },
-      {} as HookGatewayStopContext,
-    );
-
     // Unsubscribe activity buffer from event bus
     if (unsubscribeActivity) {
       unsubscribeActivity();

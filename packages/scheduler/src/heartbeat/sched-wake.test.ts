@@ -9,12 +9,12 @@
  */
 
 import { TypedEventBus } from "@comis/core";
+import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
 import { describe, it, expect, vi } from "vitest";
 import type { HeartbeatRunnerDeps, HeartbeatNotification } from "./heartbeat-runner.js";
 import type { HeartbeatSourcePort } from "./heartbeat-source.js";
 import type { QuietHoursConfig } from "./quiet-hours.js";
 import { createHeartbeatRunner } from "./heartbeat-runner.js";
-import { HEARTBEAT_OK_TOKEN } from "./relevance-filter.js";
 
 // ---------------------------------------------------------------------------
 // Helpers (reused from heartbeat-runner.test.ts patterns)

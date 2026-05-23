@@ -99,7 +99,7 @@ describe("buildCacheTraceWrapper", () => {
 
     expect(callOrder).toEqual(["next"]);
     const lines = readLines(filePath);
-    // Plan 48-07: wrapper now emits 3 stages — model:before, stream:context, model:after.
+    // Wrapper emits 3 stages — model:before, stream:context, model:after.
     expect(lines).toHaveLength(3);
     expect(lines[0]!.stage).toBe("model:before");
     expect(lines[1]!.stage).toBe("stream:context");
@@ -230,7 +230,7 @@ describe("buildCacheTraceWrapper", () => {
   });
 });
 
-describe("buildCacheTraceWrapper emits model:before stage (Plan 48-07)", () => {
+describe("buildCacheTraceWrapper emits model:before stage", () => {
   it("wrapper_emits_model_before_stage_with_provider_and_modelid", async () => {
     const filePath = join(tmpDir, "trace.jsonl");
     const trace = makeTrace({ includeMessages: true, filePath });

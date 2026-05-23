@@ -2,12 +2,12 @@
 /**
  * Inbound Pipeline: Thin orchestrator for message reception and routing.
  *
- * Delegates to 5 focused phase modules:
- *   1. inbound-resolve  — agent resolution, identity, session key
- *   2. inbound-preprocess — audio preflight, media preprocessing, compression
- *   3. inbound-gate     — auto-reply, slash commands, reset triggers, skills
- *   4. inbound-setup    — ack reaction, typing controller
- *   5. inbound-route    — debounce, group history, queue routing, execution
+ * Delegates to 3 focused phase modules:
+ *   1. resolve-and-preprocess — agent resolution, session key, audio preflight,
+ *                                media preprocessing, compression
+ *   2. inbound-gate           — auto-reply, slash commands, reset triggers, skills
+ *   3. setup-and-route        — typing controller, streaming config, steer/followup,
+ *                                queue routing, execution
  *
  * @module
  */
@@ -18,14 +18,10 @@ import type { MessageRouter } from "../routing/message-router.js";
 import type { SessionLifecycle } from "@comis/agent";
 // Relative path used because orchestrator cannot import its own published name.
 import type { CommandQueue } from "../queue/command-queue.js";
-import type { DebounceBuffer } from "../queue/debounce-buffer.js";
-import type { FollowupTrigger } from "../queue/followup-trigger.js";
-import type { PriorityScheduler } from "../queue/priority-scheduler.js";
-import type { SessionLabelStore } from "@comis/agent";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
-import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig, AckReactionConfig } from "@comis/core";
+import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 
@@ -34,18 +30,15 @@ import type {
   ChannelRegistry,
   SendOverrideStore,
   PreflightResult,
-  GroupHistoryBuffer,
   VoiceResponsePipelineDeps,
 } from "@comis/channels";
 import type { RetryEngine } from "@comis/core";
 import { isRegexSafe } from "@comis/channels";
 
 // Phase module imports
-import { resolveInboundAgent } from "./inbound-resolve.js";
-import { preprocessInboundMessage } from "./inbound-preprocess.js";
+import { resolveAndPreprocess } from "./resolve-and-preprocess.js";
 import { evaluateInboundGate } from "./inbound-gate.js";
-import { setupInboundExecution } from "./inbound-setup.js";
-import { routeInboundMessage } from "./inbound-route.js";
+import { setupAndRoute } from "./setup-and-route.js";
 import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -65,22 +58,10 @@ export interface InboundPipelineDeps {
   autoReplyEngineConfig?: AutoReplyEngineConfig;
   sendPolicyConfig?: SendPolicyConfig;
   getResetTriggers?: (agentId: string) => string[];
-  identityResolver?: { resolve(provider: string, providerUserId: string): string | undefined };
-  getDmScopeConfig?: (agentId: string) => { mode?: string; threadIsolation?: boolean } | undefined;
-  debounceBuffer?: DebounceBuffer;
-  groupHistoryBuffer?: GroupHistoryBuffer;
-  followupTrigger?: FollowupTrigger;
-  followupConfig?: { maxFollowupRuns: number };
-  priorityScheduler?: PriorityScheduler;
   queueConfig?: QueueConfig;
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
-  sessionLabelStore?: SessionLabelStore;
-  ackReactionConfig?: AckReactionConfig;
-  loadPromptSkill?: (name: string, args?: string) => Promise<Result<{ content: string; allowedTools: string[]; skillName: string }, Error>>;
-  getUserInvocableSkillNames?: () => Set<string>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assembleToolsForAgent?: (agentId: string, options?: { sessionKey?: SessionKey }) => Promise<any[]>;
-  greetingGenerator?: { generate(agentName: string): Promise<Result<string, Error>> };
   audioPreflight?: (msg: NormalizedMessage) => Promise<PreflightResult>;
   voiceResponsePipeline?: VoiceResponsePipelineDeps;
   parseOutboundMedia?: (text: string) => { text: string; mediaUrls: string[] };
@@ -94,14 +75,6 @@ export interface InboundPipelineDeps {
    *  inbound-gate.ts and execution-deliver.ts use the method form instead
    *  of the free-standing standalone export. */
   deliveryService: DeliveryService;
-  /**
-   * Per-instance set of in-flight outbound sendMessage promises. Threaded
-   * through ExecutionPipelineDeps -> DeliverToChannelDeps so deliver-to-channel
-   * can register active sends. Drained in stopAll() with a 5s deadline so
-   * SIGUSR2 cannot tear down adapters mid-send. Created by the channel-manager
-   * factory; do not pass externally.
-   */
-  inFlightSends?: Set<Promise<unknown>>;
   /** Optional active run registry for SDK-native steer+followup. */
   activeRunRegistry?: ActiveRunRegistry;
   /**
@@ -113,8 +86,6 @@ export interface InboundPipelineDeps {
   sessionResolver?: BackgroundSessionResolver;
   /** Handle /config command. Returns response text or undefined if not a config command. */
   handleConfigCommand?: (args: string[], channelType: string) => Promise<string | undefined>;
-  /** Optional callback for task extraction after successful agent execution. */
-  onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
   /** When true, lifecycle reactor handles queued/thinking reactions -- skip ack reaction. */
   lifecycleReactionsEnabled?: boolean;
   /** Response prefix config for template-based prefix/suffix on agent responses. */
@@ -171,7 +142,10 @@ export function matchesResetTrigger(text: string, triggers: string[]): boolean {
 /**
  * Process an inbound message through the full pipeline.
  *
- * Orchestrates 5 phases: resolve -> preprocess -> gate -> setup -> route.
+ * Orchestrates 3 phases:
+ *   1. resolveAndPreprocess
+ *   2. evaluateInboundGate
+ *   3. setupAndRoute
  */
 export async function processInboundMessage(
   deps: InboundPipelineDeps,
@@ -196,27 +170,18 @@ export async function processInboundMessage(
     return;
   }
 
-  // Phase 1: Resolve agent, identity, session key
-  const resolved = resolveInboundAgent(deps, adapter, msg);
+  // Phase 1: Resolve agent + preprocess
+  const resolved = await resolveAndPreprocess(deps, adapter, msg);
   if (!resolved) return; // No executor -- early exit
-  const { agentId, executor, sessionKey } = resolved;
+  const { agentId, executor, sessionKey, processedMsg } = resolved;
 
-  // Phase 2: Audio preflight, media preprocessing, compression
-  const processedMsg = await preprocessInboundMessage(deps, msg, adapter.channelType);
-
-  // Phase 3: Auto-reply gate, slash commands, reset triggers, prompt skills
+  // Phase 2: Auto-reply gate, slash commands, reset triggers, prompt skills
   const gate = await evaluateInboundGate(deps, adapter, processedMsg, sessionKey, agentId, sendOverrides);
   if (gate.action === "handled" || gate.action === "skip") return;
 
-  // Phase 4: Ack reaction, typing controller, streaming config
-  const { typingLifecycle, streamCfg } = setupInboundExecution(
-    deps, adapter, gate.processedMsg, msg, sessionKey,
-  );
-
-  // Phase 5: Debounce, group history, steer+followup, queue routing, execution
-  await routeInboundMessage(
+  // Phase 3: Setup + route
+  await setupAndRoute(
     deps, adapter, gate.processedMsg, msg, sessionKey, agentId,
-    executor, streamCfg, activePacers, sendOverrides,
-    typingLifecycle, gate.directives,
+    executor, activePacers, sendOverrides, gate.directives,
   );
 }

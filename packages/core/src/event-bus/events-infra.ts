@@ -45,30 +45,11 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  /** Plugin registered with the plugin registry */
-  "plugin:registered": {
-    pluginId: string;
-    pluginName: string;
-    hookCount: number;
-    timestamp: number;
-  };
-
-  /** Plugin deactivated */
-  "plugin:deactivated": {
-    pluginId: string;
-    reason: string;
-    timestamp: number;
-  };
-
-  /** Hook execution completed (for observability) */
-  "hook:executed": {
-    hookName: string;
-    pluginId: string;
-    durationMs: number;
-    success: boolean;
-    error?: string;
-    timestamp: number;
-  };
+  // Three plugin / hook lifecycle event-bus events were removed from this
+  // map. They had zero non-test subscribers; the only emit sites were
+  // inside PluginRegistry and HookRunner themselves. Plugin lifecycle is
+  // now consumed exclusively through the in-tree PluginRegistry interface
+  // (register / unregister / getHooksByName / deactivateAll).
 
   // -------------------------------------------------------------------------
   // Auth events
@@ -77,8 +58,7 @@ export interface InfraEvents {
   /** Provider auth token rotated (OAuth refresh) */
   "auth:token_rotated": {
     provider: string;
-    profileName: string;
-    /** Canonical "<provider>:<identity>" form. Coexists with profileName for backward compat. */
+    /** Canonical "<provider>:<identity>" form. */
     profileId: string;
     expiresAtMs: number;
     timestamp: number;
@@ -320,16 +300,6 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  /** Scheduler: task extracted from conversation */
-  "scheduler:task_extracted": {
-    taskId: string;
-    title: string;
-    priority: string;
-    confidence: number;
-    sessionKey: string;
-    timestamp: number;
-  };
-
   // -------------------------------------------------------------------------
   // Process metrics and system events
   // -------------------------------------------------------------------------
@@ -524,8 +494,15 @@ export interface InfraEvents {
   // System lifecycle events
   // -------------------------------------------------------------------------
 
-  /** System is shutting down */
-  "system:shutdown": { reason: string; graceful: boolean };
+  // The "system:shutdown" event-bus event was removed from this map. Its
+  // production subscribers (across daemon.ts, channels-helpers.ts,
+  // setup-tools.ts, setup-channels-runtime.ts, setup-cross-session-events.ts)
+  // had ZERO production emitters — every teardown silently no-op'd in
+  // production until the systemd KillMode reaped the process. Teardowns now
+  // flow directly through setupShutdown's ShutdownDeps (no event-bus
+  // indirection). approval-gate.ts:156 + :339 retain the literal
+  // "system:shutdown" string as a denial-reason sentinel — that string is
+  // NOT this event.
 
   /** Unhandled error from a system component */
   "system:error": { error: Error; source: string };
@@ -539,13 +516,6 @@ export interface InfraEvents {
     secretName: string;
     agentId: string;
     outcome: "success" | "denied" | "not_found";
-    timestamp: number;
-  };
-
-  /** Secret lifecycle event (CRUD operations) */
-  "secret:modified": {
-    secretName: string;
-    action: "created" | "updated" | "deleted" | "imported";
     timestamp: number;
   };
 

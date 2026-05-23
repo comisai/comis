@@ -308,13 +308,11 @@ export function registerSecretsCommand(program: Command): void {
         }
 
         renderTable(
-          ["Name", "Provider", "Created", "Last Used", "Usage Count"],
+          ["Name", "Provider", "Created"],
           rows.map((s) => [
             s.name,
             s.provider ?? "-",
             formatRelativeTime(s.createdAt),
-            s.lastUsedAt ? formatRelativeTime(s.lastUsedAt) : "-",
-            String(s.usageCount),
           ]),
         );
       } catch (e) {

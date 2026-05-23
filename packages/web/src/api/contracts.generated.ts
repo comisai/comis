@@ -2044,9 +2044,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               }
             }
           ]
-        },
-        "path": {
-          "type": "string"
         }
       },
       "required": [
@@ -3203,12 +3200,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "updatedAt": {
                 "type": "number"
               },
-              "lastUsedAt": {
-                "type": "number"
-              },
-              "usageCount": {
-                "type": "number"
-              },
               "expiresAt": {
                 "type": "number"
               }
@@ -3271,10 +3262,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "storage": {
           "type": "string",
-          "enum": [
-            "encrypted",
-            "envfile"
-          ]
+          "const": "encrypted"
         },
         "restarting": {
           "type": "boolean",
@@ -7653,12 +7641,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "expiresAt": {
                 "type": "number"
               },
-              "lastUsedAt": {
-                "type": "number"
-              },
-              "usageCount": {
-                "type": "number"
-              },
               "createdAt": {
                 "type": "number"
               },
@@ -7668,7 +7650,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "required": [
               "name",
-              "usageCount",
               "createdAt",
               "updatedAt"
             ],

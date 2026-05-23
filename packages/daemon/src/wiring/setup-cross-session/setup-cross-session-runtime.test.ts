@@ -1946,7 +1946,12 @@ describe("setupCrossSession", () => {
       }
     });
 
-    it("system:shutdown stops all controllers and clears map", async () => {
+    it("proxyTypingCleanup cleanup function stops every active controller and clears the map", async () => {
+      // registerProxyTypingListeners used to subscribe to
+      // eventBus.on("system:shutdown", ...) which silently no-op'd in
+      // production. It now returns a cleanup function the composition root
+      // invokes directly via ShutdownDeps.proxyTypingCleanup. This test
+      // exercises that returned function directly (no event-bus indirection).
       const setupCrossSession = await getSetupCrossSession();
       const { deps, eventBus } = createProxyDeps();
 
@@ -1958,7 +1963,7 @@ describe("setupCrossSession", () => {
         .mockReturnValueOnce({ start: vi.fn(), stop: stopA, refreshTtl: vi.fn(), isActive: true, startedAt: Date.now(), isSealed: false })
         .mockReturnValueOnce({ start: vi.fn(), stop: stopB, refreshTtl: vi.fn(), isActive: true, startedAt: Date.now(), isSealed: false });
 
-      setupCrossSession(deps);
+      const { proxyTypingCleanup } = setupCrossSession(deps);
 
       // Start two proxy controllers
       eventBus.emit("typing:proxy_start", {
@@ -1978,8 +1983,9 @@ describe("setupCrossSession", () => {
         timestamp: Date.now(),
       });
 
-      // Emit shutdown
-      eventBus.emit("system:shutdown", { reason: "test", graceful: true });
+      // Invoke the returned cleanup directly (was previously
+      // eventBus.emit("system:shutdown", ...)).
+      proxyTypingCleanup();
 
       expect(stopA).toHaveBeenCalledTimes(1);
       expect(stopB).toHaveBeenCalledTimes(1);

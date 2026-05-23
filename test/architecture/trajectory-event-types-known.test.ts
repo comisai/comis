@@ -75,10 +75,7 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "skill:executed",
   "skill:rejected",
   "skill:registry_reset",
-  "skill:created",
-  "skill:updated",
   "skill:failed",
-  "skills:reloaded",
 
   // -------------------------------------------------------------------
   // Security / safety — fed by separate alerting paths; trajectory
@@ -100,7 +97,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // Model catalog + observability metadata not tied to a single turn.
   // -------------------------------------------------------------------
   "model:catalog_loaded",
-  "model:lkw_fallback_succeeded",
   "observability:cache_break",
   "observability:latency",
 
@@ -112,7 +108,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "graph:completed",
   "graph:driver_lifecycle",
   "sep:plan_extracted",
-  "sep:plan_completed",
   "cache:graph_prefix_written",
 
   // -------------------------------------------------------------------
@@ -200,14 +195,12 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "queue:dequeued",
   "queue:enqueued",
   "queue:overflow",
-  "priority:aged_promotion",
-  "priority:lane_assigned",
 
   // -------------------------------------------------------------------
   // Context-engine internals — granular pipeline signals; the
   // turn-level summary lands in prompt.submitted instead. NOTE:
   // `context:pipeline` itself was lifted into TRAJECTORY_BRIDGE_MAPPING
-  // (→ `context.compiled`) per 260519-tlx Gap COV. The post-LLM patch
+  // (→ `context.compiled`). The post-LLM patch
   // event `context:pipeline:cache` stays internal — its cache fields
   // are folded into the pre-LLM `context:pipeline` snapshot the
   // trajectory captures.

@@ -30,13 +30,11 @@
  * @module
  */
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { ComisLogger } from "@comis/core";
+import type { ComisLogger, WrapExternalContentOptions } from "@comis/core";
 
 // Import every platform-tool factory function. Local relative paths because
 // the factory files live under `./tools/`.
 import { createCronTool } from "./tools/cron-tool.js";
-import { createUnifiedMemoryTool } from "./tools/unified-memory-tool.js";
-import { createUnifiedSessionTool } from "./tools/unified-session-tool.js";
 import { createUnifiedContextTool } from "./tools/unified-context-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createDiscordActionTool } from "./tools/discord-action-tool.js";
@@ -109,6 +107,15 @@ export interface PlatformToolBuildContext {
   readonly approvalGate?: unknown;
   /** Typed event bus reference (unused by most descriptors; held for future use). */
   readonly eventBus?: unknown;
+  /**
+   * Optional callback for suspicious content detection. Forwarded by the
+   * daemon (built once per process inside `bootAgents` in `daemon.ts`,
+   * from the audit-aggregator constructed there; the former
+   * `buildAuditBundle` helper has been inlined directly into the stage
+   * body). Currently consumed by the MCP bridge via `mcpToolsToAgentTools`
+   * and reserved for future MCP-wrapping platform-tool descriptors.
+   */
+  readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /** `image_generate` tool's conditional predicate signal (truthy when provider wired). */
   readonly imageGenProvider?: unknown;
   /** `background_tasks` tool's conditional predicate signal (truthy when manager wired). */
@@ -328,11 +335,6 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       category: "memory",
       build: (ctx) => createMemoryStoreTool(ctx.rpcCall as never),
     },
-    {
-      name: "unified_memory",
-      category: "memory",
-      build: (ctx) => createUnifiedMemoryTool(ctx.rpcCall as never, ctx.approvalGate as never),
-    },
 
     // ---- messaging ----
     {
@@ -443,11 +445,6 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       name: "sessions_spawn",
       category: "session",
       build: (ctx) => createSessionsSpawnTool(ctx.rpcCall as never),
-    },
-    {
-      name: "unified_session",
-      category: "session",
-      build: (ctx) => createUnifiedSessionTool(ctx.rpcCall as never),
     },
   ];
 }

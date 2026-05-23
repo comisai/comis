@@ -21,7 +21,6 @@ const EVENT_CONFIG: Record<string, { label: string; color: string }> = {
   "scheduler:job_started": { label: "JOB START", color: "#8b5cf6" },
   "scheduler:job_completed": { label: "JOB DONE", color: "#22c55e" },
   "scheduler:heartbeat_check": { label: "HEARTBEAT", color: "#06b6d4" },
-  "scheduler:task_extracted": { label: "TASK", color: "#f59e0b" },
   "system:error": { label: "ERROR", color: "#ef4444" },
 };
 

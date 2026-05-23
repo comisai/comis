@@ -52,15 +52,15 @@ describe("createEchoPlugin", () => {
   it("has capabilities with minimal features", () => {
     const plugin = createEchoPlugin();
 
-    expect(plugin.capabilities.chatTypes).toEqual(["dm"]);
     expect(plugin.capabilities.features.reactions).toBe(false);
     expect(plugin.capabilities.features.attachments).toBe(false);
+    expect(plugin.capabilities.features.editMessages).toBe(false);
   });
 
-  it("has no streaming support", () => {
+  it("uses positive maxMessageChars limit", () => {
     const plugin = createEchoPlugin();
 
-    expect(plugin.capabilities.streaming?.supported).toBe(false);
+    expect(plugin.capabilities.limits.maxMessageChars).toBeGreaterThan(0);
   });
 
   it("register() returns ok", () => {

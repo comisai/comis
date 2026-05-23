@@ -88,9 +88,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ImageFallbackChainConfig",
       "createModelAllowlist",
       "ModelAllowlist",
-      "createModelAliasResolver",
-      "ModelAliasResolver",
-      "ModelAliasResolverDeps",
       "createContextWindowResolver",
       "ContextWindowResolver",
       "ContextWindowResolverDeps",
@@ -143,6 +140,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // policy entry.
       "SessionLifecycleOptions",
       "createSessionLabelStore",
+      // SessionLabelStore type: pair of createSessionLabelStore (already in this
+      // baseline). The only in-repo consumer (ChannelManagerDeps.sessionLabelStore
+      // field) was deleted alongside 10 other unwired deps fields. Pair the type
+      // and factory in the baseline until a future cleanup removes both as a
+      // unit (separate dead-module cleanup).
+      "SessionLabelStore",
       "ScopedSessionKeyParams",
       "withSessionLock",
       "LockedSessionStoreOptions",
@@ -159,15 +162,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createIdentityUpdater",
       "IdentityUpdater",
       "PendingUpdate",
-      "createIdentityLinkResolver",
-      "IdentityLinkResolver",
-      "IdentityLinkResolverDeps",
       "GreetingGeneratorDeps",
       "MemoryReviewDeps",
-      "createRagRetriever",
       "formatMemorySection",
-      "RagRetriever",
-      "RagRetrieverDeps",
       "CommandQueueDeps",
       "QueueStats",
       "SessionLane",
@@ -178,9 +175,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DebounceBufferDeps",
       "createFollowupTrigger",
       "FollowupTriggerDeps",
-      "createPriorityScheduler",
-      "PrioritySchedulerDeps",
-      "LaneStats",
       "loadWorkspaceBootstrapFiles",
       "truncateFileContent",
       "filterBootstrapFilesForSubAgent",
@@ -427,8 +421,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DiscordBotInfo",
       "chunkDiscordText",
       "ChunkDiscordTextOpts",
-      "createDiscordResolver",
-      "DiscordResolverDeps",
       "createSlackAdapter",
       "SlackAdapterDeps",
       "mapSlackToNormalized",
@@ -457,8 +449,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SignalBotInfo",
       "convertIrToSignalTextStyles",
       "SignalTextStyle",
-      "createSignalResolver",
-      "SignalResolverDeps",
       "createLineAdapter",
       "LineAdapterDeps",
       "LineAdapterHandle",
@@ -524,6 +514,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createTypingLifecycleController",
       "TypingLifecycleController",
       "TypingLifecycleOptions",
+      // GroupHistoryBuffer: the only in-repo consumer
+      // (InboundPipelineDeps.groupHistoryBuffer field, plus its mirror on
+      // ChannelManagerDeps) was deleted — the deps slot was never wired by the
+      // daemon and the absent-mode (no group history injection) IS the
+      // production code path. Type stays exported on the documented public
+      // surface until a future cleanup removes the implementation module as a
+      // dead-code unit (separate cleanup).
+      "GroupHistoryBuffer",
       // deliverToChannel, DeliverToChannelDeps, DeliveryResult,
       // ChunkDeliveryResult, resolveChunkLimit, and QUEUE_BACKOFF_SCHEDULE_MS
       // were removed from @comis/channels exports when
@@ -668,8 +666,27 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PROFILE_ID_RE",
       // ContextStorePort is declared but not yet consumed by agent —
       // tracked as a planned-orphan policy entry mirrored from the
-      // FileLockPort pattern.
+      // FileLockPort pattern. Preserved this entry through the split:
+      // ContextStorePort is now a type alias
+      // (`type ContextStorePort = ContextEngineStore & ContextAdminStore`)
+      // and remains an in-codebase symbol consumed primarily by the
+      // daemon's context-handlers + the memory contract test.
       "ContextStorePort",
+      // ContextEngineStore (34 per-session read/write methods). Consumed
+      // by the agent context-engine + the executor injection-deps types;
+      // the public-export-consumers test resolves the consumer files (so
+      // a runtime consumer entry is not required here for Engine).
+      // Tracked alongside ContextAdminStore for documentation symmetry.
+      // ContextAdminStore (4 admin/cleanup methods). The admin half of
+      // ContextStorePort. No production consumer imports this name as a
+      // value-typed annotation today — the daemon's context-handlers +
+      // api/types.ts consume the wider intersection alias
+      // `ContextStorePort` (which still resolves structurally through
+      // the alias to the union of Engine + Admin methods). Tracked as a
+      // planned-orphan policy entry mirroring the ContextStorePort
+      // pattern above; the memory contract test gates the type contract
+      // via `.toExtend<ContextAdminStore>()`.
+      "ContextAdminStore",
       // Row DTOs for ContextStorePort moved from @comis/memory into
       // core/src/ports/context-store-types.ts. The 2 link-table types
       // (CtxSummaryMessageRow, CtxSummaryParentRow) were already orphans
@@ -718,12 +735,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "decodeCodexJwtPayload",
       "resolveCodexStableSubject",
       "RewrittenOAuthError",
-      "SkillPort",
-      "SkillPermissions",
-      "SkillInput",
-      "SkillOutput",
-      "SkillManifest",
       "FileExtractionErrorKind",
+      // RagConfig: surface-only export. The createRagRetriever factory in
+      // packages/agent/src/rag/rag-retriever.ts was deleted; the canonical
+      // post-deletion consumer is
+      // packages/agent/src/executor/prompt-assembly.ts:649 which reads
+      // `config.rag.includeTrustLevels` off the PerAgentConfig.rag slot
+      // typed via the schema. No production code carries `RagConfig` as a
+      // named import after the factory removal. Kept exported because the
+      // RagConfigSchema is still operator-facing config; the type alias is
+      // simply zero-consumer until the next round of public-API trimming.
+      "RagConfig",
       "HookName",
       "ModifyingHookName",
       "VoidHookName",
@@ -752,13 +774,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "HookSessionEndContext",
       "HookGatewayStartEvent",
       "HookGatewayStopEvent",
+      // HookGatewayStartContext + HookGatewayStopContext became orphans when
+      // the dead hookRunner?.runGatewayStart() / runGatewayStop() invocations
+      // were removed from packages/gateway/src/server/hono-server.ts (Plan
+      // 55-01). The Event types remain because plugin authors may still
+      // declare gateway lifecycle hooks; the Context types are kept in the
+      // public surface for symmetry with other Hook* pairs.
+      "HookGatewayStartContext",
+      "HookGatewayStopContext",
       "PluginPort",
       "RegisteredHook",
       "PluginToolDefinition",
       "PluginHttpRoute",
       "OutputGuardFinding",
       "OutputGuardResult",
-      "Provider",
       "createSecretManager",
       "requiresConfirmation",
       "ActionClassification",
@@ -891,8 +920,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OverflowConfigSchema",
       "DebounceBufferConfigSchema",
       "FollowupConfigSchema",
-      "PriorityLaneConfigSchema",
-      "LaneAssignmentConfigSchema",
       "StreamingConfigSchema",
       "PerChannelStreamingConfigSchema",
       "TypingModeSchema",
@@ -944,6 +971,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ChannelConfig",
       "ChannelEntry",
       "ChannelHealthCheckConfig",
+      // AckReactionConfig: the only in-repo consumer
+      // (ChannelManagerDeps.ackReactionConfig field, plus its mirror on
+      // InboundPipelineDeps and SetupDeps) was deleted — the deps slot was
+      // never wired by the daemon and the absent-mode (no ack reactions sent
+      // through inbound setup; lifecycle reactor owns the reaction surface
+      // when enabled) IS the production code path. Schema + type stay on the
+      // public surface (AckReactionConfigSchema is operator-facing YAML)
+      // until a future cleanup consolidates the schema under the
+      // lifecycle-reactor section.
+      "AckReactionConfig",
       "CompactionConfig",
       "RetentionConfig",
       "SecurityConfig",
@@ -1355,11 +1392,31 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "WorkspaceFiles",
       "WorkspaceStatus",
     ])],
-    // @comis/daemon: baseline orphans tracked here.
-    // createTracingLogger + TracingLoggerOptions are consumed by the
-    // residency-test daemon harness via DYNAMIC require("@comis/daemon"),
-    // which the public-export-consumers AST walker does not track (it only
-    // sees static `import` and re-export `export from` declarations).
+    // @comis/daemon: baseline orphans tracked here. All four
+    // value-side root re-exports (createAnnouncementDeadLetterQueue,
+    // createContextHandlers, createAgentHandlers, createTracingLogger)
+    // DO have real test consumers — they are tracked here only because
+    // the public-export-consumers AST walker excludes `test/**` and
+    // ignores dynamic `require("@comis/daemon")` patterns (it walks
+    // only static `import`/`export from` declarations outside the
+    // package). Per the Path B disposition: each surviving re-export has a
+    // documented test caller; no further deletion is safe without
+    // retargeting those consumers.
+    //
+    // Consumer audit (2026-05-21):
+    //   - createAnnouncementDeadLetterQueue / AnnouncementDeadLetterQueue / DeadLetterEntry
+    //     → test/integration/resilience-e2e-dead-letter.test.ts:22 (static import)
+    //   - createContextHandlers / ContextHandlerDeps
+    //     → test/integration/context-dag-integration.test.ts:52-53 (static import)
+    //   - createAgentHandlers / AgentHandlerDeps
+    //     → test/integration/oauth-multi-account.test.ts:80,580 (static import +
+    //       direct factory call — drives the agents.update RPC handler against a
+    //       shared agents map mirroring the daemon-runtime container.config.agents
+    //       pattern at daemon.ts:594/634)
+    //   - createTracingLogger / TracingLoggerOptions
+    //     → test/support/daemon-harness.ts:434-442 (DYNAMIC require("@comis/daemon"),
+    //       threads LoggerOptions.disableRedaction through to the daemon's
+    //       production logger for the residency integration test)
     ["@comis/daemon", new Set<string>([
       "main",
       "DaemonInstance",
@@ -1382,6 +1439,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TracingLoggerOptions",
     ])],
     // @comis/gateway: baseline orphans tracked here.
+    // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
+    // consumed by test/integration/gateway/mtls-handshake.test.ts — integration
+    // tests live outside packages/, which the public-export-consumers walker
+    // does not scan. Listed here per the documented external-API category.
     ["@comis/gateway", new Set<string>([
       "createRateLimiter",
       "createOAuthCallbackRoute",
@@ -1392,6 +1453,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createAcpAgent",
       "AcpServerDeps",
       "createMdnsAdvertiser",
+      "validateCertificates",
+      "extractClientCN",
+      "CertPaths",
     ])],
     // @comis/infra: baseline orphans + transient orphans.
     // createSystemClock/createSystemEnv/createSystemTimers are Node-backed
@@ -1428,7 +1492,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "InspectFilters",
       "ClearScope",
       "MemoryStats",
-      "GuardrailResult",
       "EmbeddingQueue",
       "EmbeddingProviderOptions",
       "createOpenAIEmbeddingProvider",
@@ -1553,14 +1616,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "CacheStatsByAgentRawDbRowFromSchema",
       "OAuthProfileRowSchema",
       "OAuthProfileRowFromSchema",
-      "CredentialMappingRowSchema",
-      "CredentialMappingRowFromSchema",
       "DeliveryMirrorDbRowSchema",
       "DeliveryMirrorDbRowFromSchema",
       "DeliveryQueueDbRowSchema",
       "DeliveryQueueDbRowFromSchema",
-      "IdentityLinkRowSchema",
-      "IdentityLinkRowFromSchema",
       "BatchCacheRowSchema",
       "BatchCacheRowFromSchema",
       // Common projection schemas (2 × 2 = 4 entries):
@@ -1581,21 +1640,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DeliveryBridgeDeps",
       "DeliveryOutcome",
       "ChannelVisibilityConfig",
-      "TaskExtractorDeps",
-      "ExtractionFn",
-      "TaskStore",
-      "ExtractedTask",
-      "TaskPriority",
-      "TaskStatus",
-      "TaskExtractionResult",
-      "ExtractedTaskSchema",
-      "TaskExtractionResultSchema",
-      "TaskPrioritySchema",
-      "TaskStatusSchema",
-      "scorePriority",
-      "rankTasks",
-      "PRIORITY_WEIGHTS",
-      "PriorityScore",
       "shouldBypassFileGates",
       "HeartbeatTriggerKind",
       "resolveHeartbeatTriggerKind",
@@ -1610,9 +1654,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "HeartbeatResponseOutcome",
       "ClassifyHeartbeatInput",
       "ProcessHeartbeatInput",
-      "buildCronEventPrompt",
-      "buildExecEventPrompt",
-      "shouldSkipHeartbeatOnlyDelivery",
       "isQueueBusy",
       "AgentHeartbeatSourceDeps",
       "HeartbeatSessionOps",
@@ -1626,7 +1667,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SILENT_PREFIX",
       "VisibleDeliveryKind",
       "VisibleDeliveryRecord",
-      "parseSanitizedMcpToolName",
     ])],
     // @comis/skills: baseline orphans tracked here.
     ["@comis/skills", new Set<string>([

@@ -337,9 +337,11 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       // Channel type
       expect(plugin.channelType).toBe("echo");
 
-      // Capabilities
-      expect(plugin.capabilities.chatTypes).toContain("dm");
+      // Capabilities (ChannelCapability surface: features + limits +
+      // optional replyToMetaKey — chatTypes/streaming/threading were
+      // removed in an earlier port refactor).
       expect(plugin.capabilities.limits.maxMessageChars).toBe(10000);
+      expect(plugin.capabilities.features).toBeDefined();
 
       // Adapter
       expect(plugin.adapter).toBeDefined();
@@ -370,86 +372,64 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
 
   describe("ChannelCapabilitySchema validation (CADPT-08 through CADPT-12)", () => {
     it("CADPT-08: valid capabilities pass schema validation with all fields", () => {
+      // Current schema surface: features (5 flags) +
+      // limits.maxMessageChars + optional replyToMetaKey. The removed
+      // chatTypes/streaming/threading/extra-feature-flags would be
+      // rejected by the strictObject schema.
       const capabilities = {
-        chatTypes: ["dm", "group"] as const,
         features: {
           reactions: true,
           editMessages: true,
           deleteMessages: true,
           fetchHistory: true,
           attachments: true,
-          threads: true,
-          mentions: true,
-          formatting: ["markdown", "html"],
         },
         limits: {
           maxMessageChars: 4096,
-          maxAttachmentSizeMb: 25,
         },
-        streaming: {
-          supported: true,
-          method: "edit" as const,
-          throttleMs: 200,
-        },
-        threading: {
-          supported: true,
-          threadType: "native" as const,
-          maxDepth: 10,
-        },
+        replyToMetaKey: "ts",
       };
 
       const parsed = ChannelCapabilitySchema.parse(capabilities);
-      expect(parsed.chatTypes).toEqual(["dm", "group"]);
       expect(parsed.features.reactions).toBe(true);
       expect(parsed.features.editMessages).toBe(true);
+      expect(parsed.features.deleteMessages).toBe(true);
+      expect(parsed.features.fetchHistory).toBe(true);
+      expect(parsed.features.attachments).toBe(true);
       expect(parsed.limits.maxMessageChars).toBe(4096);
-      expect(parsed.streaming.supported).toBe(true);
-      expect(parsed.streaming.method).toBe("edit");
-      expect(parsed.streaming.throttleMs).toBe(200);
-      expect(parsed.threading.supported).toBe(true);
-      expect(parsed.threading.threadType).toBe("native");
-      expect(parsed.threading.maxDepth).toBe(10);
+      expect(parsed.replyToMetaKey).toBe("ts");
     });
 
     it("CADPT-09: capabilities with only required fields pass validation (defaults applied)", () => {
       const minimal = {
-        chatTypes: ["dm"] as const,
         limits: { maxMessageChars: 2000 },
       };
 
       const parsed = ChannelCapabilitySchema.parse(minimal);
 
-      // Defaults applied for features
+      // Defaults applied for features (every flag defaults to false)
       expect(parsed.features.reactions).toBe(false);
       expect(parsed.features.editMessages).toBe(false);
       expect(parsed.features.deleteMessages).toBe(false);
       expect(parsed.features.fetchHistory).toBe(false);
       expect(parsed.features.attachments).toBe(false);
-      expect(parsed.features.threads).toBe(false);
-      expect(parsed.features.mentions).toBe(false);
-      expect(parsed.features.formatting).toEqual([]);
-
-      // Defaults applied for streaming
-      expect(parsed.streaming.supported).toBe(false);
-      expect(parsed.streaming.throttleMs).toBe(300);
-      expect(parsed.streaming.method).toBe("none");
-
-      // Defaults applied for threading
-      expect(parsed.threading.supported).toBe(false);
-      expect(parsed.threading.threadType).toBe("none");
     });
 
-    it("CADPT-10: missing chatTypes rejects validation", () => {
+    it("CADPT-10: removed-field 'chatTypes' rejected by strictObject", () => {
+      // chatTypes was removed from the schema. strictObject must reject
+      // it rather than silently accept legacy shapes.
       const invalid = {
+        chatTypes: ["dm"],
         limits: { maxMessageChars: 4096 },
       };
 
-      expect(() => ChannelCapabilitySchema.parse(invalid)).toThrow();
+      expect(() => ChannelCapabilitySchema.parse(invalid)).toThrow(
+        /unrecognized/i,
+      );
     });
 
     it("CADPT-11: missing maxMessageChars rejects validation", () => {
       const invalid = {
-        chatTypes: ["dm"],
         limits: {},
       };
 
@@ -458,7 +438,6 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
 
     it("CADPT-12: extra unknown keys rejected by strictObject", () => {
       const withExtraKey = {
-        chatTypes: ["dm"],
         limits: { maxMessageChars: 4096 },
         unknownField: true,
       };
@@ -478,7 +457,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
      */
     function setup() {
       const eventBus = new TypedEventBus();
-      const pluginRegistry = createPluginRegistry({ eventBus });
+      const pluginRegistry = createPluginRegistry();
       const channelRegistry = createChannelRegistry({ pluginRegistry, eventBus });
       return { eventBus, pluginRegistry, channelRegistry };
     }
@@ -500,20 +479,14 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       const lifecycleLog: string[] = [];
 
       const capabilities: ChannelCapability = opts.capabilities ?? {
-        chatTypes: ["dm"],
         features: {
           reactions: false,
           editMessages: false,
           deleteMessages: false,
           fetchHistory: false,
           attachments: false,
-          threads: false,
-          mentions: false,
-          formatting: [],
         },
         limits: { maxMessageChars: 5000 },
-        streaming: { supported: false, throttleMs: 300, method: "none" as const },
-        threading: { supported: false, threadType: "none" as const },
       };
 
       return {
@@ -549,27 +522,26 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       } as ChannelPluginPort & { _lifecycleLog: string[] };
     }
 
-    it("CADPT-13: register -> activate -> deactivate lifecycle executes in order", async () => {
+    it("CADPT-13: register -> deactivate lifecycle executes in order", async () => {
       const { pluginRegistry, channelRegistry } = setup();
 
       const plugin = createCustomPlugin({ channelType: "custom-lifecycle" }) as ChannelPluginPort & {
         _lifecycleLog: string[];
       };
 
-      // Register
+      // Register (the plugin's `register()` hook fires inside)
       const registerResult = channelRegistry.registerChannel(plugin);
       expect(registerResult.ok).toBe(true);
 
-      // Activate all
-      const activateResult = await pluginRegistry.activateAll();
-      expect(activateResult.ok).toBe(true);
-
-      // Deactivate all
+      // Deactivate all — calls each plugin's `deactivate()` (no separate
+      // `activateAll`; channel adapters self-start via their `start()`
+      // lifecycle when registered, not via plugin activate)
       const deactivateResult = await pluginRegistry.deactivateAll();
       expect(deactivateResult.ok).toBe(true);
 
-      // Verify lifecycle order
-      expect(plugin._lifecycleLog).toEqual(["register", "activate", "deactivate"]);
+      // Verify lifecycle order: register fires during channelRegistry.registerChannel,
+      // deactivate fires during deactivateAll
+      expect(plugin._lifecycleLog).toEqual(["register", "deactivate"]);
     });
 
     it("CADPT-14: plugin hook registration via PluginRegistryApi.registerHook()", () => {

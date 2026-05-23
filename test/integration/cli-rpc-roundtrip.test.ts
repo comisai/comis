@@ -39,11 +39,14 @@ describe("INTEGRATION: cli withClient → daemon RPC roundtrip", () => {
       handle.daemon.container.config.gateway.port
     }/ws`;
     process.env["COMIS_GATEWAY_TOKEN"] = handle.authToken;
+    // Under VITEST, withClient refuses real WebSockets unless this is set.
+    process.env["COMIS_CLI_E2E"] = "true";
   }, 60_000);
 
   afterAll(async () => {
     delete process.env["COMIS_GATEWAY_URL"];
     delete process.env["COMIS_GATEWAY_TOKEN"];
+    delete process.env["COMIS_CLI_E2E"];
     if (handle) {
       try {
         await handle.cleanup();

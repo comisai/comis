@@ -14,7 +14,7 @@ const testConfig: MemoryConfig = {
   embeddingModel: "test-model",
   embeddingDimensions: 4,
   compaction: { enabled: false, threshold: 1000, targetSize: 500 },
-  retention: { maxAgeDays: 0, maxEntries: 0 },
+  retention: { maxAgeDays: 0 },
 };
 
 /** Create a minimal valid MemoryEntry for testing. */
@@ -121,26 +121,31 @@ describe("SqliteMemoryAdapter", () => {
       });
 
       await adapter.store(entry);
-      const result = await adapter.retrieve(entry.id);
+      // Direct SQL read (adapter.retrieve was removed in a prior port-trim cleanup)
+      const row = adapter
+        .getDb()
+        .prepare("SELECT * FROM memories WHERE id = ?")
+        .get(entry.id) as { trust_level: string; source_who: string; source_channel: string; source_session_key: string | null };
 
-      expect(result.ok).toBe(true);
-      if (result.ok && result.value) {
-        expect(result.value.trustLevel).toBe("external");
-        expect(result.value.source.who).toBe("web-scraper");
-        expect(result.value.source.channel).toBe("api");
-        expect(result.value.source.sessionKey).toBe("sess-123");
-      }
+      expect(row).toBeDefined();
+      expect(row.trust_level).toBe("external");
+      expect(row.source_who).toBe("web-scraper");
+      expect(row.source_channel).toBe("api");
+      expect(row.source_session_key).toBe("sess-123");
     });
 
     it("stores entry with tags", async () => {
       const entry = makeEntry({ tags: ["important", "project-x"] });
       await adapter.store(entry);
 
-      const result = await adapter.retrieve(entry.id);
-      expect(result.ok).toBe(true);
-      if (result.ok && result.value) {
-        expect(result.value.tags).toEqual(["important", "project-x"]);
-      }
+      // Direct SQL read; tags column stores JSON-encoded array
+      const row = adapter
+        .getDb()
+        .prepare("SELECT tags FROM memories WHERE id = ?")
+        .get(entry.id) as { tags: string };
+
+      expect(row).toBeDefined();
+      expect(JSON.parse(row.tags)).toEqual(["important", "project-x"]);
     });
 
     it("stores entry with embedding when vec is available", async () => {
@@ -151,13 +156,26 @@ describe("SqliteMemoryAdapter", () => {
 
       expect(result.ok).toBe(true);
 
-      // Verify embedding was stored
-      const retrieved = await adapter.retrieve(entry.id);
-      expect(retrieved.ok).toBe(true);
-      if (retrieved.ok && retrieved.value) {
-        expect(retrieved.value.embedding).toBeDefined();
-        expect(retrieved.value.embedding!.length).toBe(4);
-        expect(retrieved.value.embedding![0]).toBeCloseTo(0.1, 4);
+      // Verify embedding was stored via direct vec_memories read
+      const row = adapter
+        .getDb()
+        .prepare("SELECT has_embedding FROM memories WHERE id = ?")
+        .get(entry.id) as { has_embedding: number };
+      expect(row.has_embedding).toBe(1);
+
+      const vecRow = adapter
+        .getDb()
+        .prepare("SELECT embedding FROM vec_memories WHERE memory_id = ?")
+        .get(entry.id) as { embedding: Buffer } | undefined;
+      expect(vecRow).toBeDefined();
+      if (vecRow) {
+        const float32 = new Float32Array(
+          vecRow.embedding.buffer,
+          vecRow.embedding.byteOffset,
+          vecRow.embedding.byteLength / Float32Array.BYTES_PER_ELEMENT,
+        );
+        expect(float32.length).toBe(4);
+        expect(float32[0]).toBeCloseTo(0.1, 4);
       }
     });
 
@@ -187,99 +205,14 @@ describe("SqliteMemoryAdapter", () => {
       const entry = makeEntry({ expiresAt: expires });
       await adapter.store(entry);
 
-      const result = await adapter.retrieve(entry.id);
-      expect(result.ok).toBe(true);
-      if (result.ok && result.value) {
-        expect(result.value.expiresAt).toBe(expires);
-      }
-    });
-  });
-
-  // ── storeWithType ──────────────────────────────────────────────
-
-  describe("storeWithType", () => {
-    it("stores entry with explicit memory type", async () => {
-      const entry = makeEntry();
-      await adapter.storeWithType(entry, "episodic");
-
+      // Direct SQL read (adapter.retrieve was removed in a prior port-trim cleanup)
       const row = adapter
         .getDb()
-        .prepare("SELECT memory_type FROM memories WHERE id = ?")
-        .get(entry.id) as { memory_type: string };
+        .prepare("SELECT expires_at FROM memories WHERE id = ?")
+        .get(entry.id) as { expires_at: number };
 
-      expect(row.memory_type).toBe("episodic");
-    });
-
-    it("supports all memory types", async () => {
-      const types = ["working", "episodic", "semantic", "procedural"] as const;
-
-      for (const type of types) {
-        const entry = makeEntry();
-        const result = await adapter.storeWithType(entry, type);
-        expect(result.ok).toBe(true);
-
-        const row = adapter
-          .getDb()
-          .prepare("SELECT memory_type FROM memories WHERE id = ?")
-          .get(entry.id) as { memory_type: string };
-        expect(row.memory_type).toBe(type);
-      }
-    });
-  });
-
-  // ── retrieve ───────────────────────────────────────────────────
-
-  describe("retrieve", () => {
-    it("retrieves stored entry with all fields intact", async () => {
-      const entry = makeEntry({
-        content: "remember this important fact",
-        trustLevel: "system",
-        source: { who: "admin", channel: "cli" },
-        tags: ["fact", "important"],
-      });
-
-      await adapter.store(entry);
-      const result = await adapter.retrieve(entry.id);
-
-      expect(result.ok).toBe(true);
-      if (result.ok && result.value) {
-        expect(result.value.id).toBe(entry.id);
-        expect(result.value.content).toBe("remember this important fact");
-        expect(result.value.trustLevel).toBe("system");
-        expect(result.value.source.who).toBe("admin");
-        expect(result.value.source.channel).toBe("cli");
-        expect(result.value.tags).toEqual(["fact", "important"]);
-        expect(result.value.tenantId).toBe("default");
-        expect(result.value.userId).toBe("user-1");
-        expect(result.value.createdAt).toBe(entry.createdAt);
-      }
-    });
-
-    it("returns undefined for non-existent ID", async () => {
-      const result = await adapter.retrieve("non-existent-id");
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBeUndefined();
-      }
-    });
-
-    it("scopes retrieve() by tenantId so entries from other tenants are not returned", async () => {
-      const entry = makeEntry({ tenantId: "tenant-a" });
-      await adapter.store(entry);
-
-      // Should not find with different tenant
-      const result = await adapter.retrieve(entry.id, "tenant-b");
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBeUndefined();
-      }
-
-      // Should find with correct tenant
-      const result2 = await adapter.retrieve(entry.id, "tenant-a");
-      expect(result2.ok).toBe(true);
-      if (result2.ok) {
-        expect(result2.value).toBeDefined();
-      }
+      expect(row).toBeDefined();
+      expect(row.expires_at).toBe(expires);
     });
   });
 
@@ -424,102 +357,6 @@ describe("SqliteMemoryAdapter", () => {
     });
   });
 
-  // ── update ─────────────────────────────────────────────────────
-
-  describe("update", () => {
-    it("updates content field", async () => {
-      const entry = makeEntry({ content: "original content" });
-      await adapter.store(entry);
-
-      const result = await adapter.update(entry.id, { content: "updated content" });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.content).toBe("updated content");
-        expect(result.value.updatedAt).toBeDefined();
-      }
-    });
-
-    it("updates tags array on existing memory entry via adapter.update()", async () => {
-      const entry = makeEntry({ tags: ["old-tag"] });
-      await adapter.store(entry);
-
-      const result = await adapter.update(entry.id, {
-        tags: ["new-tag", "another"],
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.tags).toEqual(["new-tag", "another"]);
-      }
-    });
-
-    it("updates trustLevel on existing memory entry via adapter.update()", async () => {
-      const entry = makeEntry({ trustLevel: "external" });
-      await adapter.store(entry);
-
-      const result = await adapter.update(entry.id, { trustLevel: "learned" });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.trustLevel).toBe("learned");
-      }
-    });
-
-    it("updates expiresAt timestamp on existing memory entry via adapter.update()", async () => {
-      const entry = makeEntry();
-      await adapter.store(entry);
-
-      const newExpiry = Date.now() + 999999;
-      const result = await adapter.update(entry.id, { expiresAt: newExpiry });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.expiresAt).toBe(newExpiry);
-      }
-    });
-
-    it("updates embedding when vec is available", async () => {
-      if (!isVecAvailable()) return;
-
-      const entry = makeEntry({ embedding: [0.1, 0.2, 0.3, 0.4] });
-      await adapter.store(entry);
-
-      const result = await adapter.update(entry.id, {
-        embedding: [0.9, 0.8, 0.7, 0.6],
-      });
-
-      expect(result.ok).toBe(true);
-
-      // Verify new embedding
-      const retrieved = await adapter.retrieve(entry.id);
-      expect(retrieved.ok).toBe(true);
-      if (retrieved.ok && retrieved.value) {
-        expect(retrieved.value.embedding![0]).toBeCloseTo(0.9, 4);
-      }
-    });
-
-    it("returns error for non-existent entry", async () => {
-      const result = await adapter.update("non-existent", { content: "nope" });
-      expect(result.ok).toBe(false);
-    });
-
-    it("sets updatedAt timestamp on update", async () => {
-      const entry = makeEntry();
-      await adapter.store(entry);
-
-      const before = Date.now();
-      const result = await adapter.update(entry.id, { content: "modified" });
-      const after = Date.now();
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.updatedAt).toBeGreaterThanOrEqual(before);
-        expect(result.value.updatedAt).toBeLessThanOrEqual(after);
-      }
-    });
-  });
-
   // ── delete ─────────────────────────────────────────────────────
 
   describe("delete", () => {
@@ -533,12 +370,12 @@ describe("SqliteMemoryAdapter", () => {
         expect(result.value).toBe(true);
       }
 
-      // Verify gone
-      const retrieved = await adapter.retrieve(entry.id);
-      expect(retrieved.ok).toBe(true);
-      if (retrieved.ok) {
-        expect(retrieved.value).toBeUndefined();
-      }
+      // Verify gone (direct SQL read; adapter.retrieve was removed in a prior port-trim cleanup)
+      const row = adapter
+        .getDb()
+        .prepare("SELECT id FROM memories WHERE id = ?")
+        .get(entry.id);
+      expect(row).toBeUndefined();
     });
 
     it("returns false for non-existent entry", async () => {
@@ -560,12 +397,12 @@ describe("SqliteMemoryAdapter", () => {
         expect(result.value).toBe(false);
       }
 
-      // Entry should still exist
-      const retrieved = await adapter.retrieve(entry.id, "tenant-x");
-      expect(retrieved.ok).toBe(true);
-      if (retrieved.ok) {
-        expect(retrieved.value).toBeDefined();
-      }
+      // Entry should still exist (direct SQL read; adapter.retrieve was removed in a prior port-trim cleanup)
+      const row = adapter
+        .getDb()
+        .prepare("SELECT id FROM memories WHERE id = ? AND tenant_id = ?")
+        .get(entry.id, "tenant-x");
+      expect(row).toBeDefined();
     });
 
     it("removes entry from FTS5 index", async () => {
@@ -606,66 +443,6 @@ describe("SqliteMemoryAdapter", () => {
     });
   });
 
-  // ── clear ──────────────────────────────────────────────────────
-
-  describe("clear", () => {
-    it("removes all entries for the tenant", async () => {
-      await adapter.store(makeEntry({ content: "entry one" }));
-      await adapter.store(makeEntry({ content: "entry two" }));
-      await adapter.store(makeEntry({ content: "entry three" }));
-
-      const result = await adapter.clear(testSessionKey);
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBe(3);
-      }
-
-      // Verify all gone
-      const search = await adapter.search(testSessionKey, "entry");
-      expect(search.ok).toBe(true);
-      if (search.ok) {
-        expect(search.value).toHaveLength(0);
-      }
-    });
-
-    it("only clears entries for the specified tenant", async () => {
-      await adapter.store(makeEntry({ tenantId: "tenant-a", content: "keep this cat" }));
-      await adapter.store(makeEntry({ tenantId: "tenant-b", content: "delete this cat" }));
-
-      const sessionB: SessionKey = {
-        tenantId: "tenant-b",
-        userId: "user-1",
-        channelId: "test",
-      };
-      const result = await adapter.clear(sessionB);
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBe(1);
-      }
-
-      // Tenant A entry should remain
-      const sessionA: SessionKey = {
-        tenantId: "tenant-a",
-        userId: "user-1",
-        channelId: "test",
-      };
-      const search = await adapter.search(sessionA, "cat");
-      expect(search.ok).toBe(true);
-      if (search.ok) {
-        expect(search.value).toHaveLength(1);
-      }
-    });
-
-    it("returns 0 when no entries exist", async () => {
-      const result = await adapter.clear(testSessionKey);
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBe(0);
-      }
-    });
-  });
-
   // ── multi-agent memory isolation ─────────────────────────────
 
   describe("multi-agent memory isolation", () => {
@@ -701,19 +478,14 @@ describe("SqliteMemoryAdapter", () => {
       await adapter.store(entry);
 
       // Check raw DB to verify agent_id column
+      // (adapter.retrieve was removed in a prior port-trim cleanup; direct SQL is
+      // the canonical verification path now)
       const row = adapter
         .getDb()
         .prepare("SELECT agent_id FROM memories WHERE id = ?")
         .get(entry.id) as { agent_id: string };
 
       expect(row.agent_id).toBe("default");
-
-      // Also verify via retrieve
-      const result = await adapter.retrieve(entry.id);
-      expect(result.ok).toBe(true);
-      if (result.ok && result.value) {
-        expect(result.value.agentId).toBe("default");
-      }
     });
 
     it("search without agentId returns all agents' memories", async () => {
@@ -796,40 +568,11 @@ describe("SqliteMemoryAdapter", () => {
   // ── expiry filtering ──────────────────────────────────────────────
 
   describe("expiry filtering", () => {
-    it("retrieve returns undefined for expired entry", async () => {
-      const entry = makeEntry({ expiresAt: Date.now() - 1000 }); // expired 1s ago
-      await adapter.store(entry);
-
-      const result = await adapter.retrieve(entry.id);
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBeUndefined();
-      }
-    });
-
-    it("retrieve returns entry with future expiresAt", async () => {
-      const entry = makeEntry({ expiresAt: Date.now() + 60000 }); // expires in 60s
-      await adapter.store(entry);
-
-      const result = await adapter.retrieve(entry.id);
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBeDefined();
-        expect(result.value!.id).toBe(entry.id);
-      }
-    });
-
-    it("retrieve returns entry with null expiresAt (no expiry)", async () => {
-      const entry = makeEntry(); // no expiresAt
-      await adapter.store(entry);
-
-      const result = await adapter.retrieve(entry.id);
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBeDefined();
-        expect(result.value!.id).toBe(entry.id);
-      }
-    });
+    // NOTE: Tests for `adapter.retrieve()` expiry semantics (expired/future/null
+    // expiresAt) were removed in a prior port-trim cleanup along with the
+    // method itself. The expiry semantics live on the surviving `search`
+    // surface — exercised by the two `search excludes expired entries` tests
+    // below.
 
     it("search excludes expired entries from text results", async () => {
       await adapter.store(
@@ -906,12 +649,9 @@ describe("SqliteMemoryAdapter", () => {
         expect(storeResult.error.message).toContain("not open");
       }
 
-      // Attempt to retrieve -- should return err(), not crash
-      const retrieveResult = await adapter.retrieve("any-id");
-      expect(retrieveResult.ok).toBe(false);
-      if (!retrieveResult.ok) {
-        expect(retrieveResult.error.message).toContain("not open");
-      }
+      // (adapter.retrieve was removed in a prior port-trim cleanup; the
+      // surviving store + search closed-DB error paths are exercised in this
+      // same test.)
 
       // Attempt to search -- should return err(), not crash
       const searchResult = await adapter.search(testSessionKey, "test");

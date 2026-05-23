@@ -103,7 +103,7 @@ describe("TOOL_GUIDES", () => {
 
   // MCP install guidance — routes the LLM to mcp_manage first instead of letting
   // it hallucinate a gateway.patch schema for integrations.mcp.servers entries.
-  // Closes the source of hallucinated MCP installs surfaced in log review (260520-wcf).
+  // Closes the source of hallucinated MCP installs surfaced in log review.
   it("gateway guide documents the mcp_manage path for MCP installs", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/mcp_manage/);
     expect(TOOL_GUIDES.gateway).toMatch(/## Installing an MCP server/);

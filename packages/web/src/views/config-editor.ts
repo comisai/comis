@@ -29,7 +29,12 @@ export { serializeYaml as serializeToYaml, parseYaml };
 import type { TabDef } from "../components/nav/ic-tabs.js";
 import type { SchemaProperty } from "./config-editor/schema-form.js";
 import { systemClearTimeout, systemDateFrom, systemSetTimeout } from "@comis/core";
-import { createConfigEditorController, type ConfigEditorController } from "./config-editor-controller.js";
+import type {
+  ConfigHistoryResponse,
+  ConfigDiffResponse,
+  ConfigRollbackResponse,
+  ConfigGcResponse,
+} from "../api/types/config-types.js";
 
 type LoadState = "loading" | "loaded" | "error";
 
@@ -252,32 +257,8 @@ export class IcConfigEditor extends LitElement {
   private _dataLoaded = false;
   private _configPatchedHandler: ((e: Event) => void) | null = null;
 
-  /** RPC-orchestration controller — created when rpcClient becomes available. */
-  @state() private _controller: ConfigEditorController | null = null;
-
-  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
-  private _capturedRpcClient: RpcClient | null = null;
-
-  /** Lazily instantiate (and rebind) controller; mirrors `dashboard.ts:_ensureController()`
-   *  so call sites can use `const ctrl = this._ensureController(); if (!ctrl) return;`
-   *  instead of unsafe `this._controller!` non-null assertions. Detects rpcClient
-   *  swaps and recreates so the controller never holds a stale client. */
-  private _ensureController(): ConfigEditorController | null {
-    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
-      this.removeController(this._controller);
-      this._controller = null;
-      this._capturedRpcClient = null;
-    }
-    if (!this._controller && this.rpcClient) {
-      this._capturedRpcClient = this.rpcClient;
-      this._controller = createConfigEditorController(this, this.rpcClient);
-    }
-    return this._controller;
-  }
-
   override connectedCallback(): void {
     super.connectedCallback();
-    this._ensureController();
     // Listen for external config changes via SSE
     this._configPatchedHandler = () => {
       if (this._dataLoaded && !this._dirty) this._tryLoad();
@@ -313,7 +294,6 @@ export class IcConfigEditor extends LitElement {
 
   override updated(changed: Map<string, unknown>): void {
     if (changed.has("rpcClient") && this.rpcClient) {
-      this._ensureController();
       this._tryLoad();
     }
   }
@@ -345,8 +325,8 @@ export class IcConfigEditor extends LitElement {
 
     try {
       // Load config first (primary data for the editor)
-      const ctrl = this._controller!;
-      const configResult = await ctrl.readConfig();
+      const rpc = this.rpcClient;
+      const configResult = await rpc.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
 
       this._sections = configResult.sections;
       this._configData = configResult.config;
@@ -360,7 +340,7 @@ export class IcConfigEditor extends LitElement {
       this._dataLoaded = true;
 
       // Load schema in the background (enables validation/hints)
-      ctrl.loadSchema()
+      rpc.call<{ schema: Record<string, unknown>; sections: string[] }>("config.schema")
         .then((schemaResult) => {
           const rootSchema = schemaResult.schema as Record<string, unknown>;
           this._schemaData = (rootSchema.properties ?? rootSchema) as Record<string, SchemaProperty>;
@@ -601,8 +581,8 @@ export class IcConfigEditor extends LitElement {
 
   private async _onApply(): Promise<void> {
     if (!this._dirty) return;
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
+    const rpc = this.rpcClient;
 
     this._applying = true;
     let value: unknown;
@@ -623,7 +603,7 @@ export class IcConfigEditor extends LitElement {
     this._rollbackSnapshot = structuredClone(this._configData) as Record<string, unknown>;
 
     try {
-      await controller.applyConfig({
+      await rpc.call("config.apply", {
         section: this._selectedSection,
         value,
       });
@@ -631,7 +611,7 @@ export class IcConfigEditor extends LitElement {
       this._dirty = false;
 
       // Reload config data
-      const configResult = await controller.readConfig();
+      const configResult = await rpc.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
       this._configData = configResult.config;
       this._loadSectionState();
     } catch (err) {
@@ -649,16 +629,17 @@ export class IcConfigEditor extends LitElement {
   /* ---------------------------------------------------------------- */
 
   private async _onRollback(): Promise<void> {
-    if (!this._controller || !this._rollbackSnapshot) return;
+    if (!this.rpcClient || !this._rollbackSnapshot) return;
+    const rpc = this.rpcClient;
 
     try {
-      await this._controller.applyConfig({
+      await rpc.call("config.apply", {
         config: this._rollbackSnapshot,
       });
       IcToast.show("Configuration rolled back", "success");
 
       // Reload config data from server
-      const configResult = await this._controller.readConfig();
+      const configResult = await rpc.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
       this._configData = configResult.config;
       this._rollbackSnapshot = null;
       this._confirmRollback = false;
@@ -675,12 +656,12 @@ export class IcConfigEditor extends LitElement {
   /* ---------------------------------------------------------------- */
 
   private async _loadGatewayConfig(): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     this._gatewayLoading = true;
     this._gatewayError = "";
 
     try {
-      const result = await this._controller.readSection<Record<string, unknown>>("gateway");
+      const result = await this.rpcClient.call<Record<string, unknown>>("config.read", { section: "gateway" });
       this._gatewayConfig = (result ?? {}) as GatewayConfig;
     } catch (err) {
       this._gatewayError = err instanceof Error ? err.message : "Failed to load gateway config";
@@ -690,10 +671,10 @@ export class IcConfigEditor extends LitElement {
   }
 
   private async _patchGateway(key: string, value: unknown): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
 
     try {
-      await this._controller.patchConfig({ section: "gateway", key, value });
+      await this.rpcClient.call("config.patch", { section: "gateway", key, value });
       // Optimistically update local state
       if (this._gatewayConfig) {
         this._gatewayConfig = { ...this._gatewayConfig, [key]: value } as GatewayConfig;
@@ -722,12 +703,12 @@ export class IcConfigEditor extends LitElement {
   /* ---------------------------------------------------------------- */
 
   private async _loadHistory(): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     this._historyLoading = true;
     this._historyError = "";
 
     try {
-      const result = await this._controller.loadHistory(50);
+      const result = await this.rpcClient.call<ConfigHistoryResponse>("config.history", { limit: 50 });
       if (result.error) {
         // Git unavailable -- informational, not an error toast
         this._historyEntries = [];
@@ -743,11 +724,12 @@ export class IcConfigEditor extends LitElement {
   }
 
   private async _loadDiff(sha: string): Promise<void> {
-    if (!this._controller) return;
+    if (!this.rpcClient) return;
     this._diffLoading = true;
 
     try {
-      this._diffText = await this._controller.loadDiff(sha);
+      const result = await this.rpcClient.call<ConfigDiffResponse>("config.diff", { sha });
+      this._diffText = result.diff;
     } catch (err) {
       this._diffText = "";
       const msg = err instanceof Error ? err.message : "Failed to load diff";
@@ -769,10 +751,10 @@ export class IcConfigEditor extends LitElement {
   }
 
   private async _onHistoryRollback(): Promise<void> {
-    if (!this._controller || !this._confirmRollbackSha) return;
+    if (!this.rpcClient || !this._confirmRollbackSha) return;
 
     try {
-      await this._controller.rollbackToSha(this._confirmRollbackSha);
+      await this.rpcClient.call<ConfigRollbackResponse>("config.rollback", { sha: this._confirmRollbackSha });
       IcToast.show("Config rolled back. Daemon restarting...", "success");
       this._confirmRollbackSha = null;
     } catch (err) {
@@ -783,11 +765,11 @@ export class IcConfigEditor extends LitElement {
   }
 
   private async _onGc(): Promise<void> {
-    if (!this._controller || this._gcRunning) return;
+    if (!this.rpcClient || this._gcRunning) return;
     this._gcRunning = true;
 
     try {
-      const result = await this._controller.runGc();
+      const result = await this.rpcClient.call<ConfigGcResponse>("config.gc");
       const squashed = result.squashed;
       IcToast.show(
         squashed != null ? `GC complete: ${squashed} versions squashed` : "GC complete",

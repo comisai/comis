@@ -20,10 +20,6 @@ import { cleanMessageContent } from "../utils/message-content.js";
 import type { BudgetSegment } from "../components/data/ic-budget-segment-bar.js";
 import type { WaterfallLayer } from "../components/data/ic-layer-waterfall.js";
 import { systemDateFrom } from "@comis/core";
-import {
-  createSessionDetailController,
-  type SessionDetailController,
-} from "./session-detail-controller.js";
 
 // Side-effect imports to register child custom elements
 import "../components/nav/ic-breadcrumb.js";
@@ -460,40 +456,7 @@ export class IcSessionDetail extends LitElement {
     callCount: number;
   } | null = null;
 
-  /** Controller owns RPC orchestration (thin façade — view keeps @state + render). */
-  private _controller: SessionDetailController | null = null;
-
-  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
-  private _capturedRpcClient: RpcClient | null = null;
-
-  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
-   *  Wave-4 pattern so test code that bypasses Lit's reactive cycle still
-   *  constructs the controller. Detects rpcClient swaps and recreates. */
-  private _ensureController(): SessionDetailController | null {
-    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
-      this.removeController(this._controller);
-      this._controller = null;
-      this._capturedRpcClient = null;
-    }
-    if (!this._controller && this.rpcClient) {
-      this._capturedRpcClient = this.rpcClient;
-      this._controller = createSessionDetailController(this, this.rpcClient);
-    }
-    return this._controller;
-  }
-
-  override connectedCallback(): void {
-    super.connectedCallback();
-    // Note: _loadSession() is NOT called here -- apiClient is typically
-    // null at this point. The updated() callback handles loading once
-    // the client property is set.
-    this._ensureController();
-  }
-
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has("rpcClient")) {
-      this._ensureController();
-    }
     if (
       (changed.has("apiClient") || changed.has("sessionKey")) &&
       this.apiClient &&
@@ -533,14 +496,14 @@ export class IcSessionDetail extends LitElement {
   /* ---- Context State data loading ---- */
 
   private async _loadContextData(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller || !this._session) return;
+    if (!this.rpcClient || !this._session) return;
+    const rpc = this.rpcClient;
 
     try {
       const agentId = this._session.agentId;
       const [pipelineResult, dagResult] = await Promise.all([
-        controller.getPipelineSnapshots(agentId, 100),
-        controller.getDagCompactions(agentId, 50),
+        rpc.call<PipelineSnapshot[]>("obs.context.pipeline", { agentId, limit: 100 }),
+        rpc.call<DagCompactionSnapshot[]>("obs.context.dag", { agentId, limit: 50 }),
       ]);
 
       // Client-side filter by sessionKey
@@ -569,14 +532,16 @@ export class IcSessionDetail extends LitElement {
   /* ---- Metrics data loading ---- */
 
   private async _loadMetricsData(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller) {
+    if (!this.rpcClient) {
       this._metricsLoaded = true;
       return;
     }
 
     try {
-      const result = await controller.getSessionBilling(this.sessionKey);
+      const result = await this.rpcClient.call<{ totalTokens: number; totalCost: number; callCount: number }>(
+        "obs.billing.bySession",
+        { sessionKey: this.sessionKey },
+      );
       this._sessionBilling = result ?? null;
     } catch {
       // Billing data optional, graceful fallback

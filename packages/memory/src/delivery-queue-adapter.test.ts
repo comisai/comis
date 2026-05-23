@@ -30,8 +30,6 @@ describe("SqliteDeliveryQueueAdapter", () => {
       tenantId: "default",
       optionsJson: "{}",
       origin: "agent",
-      formatApplied: false,
-      chunkingApplied: false,
       maxAttempts: 5,
       createdAt: now,
       scheduledAt: now,
@@ -47,6 +45,18 @@ describe("SqliteDeliveryQueueAdapter", () => {
     eventBus = createMockEventBus();
     queue = createSqliteDeliveryQueue(db, eventBus);
   });
+
+  /**
+   * Helper that reads active delivery_queue depth via direct SQL. Replaces the
+   * deleted queue.depth() port method (removed in a prior port-trim cleanup);
+   * the count semantics — pending + in_flight — are preserved verbatim.
+   */
+  function readDepth(): number {
+    const row = db
+      .prepare("SELECT COUNT(*) as count FROM delivery_queue WHERE status IN ('pending', 'in_flight')")
+      .get() as { count: number };
+    return row.count;
+  }
 
   // -----------------------------------------------------------------------
   // enqueue
@@ -65,17 +75,11 @@ describe("SqliteDeliveryQueueAdapter", () => {
 
     it("increments depth to 1 after enqueue", async () => {
       await queue.enqueue(makeEntry());
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(1);
-      }
+      expect(readDepth()).toBe(1);
     });
 
     it("persists all fields correctly", async () => {
-      await queue.enqueue(
-        makeEntry({ formatApplied: true, chunkingApplied: true }),
-      );
+      await queue.enqueue(makeEntry());
       const pending = await queue.pendingEntries();
       expect(pending.ok).toBe(true);
       if (pending.ok) {
@@ -86,14 +90,10 @@ describe("SqliteDeliveryQueueAdapter", () => {
         expect(entry.tenantId).toBe("default");
         expect(entry.optionsJson).toBe("{}");
         expect(entry.origin).toBe("agent");
-        expect(entry.formatApplied).toBe(true);
-        expect(entry.chunkingApplied).toBe(true);
         expect(entry.status).toBe("pending");
         expect(entry.attemptCount).toBe(0);
         expect(entry.maxAttempts).toBe(5);
         expect(entry.traceId).toBe("trace-abc");
-        expect(entry.markdownFallbackApplied).toBe(false);
-        expect(entry.deliveredMessageId).toBeNull();
         expect(entry.lastAttemptAt).toBeNull();
         expect(entry.nextRetryAt).toBeNull();
         expect(entry.lastError).toBeNull();
@@ -114,11 +114,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
       const ackResult = await queue.ack(enqResult.value, "msg-telegram-42");
       expect(ackResult.ok).toBe(true);
 
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(0);
-      }
+      expect(readDepth()).toBe(0);
     });
   });
 
@@ -153,11 +149,8 @@ describe("SqliteDeliveryQueueAdapter", () => {
 
       await queue.nack(enqResult.value, "err", now + 60_000);
 
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(1);
-      }
+      // Depth should be 1 (nacked still in pending)
+      expect(readDepth()).toBe(1);
     });
   });
 
@@ -185,11 +178,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
       expect(row.last_error).toBe("permanent: channel not found");
 
       // Depth should be 0 (failed entries excluded)
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(0);
-      }
+      expect(readDepth()).toBe(0);
     });
   });
 
@@ -254,11 +243,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
         expect(result.value).toBe(1);
       }
 
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(0);
-      }
+      expect(readDepth()).toBe(0);
     });
 
     it("does NOT prune delivered entries even if expired", async () => {
@@ -290,37 +275,9 @@ describe("SqliteDeliveryQueueAdapter", () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // depth
-  // -----------------------------------------------------------------------
-
-  describe("depth", () => {
-    it("counts pending and in_flight entries only", async () => {
-      // 2 pending entries
-      await queue.enqueue(makeEntry({ text: "a" }));
-      await queue.enqueue(makeEntry({ text: "b" }));
-      // 1 entry acked (delivered)
-      const ackResult = await queue.enqueue(makeEntry({ text: "c" }));
-      if (ackResult.ok) await queue.ack(ackResult.value, "msg-c");
-      // 1 entry failed
-      const failResult = await queue.enqueue(makeEntry({ text: "d" }));
-      if (failResult.ok) await queue.fail(failResult.value, "permanent");
-
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(2); // only the 2 pending entries
-      }
-    });
-
-    it("returns 0 on empty queue", async () => {
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) {
-        expect(depth.value).toBe(0);
-      }
-    });
-  });
+  // NOTE: describe("depth") was removed in a prior port-trim cleanup along with
+  // the queue.depth() port method. The status-counting semantics live on
+  // queue.statusCounts() (pending + in_flight equivalents).
 
   // -----------------------------------------------------------------------
   // enqueue eventBus emission (SPEC-R5)
@@ -396,15 +353,15 @@ describe("SqliteDeliveryQueueAdapter", () => {
       // Two crashed rows directly via raw SQL
       db.prepare(
         `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
-                                       format_applied, chunking_applied, status, attempt_count, max_attempts,
+                                       status, attempt_count, max_attempts,
                                        created_at, scheduled_at, expire_at, last_error)
-         VALUES ('crashed-1', 't', 'tg', 'c1', 'def', '{}', 'channel', 0, 0, 'in_flight', 0, 5, ?, ?, ?, 'crashed mid-send')`,
+         VALUES ('crashed-1', 't', 'tg', 'c1', 'def', '{}', 'channel', 'in_flight', 0, 5, ?, ?, ?, 'crashed mid-send')`,
       ).run(now, now, now + 60_000);
       db.prepare(
         `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
-                                       format_applied, chunking_applied, status, attempt_count, max_attempts,
+                                       status, attempt_count, max_attempts,
                                        created_at, scheduled_at, expire_at, last_error)
-         VALUES ('crashed-2', 't', 'tg', 'c1', 'def', '{}', 'channel', 0, 0, 'in_flight', 0, 5, ?, ?, ?, NULL)`,
+         VALUES ('crashed-2', 't', 'tg', 'c1', 'def', '{}', 'channel', 'in_flight', 0, 5, ?, ?, ?, NULL)`,
       ).run(now, now, now + 60_000);
       // One pending row via the public API (still works after constructor change)
       await queue.enqueue(makeEntry({ text: "fresh" }));

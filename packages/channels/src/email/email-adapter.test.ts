@@ -208,32 +208,14 @@ describe("createEmailAdapter", () => {
     expect(imapLifecycleMock.onNewMessage).toHaveBeenCalled();
   });
 
-  it("editMessage returns err (emails cannot be edited)", async () => {
+  it("omits editMessage / reactToMessage / removeReaction / deleteMessage / fetchMessages (capability-gated)", async () => {
     const { createEmailAdapter } = await getModule();
     const adapter = createEmailAdapter(makeDeps());
-    const result = await adapter.editMessage("ch", "msg-1", "new text");
-    expect(result.ok).toBe(false);
-  });
-
-  it("reactToMessage returns err", async () => {
-    const { createEmailAdapter } = await getModule();
-    const adapter = createEmailAdapter(makeDeps());
-    const result = await adapter.reactToMessage("ch", "msg-1", "thumbsup");
-    expect(result.ok).toBe(false);
-  });
-
-  it("deleteMessage returns err", async () => {
-    const { createEmailAdapter } = await getModule();
-    const adapter = createEmailAdapter(makeDeps());
-    const result = await adapter.deleteMessage("ch", "msg-1");
-    expect(result.ok).toBe(false);
-  });
-
-  it("fetchMessages returns err", async () => {
-    const { createEmailAdapter } = await getModule();
-    const adapter = createEmailAdapter(makeDeps());
-    const result = await adapter.fetchMessages("ch");
-    expect(result.ok).toBe(false);
+    expect(adapter.editMessage).toBeUndefined();
+    expect(adapter.reactToMessage).toBeUndefined();
+    expect(adapter.removeReaction).toBeUndefined();
+    expect(adapter.deleteMessage).toBeUndefined();
+    expect(adapter.fetchMessages).toBeUndefined();
   });
 
   it("sendAttachment sends email with file attachment", async () => {

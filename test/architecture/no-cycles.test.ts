@@ -83,12 +83,19 @@ const BASELINE_INTRA_PACKAGE_CYCLES: ReadonlySet<string> = new Set([
   "orchestrator/src/execution/execution-deliver.ts|orchestrator/src/execution/execution-pipeline.ts",
   "orchestrator/src/execution/execution-execute.ts|orchestrator/src/execution/execution-pipeline.ts",
   "orchestrator/src/execution/execution-filter.ts|orchestrator/src/execution/execution-pipeline.ts",
-  "orchestrator/src/execution/execution-pipeline.ts|orchestrator/src/execution/execution-policy.ts",
+  // The former execution-policy body was inlined into execution-pipeline;
+  // the corresponding cycle entry (execution-pipeline|execution-policy)
+  // is removed — net shrink of 1.
   "orchestrator/src/inbound/inbound-gate.ts|orchestrator/src/inbound/inbound-pipeline.ts",
-  "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/inbound-preprocess.ts",
-  "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/inbound-resolve.ts",
-  "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/inbound-route.ts",
-  "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/inbound-setup.ts",
+  // inbound-resolve.ts + inbound-preprocess.ts were merged into
+  // resolve-and-preprocess.ts; the two pre-collapse cycle entries
+  // (inbound-pipeline|inbound-preprocess and inbound-pipeline|inbound-resolve)
+  // became the single entry below.
+  "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/resolve-and-preprocess.ts",
+  // inbound-setup.ts + inbound-route.ts were merged into setup-and-route.ts;
+  // the two pre-collapse cycle entries (inbound-pipeline|inbound-setup and
+  // inbound-pipeline|inbound-route) became the single entry below.
+  "orchestrator/src/inbound/inbound-pipeline.ts|orchestrator/src/inbound/setup-and-route.ts",
   "channels/src/slack/media-handler.ts|channels/src/slack/message-mapper.ts",
   "channels/src/whatsapp/media-handler.ts|channels/src/whatsapp/message-mapper.ts",
   "cli/src/wizard/index.ts|cli/src/wizard/steps/00-welcome.ts",

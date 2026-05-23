@@ -13,7 +13,6 @@
 
 import { execFile } from "node:child_process";
 import { ok, err, type Result } from "@comis/shared";
-import { createCredentialValidator } from "../shared/credential-validator-factory.js";
 import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -112,37 +111,34 @@ function probeImsgRpc(binaryPath: string): Promise<Result<void, Error>> {
  * @param opts - Validation options
  * @returns ImsgBotInfo on success, descriptive Error on failure
  */
-export const validateIMessageConnection: (opts?: ValidateIMessageOptions) => Promise<Result<ImsgBotInfo, Error>> =
-  createCredentialValidator<ValidateIMessageOptions | undefined, ImsgBotInfo>({
-    platform: "iMessage",
-    validateInputs: () => {
-      // Platform check is the "input validation" for iMessage
-      if (process.platform !== "darwin") {
-        return (
-          `iMessage adapter requires macOS (process.platform="${process.platform}"). ` +
-          "iMessage is only available on Apple platforms."
-        );
-      }
-      return undefined;
-    },
-    callApi: async (opts) => {
-      const binaryPath = opts?.binaryPath ?? "imsg";
+export async function validateIMessageConnection(
+  opts?: ValidateIMessageOptions,
+): Promise<Result<ImsgBotInfo, Error>> {
+  // Platform check is the "input validation" for iMessage
+  if (process.platform !== "darwin") {
+    return err(
+      new Error(
+        `Invalid iMessage credentials: iMessage adapter requires macOS (process.platform="${process.platform}"). ` +
+          "iMessage is only available on Apple platforms.",
+      ),
+    );
+  }
+  const binaryPath = opts?.binaryPath ?? "imsg";
 
-      // Binary availability
-      const binaryResult = await findBinary(binaryPath);
-      if (!binaryResult.ok) {
-        return err(binaryResult.error);
-      }
+  // Binary availability
+  const binaryResult = await findBinary(binaryPath);
+  if (!binaryResult.ok) {
+    return err(binaryResult.error);
+  }
 
-      // RPC probe
-      const probeResult = await probeImsgRpc(binaryPath);
-      if (!probeResult.ok) {
-        return err(probeResult.error);
-      }
+  // RPC probe
+  const probeResult = await probeImsgRpc(binaryPath);
+  if (!probeResult.ok) {
+    return err(probeResult.error);
+  }
 
-      return ok({
-        platform: "macos",
-        available: true,
-      });
-    },
+  return ok({
+    platform: "macos",
+    available: true,
   });
+}

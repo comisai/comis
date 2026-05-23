@@ -86,56 +86,9 @@ describe("InfraEvents payload structure", () => {
     expect(handler.mock.calls[1]![0].key).toBeUndefined();
   });
 
-  it("plugin:registered delivers pluginId, pluginName, hookCount", () => {
-    const bus = new TypedEventBus();
-    const handler = vi.fn();
-    const payload: EventMap["plugin:registered"] = {
-      pluginId: "tg-01",
-      pluginName: "telegram",
-      hookCount: 3,
-      timestamp: Date.now(),
-    };
-
-    bus.on("plugin:registered", handler);
-    bus.emit("plugin:registered", payload);
-
-    expect(handler).toHaveBeenCalledWith(payload);
-    const received = handler.mock.calls[0]![0] as EventMap["plugin:registered"];
-    expect(received.pluginId).toBe("tg-01");
-    expect(received.pluginName).toBe("telegram");
-    expect(received.hookCount).toBe(3);
-  });
-
-  it("hook:executed delivers hookName, pluginId, durationMs, success, optional error", () => {
-    const bus = new TypedEventBus();
-    const handler = vi.fn();
-
-    // Success case
-    const successPayload: EventMap["hook:executed"] = {
-      hookName: "onMessage",
-      pluginId: "tg-01",
-      durationMs: 12,
-      success: true,
-      timestamp: Date.now(),
-    };
-    bus.on("hook:executed", handler);
-    bus.emit("hook:executed", successPayload);
-    expect(handler.mock.calls[0]![0].success).toBe(true);
-    expect(handler.mock.calls[0]![0].error).toBeUndefined();
-
-    // Failure case with error
-    const failPayload: EventMap["hook:executed"] = {
-      hookName: "onConnect",
-      pluginId: "discord-01",
-      durationMs: 5000,
-      success: false,
-      error: "WebSocket timeout",
-      timestamp: Date.now(),
-    };
-    bus.emit("hook:executed", failPayload);
-    expect(handler.mock.calls[1]![0].success).toBe(false);
-    expect(handler.mock.calls[1]![0].error).toBe("WebSocket timeout");
-  });
+  // The "plugin:registered" and "hook:executed" payload-shape tests were
+  // deleted alongside the events. The events had zero non-test subscribers;
+  // tests that needed plugin lifecycle now query PluginRegistry state directly.
 
   it("auth:token_rotated delivers provider and expiresAtMs", () => {
     const bus = new TypedEventBus();
@@ -143,7 +96,6 @@ describe("InfraEvents payload structure", () => {
     const expiresAt = Date.now() + 3600000;
     const payload: EventMap["auth:token_rotated"] = {
       provider: "google",
-      profileName: "gmail-oauth",
       profileId: "google:gmail-oauth",
       expiresAtMs: expiresAt,
       timestamp: Date.now(),
@@ -380,22 +332,12 @@ describe("InfraEvents payload structure", () => {
     expect(received.activeHandles).toBe(42);
   });
 
-  it("system:shutdown delivers reason and graceful", () => {
-    const bus = new TypedEventBus();
-    const handler = vi.fn();
-    const payload: EventMap["system:shutdown"] = {
-      reason: "SIGTERM",
-      graceful: true,
-    };
-
-    bus.on("system:shutdown", handler);
-    bus.emit("system:shutdown", payload);
-
-    expect(handler).toHaveBeenCalledWith(payload);
-    const received = handler.mock.calls[0]![0] as EventMap["system:shutdown"];
-    expect(received.reason).toBe("SIGTERM");
-    expect(received.graceful).toBe(true);
-  });
+  // The "system:shutdown" event was removed from InfraEvents — it had
+  // production subscribers but zero production emitters, so every teardown
+  // silently no-op'd until systemd KillMode reaped the process. Teardown
+  // wiring now flows directly through setupShutdown's ShutdownDeps (see
+  // packages/daemon/src/wiring/setup-shutdown.ts). The payload-shape test
+  // that used to live here was deleted with the event declaration.
 
   it("system:error delivers Error instance and source string", () => {
     const bus = new TypedEventBus();

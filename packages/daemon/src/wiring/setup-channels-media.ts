@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { AppContainer, Attachment, ChannelPort, NormalizedMessage, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, NormalizedMessage, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, WrapExternalContentOptions } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { isVisionCapable } from "@comis/agent";
@@ -76,6 +76,10 @@ export interface MediaPipelineDeps {
   memoryAdapter?: MemoryPort;
   tenantId?: string;
   embeddingQueue?: { enqueue(id: string, content: string): void };
+  /** Optional callback for suspicious-content detection in media textPrefix wrap output.
+   *  Threaded through to preprocessMessage's deps so audio/image/video handlers fire the callback
+   *  when wrapExternalContent detects injection patterns. */
+  onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +104,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
     transcriber,
     maxMediaBytes,
     defaultAgentId,
+    onSuspiciousContent,
   } = deps;
 
   // -- Media file persistence --
@@ -357,6 +362,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           fileExtractionConfig: deps.fileExtractionConfig ? {
             maxTotalChars: deps.fileExtractionConfig.maxTotalChars,
           } : undefined,
+          onSuspiciousContent,
         },
         enrichedMsg,
       );

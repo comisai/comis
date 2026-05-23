@@ -163,8 +163,12 @@ export async function setupAgents(deps: {
   injectionRateLimiter?: InjectionRateLimiter;
   /** Embedding queue for async vector generation. Wired into executor for conversation persistence. */
   embeddingQueue?: { enqueue(entryId: string, content: string): void };
-  /** Context store for DAG mode context engine */
-  contextStore?: import("@comis/core").ContextStorePort;
+  /** Context store for DAG mode context engine. Narrowed to ContextEngineStore
+   *  (the engine half of ContextStorePort) — the agent never calls admin
+   *  methods (listConversations, cleanupExpiredGrants, deleteConversation,
+   *  touchConversation), so the narrower view prevents structural misuse at
+   *  compile time. */
+  contextStore?: import("@comis/core").ContextEngineStore;
   /** Raw better-sqlite3 database handle for DAG transactions */
   db?: unknown;
   /** Optional embedding port for discover_tools semantic search. */

@@ -566,39 +566,19 @@ describe("createLineAdapter", () => {
   // Unsupported operations
   // -----------------------------------------------------------------------
 
-  describe("unsupported operations", () => {
-    it("editMessage returns err with 'does not support' message", async () => {
+  describe("unsupported operations (capability-gated: omitted on adapter)", () => {
+    it("omits editMessage / reactToMessage / removeReaction / deleteMessage / fetchMessages", () => {
       const adapter = createLineAdapter(makeDeps());
-      const result = await adapter.editMessage("U1234", "msg-1", "new text");
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("does not support");
-      }
+      expect(adapter.editMessage).toBeUndefined();
+      expect(adapter.reactToMessage).toBeUndefined();
+      expect(adapter.removeReaction).toBeUndefined();
+      expect(adapter.deleteMessage).toBeUndefined();
+      expect(adapter.fetchMessages).toBeUndefined();
     });
 
-    it("reactToMessage returns err", async () => {
+    it("retains real sendAttachment (LINE pushMessage with image/video/audio/text)", () => {
       const adapter = createLineAdapter(makeDeps());
-      const result = await adapter.reactToMessage("U1234", "msg-1", "thumbs_up");
-
-      expect(result.ok).toBe(false);
-    });
-
-    it("deleteMessage returns err", async () => {
-      const adapter = createLineAdapter(makeDeps());
-      const result = await adapter.deleteMessage("U1234", "msg-1");
-
-      expect(result.ok).toBe(false);
-    });
-
-    it("fetchMessages returns err", async () => {
-      const adapter = createLineAdapter(makeDeps());
-      const result = await adapter.fetchMessages("U1234");
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("not supported on LINE");
-      }
+      expect(typeof adapter.sendAttachment).toBe("function");
     });
   });
 

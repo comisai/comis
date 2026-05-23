@@ -30,17 +30,17 @@ describe("IcConnectionDot", () => {
     expect(dot?.tagName.toLowerCase()).toBe("span");
   });
 
-  it("connected status uses green color (var(--ic-success))", async () => {
+  it("healthy status uses green color (var(--ic-success))", async () => {
     const el = await createElement<IcConnectionDot>("ic-connection-dot", {
-      status: "connected",
+      status: "healthy",
     });
     const dot = el.shadowRoot?.querySelector(".dot") as HTMLElement;
     expect(dot?.style.backgroundColor).toContain("var(--ic-success)");
   });
 
-  it("reconnecting status uses green color (var(--ic-success)) via healthy alias", async () => {
+  it("idle status uses green color (var(--ic-success))", async () => {
     const el = await createElement<IcConnectionDot>("ic-connection-dot", {
-      status: "reconnecting",
+      status: "idle",
     });
     const dot = el.shadowRoot?.querySelector(".dot") as HTMLElement;
     expect(dot?.style.backgroundColor).toContain("var(--ic-success)");
@@ -70,7 +70,7 @@ describe("IcConnectionDot", () => {
 
   it("has aria-label containing status text", async () => {
     const el = await createElement<IcConnectionDot>("ic-connection-dot", {
-      status: "connected",
+      status: "healthy",
     });
     const dot = el.shadowRoot?.querySelector(".dot");
     expect(dot?.getAttribute("aria-label")).toContain("Healthy");
@@ -87,7 +87,7 @@ describe("IcConnectionDot", () => {
 
   it("showLabel displays label text by default (true)", async () => {
     const el = await createElement<IcConnectionDot>("ic-connection-dot", {
-      status: "connected",
+      status: "healthy",
     });
     const label = el.shadowRoot?.querySelector(".label");
     expect(label).toBeTruthy();
@@ -96,7 +96,7 @@ describe("IcConnectionDot", () => {
 
   it("showLabel hides label text when explicitly set to false", async () => {
     const el = await createElement<IcConnectionDot>("ic-connection-dot", {
-      status: "connected",
+      status: "healthy",
       showLabel: false,
     });
     const label = el.shadowRoot?.querySelector(".label");
@@ -105,7 +105,7 @@ describe("IcConnectionDot", () => {
 
   it("renders a status icon for color-independent status", async () => {
     const el = await createElement<IcConnectionDot>("ic-connection-dot", {
-      status: "connected",
+      status: "healthy",
     });
     const iconSpan = el.shadowRoot?.querySelector(".status-icon");
     expect(iconSpan).toBeTruthy();

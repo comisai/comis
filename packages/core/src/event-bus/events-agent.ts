@@ -39,29 +39,6 @@ export interface AgentEvents {
     timestamp: number;
   };
 
-  /** Skills reloaded after file watcher detected changes */
-  "skills:reloaded": {
-    agentId: string;
-    skillCount: number;
-    timestamp: number;
-  };
-
-  /** Skill created via skills_manage create action */
-  "skill:created": {
-    skillName: string;
-    scope: "local" | "shared";
-    agentId: string;
-    timestamp: number;
-  };
-
-  /** Skill updated via skills_manage update action */
-  "skill:updated": {
-    skillName: string;
-    scope: "local" | "shared";
-    agentId: string;
-    timestamp: number;
-  };
-
   /** Skill operation failed at runtime — distinct from skill:rejected which is security scan */
   "skill:failed": {
     skillName: string;
@@ -207,14 +184,14 @@ export interface AgentEvents {
       longTtl: number;
     };
     /**
-     * Cost-correction breadcrumb (260520-wcf). When the pi-ai SDK
-     * underprices 1h cache writes at the 5m rate, the bridge surfaces
-     * the correction here as a forensics aid for operators querying
-     * token_usage events. `delta` is signed (`corrected - sdkRaw`),
-     * `sdkRaw` is the SDK-reported total before correction, `corrected`
-     * is the post-correction total ultimately recorded by the
-     * costTracker. The field is OMITTED when delta === 0 — the absence
-     * is the "no correction was needed" signal, not a zero delta.
+     * Cost-correction breadcrumb. When the pi-ai SDK underprices 1h
+     * cache writes at the 5m rate, the bridge surfaces the correction
+     * here as a forensics aid for operators querying token_usage
+     * events. `delta` is signed (`corrected - sdkRaw`), `sdkRaw` is the
+     * SDK-reported total before correction, `corrected` is the
+     * post-correction total ultimately recorded by the costTracker. The
+     * field is OMITTED when delta === 0 — the absence is the "no
+     * correction was needed" signal, not a zero delta.
      */
     costCorrection?: {
       delta: number;
@@ -222,13 +199,13 @@ export interface AgentEvents {
       corrected: number;
     };
     /**
-     * Warmup-turn flag (260520-wcf). True when this turn wrote cache
-     * tokens without reading any (`cacheReadTokens === 0 &&
-     * cacheWriteTokens > 0`) — the first cache-write turn of a session.
-     * Reporting `cacheSavedUsd: -X, cacheSavingsRate: -91%` on this
-     * turn is misleading because the "loss" is a deferred investment,
-     * not a regression. Consumers should filter `warmupTurn === true`
-     * out of cost-regression dashboards. Always populated.
+     * Warmup-turn flag. True when this turn wrote cache tokens without
+     * reading any (`cacheReadTokens === 0 && cacheWriteTokens > 0`) —
+     * the first cache-write turn of a session. Reporting
+     * `cacheSavedUsd: -X, cacheSavingsRate: -91%` on this turn is
+     * misleading because the "loss" is a deferred investment, not a
+     * regression. Consumers should filter `warmupTurn === true` out of
+     * cost-regression dashboards. Always populated.
      */
     warmupTurn: boolean;
     /**
@@ -282,14 +259,6 @@ export interface AgentEvents {
     effortValue?: string;
   };
 
-  /** Latency recorded for an operation */
-  "observability:latency": {
-    operation: "llm_call" | "tool_execution" | "memory_search";
-    durationMs: number;
-    timestamp: number;
-    metadata?: Record<string, unknown>;
-  };
-
   /** Model failover: attempt to switch from one model to another */
   "model:fallback_attempt": {
     fromProvider: string;
@@ -315,13 +284,6 @@ export interface AgentEvents {
     fromModel: string;
     toProvider: string;
     toModel: string;
-    timestamp: number;
-  };
-
-  /** Last-known-working model fallback: LKW model succeeded */
-  "model:lkw_fallback_succeeded": {
-    provider: string;
-    model: string;
     timestamp: number;
   };
 
@@ -440,19 +402,6 @@ export interface AgentEvents {
     agentId: string;
     sessionKey: string;
     stepCount: number;
-    timestamp: number;
-  };
-
-  /** SEP plan completed (all steps resolved). Observability-only post-L4 —
-   *  the legacy enforcement nudge was replaced by the post-batch
-   *  continuation handler. */
-  "sep:plan_completed": {
-    agentId: string;
-    sessionKey: string;
-    stepsPlanned: number;
-    stepsCompleted: number;
-    stepsSkipped: number;
-    durationMs: number;
     timestamp: number;
   };
 

@@ -19,7 +19,6 @@ function createMockApiClient(overrides?: Partial<ApiClient>): ApiClient {
     chat: vi.fn().mockResolvedValue({ response: "ok" }),
     getChatHistory: vi.fn().mockResolvedValue([]),
     health: vi.fn().mockResolvedValue({ status: "ok", timestamp: new Date().toISOString() }),
-    subscribeEvents: vi.fn().mockReturnValue(() => {}),
     browseMemory: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
     deleteMemory: vi.fn().mockResolvedValue(undefined),
     editMemory: vi.fn().mockResolvedValue(undefined),

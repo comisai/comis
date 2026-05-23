@@ -25,6 +25,9 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: text.length,
       });
     }),
+    // DeliveryService provides drainInFlight(). Default fake returns empty
+    // drain telemetry; tests that exercise drain semantics override this field.
+    drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
 
@@ -594,63 +597,9 @@ describe("/approve and /deny command interception", () => {
   });
 });
 
-describe("ack reaction bypass with lifecycleReactionsEnabled", () => {
-  it("skips ack reaction when lifecycleReactionsEnabled is true", async () => {
-    const adapter = makeAdapterForTest();
-    const deps = makeMinimalDeps({
-      ackReactionConfig: { enabled: true, emoji: "\u{1F440}" },
-      lifecycleReactionsEnabled: true,
-      channelRegistry: {
-        getCapabilities: vi.fn(() => ({
-          chatTypes: ["dm"],
-          features: { reactions: true, editMessages: true, deleteMessages: true, fetchHistory: false, attachments: true, threads: false, mentions: true, formatting: [], buttons: false, cards: false, effects: false },
-          limits: { maxMessageChars: 4096, maxAttachmentSizeMb: 50 },
-          streaming: { supported: true, throttleMs: 300, maxChars: 4096, method: "edit" as const },
-          threading: { supported: false, threadType: "none" as const },
-          replyToMetaKey: "telegramMessageId",
-        })),
-        getAdapter: vi.fn(),
-        getChannelTypes: vi.fn(() => []),
-        getChannelPlugins: vi.fn(() => []),
-        registerChannel: vi.fn(() => ok(undefined)),
-        unregisterChannel: vi.fn(() => ok(undefined)),
-      } as any,
-    });
-
-    await processInboundMessage(deps, adapter, makeMsg(), new Set(), new Map() as any);
-
-    // reactToMessage should NOT have been called for ack reaction
-    expect(adapter.reactToMessage).not.toHaveBeenCalled();
-  });
-
-  it("sends ack reaction when lifecycleReactionsEnabled is false", async () => {
-    const adapter = makeAdapterForTest();
-    const deps = makeMinimalDeps({
-      ackReactionConfig: { enabled: true, emoji: "\u{1F440}" },
-      lifecycleReactionsEnabled: false,
-      channelRegistry: {
-        getCapabilities: vi.fn(() => ({
-          chatTypes: ["dm"],
-          features: { reactions: true, editMessages: true, deleteMessages: true, fetchHistory: false, attachments: true, threads: false, mentions: true, formatting: [], buttons: false, cards: false, effects: false },
-          limits: { maxMessageChars: 4096, maxAttachmentSizeMb: 50 },
-          streaming: { supported: true, throttleMs: 300, maxChars: 4096, method: "edit" as const },
-          threading: { supported: false, threadType: "none" as const },
-          replyToMetaKey: "telegramMessageId",
-        })),
-        getAdapter: vi.fn(),
-        getChannelTypes: vi.fn(() => []),
-        getChannelPlugins: vi.fn(() => []),
-        registerChannel: vi.fn(() => ok(undefined)),
-        unregisterChannel: vi.fn(() => ok(undefined)),
-      } as any,
-    });
-
-    await processInboundMessage(deps, adapter, makeMsg(), new Set(), new Map() as any);
-
-    // reactToMessage SHOULD have been called for ack reaction
-    expect(adapter.reactToMessage).toHaveBeenCalledWith("chat-1", "42", "\u{1F440}");
-  });
-});
+// "ack reaction bypass with lifecycleReactionsEnabled" describe block deleted:
+// ackReactionConfig deps slot was removed; the ack-reaction code path that
+// conditionally fired based on lifecycleReactionsEnabled is gone.
 
 // ---------------------------------------------------------------------------
 // General slash command interception

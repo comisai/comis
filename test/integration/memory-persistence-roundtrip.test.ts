@@ -7,6 +7,11 @@
  * a vitest tmp dir (NOT ~/.comis/), proves entries survive close+reopen,
  * and runs hybrid search across the persisted store.
  *
+ * The `MemoryPort` surface is `store / search / delete` (no `retrieve`,
+ * no `clear` — those would be redundant with search-by-content and the
+ * retention policy in @comis/core). Roundtrip is verified by storing an
+ * entry and confirming a search returns it.
+ *
  * @module
  */
 
@@ -16,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { SqliteMemoryAdapter } from "@comis/memory";
-import type { MemoryConfig, MemoryEntry } from "@comis/core";
+import type { MemoryConfig, MemoryEntry, SessionKey } from "@comis/core";
 
 function makeTestConfig(dbPath: string): MemoryConfig {
   return {
@@ -28,6 +33,12 @@ function makeTestConfig(dbPath: string): MemoryConfig {
     retention: { maxAgeDays: 0, maxEntries: 0 },
   } as MemoryConfig;
 }
+
+const DEFAULT_SESSION_KEY: SessionKey = {
+  tenantId: "default",
+  userId: "user_a",
+  channelId: "default",
+};
 
 function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {
@@ -60,17 +71,19 @@ describe("INTEGRATION: memory persistence — SqliteMemoryAdapter roundtrip", ()
     }
   });
 
-  it("stores entry, retrieves by id, returns identical payload", async () => {
+  it("stores entry, search returns the persisted payload", async () => {
     const adapter = new SqliteMemoryAdapter(makeTestConfig(dbPath));
     const entry = makeEntry({ content: "the quick brown fox" });
     const storeResult = await adapter.store(entry);
     expect(storeResult.ok).toBe(true);
 
-    const retrieveResult = await adapter.retrieve(entry.id);
-    expect(retrieveResult.ok).toBe(true);
-    if (retrieveResult.ok && retrieveResult.value) {
-      expect(retrieveResult.value.content).toBe("the quick brown fox");
-      expect(retrieveResult.value.id).toBe(entry.id);
+    const searchResult = await adapter.search(DEFAULT_SESSION_KEY, "quick");
+    expect(searchResult.ok).toBe(true);
+    if (searchResult.ok) {
+      const ids = searchResult.value.map((r) => r.entry.id);
+      expect(ids).toContain(entry.id);
+      const hit = searchResult.value.find((r) => r.entry.id === entry.id);
+      expect(hit?.entry.content).toBe("the quick brown fox");
     }
   });
 
@@ -85,31 +98,38 @@ describe("INTEGRATION: memory persistence — SqliteMemoryAdapter roundtrip", ()
         makeEntry({ id: entryId, content: "persistent-content" }),
       );
       expect(r.ok).toBe(true);
+      adapter.close();
     }
 
     // Read-back phase with a fresh adapter on the same file
     {
       const adapter = new SqliteMemoryAdapter(config);
-      const r = await adapter.retrieve(entryId);
+      const r = await adapter.search(DEFAULT_SESSION_KEY, "persistent");
       expect(r.ok).toBe(true);
-      if (r.ok && r.value) {
-        expect(r.value.content).toBe("persistent-content");
+      if (r.ok) {
+        const hit = r.value.find((x) => x.entry.id === entryId);
+        expect(hit).toBeDefined();
+        expect(hit!.entry.content).toBe("persistent-content");
       }
+      adapter.close();
     }
   });
 
-  it("delete removes entry from store; subsequent retrieve returns undefined", async () => {
+  it("delete removes entry from store; subsequent search does not return it", async () => {
     const adapter = new SqliteMemoryAdapter(makeTestConfig(dbPath));
-    const entry = makeEntry({ content: "to be deleted" });
+    const entry = makeEntry({ content: "to be deleted soon" });
     await adapter.store(entry);
 
     const deleteResult = await adapter.delete(entry.id);
     expect(deleteResult.ok).toBe(true);
 
-    const retrieveResult = await adapter.retrieve(entry.id);
-    expect(retrieveResult.ok).toBe(true);
-    if (retrieveResult.ok) {
-      expect(retrieveResult.value).toBeUndefined();
+    const searchResult = await adapter.search(DEFAULT_SESSION_KEY, "deleted");
+    expect(searchResult.ok).toBe(true);
+    if (searchResult.ok) {
+      const stillThere = searchResult.value.some(
+        (r) => r.entry.id === entry.id,
+      );
+      expect(stillThere).toBe(false);
     }
   });
 
@@ -119,46 +139,16 @@ describe("INTEGRATION: memory persistence — SqliteMemoryAdapter roundtrip", ()
     await adapter.store(makeEntry({ content: "beta haystack distractor" }));
     await adapter.store(makeEntry({ content: "gamma irrelevant text" }));
 
-    // SqliteMemoryAdapter.search(sessionKey, query, options?). sessionKey uses
-    // channelId field (not channel) per @comis/core SessionKey type.
-    const sessionKey = {
-      tenantId: "default",
-      userId: "user_a",
-      channelId: "default",
-    };
-    const searchResult = await adapter.search(sessionKey, "needle", {
-      limit: 10,
-    });
+    const searchResult = await adapter.search(
+      DEFAULT_SESSION_KEY,
+      "needle",
+      { limit: 10 },
+    );
     expect(searchResult.ok).toBe(true);
     if (searchResult.ok) {
-      // search returns MemorySearchResult[] (array of { entry, score? }).
       expect(Array.isArray(searchResult.value)).toBe(true);
+      const contents = searchResult.value.map((r) => r.entry.content);
+      expect(contents.some((c) => c.includes("needle"))).toBe(true);
     }
-  });
-
-  it("clear removes all entries for a session key", async () => {
-    const adapter = new SqliteMemoryAdapter(makeTestConfig(dbPath));
-    const sessionKey = {
-      tenantId: "default",
-      userId: "user_clear",
-      channelId: "test-channel",
-    };
-    await adapter.store(
-      makeEntry({
-        userId: "user_clear",
-        content: "first entry to clear",
-        source: { who: "integration-test", channel: "test-channel" },
-      }),
-    );
-    await adapter.store(
-      makeEntry({
-        userId: "user_clear",
-        content: "second entry to clear",
-        source: { who: "integration-test", channel: "test-channel" },
-      }),
-    );
-
-    const clearResult = await adapter.clear(sessionKey);
-    expect(clearResult.ok).toBe(true);
   });
 });

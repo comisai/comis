@@ -7,7 +7,6 @@
  * - Adapter lifecycle (startAll / stopAll)
  * - Closure state (activePacers, sendOverrides, adaptersByType)
  * - Session expiry cleanup
- * - Debounce flush handler registration
  *
  * Pipeline modules:
  * - execution-pipeline.ts: outbound delivery (executeAndDeliver)
@@ -24,15 +23,11 @@ import type { SessionLifecycle } from "@comis/agent";
 // Queue types live in orchestrator. Relative path used because the
 // orchestrator package cannot import its own published name.
 import type { CommandQueue } from "./queue/command-queue.js";
-import type { DebounceBuffer } from "./queue/debounce-buffer.js";
-import type { FollowupTrigger } from "./queue/followup-trigger.js";
-import type { PriorityScheduler } from "./queue/priority-scheduler.js";
-import type { SessionLabelStore } from "@comis/agent";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
-import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig, AckReactionConfig } from "@comis/core";
-import { formatSessionKey, systemNowMs, systemSetTimeout } from "@comis/core";
+import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
+import { formatSessionKey } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 
@@ -47,7 +42,6 @@ import { createSendOverrideStore } from "@comis/channels";
 import type { SendOverrideStore } from "@comis/channels";
 import type { PreflightResult } from "@comis/channels";
 import type { RetryEngine } from "@comis/core";
-import type { GroupHistoryBuffer } from "@comis/channels";
 import type { VoiceResponsePipelineDeps } from "@comis/channels";
 
 // inbound-pipeline.ts lives in @comis/orchestrator. Channels cannot import
@@ -98,10 +92,6 @@ export interface ChannelManagerDeps {
   sendPolicyConfig?: SendPolicyConfig;
   /** Optional reset trigger phrases per agent. When absent, no trigger phrase detection. */
   getResetTriggers?: (agentId: string) => string[];
-  /** Optional identity link resolver for cross-platform user recognition. When absent, senderId is used directly. */
-  identityResolver?: { resolve(provider: string, providerUserId: string): string | undefined };
-  /** Optional DM scope config callback per agent. When absent, defaults to per-channel-peer (current behavior). */
-  getDmScopeConfig?: (agentId: string) => { mode?: string; threadIsolation?: boolean } | undefined;
   /** Optional retry engine for resilient message delivery. When absent, sends use adapter.sendMessage directly. */
   retryEngine?: RetryEngine;
   /** Delivery queue for crash-safe message persistence. Optional -- when absent, agent responses skip queue. */
@@ -110,28 +100,10 @@ export interface ChannelManagerDeps {
    *  (setup-channels.ts). Threaded into the inbound pipeline via
    *  pipelineDeps spread. */
   deliveryService: DeliveryService;
-  /** Optional ingress debounce buffer for coalescing rapid messages before queue entry. When absent, messages go directly to CommandQueue. */
-  debounceBuffer?: DebounceBuffer;
-  /** Optional group history buffer for context injection in group chats. When absent, group history injection is disabled. */
-  groupHistoryBuffer?: GroupHistoryBuffer;
-  /** Optional follow-up trigger for re-enqueueing after tool/compaction results. When absent, no follow-up runs are triggered. */
-  followupTrigger?: FollowupTrigger;
-  /** Optional follow-up config for depth limits. When absent, defaults used from FollowupTrigger. */
-  followupConfig?: { maxFollowupRuns: number };
-  /** Optional priority scheduler for multi-lane queue processing. When absent, single global gate is used. */
-  priorityScheduler?: PriorityScheduler;
-  /** Optional queue config for lane assignment rules and priority scheduling. When absent, default lane assignment used. */
+  /** Optional queue config. When absent, default queue behavior used. */
   queueConfig?: QueueConfig;
   /** Optional callback to get elevated reply config for an agent. When absent, no elevated routing. */
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
-  /** Optional session label store for label-aware group history. When absent, labels are not included in group history output. */
-  sessionLabelStore?: SessionLabelStore;
-  /** Optional ack reaction config for sending emoji reactions when processing starts. When absent, no ack reactions are sent. */
-  ackReactionConfig?: AckReactionConfig;
-  /** Optional prompt skill loader for /skill:name detection. Returns pre-expanded skill content string and allowed tools. When absent, skill commands pass through as plain text. */
-  loadPromptSkill?: (name: string, args?: string) => Promise<Result<{ content: string; allowedTools: string[]; skillName: string }, Error>>;
-  /** Optional callback to get user-invocable skill names for command matching. When absent, no skill command matching occurs. */
-  getUserInvocableSkillNames?: () => Set<string>;
   /** Optional tool assembler for resolving agent tools before execution. When absent, executor receives no tools (undefined).
    *  The optional `options` object carries per-call wiring -- currently used to thread the inbound session's
    *  structural SessionKey so the assembled tools resolve the session-lifetime FileStateTracker via
@@ -139,8 +111,6 @@ export interface ChannelManagerDeps {
    *  to preserve the channels -> daemon dependency direction. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assembleToolsForAgent?: (agentId: string, options?: { sessionKey?: SessionKey }) => Promise<any[]>;
-  /** Optional greeting generator for persona-appropriate session reset messages. When absent, static "Session reset." is sent. */
-  greetingGenerator?: { generate(agentName: string): Promise<Result<string, Error>> };
   /** Optional audio preflight for transcribing voice before mention gate. */
   audioPreflight?: (msg: NormalizedMessage) => Promise<PreflightResult>;
   /** Optional voice response pipeline deps for auto-TTS voice reply. When absent, voice response is disabled. */
@@ -159,8 +129,6 @@ export interface ChannelManagerDeps {
   sessionResolver?: BackgroundSessionResolver;
   /** Handle /config command. Returns response text or undefined if not a config command. */
   handleConfigCommand?: (args: string[], channelType: string) => Promise<string | undefined>;
-  /** Optional callback for task extraction after successful agent execution. */
-  onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
   /**
    * Optional hook fired BEFORE the inbound message is dispatched to the executor.
    * Use this for state that must be visible during processing (e.g. continuation
@@ -208,16 +176,6 @@ export interface ChannelManagerDeps {
    * (channels cannot import from orchestrator).
    */
   processInboundMessage: ProcessInboundMessageFn;
-  /**
-   * Optional in-flight outbound sendMessage promise tracker. PRODUCTION
-   * callers (daemon) MUST NOT pass this -- the factory creates its own
-   * per-instance Set. Exposed via deps strictly to allow unit tests to
-   * inject a controllable Set for drain-ordering and deadline assertions.
-   * Drained in stopAll() with a 5s deadline so SIGUSR2 cannot tear down
-   * adapters mid-send (which would orphan the SQLite delivery-queue ack
-   * and trigger a duplicate retry on the next instance).
-   */
-  inFlightSends?: Set<Promise<unknown>>;
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];
 }
@@ -254,33 +212,17 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
   const adaptersByType = new Map<string, ChannelPort>();
 
   /**
-   * Per-instance in-flight outbound sendMessage promises. Used by
-   * deliver-to-channel.ts to register active sends; drained in stopAll() with
-   * a 5s deadline so SIGUSR2 cannot tear down adapters mid-send (which would
-   * orphan the SQLite delivery-queue ack and trigger a duplicate retry on the
-   * next instance).
-   *
-   * Tests may inject a Set via deps.inFlightSends to seed controllable
-   * promises for drain-ordering and deadline assertions; production callers
-   * (daemon) must NOT pass this -- the factory creates its own.
+   * Pipeline deps for processInboundMessage at all three call sites
+   * (debounce flush handler, normal onMessage handler, injectMessage).
+   * In-flight outbound `Promise` tracking lives INSIDE DeliveryService —
+   * drainInFlight() replaces the inline Promise.race in stopAll() below;
+   * the seam no longer threads through pipelineDeps.
    */
-  const inFlightSends = deps.inFlightSends ?? new Set<Promise<unknown>>();
+  const pipelineDeps: ChannelManagerDeps = deps;
 
-  /**
-   * Pipeline deps with inFlightSends threaded in. Spread once so the Set is
-   * visible to processInboundMessage at all three call sites (debounce flush
-   * handler, normal onMessage handler, injectMessage). The original deps
-   * object is left untouched -- callbacks like onMessageProcessed and
-   * onGraphReportRequest live on the same reference (spread copies the
-   * function references, not the underlying behavior).
-   */
-  const pipelineDeps: ChannelManagerDeps = { ...deps, inFlightSends };
-
-  // Clean up stale overrides, debounce entries, and group history when sessions expire
+  // Clean up stale send overrides when sessions expire
   deps.eventBus.on("session:expired", (ev) => {
     sendOverrides.delete(formatSessionKey(ev.sessionKey));
-    deps.debounceBuffer?.clear(ev.sessionKey);
-    deps.groupHistoryBuffer?.clear(formatSessionKey(ev.sessionKey));
   });
 
   return {
@@ -291,37 +233,9 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
         : [];
       const allAdapters = [...(deps.adapters ?? []), ...registryAdapters];
 
-      // Populate adapter lookup map for debounce flush handler routing
+      // Populate adapter lookup map for inject-message routing
       for (const adapter of allAdapters) {
         adaptersByType.set(adapter.channelType, adapter);
-      }
-
-      // Register debounce flush handler (one-time, before adapter message handlers)
-      if (deps.debounceBuffer) {
-        deps.debounceBuffer.onFlush((sessionKey, messages, channelType) => {
-          const adapter = adaptersByType.get(channelType);
-          if (!adapter) return;
-          // Create a synthetic message from the coalesced result with isDebounced flag
-          // to skip the debounce buffer on re-entry into processInboundMessage.
-          const coalesced = messages[0]!;
-          const syntheticMsg: NormalizedMessage = {
-            ...coalesced,
-            metadata: { ...coalesced.metadata, isDebounced: true },
-          };
-          // Fire-and-forget: processInboundMessage is async but the flush callback is sync.
-          // Errors are caught by the onMessage error handler.
-          void deps.processInboundMessage(pipelineDeps, adapter, syntheticMsg, activePacers, sendOverrides).catch((error) => {
-            deps.logger.error(
-              {
-                err: error instanceof Error ? error : new Error(String(error)),
-                channelType,
-                hint: "Check debounce flush handler and inbound pipeline for unhandled errors",
-                errorKind: "internal" as const,
-              },
-              "Debounce flush handler error",
-            );
-          });
-        });
       }
 
       for (const adapter of allAdapters) {
@@ -391,11 +305,6 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
     },
 
     async stopAll(): Promise<void> {
-      // Flush and shutdown debounce buffer before draining queue
-      if (deps.debounceBuffer) {
-        deps.debounceBuffer.shutdown();
-      }
-
       // Drain command queue before stopping adapters (if queue is provided)
       if (deps.commandQueue) {
         await deps.commandQueue.shutdown();
@@ -409,20 +318,17 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       // Await in-flight outbound sends with a 5s deadline so SIGUSR2 cannot
       // tear down adapters mid-HTTP-response (which would orphan the SQLite
       // delivery-queue ack and trigger a duplicate retry on the next instance).
-      // Empty-Set fast path takes no log line, no setTimeout, no Promise.race --
-      // existing shutdown latency is preserved when nothing is in flight.
-      if (inFlightSends.size > 0) {
-        const drainStart = systemNowMs();
-        const inFlightCount = inFlightSends.size;
-        await Promise.race([
-          Promise.allSettled([...inFlightSends]),
-          new Promise<void>((resolve) => systemSetTimeout(resolve, 5000)),
-        ]);
+      // Drain logic lives inside DeliveryService; empty-Set fast path inside
+      // `drainInFlight` returns `{drained: 0, remaining: 0, durationMs: 0}`
+      // with no setTimeout/Promise.race so shutdown latency is preserved when
+      // nothing is in flight.
+      const drainResult = await deps.deliveryService.drainInFlight(5000);
+      if (drainResult.drained > 0 || drainResult.remaining > 0) {
         deps.logger.info(
           {
-            inFlightCount,
-            drainMs: systemNowMs() - drainStart,
-            remaining: inFlightSends.size,
+            inFlightCount: drainResult.drained + drainResult.remaining,
+            drainMs: drainResult.durationMs,
+            remaining: drainResult.remaining,
             hint: "Outbound sends drained before adapter teardown to avoid duplicate-message risk on SIGUSR2 hot-reload",
           },
           "Channel manager: in-flight outbound sends drained",

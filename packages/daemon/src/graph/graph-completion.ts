@@ -602,7 +602,7 @@ export function writeRunMetadata(
       nodes: nodesMap,
     };
 
-    // Persist via fs-safe substrate (Phase 48 OBS-HARD-03); DEBUG on Result.err
+    // Persist via fs-safe substrate; DEBUG on Result.err
     // preserves existing "non-critical" semantics.
     const writeResult = writeRegularFile({ path: safePath(gs.sharedDir, "_run-metadata.json"), content: JSON.stringify(metadata, null, 2), confinedBaseDir: gs.sharedDir });
     if (!writeResult.ok) {

@@ -94,10 +94,4 @@ export interface PlatformCapabilities {
   readonly deleteMessages: boolean;
   readonly fetchHistory: boolean;
   readonly attachments: boolean;
-  readonly threads: boolean;
-  readonly mentions: boolean;
-  readonly formatting: readonly string[];
-  readonly buttons: boolean;
-  readonly cards: boolean;
-  readonly effects: boolean;
 }

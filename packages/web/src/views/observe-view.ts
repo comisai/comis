@@ -23,10 +23,6 @@ import type {
 } from "../api/types/index.js";
 import type { TabDef } from "../components/nav/ic-tabs.js";
 import { systemClearInterval, systemClearTimeout, systemNowMs, systemSetInterval, systemSetTimeout } from "@comis/core";
-import {
-  createObserveViewController,
-  type ObserveViewController,
-} from "./observe-view-controller.js";
 
 // Side-effect imports (register custom elements)
 import "../components/nav/ic-tabs.js";
@@ -598,9 +594,6 @@ export class IcObserveView extends LitElement {
   private _refreshInterval: ReturnType<typeof setInterval> | null = null;
   private _rpcStatusUnsub: (() => void) | null = null;
 
-  /** Controller owns RPC orchestration (thin façade pattern — view keeps @state + SSE). */
-  private _controller: ObserveViewController | null = null;
-
   /* ---- Lifecycle ---- */
 
   override connectedCallback(): void {
@@ -609,9 +602,6 @@ export class IcObserveView extends LitElement {
     // Note: _tryLoad() is NOT called here -- rpcClient is typically
     // null at this point. The willUpdate() callback handles loading once
     // the client property is set.
-    if (this.rpcClient) {
-      this._controller = createObserveViewController(this, this.rpcClient);
-    }
     this._initSse();
   }
 
@@ -652,9 +642,6 @@ export class IcObserveView extends LitElement {
     }
     if (changedProperties.has("rpcClient")) {
       if (this.rpcClient) {
-        if (!this._controller) {
-          this._controller = createObserveViewController(this, this.rpcClient);
-        }
         this._tryLoad();
       } else {
         this._loadState = "loaded";
@@ -923,9 +910,9 @@ export class IcObserveView extends LitElement {
 
   /** Handle confirmed reset - call obs.reset RPC and refresh data. */
   private async _onResetConfirm(): Promise<void> {
-    if (this._resetInput !== "RESET" || !this._controller) return;
+    if (this._resetInput !== "RESET" || !this.rpcClient) return;
     try {
-      await this._controller.resetObservability();
+      await this.rpcClient.call("obs.reset");
     } catch {
       // Best effort
     }

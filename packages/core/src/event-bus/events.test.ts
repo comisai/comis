@@ -84,23 +84,14 @@ describe("EventMap composition", () => {
       channelType: "discord",
       pluginId: "discord-01",
       capabilities: {
-        chatTypes: ["dm", "group"],
         features: {
           reactions: true,
           editMessages: true,
           deleteMessages: true,
           fetchHistory: false,
           attachments: true,
-          threads: false,
-          mentions: true,
-          formatting: ["markdown"],
-          buttons: false,
-          cards: false,
-          effects: false,
         },
         limits: { maxMessageChars: 2000 },
-        streaming: { supported: false, throttleMs: 300, method: "none" },
-        threading: { supported: false, threadType: "none" },
       },
       timestamp: Date.now(),
     };
@@ -121,7 +112,7 @@ describe("EventMap composition", () => {
     const _msgKey: keyof EventMap = "message:received" satisfies keyof MessagingEvents;
     const _agentKey: keyof EventMap = "tool:executed" satisfies keyof AgentEvents;
     const _chanKey: keyof EventMap = "queue:enqueued" satisfies keyof ChannelEvents;
-    const _infraKey: keyof EventMap = "system:shutdown" satisfies keyof InfraEvents;
+    const _infraKey: keyof EventMap = "system:error" satisfies keyof InfraEvents;
 
     expect(true).toBe(true); // type-level test passes if it compiles
   });

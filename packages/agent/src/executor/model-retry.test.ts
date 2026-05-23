@@ -939,13 +939,6 @@ describe("runWithModelRetry", () => {
           toModel: "gemini-pro",
         }),
       );
-      expect(eventBus.emit).toHaveBeenCalledWith(
-        "model:lkw_fallback_succeeded",
-        expect.objectContaining({
-          provider: "google",
-          model: "gemini-pro",
-        }),
-      );
     });
 
     it("does NOT try LKW for non-auth errors (e.g. rate limit)", async () => {

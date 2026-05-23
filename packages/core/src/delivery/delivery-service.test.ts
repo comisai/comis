@@ -95,9 +95,13 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     expect(typeof service.deliverToChannel).toBe("function");
   });
 
-  it("Test 2: returned shape matches the single-method interface", () => {
+  it("Test 2: returned shape matches the deliverToChannel + drainInFlight interface", () => {
     const service = createDeliveryService(makeDeps());
-    expect(Object.keys(service)).toEqual(["deliverToChannel"]);
+    // The service exposes both `deliverToChannel` (per-call outbound
+    // delivery) and `drainInFlight` (shutdown drain). Ordering is
+    // factory-emission order — assert on the Set so iteration order is
+    // irrelevant.
+    expect(new Set(Object.keys(service))).toEqual(new Set(["deliverToChannel", "drainInFlight"]));
   });
 
   it("Test 3: constructing the service does NOT call tryGetContext()", () => {
@@ -285,7 +289,6 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
   fail: ReturnType<typeof vi.fn>;
   pendingEntries: ReturnType<typeof vi.fn>;
   pruneExpired: ReturnType<typeof vi.fn>;
-  depth: ReturnType<typeof vi.fn>;
   statusCounts: ReturnType<typeof vi.fn>;
   recoverInFlight: ReturnType<typeof vi.fn>;
 } {
@@ -297,7 +300,6 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
     fail: vi.fn().mockResolvedValue(ok(undefined)),
     pendingEntries: vi.fn().mockResolvedValue(ok([])),
     pruneExpired: vi.fn().mockResolvedValue(ok(0)),
-    depth: vi.fn().mockResolvedValue(ok(0)),
     statusCounts: vi.fn().mockResolvedValue(
       ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
     ),
@@ -921,8 +923,6 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(enqueueArg.channelType).toBe("telegram");
       expect(enqueueArg.channelId).toBe("chat-1");
       expect(enqueueArg.origin).toBe("test");
-      expect(enqueueArg.formatApplied).toBe(true);
-      expect(enqueueArg.chunkingApplied).toBe(true);
       expect(enqueueArg.maxAttempts).toBe(5);
       expect(typeof enqueueArg.createdAt).toBe("number");
       expect(typeof enqueueArg.scheduledAt).toBe("number");
@@ -1244,7 +1244,6 @@ describe("DeliveryService — full pipeline behavior", () => {
       fail: ReturnType<typeof vi.fn>;
       pendingEntries: ReturnType<typeof vi.fn>;
       pruneExpired: ReturnType<typeof vi.fn>;
-      depth: ReturnType<typeof vi.fn>;
       statusCounts: ReturnType<typeof vi.fn>;
       recoverInFlight: ReturnType<typeof vi.fn>;
     } {
@@ -1257,7 +1256,6 @@ describe("DeliveryService — full pipeline behavior", () => {
         fail: vi.fn().mockResolvedValue(ok(undefined)),
         pendingEntries: vi.fn().mockResolvedValue(ok([])),
         pruneExpired: vi.fn().mockResolvedValue(ok(0)),
-        depth: vi.fn().mockResolvedValue(ok(0)),
         statusCounts: vi.fn().mockResolvedValue(
           ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
         ),
@@ -1395,87 +1393,123 @@ describe("DeliveryService — full pipeline behavior", () => {
   });
 
   // -------------------------------------------------------------------------
-  // inFlightSends tracking
+  // drainInFlight (internal Set ownership)
   // -------------------------------------------------------------------------
 
-  describe("inFlightSends tracking", () => {
-    function createMockQueueForInFlight(): DeliveryQueuePort & {
-      enqueue: ReturnType<typeof vi.fn>;
-      enqueueInFlight: ReturnType<typeof vi.fn>;
-      ack: ReturnType<typeof vi.fn>;
-      nack: ReturnType<typeof vi.fn>;
-      fail: ReturnType<typeof vi.fn>;
-    } {
-      return {
-        enqueue: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
-        enqueueInFlight: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
-        ack: vi.fn().mockResolvedValue(ok(undefined)),
-        nack: vi.fn().mockResolvedValue(ok(undefined)),
-        fail: vi.fn().mockResolvedValue(ok(undefined)),
-        pendingEntries: vi.fn().mockResolvedValue(ok([])),
-        pruneExpired: vi.fn().mockResolvedValue(ok(0)),
-        depth: vi.fn().mockResolvedValue(ok(0)),
-        statusCounts: vi.fn().mockResolvedValue(
-          ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
+  describe("DeliveryService.drainInFlight", () => {
+    /**
+     * Build a controllable adapter whose sendMessage returns a deferred
+     * promise. `resolveAllSends()` settles every pending send with ok().
+     * Used to exercise the in-flight tracker via the production
+     * `deliverToChannel` surface — no test-only deps injection required.
+     */
+    function makeServiceWithControllableAdapter() {
+      const pending: Array<(v: Result<string, Error>) => void> = [];
+      const adapter: DeliveryAdapter = {
+        channelType: "telegram",
+        sendMessage: vi.fn().mockImplementation(
+          () =>
+            new Promise<Result<string, Error>>((resolve) => {
+              pending.push(resolve);
+            }),
         ),
-        recoverInFlight: vi.fn().mockResolvedValue(ok(0)),
+      };
+      const service = makeDeliveryService();
+      return {
+        service,
+        adapter,
+        resolveAllSends: () => {
+          // Settle every pending promise with a successful Result.
+          let resolve: ((v: Result<string, Error>) => void) | undefined;
+          while ((resolve = pending.shift())) {
+            resolve(ok("msg-stub"));
+          }
+        },
       };
     }
 
-    it("adds sendPromise to inFlightSends Set before await and removes via finally on success", async () => {
-      const adapter = createMockAdapter("telegram");
-      let resolveSend: (v: Result<string, Error>) => void = () => {};
-      adapter.sendMessage.mockImplementation(
-        () =>
-          new Promise<Result<string, Error>>((resolve) => {
-            resolveSend = resolve;
-          }),
-      );
-      const inFlightSends = new Set<Promise<unknown>>();
-      const queue = createMockQueueForInFlight();
-      const service = makeDeliveryService({ deliveryQueue: queue, inFlightSends });
-
-      const deliveryPromise = service.deliverToChannel(adapter, "chat-1", "Hello");
-
-      // Allow microtasks to run: the send is now in-flight (awaiting resolution).
-      // The Set must observe the promise BEFORE the await -- this is the
-      // load-bearing assertion for SIGUSR2 mid-send detection.
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(inFlightSends.size).toBe(1);
-
-      resolveSend(ok("msg-id-1"));
-      await deliveryPromise;
-
-      // After settle, .finally must have removed the entry.
-      expect(inFlightSends.size).toBe(0);
+    it("resolves to zero counts when no sends are in flight", async () => {
+      const service = makeDeliveryService();
+      const result = await service.drainInFlight(5000);
+      expect(result).toEqual({ drained: 0, remaining: 0, durationMs: 0 });
     });
 
-    it("removes sendPromise via finally even when sendMessage rejects (Result err)", async () => {
-      const adapter = createMockAdapter("telegram");
-      let resolveSend: (v: Result<string, Error>) => void = () => {};
-      adapter.sendMessage.mockImplementation(
-        () =>
-          new Promise<Result<string, Error>>((resolve) => {
-            resolveSend = resolve;
-          }),
-      );
-      const inFlightSends = new Set<Promise<unknown>>();
-      const queue = createMockQueueForInFlight();
-      const service = makeDeliveryService({ deliveryQueue: queue, inFlightSends });
+    it("drains all in-flight sends when they complete before the deadline", async () => {
+      const { service, adapter, resolveAllSends } = makeServiceWithControllableAdapter();
+      const p1 = service.deliverToChannel(adapter, "chan", "hello 1");
+      const p2 = service.deliverToChannel(adapter, "chan", "hello 2");
 
-      const deliveryPromise = service.deliverToChannel(adapter, "chat-1", "Hello");
-
-      // Allow microtasks: send is in-flight, Set has 1 entry.
+      // Yield microtasks so deliverToChannel reaches the inFlightSends.add(...)
+      // line BEFORE we resolve adapter sends.
       await Promise.resolve();
       await Promise.resolve();
-      expect(inFlightSends.size).toBe(1);
 
-      // Resolve the promise with an err Result -- still settles, .finally fires.
-      resolveSend(err(new Error("Network exploded")));
-      await deliveryPromise;
+      // Resolve the underlying adapter sends; the in-flight Set drains via
+      // sendPromise.finally(() => inFlightSends.delete(tracked)).
+      resolveAllSends();
+      const drainResult = await service.drainInFlight(5000);
 
-      expect(inFlightSends.size).toBe(0);
+      expect(drainResult.drained).toBe(2);
+      expect(drainResult.remaining).toBe(0);
+      expect(drainResult.durationMs).toBeLessThan(5000);
+      // Sanity: the deliveries themselves settle.
+      await Promise.all([p1, p2]);
+    });
+
+    it("returns remaining > 0 when a hung send exceeds the deadline", async () => {
+      const { service, adapter, resolveAllSends } = makeServiceWithControllableAdapter();
+      // Start a delivery and do NOT resolve the adapter — the underlying
+      // sendMessage promise hangs, so the inFlightSends Set holds onto it.
+      const _hung = service.deliverToChannel(adapter, "chan", "hung");
+      void _hung;
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const drainResult = await service.drainInFlight(100);
+      expect(drainResult.remaining).toBeGreaterThanOrEqual(1);
+      expect(drainResult.durationMs).toBeGreaterThanOrEqual(100);
+
+      // Cleanup so the hung promise eventually resolves (don't leak).
+      resolveAllSends();
+    });
+
+    it("permits subsequent deliverToChannel after drainInFlight resolves", async () => {
+      const { service, adapter, resolveAllSends } = makeServiceWithControllableAdapter();
+      const p1 = service.deliverToChannel(adapter, "chan", "first");
+      await Promise.resolve();
+      await Promise.resolve();
+      resolveAllSends();
+      await service.drainInFlight(5000);
+
+      // Internal Set must be empty + reusable.
+      const p2 = service.deliverToChannel(adapter, "chan", "second");
+      await Promise.resolve();
+      await Promise.resolve();
+      resolveAllSends();
+      await Promise.all([p1, p2]);
+
+      const final = await service.drainInFlight(5000);
+      expect(final.drained).toBe(0);
+      expect(final.remaining).toBe(0);
+    });
+
+    it("createDeliveryService no longer accepts an inFlightSends deps field", () => {
+      // Type-level assertion via @ts-expect-error: DeliveryServiceDeps
+      // does NOT declare inFlightSends. Tests that try to pass one must
+      // fail at compile time. The runtime call still succeeds (extra
+      // properties are erased at the structural-type seam), but the
+      // @ts-expect-error directive is the load-bearing assertion.
+      const deps = {
+        hookRunner: makeNoopHookRunner(),
+        deliveryQueue: createNoOpDeliveryQueue(),
+      };
+      const _service = createDeliveryService({
+        ...deps,
+        // @ts-expect-error — inFlightSends is no longer a valid DeliveryServiceDeps field
+        inFlightSends: new Set<Promise<unknown>>(),
+      });
+      expect(_service).toBeDefined();
     });
   });
+
 });

@@ -3,16 +3,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
-// Hoisted mocks (Health)
-// ---------------------------------------------------------------------------
-
-const mockLoadOrCreateDeviceIdentity = vi.hoisted(() => vi.fn());
-
-vi.mock("../device/device-identity.js", () => ({
-  loadOrCreateDeviceIdentity: mockLoadOrCreateDeviceIdentity,
-}));
-
-// ---------------------------------------------------------------------------
 // Hoisted mocks (Monitoring)
 // ---------------------------------------------------------------------------
 
@@ -102,23 +92,13 @@ function createMonitoringContainer(opts: { monitoring?: Record<string, any>; sch
 
 describe("setupHealth", () => {
   let mockCreateProcessMonitor: ReturnType<typeof vi.fn>;
-  let mockStartWatchdog: ReturnType<typeof vi.fn>;
   let mockProcessMonitor: { start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> };
-  let mockWatchdogHandle: { kick: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
 
     mockProcessMonitor = { start: vi.fn(), stop: vi.fn() };
-    mockWatchdogHandle = { kick: vi.fn() };
     mockCreateProcessMonitor = vi.fn(() => mockProcessMonitor);
-    mockStartWatchdog = vi.fn(() => mockWatchdogHandle);
-
-    // Default: identity loads successfully
-    mockLoadOrCreateDeviceIdentity.mockReturnValue({
-      ok: true,
-      value: { deviceId: "dev-abc123", publicKey: "pk-test" },
-    });
   });
 
   async function getSetupHealth() {
@@ -139,7 +119,6 @@ describe("setupHealth", () => {
       logger: createMockLogger() as any,
       daemonLogger: createMockLogger() as any,
       _createProcessMonitor: mockCreateProcessMonitor,
-      _startWatchdog: mockStartWatchdog,
     });
 
     expect(mockCreateProcessMonitor).toHaveBeenCalledWith({ eventBus: container.eventBus });
@@ -147,32 +126,10 @@ describe("setupHealth", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2. Starts watchdog with logger and processMonitor
+  // 2. Returns processMonitor as the sole field
   // -------------------------------------------------------------------------
 
-  it("calls _startWatchdog with logger and processMonitor", async () => {
-    const daemonLogger = createMockLogger();
-    const setupHealth = await getSetupHealth();
-
-    setupHealth({
-      container: createMinimalContainer(),
-      logger: createMockLogger() as any,
-      daemonLogger: daemonLogger as any,
-      _createProcessMonitor: mockCreateProcessMonitor,
-      _startWatchdog: mockStartWatchdog,
-    });
-
-    expect(mockStartWatchdog).toHaveBeenCalledWith({
-      logger: daemonLogger,
-      processMonitor: mockProcessMonitor,
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // 3. Returns all result fields
-  // -------------------------------------------------------------------------
-
-  it("returns processMonitor, watchdogHandle, and deviceIdentity", async () => {
+  it("returns processMonitor as the sole result field", async () => {
     const setupHealth = await getSetupHealth();
 
     const result = setupHealth({
@@ -180,87 +137,10 @@ describe("setupHealth", () => {
       logger: createMockLogger() as any,
       daemonLogger: createMockLogger() as any,
       _createProcessMonitor: mockCreateProcessMonitor,
-      _startWatchdog: mockStartWatchdog,
     });
 
     expect(result.processMonitor).toBe(mockProcessMonitor);
-    expect(result.watchdogHandle).toBe(mockWatchdogHandle);
-    expect(result.deviceIdentity).toEqual({ deviceId: "dev-abc123", publicKey: "pk-test" });
-  });
-
-  // -------------------------------------------------------------------------
-  // 4. Loads device identity on success
-  // -------------------------------------------------------------------------
-
-  it("loads device identity and logs info on success", async () => {
-    const daemonLogger = createMockLogger();
-    const setupHealth = await getSetupHealth();
-
-    const result = setupHealth({
-      container: createMinimalContainer(),
-      logger: createMockLogger() as any,
-      daemonLogger: daemonLogger as any,
-      _createProcessMonitor: mockCreateProcessMonitor,
-      _startWatchdog: mockStartWatchdog,
-    });
-
-    expect(result.deviceIdentity).toBeDefined();
-    expect(daemonLogger.info).toHaveBeenCalledWith(
-      { deviceId: "dev-abc123" },
-      "Device identity loaded",
-    );
-  });
-
-  // -------------------------------------------------------------------------
-  // 5. Sets deviceIdentity to undefined on failure, logs warn
-  // -------------------------------------------------------------------------
-
-  it("sets deviceIdentity to undefined and logs warn on identity load failure", async () => {
-    mockLoadOrCreateDeviceIdentity.mockReturnValue({
-      ok: false,
-      error: { message: "Permission denied" },
-    });
-
-    const daemonLogger = createMockLogger();
-    const setupHealth = await getSetupHealth();
-
-    const result = setupHealth({
-      container: createMinimalContainer(),
-      logger: createMockLogger() as any,
-      daemonLogger: daemonLogger as any,
-      _createProcessMonitor: mockCreateProcessMonitor,
-      _startWatchdog: mockStartWatchdog,
-    });
-
-    expect(result.deviceIdentity).toBeUndefined();
-    expect(daemonLogger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        err: "Permission denied",
-        hint: "Check file permissions in data directory",
-        errorKind: "internal",
-      }),
-      "Device identity not available (non-fatal)",
-    );
-  });
-
-  // -------------------------------------------------------------------------
-  // 6. Falls back to "." when dataDir is undefined
-  // -------------------------------------------------------------------------
-
-  it("uses '.' as stateDir when dataDir is falsy", async () => {
-    const container = createMinimalContainer({ dataDir: "" });
-    const setupHealth = await getSetupHealth();
-
-    setupHealth({
-      container,
-      logger: createMockLogger() as any,
-      daemonLogger: createMockLogger() as any,
-      _createProcessMonitor: mockCreateProcessMonitor,
-      _startWatchdog: mockStartWatchdog,
-    });
-
-    // loadOrCreateDeviceIdentity should be called with "."
-    expect(mockLoadOrCreateDeviceIdentity).toHaveBeenCalledWith(".");
+    expect(Object.keys(result)).toEqual(["processMonitor"]);
   });
 });
 

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SqliteMemoryAdapter: Full MemoryPort implementation backed by SQLite.
+ * SqliteMemoryAdapter: MemoryPort implementation backed by SQLite.
  *
- * Implements all 6 MemoryPort methods (store/retrieve/search/update/delete/clear)
- * with provenance tracking, trust-level partitioning, and hybrid search.
+ * Implements the 3 MemoryPort methods (store/search/delete) with provenance
+ * tracking, trust-level partitioning, and hybrid search.
  *
  * Implements multi-tier memory (memoryType), provenance tracking, trust-level
  * partitioning, hybrid search, and WAL mode for concurrent access.
@@ -13,7 +13,6 @@ import type {
   MemoryPort,
   MemorySearchOptions,
   MemorySearchResult,
-  MemoryUpdateFields,
   MemoryEntry,
   SessionKey,
   MemoryConfig,
@@ -21,18 +20,16 @@ import type {
 } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import type Database from "better-sqlite3";
-import type { MemoryRow } from "./types.js";
 import { hybridSearch, searchByVector } from "./hybrid-search.js";
 import { initSchema } from "./schema.js";
 import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags, createRowMapper } from "./row-mapper.js";
-import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
+import { MemoryRowSchema } from "./row-schemas.js";
 import { truncateForEmbedding } from "./embedding-batch-indexer.js";
 import { openSqliteDatabase } from "./sqlite-adapter-base.js";
 import { systemNowMs } from "@comis/core";
 
 // Row mappers
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
-const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
 
 /** Minimal pino-compatible logger interface for memory subsystem logging. */
 interface MemoryLogger {
@@ -97,75 +94,6 @@ export class SqliteMemoryAdapter implements MemoryPort {
       // hasEmbedding=false implies embedding will be queued for background generation
       this.logger?.debug({ durationMs, op: "store", hasEmbedding: !!entry.embedding, embeddingQueued: !entry.embedding, memoryType }, "Memory store complete");
       return ok(entry);
-    } catch (e: unknown) {
-      return err(e instanceof Error ? e : new Error(String(e)));
-    }
-  }
-
-  // ── storeWithType (for compaction service) ───────────────────────
-
-  /**
-   * Store a memory entry with an explicit memoryType.
-   * Used by the compaction service to store summarized entries
-   * as 'semantic' and working memories.
-   */
-  async storeWithType(
-    entry: MemoryEntry,
-    memoryType: "working" | "episodic" | "semantic" | "procedural",
-  ): Promise<Result<MemoryEntry, Error>> {
-    try {
-      const vecAvailable = this.vecAvailable;
-      const tx = this.db.transaction(() => {
-        insertMemoryRow(this.db, entry, memoryType);
-        if (entry.embedding) {
-          storeEmbedding(this.db, entry.id, entry.embedding, vecAvailable);
-        }
-      });
-      tx();
-
-      return ok(entry);
-    } catch (e: unknown) {
-      return err(e instanceof Error ? e : new Error(String(e)));
-    }
-  }
-
-  // ── retrieve ─────────────────────────────────────────────────────
-
-  async retrieve(id: string, tenantId?: string): Promise<Result<MemoryEntry | undefined, Error>> {
-    const startMs = systemNowMs();
-    try {
-      const tid = tenantId ?? "default";
-      // Filter expired entries at query time
-      const row = this.db
-        .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND (expires_at IS NULL OR expires_at > ?)")
-        .get(id, tid, systemNowMs()) as MemoryRow | undefined;
-
-      if (!row) {
-        const durationMs = systemNowMs() - startMs;
-        this.logger?.debug({ durationMs, op: "retrieve", resultCount: 0 }, "Memory retrieve complete");
-        return ok(undefined);
-      }
-
-      // Load embedding if available (per-instance vec state)
-      let embedding: number[] | undefined;
-      if (row.has_embedding && this.vecAvailable) {
-        const vecRow = this.db
-          .prepare("SELECT embedding FROM vec_memories WHERE memory_id = ?")
-          .get(id) as { embedding: Buffer } | undefined;
-
-        if (vecRow) {
-          const float32 = new Float32Array(
-            vecRow.embedding.buffer,
-            vecRow.embedding.byteOffset,
-            vecRow.embedding.byteLength / Float32Array.BYTES_PER_ELEMENT,
-          );
-          embedding = Array.from(float32);
-        }
-      }
-
-      const durationMs = systemNowMs() - startMs;
-      this.logger?.debug({ durationMs, op: "retrieve", resultCount: 1 }, "Memory retrieve complete");
-      return ok(rowToEntry(row, embedding));
     } catch (e: unknown) {
       return err(e instanceof Error ? e : new Error(String(e)));
     }
@@ -329,104 +257,6 @@ export class SqliteMemoryAdapter implements MemoryPort {
     }
   }
 
-  // ── update ───────────────────────────────────────────────────────
-
-  async update(
-    id: string,
-    fields: MemoryUpdateFields,
-    tenantId?: string,
-  ): Promise<Result<MemoryEntry, Error>> {
-    const startMs = systemNowMs();
-    try {
-      const tid = tenantId ?? "default";
-
-      // Verify entry exists
-      const existingParsed = memoryRowMapper.parseOptionalRow(
-        this.db
-          .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
-          .get(id, tid),
-      );
-      if (!existingParsed.ok) {
-        return err(new Error(`Row validation failed: ${existingParsed.error.message}`));
-      }
-      const existing = existingParsed.value;
-
-      if (!existing) {
-        return err(new Error(`Memory entry not found: ${id}`));
-      }
-
-      // Build dynamic SET clause
-      const setClauses: string[] = [];
-      const setParams: unknown[] = [];
-
-      if (fields.content !== undefined) {
-        setClauses.push("content = ?");
-        setParams.push(fields.content);
-      }
-      if (fields.tags !== undefined) {
-        setClauses.push("tags = ?");
-        setParams.push(JSON.stringify(fields.tags));
-      }
-      if (fields.trustLevel !== undefined) {
-        setClauses.push("trust_level = ?");
-        setParams.push(fields.trustLevel);
-      }
-      if (fields.expiresAt !== undefined) {
-        setClauses.push("expires_at = ?");
-        setParams.push(fields.expiresAt);
-      }
-
-      // Always update updated_at
-      setClauses.push("updated_at = ?");
-      setParams.push(systemNowMs());
-
-      const tx = this.db.transaction(() => {
-        if (setClauses.length > 0) {
-          const sql = `UPDATE memories SET ${setClauses.join(", ")} WHERE id = ? AND tenant_id = ?`;
-          setParams.push(id, tid);
-          this.db.prepare(sql).run(...setParams);
-        }
-
-        // Handle embedding update (per-instance vec state)
-        if (fields.embedding !== undefined && this.vecAvailable) {
-          const float32 = new Float32Array(fields.embedding);
-
-          if (existing.has_embedding) {
-            // Delete old embedding and insert new
-            this.db.prepare("DELETE FROM vec_memories WHERE memory_id = ?").run(id);
-          }
-
-          this.db
-            .prepare("INSERT INTO vec_memories(memory_id, embedding) VALUES (?, ?)")
-            .run(id, float32);
-          this.db.prepare("UPDATE memories SET has_embedding = 1 WHERE id = ?").run(id);
-        }
-      });
-      tx();
-
-      // Return updated entry
-      const updatedParsed = memoryRowMapper.parseOptionalRow(
-        this.db
-          .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
-          .get(id, tid),
-      );
-      if (!updatedParsed.ok) {
-        return err(new Error(`Row validation failed: ${updatedParsed.error.message}`));
-      }
-      const updated = updatedParsed.value;
-      if (!updated) {
-        // Should not happen — we just updated. Surface as internal error.
-        return err(new Error(`Updated memory entry vanished: ${id}`));
-      }
-
-      const durationMs = systemNowMs() - startMs;
-      this.logger?.debug({ durationMs, op: "update" }, "Memory update complete");
-      return ok(rowToEntry(updated));
-    } catch (e: unknown) {
-      return err(e instanceof Error ? e : new Error(String(e)));
-    }
-  }
-
   // ── delete ───────────────────────────────────────────────────────
 
   async delete(id: string, tenantId?: string): Promise<Result<boolean, Error>> {
@@ -447,39 +277,6 @@ export class SqliteMemoryAdapter implements MemoryPort {
       const durationMs = systemNowMs() - startMs;
       this.logger?.debug({ durationMs, op: "delete" }, "Memory delete complete");
       return ok(result.changes > 0);
-    } catch (e: unknown) {
-      return err(e instanceof Error ? e : new Error(String(e)));
-    }
-  }
-
-  // ── clear ────────────────────────────────────────────────────────
-
-  async clear(sessionKey: SessionKey): Promise<Result<number, Error>> {
-    const startMs = systemNowMs();
-    try {
-      const tid = sessionKey.tenantId;
-
-      // Get IDs to delete from vec_memories first (per-instance)
-      if (this.vecAvailable) {
-        const idsParsed = idProjectionMapper.parseRows(
-          this.db
-            .prepare("SELECT id FROM memories WHERE tenant_id = ?")
-            .all(tid),
-        );
-        // Degrade-on-validation-error: clear scope → no vec rows to cascade.
-        const ids = idsParsed.ok ? idsParsed.value : [];
-
-        for (const { id } of ids) {
-          this.db.prepare("DELETE FROM vec_memories WHERE memory_id = ?").run(id);
-        }
-      }
-
-      // Delete all memories for tenant (FTS5 trigger handles cleanup)
-      const result = this.db.prepare("DELETE FROM memories WHERE tenant_id = ?").run(tid);
-
-      const durationMs = systemNowMs() - startMs;
-      this.logger?.debug({ durationMs, op: "clear" }, "Memory clear complete");
-      return ok(result.changes);
     } catch (e: unknown) {
       return err(e instanceof Error ? e : new Error(String(e)));
     }

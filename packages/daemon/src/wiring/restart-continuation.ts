@@ -52,7 +52,7 @@ export interface RestartContinuationTracker {
    * @param filePath - Target file (typically `safePath(dataDir, "restart-continuations.json")`).
    * @param recentWindowMs - Sessions older than this are skipped.
    * @param confinedBaseDir - Confinement base for the fs-safe substrate.
-   *   Required (Phase 48 OBS-HARD-03): the resolved real path of
+   *   Required: the resolved real path of
    *   `filePath` must stay inside the operator's data root so writes
    *   cannot escape `~/.comis/` via an ancestor-symlink swap. Pass
    *   `dataDir` from the caller's closure.
@@ -99,12 +99,10 @@ export function createRestartContinuationTracker(): RestartContinuationTracker {
         (r) => now - r.timestamp < recentWindowMs,
       );
       if (recent.length === 0) return 0;
-      // OBS-HARD-03: route through the fs-safe substrate so the
+      // Route through the fs-safe substrate so the
       // restart-continuation hand-off file lands at mode `0o600` per
       // §1.4. Failure is non-fatal: log + return 0 so daemon shutdown
-      // continues (best-effort write contract preserved — see PLAN
-      // 48-05 Task 2 + RESEARCH.md §"Sibling-Writer Migration Map"
-      // row 3).
+      // continues (best-effort write contract preserved).
       const result = writeRegularFile({
         path: filePath,
         content: JSON.stringify(recent, null, 2),

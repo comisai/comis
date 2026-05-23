@@ -98,6 +98,25 @@ export interface ExcludeDeferralResult {
 // ---------------------------------------------------------------------------
 
 /**
+ * Channel-specific tool deferral table. Each entry collapses the
+ * byte-identical rule shape — channel-action tools are deferred unless
+ * the current channelType matches.
+ *
+ * The table-driven `.map()` rebuild below preserves DEFERRAL_RULES.length === 5
+ * (1 privileged + 4 channel-action rules), so the existing test at
+ * tool-deferral.test.ts:1099-1110 holds verbatim.
+ *
+ * Adding a new channel-action tool: append one entry below. The corresponding
+ * generated rule defers the tool unless the current channelType matches.
+ */
+const CHANNEL_TOOL_GATES = [
+  { channelType: "discord",  tool: "discord_action",  description: "Discord-specific actions (pin, kick, ban, roles, threads, channels)" },
+  { channelType: "telegram", tool: "telegram_action", description: "Telegram-specific actions (pin, poll, sticker, chat admin, topics)" },
+  { channelType: "slack",    tool: "slack_action",    description: "Slack-specific actions (pin, topic, archive, channels)" },
+  { channelType: "whatsapp", tool: "whatsapp_action", description: "WhatsApp-specific actions (group management, settings)" },
+] as const;
+
+/**
  * Declarative deferral rules. Each rule specifies tools to defer and the
  * condition under which they remain active.
  */
@@ -108,30 +127,12 @@ export const DEFERRAL_RULES: DeferralRule[] = [
     namespace: "admin",
     namespaceDescription: "Fleet management, observability, session/memory/channel/token/skill/MCP admin (requires admin trust)",
   },
-  {
-    tools: ["discord_action"],
-    activeWhen: (ctx) => ctx.channelType === "discord",
-    namespace: "discord",
-    namespaceDescription: "Discord-specific actions (pin, kick, ban, roles, threads, channels)",
-  },
-  {
-    tools: ["telegram_action"],
-    activeWhen: (ctx) => ctx.channelType === "telegram",
-    namespace: "telegram",
-    namespaceDescription: "Telegram-specific actions (pin, poll, sticker, chat admin, topics)",
-  },
-  {
-    tools: ["slack_action"],
-    activeWhen: (ctx) => ctx.channelType === "slack",
-    namespace: "slack",
-    namespaceDescription: "Slack-specific actions (pin, topic, archive, channels)",
-  },
-  {
-    tools: ["whatsapp_action"],
-    activeWhen: (ctx) => ctx.channelType === "whatsapp",
-    namespace: "whatsapp",
-    namespaceDescription: "WhatsApp-specific actions (group management, settings)",
-  },
+  ...CHANNEL_TOOL_GATES.map((gate) => ({
+    tools: [gate.tool],
+    activeWhen: (ctx: DeferralContext) => ctx.channelType === gate.channelType,
+    namespace: gate.channelType,
+    namespaceDescription: gate.description,
+  })),
 ];
 
 /**
@@ -384,10 +385,6 @@ export function applyToolDeferral(
   // narrow context windows). Providers without mid-turn injection (OpenAI,
   // xAI, etc.) were already exempt from MCP deferral and remain so -- the
   // flip means the Anthropic/Google branch now matches their behavior.
-  //
-  // No MCP-deferral pass runs here. This block is intentionally left as a
-  // comment-only architectural slot so a future budget-pressure rule can
-  // reintroduce conditional MCP deferral if telemetry justifies it.
 
   // Small model aggressive deferral
   if (deferralContext.modelTier === "small") {

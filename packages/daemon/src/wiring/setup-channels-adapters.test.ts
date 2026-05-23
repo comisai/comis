@@ -15,7 +15,15 @@ const mockSignalPlugin = { adapter: { sendMessage: vi.fn() } };
 const mockLinePlugin = { adapter: { sendMessage: vi.fn() } };
 const mockIMessagePlugin = { adapter: { sendMessage: vi.fn() } };
 const mockIrcPlugin = { adapter: { sendMessage: vi.fn() } };
-const mockEmailPlugin = { adapter: { sendMessage: vi.fn() }, channelType: "email" };
+const mockEmailPlugin = {
+  adapter: { sendMessage: vi.fn() },
+  channelType: "email",
+  capabilities: {
+    features: { reactions: false, editMessages: false, deleteMessages: false, fetchHistory: false, attachments: true },
+    limits: { maxMessageChars: 100_000 },
+    replyToMetaKey: "emailMessageId",
+  },
+};
 
 vi.mock("@comis/channels", () => ({
   createTelegramPlugin: vi.fn(() => mockTelegramPlugin),
@@ -448,14 +456,15 @@ describe("bootstrapAdapters", () => {
     );
   });
 
-  it("sets email channelCapabilities with supportsReactions false and replyToMetaKey emailMessageId", async () => {
+  it("registers email plugin with features.reactions false and replyToMetaKey emailMessageId", async () => {
     const container = makeContainer({
       email: { enabled: true, address: "bot@example.com", imapHost: "imap.example.com", smtpHost: "smtp.example.com", botToken: "pass" },
     });
     const result = await bootstrapAdapters({ container, channelsLogger });
 
-    const caps = result.channelCapabilities.get("email");
-    expect(caps).toEqual({ supportsReactions: false, replyToMetaKey: "emailMessageId" });
+    const plugin = result.channelPlugins.get("email");
+    expect(plugin?.capabilities.features.reactions).toBe(false);
+    expect(plugin?.capabilities.replyToMetaKey).toBe("emailMessageId");
   });
 
   it("registers email in channelPlugins for routing resolution", async () => {

@@ -40,7 +40,6 @@ function createMockApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
     health: vi
       .fn()
       .mockResolvedValue({ status: "ok", timestamp: "" }),
-    subscribeEvents: vi.fn().mockReturnValue(() => {}),
     ...overrides,
   };
 }

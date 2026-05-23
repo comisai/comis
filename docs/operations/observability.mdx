@@ -86,9 +86,8 @@ by default):
 - **Memory usage** -- heap size and resident set size
 - **CPU usage** -- process-level CPU utilization
 
-These metrics are used by the [watchdog](/operations/daemon#watchdog) to
-determine if the daemon is healthy, and they appear on the health endpoint at
-`/health`.
+These metrics surface on the [`/health` HTTP endpoint](/operations/monitoring#the-health-http-endpoint)
+to determine if the daemon is healthy.
 
 ### Channel Activity Tracking
 

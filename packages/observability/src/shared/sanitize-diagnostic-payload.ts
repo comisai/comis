@@ -46,42 +46,114 @@
  * `limitPayloadValue` in the canonical chain
  * `redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value)))`.
  *
+ * The recursive `walk` body, WeakSet allocation, and `isPlainObject`
+ * predicate live in the shared `combined-walker.ts`.
+ * `sanitizeDiagnosticPayload` is a one-line delegate invoking
+ * `combinedWalk` with `sanitizeNodeHook` only. `sanitizeString` and
+ * `maybeRewriteImageObject` remain here (sanitize-stage knowledge);
+ * they are narrow-exported for the combined walker.
+ *
  * @module
  */
 
 import { createHash } from "node:crypto";
 
+import { combinedWalk, sanitizeNodeHook } from "./combined-walker.js";
+
 /**
  * Names that, regardless of casing or word boundary, are credentials
  * and must drop their value. Compared case-insensitively against the
- * field name in full.
+ * field name in full inside the diagnostic-payload sanitizer (via
+ * `isCredentialFieldName`).
+ *
+ * **EXPORTED** because the same Set drives `@comis/infra`'s Pino
+ * `redact.paths` generator. Pino's path matcher is CASE-SENSITIVE — so
+ * the Set deliberately contains THREE lanes:
+ *
+ *   1. **bare/single-word** entries (`auth`, `token`, `secret`, …) —
+ *      lower-case ASCII words, only one form needed.
+ *   2. **snake_case** forms (`access_token`, `api_key`, …) — required
+ *      for payloads keyed in snake_case.
+ *   3. **camelCase** forms (`apiKey`, `botToken`, …) — required to
+ *      preserve the legacy hand-table's camelCase coverage. Removing
+ *      the hand-table without these would silently regress production
+ *      `apiKey`/`botToken`/... redaction (RESEARCH Pitfall 3).
+ *
+ * The duplication is intentional and cheap (~27 entries). The
+ * `isCredentialFieldName` predicate (below) lowercases its input
+ * before lookup, so the camelCase entries are no-op duplicates in
+ * the sanitizer's codepath; they are load-bearing for the Pino
+ * `redact.paths` codepath.
  */
-const CREDENTIAL_KEYS = new Set<string>([
-  "password",
-  "apikey",
-  "api_key",
-  "token",
-  "secret",
-  "authorization",
+export const CREDENTIAL_KEYS = new Set<string>([
+  // -------------------------------------------------------------------
+  // Bare / single-word credential names (lower-case ASCII; one form
+  // covers all uses).
+  // -------------------------------------------------------------------
   "auth",
+  "token",
+  "password",
+  "secret",
   "cookie",
-  "privatekey",
-  "private_key",
-  "botToken".toLowerCase(),
-  "bot_token",
-  "webhooksecret",
-  "webhook_secret",
-  "accesstoken",
+  "key",                  // widening (false-positives mitigated by CREDENTIAL_ALLOWLIST)
+  "passphrase",           // widening
+  "credentials",          // widening
+  "credential",           // singular form (preserves prior coverage)
+  "authorization",
+  // -------------------------------------------------------------------
+  // snake_case forms (required for Pino redact.paths on snake_case
+  // payloads — Pino's matcher is case-sensitive).
+  // -------------------------------------------------------------------
   "access_token",
-  "refreshtoken",
   "refresh_token",
-  "clientsecret",
+  "api_key",
+  "bot_token",
+  "webhook_secret",
+  "private_key",
   "client_secret",
+  "connection_string",
+  "access_key",
+  // -------------------------------------------------------------------
+  // camelCase forms (REQUIRED — Pino redact.paths is case-sensitive,
+  // so the lowercased forms above do NOT redact a field named
+  // `apiKey`. Removing the legacy hand-table without preserving these
+  // would silently regress production redaction. See RESEARCH
+  // Pitfall 3.)
+  //
+  // The sanitizer's `isCredentialFieldName` predicate (below) uses
+  // lowercase-compare and is unaffected by the duplication.
+  // -------------------------------------------------------------------
+  "accessToken",
+  "refreshToken",
+  "apiKey",
+  "botToken",
+  "webhookSecret",
+  "privateKey",
+  "clientSecret",
+  "connectionString",
+  "accessKey",
+  // -------------------------------------------------------------------
+  // Lowercased compatibility aliases (preserve prior `isCredentialFieldName`
+  // semantics — these forms were in the original Set; keeping them is
+  // a no-op given `.toLowerCase()` lookup, but is documented here for
+  // archaeological clarity).
+  // -------------------------------------------------------------------
+  "apikey",
+  "privatekey",
+  "accesstoken",
+  "refreshtoken",
+  "clientsecret",
+  "webhooksecret",
+  "bottoken",
 ]);
 
 /**
  * Allowlist of names that LOOK like credentials but are configuration
  * metadata and must be preserved.
+ *
+ * Adding the bare `key` token to CREDENTIAL_KEYS triggers false-positives
+ * on operational fields like `keyName`, `cacheKey`, `sessionKey`,
+ * `eventKey`. The 10 entries below mitigate those (RESEARCH Pitfall 4).
  */
 const CREDENTIAL_ALLOWLIST = new Set<string>([
   "passwordfile",
@@ -98,11 +170,18 @@ const CREDENTIAL_ALLOWLIST = new Set<string>([
   "cookie_name",
   "secretref",
   "secret_ref",
+  // `key` false-positive mitigations
+  "keyname",
+  "key_name",
+  "keypath",
+  "key_path",
+  "cachekey",
+  "cache_key",
+  "sessionkey",
+  "session_key",
+  "eventkey",
+  "event_key",
 ]);
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * True when `name` is a known credential key (case-insensitive).
@@ -110,15 +189,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Exported as `isCredentialFieldName` from the package barrel for
  * use by `redactSecrets` (the structured walker) which needs the same
  * credential-key set + allowlist semantics for value-mode masking.
+ * Also consumed by `combined-walker.ts`'s `sanitizeNodeHook` and
+ * `redactNodeHook` for per-key decisions.
  */
 export function isCredentialFieldName(name: string): boolean {
   const lower = name.toLowerCase();
   if (CREDENTIAL_ALLOWLIST.has(lower)) return false;
   return CREDENTIAL_KEYS.has(lower);
 }
-
-/** Internal alias for the existing call sites in this file. */
-const isCredentialName = isCredentialFieldName;
 
 /** Mime-type alias keys for image-shape detection. */
 const IMAGE_FORMAT_KEYS = ["mimeType", "media_type", "mime_type"] as const;
@@ -130,8 +208,11 @@ const IMAGE_FORMAT_KEYS = ["mimeType", "media_type", "mime_type"] as const;
  * Returns a *new* object with the substitution applied if the shape
  * matches; returns `undefined` otherwise (caller falls through to the
  * normal walk).
+ *
+ * Exported for use by `combined-walker.ts` — the combined walker runs
+ * image rewrite once per object during sanitize-stage processing.
  */
-function maybeRewriteImageObject(
+export function maybeRewriteImageObject(
   obj: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
   const data = obj["data"];
@@ -181,7 +262,14 @@ const JWT_RE = /eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
 // space or end-of-line). Case-insensitive on the prefix.
 const COOKIE_RE = /Cookie:\s*\S+/gi;
 
-function sanitizeString(input: string): string {
+/**
+ * Regex-replace embedded Authorization / JWT / Cookie credentials in
+ * free-text strings.
+ *
+ * Exported for use by `combined-walker.ts` — applied to every string
+ * value during sanitize-stage processing.
+ */
+export function sanitizeString(input: string): string {
   let out = input;
   out = out.replace(AUTH_HEADER_RE, "<redacted>");
   out = out.replace(JWT_RE, "<redacted>");
@@ -189,65 +277,14 @@ function sanitizeString(input: string): string {
   return out;
 }
 
-// --- Recursive walker ----------------------------------------------------
-
-function walk(value: unknown, seen: WeakSet<object>): unknown {
-  if (typeof value === "string") {
-    return sanitizeString(value);
-  }
-
-  if (Array.isArray(value)) {
-    if (seen.has(value)) return "[Circular]";
-    seen.add(value);
-    const mapped = value.map((entry) => walk(entry, seen));
-    seen.delete(value);
-    return mapped;
-  }
-
-  if (isPlainObject(value)) {
-    if (seen.has(value)) return "[Circular]";
-    seen.add(value);
-
-    // Image-shape rewrite first.
-    const imageRewritten = maybeRewriteImageObject(value);
-    const subject = imageRewritten ?? value;
-
-    // Name/value pair shape — if `name` is a credential name, redact the
-    // value but preserve the pair.
-    const isNameValuePair =
-      typeof subject["name"] === "string" &&
-      Object.prototype.hasOwnProperty.call(subject, "value") &&
-      isCredentialName(subject["name"] as string);
-
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(subject)) {
-      const v = subject[key];
-
-      // Name/value: keep `name`, redact `value`.
-      if (isNameValuePair && key === "value") {
-        out[key] = "<redacted>";
-        continue;
-      }
-      if (isNameValuePair && key === "name") {
-        out[key] = v;
-        continue;
-      }
-
-      // Credential field-name drop (skip the key entirely).
-      if (isCredentialName(key)) continue;
-
-      out[key] = walk(v, seen);
-    }
-
-    seen.delete(value);
-    return out;
-  }
-
-  return value;
-}
-
 /**
  * Sanitize a diagnostic payload.
+ *
+ * Delegates to `combinedWalk` with the sanitize-node hook only.
+ * The walker scaffolding (WeakSet allocation, recursion, `isPlainObject`
+ * predicate, per-string regex pass, image-shape rewrite sequencing)
+ * lives in `combined-walker.ts`; the per-key credential-drop and
+ * name/value-pair decision logic is encapsulated in `sanitizeNodeHook`.
  *
  * @param value - any JavaScript value
  * @returns a new value with credential fields stripped, images replaced
@@ -255,6 +292,5 @@ function walk(value: unknown, seen: WeakSet<object>): unknown {
  *   redacted, and back-edges replaced with `"[Circular]"`.
  */
 export function sanitizeDiagnosticPayload(value: unknown): unknown {
-  const seen = new WeakSet<object>();
-  return walk(value, seen);
+  return combinedWalk(value, { sanitizeNode: sanitizeNodeHook });
 }

@@ -3,37 +3,30 @@
  * Multi-agent isolation integration tests.
  *
  * Verifies two core isolation behaviors:
- * - Multi-agent memory isolation (separate MemoryPorts yield separate memories)
- * - Multi-agent session isolation (separate SessionStores yield separate session data)
+ * - Multi-agent memory isolation (separate caller-supplied result arrays
+ *   yield separate formatted memory sections — the formatter is purely
+ *   transformational and has no shared state across calls)
+ * - Multi-agent session isolation (separate SessionStores yield separate
+ *   session data)
  *
- * Each pair of agents (alpha and beta) operates with fully independent
- * infrastructure -- separate MemoryPorts and separate SessionStores --
- * ensuring zero data leakage between concurrent agents.
+ * The canonical retrieval entry point is HybridMemoryInjector
+ * (createHybridMemoryInjector). The splitter operates per-call on
+ * caller-supplied results, so per-agent isolation holds by construction
+ * (the injector itself has no MemoryPort dependency and no shared state).
  */
 
-import type {
-  MemoryPort,
-  MemorySearchResult,
-  SessionKey,
-  RagConfig,
-} from "@comis/core";
+import type { MemorySearchResult, SessionKey } from "@comis/core";
 import type { SessionStore, SessionData } from "@comis/memory";
-import { ok } from "@comis/shared";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { createRagRetriever } from "../rag/rag-retriever.js";
+import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createSessionLifecycle } from "./session-lifecycle.js";
-
-// Mock sanitizeToolOutput to passthrough (required for createRagRetriever)
-vi.mock("../safety/tool-sanitizer.js", () => ({
-  sanitizeToolOutput: vi.fn((text: string) => text),
-}));
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Factory for MemorySearchResult (copied from rag-retriever.test.ts).
+ * Factory for MemorySearchResult (analog: hybrid-memory-injector.test.ts:6-20).
  */
 function createMockResult(overrides: {
   id?: string;
@@ -45,7 +38,7 @@ function createMockResult(overrides: {
 }): MemorySearchResult {
   return {
     entry: {
-      id: overrides.id ?? "00000000-0000-0000-0000-000000000001",
+      id: overrides.id ?? `mem-${Math.random().toString(36).slice(2, 8)}`,
       tenantId: "default",
       agentId: "default",
       userId: "user-1",
@@ -53,30 +46,12 @@ function createMockResult(overrides: {
       trustLevel: overrides.trustLevel ?? "learned",
       source: {
         who: "agent",
-        channel: overrides.channel,
+        channel: overrides.channel ?? "test",
       },
       tags: [],
       createdAt: overrides.createdAt ?? 1700000000000,
     },
     score: overrides.score ?? 0.8,
-  };
-}
-
-/**
- * Create a mock MemoryPort for a specific agent with seeded search results.
- * All 6 MemoryPort methods are vi.fn(); search returns ok(seededResults).
- */
-function createAgentMemoryPort(
-  _agentId: string,
-  seededResults: MemorySearchResult[],
-): MemoryPort {
-  return {
-    store: vi.fn(),
-    retrieve: vi.fn(),
-    search: vi.fn().mockResolvedValue(ok(seededResults)),
-    update: vi.fn(),
-    delete: vi.fn(),
-    clear: vi.fn(),
   };
 }
 
@@ -198,18 +173,21 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Shared RAG config for memory isolation tests */
-const ragConfig: RagConfig = {
-  enabled: true,
-  maxResults: 10,
-  maxContextChars: 4000,
-  minScore: 0.1,
-  includeTrustLevels: ["system", "learned"],
-};
-
 // ---------------------------------------------------------------------------
 // -- Multi-agent memory isolation
 // ---------------------------------------------------------------------------
+//
+// Architecture: createHybridMemoryInjector is the canonical
+// retrieval-formatting entry point. It takes pre-resolved
+// MemorySearchResult[] arrays from the caller (production wiring resolves
+// the array via the per-agent MemoryPort.search() upstream) and splits them
+// between inline + system-prompt placement.
+//
+// Per-agent isolation now holds by construction: the injector has no shared
+// state across calls and no MemoryPort dependency; passing distinct result
+// arrays guarantees distinct formatted output. The isolation tests below
+// pass the per-agent MemorySearchResult[] directly to .split() — equivalent
+// to wiring distinct MemoryPort instances per agent in production.
 
 describe("-- Multi-agent memory isolation", () => {
   const alphaMemories: MemorySearchResult[] = [
@@ -242,160 +220,114 @@ describe("-- Multi-agent memory isolation", () => {
     }),
   ];
 
-  const alphaKey: SessionKey = {
-    tenantId: "alpha",
-    userId: "user-1",
-    channelId: "ch-1",
-  };
-
-  const betaKey: SessionKey = {
-    tenantId: "beta",
-    userId: "user-1",
-    channelId: "ch-1",
-  };
-
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it("alpha and beta with separate MemoryPorts see only their own memories", async () => {
-    const alphaMemory = createAgentMemoryPort("alpha", alphaMemories);
-    const betaMemory = createAgentMemoryPort("beta", betaMemories);
+  it("alpha and beta hybrid injectors emit only their own memories", () => {
+    // Each agent gets an independent injector instance and feeds its own
+    // pre-resolved results array. The injector has no shared state across
+    // calls, so cross-contamination is impossible by construction.
+    const alphaInjector = createHybridMemoryInjector();
+    const betaInjector = createHybridMemoryInjector();
 
-    const alphaRetriever = createRagRetriever({
-      memoryPort: alphaMemory,
-      config: ragConfig,
-    });
-    const betaRetriever = createRagRetriever({
-      memoryPort: betaMemory,
-      config: ragConfig,
-    });
+    const alphaInjection = alphaInjector.split(alphaMemories, 4000);
+    const betaInjection = betaInjector.split(betaMemories, 4000);
 
-    const [alphaResult, betaResult] = await Promise.all([
-      alphaRetriever.retrieve("preferences", alphaKey),
-      betaRetriever.retrieve("preferences", betaKey),
-    ]);
+    // Alpha output contains only alpha memories
+    const alphaText =
+      (alphaInjection.inlineMemory ?? "") +
+      alphaInjection.systemPromptSections.join("");
+    expect(alphaText).toContain("Alpha user prefers dark mode");
+    expect(alphaText).toContain("Alpha agent learned about TypeScript");
+    expect(alphaText).not.toContain("Beta");
 
-    // Alpha results contain only alpha memories
-    expect(alphaResult).toHaveLength(1);
-    expect(alphaResult[0]).toContain("Alpha user prefers dark mode");
-    expect(alphaResult[0]).toContain("Alpha agent learned about TypeScript");
-    expect(alphaResult[0]).not.toContain("Beta");
-
-    // Beta results contain only beta memories
-    expect(betaResult).toHaveLength(1);
-    expect(betaResult[0]).toContain("Beta user prefers light mode");
-    expect(betaResult[0]).toContain("Beta agent learned about Python");
-    expect(betaResult[0]).not.toContain("Alpha");
+    // Beta output contains only beta memories
+    const betaText =
+      (betaInjection.inlineMemory ?? "") +
+      betaInjection.systemPromptSections.join("");
+    expect(betaText).toContain("Beta user prefers light mode");
+    expect(betaText).toContain("Beta agent learned about Python");
+    expect(betaText).not.toContain("Alpha");
   });
 
-  it("concurrent retrieval with parallel execution tracking", async () => {
+  it("concurrent split() calls on shared injector do not cross-contaminate", async () => {
     let parallelCount = 0;
     let peakParallel = 0;
 
-    // Create ports with delayed search to prove parallel execution
-    const alphaMemory = createAgentMemoryPort("alpha", alphaMemories);
-    const betaMemory = createAgentMemoryPort("beta", betaMemories);
+    // Single injector instance, two concurrent calls with distinct result
+    // arrays. .split() is synchronous + pure, so this asserts the injector
+    // has no hidden shared state that could leak across calls.
+    const injector = createHybridMemoryInjector();
 
-    // Override search with delayed versions that track parallelism
-    vi.mocked(alphaMemory.search).mockImplementation(async () => {
-      parallelCount++;
-      peakParallel = Math.max(peakParallel, parallelCount);
-      await delay(50);
-      parallelCount--;
-      return ok(alphaMemories);
-    });
-
-    vi.mocked(betaMemory.search).mockImplementation(async () => {
-      parallelCount++;
-      peakParallel = Math.max(peakParallel, parallelCount);
-      await delay(50);
-      parallelCount--;
-      return ok(betaMemories);
-    });
-
-    const alphaRetriever = createRagRetriever({
-      memoryPort: alphaMemory,
-      config: ragConfig,
-    });
-    const betaRetriever = createRagRetriever({
-      memoryPort: betaMemory,
-      config: ragConfig,
-    });
-
-    const [alphaResult, betaResult] = await Promise.all([
-      alphaRetriever.retrieve("preferences", alphaKey),
-      betaRetriever.retrieve("preferences", betaKey),
+    const [alphaInjection, betaInjection] = await Promise.all([
+      (async () => {
+        parallelCount++;
+        peakParallel = Math.max(peakParallel, parallelCount);
+        await delay(20);
+        const out = injector.split(alphaMemories, 4000);
+        parallelCount--;
+        return out;
+      })(),
+      (async () => {
+        parallelCount++;
+        peakParallel = Math.max(peakParallel, parallelCount);
+        await delay(20);
+        const out = injector.split(betaMemories, 4000);
+        parallelCount--;
+        return out;
+      })(),
     ]);
 
     // Actual parallel execution occurred
     expect(peakParallel).toBeGreaterThanOrEqual(2);
 
     // Results still contain only their own memories
-    expect(alphaResult).toHaveLength(1);
-    expect(alphaResult[0]).toContain("Alpha user prefers dark mode");
-    expect(alphaResult[0]).not.toContain("Beta");
+    const alphaText =
+      (alphaInjection.inlineMemory ?? "") +
+      alphaInjection.systemPromptSections.join("");
+    expect(alphaText).toContain("Alpha user prefers dark mode");
+    expect(alphaText).not.toContain("Beta");
 
-    expect(betaResult).toHaveLength(1);
-    expect(betaResult[0]).toContain("Beta user prefers light mode");
-    expect(betaResult[0]).not.toContain("Alpha");
+    const betaText =
+      (betaInjection.inlineMemory ?? "") +
+      betaInjection.systemPromptSections.join("");
+    expect(betaText).toContain("Beta user prefers light mode");
+    expect(betaText).not.toContain("Alpha");
   });
 
-  it("alpha store does not appear in beta search", async () => {
-    // Create two separate MemoryPorts with independent stored entries
-    const alphaStored: MemorySearchResult[] = [];
-    const betaStored: MemorySearchResult[] = [];
-
-    const alphaMemory: MemoryPort = {
-      store: vi.fn().mockImplementation(async () => {
-        alphaStored.push(
-          createMockResult({
-            id: "alpha-stored",
-            content: "Alpha private data stored via store()",
-            trustLevel: "learned",
-            score: 0.95,
-          }),
-        );
-        return ok(undefined);
+  it("alpha private content never appears in beta output (distinct input arrays)", () => {
+    // Simulates two agents whose upstream MemoryPort.search() returns
+    // disjoint result sets — production wiring guarantees this because each
+    // agent has its own MemoryPort instance with its own tenant scope.
+    const alphaPrivate: MemorySearchResult[] = [
+      createMockResult({
+        id: "alpha-stored",
+        content: "Alpha private data stored via store()",
+        trustLevel: "learned",
+        score: 0.95,
       }),
-      retrieve: vi.fn(),
-      search: vi.fn().mockImplementation(async () => ok(alphaStored)),
-      update: vi.fn(),
-      delete: vi.fn(),
-      clear: vi.fn(),
-    };
+    ];
 
-    const betaMemory: MemoryPort = {
-      store: vi.fn(),
-      retrieve: vi.fn(),
-      search: vi.fn().mockImplementation(async () => ok(betaMemories)),
-      update: vi.fn(),
-      delete: vi.fn(),
-      clear: vi.fn(),
-    };
+    const alphaInjector = createHybridMemoryInjector();
+    const betaInjector = createHybridMemoryInjector();
 
-    // Alpha stores an entry
-    await alphaMemory.store({
-      content: "Alpha private data",
-      trustLevel: "learned",
-      source: { who: "agent" },
-      tags: [],
-    } as never);
+    // Alpha sees its own private data
+    const alphaInjection = alphaInjector.split(alphaPrivate, 4000);
+    const alphaText =
+      (alphaInjection.inlineMemory ?? "") +
+      alphaInjection.systemPromptSections.join("");
+    expect(alphaText).toContain("Alpha private data");
 
-    // Verify alpha stored it
-    expect(alphaStored).toHaveLength(1);
-
-    // Beta searches -- returns only beta's seeded data
-    const betaRetriever = createRagRetriever({
-      memoryPort: betaMemory,
-      config: ragConfig,
-    });
-    const betaResult = await betaRetriever.retrieve("data", betaKey);
-
-    // Beta NEVER sees alpha's stored data
-    expect(betaResult).toHaveLength(1);
-    expect(betaResult[0]).not.toContain("Alpha private data");
-    expect(betaResult[0]).toContain("Beta user prefers light mode");
+    // Beta receives ONLY its own seeded data — alpha's private content
+    // never crosses the boundary because beta's input array does not
+    // contain it.
+    const betaInjection = betaInjector.split(betaMemories, 4000);
+    const betaText =
+      (betaInjection.inlineMemory ?? "") +
+      betaInjection.systemPromptSections.join("");
+    expect(betaText).not.toContain("Alpha private data");
+    expect(betaText).toContain("Beta user prefers light mode");
   });
 });
 

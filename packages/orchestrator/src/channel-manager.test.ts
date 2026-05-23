@@ -15,7 +15,9 @@ import { processInboundMessage as realProcessInboundMessage } from "./inbound/in
 // delegates to adapter.sendMessage so all the existing assertions on
 // adapter.sendMessage (chunking, replyTo extraction, per-platform behavior)
 // keep working — the assertions are observing the adapter call shape, not
-// the in-between DeliveryService call.
+// the in-between DeliveryService call. `drainInFlight` is a default no-op
+// (empty drain) for tests that don't exercise stopAll() drain semantics;
+// see `makeFakeDeliveryServiceWithTracker` for the drain-test variant.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake
 function makeFakeDeliveryService(): DeliveryService {
   return {
@@ -46,6 +48,61 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: text.length,
       });
     }),
+    drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+  };
+}
+
+/**
+ * Test-only DeliveryService that exposes a controllable in-flight tracker.
+ * Use in tests that need to assert drain ordering or hung-send timing
+ * without leaking the Set through production deps (the `inFlightSends`
+ * deps slot was removed from `ChannelManagerDeps`).
+ *
+ * Returns `{ service, track }`. Call `track(promise)` to add a promise to
+ * the tracker; the service's `drainInFlight(deadlineMs)` races
+ * `Promise.allSettled` against the deadline and returns drain telemetry —
+ * matching the production `DeliveryService.drainInFlight` contract.
+ */
+function makeFakeDeliveryServiceWithTracker(): {
+  service: DeliveryService;
+  track: (p: Promise<unknown>) => void;
+} {
+  const tracker = new Set<Promise<unknown>>();
+  const service: DeliveryService = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stub
+    deliverToChannel: vi.fn(async (_adapter: any, _channelId: string, _text: string, _options?: any) => {
+      return ok({
+        ok: true,
+        totalChunks: 1,
+        deliveredChunks: 1,
+        failedChunks: 0,
+        chunks: [{ ok: true, messageId: "stub", charCount: _text.length, retried: false }],
+        totalChars: _text.length,
+      });
+    }),
+    drainInFlight: async (deadlineMs = 5000) => {
+      const start = Date.now();
+      const inFlightCount = tracker.size;
+      if (inFlightCount === 0) {
+        return { drained: 0, remaining: 0, durationMs: 0 };
+      }
+      await Promise.race([
+        Promise.allSettled([...tracker]),
+        new Promise<void>((resolve) => setTimeout(resolve, deadlineMs)),
+      ]);
+      return {
+        drained: inFlightCount - tracker.size,
+        remaining: tracker.size,
+        durationMs: Date.now() - start,
+      };
+    },
+  };
+  return {
+    service,
+    track: (p: Promise<unknown>) => {
+      tracker.add(p);
+      void p.finally(() => tracker.delete(p));
+    },
   };
 }
 
@@ -117,6 +174,38 @@ function makeSessionManager(): SessionLifecycle {
   };
 }
 
+/**
+ * The orchestrator reads `replyToMetaKey` via
+ * `deps.channelRegistry?.getCapabilities(channelType)`. The hardcoded
+ * REPLY_TO_META_KEY Record fallback was deleted, so tests that previously
+ * relied on the implicit telegram/discord/slack/whatsapp fallback must
+ * inject this fake registry to keep those code paths covered.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stub
+function makeFakeChannelRegistry(): any {
+  const caps: Record<string, { replyToMetaKey: string; features: { reactions: boolean } }> = {
+    telegram: { replyToMetaKey: "telegramMessageId", features: { reactions: true } },
+    discord: { replyToMetaKey: "discordMessageId", features: { reactions: true } },
+    slack: { replyToMetaKey: "slackTs", features: { reactions: true } },
+    whatsapp: { replyToMetaKey: "whatsappMessageId", features: { reactions: true } },
+    signal: { replyToMetaKey: "signalTimestamp", features: { reactions: true } },
+    line: { replyToMetaKey: "lineMessageId", features: { reactions: false } },
+    imessage: { replyToMetaKey: "imsgMessageId", features: { reactions: false } },
+    irc: { replyToMetaKey: "ircMessageId", features: { reactions: false } },
+    email: { replyToMetaKey: "emailMessageId", features: { reactions: false } },
+    echo: { replyToMetaKey: "echoMessageId", features: { reactions: false } },
+  };
+  return {
+    // eslint-disable-next-line security/detect-object-injection -- test-only lookup over closed map
+    getCapabilities: (channelType: string) => caps[channelType],
+    getAdapter: () => undefined,
+    getChannelTypes: () => Object.keys(caps),
+    getChannelPlugins: () => [],
+    registerChannel: () => ({ ok: true as const, value: undefined }),
+    unregisterChannel: () => ({ ok: true as const, value: undefined }),
+  };
+}
+
 function makeEventBus() {
   return {
     emit: vi.fn(() => true),
@@ -142,6 +231,11 @@ function makeDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManagerDeps {
     // to adapter.sendMessage so the existing assertions remain valid
     // (assertions observe adapter call shape, not the in-between layer).
     deliveryService: makeFakeDeliveryService(),
+    // Orchestrator reads replyToMetaKey via this registry; the fake mirrors
+    // plugin CAPABILITIES for the 10 channel types so tests that exercise
+    // the inbound replyTo extraction path keep their assertions valid after
+    // the REPLY_TO_META_KEY Record was deleted.
+    channelRegistry: makeFakeChannelRegistry(),
     // processInboundMessage is injected. Default wires the REAL
     // implementation so existing test assertions on executor.execute /
     // adapter.sendMessage / preprocessMessage / etc. still exercise the
@@ -1131,13 +1225,14 @@ describe("createChannelManager", () => {
     it("awaits in-flight sendMessage before calling adapter.stop()", async () => {
       const callOrder: string[] = [];
       let resolveSend: () => void = () => {};
-      // Pre-populate an in-flight Set with a manually-resolvable promise to
-      // simulate what deliver-to-channel.ts would have added mid-send.
-      const externalSet = new Set<Promise<unknown>>();
+      // Stage an in-flight promise via the tracker helper. The Set lives
+      // inside the test-only `makeFakeDeliveryServiceWithTracker` —
+      // production deps no longer expose an `inFlightSends` injection slot.
+      const { service: deliveryService, track } = makeFakeDeliveryServiceWithTracker();
       const sendPromise = new Promise<void>((r) => {
         resolveSend = r;
       });
-      externalSet.add(sendPromise);
+      track(sendPromise);
 
       const adapter = makeAdapter({
         stop: vi.fn(async () => {
@@ -1145,7 +1240,7 @@ describe("createChannelManager", () => {
           return ok(undefined);
         }),
       });
-      const deps = makeDeps({ adapters: [adapter], inFlightSends: externalSet });
+      const deps = makeDeps({ adapters: [adapter], deliveryService });
       const manager = createChannelManager(deps);
       await manager.startAll();
 
@@ -1165,14 +1260,16 @@ describe("createChannelManager", () => {
     it("enforces 5s deadline on hung sends", async () => {
       vi.useFakeTimers();
       try {
-        const externalSet = new Set<Promise<unknown>>();
-        // Hung promise -- never resolves. Drain must time out at 5000ms.
+        // Stage the hung send via the tracker helper. `drainInFlight(5000)`
+        // races allSettled against a setTimeout(5000) — vi.useFakeTimers +
+        // advanceTimersByTimeAsync drive the deadline deterministically.
+        const { service: deliveryService, track } = makeFakeDeliveryServiceWithTracker();
         const hung = new Promise<void>(() => {});
-        externalSet.add(hung);
+        track(hung);
 
         const stopSpy = vi.fn(async () => ok(undefined));
         const adapter = makeAdapter({ stop: stopSpy });
-        const deps = makeDeps({ adapters: [adapter], inFlightSends: externalSet });
+        const deps = makeDeps({ adapters: [adapter], deliveryService });
         const manager = createChannelManager(deps);
         await manager.startAll();
 
@@ -1189,9 +1286,12 @@ describe("createChannelManager", () => {
       }
     });
 
-    it("skips drain log when inFlightSends is empty", async () => {
+    it("skips drain log when no sends are in flight", async () => {
       const adapter = makeAdapter();
-      const deps = makeDeps({ adapters: [adapter] }); // factory creates its own empty Set
+      // makeFakeDeliveryService.drainInFlight returns
+      // `{drained: 0, remaining: 0, durationMs: 0}` by default; channel-manager
+      // suppresses the drain INFO when both drained and remaining are zero.
+      const deps = makeDeps({ adapters: [adapter] });
       const manager = createChannelManager(deps);
       await manager.startAll();
       await manager.stopAll();
@@ -1222,172 +1322,10 @@ describe("createChannelManager", () => {
     });
   });
 
-  describe("prompt skill detection", () => {
-    it("detects /skill:name command and injects metadata", async () => {
-      const adapter = makeAdapter();
-      const executor = makeExecutor();
-      const loadPromptSkill = vi.fn(async () =>
-        ok({ content: "<skill>test content</skill>", allowedTools: ["exec"], skillName: "test-skill" }),
-      );
-      const getUserInvocableSkillNames = vi.fn(() => new Set(["test-skill"]));
-      const eventBus = makeEventBus();
-      const deps = makeDeps({
-        adapters: [adapter],
-        createExecutor: vi.fn(() => executor),
-        eventBus,
-        loadPromptSkill,
-        getUserInvocableSkillNames,
-      });
-      const manager = createChannelManager(deps);
-      await manager.startAll();
-
-      const msg = makeMessage({ text: "/skill:test-skill write some code" });
-      await adapter._handlers[0](msg);
-
-      // Executor should receive the message with injected metadata
-      const executeCall = vi.mocked(executor.execute).mock.calls[0];
-      const executedMsg = executeCall[0] as NormalizedMessage;
-      expect(executedMsg.metadata?.promptSkillContent).toBe("<skill>test content</skill>");
-      expect(executedMsg.metadata?.promptSkillAllowedTools).toEqual(["exec"]);
-      expect(executedMsg.metadata?.promptSkillName).toBe("test-skill");
-      expect(executedMsg.text).toBe("write some code");
-
-      // skill:prompt_invoked event should have been emitted
-      expect(eventBus.emit).toHaveBeenCalledWith(
-        "skill:prompt_invoked",
-        expect.objectContaining({
-          skillName: "test-skill",
-          invokedBy: "user",
-          args: "write some code",
-        }),
-      );
-    });
-
-    it("system commands take priority over /skill:name", async () => {
-      const adapter = makeAdapter();
-      const executor = makeExecutor();
-      const loadPromptSkill = vi.fn(async () =>
-        ok({ content: "<skill>...</skill>", allowedTools: [], skillName: "status" }),
-      );
-      const getUserInvocableSkillNames = vi.fn(() => new Set(["status"]));
-      const deps = makeDeps({
-        adapters: [adapter],
-        createExecutor: vi.fn(() => executor),
-        loadPromptSkill,
-        getUserInvocableSkillNames,
-      });
-      const manager = createChannelManager(deps);
-      await manager.startAll();
-
-      // /status is a system command -- loadPromptSkill should NOT be called
-      const msg = makeMessage({ text: "/status" });
-      await adapter._handlers[0](msg);
-
-      expect(loadPromptSkill).not.toHaveBeenCalled();
-    });
-
-    it("skips detection when deps are absent", async () => {
-      const adapter = makeAdapter();
-      const executor = makeExecutor();
-      // No loadPromptSkill or getUserInvocableSkillNames in deps
-      const deps = makeDeps({
-        adapters: [adapter],
-        createExecutor: vi.fn(() => executor),
-      });
-      const manager = createChannelManager(deps);
-      await manager.startAll();
-
-      const msg = makeMessage({ text: "/skill:test-skill args" });
-      await adapter._handlers[0](msg);
-
-      // Executor should receive the original text unchanged
-      const executeCall = vi.mocked(executor.execute).mock.calls[0];
-      expect(executeCall[0].text).toBe("/skill:test-skill args");
-    });
-
-    it("handles load failure gracefully", async () => {
-      const adapter = makeAdapter();
-      const executor = makeExecutor();
-      const loadPromptSkill = vi.fn(async () => err(new Error("not found")));
-      const getUserInvocableSkillNames = vi.fn(() => new Set(["test-skill"]));
-      const logger = createMockLogger();
-      const deps = makeDeps({
-        adapters: [adapter],
-        createExecutor: vi.fn(() => executor),
-        loadPromptSkill,
-        getUserInvocableSkillNames,
-        logger,
-      });
-      const manager = createChannelManager(deps);
-      await manager.startAll();
-
-      const msg = makeMessage({ text: "/skill:test-skill args" });
-      await adapter._handlers[0](msg);
-
-      // logger.warn should have been called about the load failure
-      expect(logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ skillName: "test-skill" }),
-        "Failed to load prompt skill",
-      );
-
-      // Executor should receive message without skill metadata
-      const executeCall = vi.mocked(executor.execute).mock.calls[0];
-      const executedMsg = executeCall[0] as NormalizedMessage;
-      expect(executedMsg.metadata?.promptSkillContent).toBeUndefined();
-    });
-
-    it("sets empty text when no args provided", async () => {
-      const adapter = makeAdapter();
-      const executor = makeExecutor();
-      const loadPromptSkill = vi.fn(async () =>
-        ok({ content: "<skill>content</skill>", allowedTools: ["exec"], skillName: "test-skill" }),
-      );
-      const getUserInvocableSkillNames = vi.fn(() => new Set(["test-skill"]));
-      const deps = makeDeps({
-        adapters: [adapter],
-        createExecutor: vi.fn(() => executor),
-        loadPromptSkill,
-        getUserInvocableSkillNames,
-      });
-      const manager = createChannelManager(deps);
-      await manager.startAll();
-
-      const msg = makeMessage({ text: "/skill:test-skill" });
-      await adapter._handlers[0](msg);
-
-      // Executor should receive empty text (no args)
-      const executeCall = vi.mocked(executor.execute).mock.calls[0];
-      expect(executeCall[0].text).toBe("");
-    });
-
-    it("does not inject allowedTools metadata when allowedTools is empty", async () => {
-      const adapter = makeAdapter();
-      const executor = makeExecutor();
-      const loadPromptSkill = vi.fn(async () =>
-        ok({ content: "<skill>content</skill>", allowedTools: [], skillName: "test-skill" }),
-      );
-      const getUserInvocableSkillNames = vi.fn(() => new Set(["test-skill"]));
-      const deps = makeDeps({
-        adapters: [adapter],
-        createExecutor: vi.fn(() => executor),
-        loadPromptSkill,
-        getUserInvocableSkillNames,
-      });
-      const manager = createChannelManager(deps);
-      await manager.startAll();
-
-      const msg = makeMessage({ text: "/skill:test-skill" });
-      await adapter._handlers[0](msg);
-
-      // Executor should receive message with promptSkillAllowedTools undefined (not empty array)
-      const executeCall = vi.mocked(executor.execute).mock.calls[0];
-      const executedMsg = executeCall[0] as NormalizedMessage;
-      expect(executedMsg.metadata?.promptSkillAllowedTools).toBeUndefined();
-      // But skill content and name should still be present
-      expect(executedMsg.metadata?.promptSkillContent).toBe("<skill>content</skill>");
-      expect(executedMsg.metadata?.promptSkillName).toBe("test-skill");
-    });
-  });
+  // "prompt skill detection" describe block removed: loadPromptSkill +
+  // getUserInvocableSkillNames deps slots removed from ChannelManagerDeps.
+  // Production-absent-mode: skill commands now pass through as plain text
+  // to the agent.
 
   describe("command queue enqueue failure logging", () => {
     function makeCommandQueue(enqueueResult: ReturnType<typeof ok> | ReturnType<typeof err>): CommandQueue {

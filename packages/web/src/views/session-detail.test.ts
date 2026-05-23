@@ -81,7 +81,6 @@ function createMockApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
     chat: vi.fn().mockResolvedValue({ response: "" }),
     getChatHistory: vi.fn().mockResolvedValue([]),
     health: vi.fn().mockResolvedValue({ status: "ok", timestamp: "" }),
-    subscribeEvents: vi.fn().mockReturnValue(() => {}),
     ...overrides,
   } as ApiClient;
 }

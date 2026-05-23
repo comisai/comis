@@ -69,7 +69,7 @@ function createWalConfig(dbPath: string): MemoryConfig {
     embeddingModel: "test",
     embeddingDimensions: 4,
     compaction: { enabled: false, threshold: 1000, targetSize: 500 },
-    retention: { maxAgeDays: 0, maxEntries: 0 },
+    retention: { maxAgeDays: 0 },
   };
 }
 
@@ -218,14 +218,15 @@ describe("WAL concurrency tests", () => {
         expect(results[i]!.ok).toBe(true);
       }
 
-      // Verify data integrity: retrieve each of the 10 entries
+      // Verify data integrity via direct SQL read (adapter.retrieve was removed
+      // in a prior port-trim cleanup)
       for (let i = 0; i < 10; i++) {
-        const retrieved = await adapter1.retrieve(`concurrent-${i}`);
-        expect(retrieved.ok).toBe(true);
-        if (retrieved.ok) {
-          expect(retrieved.value).toBeDefined();
-          expect(retrieved.value!.content).toBe(`entry ${i}`);
-        }
+        const row = adapter1
+          .getDb()
+          .prepare("SELECT id, content FROM memories WHERE id = ?")
+          .get(`concurrent-${i}`) as { id: string; content: string } | undefined;
+        expect(row).toBeDefined();
+        expect(row!.content).toBe(`entry ${i}`);
       }
     });
 

@@ -14,6 +14,7 @@
 import type { ChannelPort, NormalizedMessage, SessionKey } from "@comis/core";
 import { formatSessionKey, systemNowMs } from "@comis/core";
 import { sanitizeAssistantResponse, extractFinalTagContent } from "@comis/agent";
+import { suppressError } from "@comis/shared";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
 import { buildThreadSendOpts } from "./execution-pipeline.js";
@@ -115,12 +116,11 @@ export async function filterExecutionResponse(
         ? `I ran out of processing budget. Here's what I completed:\n${summary}\n\nTo continue, send your next message or use +500k for more budget.`
         : "I've reached my processing limit for this request. Please try again or break the task into smaller steps.";
 
-      await adapter.sendMessage(
-        effectiveMsg.channelId,
-        message,
-        { replyTo },
-      // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-      ).catch(() => { /* adapter logs internally */ });
+      suppressError(
+        adapter.sendMessage(effectiveMsg.channelId, message, { replyTo }),
+        "empty-response resource-abort fallback delivery",
+        (msg: string) => deps.logger.debug({ errorKind: "internal" as const }, msg),
+      );
 
       return { deliver: false, reason: "resource_abort_empty" };
     }
@@ -137,13 +137,15 @@ export async function filterExecutionResponse(
         errorKind: "dependency" as const,
       }, "Empty response on normal completion — sending fallback acknowledgment");
 
-       
-      await adapter.sendMessage(
-        effectiveMsg.channelId,
-        "I completed the requested operations but wasn't able to generate a summary. Please check the results or ask me to continue.",
-        { replyTo },
-      // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-      ).catch(() => { /* adapter logs internally */ });
+      suppressError(
+        adapter.sendMessage(
+          effectiveMsg.channelId,
+          "I completed the requested operations but wasn't able to generate a summary. Please check the results or ask me to continue.",
+          { replyTo },
+        ),
+        "empty-response stop-ack fallback delivery",
+        (msg: string) => deps.logger.debug({ errorKind: "internal" as const }, msg),
+      );
 
       return { deliver: false, reason: "empty_stop_ack" };
     }
@@ -211,11 +213,18 @@ export async function filterExecutionResponse(
   // -------------------------------------------------------------------
   // VOICE RESPONSE PIPELINE
   // -------------------------------------------------------------------
-  if (deps.voiceResponsePipeline) {
+  // ChannelPort.sendAttachment is optional. Voice delivery requires the adapter
+  // to implement it; otherwise skip the voice pipeline and fall through to text
+  // delivery. Adapters without sendAttachment (e.g., IRC) cannot send voice
+  // messages regardless of TTS config.
+  if (deps.voiceResponsePipeline && typeof adapter.sendAttachment === "function") {
+    const voiceAdapter = {
+      sendAttachment: adapter.sendAttachment.bind(adapter),
+    };
     const voiceResult = await executeVoiceResponse(deps.voiceResponsePipeline, {
       responseText: finalDeliveryText,
       originalMessage: originalMsg,
-      adapter,
+      adapter: voiceAdapter,
       channelType: adapter.channelType,
       channelId: effectiveMsg.channelId,
       sendOptions: buildThreadSendOpts(effectiveMsg.metadata),

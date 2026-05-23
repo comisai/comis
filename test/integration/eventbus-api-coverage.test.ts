@@ -15,7 +15,7 @@
  *   Domain 3:  Skills/Tools (6 events)
  *   Domain 4:  Observability/Metrics (3 events)
  *   Domain 5:  Scheduler/Tasks (5 events)
- *   Domain 6:  Queue/Priority (8 events)
+ *   Domain 6:  Queue (6 events)
  *   Domain 7:  Plugin/Hooks (3 events)
  *   Domain 8:  Delivery/Streaming/Retry (7 events)
  *   Domain 9:  Model/Failover (5 events)
@@ -29,7 +29,7 @@
  *   Behavioral Guarantees (6 tests)
  *   EventAwaiter Integration (5 tests)
  *
- * Total: 77 payload tests + 11 behavioral/EventAwaiter tests = ~88 tests
+ * Total: 75 payload tests + 11 behavioral/EventAwaiter tests = ~86 tests
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -96,7 +96,7 @@ describe("EventMap Payload Coverage", () => {
         delta: "Hel",
         accumulated: "Hel",
       },
-      // NOTE: session:created is NOT yet emitted in production (research open question 1)
+      // NOTE: session:created is NOT yet emitted in production
       "session:created": {
         sessionKey: SESSION_KEY,
         timestamp: NOW,
@@ -105,7 +105,7 @@ describe("EventMap Payload Coverage", () => {
         sessionKey: SESSION_KEY,
         reason: "timeout",
       },
-      // NOTE: session:label_changed is NOT yet emitted in production (research open question 1)
+      // NOTE: session:label_changed is NOT yet emitted in production
       "session:label_changed": {
         sessionKey: SESSION_KEY,
         label: "New Label",
@@ -331,14 +331,6 @@ describe("EventMap Payload Coverage", () => {
         alertsRaised: 1,
         timestamp: NOW,
       },
-      "scheduler:task_extracted": {
-        taskId: "task-001",
-        title: "Send weekly report",
-        priority: "high",
-        confidence: 0.92,
-        sessionKey: "tenant:user:ch",
-        timestamp: NOW,
-      },
     } satisfies Partial<EventMap>;
 
     for (const [eventName, payload] of Object.entries(EVENTS)) {
@@ -353,10 +345,10 @@ describe("EventMap Payload Coverage", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Domain 6: Queue/Priority (8 events)
+  // Domain 6: Queue (6 events)
   // -------------------------------------------------------------------------
 
-  describe("Domain 6: Queue/Priority", () => {
+  describe("Domain 6: Queue", () => {
     const EVENTS = {
       "queue:enqueued": {
         sessionKey: SESSION_KEY,
@@ -396,20 +388,6 @@ describe("EventMap Payload Coverage", () => {
         channelType: "telegram",
         messageCount: 3,
         trigger: "timer" as const,
-        timestamp: NOW,
-      },
-      "priority:lane_assigned": {
-        sessionKey: SESSION_KEY,
-        channelType: "telegram",
-        lane: "high",
-        reason: "trusted sender",
-        timestamp: NOW,
-      },
-      "priority:aged_promotion": {
-        sessionKey: "tenant:user:ch",
-        fromLane: "low",
-        toLane: "normal",
-        waitTimeMs: 30000,
         timestamp: NOW,
       },
     } satisfies Partial<EventMap>;
@@ -658,10 +636,10 @@ describe("EventMap Payload Coverage", () => {
         patchedBy: "rpc:admin",
         timestamp: NOW,
       },
-      "system:shutdown": {
-        reason: "SIGTERM received",
-        graceful: true,
-      },
+      // "system:shutdown" was deleted from EventMap —
+      // the teardown wiring now flows through setupShutdown's ShutdownDeps
+      // directly. The remaining surviving infra event below ("system:error")
+      // provides shape coverage.
       "system:error": {
         error: new Error("test unhandled error"),
         source: "agent-executor",
@@ -941,15 +919,20 @@ describe("Behavioral Guarantees", () => {
     bus.removeAllListeners();
   });
 
+  // Retargeting: "system:shutdown" was deleted from
+  // EventMap. The following bus-API coverage tests retarget to "system:error"
+  // (its sibling infra-event with the same lifecycle semantics) and
+  // "background_task:cancelled" where a second distinct event is needed
+  // alongside "system:error".
   it("multi-listener fan-out delivers same payload reference to 5 handlers", () => {
-    const payload = { reason: "test fan-out", graceful: true };
+    const payload = { error: new Error("test fan-out"), source: "unit-test" };
     const handlers = Array.from({ length: 5 }, () => vi.fn());
 
     for (const h of handlers) {
-      bus.on("system:shutdown", h);
+      bus.on("system:error", h);
     }
 
-    bus.emit("system:shutdown", payload);
+    bus.emit("system:error", payload);
 
     for (const h of handlers) {
       expect(h).toHaveBeenCalledOnce();
@@ -961,12 +944,12 @@ describe("Behavioral Guarantees", () => {
   it("event handlers are invoked in registration order", () => {
     const order: number[] = [];
 
-    bus.on("system:shutdown", () => order.push(0));
-    bus.on("system:shutdown", () => order.push(1));
-    bus.on("system:shutdown", () => order.push(2));
-    bus.on("system:shutdown", () => order.push(3));
+    bus.on("system:error", () => order.push(0));
+    bus.on("system:error", () => order.push(1));
+    bus.on("system:error", () => order.push(2));
+    bus.on("system:error", () => order.push(3));
 
-    bus.emit("system:shutdown", { reason: "ordering test", graceful: true });
+    bus.emit("system:error", { error: new Error("ordering test"), source: "unit-test" });
 
     expect(order).toEqual([0, 1, 2, 3]);
   });
@@ -984,9 +967,9 @@ describe("Behavioral Guarantees", () => {
     process.on("warning", warningHandler);
     try {
       // Register 3 handlers to exceed limit of 2
-      bus.on("system:shutdown", () => {});
-      bus.on("system:shutdown", () => {});
-      bus.on("system:shutdown", () => {});
+      bus.on("system:error", () => {});
+      bus.on("system:error", () => {});
+      bus.on("system:error", () => {});
 
       // Warning is emitted asynchronously via process.emitWarning
       // Wait a tick for it to be delivered
@@ -1003,32 +986,32 @@ describe("Behavioral Guarantees", () => {
     bus.setMaxListeners(20);
 
     for (let i = 0; i < 15; i++) {
-      bus.on("system:shutdown", () => {});
+      bus.on("system:error", () => {});
     }
 
     // No warning should fire -- just verify the listener count is correct
-    expect(bus.listenerCount("system:shutdown")).toBe(15);
+    expect(bus.listenerCount("system:error")).toBe(15);
   });
 
   it("removeAllListeners for specific event preserves other event listeners", () => {
-    bus.on("system:shutdown", () => {});
     bus.on("system:error", () => {});
+    bus.on("background_task:cancelled", () => {});
 
-    bus.removeAllListeners("system:shutdown");
+    bus.removeAllListeners("system:error");
 
-    expect(bus.listenerCount("system:shutdown")).toBe(0);
-    expect(bus.listenerCount("system:error")).toBe(1);
+    expect(bus.listenerCount("system:error")).toBe(0);
+    expect(bus.listenerCount("background_task:cancelled")).toBe(1);
   });
 
   it("removeAllListeners with no argument clears everything", () => {
-    bus.on("system:shutdown", () => {});
     bus.on("system:error", () => {});
+    bus.on("background_task:cancelled", () => {});
     bus.on("config:patched", () => {});
 
     bus.removeAllListeners();
 
-    expect(bus.listenerCount("system:shutdown")).toBe(0);
     expect(bus.listenerCount("system:error")).toBe(0);
+    expect(bus.listenerCount("background_task:cancelled")).toBe(0);
     expect(bus.listenerCount("config:patched")).toBe(0);
   });
 });

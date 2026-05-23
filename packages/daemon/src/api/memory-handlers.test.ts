@@ -37,7 +37,6 @@ function makeDeps(overrides?: Partial<MemoryHandlerDeps>): MemoryHandlerDeps {
         embeddedEntries: 38,
         dbSizeBytes: 1048576,
       })),
-      enforceGuardrails: vi.fn(() => null),
     } as never,
     memoryAdapter: {
       store: vi.fn(async () => ({ ok: true, value: true })),
@@ -133,7 +132,6 @@ describe("createMemoryHandlers - memory management", () => {
           search: vi.fn(async () => []),
           clear: vi.fn(() => 0),
           stats: vi.fn(() => ({})),
-          enforceGuardrails: vi.fn(() => null),
         } as never,
       });
       const handlers = createMemoryHandlers(deps);
@@ -197,7 +195,6 @@ describe("createMemoryHandlers - memory management", () => {
           search: vi.fn(async () => []),
           clear: vi.fn(() => 0),
           stats: vi.fn(() => ({})),
-          enforceGuardrails: vi.fn(() => null),
         } as never,
       });
       const handlers = createMemoryHandlers(deps);
@@ -397,7 +394,6 @@ describe("createMemoryHandlers - memory management", () => {
           search: vi.fn(async () => []),
           clear: vi.fn(() => 0),
           stats: vi.fn(() => ({})),
-          enforceGuardrails: vi.fn(() => null),
         } as never,
       });
       const handlers = createMemoryHandlers(deps);

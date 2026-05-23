@@ -32,7 +32,7 @@ describe("@comis/shared -- architecture invariants", () => {
     expect(
       offenders,
       "Only @comis/shared/src/mcp-tool-name.ts may contain the canonical parser shape; " +
-        "any other shared utility must delegate to extractMcpServerName / parseSanitizedMcpToolName",
+        "any other shared utility must delegate to extractMcpServerName",
     ).toEqual([]);
     // Sanity: the canonical file MUST match — confirms the regex actually finds the shape.
     // If this assertion fires, mcp-tool-name.ts has drifted away from the canonical body

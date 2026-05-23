@@ -15,7 +15,6 @@ vi.mock("../setup-channels-adapters.js", () => ({
     adaptersByType: mockAdaptersByType,
     tgPlugin: undefined,
     linePlugin: undefined,
-    channelCapabilities: new Map(),
     channelPlugins: new Map(),
   })),
 }));
@@ -107,6 +106,7 @@ vi.mock("@comis/core", async () => {
         await adapter.sendMessage(channelId, text);
         return { ok: true, value: { ok: true, totalChunks: 1, deliveredChunks: 1, failedChunks: 0, chunks: [{ ok: true, messageId: "m1", charCount: text.length, retried: false }], totalChars: text.length } };
       }),
+      drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
     })),
     createNoOpDeliveryQueue: vi.fn(() => ({})),
     systemNowMs: () => Date.now(),

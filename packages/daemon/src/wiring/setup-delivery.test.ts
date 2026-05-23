@@ -25,8 +25,6 @@ function makeEntry(overrides: Partial<DeliveryQueueEntry> = {}): DeliveryQueueEn
     tenantId: "default",
     optionsJson: "{}",
     origin: "test",
-    formatApplied: true,
-    chunkingApplied: true,
     status: "pending",
     attemptCount: 0,
     maxAttempts: 5,
@@ -36,8 +34,6 @@ function makeEntry(overrides: Partial<DeliveryQueueEntry> = {}): DeliveryQueueEn
     lastAttemptAt: null,
     nextRetryAt: null,
     lastError: null,
-    markdownFallbackApplied: false,
-    deliveredMessageId: null,
     traceId: null,
     ...overrides,
   };
@@ -63,7 +59,6 @@ function createMockQueue(): DeliveryQueuePort & {
     fail: vi.fn(async (id: string, error: string) => { failCalls.push({ id, error }); return ok(undefined); }),
     pendingEntries: vi.fn(async () => ok([] as DeliveryQueueEntry[])),
     pruneExpired: vi.fn(async () => ok(0)),
-    depth: vi.fn(async () => ok(0)),
     statusCounts: vi.fn(async () => ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 })),
     recoverInFlight: vi.fn(async () => ok(0)),
   };
@@ -843,9 +838,9 @@ describe("setupDeliveryQueue", () => {
       const seedRow = (id: string, status: "pending" | "in_flight"): void => {
         db.prepare(
           `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
-                                         format_applied, chunking_applied, status, attempt_count, max_attempts,
+                                         status, attempt_count, max_attempts,
                                          created_at, scheduled_at, expire_at)
-           VALUES (?, ?, 'telegram', 'ch-1', 'def', '{}', 'channel', 0, 0, ?, 0, 5, ?, ?, ?)`,
+           VALUES (?, ?, 'telegram', 'ch-1', 'def', '{}', 'channel', ?, 0, 5, ?, ?, ?)`,
         ).run(id, `msg-${id}`, status, now, now, now + 60_000);
       };
 
@@ -865,9 +860,11 @@ describe("setupDeliveryQueue", () => {
       }
 
       // Sanity: queue depth = 200 (pending + in_flight)
-      const depth = await queue.depth();
-      expect(depth.ok).toBe(true);
-      if (depth.ok) expect(depth.value).toBe(200);
+      // Direct SQL read; queue.depth() was removed during port-surface trimming.
+      const depthRow = db
+        .prepare("SELECT COUNT(*) as count FROM delivery_queue WHERE status IN ('pending', 'in_flight')")
+        .get() as { count: number };
+      expect(depthRow.count).toBe(200);
 
       // Spy adapter that records every entryId it was asked to send.
       const sentIds: string[] = [];

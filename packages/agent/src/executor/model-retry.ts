@@ -488,11 +488,6 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           promptError = undefined;
           effectiveModel = { provider: lkw.provider, model: lkw.model };
 
-          eventBus.emit("model:lkw_fallback_succeeded", {
-            provider: lkw.provider,
-            model: lkw.model,
-            timestamp: clock.now(),
-          });
           logger.info(
             { lkwProvider: lkw.provider, lkwModel: lkw.model },
             "Last-known-working model fallback succeeded",

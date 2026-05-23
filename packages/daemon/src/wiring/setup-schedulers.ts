@@ -22,13 +22,10 @@ import {
   createCronScheduler,
   createCronStore,
   createExecutionTracker,
-  createTaskExtractor,
-  createTaskStore,
   resolveEffectiveHeartbeatConfig,
   resolveHeartbeatSessionKey,
   type CronScheduler,
   type SystemEventQueue,
-  type TaskExtractor,
 } from "@comis/scheduler";
 import type { ComputeDailyResetNextRun } from "@comis/core";
 import { createBrowserService, type BrowserService } from "@comis/skills";
@@ -89,7 +86,7 @@ export async function setupSchedulers(deps: {
   /** Timer scheduling. Threaded into SessionResetScheduler. */
   timers: TimerPort;
 }): Promise<SchedulersResult> {
-  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, timers } = deps;
+  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers } = deps;
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
@@ -366,7 +363,7 @@ export async function setupSchedulers(deps: {
         return currentAgents[agentId]?.session?.resetPolicy;
       },
       computeDailyResetNextRun,
-      nowMs: undefined, // Use real clock in production
+      nowMs: clock.now.bind(clock),
       timers,
     });
 
@@ -383,131 +380,4 @@ export async function setupSchedulers(deps: {
     getAgentCronScheduler,
     getAgentBrowserService,
   };
-}
-
-// ===========================================================================
-// Task Extraction
-// ===========================================================================
-
-// ---------------------------------------------------------------------------
-// Deps / Result types
-// ---------------------------------------------------------------------------
-
-/** Dependencies for task extraction setup. */
-export interface TaskExtractionDeps {
-  /** Bootstrap output (config.scheduler.tasks, eventBus). */
-  container: AppContainer;
-  /** Per-agent workspace directories (from setupAgents result). */
-  workspaceDirs: Map<string, string>;
-  /** Module-bound logger for scheduler subsystem. */
-  schedulerLogger: ComisLogger;
-}
-
-/** All services produced by the task extraction setup phase. */
-export interface TaskExtractionResult {
-  /** Per-agent task extractors (only for agents with tasks enabled). */
-  taskExtractors: Map<string, TaskExtractor>;
-  /**
-   * Callback for the execution pipeline. If task extraction is disabled
-   * for the given agent (or globally), this is a no-op.
-   */
-  extractFromConversation: (
-    conversationText: string,
-    sessionKey: string,
-    agentId: string,
-  ) => Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
-// Setup function
-// ---------------------------------------------------------------------------
-
-/**
- * Create per-agent task extractors and return an extraction callback
- * for the execution pipeline.
- * The extraction callback is safe to call unconditionally -- it checks
- * the feature gate internally and returns immediately if disabled.
- */
-export function setupTaskExtraction(deps: TaskExtractionDeps): TaskExtractionResult {
-  const { container, workspaceDirs, schedulerLogger } = deps;
-  const tasksConfig = container.config.scheduler.tasks;
-  const agents = container.config.agents;
-  const taskExtractors = new Map<string, TaskExtractor>();
-
-  if (!tasksConfig.enabled) {
-    schedulerLogger.debug("Task extraction disabled globally");
-    return {
-      taskExtractors,
-      extractFromConversation: async () => { /* no-op when disabled */ },
-    };
-  }
-
-  for (const [agentId] of Object.entries(agents)) {
-    const agentWorkspace = workspaceDirs.get(agentId);
-    if (!agentWorkspace) continue;
-
-    const storePath = safePath(agentWorkspace, ".scheduler", "tasks.json");
-    const store = createTaskStore(storePath);
-
-    // Pluggable extraction function -- in production this would wrap an LLM call.
-    // For now, create a placeholder that returns empty tasks. The daemon can
-    // override this with a real LLM-based extraction when the agent executor
-    // integration is fully wired.
-    const extractFn = async () => {
-      // TODO: Wire to agent executor LLM call for real extraction
-      return { tasks: [], reasoning: "Extraction function not yet wired to LLM" };
-    };
-
-    const extractor = createTaskExtractor({
-      extractFn,
-      store,
-      logger: schedulerLogger.child({ agentId, component: "task-extractor" }),
-      config: {
-        enabled: tasksConfig.enabled,
-        confidenceThreshold: tasksConfig.confidenceThreshold,
-      },
-      eventBus: container.eventBus,
-    });
-
-    taskExtractors.set(agentId, extractor);
-    schedulerLogger.debug({ agentId }, "Task extractor created");
-  }
-
-  if (taskExtractors.size > 0) {
-    schedulerLogger.info(
-      { extractorCount: taskExtractors.size },
-      "Task extraction enabled for agents",
-    );
-  }
-
-  async function extractFromConversation(
-    conversationText: string,
-    sessionKey: string,
-    agentId: string,
-  ): Promise<void> {
-    const extractor = taskExtractors.get(agentId);
-    if (!extractor) return;
-
-    try {
-      const tasks = await extractor.extract(conversationText, sessionKey);
-      if (tasks.length > 0) {
-        schedulerLogger.info(
-          { agentId, taskCount: tasks.length, sessionKey },
-          "Tasks extracted from conversation",
-        );
-      }
-    } catch (err: unknown) {
-      schedulerLogger.warn(
-        {
-          agentId,
-          err: err instanceof Error ? err.message : String(err),
-          hint: "Task extraction failed but does not block message processing",
-          errorKind: "internal" as const,
-        },
-        "Task extraction error",
-      );
-    }
-  }
-
-  return { taskExtractors, extractFromConversation };
 }

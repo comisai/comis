@@ -8,13 +8,12 @@
  * with descriptive error, and message parse errors.
  *
  * **Typed RPC wrapper:**
- * `callTyped(client, contract, params)` is the typed entry point. It runs
- * `contract.request.parse(...)` + `contract.response.parse(...)` under the
- * `VALIDATE` gate (the gate location is THIS file specifically, not a
- * sibling `typed-rpc.ts`). VALIDATE is on when `NODE_ENV === "development"`
- * OR `COMIS_CLI_VALIDATE === "1"`; production builds skip the parse hop
- * for cold-start budget compliance. The daemon side ALWAYS parses — the
- * trust boundary lives there.
+ * `callTyped(client, contract, params)` is the typed entry point. It ALWAYS
+ * runs `contract.request.parse(...)` + `contract.response.parse(...)` (the
+ * gate location is THIS file specifically, not a sibling `typed-rpc.ts`).
+ * Validation is unconditional on the CLI side — matching the daemon side
+ * which also always parses. The Zod parse cost is sub-ms per call at the
+ * current registry scale, so cold-start budget impact is negligible.
  *
  * `test/architecture/cli-uses-typed-rpc.test.ts` allowlists this file as
  * the sole CLI source that may invoke `client.call(...)` directly; every
@@ -42,52 +41,32 @@ export interface RpcClient {
 }
 
 // ---------------------------------------------------------------------------
-// VALIDATE gate + typed-RPC wrapper
+// Typed-RPC wrapper (always-on contract validation)
 // ---------------------------------------------------------------------------
 
 /**
- * Whether `callTyped` runs `contract.request/response.parse(...)`.
- *
- * Production builds skip Zod parse to keep the CLI cold-start budget
- * (<= 50ms median regression). Development AND opt-in
- * `COMIS_CLI_VALIDATE=1` runs always validate. The daemon side always
- * parses regardless of this flag (trust boundary — gate does not apply
- * server-side).
- *
- * The gate (and the `callTyped` wrapper below) lives in
- * `packages/cli/src/client/rpc-client.ts` specifically; the architecture
- * test allowlists this path so a future split into a sibling
- * `typed-rpc.ts` remains permitted.
- *
- * The contract-parse cost is sub-ms per call at the current registry
- * scale, so the 50 ms budget is satisfied with a large negative margin.
- * The gate is not load-bearing for the budget today; it remains in place
- * as defense-in-depth for any future expansion of the registry.
- */
-const VALIDATE_DEV = systemGetEnv("NODE_ENV") === "development";
-const VALIDATE_OPT_IN = systemGetEnv("COMIS_CLI_VALIDATE") === "1";
-const VALIDATE = VALIDATE_DEV || VALIDATE_OPT_IN;
-
-/**
- * Typed RPC wrapper. Send a contract-defined RPC call and parse the
- * response under the `VALIDATE` gate.
+ * Typed RPC wrapper. Send a contract-defined RPC call and always parse
+ * both the request and response against the contract's Zod schemas.
  *
  * Consumers replace `client.call("<method>", <params>)` with
  * `callTyped(client, <DomainContract>, params)`. The `cli-uses-typed-rpc`
  * architecture test prevents regressions by forbidding raw `client.call(`
  * anywhere in `packages/cli/src/` outside this file.
+ *
+ * Validation is unconditional — the daemon side already always parses,
+ * so this closes the previously-asymmetric CLI-side bypass surface.
  */
 export async function callTyped<Req extends ZodTypeAny, Res extends ZodTypeAny>(
   client: RpcClient,
   contract: ApiContract<Req, Res>,
   params: z.input<Req>,
 ): Promise<z.output<Res>> {
-  const validatedReq = VALIDATE ? contract.request.parse(params) : params;
+  const validatedReq = contract.request.parse(params);
   const raw = await client.call(
     contract.method,
     validatedReq as Record<string, unknown>,
   );
-  return VALIDATE ? contract.response.parse(raw) : (raw as z.output<Res>);
+  return contract.response.parse(raw);
 }
 
 /** Default connection timeout in milliseconds. */

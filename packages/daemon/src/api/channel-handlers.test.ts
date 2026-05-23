@@ -39,6 +39,11 @@ function makeDeps(overrides?: Partial<ChannelHandlerDeps>): ChannelHandlerDeps {
       discord: { enabled: true },
       slack: { enabled: false },
     },
+    // channelPlugins is REQUIRED on ChannelsApiDeps.
+    // Default to an empty Map; per-test overrides (capabilities suite)
+    // replace this with a populated Map. Tests that don't exercise
+    // channels.capabilities never touch this field.
+    channelPlugins: new Map(),
     ...overrides,
   };
 }
@@ -753,12 +758,6 @@ describe("createChannelHandlers - channel management", () => {
             deleteMessages: true,
             fetchHistory: false,
             attachments: true,
-            threads: true,
-            mentions: true,
-            formatting: ["bold", "italic"],
-            buttons: true,
-            cards: true,
-            effects: true,
           },
         },
       };
@@ -773,7 +772,7 @@ describe("createChannelHandlers - channel management", () => {
       expect(result.channelType).toBe("telegram");
       expect(result.features.reactions).toBe(true);
       expect(result.features.editMessages).toBe(true);
-      expect(result.features.threads).toBe(true);
+      expect(result.features.attachments).toBe(true);
     });
 
     it("throws when channel_type is missing", async () => {
@@ -795,13 +794,9 @@ describe("createChannelHandlers - channel management", () => {
       ).rejects.toThrow("Channel type not found: whatsapp");
     });
 
-    it("throws when channelPlugins is undefined", async () => {
-      const deps = makeDeps(); // no channelPlugins
-      const handlers = createChannelHandlers(deps);
-
-      await expect(
-        handlers["channels.capabilities"]!({ channel_type: "telegram" }),
-      ).rejects.toThrow("Channel type not found: telegram");
-    });
+    // Previously an "undefined channelPlugins" pinning test
+    // covered the BC shim `deps.channelPlugins?.get(...)`.
+    // channelPlugins is now a required field; the test was deleted in
+    // the same atomic commit as the optional-chain removal.
   });
 });

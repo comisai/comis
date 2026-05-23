@@ -10,7 +10,7 @@
  */
 
 import { wrapWebContent, type WrapExternalContentOptions } from "@comis/core";
-import { readResponseText, withTimeout } from "./web-shared.js";
+import { readResponseText, combineSignalWithTimeout } from "./web-shared.js";
 import { registerSearchProvider, type SearchProvider, type SearchProviderParams } from "./search-provider.js";
 
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ export async function runSearxngSearch(params: {
       Accept: "application/json",
       "User-Agent": "comis/1.0 (web_search)",
     },
-    signal: withTimeout(undefined, params.timeoutSeconds * 1000),
+    signal: combineSignalWithTimeout(undefined, params.timeoutSeconds * 1000),
   });
 
   if (!res.ok) {

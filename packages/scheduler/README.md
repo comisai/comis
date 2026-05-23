@@ -19,11 +19,6 @@ Task scheduling, cron management, and background job infrastructure for the [Com
 
 - **`createWakeCoalescer()`** -- Reduces redundant agent wake-ups by coalescing overlapping triggers with priority-based resolution
 
-### Task Extraction
-
-- **`createTaskExtractor()`** -- Extracts actionable tasks from conversation messages
-- **Priority scoring** -- `scorePriority()` and `rankTasks()` for task ordering
-
 ### System Events
 
 - **`createSystemEventQueue()`** -- Internal event queue for cross-system coordination

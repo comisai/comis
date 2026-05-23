@@ -9,15 +9,17 @@
  */
 
 import type { Attachment, TranscriptionPort } from "@comis/core";
+import { wrapExternalContent, type WrapExternalContentOptions, systemNowMs } from "@comis/core";
 import type { MediaProcessorLogger } from "./media-preprocessor.js";
 import { resolveMediaAttachment } from "./media-handler-factory.js";
-import { systemNowMs } from "@comis/core";
 
 /** Deps subset needed by the audio handler. */
 export interface AudioHandlerDeps {
   readonly transcriber?: TranscriptionPort;
   readonly resolveAttachment: (attachment: Attachment) => Promise<Buffer | null>;
   readonly logger: MediaProcessorLogger;
+  /** Optional callback for suspicious content detection. */
+  readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
 }
 
 /** Result produced by audio processing. */
@@ -46,8 +48,12 @@ export async function processAudioAttachment(
   // Skip if already transcribed by preflight
   if (att.transcription) {
     deps.logger.debug?.({ url: att.url, reason: "preflight" }, "Audio attachment already transcribed, reusing");
+    const wrapped = wrapExternalContent(
+      `[Voice message transcription]: ${att.transcription}`,
+      { source: "voice_transcription", onSuspiciousContent: deps.onSuspiciousContent },
+    );
     return {
-      textPrefix: `[Voice message transcription]: ${att.transcription}`,
+      textPrefix: wrapped,
       transcription: { attachmentUrl: att.url, text: att.transcription },
     };
   }
@@ -68,8 +74,12 @@ export async function processAudioAttachment(
         "Audio attachment transcribed",
       );
       deps.logger.debug?.({ url: att.url, mimeType: att.mimeType, reason: "stt", durationMs }, "Audio attachment transcribed");
+      const wrapped = wrapExternalContent(
+        `[Voice message transcription]: ${result.value.text}`,
+        { source: "voice_transcription", onSuspiciousContent: deps.onSuspiciousContent },
+      );
       return {
-        textPrefix: `[Voice message transcription]: ${result.value.text}`,
+        textPrefix: wrapped,
         transcription: {
           attachmentUrl: att.url,
           text: result.value.text,

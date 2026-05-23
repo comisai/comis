@@ -18,7 +18,6 @@ import type {
   MessageHandler,
   DeliveryService,
   TypedEventBus,
-  SessionKey,
 } from "@comis/core";
 import type { AgentExecutor, SessionLifecycle } from "@comis/agent";
 import type { MessageRouter } from "./routing/message-router.js";
@@ -65,13 +64,17 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: 0,
       }),
     ),
+    // channel-manager.stopAll() drains via
+    // deps.deliveryService.drainInFlight(5000). Default fake returns empty
+    // drain telemetry so this test suite's stopAll() exercises complete
+    // cleanly when no sends are tracked.
+    drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
 
 function makeRouter(): MessageRouter {
   return {
     resolve: vi.fn(() => "agent-default"),
-    updateConfig: vi.fn(),
   };
 }
 
@@ -319,89 +322,14 @@ describe("createChannelManager injectMessage early-exit branches", () => {
 });
 
 // ---------------------------------------------------------------------------
-// session:expired event listener side effects
-// ---------------------------------------------------------------------------
-
-describe("createChannelManager session:expired side effects", () => {
-  it("clears send overrides + debounce buffer + group history on session:expired", async () => {
-    const eventBus = makeEventBus();
-    const debounceBuffer = {
-      onFlush: vi.fn(),
-      shutdown: vi.fn(),
-      push: vi.fn(),
-      clear: vi.fn(),
-    };
-    const groupHistoryBuffer = {
-      clear: vi.fn(),
-      getFormatted: vi.fn(),
-      depth: vi.fn(() => 0),
-      push: vi.fn(),
-    };
-    const deps = makeDeps({
-      eventBus,
-      debounceBuffer: debounceBuffer as never,
-      groupHistoryBuffer: groupHistoryBuffer as never,
-    });
-    createChannelManager(deps);
-
-    // Emit session:expired
-    const sessionKey: SessionKey = {
-      tenantId: "default",
-      userId: "u",
-      channelId: "c",
-    };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (eventBus.emit as any)("session:expired", { sessionKey });
-
-    expect(debounceBuffer.clear).toHaveBeenCalledWith(sessionKey);
-    expect(groupHistoryBuffer.clear).toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
 // stopAll() shutdown ordering
 // ---------------------------------------------------------------------------
+// debounceBuffer + groupHistoryBuffer + sessionLabelStore were removed from
+// ChannelManagerDeps. The session:expired listener no longer clears those
+// buffers (only sendOverrides), and the debounce flush handler registration
+// was removed from startAll(). Tests covering those code paths are gone.
 
 describe("createChannelManager stopAll shutdown ordering", () => {
-  it("shuts down debounce buffer before draining command queue", async () => {
-    const order: string[] = [];
-    const debounceBuffer = {
-      onFlush: vi.fn(),
-      shutdown: vi.fn(() => {
-        order.push("debounce-shutdown");
-      }),
-      push: vi.fn(),
-      clear: vi.fn(),
-    };
-    const commandQueue = {
-      shutdown: vi.fn(async () => {
-        order.push("cmdqueue-shutdown");
-      }),
-      enqueue: vi.fn(),
-    };
-    const adapter = makeAdapter({
-      channelType: "telegram",
-      stop: vi.fn(async () => {
-        order.push("adapter-stop");
-        return ok(undefined);
-      }),
-    });
-    const deps = makeDeps({
-      adapters: [adapter],
-      debounceBuffer: debounceBuffer as never,
-      commandQueue: commandQueue as never,
-    });
-    const mgr = createChannelManager(deps);
-    await mgr.startAll();
-    await mgr.stopAll();
-
-    expect(order).toEqual([
-      "debounce-shutdown",
-      "cmdqueue-shutdown",
-      "adapter-stop",
-    ]);
-  });
-
   it("logs error when adapter.stop() fails but continues to next adapter", async () => {
     const logger = createMockLogger();
     const failingAdapter = makeAdapter({
@@ -431,170 +359,6 @@ describe("createChannelManager stopAll shutdown ordering", () => {
         hint: expect.stringContaining("cleanup failed"),
       }),
       "Failed to stop adapter",
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Debounce flush handler routing
-// ---------------------------------------------------------------------------
-
-describe("createChannelManager debounce flush handler", () => {
-  it("invokes processInboundMessage with synthetic isDebounced message when flush fires for known channel type", async () => {
-    let registeredFlushHandler:
-      | ((
-          sk: SessionKey,
-          msgs: NormalizedMessage[],
-          channelType: string,
-        ) => void)
-      | undefined;
-    const debounceBuffer = {
-      onFlush: vi.fn((cb) => {
-        registeredFlushHandler = cb;
-      }),
-      shutdown: vi.fn(),
-      push: vi.fn(),
-      clear: vi.fn(),
-    };
-    const adapter = makeAdapter({ channelType: "telegram" });
-    const processInboundMessage = vi.fn(async () => undefined);
-    const deps = makeDeps({
-      adapters: [adapter],
-      debounceBuffer: debounceBuffer as never,
-      processInboundMessage,
-    });
-    const mgr = createChannelManager(deps);
-    await mgr.startAll();
-
-    expect(registeredFlushHandler).toBeDefined();
-    const sessionKey: SessionKey = {
-      tenantId: "default",
-      userId: "u",
-      channelId: "c",
-    };
-    const msg: NormalizedMessage = {
-      id: "msg-1",
-      channelId: "c-1",
-      channelType: "telegram",
-      senderId: "u-1",
-      text: "hello",
-      timestamp: 0,
-      attachments: [],
-      metadata: {},
-    };
-    registeredFlushHandler!(sessionKey, [msg], "telegram");
-    // Allow microtask flush
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(processInboundMessage).toHaveBeenCalledOnce();
-    // The synthetic msg must carry isDebounced=true
-    const [, , passedMsg] = processInboundMessage.mock.calls[0]!;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((passedMsg as any).metadata.isDebounced).toBe(true);
-  });
-
-  it("silently ignores flush event for an unknown channel type", async () => {
-    let registeredFlushHandler:
-      | ((
-          sk: SessionKey,
-          msgs: NormalizedMessage[],
-          channelType: string,
-        ) => void)
-      | undefined;
-    const debounceBuffer = {
-      onFlush: vi.fn((cb) => {
-        registeredFlushHandler = cb;
-      }),
-      shutdown: vi.fn(),
-      push: vi.fn(),
-      clear: vi.fn(),
-    };
-    const adapter = makeAdapter({ channelType: "telegram" });
-    const processInboundMessage = vi.fn(async () => undefined);
-    const deps = makeDeps({
-      adapters: [adapter],
-      debounceBuffer: debounceBuffer as never,
-      processInboundMessage,
-    });
-    const mgr = createChannelManager(deps);
-    await mgr.startAll();
-
-    const sessionKey: SessionKey = {
-      tenantId: "default",
-      userId: "u",
-      channelId: "c",
-    };
-    const msg: NormalizedMessage = {
-      id: "msg-1",
-      channelId: "c-1",
-      channelType: "discord",
-      senderId: "u-1",
-      text: "hello",
-      timestamp: 0,
-      attachments: [],
-      metadata: {},
-    };
-    registeredFlushHandler!(sessionKey, [msg], "discord");
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(processInboundMessage).not.toHaveBeenCalled();
-  });
-
-  it("logs error when debounce flush handler's processInboundMessage rejects", async () => {
-    let registeredFlushHandler:
-      | ((
-          sk: SessionKey,
-          msgs: NormalizedMessage[],
-          channelType: string,
-        ) => void)
-      | undefined;
-    const debounceBuffer = {
-      onFlush: vi.fn((cb) => {
-        registeredFlushHandler = cb;
-      }),
-      shutdown: vi.fn(),
-      push: vi.fn(),
-      clear: vi.fn(),
-    };
-    const adapter = makeAdapter({ channelType: "telegram" });
-    const logger = createMockLogger();
-    const processInboundMessage = vi.fn(async () => {
-      throw new Error("pipeline-failed-during-flush");
-    });
-    const deps = makeDeps({
-      adapters: [adapter],
-      debounceBuffer: debounceBuffer as never,
-      processInboundMessage,
-      logger,
-    });
-    const mgr = createChannelManager(deps);
-    await mgr.startAll();
-
-    const sessionKey: SessionKey = {
-      tenantId: "default",
-      userId: "u",
-      channelId: "c",
-    };
-    const msg: NormalizedMessage = {
-      id: "msg-1",
-      channelId: "c-1",
-      channelType: "telegram",
-      senderId: "u-1",
-      text: "hello",
-      timestamp: 0,
-      attachments: [],
-      metadata: {},
-    };
-    registeredFlushHandler!(sessionKey, [msg], "telegram");
-    // Allow promise rejection to surface
-    await new Promise((r) => setTimeout(r, 10));
-
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channelType: "telegram",
-        errorKind: "internal",
-      }),
-      "Debounce flush handler error",
     );
   });
 });

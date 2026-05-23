@@ -1146,14 +1146,20 @@ describe("createSessionHandlers - session management", () => {
   });
 
   // -------------------------------------------------------------------------
-  // session.spawn (Task wkj — rephrased timeout note + dedup propagation)
+  // session.spawn (async-only; dedup propagation)
   // -------------------------------------------------------------------------
+  //
+  // The sync-wait poll-until-complete branch was deleted
+  // (CHANGELOG: callers passing `async: false` are now
+  // treated as async). The async response no longer carries the
+  // multi-line `note` field that the legacy sync-timeout branch produced —
+  // the `noteType: "background_running"` field IS the canonical signal.
 
   describe("session.spawn", () => {
     function makeSpawnDeps(overrides?: Partial<SessionHandlerDeps>): SessionHandlerDeps {
-      // Rich subAgentRunner stub: returns a stable runId AND simulates the run
-      // remaining "running" past the waitTimeoutMs window so the sync-wait
-      // timeout branch of the handler is exercised.
+      // subAgentRunner stub returns a stable runId; getRunStatus
+      // returns "running" so the async-response path emits the base
+      // (non-queued) shape.
       const subAgentRunner = {
         spawn: vi.fn().mockReturnValue("test-run-id-001"),
         getRunStatus: vi.fn().mockReturnValue({
@@ -1167,12 +1173,11 @@ describe("createSessionHandlers - session management", () => {
         }),
         lastSpawnDedupInfo: vi.fn(() => undefined),
       } as never;
-      // Tight waitTimeoutMs so the test doesn't actually wait long.
       const securityConfig = { agentToAgent: { enabled: true, waitTimeoutMs: 10 } };
       return makeDeps({ subAgentRunner, securityConfig, ...overrides });
     }
 
-    it("sync-wait timeout returns inProgress with background_running noteType", async () => {
+    it("async response carries runId + inProgress + background_running noteType", async () => {
       const deps = makeSpawnDeps();
       const handlers = createSessionHandlers(deps);
 
@@ -1188,10 +1193,6 @@ describe("createSessionHandlers - session management", () => {
       expect(response.async).toBe(true);
       expect(response.inProgress).toBe(true);
       expect(response.noteType).toBe("background_running");
-      expect(typeof response.note).toBe("string");
-      expect(response.note as string).toContain("running in background");
-      expect(response.note as string).toContain("DO NOT spawn another sub-agent for the same task");
-      expect(response.note as string).toContain("test-run-id-001");
     });
 
     it("legacy timeout note string no longer appears in spawn response", async () => {
@@ -1244,10 +1245,9 @@ describe("createSessionHandlers - session management", () => {
       expect(response.deduped).toBe(true);
       expect(response.existingRunId).toBe("run-zzz-existing");
       expect(response.dedupAgeMs).toBe(1234);
-      // The dedup signal is additive — still has the new in-progress note.
+      // The dedup signal is additive — still has the in-progress signal.
       expect(response.inProgress).toBe(true);
       expect(response.noteType).toBe("background_running");
-      expect(response.note as string).toContain("running in background");
     });
 
     it("response omits deduped fields when no dedup hit occurred for this spawn", async () => {

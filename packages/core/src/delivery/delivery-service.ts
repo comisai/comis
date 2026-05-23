@@ -9,8 +9,10 @@
  *  2. Function parameters lose the trailing optional `DeliverToChannelDeps`
  *     argument; deps is captured in closure. All `deps?.X` references become `deps.X`
  *     (`deps.deliveryQueue` is REQUIRED; eventBus / retryEngine / abortSignal /
- *     inFlightSends / maxCharsOverride / replyMode remain optional, so the
- *     INNER `?.` on those fields stays).
+ *     maxCharsOverride / replyMode remain optional, so the INNER `?.` on those
+ *     fields stays). In-flight outbound `Promise` tracking is owned internally
+ *     by the factory and drained via the public `drainInFlight()` method —
+ *     callers must NOT inject a tracking Set via deps.
  *
  * Hook execution order, traceId propagation, suppressError wrap on
  * after_delivery, and all `delivery:*` event emissions are byte-identical to
@@ -44,7 +46,7 @@ import type {
   ChunkDeliveryResult,
   DeliveryResult,
 } from "./types.js";
-import { systemNowMs } from "../runtime/system-time.js";
+import { systemNowMs, systemSetTimeout } from "../runtime/system-time.js";
 
 // ---------------------------------------------------------------------------
 // Constants — platform sets local to the delivery pipeline. The chunk-limit
@@ -74,9 +76,13 @@ const PASSTHROUGH_PLATFORMS = new Set(["discord", "gateway", "echo"]);
  * `hookRunner` + `deliveryQueue` are REQUIRED — the closures that replace the
  * prior global hook-runner singleton and optional-deps shape (was an optional
  * `DeliverToChannelDeps` argument). `eventBus`, `retryEngine`,
- * `maxCharsOverride`, `replyMode`, `abortSignal`, and `inFlightSends` are
- * optional — they preserve the per-call/per-instance optional knobs the
- * standalone function already accepts.
+ * `maxCharsOverride`, `replyMode`, and `abortSignal` are optional — they
+ * preserve the per-call/per-instance optional knobs the standalone function
+ * already accepts.
+ *
+ * Note: in-flight outbound `Promise` tracking is now an internal concern of
+ * `createDeliveryService` (no `inFlightSends` deps field). The drain is
+ * exposed via the public `drainInFlight()` method on the returned service.
  *
  * @see packages/channels/src/shared/deliver-to-channel.ts:DeliverToChannelDeps
  */
@@ -102,23 +108,14 @@ export interface DeliveryServiceDeps {
 
   /** Reply mode for this delivery (off/first/all). OPTIONAL — default: "first". */
   replyMode?: "off" | "first" | "all";
-
-  /**
-   * Per-instance set of in-flight outbound sendMessage promises. OPTIONAL —
-   * when provided, each chunk send is added to the set BEFORE the await so a
-   * throwing send is still tracked, and removed via .finally() on settle.
-   * Drained in channel-manager.stopAll() with a 5s deadline so SIGUSR2 cannot
-   * tear down adapters mid-send. Created by the channel-manager factory; do
-   * not pass externally.
-   */
-  inFlightSends?: Set<Promise<unknown>>;
 }
 
 /**
- * Single-method delivery service per AGENTS.md §2.3 (no speculative methods —
- * add ops only when call sites exist). The `abortSignal` still rides on a
- * per-call options channel (consistent with the standalone function's
- * `deps.abortSignal`).
+ * DeliveryService — outbound delivery + shutdown drain.
+ *
+ * Per AGENTS.md §2.3 (no speculative methods — add ops only when call sites
+ * exist). `abortSignal` rides on a per-call options channel (consistent with
+ * the standalone function's `deps.abortSignal`).
  */
 export interface DeliveryService {
   deliverToChannel(
@@ -127,6 +124,20 @@ export interface DeliveryService {
     text: string,
     options?: DeliverToChannelOptions & { abortSignal?: AbortSignal },
   ): Promise<Result<DeliveryResult, Error>>;
+
+  /**
+   * Drain in-flight outbound sends with a deadline.
+   *
+   * SIGUSR2 hot-reload calls this from channel-manager.stopAll() so adapter
+   * teardown does not race against in-flight HTTP requests (which would
+   * orphan the SQLite delivery-queue ack and trigger duplicate retries).
+   *
+   * Returns telemetry — drain count, remaining count, duration ms — for
+   * caller logging. Never throws; remaining > 0 indicates deadline expired.
+   *
+   * @param deadlineMs - Maximum wait time. Defaults to 5000.
+   */
+  drainInFlight(deadlineMs?: number): Promise<{ drained: number; remaining: number; durationMs: number }>;
 }
 
 /**
@@ -141,6 +152,18 @@ export interface DeliveryService {
  * sessionKey) is resolved INSIDE the method body.
  */
 export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryService {
+  /**
+   * Per-instance set of in-flight outbound sendMessage promises. Each chunk
+   * send is added to the set BEFORE the await (so a SIGUSR2 hitting mid-send
+   * sees the promise in the Set and can drain it) and removed via .finally()
+   * on settle. Drained on shutdown via the public `drainInFlight()` method
+   * with a deadline so SIGUSR2 cannot tear down adapters mid-HTTP-response
+   * (which would orphan the SQLite delivery-queue ack and trigger a
+   * duplicate retry on the next instance). The Set lives entirely inside
+   * the factory closure — callers cannot inject one via deps.
+   */
+  const inFlightSends = new Set<Promise<unknown>>();
+
   return {
     async deliverToChannel(
       adapter: DeliveryAdapter,
@@ -356,8 +379,6 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               tenantId,
               optionsJson: JSON.stringify(sendOpts),
               origin: options?.origin ?? "unknown",
-              formatApplied: true,
-              chunkingApplied: true,
               maxAttempts: 5,
               createdAt: systemNowMs(),
               scheduledAt: systemNowMs(),
@@ -379,11 +400,12 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           const chunkSendStart = systemNowMs();
 
           // Build the send promise WITHOUT awaiting yet, so we can register it
-          // in deps.inFlightSends synchronously before the underlying HTTPS POST
-          // is observable as in-flight. This guarantees that a SIGUSR2 hitting
-          // mid-send will see the promise in the Set and drain it before tearing
-          // down adapters (avoids orphaned SQLite delivery-queue acks and the
-          // resulting duplicate-message retry on the next instance).
+          // in the internal inFlightSends Set synchronously before the
+          // underlying HTTPS POST is observable as in-flight. This guarantees
+          // that a SIGUSR2 hitting mid-send will see the promise in the Set
+          // and `drainInFlight()` will await it before tearing down adapters
+          // (avoids orphaned SQLite delivery-queue acks and the resulting
+          // duplicate-message retry on the next instance).
           const sendPromise: Promise<Result<string, Error>> = deps.retryEngine
             ? deps.retryEngine.sendWithRetry(
                 // RetryEngine expects a ChannelPort-like adapter -- our
@@ -396,18 +418,15 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               )
             : adapter.sendMessage(channelId, chunk, sendOpts);
 
-          if (deps.inFlightSends) {
-            const inFlightSet = deps.inFlightSends;
-            const tracked: Promise<unknown> = sendPromise;
-            inFlightSet.add(tracked);
-            // .finally fires on both fulfillment and rejection -- guarantees
-            // Set cleanup even if sendPromise rejects. We intentionally do
-            // not await this side-effect; the void keeps no-floating-promise
-            // lint quiet without altering the awaited value below.
-            void sendPromise.finally(() => {
-              inFlightSet.delete(tracked);
-            });
-          }
+          const tracked: Promise<unknown> = sendPromise;
+          inFlightSends.add(tracked);
+          // .finally fires on both fulfillment and rejection -- guarantees
+          // Set cleanup even if sendPromise rejects. We intentionally do
+          // not await this side-effect; the void keeps no-floating-promise
+          // lint quiet without altering the awaited value below.
+          void sendPromise.finally(() => {
+            inFlightSends.delete(tracked);
+          });
 
           const result: Result<string, Error> = await sendPromise;
 
@@ -593,6 +612,31 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         const wrapped = error instanceof Error ? error : new Error(String(error));
         return err(wrapped);
       }
+    },
+
+    async drainInFlight(
+      deadlineMs = 5000,
+    ): Promise<{ drained: number; remaining: number; durationMs: number }> {
+      const start = systemNowMs();
+      const inFlightCount = inFlightSends.size;
+      if (inFlightCount === 0) {
+        return { drained: 0, remaining: 0, durationMs: 0 };
+      }
+      // Race the in-flight settles against the deadline timer. `systemSetTimeout`
+      // is the sanctioned-root indirection for `setTimeout` per AGENTS.md §2.2
+      // (the only sanctioned-root in `packages/core/src/runtime/system-time.ts`).
+      await Promise.race([
+        Promise.allSettled([...inFlightSends]),
+        new Promise<void>((resolve) => {
+          const handle = systemSetTimeout(() => resolve(), deadlineMs);
+          handle.unref?.();
+        }),
+      ]);
+      return {
+        drained: inFlightCount - inFlightSends.size,
+        remaining: inFlightSends.size,
+        durationMs: systemNowMs() - start,
+      };
     },
   };
 }

@@ -17,8 +17,8 @@
  *                                caller as the SOLE output of the handler
  *                                (no logger / audit-event field carries it).
  *   - `secrets.list`   (admin) — enumerate secret METADATA (name, provider,
- *                                timestamps, usage count). Plaintext values
- *                                are NEVER part of the response.
+ *                                timestamps). Plaintext values are NEVER
+ *                                part of the response.
  *   - `secrets.delete` (admin) — remove a secret. Rate-limited at 5
  *                                deletes/minute. Emits a destructive audit
  *                                event regardless of outcome.
@@ -73,8 +73,6 @@ const SecretMetadataSchema = z.object({
   provider: z.string().optional(),
   description: z.string().optional(),
   expiresAt: z.number().optional(),
-  lastUsedAt: z.number().optional(),
-  usageCount: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
 });

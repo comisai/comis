@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: boundary rethrow in `raceWithTimeout` — caught `TimeoutError` is translated to the local Result-ish `{ ok: false, reason: "timeout" }` discriminator; non-timeout exceptions (unexpected programming errors from the wrapped pi-ai promise) propagate to the surrounding lock-held Result flow rather than being silently swallowed or fabricated into a non-timeout Result shape. The throw is structurally identical to pi-ai's existing throw-to-Result translation in this module.
 /**
  * OAuth Token Manager: Wraps pi-ai's OAuth subsystem for Comis patterns.
  *
@@ -39,6 +40,8 @@ import {
   ok,
   err,
   fromPromise,
+  withTimeout,
+  TimeoutError,
 } from "@comis/shared";
 import type { SecretManager } from "@comis/core";
 import {
@@ -47,6 +50,7 @@ import {
   systemNowMs,
   systemSetTimeout,
   systemClearTimeout,
+  systemScheduleTimeout,
   type OAuthCredentialStorePort,
   type OAuthProfile,
   type FileLockPort,
@@ -245,26 +249,29 @@ function parseEnvCredentials(raw: string | undefined): OAuthCredentials | undefi
 }
 
 /**
- * Race a promise against a setTimeout-based timeout. setTimeout (rather than
- * AbortSignal.timeout) is used so vi.useFakeTimers() in tests can advance the
- * timer deterministically. Returns "timeout" on timeout, else the resolved value.
+ * Wrap `@comis/shared`'s canonical `withTimeout` (which throws `TimeoutError`)
+ * into the local `Result`-ish discriminator the two refresh call sites consume.
+ * Preserving `{ ok, value | reason: "timeout" }` keeps the surrounding
+ * branching unchanged when collapsing onto the shared primitive.
+ *
+ * Uses `systemScheduleTimeout` from `@comis/core/runtime` — `setTimeout` under
+ * the hood so `vi.useFakeTimers()` in tests still advances the timer
+ * deterministically (the existing timeout tests at L1127 / L2075 keep
+ * working).
  */
-async function withTimeout<T>(
+async function raceWithTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
+  label: string,
 ): Promise<{ ok: true; value: T } | { ok: false; reason: "timeout" }> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<{ ok: false; reason: "timeout" }>((resolve) => {
-    timer = systemSetTimeout(() => resolve({ ok: false, reason: "timeout" }), timeoutMs);
-  });
   try {
-    const winner = await Promise.race([
-      promise.then((value) => ({ ok: true as const, value })),
-      timeoutPromise,
-    ]);
-    return winner;
-  } finally {
-    if (timer !== undefined) systemClearTimeout(timer);
+    const value = await withTimeout(promise, timeoutMs, systemScheduleTimeout, label);
+    return { ok: true, value };
+  } catch (e) {
+    if (e instanceof TimeoutError) {
+      return { ok: false, reason: "timeout" };
+    }
+    throw e;
   }
 }
 
@@ -856,10 +863,12 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             }
 
             // Bypass never throws (it returns a tagged outcome on every path),
-            // so feed the bare promise into `withTimeout` — no fromPromise wrap.
-            const raceResult = await withTimeout(
+            // so feed the bare promise into the local `raceWithTimeout`
+            // helper — no fromPromise wrap.
+            const raceResult = await raceWithTimeout(
               refreshOpenAICodexTokenLocal(profile),
               REFRESH_TIMEOUT_MS,
+              "OAuth refresh (Codex bypass)",
             );
 
             if (!raceResult.ok) {
@@ -959,7 +968,11 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             // Non-Codex: original pi-ai path UNCHANGED.
             // 30s timeout wrapper — pi-ai has no built-in timeout.
             const piAiCall = fromPromise(getOAuthApiKey(providerId, credsRecord));
-            const raceResult = await withTimeout(piAiCall, REFRESH_TIMEOUT_MS);
+            const raceResult = await raceWithTimeout(
+              piAiCall,
+              REFRESH_TIMEOUT_MS,
+              "OAuth refresh (pi-ai)",
+            );
 
             if (!raceResult.ok) {
               // timeout
@@ -1072,7 +1085,6 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             // — use directly, do NOT multiply by 1000.
             eventBus.emit("auth:token_rotated", {
               provider: providerId,
-              profileName: toSecretKey(providerId, keyPrefix),
               profileId: profile.profileId,
               expiresAtMs: newProfile.expires,
               timestamp: systemNowMs(),

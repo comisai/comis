@@ -9,9 +9,8 @@
  *     subcommand wiring (list / inspect / delete / report show / list).
  *
  *   - `renderSystemPromptReport — Tools/Skills lines never render
- *     'undefined entries'` — OBS-REVIEW-02 fix coverage. Any non-array
- *     `entries` value must render an honest `?` instead of the
- *     misleading literal `undefined`.
+ *     'undefined entries'`. Any non-array `entries` value must render an
+ *     honest `?` instead of the misleading literal `undefined`.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -144,13 +143,13 @@ describe("formatRelativeTime", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OBS-REVIEW-02: `comis sessions report show` Tools/Skills lines must
-// never render the literal "undefined entries". The old code used a
-// truthy-check (`tools?.entries`) that fired for any non-null shape,
-// then evaluated `.length` which is `undefined` for non-array values.
-// The fix uses `Array.isArray(...)`. Defensive-shape: when entries is
-// truthy but not an array, surface a literal `?` rather than crash or
-// render `undefined`.
+// `comis sessions report show` Tools/Skills lines must never render the
+// literal "undefined entries". The old code used a truthy-check
+// (`tools?.entries`) that fired for any non-null shape, then evaluated
+// `.length` which is `undefined` for non-array values. The fix uses
+// `Array.isArray(...)`. Defensive-shape: when entries is truthy but not
+// an array, surface a literal `?` rather than crash or render
+// `undefined`.
 // ---------------------------------------------------------------------------
 
 function captureConsole(): { output: string[]; restore: () => void } {

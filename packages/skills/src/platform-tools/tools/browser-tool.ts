@@ -48,16 +48,10 @@ export interface BrowserToolDeps {
  * Actions: status, start, stop, profiles, tabs, open, focus, close,
  *          snapshot, screenshot, navigate, console, pdf, upload, dialog, act
  *
- * Accepts either a bare RpcCall (backward compat) or a BrowserToolDeps object
- * with optional sanitization and persistence support.
- *
- * @param depsOrRpcCall - RPC function or full deps object
+ * @param deps - Browser tool dependencies (rpcCall + optional sanitization/persistence).
  * @returns AgentTool implementing the browser control interface
  */
-export function createBrowserTool(depsOrRpcCall: BrowserToolDeps | RpcCall): AgentTool<typeof BrowserToolSchema> {
-  const deps: BrowserToolDeps = typeof depsOrRpcCall === "function"
-    ? { rpcCall: depsOrRpcCall }
-    : depsOrRpcCall;
+export function createBrowserTool(deps: BrowserToolDeps): AgentTool<typeof BrowserToolSchema> {
   const { rpcCall } = deps;
 
   return {
@@ -123,7 +117,7 @@ export function createBrowserTool(depsOrRpcCall: BrowserToolDeps | RpcCall): Age
               }
               // Sanitization failed -- fall back to raw imageResult
             }
-            // No sanitize deps -- fall back to raw imageResult (backward compat)
+            // No sanitize deps -- return raw imageResult
             return imageResult(r.base64, r.mimeType);
           }
         }

@@ -5,9 +5,11 @@
  * Provides:
  *   - `env.set`  -- write a secret (admin-only, rate-limited, values never logged)
  *   - `env.list` -- enumerate secret NAMES (admin-only, read-only, values never returned)
- * Two storage backends:
- *   1. SecretStorePort (encrypted secrets.db via AES-256-GCM) -- preferred
- *   2. .env file append (legacy fallback when master key not configured)
+ *
+ * Storage backend: SecretStorePort (encrypted secrets.db via AES-256-GCM).
+ * The legacy .env-file fallback is gone; env.set rejects with an
+ * actionable error when the daemon was booted without
+ * SECRETS_MASTER_KEY (same posture as secrets-handlers.ts).
  *
  * Uses the `@comis/core` contract registry. Method keys are computed-
  * property names (`[EnvSetContract.method]:`) so the bidirectional 1:1
@@ -40,13 +42,6 @@ import {
   systemNowMs,
   systemSetTimeout,
 } from "@comis/core";
-import {
-  readFileSync,
-  writeFileSync,
-  renameSync,
-  existsSync,
-  chmodSync,
-} from "node:fs";
 
 import type { RpcHandler } from "./types.js";
 
@@ -193,16 +188,19 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       EnvSetContract.request.parse(userParams);
 
       try {
-        // Write to storage backend
-        if (deps.secretStore) {
-          // Encrypted mode: use SecretStorePort
-          const setResult = deps.secretStore.set(key, value);
-          if (!setResult.ok) {
-            throw new Error(`Secret store write failed: ${setResult.error.message}`);
-          }
-        } else {
-          // Legacy mode: write to .env file
-          writeToEnvFile(deps.envFilePath, key, value);
+        // Write to storage backend. SecretStorePort is mandatory; the
+        // legacy `.env` file-append fallback was removed. Daemons without
+        // a master key (SECRETS_MASTER_KEY unset) reject env.set with an
+        // actionable error mirroring secrets-handlers.ts:196.
+        if (!deps.secretStore) {
+          throw new Error(
+            "Encrypted secrets store not configured (SECRETS_MASTER_KEY missing). " +
+              "Run `comis secrets init --write` then restart the daemon.",
+          );
+        }
+        const setResult = deps.secretStore.set(key, value);
+        if (!setResult.ok) {
+          throw new Error(`Secret store write failed: ${setResult.error.message}`);
         }
 
         const durationMs = systemNowMs() - startMs;
@@ -232,9 +230,8 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
         const result = {
           set: true as const,
           key,
-          storage: (deps.secretStore ? "encrypted" : "envfile") as
-            | "encrypted"
-            | "envfile",
+          // SecretStorePort is the only backend.
+          storage: "encrypted" as const,
           restarting: true as const,
         };
         if (systemGetEnv("NODE_ENV") !== "production") {
@@ -311,14 +308,12 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       const selected = names.slice().sort().slice(0, limit);
 
       // Enrich with SecretStorePort metadata when available.
-      // Metadata is name + provider + timestamps + usageCount — NEVER a value.
+      // Metadata is name + provider + timestamps — NEVER a value.
       const metaByName = new Map<string, {
         provider?: string;
         description?: string;
         createdAt?: number;
         updatedAt?: number;
-        lastUsedAt?: number;
-        usageCount?: number;
         expiresAt?: number;
       }>();
       if (deps.secretStore) {
@@ -330,8 +325,6 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
               description: m.description,
               createdAt: m.createdAt,
               updatedAt: m.updatedAt,
-              lastUsedAt: m.lastUsedAt,
-              usageCount: m.usageCount,
               expiresAt: m.expiresAt,
             });
           }
@@ -379,58 +372,4 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       return result;
     },
   };
-}
-
-// ---------------------------------------------------------------------------
-// .env file write helper
-// ---------------------------------------------------------------------------
-
-/**
- * Write a key=value pair to a .env file atomically.
- * If the key already exists, replaces its value. Otherwise appends.
- * Sets file permissions to 0o600.
- * SECURITY: envFilePath is daemon-controlled (not user input),
- * so safePath is not needed here.
- */
-function writeToEnvFile(envFilePath: string, key: string, value: string): void {
-  let lines: string[] = [];
-
-  if (existsSync(envFilePath)) {
-    const content = readFileSync(envFilePath, "utf-8");
-    lines = content.split("\n");
-  }
-
-  // Find and replace existing key, or append
-  let found = false;
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i]!.trim();
-    if (trimmed.startsWith("#") || !trimmed) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx === -1) continue;
-    const lineKey = trimmed.slice(0, eqIdx).trim();
-    if (lineKey === key) {
-      lines[i] = `${key}=${value}`;
-      found = true;
-      break;
-    }
-  }
-
-  if (!found) {
-    // Ensure trailing newline before appending
-    if (lines.length > 0 && lines[lines.length - 1] !== "") {
-      lines.push(`${key}=${value}`);
-    } else if (lines.length === 0) {
-      lines.push(`${key}=${value}`);
-    } else {
-      // Last line is empty (trailing newline), insert before it
-      lines.splice(lines.length - 1, 0, `${key}=${value}`);
-    }
-  }
-
-  const content = lines.join("\n");
-  const tmpPath = envFilePath + ".tmp";
-  // fs-safe-allowed: tmp/rename atomic-write pattern; the renamed final envFilePath is chmod'd to 0o600 on the next line
-  writeFileSync(tmpPath, content, "utf-8");
-  renameSync(tmpPath, envFilePath);
-  chmodSync(envFilePath, 0o600);
 }

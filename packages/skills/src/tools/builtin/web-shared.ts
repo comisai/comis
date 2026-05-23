@@ -55,8 +55,12 @@ export function createWebCache<T>(ttlMs: number, maxEntries = DEFAULT_CACHE_MAX_
 /**
  * Combine an optional external AbortSignal with a timeout.
  * Returns a new signal that aborts when either the external signal fires or the timeout elapses.
+ *
+ * Named distinctly from `@comis/shared`'s promise-racing `withTimeout` because this primitive
+ * has a different shape: it takes an AbortSignal and returns an AbortSignal, instead of
+ * taking a Promise and racing it against a deadline. The two are not interchangeable.
  */
-export function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+export function combineSignalWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
   if (timeoutMs <= 0) {
     return signal ?? new AbortController().signal;
   }

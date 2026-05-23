@@ -2,13 +2,17 @@
 /**
  * Execution Pipeline: Thin orchestrator for outbound delivery.
  *
- * Delegates to 4 focused phase modules:
- *   1. execution-policy  — send policy gate, trust level, elevated reply routing
- *   2. execution-execute — LLM execution with timeout, thinking filter, abort
- *   3. execution-filter  — response sanitization, filtering, media, voice, prefix
- *   4. execution-deliver — chunking, coalescing, block pacing, delivery
+ * Delegates to 3 focused phase modules (the former execution-policy phase
+ * was inlined directly into the executeAndDeliver body — its 5 PolicyDeps
+ * fields already lived on ExecutionPipelineDeps, so the seam was pure
+ * cosmetic):
+ *   1. execution-execute — LLM execution with timeout, thinking filter, abort
+ *   2. execution-filter  — response sanitization, filtering, media, voice, prefix
+ *   3. execution-deliver — chunking, coalescing, block pacing, delivery
  *
- * Keeps follow-up trigger logic here (needs full closure deps for re-enqueue).
+ * The pre-execute send-policy gate, sender trust resolution, and elevated
+ * reply routing are now an inline block at the head of executeAndDeliver
+ * (Stage 1 marker below).
  *
  * @module
  */
@@ -16,6 +20,7 @@
 import { randomUUID } from "node:crypto";
 import type { ChannelPort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryQueuePort, DeliveryService } from "@comis/core";
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
+import { PerChannelStreamingConfigSchema } from "@comis/core";
 import type { SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
 import type { SendMessageOptions } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
@@ -25,19 +30,24 @@ import type { AgentExecutor } from "@comis/agent";
 import type { CommandDirectives } from "../commands/index.js";
 // Relative path used because orchestrator cannot import its own published name.
 import type { CommandQueue } from "../queue/command-queue.js";
-import type { FollowupTrigger } from "../queue/followup-trigger.js";
 
+import { isGroupMessage, evaluateSendPolicy, applySessionOverride } from "@comis/channels";
 import type {
   BlockPacer,
   TypingLifecycleController,
   ChannelRegistry,
   SendOverrideStore,
+  SendPolicyContext,
   VoiceResponsePipelineDeps,
 } from "@comis/channels";
 import type { RetryEngine } from "@comis/core";
 
 // Pipeline-stage imports
-import { evaluateExecutionPolicy } from "./execution-policy.js";
+// Note: the former send-policy phase body (formerly a sibling source file
+// exporting one phase function + PolicyDeps + PolicyResult) was inlined
+// directly into executeAndDeliver below. The 5 deps fields (eventBus,
+// logger, sendPolicyConfig, getElevatedReplyConfig, channelRegistry)
+// already live on ExecutionPipelineDeps — no interface change required.
 import { executeLlm } from "./execution-execute.js";
 import { filterExecutionResponse } from "./execution-filter.js";
 import { deliverExecutionResponse } from "./execution-deliver.js";
@@ -45,14 +55,6 @@ import { deliverExecutionResponse } from "./execution-deliver.js";
 // ---------------------------------------------------------------------------
 // Platform-specific configuration
 // ---------------------------------------------------------------------------
-
-/** Maps channelType to the metadata key containing the platform message ID for reply-to. */
-export const REPLY_TO_META_KEY: Record<string, string> = {
-  telegram: "telegramMessageId",
-  discord: "discordMessageId",
-  slack: "slackTs",
-  whatsapp: "whatsappMessageId",
-};
 
 /**
  * Metadata keys that carry thread context -- must be propagated to followup messages.
@@ -93,16 +95,12 @@ export interface ExecutionPipelineDeps {
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
   channelRegistry?: ChannelRegistry;
   retryEngine?: RetryEngine;
-  followupTrigger?: FollowupTrigger;
-  followupConfig?: { maxFollowupRuns: number };
   commandQueue?: CommandQueue;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assembleToolsForAgent?: (agentId: string, options?: { sessionKey?: SessionKey }) => Promise<any[]>;
   voiceResponsePipeline?: VoiceResponsePipelineDeps;
   parseOutboundMedia?: (text: string) => { text: string; mediaUrls: string[] };
   outboundMediaFetch?: (url: string) => Promise<Result<{ buffer: Buffer; mimeType?: string }, Error>>;
-  /** Optional callback for task extraction after successful agent execution. */
-  onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
   /** Response prefix config for template-based prefix/suffix on agent responses. */
   responsePrefixConfig?: { template: string; position: "prepend" | "append" };
   /** Template context builder for response prefix variables. */
@@ -118,14 +116,6 @@ export interface ExecutionPipelineDeps {
    * free-standing standalone export.
    */
   deliveryService: DeliveryService;
-  /**
-   * Per-instance set of in-flight outbound sendMessage promises. Threaded
-   * through DeliverToChannelDeps so deliver-to-channel can register active
-   * sends. Drained in stopAll() with a 5s deadline so SIGUSR2 cannot tear
-   * down adapters mid-send. Created by the channel-manager factory; do not
-   * pass externally.
-   */
-  inFlightSends?: Set<Promise<unknown>>;
   /** When true, only content inside <final> blocks reaches users. */
   enforceFinalTag?: boolean;
 }
@@ -143,38 +133,37 @@ export function resolveStreamingConfig(
   channelType: string,
   streamingConfig?: StreamingConfig,
 ): PerChannelStreamingConfig {
-  const global = streamingConfig;
-  if (!global) {
-    return {
-      enabled: true,
-      chunkMode: "paragraph",
-      chunkMinChars: 100,
-      deliveryTiming: { mode: "natural", minMs: 800, maxMs: 2500, jitterMs: 200, firstBlockDelayMs: 0 },
-      coalescer: { minChars: 0, maxChars: 500, idleMs: 1500, codeBlockPolicy: "standalone", adaptiveIdle: false },
-      typingMode: "thinking",
-      typingRefreshMs: 6000,
-      typingCircuitBreakerThreshold: 3,
-      typingTtlMs: 60000,
-      useMarkdownIR: true,
-      tableMode: "code",
-      replyMode: "first",
-    };
+  // No global streaming config provided — return the per-channel schema defaults.
+  // (Schema is the SSOT per AGENTS.md §6.4; no inline literals.)
+  //
+  // Documented deviation: the `StreamingConfigSchema.parse({})` lane is
+  // satisfied at AppConfig parse time (operator YAML → AppConfig in
+  // packages/core/src/config); inside this resolver we only use
+  // `PerChannelStreamingConfigSchema.parse({})` because the resolver's
+  // return type is `PerChannelStreamingConfig`, not `StreamingConfig`.
+  if (!streamingConfig) {
+    return PerChannelStreamingConfigSchema.parse({});
   }
-  const perChannel = global.perChannel[channelType];
+
+  // Per-channel override wins over globals.
+  const perChannel = streamingConfig.perChannel[channelType];
   if (perChannel) return perChannel;
+
+  // No per-channel override — merge schema defaults with global default* fields.
   return {
-    enabled: global.enabled,
-    chunkMode: global.defaultChunkMode,
-    chunkMinChars: 100,
-    deliveryTiming: global.defaultDeliveryTiming,
-    coalescer: global.defaultCoalescer,
-    typingMode: global.defaultTypingMode,
-    typingRefreshMs: global.defaultTypingRefreshMs,
-    typingCircuitBreakerThreshold: 3,
-    typingTtlMs: 60000,
-    useMarkdownIR: global.defaultUseMarkdownIR ?? true,
-    tableMode: global.defaultTableMode ?? "code",
-    replyMode: global.defaultReplyMode ?? "first",
+    ...PerChannelStreamingConfigSchema.parse({}),
+    enabled: streamingConfig.enabled,
+    chunkMode: streamingConfig.defaultChunkMode,
+    chunkMinChars: streamingConfig.defaultChunkMinChars,
+    deliveryTiming: streamingConfig.defaultDeliveryTiming,
+    coalescer: streamingConfig.defaultCoalescer,
+    typingMode: streamingConfig.defaultTypingMode,
+    typingRefreshMs: streamingConfig.defaultTypingRefreshMs,
+    typingCircuitBreakerThreshold: streamingConfig.defaultTypingCircuitBreakerThreshold,
+    typingTtlMs: streamingConfig.defaultTypingTtlMs,
+    useMarkdownIR: streamingConfig.defaultUseMarkdownIR,
+    tableMode: streamingConfig.defaultTableMode,
+    replyMode: streamingConfig.defaultReplyMode,
   };
 }
 
@@ -239,37 +228,137 @@ export async function executeAndDeliver(
     );
   }
 
+  // ===================================================================
   // Stage 1: Send policy gate, trust level, elevated reply routing
-  const policy = evaluateExecutionPolicy(
-    deps, adapter, effectiveMsg, originalMsg, sessionKey, agentId, sendOverrides,
-  );
+  // (Inlined from the former send-policy phase module — 5 deps fields
+  // already lived on ExecutionPipelineDeps.)
+  // ===================================================================
 
-  if (!policy.allowed) {
-    // Still execute the agent (for session history), just skip sending
-    const policyResult = await runWithContext({
-      traceId: randomUUID(),
-      tenantId: sessionKey.tenantId,
-      userId: sessionKey.userId,
-      sessionKey: formatSessionKey(sessionKey),
-      startedAt: systemNowMs(),
-      trustLevel: policy.trustLevel,
+  // Capability-driven config lookup (falls back to hardcoded maps)
+  const caps = deps.channelRegistry?.getCapabilities(adapter.channelType);
+  const metaKey = caps?.replyToMetaKey;
+  // In DMs, skip reply-to -- quoting the user's own message adds noise in 1-on-1 chats.
+  const replyTo =
+    isGroupMessage(originalMsg) && metaKey && originalMsg.metadata?.[metaKey]
+      ? String(originalMsg.metadata[metaKey])
+      : undefined;
+
+  // Resolve sender trust level from elevatedReply config (defaults to "user")
+  let trustLevel: "guest" | "user" | "admin" = "user";
+  if (deps.getElevatedReplyConfig) {
+    const elevCfg = deps.getElevatedReplyConfig(agentId);
+    if (elevCfg?.enabled) {
+      const senderId = effectiveMsg.senderId;
+      const mapped = elevCfg.senderTrustMap[senderId] ?? elevCfg.defaultTrustLevel;
+      if (mapped === "admin" || mapped === "user" || mapped === "guest") {
+        trustLevel = mapped;
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // SEND POLICY GATE (checked once before any delivery path)
+  // -------------------------------------------------------------------
+  if (deps.sendPolicyConfig?.enabled) {
+    const policyCtx: SendPolicyContext = {
+      channelId: adapter.channelId,
       channelType: adapter.channelType,
-      deliveryOrigin: createDeliveryOrigin({
+      chatType: originalMsg.chatType ?? "dm",
+    };
+    let policyDecision = evaluateSendPolicy(policyCtx, deps.sendPolicyConfig);
+
+    // Apply per-session override
+    const overrideKey = formatSessionKey(sessionKey);
+    const override = sendOverrides.get(overrideKey);
+    policyDecision = applySessionOverride(policyDecision, override);
+
+    if (!policyDecision.allowed) {
+      deps.eventBus.emit("sendpolicy:denied", {
+        channelId: adapter.channelId,
         channelType: adapter.channelType,
-        channelId: effectiveMsg.channelId,
-        userId: sessionKey.userId,
-        threadId: effectiveMsg.metadata?.threadId as string | undefined,
+        chatType: policyCtx.chatType,
+        reason: policyDecision.reason,
+        timestamp: systemNowMs(),
+      });
+      deps.logger.info(
+        { channelId: adapter.channelId, reason: policyDecision.reason },
+        "Send policy denied outbound message",
+      );
+
+      // Still execute the agent (for session history), just skip sending.
+      // (Silent-execute path preserved verbatim from pre-inline pipeline —
+      // one of two executor.execute call sites.)
+      const policyResult = await runWithContext({
+        traceId: randomUUID(),
         tenantId: sessionKey.tenantId,
-      }),
-    }, () => executor.execute(effectiveMsg, sessionKey, tools, undefined, agentId, directives as CommandDirectives | undefined, undefined, { operationType: "interactive" as const }));
-    emitDiagnostic(policyResult.tokensUsed.total, policyResult.cost.total, policyResult.finishReason);
-    return;
+        userId: sessionKey.userId,
+        sessionKey: formatSessionKey(sessionKey),
+        startedAt: systemNowMs(),
+        trustLevel,
+        channelType: adapter.channelType,
+        deliveryOrigin: createDeliveryOrigin({
+          channelType: adapter.channelType,
+          channelId: effectiveMsg.channelId,
+          userId: sessionKey.userId,
+          threadId: effectiveMsg.metadata?.threadId as string | undefined,
+          tenantId: sessionKey.tenantId,
+        }),
+      }, () => executor.execute(effectiveMsg, sessionKey, tools, undefined, agentId, directives as CommandDirectives | undefined, undefined, { operationType: "interactive" as const }));
+      emitDiagnostic(policyResult.tokensUsed.total, policyResult.cost.total, policyResult.finishReason);
+      return;
+    }
+
+    deps.eventBus.emit("sendpolicy:allowed", {
+      channelId: adapter.channelId,
+      channelType: adapter.channelType,
+      chatType: policyCtx.chatType,
+      reason: policyDecision.reason,
+      timestamp: systemNowMs(),
+    });
+  }
+
+  // -------------------------------------------------------------------
+  // ELEVATED REPLY MODE (mutates effectiveMsg via parameter rebind)
+  // -------------------------------------------------------------------
+  if (deps.getElevatedReplyConfig) {
+    const elevConfig = deps.getElevatedReplyConfig(agentId);
+    if (elevConfig?.enabled) {
+      const senderId = effectiveMsg.senderId;
+      const tl = elevConfig.senderTrustMap[senderId] ?? elevConfig.defaultTrustLevel;
+      const modelRoute = elevConfig.trustModelRoutes[tl];
+      if (modelRoute) {
+        deps.eventBus.emit("elevated:model_routed", {
+          sessionKey: formatSessionKey(sessionKey),
+          senderTrustLevel: tl,
+          modelRoute,
+          agentId,
+          timestamp: systemNowMs(),
+        });
+        effectiveMsg = {
+          ...effectiveMsg,
+          metadata: {
+            ...(effectiveMsg.metadata ?? {}),
+            modelRoute,
+          },
+        };
+      }
+      const promptOverride = elevConfig.trustPromptOverrides[tl];
+      if (promptOverride) {
+        effectiveMsg = {
+          ...effectiveMsg,
+          metadata: {
+            ...(effectiveMsg.metadata ?? {}),
+            systemPromptOverride: promptOverride,
+          },
+        };
+      }
+    }
   }
 
   // Stage 2: LLM execution with timeout, thinking filter, abort signal
   const execResult = await executeLlm(
-    deps, adapter, policy.effectiveMsg, sessionKey, agentId, executor,
-    policy.trustLevel, blockStreamCfg, policy.replyTo, typingLifecycle,
+    deps, adapter, effectiveMsg, sessionKey, agentId, executor,
+    trustLevel, blockStreamCfg, replyTo, typingLifecycle,
     tools, directives,
   );
 
@@ -279,10 +368,6 @@ export async function executeAndDeliver(
       return;
     }
 
-    // Follow-up trigger check — stays in orchestrator for closure access
-    handleFollowupTrigger(deps, adapter, policy.effectiveMsg, sessionKey, agentId, executor,
-      execResult.result, execResult.finishReason, blockStreamCfg, activePacers, sendOverrides);
-
     // Signal execution complete for thinking mode
     if (typingLifecycle && blockStreamCfg.typingMode !== "message") {
       typingLifecycle.markRunComplete();
@@ -290,8 +375,8 @@ export async function executeAndDeliver(
 
     // Stage 3: Response sanitization, filtering, media, voice, prefix
     const filterResult = await filterExecutionResponse(
-      deps, adapter, policy.effectiveMsg, originalMsg, sessionKey, agentId,
-      execResult.result, execResult.accumulated, policy.replyTo,
+      deps, adapter, effectiveMsg, originalMsg, sessionKey, agentId,
+      execResult.result, execResult.accumulated, replyTo,
       execResult.resourceAborted, execResult.abortReason, execResult.finishReason,
     );
 
@@ -308,29 +393,17 @@ export async function executeAndDeliver(
 
     // Stage 4: Chunking, coalescing, block pacing, delivery
     await deliverExecutionResponse(
-      deps, adapter, policy.effectiveMsg, filterResult.text,
-      blockStreamCfg, activePacers, policy.replyTo,
+      deps, adapter, effectiveMsg, filterResult.text,
+      blockStreamCfg, activePacers, replyTo,
       execResult.deliverySignal, typingLifecycle,
     );
 
     // Emit message:sent event with the cleaned response content
     deps.eventBus.emit("message:sent", {
-      channelId: policy.effectiveMsg.channelId,
+      channelId: effectiveMsg.channelId,
       messageId: "block-delivery",
       content: filterResult.text,
     });
-
-    // Task extraction: extract commitments/follow-ups from the conversation (non-blocking)
-    if (deps.onTaskExtraction && filterResult.text) {
-      deps.onTaskExtraction(filterResult.text, formatSessionKey(sessionKey), agentId).catch(
-        (err: unknown) => {
-          deps.logger.debug(
-            { err: err instanceof Error ? err.message : String(err) },
-            "Task extraction callback error (non-blocking)",
-          );
-        },
-      );
-    }
 
     // Emit diagnostic:message_processed for full lifecycle tracking
     emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason);
@@ -346,7 +419,7 @@ export async function executeAndDeliver(
       if (wasActive) {
         deps.eventBus.emit("typing:stopped", {
           channelId: adapter.channelId,
-          chatId: policy.effectiveMsg.channelId,
+          chatId: effectiveMsg.channelId,
           durationMs: systemNowMs() - startedAt,
           timestamp: systemNowMs(),
         });
@@ -355,93 +428,3 @@ export async function executeAndDeliver(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Follow-up trigger (kept in orchestrator for closure deps access)
-// ---------------------------------------------------------------------------
-
-/** Check and enqueue follow-up if trigger conditions are met. */
-function handleFollowupTrigger(
-  deps: ExecutionPipelineDeps,
-  adapter: ChannelPort,
-  effectiveMsg: NormalizedMessage,
-  sessionKey: SessionKey,
-  agentId: string,
-  executor: AgentExecutor,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  result: any,
-  diagFinishReason: string,
-  blockStreamCfg: PerChannelStreamingConfig,
-  activePacers: Set<BlockPacer>,
-  sendOverrides: SendOverrideStore,
-): void {
-  if (!deps.followupTrigger || !deps.commandQueue) return;
-
-  const resultMeta: Record<string, unknown> = {};
-  const resMeta = (result as unknown as Record<string, unknown>).metadata as Record<string, unknown> | undefined;
-  if (resMeta?.needs_followup) resultMeta.needs_followup = true;
-  if (resMeta?.compaction_triggered) resultMeta.compaction_triggered = true;
-  if (diagFinishReason === "compaction") resultMeta.compaction_triggered = true;
-
-  if (!deps.followupTrigger.shouldFollowup(resultMeta)) return;
-
-  const chainId = (effectiveMsg.metadata?.followupChainId as string) ?? randomUUID();
-  const currentDepth = deps.followupTrigger.getChainDepth(chainId);
-  const maxDepth = deps.followupConfig?.maxFollowupRuns ?? 3;
-
-  if (currentDepth >= maxDepth) {
-    deps.eventBus.emit("followup:depth_exceeded", {
-      sessionKey: formatSessionKey(sessionKey),
-      chainId,
-      maxDepth,
-      timestamp: systemNowMs(),
-    });
-    return;
-  }
-
-  const newDepth = deps.followupTrigger.incrementChain(chainId);
-
-  const threadMeta: Record<string, unknown> = {};
-  for (const key of THREAD_PROPAGATION_KEYS) {
-    if (effectiveMsg.metadata?.[key] != null) {
-      threadMeta[key] = effectiveMsg.metadata[key];
-    }
-  }
-
-  const followupMsg = deps.followupTrigger.createFollowupMessage(
-    sessionKey, adapter.channelType, effectiveMsg.channelId,
-    resultMeta.compaction_triggered ? "compaction" : "tool_result",
-    chainId, newDepth,
-    Object.keys(threadMeta).length > 0 ? threadMeta : undefined,
-  );
-
-  deps.eventBus.emit("followup:enqueued", {
-    sessionKey: formatSessionKey(sessionKey),
-    channelType: adapter.channelType,
-    reason: resultMeta.compaction_triggered ? "compaction" : "tool_result",
-    chainId,
-    chainDepth: newDepth,
-    timestamp: systemNowMs(),
-  });
-
-  // Re-enqueue follow-up through command queue (fire-and-forget)
-  deps.commandQueue.enqueue(sessionKey, followupMsg, adapter.channelType, async (messages) => {
-    const fMsg = messages[0]!;
-    await executeAndDeliver(deps, adapter, fMsg, fMsg, executor, sessionKey, agentId, blockStreamCfg, activePacers, sendOverrides, undefined);
-  }).then((enqueueResult) => {
-    if (!enqueueResult.ok) {
-      deps.logger.warn({
-        err: enqueueResult.error.message,
-        hint: "Check if command queue is shut down or overflow policy rejected the message",
-        errorKind: "resource" as const,
-        channelType: adapter.channelType,
-      }, "Follow-up enqueue failed");
-    }
-  }).catch((e: unknown) => {
-    deps.logger.warn({
-      err: e instanceof Error ? e.message : String(e),
-      hint: "Unexpected error during follow-up enqueue",
-      errorKind: "internal" as const,
-      channelType: adapter.channelType,
-    }, "Follow-up enqueue failed");
-  });
-}

@@ -5,9 +5,6 @@
 export { resolveEffectiveHeartbeatConfig } from "./heartbeat-config.js";
 export type { EffectiveHeartbeatConfig } from "./heartbeat-config.js";
 
-// Relevance filter
-export { HEARTBEAT_OK_TOKEN } from "./relevance-filter.js";
-
 // Heartbeat source port
 export type { HeartbeatCheckResult, HeartbeatSourcePort } from "./heartbeat-source.js";
 
@@ -47,19 +44,9 @@ export type { HeartbeatMemoryStats } from "./prompt-builder.js";
 export { stripMarkup, stripHeartbeatToken, stripResponsePrefix, classifyHeartbeatResponse, processHeartbeatResponse } from "./response-processor.js";
 export type { HeartbeatResponseOutcome, ClassifyHeartbeatInput, ProcessHeartbeatInput } from "./response-processor.js";
 
-// Cron event prompts
-export { buildCronEventPrompt, buildExecEventPrompt } from "./cron-event-prompt.js";
-
-// Cron delivery policy
-export { shouldSkipHeartbeatOnlyDelivery } from "./cron-delivery-policy.js";
-
 // Agent heartbeat source
 export { createAgentHeartbeatSource, isQueueBusy, resolveHeartbeatSessionKey } from "./agent-heartbeat-source.js";
 export type { AgentHeartbeatSourceDeps, HeartbeatSessionOps } from "./agent-heartbeat-source.js";
-
-// Heartbeat response cache — dedup identical heartbeat queries
-export { createHeartbeatResponseCache, hashHeartbeatPrompt } from "./response-cache.js";
-export type { HeartbeatResponseCache } from "./response-cache.js";
 
 // Quiet hours
 export { isInQuietHours, parseTimeToMinutes, getCurrentMinutesInTimezone } from "./quiet-hours.js";

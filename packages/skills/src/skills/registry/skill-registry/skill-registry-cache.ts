@@ -233,14 +233,9 @@ export function createSkillRegistry(
         discoveryPaths: config.discoveryPaths,
         debounceMs,
         onReload: () => {
-          // Re-discovery calls init() to refresh metadata and clear caches
+          // Re-discovery calls init() to refresh metadata and clear caches.
+          // emitSkillAudit -> audit:event captures the per-skill reload lifecycle.
           doInit();
-          // Emit skills:reloaded event after successful re-discovery
-          eventBus.emit("skills:reloaded", {
-            agentId: auditContext.agentId,
-            skillCount: metadataMap.size,
-            timestamp: systemNowMs(),
-          });
         },
         logger,
       });

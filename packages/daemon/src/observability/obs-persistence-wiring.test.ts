@@ -39,7 +39,6 @@ describe("tokenUsageEventToRow", () => {
     expect(row.traceId).toBe("trace-1");
     expect(row.agentId).toBe("agent-1");
     expect(row.channelId).toBe("chan-1");
-    expect(row.executionId).toBe("exec-1");
     expect(row.sessionKey).toBe("tenant:user:agent");
     expect(row.provider).toBe("anthropic");
     expect(row.model).toBe("claude-sonnet-4-5-20250929");
@@ -229,7 +228,6 @@ describe("setupObsPersistence", () => {
       insertDelivery: vi.fn(),
       insertDiagnostic: vi.fn(),
       insertChannelSnapshot: vi.fn(),
-      queryTokenUsage: vi.fn(),
       queryDelivery: vi.fn(),
       queryDiagnostics: vi.fn(),
       latestChannelSnapshots: vi.fn(),

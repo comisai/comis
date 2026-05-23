@@ -18,8 +18,6 @@ import type {
   AttachmentPayload,
   ChannelPort,
   ChannelStatus,
-  FetchedMessage,
-  FetchMessagesOptions,
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
@@ -388,11 +386,6 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         const message = error instanceof Error ? error.message : String(error);
         return err(new Error(`Failed to delete message: ${message}`));
       }
-    },
-
-     
-    async fetchMessages(_channelId: string, _options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>> {
-      return err(new Error("Fetching message history is not supported on WhatsApp."));
     },
 
     async sendAttachment(

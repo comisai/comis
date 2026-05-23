@@ -42,6 +42,7 @@ export type {
 export {
   sanitizeDiagnosticPayload,
   isCredentialFieldName,
+  CREDENTIAL_KEYS,
 } from "./shared/sanitize-diagnostic-payload.js";
 
 export {
@@ -51,8 +52,6 @@ export {
   resolveSafeOpenFlags,
   PathEscapeError,
 } from "./shared/path-guards.js";
-
-export { stableStringify } from "./shared/stable-stringify.js";
 
 export { safeJsonStringify } from "./shared/safe-json-stringify.js";
 
@@ -68,9 +67,9 @@ export type { FileSnapshot } from "./shared/file-snapshot.js";
 // rely on at their try-catch boundaries. Out-of-package consumers should
 // `import { appendRegularFile } from "@comis/observability"`.
 //
-// `ensureContainedDir` (Phase 48 OBS-HARD-01) is the third public helper —
-// it owns the `mkdir + lstat-gated chmod` pattern that the migration
-// sweep in Plans 48-05/48-06 routes 10 sibling writers through.
+// `ensureContainedDir` is the third public helper — it owns the
+// `mkdir + lstat-gated chmod` pattern that the migration sweep routes
+// 10 sibling writers through.
 export {
   appendRegularFile,
   writeRegularFile,
@@ -260,11 +259,10 @@ export type {
   AppendConfigAuditParams,
 } from "./config-audit/append.js";
 
-// config.observe writer (OBS-REVIEW-03 fix) — read-side counterpart
-// to the write-side helpers above. The daemon's bootstrap config-read
-// path dispatches into `appendConfigObserveAuditRecord` so each
-// resolved configPath produces one `event: "config.observe"` JSONL
-// record on every boot.
+// config.observe writer — read-side counterpart to the write-side
+// helpers above. The daemon's bootstrap config-read path dispatches
+// into `appendConfigObserveAuditRecord` so each resolved configPath
+// produces one `event: "config.observe"` JSONL record on every boot.
 export {
   createConfigObserveAuditRecord,
   appendConfigObserveAuditRecord,

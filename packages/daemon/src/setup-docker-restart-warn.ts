@@ -12,12 +12,13 @@
  * is that breadcrumb.
  *
  * Pure function over an injected logger and an optional `isDocker` probe
- * (defaulting to the real one from `@comis/infra`) so it is unit-testable
- * without spinning up the daemon harness.
+ * (defaulting to the real one from `@comis/core` -- the two-probe form,
+ * `/.dockerenv` + `/proc/1/cgroup` regex) so it is unit-testable without
+ * spinning up the daemon harness.
  *
  * @module
  */
-import { isDocker as defaultIsDocker } from "@comis/infra";
+import { isDocker as defaultIsDocker } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 export function emitDockerRestartPolicyWarn(

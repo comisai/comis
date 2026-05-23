@@ -148,8 +148,6 @@ export {
   OverflowConfigSchema,
   DebounceBufferConfigSchema,
   FollowupConfigSchema,
-  PriorityLaneConfigSchema,
-  LaneAssignmentConfigSchema,
 } from "./schema-queue.js";
 export {
   StreamingConfigSchema,
@@ -302,8 +300,6 @@ export type {
   OverflowConfig,
   DebounceBufferConfig,
   FollowupConfig,
-  PriorityLaneConfig,
-  LaneAssignmentConfig,
   StreamingConfig,
   PerChannelStreamingConfig,
   TypingMode,
@@ -353,9 +349,6 @@ export {
   type EnvValueWarning,
   type UnresolvedEnvRef,
 } from "./env-substitution.js";
-
-// Config migration (legacy key transformation)
-export { migrateConfig } from "./migrate.js";
 
 // Layered merge
 export { deepMerge, mergeLayered, loadLayered } from "./layered.js";

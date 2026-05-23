@@ -6,6 +6,12 @@
  * the impl match the `Ctx*Row` DTOs in
  * `@comis/core/src/ports/context-store-types.ts`.
  *
+ * ContextStorePort is an intersection alias
+ * `type ContextStorePort = ContextEngineStore & ContextAdminStore`. The
+ * contract test gates parity across all three names — the intersection
+ * alias AND each half — so a future classification miss (a method moved
+ * out of both halves) fails at TypeScript-check time.
+ *
  * Mirrors the analog pattern at
  * `packages/infra/src/logging/__tests__/logger-contract.test.ts`. Uses
  * `.toExtend` because `toMatchTypeOf` is deprecated since
@@ -22,6 +28,8 @@
 import Database from "better-sqlite3";
 import {
   type ContextStorePort,
+  type ContextEngineStore,
+  type ContextAdminStore,
   type CtxConversationRow,
   type CtxMessageRow,
 } from "@comis/core";
@@ -39,20 +47,34 @@ describe("createContextStore — ContextStorePort contract", () => {
     store = createContextStore(db);
   });
 
-  it("returns a value structurally compatible with ContextStorePort", () => {
+  it("returns a value structurally compatible with ContextStorePort (intersection alias)", () => {
     expectTypeOf<ReturnType<typeof createContextStore>>().toExtend<ContextStorePort>();
+  });
 
-    // Sample 8 representative methods across all 38 — guards against a
-    // future refactor silently dropping a method from the impl.
+  it("returns a value structurally compatible with ContextEngineStore (engine half — 34 per-session methods)", () => {
+    expectTypeOf<ReturnType<typeof createContextStore>>().toExtend<ContextEngineStore>();
+  });
+
+  it("returns a value structurally compatible with ContextAdminStore (admin half — 4 admin/cleanup methods)", () => {
+    expectTypeOf<ReturnType<typeof createContextStore>>().toExtend<ContextAdminStore>();
+  });
+
+  it("exposes representative methods from both halves at runtime", () => {
+    // Sample representative methods across both halves of the split —
+    // guards against a future refactor silently dropping a method from
+    // the impl. The list MUST include at least 1 Admin-half method to
+    // pin coverage across the split per RESEARCH §B.6 risk #3.
     const sampledMethods: ReadonlyArray<keyof ContextStorePort> = [
-      "createConversation",
-      "getConversation",
-      "insertMessage",
-      "getMessagesByConversation",
-      "insertSummary",
-      "getSummary",
-      "createGrant",
-      "getActiveGrants",
+      "createConversation",       // Engine
+      "getConversation",          // Engine
+      "insertMessage",            // Engine
+      "getMessagesByConversation",// Engine
+      "insertSummary",            // Engine
+      "getSummary",               // Engine
+      "createGrant",              // Engine
+      "getActiveGrants",          // Engine
+      "listConversations",        // Admin — pins admin-side coverage
+      "cleanupExpiredGrants",     // Admin — pins admin-side coverage
     ];
     for (const m of sampledMethods) {
       expect(

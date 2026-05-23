@@ -27,10 +27,10 @@ describe("bridge-metrics shape regression guard", () => {
     expect(m.hashAssertionMismatches).toBe(0);
     expect(m.signatureScrubs).toBe(0);
     expect(m.signatureScrubsToolCallsAffected).toBe(0);
-    // 260520-wcf warmup-turn counters
+    // Warmup-turn counters
     expect(m.warmupTurnCount).toBe(0);
     expect(m.totalPendingCacheInvestmentUsd).toBe(0);
-    // 260521-0bn cumulative cost-correction delta
+    // Cumulative cost-correction delta
     expect(m.totalCostCorrectionDeltaUsd).toBe(0);
   });
 
@@ -54,15 +54,15 @@ describe("bridge-metrics shape regression guard", () => {
     expect(r.hashAssertionMismatches).toBe(0);
     expect(r.signatureScrubs).toBe(0);
     expect(r.signatureScrubsToolCallsAffected).toBe(0);
-    // 260520-wcf warmup-turn counters surfaced unconditionally so the
+    // Warmup-turn counters surfaced unconditionally so the
     // "Execution complete" bookend log has a stable shape.
     expect(r.warmupTurnCount).toBe(0);
     expect(r.totalPendingCacheInvestmentUsd).toBe(0);
-    // 260521-0bn cumulative cost-correction delta surfaced unconditionally.
+    // Cumulative cost-correction delta surfaced unconditionally.
     expect(r.totalCostCorrectionDeltaUsd).toBe(0);
   });
 
-  it("buildBridgeResult projects totalCostCorrectionDeltaUsd from metrics state (260521-0bn)", () => {
+  it("buildBridgeResult projects totalCostCorrectionDeltaUsd from metrics state", () => {
     const m = createBridgeMetrics();
     m.totalCostCorrectionDeltaUsd = 0.00042;
     const r = buildBridgeResult(m, 1);

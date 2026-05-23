@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import type { RpcContext } from "./method-router.js";
-import { createMethodRouter, createDynamicMethodRouter, createStubMethods } from "./method-router.js";
+import type { RpcContext, RpcMethodMap, RpcMethodName } from "./method-router.js";
+import { createDynamicMethodRouter } from "./method-router.js";
 
 /** RPC context with full access */
 const ADMIN_CTX: RpcContext = { clientId: "admin", scopes: ["*"] };
@@ -9,100 +9,33 @@ const ADMIN_CTX: RpcContext = { clientId: "admin", scopes: ["*"] };
 /** RPC context with rpc-only scope */
 const RPC_CTX: RpcContext = { clientId: "client-a", scopes: ["rpc"] };
 
-/** RPC context with no scopes */
-const NO_SCOPE_CTX: RpcContext = { clientId: "client-b", scopes: [] };
-
-describe("createMethodRouter", () => {
-  const stubs = createStubMethods();
-  const server = createMethodRouter(stubs);
-
-  it("dispatches a registered method", async () => {
-    const response = await server.receive(
-      { jsonrpc: "2.0", method: "agent.execute", params: { query: "hello" }, id: 1 },
-      RPC_CTX,
-    );
-
-    expect(response).not.toBeNull();
-    expect(response!.result).toEqual({
-      stub: true,
-      method: "agent.execute",
-      params: { query: "hello" },
-    });
-  });
-
-  it("returns -32601 for unregistered method", async () => {
-    const response = await server.receive(
-      { jsonrpc: "2.0", method: "nonexistent.method", id: 2 },
-      RPC_CTX,
-    );
-
-    expect(response).not.toBeNull();
-    expect(response!.error).toBeDefined();
-    expect(response!.error!.code).toBe(-32601);
-  });
-
-  it("rejects call when client lacks required scope", async () => {
-    const response = await server.receive(
-      { jsonrpc: "2.0", method: "config.get", params: {}, id: 3 },
-      RPC_CTX, // has "rpc" scope, needs "admin"
-    );
-
-    expect(response).not.toBeNull();
-    expect(response!.error).toBeDefined();
-    expect(response!.error!.code).toBe(-32603);
-    expect(response!.error!.message).toContain("Insufficient scope");
-  });
-
-  it("allows wildcard scope for admin methods", async () => {
-    const response = await server.receive(
-      { jsonrpc: "2.0", method: "config.set", params: { key: "test" }, id: 4 },
-      ADMIN_CTX, // has "*" wildcard scope
-    );
-
-    expect(response).not.toBeNull();
-    expect(response!.result).toEqual({
-      stub: true,
-      method: "config.set",
-      params: { key: "test" },
-    });
-  });
-
-  it("rejects when client has empty scopes", async () => {
-    const response = await server.receive(
-      { jsonrpc: "2.0", method: "agent.execute", params: {}, id: 5 },
-      NO_SCOPE_CTX,
-    );
-
-    expect(response).not.toBeNull();
-    expect(response!.error).toBeDefined();
-    expect(response!.error!.code).toBe(-32603);
-  });
-
-  it("dispatches memory.search with rpc scope", async () => {
-    const response = await server.receive(
-      { jsonrpc: "2.0", method: "memory.search", params: { query: "test" }, id: 6 },
-      RPC_CTX,
-    );
-
-    expect(response).not.toBeNull();
-    expect(response!.result).toEqual({
-      stub: true,
-      method: "memory.search",
-      params: { query: "test" },
-    });
-  });
-});
+/**
+ * Build a minimal RpcMethodMap for a test. Seeds only the methods the test
+ * actually exercises so we do not re-introduce the dead `createStubMethods`
+ * shape via the back door (RESEARCH Pitfall 3).
+ */
+function makeInlineStubs(methods: readonly RpcMethodName[]): RpcMethodMap {
+  const map: RpcMethodMap = {};
+  for (const name of methods) {
+    map[name] = (params) => ({ stub: true, method: name, params });
+  }
+  return map;
+}
 
 describe("createDynamicMethodRouter", () => {
   it("registers initial methods from RpcMethodMap", async () => {
-    const router = createDynamicMethodRouter(createStubMethods());
+    const router = createDynamicMethodRouter(
+      makeInlineStubs(["agent.execute", "config.set"]),
+    );
     // Initial core methods should be registered
     expect(router.hasMethod("agent.execute")).toBe(true);
     expect(router.hasMethod("config.set")).toBe(true);
   });
 
   it("dispatches a dynamically registered method", async () => {
-    const router = createDynamicMethodRouter(createStubMethods());
+    const router = createDynamicMethodRouter(
+      makeInlineStubs(["agent.execute"]),
+    );
 
     router.registerMethod("cron.list", "rpc", () => ({ jobs: [] }));
 
@@ -113,6 +46,52 @@ describe("createDynamicMethodRouter", () => {
 
     expect(response).not.toBeNull();
     expect(response!.result).toEqual({ jobs: [] });
+  });
+
+  it("enforces scope on initial core methods (config.set requires admin)", async () => {
+    const router = createDynamicMethodRouter(
+      makeInlineStubs(["config.set"]),
+    );
+    const response = await router.server.receive(
+      { jsonrpc: "2.0", method: "config.set", params: { key: "test" }, id: 1 },
+      RPC_CTX, // has "rpc", needs "admin"
+    );
+    expect(response).not.toBeNull();
+    expect(response!.error).toBeDefined();
+    expect(response!.error!.code).toBe(-32603);
+    expect(response!.error!.message).toContain("Insufficient scope");
+  });
+
+  it("allows wildcard scope (admin) to call admin-only initial methods", async () => {
+    const router = createDynamicMethodRouter(
+      makeInlineStubs(["config.set"]),
+    );
+    const response = await router.server.receive(
+      { jsonrpc: "2.0", method: "config.set", params: { key: "test" }, id: 2 },
+      ADMIN_CTX,
+    );
+    expect(response).not.toBeNull();
+    expect(response!.result).toEqual({
+      stub: true,
+      method: "config.set",
+      params: { key: "test" },
+    });
+  });
+
+  it("dispatches initial method with matching scope", async () => {
+    const router = createDynamicMethodRouter(
+      makeInlineStubs(["memory.search"]),
+    );
+    const response = await router.server.receive(
+      { jsonrpc: "2.0", method: "memory.search", params: { query: "test" }, id: 3 },
+      RPC_CTX,
+    );
+    expect(response).not.toBeNull();
+    expect(response!.result).toEqual({
+      stub: true,
+      method: "memory.search",
+      params: { query: "test" },
+    });
   });
 
   it("enforces namespace prefix on new methods", () => {
@@ -191,31 +170,6 @@ describe("createDynamicMethodRouter", () => {
     expect(response).not.toBeNull();
     expect(response!.error).toBeDefined();
     expect(response!.error!.code).toBe(-32601);
-  });
-});
-
-describe("createStubMethods", () => {
-  it("returns handlers for all 6 methods", () => {
-    const stubs = createStubMethods();
-    const names = Object.keys(stubs);
-
-    expect(names).toHaveLength(6);
-    expect(names).toContain("agent.execute");
-    expect(names).toContain("agent.stream");
-    expect(names).toContain("memory.search");
-    expect(names).toContain("memory.inspect");
-    expect(names).toContain("config.get");
-    expect(names).toContain("config.set");
-  });
-
-  it("each stub returns method identification", () => {
-    const stubs = createStubMethods();
-    const result = stubs["agent.execute"]({ foo: "bar" }, ADMIN_CTX);
-    expect(result).toEqual({
-      stub: true,
-      method: "agent.execute",
-      params: { foo: "bar" },
-    });
   });
 });
 
@@ -340,7 +294,10 @@ describe("createDynamicMethodRouter trace logging", () => {
 
   it("logs successful initial-method invocation through trace wrapper when logger is provided", async () => {
     const { logger, calls } = makeLogger();
-    const router = createDynamicMethodRouter(createStubMethods(), logger);
+    const router = createDynamicMethodRouter(
+      makeInlineStubs(["agent.execute"]),
+      logger,
+    );
     await router.server.receive(
       { jsonrpc: "2.0", method: "agent.execute", params: { x: 1 }, id: 200 },
       RPC_CTX,

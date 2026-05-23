@@ -9,16 +9,6 @@ import type {
   HookBeforeAgentStartEvent,
   HookBeforeAgentStartContext,
   HookBeforeAgentStartResult,
-  HookAgentEndEvent,
-  HookAgentEndContext,
-  HookBeforeToolCallEvent,
-  HookBeforeToolCallContext,
-  HookBeforeToolCallResult,
-  HookAfterToolCallEvent,
-  HookAfterToolCallContext,
-  HookToolResultPersistEvent,
-  HookToolResultPersistContext,
-  HookToolResultPersistResult,
   HookBeforeCompactionEvent,
   HookBeforeCompactionContext,
   HookBeforeCompactionResult,
@@ -40,13 +30,9 @@ import type {
 } from "../ports/hook-types.js";
 import {
   BeforeAgentStartResultSchema,
-  BeforeToolCallResultSchema,
-  ToolResultPersistResultSchema,
   BeforeCompactionResultSchema,
   BeforeDeliveryResultSchema,
   mergeBeforeAgentStart,
-  mergeBeforeToolCall,
-  mergeToolResultPersist,
   mergeBeforeCompaction,
   mergeBeforeDelivery,
 } from "./hook-strategies.js";
@@ -67,22 +53,6 @@ export interface HookRunner {
     ctx: HookBeforeAgentStartContext,
   ): Promise<HookBeforeAgentStartResult | undefined>;
 
-  runBeforeToolCall(
-    event: HookBeforeToolCallEvent,
-    ctx: HookBeforeToolCallContext,
-  ): Promise<HookBeforeToolCallResult | undefined>;
-
-  /**
-   * Run tool_result_persist hooks SYNCHRONOUSLY.
-   *
-   * This hook executes in a synchronous code path (session transcript append).
-   * Handlers MUST NOT return Promises.
-   */
-  runToolResultPersist(
-    event: HookToolResultPersistEvent,
-    ctx: HookToolResultPersistContext,
-  ): HookToolResultPersistResult | undefined;
-
   runBeforeCompaction(
     event: HookBeforeCompactionEvent,
     ctx: HookBeforeCompactionContext,
@@ -94,8 +64,6 @@ export interface HookRunner {
   ): Promise<HookBeforeDeliveryResult | undefined>;
 
   // Void hooks (parallel, fire-and-forget)
-  runAgentEnd(event: HookAgentEndEvent, ctx: HookAgentEndContext): Promise<void>;
-  runAfterToolCall(event: HookAfterToolCallEvent, ctx: HookAfterToolCallContext): Promise<void>;
   runAfterCompaction(event: HookAfterCompactionEvent, ctx: HookAfterCompactionContext): Promise<void>;
   runAfterDelivery(event: HookAfterDeliveryEvent, ctx: HookAfterDeliveryContext): Promise<void>;
   runSessionStart(event: HookSessionStartEvent, ctx: HookSessionStartContext): Promise<void>;
@@ -106,11 +74,16 @@ export interface HookRunner {
 
 /**
  * Options for creating a hook runner.
+ *
+ * The `hook:executed` observability event was removed (zero non-test
+ * subscribers). The `eventBus` option remains for the live `audit:event`
+ * emission via `emitAuditEvent` which fires when modifying hooks alter
+ * agent prompts or delivery payloads.
  */
 export interface HookRunnerOptions {
   /** Catch and log hook handler errors instead of propagating (default: true). */
   catchErrors?: boolean;
-  /** Event bus for emitting hook:executed observability events. */
+  /** Event bus for emitting audit:event entries on modifying-hook output. */
   eventBus?: TypedEventBus;
 }
 
@@ -128,28 +101,6 @@ export function createHookRunner(
   options: HookRunnerOptions = {},
 ): HookRunner {
   const { catchErrors = true, eventBus } = options;
-
-  /**
-   * Emit a hook:executed observability event.
-   */
-  function emitHookEvent(
-    hookName: string,
-    pluginId: string,
-    startMs: number,
-    success: boolean,
-    error?: string,
-  ): void {
-    if (eventBus) {
-      eventBus.emit("hook:executed", {
-        hookName,
-        pluginId,
-        durationMs: systemNowMs() - startMs,
-        success,
-        error,
-        timestamp: systemNowMs(),
-      });
-    }
-  }
 
   /**
    * Emit an audit:event for hook modifications.
@@ -189,13 +140,9 @@ export function createHookRunner(
 
     await Promise.all(
       registeredHooks.map(async (hook: RegisteredHook<K>) => {
-        const startMs = systemNowMs();
         try {
           await (hook.handler as (e: unknown, c: unknown) => Promise<void> | void)(event, ctx);
-          emitHookEvent(hookName, hook.pluginId, startMs, true);
         } catch (e) {
-          const errorMsg = e instanceof Error ? e.message : String(e);
-          emitHookEvent(hookName, hook.pluginId, startMs, false, errorMsg);
           if (!catchErrors) throw e;
         }
       }),
@@ -220,7 +167,6 @@ export function createHookRunner(
     let result: TResult | undefined;
 
     for (const hook of registeredHooks) {
-      const startMs = systemNowMs();
       try {
         const r = await (
           hook.handler as (e: unknown, c: unknown) => Promise<TResult | void> | TResult | void
@@ -230,8 +176,6 @@ export function createHookRunner(
           if (schema) {
             const parsed = schema.safeParse(r);
             if (!parsed.success) {
-              emitHookEvent(hookName, hook.pluginId, startMs, false,
-                `Invalid hook return: ${parsed.error.issues.map(i => i.message).join(", ")}`);
               continue; // Skip invalid results
             }
           }
@@ -239,64 +183,9 @@ export function createHookRunner(
           // Audit hook modifications
           auditHookResult(hookName, hook.pluginId, r);
 
-          emitHookEvent(hookName, hook.pluginId, startMs, true);
           result = merge(result, r as TResult);
-        } else {
-          emitHookEvent(hookName, hook.pluginId, startMs, true);
         }
       } catch (e) {
-        const errorMsg = e instanceof Error ? e.message : String(e);
-        emitHookEvent(hookName, hook.pluginId, startMs, false, errorMsg);
-        if (!catchErrors) throw e;
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Run modifying hooks SYNCHRONOUSLY. For tool_result_persist only.
-   * Handlers MUST NOT return Promises.
-   * When a schema is provided, hook return values are validated before merging.
-   */
-  function runModifyingHookSync<K extends HookName, TResult>(
-    hookName: K,
-    event: unknown,
-    ctx: unknown,
-    merge: (acc: TResult | undefined, next: TResult) => TResult,
-    schema?: z.ZodType<TResult>,
-  ): TResult | undefined {
-    const registeredHooks = registry.getHooksByName(hookName);
-    if (registeredHooks.length === 0) return undefined;
-
-    let result: TResult | undefined;
-
-    for (const hook of registeredHooks) {
-      const startMs = systemNowMs();
-      try {
-        const r = (hook.handler as (e: unknown, c: unknown) => TResult | void)(event, ctx);
-        if (r) {
-          // Validate hook return value against schema
-          if (schema) {
-            const parsed = schema.safeParse(r);
-            if (!parsed.success) {
-              emitHookEvent(hookName, hook.pluginId, startMs, false,
-                `Invalid hook return: ${parsed.error.issues.map(i => i.message).join(", ")}`);
-              continue; // Skip invalid results
-            }
-          }
-
-          // Audit hook modifications
-          auditHookResult(hookName, hook.pluginId, r);
-
-          emitHookEvent(hookName, hook.pluginId, startMs, true);
-          result = merge(result, r as TResult);
-        } else {
-          emitHookEvent(hookName, hook.pluginId, startMs, true);
-        }
-      } catch (e) {
-        const errorMsg = e instanceof Error ? e.message : String(e);
-        emitHookEvent(hookName, hook.pluginId, startMs, false, errorMsg);
         if (!catchErrors) throw e;
       }
     }
@@ -315,17 +204,6 @@ export function createHookRunner(
         emitAuditEvent(hookName, pluginId, {
           systemPromptModified: result.systemPrompt !== undefined,
           prependContextModified: result.prependContext !== undefined,
-        });
-      }
-    }
-
-    if (hookName === "before_tool_call") {
-      const result = r as HookBeforeToolCallResult;
-      if (result.params !== undefined || result.block !== undefined) {
-        emitAuditEvent(hookName, pluginId, {
-          paramsModified: result.params !== undefined,
-          blocked: result.block === true,
-          blockReason: result.blockReason,
         });
       }
     }
@@ -350,14 +228,6 @@ export function createHookRunner(
       runModifyingHook("before_agent_start", event, ctx, mergeBeforeAgentStart,
         BeforeAgentStartResultSchema as z.ZodType<HookBeforeAgentStartResult>),
 
-    runBeforeToolCall: (event, ctx) =>
-      runModifyingHook("before_tool_call", event, ctx, mergeBeforeToolCall,
-        BeforeToolCallResultSchema as z.ZodType<HookBeforeToolCallResult>),
-
-    runToolResultPersist: (event, ctx) =>
-      runModifyingHookSync("tool_result_persist", event, ctx, mergeToolResultPersist,
-        ToolResultPersistResultSchema as z.ZodType<HookToolResultPersistResult>),
-
     runBeforeCompaction: (event, ctx) =>
       runModifyingHook("before_compaction", event, ctx, mergeBeforeCompaction,
         BeforeCompactionResultSchema as z.ZodType<HookBeforeCompactionResult>),
@@ -367,8 +237,6 @@ export function createHookRunner(
         BeforeDeliveryResultSchema as z.ZodType<HookBeforeDeliveryResult>),
 
     // Void hooks
-    runAgentEnd: (event, ctx) => runVoidHook("agent_end", event, ctx),
-    runAfterToolCall: (event, ctx) => runVoidHook("after_tool_call", event, ctx),
     runAfterCompaction: (event, ctx) => runVoidHook("after_compaction", event, ctx),
     runAfterDelivery: (event, ctx) => runVoidHook("after_delivery", event, ctx),
     runSessionStart: (event, ctx) => runVoidHook("session_start", event, ctx),

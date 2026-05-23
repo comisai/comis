@@ -186,7 +186,7 @@ function renderToolEntry(schema: object): ToolReportEntry {
 }
 
 /**
- * Per-file truncation predicate (260519-rrm deviation H fix).
+ * Per-file truncation predicate.
  *
  * Tolerate a single trailing-whitespace character: the bootstrap injector
  * strips trailing whitespace from injected content, so `rawChars -
@@ -246,8 +246,8 @@ export function buildSystemPromptReport(params: BuildParams): SystemPromptReport
   const injectedWorkspaceFiles: SystemPromptReport["injectedWorkspaceFiles"] = params.bootstrapFiles.map(
     (f) => {
       // Truncation predicate tolerates a 1-char delta to absorb the
-      // bootstrap injector's trailing-whitespace strip (260519-rrm
-      // deviation H). See `isFileTruncated` for rationale.
+      // bootstrap injector's trailing-whitespace strip. See
+      // `isFileTruncated` for rationale.
       const truncated = isFileTruncated(f);
       const sha256 = !f.missing && f.rawContent !== undefined ? sha256Hex(f.rawContent) : undefined;
       return {

@@ -479,14 +479,14 @@ export function writeRegularFile(
 
 // ---------------------------------------------------------------------------
 // ensureContainedDir — shared substrate primitive for parent-dir creation
-// + defensive chmod (OBS-HARD-01, Phase 48).
+// + defensive chmod.
 //
 // Replaces the open-coded `mkdir + lstat-gated chmod` pattern duplicated
 // across `queued-file-writer.ts:ensureParentDir` and
 // `config-audit/append.ts:ensureConfigAuditParentDir`. The migration
-// sweep in Phase 48 Plans 48-05/48-06 routes ~10 sibling writers through
-// this helper so every artifact-dir under `~/.comis/` honors the §1.4
-// `0o700` invariant via ONE canonical primitive.
+// routes ~10 sibling writers through this helper so every artifact-dir
+// under `~/.comis/` honors the §1.4 `0o700` invariant via ONE canonical
+// primitive.
 // ---------------------------------------------------------------------------
 
 /** Options for `ensureContainedDir`. */

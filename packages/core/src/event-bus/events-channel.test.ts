@@ -13,23 +13,14 @@ describe("ChannelEvents payload structure", () => {
       channelType: "telegram",
       pluginId: "telegram-01",
       capabilities: {
-        chatTypes: ["dm", "group"],
         features: {
           reactions: true,
           editMessages: true,
           deleteMessages: true,
           fetchHistory: false,
           attachments: true,
-          threads: false,
-          mentions: false,
-          formatting: ["markdown", "html"],
-          buttons: true,
-          cards: false,
-          effects: true,
         },
         limits: { maxMessageChars: 4096 },
-        streaming: { supported: true, throttleMs: 300, method: "edit" },
-        threading: { supported: false, threadType: "none" },
       },
       timestamp: Date.now(),
     };
@@ -41,9 +32,9 @@ describe("ChannelEvents payload structure", () => {
     const received = handler.mock.calls[0]![0] as EventMap["channel:registered"];
     expect(received.channelType).toBe("telegram");
     expect(received.pluginId).toBe("telegram-01");
-    expect(received.capabilities.chatTypes).toContain("dm");
+    expect(received.capabilities.features.reactions).toBe(true);
     expect(received.capabilities.limits.maxMessageChars).toBe(4096);
-    expect(received.capabilities.features.buttons).toBe(true);
+    expect(received.capabilities.features.editMessages).toBe(true);
   });
 
   it("queue:enqueued delivers sessionKey, queueDepth, mode", () => {

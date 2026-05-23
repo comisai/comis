@@ -264,36 +264,6 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
       return ok(messageId);
     },
 
-     
-    async editMessage(_channelId: string, _messageId: string, _text: string): Promise<Result<void, Error>> {
-      return err(
-        new Error("Editing messages is not supported on iMessage."),
-      );
-    },
-
-     
-    async reactToMessage(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
-      return err(
-        new Error(
-          "Reactions are not supported via the imsg CLI interface.",
-        ),
-      );
-    },
-
-     
-    async removeReaction(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
-      return err(
-        new Error("Reactions are not supported on iMessage"),
-      );
-    },
-
-     
-    async deleteMessage(_channelId: string, _messageId: string): Promise<Result<void, Error>> {
-      return err(
-        new Error("Deleting messages is not supported on iMessage."),
-      );
-    },
-
     async fetchMessages(
       chatId: string,
       options?: FetchMessagesOptions,
@@ -321,9 +291,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
           timestamp:
             typeof msg.timestamp === "number"
               ? msg.timestamp
-              : typeof msg.created_at === "string"
-                ? Date.parse(msg.created_at) || systemNowMs()
-                : systemNowMs(),
+              : systemNowMs(),
         }),
       );
 

@@ -1922,9 +1922,6 @@
               }
             }
           ]
-        },
-        "path": {
-          "type": "string"
         }
       },
       "required": [
@@ -3081,12 +3078,6 @@
               "updatedAt": {
                 "type": "number"
               },
-              "lastUsedAt": {
-                "type": "number"
-              },
-              "usageCount": {
-                "type": "number"
-              },
               "expiresAt": {
                 "type": "number"
               }
@@ -3149,10 +3140,7 @@
         },
         "storage": {
           "type": "string",
-          "enum": [
-            "encrypted",
-            "envfile"
-          ]
+          "const": "encrypted"
         },
         "restarting": {
           "type": "boolean",
@@ -7531,12 +7519,6 @@
               "expiresAt": {
                 "type": "number"
               },
-              "lastUsedAt": {
-                "type": "number"
-              },
-              "usageCount": {
-                "type": "number"
-              },
               "createdAt": {
                 "type": "number"
               },
@@ -7546,7 +7528,6 @@
             },
             "required": [
               "name",
-              "usageCount",
               "createdAt",
               "updatedAt"
             ],

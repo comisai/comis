@@ -168,8 +168,8 @@ describe("@comis/agent -- architecture invariants", () => {
 
   it("tool_search_tool_regex literal absent from production source (excluding allowlist)", () => {
     // Allowlist of files where "tool_search_tool_regex" legitimately appears
-    // as a tool-identifier in the Anthropic API payload reshape OR (post
-    // 260520-e8z-01) in the deferred-tools prompt teaching that explicitly
+    // as a tool-identifier in the Anthropic API payload reshape OR
+    // in the deferred-tools prompt teaching that explicitly
     // names the discovery tool. Five legitimate carriers:
     //   - request-body/tool-deferral-injection.ts — appends the server-side
     //     tool to the API payload (type discriminant + name field) when
@@ -204,7 +204,7 @@ describe("@comis/agent -- architecture invariants", () => {
       "request-body/types.ts",     // JSDoc reference on the deferred-tools config option
       "anthropic-extractor.ts",    // cache-detection/ extractor module
       "stub-filter-injector.ts",   // JSDoc cross-reference to the payload reshape
-      "tool-deferral.ts",          // deferred-tools instruction names both discovery tools (260520-e8z-01)
+      "tool-deferral.ts",          // deferred-tools instruction names both discovery tools
     ];
     const offenders = result.matches.filter(
       (m) => !ALLOWED_FILES.some((allowed) => m.endsWith(allowed)),

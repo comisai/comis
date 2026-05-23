@@ -42,13 +42,7 @@ import { ok, err, type Result } from "@comis/shared";
 import { appendRegularFile, ensureContainedDir } from "../shared/fs-safe.js";
 import { safePath, systemDateFrom, systemNowMs } from "@comis/core";
 
-import { sanitizeForPersistence } from "../redact/redact-secrets.js";
-import { safeJsonStringify } from "../shared/safe-json-stringify.js";
-
-import {
-  redactConfigAuditArgv,
-  CONFIG_AUDIT_ARGV_CAP,
-} from "./argv-redactor.js";
+import { encodeAuditRecord } from "./encode-record.js";
 import { detectSuspicious } from "./suspicious.js";
 import type {
   ConfigWriteAuditRecord,
@@ -70,7 +64,7 @@ export const DEFAULT_KEEP_ROTATED = 5;
  * everything that can be captured BEFORE the write. The "next" half
  * of the record is filled by `finalizeConfigWriteAuditRecord`.
  *
- * `callerSource` is the pre-260519-rrm `source` enum value (e.g.,
+ * `callerSource` is the original `source` enum value (e.g.,
  * "last-known-good-save", "config-patch-rpc", "cli-sync-tooling") —
  * stored under `callerSource` on the persisted record so the design
  * §9.2 top-level `source` slot is reserved for the fixed literal
@@ -364,7 +358,7 @@ export interface AppendConfigAuditParams {
   readonly keepRotated?: number;
   /**
    * Opt-in real-path confinement base forwarded to `appendRegularFile`.
-   * Production callers (last-known-good, config-audit-hook, CLI
+   * Production callers (last-known-good, audit-hook, CLI
    * sync-tooling audit) should pass `path.join(os.homedir(), ".comis")`
    * via `getDefaultConfigAuditConfinedBase()` to close the
    * ancestor-symlink gap. Tests omit it (default `undefined`) to keep
@@ -418,72 +412,8 @@ export class ConfigAuditAppendError extends Error {
 }
 
 /**
- * Sentinel emitted when `safeJsonStringify` returns undefined (BigInt,
- * circular reference, or other host-throw in JSON.stringify). The
- * sentinel is hand-crafted with only string + number primitives so it
- * is guaranteed to be JSON-serializable — `JSON.stringify` on the
- * sentinel can never itself fail.
- *
- * Downstream consumers (config.audit.list, scrubber, doctor) see a
- * parseable record they can recognize and skip / report. Compare to
- * the prior behavior, which wrote the literal string "undefined\n"
- * that broke every JSON.parse call on the affected line.
- */
-function emitSerializationErrorSentinel(): string {
-  // Hand-crafted to be unconditionally serializable. JSON.stringify here
-  // CANNOT return undefined — the non-null assertion is sound and is the
-  // boundary point where the writer guarantees a parseable JSONL line.
-  // Uses `ts` (ISO string) per design §9.2; `tsMs` was dropped in
-  // 260519-rrm deviation G.
-  const sentinel = {
-    traceSchema: "comis-config-audit" as const,
-    schemaVersion: 1 as const,
-    __serializationError: "record-not-serializable" as const,
-    ts: systemDateFrom(systemNowMs()).toISOString(),
-  };
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  return JSON.stringify(sentinel)! + "\n";
-}
-
-/**
- * Encode a record for on-disk persistence: argv goes through the
- * dedicated `redactConfigAuditArgv` (which knows `--flag=value`
- * shape); the rest of the record goes through `sanitizeForPersistence`.
- * The two redactors are NOT composed because they would mutually
- * over-redact — `redactSecretsInText` matches `--api-key=...` as a
- * credential pattern and would collapse the already-masked
- * `--api-key=***` to a bare `***`, losing the flag-name evidence
- * operators need for forensics.
- */
-function encodeRecord(record: ConfigWriteAuditRecord): string {
-  const argvRedacted = redactConfigAuditArgv(record.argv).slice(
-    0,
-    CONFIG_AUDIT_ARGV_CAP,
-  );
-  // Sanitize everything EXCEPT argv. Use a placeholder marker for
-  // argv so the sanitizer leaves the slot alone, then splice the
-  // dedicated redacted argv back in via the parsed graph.
-  const withoutArgv: Record<string, unknown> = { ...record };
-  delete (withoutArgv as { argv?: unknown }).argv;
-  const sanitized = sanitizeForPersistence(withoutArgv) as Record<string, unknown>;
-  // Splice the argv back in. We trust `argvRedacted` (the dedicated
-  // redactor) is already strictly safer than the regex pass would be.
-  sanitized.argv = argvRedacted;
-  const json = safeJsonStringify(sanitized);
-  if (json === undefined) {
-    // safeJsonStringify returned undefined (BigInt, circular ref,
-    // or host throw in JSON.stringify). Falling back to a JSON-parseable
-    // sentinel preserves audit-log forensic integrity; downstream
-    // consumers can recognize and skip the sentinel without parse failures.
-    return emitSerializationErrorSentinel();
-  }
-  return json + "\n";
-}
-
-/**
  * Ensure the parent dir exists with mode 0o700, including for the
- * existing-parent case (OBS-REVIEW-01 fix; Phase 48 OBS-HARD-01
- * substrate migration).
+ * existing-parent case (via the OBS-HARD substrate migration).
  *
  * Delegates to the shared `ensureContainedDir` substrate, which owns
  * the canonical `mkdir + lstat-gated chmod` pattern with
@@ -509,12 +439,12 @@ function encodeRecord(record: ConfigWriteAuditRecord): string {
  */
 export function ensureConfigAuditParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
-  // Delegate to the shared `ensureContainedDir` substrate (Phase 48
-  // OBS-HARD-01). The substrate owns the mkdir + lstat-gated chmod
-  // pattern with confused-deputy safety. Result is intentionally
-  // discarded — preserves the existing best-effort contract; the
-  // subsequent appendRegularFile call surfaces real errors via its
-  // own Result.err branch.
+  // Delegate to the shared `ensureContainedDir` substrate. The
+  // substrate owns the mkdir + lstat-gated chmod pattern with
+  // confused-deputy safety. Result is intentionally discarded —
+  // preserves the existing best-effort contract; the subsequent
+  // appendRegularFile call surfaces real errors via its own Result.err
+  // branch.
   ensureContainedDir({ dir, mode: 0o700 });
 }
 
@@ -542,7 +472,7 @@ function appendConfigAuditRecordSyncImpl(
 ): Result<{ totalBytes: number }, ConfigAuditAppendError> {
   const rotateAtBytes = params.rotateAtBytes ?? DEFAULT_ROTATE_AT_BYTES;
   const keepRotated = params.keepRotated ?? DEFAULT_KEEP_ROTATED;
-  const encoded = encodeRecord(params.record);
+  const encoded = encodeAuditRecord(params.record as unknown as Record<string, unknown>);
   const bytes = Buffer.byteLength(encoded, "utf8");
 
   ensureConfigAuditParentDir(params.filePath);

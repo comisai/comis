@@ -14,33 +14,15 @@ import { createWhatsAppAdapter, type WhatsAppAdapterDeps } from "./whatsapp-adap
 
 /** WhatsApp platform capabilities (self-declared, validated at registration). */
 const CAPABILITIES: ChannelCapability = {
-  chatTypes: ["dm", "group"],
   features: {
     reactions: true,
     editMessages: true,
     deleteMessages: true,
     fetchHistory: false,
     attachments: true,
-    threads: false,
-    mentions: false,
-    formatting: [],
-    buttons: true,
-    cards: false,
-    effects: false,
   },
   limits: {
     maxMessageChars: 65536,
-    maxAttachmentSizeMb: 100,
-  },
-  streaming: {
-    supported: true,
-    throttleMs: 600,
-    maxChars: 65536,
-    method: "block",
-  },
-  threading: {
-    supported: false,
-    threadType: "none",
   },
   replyToMetaKey: "whatsappMessageId",
 };

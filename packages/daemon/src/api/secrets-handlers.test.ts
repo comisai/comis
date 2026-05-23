@@ -17,10 +17,8 @@ function createMockSecretStore(
     set: vi.fn(() => ok(undefined)),
     getDecrypted: vi.fn(() => ok(undefined)),
     decryptAll: vi.fn(() => ok(new Map<string, string>())),
-    exists: vi.fn(() => false),
     list: vi.fn(() => ok([] as SecretMetadata[])),
     delete: vi.fn(() => ok(false)),
-    recordUsage: vi.fn(),
     close: vi.fn(),
     ...overrides,
   } as unknown as SecretStorePort;
@@ -245,7 +243,6 @@ describe("createSecretsHandlers", () => {
               provider: "openai",
               createdAt: 1,
               updatedAt: 1,
-              usageCount: 0,
             },
           ] as SecretMetadata[]),
         ),

@@ -26,7 +26,6 @@ function makeTokenUsageRow(overrides: Partial<TokenUsageRow> = {}): TokenUsageRo
     traceId: "trace-1",
     agentId: "agent-1",
     channelId: "channel-1",
-    executionId: "exec-1",
     sessionKey: "session-1",
     provider: "anthropic",
     model: "claude-sonnet-4-5",

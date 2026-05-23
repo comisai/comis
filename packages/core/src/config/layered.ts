@@ -3,7 +3,6 @@ import type { Result } from "@comis/shared";
 import { err } from "@comis/shared";
 import type { AppConfig, ConfigError } from "./types.js";
 import { loadConfigFile, validateConfig } from "./loader.js";
-import { migrateConfig } from "./migrate.js";
 
 /** Keys that could cause prototype pollution -- filtered as defense-in-depth. */
 const PROTO_KEYS = new Set(["__proto__", "constructor", "prototype"]);
@@ -83,8 +82,7 @@ export function mergeLayered(layers: Record<string, unknown>[]): Result<AppConfi
     merged = deepMerge(merged, layer);
   }
 
-  const migrated = migrateConfig(merged);
-  return validateConfig(migrated);
+  return validateConfig(merged);
 }
 
 /**

@@ -186,25 +186,19 @@ describe("createSignalAdapter", () => {
     });
   });
 
-  describe("editMessage()", () => {
-    it("returns not supported error", async () => {
+  describe("editMessage / fetchMessages (capability-gated: omitted on adapter)", () => {
+    it("omits editMessage and fetchMessages (capability gate features.{editMessages,fetchHistory} blocks)", () => {
       const adapter = createSignalAdapter(makeDeps());
-      const result = await adapter.editMessage("chat", "msg", "new text");
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("not supported");
-      }
+      expect(adapter.editMessage).toBeUndefined();
+      expect(adapter.fetchMessages).toBeUndefined();
     });
-  });
 
-  describe("fetchMessages()", () => {
-    it("returns not supported error", async () => {
+    it("retains real reactToMessage, removeReaction, deleteMessage, sendAttachment", () => {
       const adapter = createSignalAdapter(makeDeps());
-      const result = await adapter.fetchMessages("chat");
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("not supported");
-      }
+      expect(typeof adapter.reactToMessage).toBe("function");
+      expect(typeof adapter.removeReaction).toBe("function");
+      expect(typeof adapter.deleteMessage).toBe("function");
+      expect(typeof adapter.sendAttachment).toBe("function");
     });
   });
 

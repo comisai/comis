@@ -38,33 +38,15 @@ export interface TelegramPluginHandle extends ChannelPluginPort {
 
 /** Telegram platform capabilities (self-declared, validated at registration). */
 const CAPABILITIES: ChannelCapability = {
-  chatTypes: ["dm", "group", "channel", "forum"],
   features: {
     reactions: true,
     editMessages: true,
     deleteMessages: true,
     fetchHistory: false,
     attachments: true,
-    threads: true,
-    mentions: true,
-    formatting: ["html"],
-    buttons: true,
-    cards: true,
-    effects: true,
   },
   limits: {
     maxMessageChars: 4096,
-    maxAttachmentSizeMb: 50,
-  },
-  streaming: {
-    supported: true,
-    throttleMs: 300,
-    maxChars: 4096,
-    method: "edit",
-  },
-  threading: {
-    supported: true,
-    threadType: "native",
   },
   replyToMetaKey: "telegramMessageId",
 };

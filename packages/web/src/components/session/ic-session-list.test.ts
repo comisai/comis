@@ -1,53 +1,44 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { IcSessionList } from "./ic-session-list.js";
-import type { SessionInfo } from "../../api/types/index.js";
+import type { SessionListItem } from "../../api/types/index.js";
 
 // Side-effect import to register custom element
 import "./ic-session-list.js";
 
-const testSessions: SessionInfo[] = [
+const testSessions: SessionListItem[] = [
   {
-    key: "abc12345",
+    sessionKey: "abc12345",
     agentId: "default",
-    channelType: "telegram",
+    userId: "user1",
+    channelId: "ch1",
+    kind: "telegram",
     messageCount: 47,
     totalTokens: 23400,
-    inputTokens: 15234,
-    outputTokens: 8166,
-    toolCalls: 12,
-    compactions: 1,
-    resetCount: 0,
     createdAt: Date.now() - 7200000,
-    lastActiveAt: Date.now() - 3600000,
+    updatedAt: Date.now() - 3600000,
   },
   {
-    key: "def67890",
+    sessionKey: "def67890",
     agentId: "default",
-    channelType: "discord",
+    userId: "user2",
+    channelId: "ch2",
+    kind: "discord",
     messageCount: 12,
     totalTokens: 8100,
-    inputTokens: 5200,
-    outputTokens: 2900,
-    toolCalls: 3,
-    compactions: 0,
-    resetCount: 1,
     createdAt: Date.now() - 18000000,
-    lastActiveAt: Date.now() - 7200000,
+    updatedAt: Date.now() - 7200000,
   },
   {
-    key: "ghi11223longkeythatexceedstruncation",
+    sessionKey: "ghi11223longkeythatexceedstruncation",
     agentId: "support",
-    channelType: "slack",
+    userId: "user3",
+    channelId: "ch3",
+    kind: "slack",
     messageCount: 103,
     totalTokens: 67200,
-    inputTokens: 42000,
-    outputTokens: 25200,
-    toolCalls: 28,
-    compactions: 2,
-    resetCount: 0,
     createdAt: Date.now() - 86400000,
-    lastActiveAt: Date.now() - 43200000,
+    updatedAt: Date.now() - 43200000,
   },
 ];
 
@@ -194,7 +185,7 @@ describe("IcSessionList", () => {
     row?.click();
 
     expect(handler).toHaveBeenCalledOnce();
-    expect((handler.mock.calls[0][0] as CustomEvent).detail).toHaveProperty("key");
+    expect((handler.mock.calls[0][0] as CustomEvent).detail).toHaveProperty("sessionKey");
   });
 
   it("forwards selectable property to ic-data-table", async () => {

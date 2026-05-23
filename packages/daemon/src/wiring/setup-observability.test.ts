@@ -66,18 +66,14 @@ function createMockEventBus() {
 
 describe("setupObservability", () => {
   let mockCreateTokenTracker: ReturnType<typeof vi.fn>;
-  let mockCreateLatencyRecorder: ReturnType<typeof vi.fn>;
   let mockTokenTracker: any;
-  let mockLatencyRecorder: any;
   let setIntervalSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
     mockTokenTracker = { prune: vi.fn() };
-    mockLatencyRecorder = { prune: vi.fn() };
     mockCreateTokenTracker = vi.fn(() => mockTokenTracker);
-    mockCreateLatencyRecorder = vi.fn(() => mockLatencyRecorder);
 
     // Spy on setInterval to verify prune timer setup
     setIntervalSpy = vi.spyOn(global, "setInterval").mockReturnValue({
@@ -97,21 +93,19 @@ describe("setupObservability", () => {
   }
 
   // -------------------------------------------------------------------------
-  // 1. Creates token tracker and latency recorder with eventBus
+  // 1. Creates token tracker with eventBus
   // -------------------------------------------------------------------------
 
-  it("calls _createTokenTracker and _createLatencyRecorder with eventBus", async () => {
+  it("calls _createTokenTracker with eventBus", async () => {
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
 
     setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
-      _createLatencyRecorder: mockCreateLatencyRecorder,
     });
 
     expect(mockCreateTokenTracker).toHaveBeenCalledWith(eventBus);
-    expect(mockCreateLatencyRecorder).toHaveBeenCalledWith(eventBus);
   });
 
   // -------------------------------------------------------------------------
@@ -125,7 +119,6 @@ describe("setupObservability", () => {
     const result = setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
-      _createLatencyRecorder: mockCreateLatencyRecorder,
     });
 
     expect(mockCreateCostTracker).toHaveBeenCalled();
@@ -148,7 +141,6 @@ describe("setupObservability", () => {
     const result = setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
-      _createLatencyRecorder: mockCreateLatencyRecorder,
     });
 
     const payload = {
@@ -190,7 +182,6 @@ describe("setupObservability", () => {
     const result = setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
-      _createLatencyRecorder: mockCreateLatencyRecorder,
     });
 
     expect(mockCreateDiagnosticCollector).toHaveBeenCalledWith({ eventBus });
@@ -217,7 +208,6 @@ describe("setupObservability", () => {
     setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
-      _createLatencyRecorder: mockCreateLatencyRecorder,
     });
 
     // setInterval should have been called with 30-minute interval
@@ -247,7 +237,6 @@ describe("setupObservability", () => {
     setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
-      _createLatencyRecorder: mockCreateLatencyRecorder,
       logger: mockLogger,
     });
 
@@ -268,7 +257,6 @@ describe("setupObservability", () => {
     setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
-      _createLatencyRecorder: mockCreateLatencyRecorder,
       logger: mockLogger,
     });
 
@@ -327,11 +315,9 @@ describe("setupObservability", () => {
     const result = setupObservability({
       eventBus: eventBus as any,
       _createTokenTracker: mockCreateTokenTracker,
-      _createLatencyRecorder: mockCreateLatencyRecorder,
     });
 
     expect(result.tokenTracker).toBe(mockTokenTracker);
-    expect(result.latencyRecorder).toBe(mockLatencyRecorder);
     expect(result.sharedCostTracker).toBeDefined();
     expect(result.diagnosticCollector).toBeDefined();
     expect(result.billingEstimator).toBeDefined();

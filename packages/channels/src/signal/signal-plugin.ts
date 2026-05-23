@@ -14,32 +14,15 @@ import { createSignalAdapter, type SignalAdapterDeps } from "./signal-adapter.js
 
 /** Signal platform capabilities (self-declared, validated at registration). */
 const CAPABILITIES: ChannelCapability = {
-  chatTypes: ["dm", "group"],
   features: {
     reactions: true,
     editMessages: false,
     deleteMessages: true,
     fetchHistory: false,
     attachments: true,
-    threads: false,
-    mentions: false,
-    formatting: ["signal-text-styles"],
-    buttons: false,
-    cards: false,
-    effects: false,
   },
   limits: {
     maxMessageChars: 65536,
-    maxAttachmentSizeMb: 100,
-  },
-  streaming: {
-    supported: true,
-    throttleMs: 500,
-    method: "block",
-  },
-  threading: {
-    supported: false,
-    threadType: "none",
   },
   replyToMetaKey: "signalTimestamp",
 };

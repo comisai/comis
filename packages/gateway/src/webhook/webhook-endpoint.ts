@@ -2,7 +2,6 @@
 import type { Env } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { z } from "zod";
 import type { WebhookMappingConfig } from "@comis/core";
 import type { HmacAlgorithm } from "./hmac-verifier.js";
 import { createHmacMiddleware } from "./hmac-verifier.js";
@@ -21,113 +20,6 @@ interface WebhookEnv extends Env {
   Variables: {
     rawBody: string;
   };
-}
-
-/**
- * Zod schema for webhook payloads.
- *
- * Validates incoming webhook requests to ensure they contain
- * the required fields before passing to the handler.
- */
-export const WebhookPayloadSchema = z.strictObject({
-    /** Event type (e.g., "deployment.completed", "alert.fired") */
-    event: z.string().min(1, "Event type is required"),
-    /** Source system identifier */
-    source: z.string().min(1, "Source is required"),
-    /** Arbitrary event data */
-    data: z.record(z.string(), z.unknown()),
-    /** Optional ISO 8601 timestamp */
-    timestamp: z.string().optional(),
-  });
-
-/**
- * Parsed webhook payload type.
- */
-export type WebhookPayload = z.infer<typeof WebhookPayloadSchema>;
-
-/**
- * Handler function called when a valid webhook is received.
- */
-export type WebhookHandler = (payload: WebhookPayload) => Promise<void>;
-
-/**
- * Dependencies for creating a webhook endpoint.
- */
-export interface WebhookEndpointDeps {
-  /** Shared secret for HMAC verification */
-  readonly secret: string;
-  /** Callback invoked with validated webhook payload */
-  readonly onWebhook: WebhookHandler;
-  /** HMAC algorithm (default: "sha256") */
-  readonly algorithm?: HmacAlgorithm;
-  /** Signature header name (default: "x-webhook-signature") */
-  readonly headerName?: string;
-}
-
-/**
- * Create a Hono sub-application for receiving webhooks.
- *
- * The endpoint:
- * 1. Verifies HMAC signature using the shared secret
- * 2. Validates payload against WebhookPayloadSchema (Zod)
- * 3. Calls the onWebhook handler
- * 4. Returns 200 { received: true }
- *
- * Error responses:
- * - 401: Missing or invalid signature
- * - 400: Invalid JSON body
- * - 422: Payload validation failed (missing/invalid fields)
- * - 500: Handler error
- *
- * @param deps - Webhook endpoint dependencies
- * @returns Hono sub-application to be mounted at desired path
- */
-export function createWebhookEndpoint(deps: WebhookEndpointDeps): Hono<WebhookEnv> {
-  const { secret, onWebhook, algorithm, headerName } = deps;
-  const app = new Hono<WebhookEnv>();
-
-  const hmacMiddleware = createHmacMiddleware({
-    secret,
-    headerName,
-    algorithm,
-  });
-
-  const bodyLimitMw = bodyLimit({ maxSize: DEFAULT_MAX_BODY_BYTES });
-
-  app.post("/webhook", bodyLimitMw, hmacMiddleware, async (c) => {
-    // rawBody was set by HMAC middleware
-    const rawBody = c.get("rawBody");
-
-    // Parse JSON from raw body
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(rawBody);
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
-    }
-
-    // Validate against schema
-    const result = WebhookPayloadSchema.safeParse(parsed);
-    if (!result.success) {
-      const issues = result.error.issues.map((i) => ({
-        path: i.path.join("."),
-        message: i.message,
-      }));
-      return c.json({ error: "Validation failed", issues }, 422);
-    }
-
-    // Call handler
-    try {
-      await onWebhook(result.data);
-    } catch {
-      // Error is logged by the handler callback before reaching here
-      return c.json({ error: "Internal error" }, 500);
-    }
-
-    return c.json({ received: true });
-  });
-
-  return app;
 }
 
 /**
@@ -157,9 +49,8 @@ export interface MappedWebhookEndpointDeps {
 /**
  * Create a Hono sub-application for path-based webhook routing.
  *
- * Unlike `createWebhookEndpoint` (strict payload schema + required HMAC),
- * this endpoint accepts any JSON payload and routes it to the matching
- * webhook mapping's action handler.
+ * Accepts any JSON payload and routes it to the matching webhook mapping's
+ * action handler. HMAC verification is optional (driven by `secret`).
  *
  * The endpoint:
  * 1. Optionally verifies HMAC signature (if `secret` is provided)
@@ -171,7 +62,8 @@ export interface MappedWebhookEndpointDeps {
  *
  * Error responses:
  * - 401: Missing or invalid HMAC signature (when secret is configured)
- * - 400: Invalid JSON body or body exceeds maxBodyBytes
+ * - 413: Request body exceeds `maxBodyBytes` (enforced by Hono `bodyLimit`)
+ * - 400: Invalid JSON body
  * - 404: No matching webhook mapping for this path
  * - 500: Handler error
  *
@@ -200,17 +92,15 @@ export function createMappedWebhookEndpoint(deps: MappedWebhookEndpointDeps): Ho
   }
 
   app.post("/:path{.+}", async (c) => {
-    // Read raw body (either from HMAC middleware context or directly)
+    // Read raw body (either from HMAC middleware context or directly).
+    // Body-size limits are enforced upstream by `bodyLimitMw` (411/413 before
+    // the handler runs — covered by the "rejects mapped webhook with body
+    // over 1MB" test). No second check needed here.
     let rawBody: string;
     if (secret) {
       rawBody = c.get("rawBody");
     } else {
       rawBody = await c.req.text();
-    }
-
-    // Enforce body size limit
-    if (rawBody.length > maxBodyBytes) {
-      return c.json({ error: "Request body exceeds maximum size" }, 400);
     }
 
     // Parse JSON (loose — no schema validation)

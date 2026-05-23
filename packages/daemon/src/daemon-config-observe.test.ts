@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Daemon bootstrap config.observe wiring test (OBS-REVIEW-03 fix).
+ * Daemon bootstrap config.observe wiring test.
  *
  * Smoke-tests that on daemon startup, the bootstrap config-read path
  * emits exactly one `event: "config.observe"` audit record per
@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { emitBootstrapConfigObserveRecords } from "./stages/foundation-helpers.js";
+import { emitBootstrapConfigObserveRecords } from "./config/bootstrap-observe.js";
 import { readConfigFileObservation } from "./config/read-config-file-observation.js";
 import { ConfigObserveAuditRecordSchema } from "@comis/observability";
 

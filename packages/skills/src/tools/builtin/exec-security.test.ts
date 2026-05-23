@@ -1697,8 +1697,8 @@ describe("extractHeredoc", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 260520-wcf: extractDashCArg rewrites `<interp> -c "<multiline>"` to the
-// stdin form so multi-line bodies stop tripping Gate 0's newline guard.
+// extractDashCArg rewrites `<interp> -c "<multiline>"` to the stdin form so
+// multi-line bodies stop tripping Gate 0's newline guard.
 // ---------------------------------------------------------------------------
 describe("extractDashCArg", () => {
   it("rewrites python3 -c with embedded newline to stdin form using python3 -", () => {

@@ -179,6 +179,8 @@ function makeMinimalDeps(
       if (!sendResult.ok) return err(sendResult.error);
       return ok({ ok: true, messageId: sendResult.value });
     }) as ChannelManagerDeps["deliveryService"]["deliverToChannel"],
+    // channel-manager.stopAll() drains via this method.
+    drainInFlight: (async () => ({ drained: 0, remaining: 0, durationMs: 0 })) as ChannelManagerDeps["deliveryService"]["drainInFlight"],
   } as ChannelManagerDeps["deliveryService"];
 
   return {

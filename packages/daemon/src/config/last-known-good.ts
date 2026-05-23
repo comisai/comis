@@ -5,10 +5,11 @@
  * Snapshot on success, suggest on failure, restore via CLI flag.
  *
  * Each save / restore call writes a config-audit record to
- * `~/.comis/logs/config-audit.jsonl` via the two-phase pattern
- * (`createConfigWriteAuditRecordBase` + `finalizeConfigWriteAuditRecord`
- * + `appendConfigAuditRecordSync` — sync because last-known-good runs
- * during shutdown when async appends may not flush).
+ * `~/.comis/logs/config-audit.jsonl` via `withAuditHookSync` from
+ * `./audit-hook.ts` — the shared single-call wrapper that owns the
+ * sanctioned trust-boundary process.* reads + sync `appendConfigAuditRecordSync`
+ * (sync because last-known-good runs during shutdown when async
+ * appends may not flush).
  *
  * The audit hook is best-effort: a failure to write the JSONL line
  * does NOT abort the LKG save / restore. The JSONL log is a
@@ -21,13 +22,7 @@ import { existsSync, readFileSync, copyFileSync, chmodSync } from "node:fs";
 import { dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { safePath } from "@comis/core";
-import {
-  createConfigWriteAuditRecordBase,
-  finalizeConfigWriteAuditRecord,
-  appendConfigAuditRecordSync,
-  resolveConfigAuditLogPath,
-  getDefaultConfigAuditConfinedBase,
-} from "@comis/observability";
+import { withAuditHookSync } from "./audit-hook.js";
 
 /** Suffix appended to the config filename for the last-known-good snapshot. */
 const LKG_SUFFIX = ".last-good.yaml";
@@ -43,100 +38,6 @@ export function lastKnownGoodPath(configPath: string): string {
 }
 
 /**
- * Best-effort audit-hook helper. Captures pre-write state, runs the
- * write callback, then records the outcome (success / failed) into
- * the config-audit JSONL log. Audit failures are swallowed — the
- * JSONL is a forensics aid, not a correctness gate.
- *
- * `auditConfigPath` is the operative path for the audit record. For
- * `saveLastKnownGood`, the LKG file is the WRITE TARGET so the audit
- * record reflects state changes to the .last-good.yaml file (NOT to
- * the source config.yaml).
- */
-function withAuditHook(params: {
-  source: "last-known-good-save" | "last-known-good-restore";
-  auditConfigPath: string;
-  write: () => void;
-}): { ok: boolean; errorCode?: string; errorMessage?: string } {
-  let base;
-  try {
-    base = createConfigWriteAuditRecordBase({
-      source: params.source,
-      configPath: params.auditConfigPath,
-      // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary read of process.pid/argv/cwd is sanctioned for audit-log provenance
-      pid: process.pid,
-      // eslint-disable-next-line no-restricted-syntax -- ppid via process.ppid (sanctioned audit-log provenance)
-      ppid: process.ppid,
-      // eslint-disable-next-line no-restricted-syntax -- argv via process.argv (sanctioned audit-log provenance, redacted at append time)
-      argv: process.argv,
-      // eslint-disable-next-line no-restricted-syntax -- cwd via process.cwd (sanctioned audit-log provenance)
-      cwd: process.cwd(),
-      // eslint-disable-next-line no-restricted-syntax -- execArgv via process.execArgv (sanctioned audit-log provenance)
-      execArgv: process.execArgv,
-      watchMode: false,
-      // eslint-disable-next-line no-restricted-syntax -- daemon trust-boundary entryScript via import.meta.url for audit-log provenance (matches surrounding pattern)
-      entryScript: fileURLToPath(import.meta.url),
-    });
-  } catch {
-    // Couldn't even build the base — run the write anyway.
-    try {
-      params.write();
-      return { ok: true };
-    } catch (writeErr) {
-      return {
-        ok: false,
-        errorCode: (writeErr as NodeJS.ErrnoException).code,
-        errorMessage: (writeErr as Error).message,
-      };
-    }
-  }
-
-  let writeOk = true;
-  let errorCode: string | undefined;
-  let errorMessage: string | undefined;
-  try {
-    params.write();
-  } catch (writeErr) {
-    writeOk = false;
-    errorCode = (writeErr as NodeJS.ErrnoException).code;
-    errorMessage = (writeErr as Error).message;
-  }
-
-  try {
-    const record = finalizeConfigWriteAuditRecord(base, {
-      result: writeOk ? "rename" : "failed",
-      ...(errorCode !== undefined && { errorCode }),
-      ...(errorMessage !== undefined && { errorMessage }),
-    });
-    const auditLogPath = resolveConfigAuditLogPath();
-    const auditConfinedBase = getDefaultConfigAuditConfinedBase(auditLogPath);
-    appendConfigAuditRecordSync({
-      filePath: auditLogPath,
-      record,
-      // Confine the audit-log write to ~/.comis/ when the default log
-      // path applies; skip confinement when the operator overrode
-      // COMIS_CONFIG_AUDIT_LOG to a custom location (they own the
-      // legitimacy of the override target).
-      ...(auditConfinedBase !== undefined && {
-        confinedBaseDir: auditConfinedBase,
-      }),
-    });
-  } catch {
-    // Audit append failed — swallow. The JSONL is a forensics aid.
-  }
-
-  if (!writeOk) {
-    const result: { ok: boolean; errorCode?: string; errorMessage?: string } = {
-      ok: false,
-    };
-    if (errorCode !== undefined) result.errorCode = errorCode;
-    if (errorMessage !== undefined) result.errorMessage = errorMessage;
-    return result;
-  }
-  return { ok: true };
-}
-
-/**
  * Save a copy of the current config as the last-known-good snapshot.
  * Called after successful daemon startup.
  *
@@ -144,6 +45,10 @@ function withAuditHook(params: {
  * `true` for callers that don't pass the parameter. When `false`, the
  * audit JSONL append is skipped but the LKG copy itself still runs —
  * the audit log is a forensics aid, not a correctness gate.
+ *
+ * The audit-record `configPath` field reflects the WRITE TARGET (the
+ * `.last-good.yaml` file), not the source `config.yaml` — the record
+ * describes state changes to the LKG file.
  */
 export function saveLastKnownGood(
   configPath: string,
@@ -153,21 +58,14 @@ export function saveLastKnownGood(
   if (!existsSync(configPath)) {
     return { saved: false, path: lkgPath };
   }
-  // When audit is disabled, skip the JSONL append wrapper and call
-  // the write callback directly. Mirrors the success-path return
-  // shape of withAuditHook for the caller.
-  if (!auditEnabled) {
-    try {
-      copyFileSync(configPath, lkgPath);
-      chmodSync(lkgPath, 0o600);
-      return { saved: true, path: lkgPath };
-    } catch {
-      return { saved: false, path: lkgPath };
-    }
-  }
-  const audit = withAuditHook({
+  const audit = withAuditHookSync({
     source: "last-known-good-save",
     auditConfigPath: lkgPath,
+    // fileURLToPath(import.meta.url) resolves to last-known-good.ts —
+    // the correct entry-script attribution for this call site (not
+    // the shared audit-hook.ts module where the helper is defined).
+    entryScript: fileURLToPath(import.meta.url),
+    auditEnabled,
     write: () => {
       copyFileSync(configPath, lkgPath);
       chmodSync(lkgPath, 0o600);
@@ -193,19 +91,11 @@ export function restoreLastKnownGood(
   if (!existsSync(lkgPath)) {
     return { restored: false, lkgPath };
   }
-  // When audit is disabled, skip the JSONL append wrapper.
-  if (!auditEnabled) {
-    try {
-      copyFileSync(lkgPath, configPath);
-      chmodSync(configPath, 0o600);
-      return { restored: true, lkgPath };
-    } catch {
-      return { restored: false, lkgPath };
-    }
-  }
-  const audit = withAuditHook({
+  const audit = withAuditHookSync({
     source: "last-known-good-restore",
     auditConfigPath: configPath,
+    entryScript: fileURLToPath(import.meta.url),
+    auditEnabled,
     write: () => {
       copyFileSync(lkgPath, configPath);
       chmodSync(configPath, 0o600);

@@ -2,7 +2,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles } from "../../styles/shared.js";
-import type { SessionInfo, DataTableColumn } from "../../api/types/index.js";
+import type { SessionListItem, DataTableColumn } from "../../api/types/index.js";
 import {
   parseSessionKeyString,
   formatSessionDisplayName,
@@ -35,12 +35,12 @@ const STATUS_DOT_COLORS: Record<string, string> = {
 };
 
 /** Column definitions for the session data table. */
-const SESSION_COLUMNS: DataTableColumn<SessionInfo>[] = [
+const SESSION_COLUMNS: DataTableColumn<SessionListItem>[] = [
   {
-    key: "key",
+    key: "sessionKey",
     label: "Session",
     sortable: true,
-    render: (value: unknown, row: SessionInfo) => {
+    render: (value: unknown, row: SessionListItem) => {
       const raw = String(value ?? "");
       const parsed = parseSessionKeyString(raw);
       const displayName = parsed
@@ -48,7 +48,7 @@ const SESSION_COLUMNS: DataTableColumn<SessionInfo>[] = [
         : raw.length > 15
           ? raw.slice(0, 12) + "..."
           : raw;
-      const channelLabel = parsed?.channelId ?? row.channelType;
+      const channelLabel = parsed?.channelId ?? row.kind;
       return html`<span title=${raw}>
         <strong style="font-size: var(--ic-text-sm);">${displayName}</strong>
         <span style="font-size: var(--ic-text-xs); color: var(--ic-text-dim); margin-left: 4px;">${channelLabel}</span>
@@ -56,11 +56,13 @@ const SESSION_COLUMNS: DataTableColumn<SessionInfo>[] = [
     },
   },
   {
-    key: "createdAt",
+    // Synthetic key — render() owns the source field (row.updatedAt via
+    // computeSessionStatus). `sortable: false` so ordering is unaffected.
+    key: "status",
     label: "Status",
     sortable: false,
-    render: (_value: unknown, row: SessionInfo) => {
-      const status = computeSessionStatus(row.lastActiveAt);
+    render: (_value: unknown, row: SessionListItem) => {
+      const status = computeSessionStatus(row.updatedAt);
       const color = STATUS_DOT_COLORS[status] ?? STATUS_DOT_COLORS.expired;
       return html`<span style="display: inline-flex; align-items: center; gap: 6px;">
         <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${color};"></span>
@@ -74,7 +76,7 @@ const SESSION_COLUMNS: DataTableColumn<SessionInfo>[] = [
     sortable: true,
   },
   {
-    key: "channelType",
+    key: "kind",
     label: "Channel",
     sortable: true,
     render: (value: unknown) => {
@@ -94,7 +96,7 @@ const SESSION_COLUMNS: DataTableColumn<SessionInfo>[] = [
     render: (value: unknown) => formatTokens(Number(value ?? 0)),
   },
   {
-    key: "lastActiveAt",
+    key: "updatedAt",
     label: "Age",
     sortable: true,
     render: (value: unknown) => {
@@ -110,7 +112,7 @@ const SESSION_COLUMNS: DataTableColumn<SessionInfo>[] = [
  * Renders a list of sessions in a sortable, paginated table with
  * optional row selection for bulk operations.
  *
- * @fires session-click - CustomEvent<SessionInfo> when a row is clicked
+ * @fires session-click - CustomEvent<SessionListItem> when a row is clicked
  * @fires selection-change - CustomEvent<string[]> when selection changes
  *
  * @example
@@ -135,12 +137,12 @@ export class IcSessionList extends LitElement {
   ];
 
   /** Session data to display. */
-  @property({ attribute: false }) sessions: SessionInfo[] = [];
+  @property({ attribute: false }) sessions: SessionListItem[] = [];
 
   /** Enable row selection checkboxes. */
   @property({ type: Boolean }) selectable = false;
 
-  private _handleRowClick(e: CustomEvent<SessionInfo>): void {
+  private _handleRowClick(e: CustomEvent<SessionListItem>): void {
     this.dispatchEvent(
       new CustomEvent("session-click", {
         detail: e.detail,

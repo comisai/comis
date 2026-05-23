@@ -23,6 +23,25 @@ export interface SessionInfo {
   readonly label?: string;
 }
 
+/**
+ * Narrow row type for the `session.list` RPC response.
+ *
+ * Mirrors the contract response item shape exactly (9 fields, no invented
+ * extras, no alias fallbacks). Distinct from `SessionInfo` which also covers
+ * the richer `session.status` / `session.history` shapes.
+ */
+export interface SessionListItem {
+  readonly sessionKey: string;
+  readonly agentId: string;
+  readonly userId: string;
+  readonly channelId: string;
+  readonly kind: string;
+  readonly messageCount: number;
+  readonly totalTokens: number;
+  readonly updatedAt: number;
+  readonly createdAt: number;
+}
+
 /** Session content search result from session.search RPC */
 export interface SessionSearchResult {
   readonly sessionKey: string;

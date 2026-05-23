@@ -2,7 +2,7 @@
 /**
  * Hash-based router with parameterized route support for the Comis SPA.
  *
- * Supports 27 route patterns with named parameters (e.g., `:id`, `:type`).
+ * Supports 38 route patterns with named parameters (e.g., `:id`, `:type`).
  * Routes are matched longest-first to ensure specific patterns like
  * `observe/billing` take priority over `observe` with a parameter.
  *
@@ -33,8 +33,6 @@ export interface Router {
   start(): void;
   /** Stop listening */
   stop(): void;
-  /** Update URL query parameters without triggering a full navigation */
-  setQuery(params: Record<string, string>): void;
 }
 
 /** Internal route definition */
@@ -83,7 +81,6 @@ const ROUTE_TABLE: ReadonlyArray<{ pattern: string; view: string }> = [
   { pattern: "media", view: "ic-media-test-view" },
   { pattern: "media/config", view: "ic-media-config-view" },
   { pattern: "security", view: "ic-security-view" },
-  { pattern: "approvals", view: "ic-approvals-view" },
   { pattern: "config", view: "ic-config-editor" },
   { pattern: "setup", view: "ic-setup-wizard" },
   { pattern: "pipelines", view: "ic-pipeline-list" },
@@ -160,16 +157,6 @@ function matchRoute(path: string, routes: RouteDefinition[]): RouteMatch | null 
 }
 
 /**
- * Route aliases for backward compatibility.
- * Old paths redirect silently to new canonical paths via history.replaceState.
- */
-const ROUTE_ALIASES: ReadonlyArray<{ from: string; to: string }> = [
-  { from: "observe", to: "observe/overview" },
-  // Future phases may add more aliases as routes are restructured
-  // e.g., { from: "security", to: "configure/security" }
-];
-
-/**
  * Create a hash-based router with parameterized route support.
  *
  * @param onChange - Called when the route changes with the matched RouteMatch
@@ -178,7 +165,7 @@ const ROUTE_ALIASES: ReadonlyArray<{ from: string; to: string }> = [
  */
 export function createRouter(
   onChange: (match: RouteMatch) => void,
-   
+
   _defaultRoute: string = "dashboard",
 ): Router {
   const compiledRoutes = compileRoutes();
@@ -204,21 +191,6 @@ export function createRouter(
         } else if (pair) {
           query[decodeURIComponent(pair)] = "";
         }
-      }
-    }
-
-    // Check aliases - use history.replaceState to avoid hashchange loop
-    for (const alias of ROUTE_ALIASES) {
-      if (path === alias.from) {
-        const newHash = queryString
-          ? `#/${alias.to}?${queryString}`
-          : `#/${alias.to}`;
-        history.replaceState(null, "", newHash);
-        // Re-resolve with the new path (no infinite loop since replaceState
-        // does not fire hashchange)
-        const match = matchRoute(alias.to, compiledRoutes);
-        if (match) return { ...match, query };
-        return { ...DEFAULT_MATCH, query };
       }
     }
 
@@ -248,16 +220,6 @@ export function createRouter(
 
     stop(): void {
       window.removeEventListener("hashchange", handleChange);
-    },
-
-    setQuery(params: Record<string, string>): void {
-      const current = resolveHash();
-      const merged = { ...current.query, ...params };
-      // Remove keys with empty string values
-      const filtered = Object.entries(merged).filter(([, v]) => v !== "");
-      const qs = filtered.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
-      const newHash = qs ? `#/${current.route}?${qs}` : `#/${current.route}`;
-      history.replaceState(null, "", newHash);
     },
   };
 }

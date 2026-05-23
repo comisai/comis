@@ -260,7 +260,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill directory already exists: ${params.name}`);
       }
 
-      // OBS-HARD-03: route skill-folder dir creation + per-file writes
+      // Route skill-folder dir creation + per-file writes
       // through the shared fs-safe substrate so every artifact honors
       // the §1.4 `0o700`/`0o600` invariant. `confinedBaseDir` is the
       // scope-resolved `skillsBaseDir` (either `dataDir/skills` for
@@ -421,7 +421,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill directory already exists: ${name}`);
       }
 
-      // OBS-HARD-03: route skill-folder dir creation + per-file writes
+      // Route skill-folder dir creation + per-file writes
       // through the shared fs-safe substrate so every artifact honors
       // the §1.4 `0o700`/`0o600` invariant. Mirrors the skills.upload
       // migration; same scope-resolved `skillsBaseDir` confinement bound.
@@ -644,7 +644,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill directory already exists: ${params.name}. Use update action to modify existing skills.`);
       }
 
-      // OBS-HARD-03: route skill-dir creation + SKILL.md write through
+      // Route skill-dir creation + SKILL.md write through
       // the shared fs-safe substrate so the new skill folder honors the
       // §1.4 `0o700`/`0o600` invariant. Result.err propagates via thrown
       // Error per the file's @allow-throw header.
@@ -686,15 +686,12 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill file write failed: ${writeResult.error.message}`);
       }
 
-      // Re-discover
+      // Re-discover (triggers emitSkillAudit -> audit:event lifecycle capture)
       if (scope === "shared" && deps.skillRegistries) {
         for (const registry of deps.skillRegistries.values()) registry.init();
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-
-      // Emit skill:created event
-      deps.eventBus?.emit("skill:created", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: systemNowMs() });
 
       const result = { ok: true as const, path: skillDir, name: params.name };
       if (IS_DEV) SkillsCreateContract.response.parse(result);
@@ -754,10 +751,10 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`SKILL.md not found at expected location: ${skillMdPath}`);
       }
 
-      // OBS-HARD-03: route the SKILL.md overwrite through the shared
+      // Route the SKILL.md overwrite through the shared
       // fs-safe substrate so the updated file honors the §1.4 `0o600`
       // invariant — even if the existing file was previously written
-      // with a wider mode (pre-Phase 48 artifacts). `confinedBaseDir`
+      // with a wider mode (legacy artifacts). `confinedBaseDir`
       // is the resolved skill directory (which already exists by the
       // preceding existsSync check). writeRegularFile's unlink-before-
       // open semantics defensively re-mode the file via fchmod(0o600)
@@ -782,14 +779,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill file write failed: ${writeResult.error.message}`);
       }
 
-      // Re-discover
+      // Re-discover (triggers emitSkillAudit -> audit:event lifecycle capture)
       if (scope === "shared" && deps.skillRegistries) {
         for (const reg of deps.skillRegistries.values()) reg.init();
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
 
-      deps.eventBus?.emit("skill:updated", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: systemNowMs() });
       const result = { ok: true as const, name: params.name };
       if (IS_DEV) SkillsUpdateContract.response.parse(result);
       return result;

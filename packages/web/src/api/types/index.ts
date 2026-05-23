@@ -18,5 +18,3 @@ export * from "./media-types.js";
 export * from "./mcp-types.js";
 export * from "./graph-types.js";
 export * from "./heartbeat-types.js";
-export * from "./rpc-registry.js";
-export { createTypedRpc } from "./rpc-registry.js";

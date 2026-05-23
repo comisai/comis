@@ -17,17 +17,11 @@ export type {
   MemoryPort,
   MemorySearchOptions,
   MemorySearchResult,
-  MemoryUpdateFields,
 } from "./memory.js";
-export type {
-  SkillPort,
-  SkillPermissions,
-  SkillInput,
-  SkillOutput,
-  SkillManifest,
-} from "./skill.js";
 export type { EmbeddingPort } from "./embedding.js";
 export type { ContextStorePort } from "./context-store.js";
+export type { ContextEngineStore } from "./context-engine-store.js";
+export type { ContextAdminStore } from "./context-admin-store.js";
 export type {
   CtxConversationRow,
   CtxMessageRow,
@@ -90,16 +84,6 @@ export type {
   HookBeforeAgentStartEvent,
   HookBeforeAgentStartContext,
   HookBeforeAgentStartResult,
-  HookAgentEndEvent,
-  HookAgentEndContext,
-  HookBeforeToolCallEvent,
-  HookBeforeToolCallContext,
-  HookBeforeToolCallResult,
-  HookAfterToolCallEvent,
-  HookAfterToolCallContext,
-  HookToolResultPersistEvent,
-  HookToolResultPersistContext,
-  HookToolResultPersistResult,
   HookBeforeCompactionEvent,
   HookBeforeCompactionContext,
   HookBeforeCompactionResult,
@@ -118,20 +102,12 @@ export type {
   PluginPort,
   PluginRegistryApi,
   RegisteredHook,
-  PluginToolDefinition,
-  PluginHttpRoute,
 } from "./plugin.js";
 export type {
   ChannelPluginPort,
   ChannelCapability,
 } from "./channel-plugin.js";
 export type { ChannelStatus } from "./channel.js";
-export type {
-  DeviceIdentity,
-  DeviceIdentityPort,
-  PairingRequest,
-  PairedDevice,
-} from "./device-identity.js";
 export type {
   OutputGuardPort,
   OutputGuardFinding,
@@ -141,9 +117,8 @@ export type {
   SecretStorePort,
   SecretMetadata,
 } from "./secret-store.js";
-export type { CredentialMappingPort } from "./credential-mapping.js";
 export type { OAuthCredentialStorePort, OAuthProfile } from "./oauth-credential-store.js";
-export type { Provider, ImageGenInput, ImageGenOutput, ImageGenerationPort } from "./provider.js";
+export type { ImageGenInput, ImageGenOutput, ImageGenerationPort } from "./provider.js";
 export type {
   DeliveryQueuePort,
   DeliveryQueueEntry,

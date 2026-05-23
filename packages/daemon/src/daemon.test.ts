@@ -3,11 +3,9 @@ import { PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type Gate
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { ComisLogger } from "@comis/infra";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { WatchdogHandle } from "./health/watchdog.js";
-import type { LatencyRecorder } from "./observability/latency-recorder.js";
 import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";
-import type { ShutdownHandle } from "./process/graceful-shutdown.js";
+import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
 import { main, type DaemonOverrides, hardenDataDirPermissions, runPreflightDoctor, applyInspectDefaultsForLogging } from "./daemon.js";
 import type { MediaResult } from "./wiring/setup-media.js";
@@ -41,7 +39,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         embeddingModel: "text-embedding-3-small",
         embeddingDimensions: 1536,
         compaction: { enabled: false, threshold: 1000, targetSize: 500 },
-        retention: { maxAgeDays: 0, maxEntries: 0 },
+        retention: { maxAgeDays: 0 },
       },
       embedding: {
         enabled: false,
@@ -202,16 +200,6 @@ function createMockTokenTracker(): TokenTracker {
   };
 }
 
-function createMockLatencyRecorder(): LatencyRecorder {
-  return {
-    startTimer: vi.fn().mockReturnValue(() => 0),
-    record: vi.fn(),
-    getStats: vi.fn().mockReturnValue({ count: 0, mean: 0, min: 0, max: 0, p50: 0, p99: 0 }),
-    reset: vi.fn(),
-    prune: vi.fn().mockReturnValue(0),
-  };
-}
-
 function createMockProcessMonitor(): ProcessMonitor {
   return {
     start: vi.fn(),
@@ -225,12 +213,6 @@ function createMockShutdownHandle(): ShutdownHandle {
     isShuttingDown: false,
     trigger: vi.fn<(signal: string) => Promise<void>>().mockResolvedValue(undefined),
     dispose: vi.fn(),
-  };
-}
-
-function createMockWatchdogHandle(): WatchdogHandle {
-  return {
-    stop: vi.fn(),
   };
 }
 
@@ -267,10 +249,8 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
   const logger = createMockLogger();
   const logLevelManager = createMockLogLevelManager();
   const tokenTracker = createMockTokenTracker();
-  const latencyRecorder = createMockLatencyRecorder();
   const processMonitor = createMockProcessMonitor();
   const shutdownHandle = createMockShutdownHandle();
-  const watchdogHandle = createMockWatchdogHandle();
   const gatewayHandle = createMockGatewayHandle();
 
   const overrides: DaemonOverrides = {
@@ -291,21 +271,9 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
       callOrder.push("createTokenTracker");
       return tokenTracker;
     }),
-    createLatencyRecorder: vi.fn().mockImplementation(() => {
-      callOrder.push("createLatencyRecorder");
-      return latencyRecorder;
-    }),
     createProcessMonitor: vi.fn().mockImplementation(() => {
       callOrder.push("createProcessMonitor");
       return processMonitor;
-    }),
-    registerGracefulShutdown: vi.fn().mockImplementation(() => {
-      callOrder.push("registerGracefulShutdown");
-      return shutdownHandle;
-    }),
-    startWatchdog: vi.fn().mockImplementation(() => {
-      callOrder.push("startWatchdog");
-      return watchdogHandle;
     }),
     createGatewayServer: vi.fn().mockImplementation(() => {
       callOrder.push("createGatewayServer");
@@ -322,10 +290,8 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
       logger,
       logLevelManager,
       tokenTracker,
-      latencyRecorder,
       processMonitor,
       shutdownHandle,
-      watchdogHandle,
       gatewayHandle,
     },
   };
@@ -356,10 +322,7 @@ describe("daemon main()", () => {
       "createTracingLogger",
       "createLogLevelManager",
       "createTokenTracker",
-      "createLatencyRecorder",
       "createProcessMonitor",
-      "startWatchdog",
-      "registerGracefulShutdown",
     ]);
   });
 
@@ -376,11 +339,8 @@ describe("daemon main()", () => {
       "createTracingLogger",
       "createLogLevelManager",
       "createTokenTracker",
-      "createLatencyRecorder",
       "createProcessMonitor",
-      "startWatchdog",
       "createGatewayServer",
-      "registerGracefulShutdown",
     ]);
   });
 
@@ -394,10 +354,16 @@ describe("daemon main()", () => {
     expect(instance.logger).toBe(mocks.logger);
     expect(instance.logLevelManager).toBe(mocks.logLevelManager);
     expect(instance.tokenTracker).toBe(mocks.tokenTracker);
-    expect(instance.latencyRecorder).toBe(mocks.latencyRecorder);
     expect(instance.processMonitor).toBe(mocks.processMonitor);
-    expect(instance.shutdownHandle).toBe(mocks.shutdownHandle);
-    expect(instance.watchdogHandle).toBe(mocks.watchdogHandle);
+    // shutdownHandle is constructed inline by setupShutdown rather than
+    // injected via a `_registerGracefulShutdown` factory seam. Assert the
+    // shape (the integration tests cover behavior).
+    expect(instance.shutdownHandle).toBeDefined();
+    expect(typeof instance.shutdownHandle.trigger).toBe("function");
+    expect(typeof instance.shutdownHandle.dispose).toBe("function");
+    // Dispose the handle so the spy-registered signal listeners don't leak
+    // between tests.
+    instance.shutdownHandle.dispose();
   });
 
   it("returns gatewayHandle when gateway is enabled", async () => {
@@ -421,32 +387,13 @@ describe("daemon main()", () => {
     expect(overrides.createGatewayServer).not.toHaveBeenCalled();
   });
 
-  it("passes onShutdown callback when gateway is enabled", async () => {
-    const { overrides } = buildOverrides({
-      enabled: true,
-      tokens: [{ id: "test", secret: "s3cret", scopes: ["rpc"] }],
-    });
-
-    await main(overrides);
-
-    expect(overrides.registerGracefulShutdown).toHaveBeenCalledWith(
-      expect.objectContaining({
-        onShutdown: expect.any(Function),
-      }),
-    );
-  });
-
-  it("always passes onShutdown for db cleanup even when gateway is disabled", async () => {
-    const { overrides } = buildOverrides();
-
-    await main(overrides);
-
-    expect(overrides.registerGracefulShutdown).toHaveBeenCalledWith(
-      expect.objectContaining({
-        onShutdown: expect.any(Function),
-      }),
-    );
-  });
+  // The `_registerGracefulShutdown` factory seam is gone, so the
+  // "passes onShutdown callback" assertions that previously inspected the
+  // factory call are obsolete here. Coverage moves to:
+  //   - packages/daemon/src/wiring/setup-shutdown.test.ts (per-component
+  //     teardown invocation)
+  //   - test/integration/daemon-shutdown*.test.ts (real-signal trigger end-
+  //     to-end)
 
   it("starts process monitor after creation", async () => {
     const { overrides, mocks } = buildOverrides();
@@ -537,44 +484,13 @@ describe("daemon main()", () => {
     await expect(main(overrides)).rejects.toThrow("Bootstrap failed: Config file not found");
   });
 
-  it("passes container to graceful shutdown", async () => {
-    const { overrides, mocks } = buildOverrides();
-
-    await main(overrides);
-
-    expect(overrides.registerGracefulShutdown).toHaveBeenCalledWith(
-      expect.objectContaining({
-        container: mocks.container,
-        processMonitor: mocks.processMonitor,
-      }),
-    );
-  });
-
-  it("passes process monitor to watchdog for health gating", async () => {
-    const { overrides, mocks } = buildOverrides();
-
-    await main(overrides);
-
-    expect(overrides.startWatchdog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        processMonitor: mocks.processMonitor,
-      }),
-    );
-  });
-
-  it("passes exit override to graceful shutdown", async () => {
-    const { overrides } = buildOverrides();
-    const mockExit = vi.fn();
-    overrides.exit = mockExit;
-
-    await main(overrides);
-
-    expect(overrides.registerGracefulShutdown).toHaveBeenCalledWith(
-      expect.objectContaining({
-        exit: mockExit,
-      }),
-    );
-  });
+  // The two assertions previously here checked
+  // `overrides.registerGracefulShutdown.toHaveBeenCalledWith(...)` to verify
+  // that container/processMonitor/exit flowed through the factory seam. After
+  // inlining, the seam is gone and the same wiring is exercised by:
+  //   - setup-shutdown.test.ts ("returns shutdownHandle from setupShutdown",
+  //     "executes ordered teardown in correct sequence")
+  //   - test/integration/daemon-shutdown.test.ts (real SIGTERM end-to-end)
 
   // -------------------------------------------------------------------------
   // Boot-time PROVIDER_OVERRIDES staleness validator

@@ -137,7 +137,7 @@ export function createCacheBreakDiffWriter(
   return (event: CacheBreakDiffPayload): void => {
     try {
       if (!dirEnsured) {
-        // OBS-HARD-02: route through the shared fs-safe substrate so
+        // Route through the shared fs-safe substrate so
         // `~/.comis/cache-breaks/` honors the §1.4 `0o700` invariant.
         // Failure is non-fatal — log + skip this event so the detection
         // flow upstream stays unaffected (existing fault-tolerance
@@ -227,7 +227,7 @@ export function createCacheBreakDiffWriter(
         effortValue: event.effortValue,
         // Breakpoint budget context
         ...(event.breakpointBudget && { breakpointBudget: event.breakpointBudget }),
-        // Breakpoint pressure ratio (260520-wcf): fraction of the SDK's
+        // Breakpoint pressure ratio: fraction of the SDK's
         // 4-breakpoint ceiling consumed at the time of the cache break.
         // Clamped to [0, 1] — values > 1 indicate accounting drift, < 0
         // is impossible but locked in for defense in depth. Emitted only
@@ -256,7 +256,7 @@ export function createCacheBreakDiffWriter(
         },
       };
 
-      // OBS-HARD-02: route the JSON write through the fs-safe substrate
+      // Route the JSON write through the fs-safe substrate
       // so each cache-break diff file lands at mode `0o600` per §1.4.
       // Failure is non-fatal — log + continue to attempt the .diff
       // sibling so a partial-write at the JSON layer does not block the
@@ -343,7 +343,7 @@ export function createCacheBreakDiffWriter(
       if (diffSections.length > 0) {
         const diffFilename = filename.replace(".json", ".diff");
         const diffFilePath = safePath(config.outputDir, diffFilename);
-        // OBS-HARD-02: route the .diff write through the fs-safe
+        // Route the .diff write through the fs-safe
         // substrate so the sibling artifact also lands at mode `0o600`.
         const diffResult = writeRegularFile({
           path: diffFilePath,

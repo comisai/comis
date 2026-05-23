@@ -328,7 +328,7 @@ describe("skills.upload handler", () => {
   });
 
   it("skills_upload_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
-    // OBS-HARD-03 / T-48-24b: route through @comis/observability/shared/fs-safe.ts
+    // Route through @comis/observability/shared/fs-safe.ts
     // so the §1.4 confidentiality invariant (dir 0o700, file 0o600) is enforced on
     // every skill artifact written by skills.upload — including nested-parent dirs.
     const wsDir = join(tmpRoot, "ws");
@@ -549,7 +549,7 @@ describe("skills.import handler", () => {
   });
 
   it("skills_import_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
-    // OBS-HARD-03 / T-48-24b: imported skill artifacts honor §1.4 modes
+    // Imported skill artifacts honor §1.4 modes
     // (dir 0o700, file 0o600) — including nested-parent dirs created
     // by the in-loop ensureContainedDir for sub-folders.
     const wsDir = join(tmpRoot, "ws");
@@ -801,7 +801,7 @@ describe("skills.create handler", () => {
     ).rejects.toThrow(/already exists/i);
   });
 
-  it("writes SKILL.md and emits skill:created event on successful create in local scope", async () => {
+  it("writes SKILL.md and triggers registry re-init on successful create in local scope", async () => {
     const wsDir = join(tmpRoot, "ws");
     fs.mkdirSync(wsDir, { recursive: true });
     const reg = makeRegistry([]);
@@ -821,12 +821,11 @@ describe("skills.create handler", () => {
     });
     expect(result.ok).toBe(true);
     expect(fs.existsSync(join(wsDir, "skills", "new-skill", "SKILL.md"))).toBe(true);
-    expect(eventBus.emit).toHaveBeenCalledWith("skill:created", expect.objectContaining({ skillName: "new-skill" }));
     expect(reg.init).toHaveBeenCalled();
   });
 
   it("skills_create_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
-    // OBS-HARD-03 / T-48-24b: skills.create routes its mkdir + SKILL.md
+    // skills.create routes its mkdir + SKILL.md
     // writeFile through the fs-safe substrate so the new skill artifact
     // honors the §1.4 confidentiality invariant (dir 0o700, file 0o600).
     const wsDir = join(tmpRoot, "ws");
@@ -948,7 +947,7 @@ describe("skills.update handler", () => {
     ).rejects.toThrow(/SKILL\.md not found/i);
   });
 
-  it("overwrites SKILL.md and emits skill:updated event on successful update in local scope", async () => {
+  it("overwrites SKILL.md and triggers registry re-init on successful update in local scope", async () => {
     const wsDir = join(tmpRoot, "ws");
     const skillDir = join(wsDir, "skills", "update-me");
     fs.mkdirSync(skillDir, { recursive: true });
@@ -970,20 +969,19 @@ describe("skills.update handler", () => {
     expect(result.ok).toBe(true);
     const content = fs.readFileSync(join(skillDir, "SKILL.md"), "utf-8");
     expect(content).toContain("NEW BODY");
-    expect(eventBus.emit).toHaveBeenCalledWith("skill:updated", expect.objectContaining({ skillName: "update-me" }));
     expect(reg.init).toHaveBeenCalled();
   });
 
   it("skills_update_writes_skill_file_at_0o600_via_fs_safe_substrate", async () => {
-    // OBS-HARD-03 / T-48-24b: skills.update routes its SKILL.md
+    // skills.update routes its SKILL.md
     // overwrite through writeRegularFile so the resulting file mode is
     // `0o600` — and writeRegularFile's unlink-before-open + defensive
     // fchmod path defensively corrects legacy artifacts written at a
-    // wider mode by pre-Phase 48 code.
+    // wider mode by older code.
     const wsDir = join(tmpRoot, "ws");
     const skillDir = join(wsDir, "skills", "mode-update");
     fs.mkdirSync(skillDir, { recursive: true });
-    // Pre-seed a legacy SKILL.md at the wider 0o644 mode (the pre-Phase 48 default).
+    // Pre-seed a legacy SKILL.md at the wider 0o644 mode (the older default).
     fs.writeFileSync(join(skillDir, "SKILL.md"), "LEGACY", "utf-8");
     fs.chmodSync(join(skillDir, "SKILL.md"), 0o644);
     const reg = makeRegistry([{ name: "mode-update", location: skillDir }]);

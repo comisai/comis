@@ -12,7 +12,7 @@ const testConfig: MemoryConfig = {
   embeddingModel: "test-model",
   embeddingDimensions: 4,
   compaction: { enabled: false, threshold: 1000, targetSize: 500 },
-  retention: { maxAgeDays: 0, maxEntries: 0 },
+  retention: { maxAgeDays: 0 },
 };
 
 /** Create a minimal valid MemoryEntry for testing. */
@@ -123,11 +123,7 @@ describe("MemoryApi", () => {
     ];
 
     for (const entry of entries) {
-      const memoryType = entry.memoryType ?? "semantic";
-      await adapter.storeWithType(
-        entry,
-        memoryType as "working" | "episodic" | "semantic" | "procedural",
-      );
+      await adapter.store(entry);
     }
 
     // Add a session for stats testing
@@ -445,11 +441,7 @@ describe("MemoryApi", () => {
       ];
 
       for (const entry of entries) {
-        const memoryType = entry.memoryType ?? "semantic";
-        await multiAdapter.storeWithType(
-          entry,
-          memoryType as "working" | "episodic" | "semantic" | "procedural",
-        );
+        await multiAdapter.store(entry);
       }
     });
 
@@ -506,84 +498,8 @@ describe("MemoryApi", () => {
     });
   });
 
-  // ── enforceGuardrails ─────────────────────────────────────────
-
-  describe("enforceGuardrails", () => {
-    it("returns null when no limits configured", () => {
-      const result = api.enforceGuardrails();
-      expect(result).toBeNull();
-    });
-
-    it("returns null when within limits", () => {
-      // Create api with maxEntries = 20 (we have 10)
-      const limitedConfig: MemoryConfig = {
-        ...testConfig,
-        retention: { maxAgeDays: 0, maxEntries: 20 },
-      };
-      const limitedApi = createMemoryApi(adapter.getDb(), adapter, sessionStore, limitedConfig);
-
-      const result = limitedApi.enforceGuardrails();
-      expect(result).toBeNull();
-    });
-
-    it("removes oldest non-system entries when limit exceeded", () => {
-      // maxEntries = 7, we have 10 entries, so need to remove 3
-      const limitedConfig: MemoryConfig = {
-        ...testConfig,
-        retention: { maxAgeDays: 0, maxEntries: 7 },
-      };
-      const limitedApi = createMemoryApi(adapter.getDb(), adapter, sessionStore, limitedConfig);
-
-      const result = limitedApi.enforceGuardrails();
-      expect(result).not.toBeNull();
-      expect(result!.entriesRemoved).toBe(3);
-      expect(result!.reason).toContain("exceeded maxEntries");
-
-      // Verify system entries are preserved
-      const remaining = api.inspect({ trustLevel: "system" });
-      expect(remaining.length).toBe(3);
-    });
-
-    it("preserves system entries even when they are the oldest", () => {
-      // Create a scenario where system entries are older than non-system
-      // Our seed data has system entries at now-10000, now-9000, now-2000
-      // The oldest non-system entry is at now-8000
-
-      // Set maxEntries to 5 (need to remove 5 out of 10)
-      const limitedConfig: MemoryConfig = {
-        ...testConfig,
-        retention: { maxAgeDays: 0, maxEntries: 5 },
-      };
-      const limitedApi = createMemoryApi(adapter.getDb(), adapter, sessionStore, limitedConfig);
-
-      const result = limitedApi.enforceGuardrails();
-      expect(result).not.toBeNull();
-      expect(result!.entriesRemoved).toBe(5);
-
-      // All 3 system entries should still be there
-      const systemEntries = api.inspect({ trustLevel: "system" });
-      expect(systemEntries.length).toBe(3);
-
-      // Total should be 5
-      const total = api.inspect();
-      expect(total.length).toBe(5);
-    });
-
-    it("scopes enforcement to specific tenant", () => {
-      // Set maxEntries to 5. Default tenant has 9 entries.
-      const limitedConfig: MemoryConfig = {
-        ...testConfig,
-        retention: { maxAgeDays: 0, maxEntries: 5 },
-      };
-      const limitedApi = createMemoryApi(adapter.getDb(), adapter, sessionStore, limitedConfig);
-
-      const result = limitedApi.enforceGuardrails("default");
-      expect(result).not.toBeNull();
-      expect(result!.entriesRemoved).toBe(4); // 9 - 5 = 4 non-system removed
-
-      // tenant-b should be untouched
-      const tenantB = api.inspect({ tenantId: "tenant-b" });
-      expect(tenantB.length).toBe(1);
-    });
-  });
+  // NOTE: describe("enforceGuardrails") was removed in a prior port-trim cleanup
+  // along with the MemoryApi.enforceGuardrails method + GuardrailResult interface
+  // + RetentionConfigSchema.maxEntries Zod field. Retention is now governed only
+  // by RetentionConfigSchema.maxAgeDays (whose enforcement path lives elsewhere).
 });

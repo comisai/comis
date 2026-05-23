@@ -2,8 +2,6 @@
 import { z } from "zod";
 import type {
   HookBeforeAgentStartResult,
-  HookBeforeToolCallResult,
-  HookToolResultPersistResult,
   HookBeforeCompactionResult,
   HookBeforeDeliveryResult,
 } from "../ports/hook-types.js";
@@ -13,16 +11,6 @@ import type {
 export const BeforeAgentStartResultSchema = z.strictObject({
   systemPrompt: z.string().max(50_000).optional(),
   prependContext: z.string().max(50_000).optional(),
-});
-
-export const BeforeToolCallResultSchema = z.strictObject({
-  params: z.record(z.string(), z.unknown()).optional(),
-  block: z.boolean().optional(),
-  blockReason: z.string().optional(),
-});
-
-export const ToolResultPersistResultSchema = z.strictObject({
-  result: z.string().optional(),
 });
 
 export const BeforeCompactionResultSchema = z.strictObject({
@@ -46,26 +34,6 @@ export function mergeBeforeAgentStart(
   return {
     systemPrompt: next.systemPrompt ?? acc?.systemPrompt,
     prependContext: next.prependContext ?? acc?.prependContext,
-  };
-}
-
-export function mergeBeforeToolCall(
-  acc: HookBeforeToolCallResult | undefined,
-  next: HookBeforeToolCallResult,
-): HookBeforeToolCallResult {
-  return {
-    params: next.params ?? acc?.params,
-    block: next.block ?? acc?.block,
-    blockReason: next.blockReason ?? acc?.blockReason,
-  };
-}
-
-export function mergeToolResultPersist(
-  acc: HookToolResultPersistResult | undefined,
-  next: HookToolResultPersistResult,
-): HookToolResultPersistResult {
-  return {
-    result: next.result ?? acc?.result,
   };
 }
 

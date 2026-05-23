@@ -17,7 +17,7 @@
  * @module
  */
 
-import type { ContextStorePort } from "@comis/core";
+import type { ContextEngineStore } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import type {
   IntegrityIssue,
@@ -142,7 +142,7 @@ export function checkIntegrity(
 // ---------------------------------------------------------------------------
 
 function checkOrphanSummaries(
-  store: ContextStorePort,
+  store: ContextEngineStore,
   conversationId: string,
 ): IntegrityIssue[] {
   const issues: IntegrityIssue[] = [];
@@ -209,7 +209,7 @@ function checkStaleCounts(
 // ---------------------------------------------------------------------------
 
 function checkContiguityGaps(
-  store: ContextStorePort,
+  store: ContextEngineStore,
   conversationId: string,
 ): IntegrityIssue[] {
   const issues: IntegrityIssue[] = [];
@@ -234,7 +234,7 @@ function checkContiguityGaps(
 // ---------------------------------------------------------------------------
 
 function checkDanglingRefs(
-  store: ContextStorePort,
+  store: ContextEngineStore,
   conversationId: string,
 ): IntegrityIssue[] {
   const issues: IntegrityIssue[] = [];
@@ -328,7 +328,7 @@ function checkFtsDesync(
 // ---------------------------------------------------------------------------
 
 function checkCycles(
-  store: ContextStorePort,
+  store: ContextEngineStore,
   conversationId: string,
 ): IntegrityIssue[] {
   const issues: IntegrityIssue[] = [];
@@ -361,7 +361,7 @@ function checkCycles(
 }
 
 function dfsDetectCycle(
-  store: ContextStorePort,
+  store: ContextEngineStore,
   summaryId: string,
   visited: Set<string>,
   depth: number,
@@ -383,7 +383,7 @@ function dfsDetectCycle(
 // ---------------------------------------------------------------------------
 
 function applyRepairs(
-  store: ContextStorePort,
+  store: ContextEngineStore,
   db: unknown,
   issues: IntegrityIssue[],
   conversationId: string,

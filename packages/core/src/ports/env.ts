@@ -13,9 +13,4 @@
 
 export interface EnvPort {
   get(key: string): string | undefined;
-  /**
-   * Read multiple keys at once. Returns a frozen snapshot — useful for
-   * config-bootstrap paths that must not see mutation mid-load.
-   */
-  snapshot(keys: readonly string[]): Readonly<Record<string, string | undefined>>;
 }

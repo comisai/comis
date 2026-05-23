@@ -250,7 +250,7 @@ describe("config-audit/append", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Defensive 0o700 chmod on existing parent dir (OBS-REVIEW-01 fix).
+// Defensive 0o700 chmod on existing parent dir.
 //
 // Non-observability subsystems (pino-roll, pi-mono) may create the parent
 // dir FIRST under default umask (0o755). mkdir's `mode` arg is silently
@@ -355,7 +355,7 @@ describe("encodeRecord — sentinel on serialization failure", () => {
       expect(parsed.traceSchema).toBe("comis-config-audit");
       expect(parsed.schemaVersion).toBe(1);
       expect(parsed.__serializationError).toBe("record-not-serializable");
-      // Design §9.2 uses `ts` (ISO string). `tsMs` was dropped in 260519-rrm.
+      // Design §9.2 uses `ts` (ISO string). `tsMs` was dropped.
       expect(typeof parsed.ts).toBe("string");
       expect(Number.isFinite(Date.parse(parsed.ts))).toBe(true);
     } finally {

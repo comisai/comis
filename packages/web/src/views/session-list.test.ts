@@ -3,53 +3,44 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import type { IcSessionListView } from "./session-list.js";
 import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
-import type { SessionInfo } from "../api/types/index.js";
+import type { SessionListItem } from "../api/types/index.js";
 
 // Side-effect import to register custom element
 import "./session-list.js";
 
-const testSessions: SessionInfo[] = [
+const testSessions: SessionListItem[] = [
   {
-    key: "abc12345",
+    sessionKey: "abc12345",
     agentId: "default",
-    channelType: "telegram",
+    userId: "user1",
+    channelId: "ch1",
+    kind: "telegram",
     messageCount: 47,
     totalTokens: 23400,
-    inputTokens: 15234,
-    outputTokens: 8166,
-    toolCalls: 12,
-    compactions: 1,
-    resetCount: 0,
     createdAt: Date.now() - 7200000,
-    lastActiveAt: Date.now() - 3600000,
+    updatedAt: Date.now() - 3600000,
   },
   {
-    key: "def67890",
+    sessionKey: "def67890",
     agentId: "default",
-    channelType: "discord",
+    userId: "user2",
+    channelId: "ch2",
+    kind: "discord",
     messageCount: 12,
     totalTokens: 8100,
-    inputTokens: 5200,
-    outputTokens: 2900,
-    toolCalls: 3,
-    compactions: 0,
-    resetCount: 1,
     createdAt: Date.now() - 18000000,
-    lastActiveAt: Date.now() - 7200000,
+    updatedAt: Date.now() - 7200000,
   },
   {
-    key: "ghi11223",
+    sessionKey: "ghi11223",
     agentId: "support",
-    channelType: "slack",
+    userId: "user3",
+    channelId: "ch3",
+    kind: "slack",
     messageCount: 103,
     totalTokens: 67200,
-    inputTokens: 42000,
-    outputTokens: 25200,
-    toolCalls: 28,
-    compactions: 2,
-    resetCount: 0,
     createdAt: Date.now() - 86400000,
-    lastActiveAt: Date.now() - 43200000,
+    updatedAt: Date.now() - 43200000,
   },
 ];
 
@@ -76,7 +67,6 @@ function createMockApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
     chat: vi.fn().mockResolvedValue({ response: "" }),
     getChatHistory: vi.fn().mockResolvedValue([]),
     health: vi.fn().mockResolvedValue({ status: "ok", timestamp: "" }),
-    subscribeEvents: vi.fn().mockReturnValue(() => {}),
     ...overrides,
   } as ApiClient;
 }
@@ -225,7 +215,7 @@ describe("IcSessionListView", () => {
 
     const sessionList = el.shadowRoot?.querySelector("ic-session-list") as any;
     expect(sessionList?.sessions).toHaveLength(1);
-    expect(sessionList?.sessions[0].channelType).toBe("telegram");
+    expect(sessionList?.sessions[0].kind).toBe("telegram");
   });
 
   it("session click navigates to session detail route", async () => {
@@ -359,22 +349,22 @@ describe("IcSessionListView", () => {
   });
 
   it("status filter narrows sessions by computed status", async () => {
-    // Create sessions with different lastActiveAt values for different statuses
-    const sessionsWithStatus: SessionInfo[] = [
+    // Create sessions with different updatedAt values for different statuses
+    const sessionsWithStatus: SessionListItem[] = [
       {
         ...testSessions[0],
-        key: "active-session",
-        lastActiveAt: Date.now() - 60000, // 1 min ago -> active
+        sessionKey: "active-session",
+        updatedAt: Date.now() - 60000, // 1 min ago -> active
       },
       {
         ...testSessions[1],
-        key: "idle-session",
-        lastActiveAt: Date.now() - 30 * 60 * 1000, // 30 min ago -> idle
+        sessionKey: "idle-session",
+        updatedAt: Date.now() - 30 * 60 * 1000, // 30 min ago -> idle
       },
       {
         ...testSessions[2],
-        key: "expired-session",
-        lastActiveAt: Date.now() - 2 * 60 * 60 * 1000, // 2 hours ago -> expired
+        sessionKey: "expired-session",
+        updatedAt: Date.now() - 2 * 60 * 60 * 1000, // 2 hours ago -> expired
       },
     ];
 
@@ -394,7 +384,7 @@ describe("IcSessionListView", () => {
 
     const sessionList = el.shadowRoot?.querySelector("ic-session-list") as any;
     expect(sessionList?.sessions).toHaveLength(1);
-    expect(sessionList?.sessions[0].key).toBe("active-session");
+    expect(sessionList?.sessions[0].sessionKey).toBe("active-session");
   });
 
   it("content search calls session.search RPC when rpcClient available", async () => {
@@ -429,7 +419,7 @@ describe("IcSessionListView", () => {
     // After RPC returns, filteredSessions should only contain the matched session
     const sessionList = el.shadowRoot?.querySelector("ic-session-list") as any;
     expect(sessionList?.sessions).toHaveLength(1);
-    expect(sessionList?.sessions[0].key).toBe("abc12345");
+    expect(sessionList?.sessions[0].sessionKey).toBe("abc12345");
   });
 
   it("falls back to client-side search when rpcClient unavailable", async () => {

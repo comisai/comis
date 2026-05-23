@@ -79,11 +79,11 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
 
   // ---- Context engine ----
   // Context pipeline runs once per turn (pre-LLM context assembly).
-  // Mapping closes 260519-tlx Gap COV — design §6.4 mapping table entry
-  // "(executor) prompt assembled (or context layer) → context.compiled".
-  // The post-LLM `context:pipeline:cache` patch event is NOT mapped here;
-  // its cache fields land in this initial pipeline snapshot at emit time
-  // (the producer reuses the same payload-fence semantics for both events).
+  // Mapping table entry: "(executor) prompt assembled (or context layer)
+  // → context.compiled". The post-LLM `context:pipeline:cache` patch
+  // event is NOT mapped here; its cache fields land in this initial
+  // pipeline snapshot at emit time (the producer reuses the same
+  // payload-fence semantics for both events).
   "context:pipeline": "context.compiled",
 } as const satisfies Record<string, TrajectoryEventType>;
 
@@ -173,8 +173,7 @@ export function attachTrajectoryToEventBus(
  * Correlation keys (`traceId`, `agentId`, `sessionKey`, `sessionId`) are
  * envelope-only per design §6.2. Bridge payload translators MUST NOT
  * echo them into `data` — the recorder's envelope already carries them
- * via `TrajectoryRecorderInit` + AsyncLocalStorage. Duplicating them
- * into `data` was deviation C in the 260519-rrm audit.
+ * via `TrajectoryRecorderInit` + AsyncLocalStorage.
  */
 function translatePayload(
   eventName: TrajectoryBridgedEventName,
@@ -348,8 +347,8 @@ function translatePayload(
 
     case "context:pipeline":
       // Envelope-only correlation keys (agentId, sessionKey) intentionally
-      // stripped per design §6.2 + 260519-rrm deviation C. The trajectory
-      // envelope carries them via TrajectoryRecorderInit + AsyncLocalStorage.
+      // stripped per design §6.2. The trajectory envelope carries them
+      // via TrajectoryRecorderInit + AsyncLocalStorage.
       return {
         tokensLoaded: payload.tokensLoaded,
         tokensEvicted: payload.tokensEvicted,

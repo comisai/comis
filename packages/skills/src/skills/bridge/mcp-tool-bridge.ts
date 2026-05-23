@@ -15,7 +15,7 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema } from "typebox";
-import { registerToolMetadata } from "@comis/core";
+import { registerToolMetadata, wrapExternalContent, type WrapExternalContentOptions } from "@comis/core";
 import { extractMcpServerName } from "@comis/shared";
 export { extractMcpServerName };
 import { resolveSourceProfile, type ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
@@ -180,6 +180,7 @@ export function mcpToolsToAgentTools(
   callTool: McpClientManager["callTool"],
   toolSourceProfiles?: Record<string, Partial<ToolSourceProfile>>,
   logger?: McpBridgeLogger,
+  onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   /** Log the content shape of an execute() return value for content-loss diagnosis. */
@@ -270,6 +271,19 @@ export function mcpToolsToAgentTools(
           if (textParts.length > profile.maxChars) {
             const { truncated } = truncateJsonAware(textParts, profile.maxChars);
             textParts = truncated;
+          }
+
+          // Wrap AFTER cap so SECURITY NOTICE boilerplate is preserved
+          // (wrap-then-cap would truncate the closing <<<END_UNTRUSTED_xxx>>>
+          // marker mid-content). Fixed ~150-byte wrapper boilerplate sits beyond
+          // the per-source maxChars budget — the cap governs content size, not
+          // wrapper overhead. The `if (textParts)` guard preserves the empty-
+          // content fallback "Tool returned no text content" path below.
+          if (textParts) {
+            textParts = wrapExternalContent(textParts, {
+              source: "mcp_tool",
+              onSuspiciousContent,
+            });
           }
 
           const successResult = {

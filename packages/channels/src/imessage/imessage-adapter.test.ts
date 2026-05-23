@@ -235,29 +235,19 @@ describe("createIMessageAdapter", () => {
     });
   });
 
-  describe("unsupported operations", () => {
-    it("returns error for editMessage", async () => {
+  describe("unsupported operations (capability-gated: omitted on adapter)", () => {
+    it("omits editMessage / reactToMessage / removeReaction / deleteMessage (capability gate blocks)", () => {
       const adapter = createIMessageAdapter({ logger: mockLogger });
-      const result = await adapter.editMessage("42", "msg-1", "Updated");
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("not supported");
-      }
+      expect(adapter.editMessage).toBeUndefined();
+      expect(adapter.reactToMessage).toBeUndefined();
+      expect(adapter.removeReaction).toBeUndefined();
+      expect(adapter.deleteMessage).toBeUndefined();
     });
 
-    it("returns error for reactToMessage", async () => {
+    it("retains real fetchMessages (imsg chats.messages) and sendAttachment (imsg send file)", () => {
       const adapter = createIMessageAdapter({ logger: mockLogger });
-      const result = await adapter.reactToMessage("42", "msg-1", "thumbsup");
-      expect(result.ok).toBe(false);
-    });
-
-    it("returns error for deleteMessage", async () => {
-      const adapter = createIMessageAdapter({ logger: mockLogger });
-      const result = await adapter.deleteMessage("42", "msg-1");
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("not supported");
-      }
+      expect(typeof adapter.fetchMessages).toBe("function");
+      expect(typeof adapter.sendAttachment).toBe("function");
     });
 
     it("returns ok with reason for sendTyping", async () => {

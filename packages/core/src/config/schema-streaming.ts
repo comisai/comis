@@ -98,6 +98,8 @@ export const StreamingConfigSchema = z.strictObject({
     enabled: z.boolean().default(true),
     /** Default chunk mode for channels without per-channel override */
     defaultChunkMode: ChunkModeSchema,
+    /** Default minimum characters before allowing a split point */
+    defaultChunkMinChars: z.number().int().nonnegative().default(100),
     /** Default delivery timing for channels without per-channel override */
     defaultDeliveryTiming: DeliveryTimingConfigSchema.default(() => DeliveryTimingConfigSchema.parse({})),
     /** Default coalescer for channels without per-channel override */
@@ -106,6 +108,10 @@ export const StreamingConfigSchema = z.strictObject({
     defaultTypingMode: TypingModeSchema,
     /** Default typing indicator refresh interval in ms */
     defaultTypingRefreshMs: z.number().int().positive().default(6000),
+    /** Default consecutive sendTyping failures before circuit breaker trips */
+    defaultTypingCircuitBreakerThreshold: z.number().int().positive().default(3),
+    /** Default maximum typing indicator duration in ms before auto-stop */
+    defaultTypingTtlMs: z.number().int().positive().default(60000),
     /** Default table conversion mode for IR pipeline */
     defaultTableMode: TableModeSchema,
     /** Default for Markdown IR pipeline (true = format-aware chunking with platform rendering) */

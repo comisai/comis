@@ -11,12 +11,12 @@
  *     (`traceSchema`, `schemaVersion`, `seq`, `ts`, etc.) is identical.
  *   - Single file path (resolved via `resolveCacheTraceFilePath`)
  *     rather than per-session JSONL.
- *   - 50 MB per-file cap (parity with trajectory; Plan 48-03 raised
- *     this from 10 MB so the runtime fallback matches the schema
- *     default introduced by Plan 48-02). Cache-trace events accumulate
- *     across many sessions in one long-lived file — the cap bounds DoS
- *     exposure and is paired with the proactive inline + summary
- *     `cache_trace.write_failures` sentinel pair (D-10 + D-11).
+ *   - 50 MB per-file cap (parity with trajectory; the runtime fallback
+ *     matches the schema default introduced by CacheTraceConfigSchemaInner.maxFileBytes).
+ *     Cache-trace events accumulate across many sessions in one
+ *     long-lived file — the cap bounds DoS exposure and is paired with
+ *     the proactive inline + summary `cache_trace.write_failures`
+ *     sentinel pair.
  *   - `setLatestTokenUsage` + `attachToEventBus` (see
  *     `event-bus-bridge.ts`): the EventBus bridge subscribes to
  *     `observability:token_usage` (the only event that physically
@@ -48,10 +48,9 @@ import type { CacheTraceEvent, CacheTraceStage } from "./types.js";
 // Constants (defaults — overridable per init)
 // ---------------------------------------------------------------------------
 
-// Plan 48-03 flip (per checker BLOCKER 1 — co-located here with sentinel
-// state-machine work to keep all runtime.ts edits in one plan): the
-// fallback default is raised 10 MB → 50 MB so it matches the schema
-// default from Plan 48-02 (CacheTraceConfigSchemaInner.maxFileBytes).
+// Co-located here with sentinel state-machine work to keep all
+// runtime.ts edits together: the fallback default is 50 MB so it
+// matches the schema default from CacheTraceConfigSchemaInner.maxFileBytes.
 // In normal operation the schema default always wins via
 // `init.maxFileBytes`; this fallback only applies when callers omit the
 // option, but the agreement removes the "where does the actual cap come
@@ -123,7 +122,7 @@ export interface CacheTraceInit {
    * Tests omit it (the option is opt-in for back-compat).
    */
   readonly confinedBaseDir?: string;
-  /** Per-file byte cap. Default 50 MB (Plan 48-03 raised from 10 MB to match schema default). */
+  /** Per-file byte cap. Default 50 MB. */
   readonly maxFileBytes?: number;
   /** Per-writer queued byte cap. Default 4 MB. */
   readonly maxQueuedBytes?: number;
@@ -210,7 +209,7 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
   // recorders for the same path, but seq accounting + latest-token-usage
   // is per-recorder (matches trajectory's pattern).
   //
-  // Plan 48-03 D-10/D-11 extensions:
+  // Sentinel state-machine fields:
   //   - `writeFailureSentinelEmitted`: once-per-session latch for the
   //     inline `cache_trace.write_failures` emit inside recordStage.
   //     The latch flips true on the first detection of
@@ -248,7 +247,7 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
     ): "queued" | "dropped" {
       if (state.closed) return "dropped";
 
-      // 0. Plan 48-03 D-10: inline `cache_trace.write_failures` sentinel.
+      // 0. Inline `cache_trace.write_failures` sentinel.
       //    The queued writer surfaces per-line append failures
       //    asynchronously (the failure lands inside the writer's
       //    promise chain, not inside the recordStage call site). We
@@ -259,7 +258,7 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
       //    BEFORE processing the new event. The latch
       //    `state.writeFailureSentinelEmitted` collapses subsequent
       //    failure detections into the summary sentinel at
-      //    flushAndClose (D-11) so we never flood the file with
+      //    flushAndClose so we never flood the file with
       //    per-failure sentinels.
       //
       //    The emit is best-effort: when the cap is fully exhausted
@@ -298,7 +297,7 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
       //    sanitizeForPersistence applies credential redaction +
       //    diagnostic-payload sanitization + bounded-payload limiter.
       //
-      //    260520-wcf: derive per-key exemption overrides from the
+      //    Derive per-key exemption overrides from the
       //    operator-set includeSystem / includeMessages flags. When the
       //    operator opts in, the corresponding payload slot can carry
       //    full SDK content even if it exceeds 32 KB (otherwise the
@@ -397,7 +396,7 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
       state.closed = true;
       await writer.flush();
 
-      // 3. Plan 48-03 D-11: summary `cache_trace.write_failures`
+      // 3. Summary `cache_trace.write_failures`
       //    sentinel. Fires at flushAndClose when the underlying queued
       //    writer reports per-line append failures. Carries the final
       //    tally + session lifetime so post-mortem readers know:
@@ -408,7 +407,7 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
       //    Field renames vs prior shape:
       //      `count`         → `droppedEvents`         (naming parity
       //                                                 with the inline
-      //                                                 sentinel D-10)
+      //                                                 sentinel)
       //      `rejectedBytes` → `totalDroppedBytes`     (signals "final
       //                                                 cumulative" vs
       //                                                 the inline
@@ -416,7 +415,7 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
       //                                                 `droppedBytes`)
       //    Per AGENTS.md §2.9, the rename ships without aliases; no
       //    live external consumer pins the prior field shape.
-      //    Two-sentinel-per-cap-hit-session model (D-10 + D-11):
+      //    Two-sentinel-per-cap-hit-session model:
       //      sessions that hit the cap → exactly 1 inline + 1 summary
       //      sessions that never hit the cap → 0 sentinels
       const failureCount = writer.failureCount();

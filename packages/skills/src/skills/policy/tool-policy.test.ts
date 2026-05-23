@@ -473,13 +473,13 @@ function createCronTools(): AgentTool<any>[] {
   return [
     mockTool("web_search"),
     mockTool("message"),
-    mockTool("read_file"),
-    mockTool("write_file"),
-    mockTool("list_dir"),
+    mockTool("read"),
+    mockTool("write"),
+    mockTool("ls"),
     mockTool("memory_store"),
     mockTool("memory_search"),
     mockTool("cron"),
-    mockTool("discover"),
+    mockTool("discover_tools"),
     // Out-of-profile tools that should be filtered
     mockTool("exec"),
     mockTool("browser"),
@@ -494,13 +494,13 @@ describe("TOOL_PROFILES operational presets", () => {
     expect(TOOL_PROFILES["cron-minimal"]).toEqual([
       "web_search",
       "message",
-      "read_file",
-      "write_file",
-      "list_dir",
+      "read",
+      "write",
+      "ls",
       "memory_store",
       "memory_search",
       "cron",
-      "discover",
+      "discover_tools",
     ]);
   });
 
@@ -509,7 +509,7 @@ describe("TOOL_PROFILES operational presets", () => {
       "message",
       "memory_store",
       "memory_search",
-      "discover",
+      "discover_tools",
     ]);
   });
 });
@@ -583,6 +583,6 @@ describe("applyToolPolicy - operational opt-in behavior", () => {
     });
 
     const names = result.tools.map((t) => t.name);
-    expect(names.sort()).toEqual(["discover", "memory_search", "memory_store", "message"]);
+    expect(names.sort()).toEqual(["discover_tools", "memory_search", "memory_store", "message"]);
   });
 });

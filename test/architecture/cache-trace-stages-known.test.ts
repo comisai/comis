@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-HARD-11 — cache-trace stages closed-union enforcement.
+ * Cache-trace stages closed-union enforcement.
  *
  * Mirrors `trajectory-event-types-known.test.ts`. Walks
  * `packages/observability/src/cache-trace/**\/*.ts` +

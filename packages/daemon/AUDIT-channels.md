@@ -2,9 +2,9 @@
 
 **Generated:** 2026-05-12
 **Status:** FINAL
-**Interface source:** `packages/daemon/src/api/types.ts:144–174`
+**Interface source:** `packages/daemon/src/api/types.ts:139–170`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 15 (8 required + 7 optional + 0 stale-fallback)
+**Field count:** 15 (9 required + 6 optional + 0 stale-fallback)
 **Location:** co-located with the `@comis/daemon` package; `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
 
 ## Field Classification
@@ -22,7 +22,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | deliveryQueue | optional | message.send / message.reply bypass the persistent delivery queue and call adapter.sendMessage directly; ack tracking is disabled | packages/daemon/src/api/types.ts:158 |
 | deliveryService | required | — | packages/daemon/src/api/types.ts:163 |
 | healthMonitor | optional | channel.list does not include health-status fields; channel.start does not register a health probe | packages/daemon/src/api/types.ts:165 |
-| channelPlugins | optional | channel.capabilities returns the hardcoded built-in capability map only; plugin-contributed capabilities are not advertised | packages/daemon/src/api/types.ts:167 |
+| channelPlugins | required | — | packages/daemon/src/api/types.ts:163 |
 | defaultAgentId | required | — | packages/daemon/src/api/types.ts:170 |
 | defaultWorkspaceDir | required | — | packages/daemon/src/api/types.ts:171 |
 | workspaceDirs | required | — | packages/daemon/src/api/types.ts:172 |
@@ -31,12 +31,12 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field corresponds to a feature-gate documented above. `inboundMessageIdResolver` is a compat path for tests; `wsConnections` is set after gateway init via a mutable ref so it is optional during early dispatcher construction; `deliveryQueue` / `healthMonitor` / `channelPlugins` are configurable subsystems whose absence triggers explicit fallback paths.
+**None.** Every optional field corresponds to a feature-gate documented above. `inboundMessageIdResolver` is a compat path for tests; `wsConnections` is set after gateway init via a mutable ref so it is optional during early dispatcher construction; `deliveryQueue` / `healthMonitor` are configurable subsystems whose absence triggers explicit fallback paths. `channelPlugins` was promoted from optional to required — setup-channels-adapters.ts always wires ≥9 plugin entries before `buildRpcDispatchDeps`.
 
 ## Summary
 
 - **Pre-audit count:** 15
-- **Final count:** 15 (8 required + 7 optional)
+- **Final count:** 15 (9 required + 6 optional, after promoting `channelPlugins` to required)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

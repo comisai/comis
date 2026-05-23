@@ -12,6 +12,7 @@ export default tseslint.config(
       "node_modules/**",
       "**/node_modules/**",
       "packages/*/dist/**",
+      ".claude/worktrees/**",
       "website/.astro/**",
       // Fixtures consumed as raw text by test helpers (e.g. parsed via
       // ts.createSourceFile). They are not compiled; lint rules like

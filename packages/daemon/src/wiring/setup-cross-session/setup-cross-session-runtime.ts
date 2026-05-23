@@ -44,6 +44,13 @@ export interface CrossSessionResult {
   deadLetterQueue?: ReturnType<typeof createAnnouncementDeadLetterQueue>;
   /** Announcement batcher for coalescing concurrent graph/sub-agent completions. */
   announcementBatcher: ReturnType<typeof createAnnouncementBatcher>;
+  /**
+   * Cleanup function for proxy-typing controllers + TTL sweep timer. Threaded
+   * to the composition root for invocation via
+   * ShutdownDeps.proxyTypingCleanup (replaces eventBus.on(
+   * "system:shutdown", ...) indirection that silently no-op'd in production).
+   */
+  proxyTypingCleanup: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -333,12 +340,15 @@ export function setupCrossSession(deps: {
     timers: deps.timers,
   });
 
-  // Register proxy typing event listeners (typing:proxy_start/stop + TTL sweep + shutdown)
-  registerProxyTypingListeners({
+  // Register proxy typing event listeners (typing:proxy_start/stop + TTL
+  // sweep). Returns a cleanup function the composition root threads into
+  // ShutdownDeps.proxyTypingCleanup (replaces the eventBus.on(
+  // "system:shutdown", ...) indirection that silently no-op'd in production).
+  const proxyTypingCleanup = registerProxyTypingListeners({
     container,
     adaptersByType: adaptersByType as unknown as Map<string, ChannelPort & { platformAction?(action: string, params: Record<string, unknown>): Promise<unknown> }>,
     logger: deps.logger,
   });
 
-  return { crossSessionSender, subAgentRunner, sendToChannel, announceToParent, deadLetterQueue, announcementBatcher };
+  return { crossSessionSender, subAgentRunner, sendToChannel, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup };
 }

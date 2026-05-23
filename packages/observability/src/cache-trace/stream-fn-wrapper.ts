@@ -117,14 +117,14 @@ export function buildCacheTraceWrapper(trace: CacheTrace): StreamFnWrapper {
       if (typeof modelProvider === "string") preCallPayload.provider = modelProvider;
       if (typeof modelId === "string") preCallPayload.modelId = modelId;
 
-      // Plan 48-07 (resolves RESEARCH.md Q-2): emit `model:before`
-      // directly from the wrapper instead of round-tripping through a
-      // new EventBus event. The model context (provider, modelId) and
-      // digest fingerprints are already in scope here — an EventBus
-      // round-trip would carry the same data through one more hop with
-      // no observable benefit. The `model:before` stage gives operators
-      // a forensic "about to call <model> with <digests>" record for
-      // cache-hit diagnosis, ordered BEFORE the `stream:context` emit.
+      // Emit `model:before` directly from the wrapper instead of
+      // round-tripping through a new EventBus event. The model context
+      // (provider, modelId) and digest fingerprints are already in
+      // scope here — an EventBus round-trip would carry the same data
+      // through one more hop with no observable benefit. The
+      // `model:before` stage gives operators a forensic "about to call
+      // <model> with <digests>" record for cache-hit diagnosis, ordered
+      // BEFORE the `stream:context` emit.
       const modelBeforePayload: Record<string, unknown> = {};
       if (typeof modelProvider === "string") modelBeforePayload.provider = modelProvider;
       if (typeof modelId === "string") modelBeforePayload.modelId = modelId;

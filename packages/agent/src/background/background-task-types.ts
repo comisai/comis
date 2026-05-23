@@ -61,7 +61,7 @@ export interface BackgroundTask {
   notificationPolicy?: BackgroundTaskNotificationPolicy;
   /** Live three-state session lifecycle. Optional; recovery defaults to
    *  "pending" when absent. The dispatcher inspects this before firing
-   *  notifyFn. */
+   *  fallbackNotifyFn. */
   dispatchState?: BackgroundSessionState;
   // In-memory only (not serialized):
   _promise?: Promise<unknown>;
@@ -89,7 +89,7 @@ export interface PersistedTaskState {
   notificationPolicy?: BackgroundTaskNotificationPolicy;
   /**
    * Three-state session lifecycle. Optional; recovery defaults to "pending"
-   * when absent. The dispatcher inspects this before firing notifyFn.
+   * when absent. The dispatcher inspects this before firing fallbackNotifyFn.
    */
   dispatchState?: BackgroundSessionState;
 }

@@ -532,68 +532,15 @@ describe("createIrcAdapter", () => {
   // Unsupported operations
   // -------------------------------------------------------------------------
 
-  describe("unsupported operations", () => {
-    it("editMessage returns err with 'does not support' message", async () => {
+  describe("unsupported operations (all six capability-gated methods omitted)", () => {
+    it("omits editMessage, reactToMessage, removeReaction, deleteMessage, fetchMessages, sendAttachment", () => {
       const adapter = createIrcAdapter(makeDeps());
-      const result = await adapter.editMessage("#comis", "msg1", "Updated");
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("does not support");
-      }
-    });
-
-    it("reactToMessage returns err", async () => {
-      const adapter = createIrcAdapter(makeDeps());
-      const result = await adapter.reactToMessage("#comis", "msg1", "thumbsup");
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("does not support");
-      }
-    });
-
-    it("deleteMessage returns err", async () => {
-      const adapter = createIrcAdapter(makeDeps());
-      const result = await adapter.deleteMessage("#comis", "msg1");
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("does not support");
-      }
-    });
-
-    it("fetchMessages returns err", async () => {
-      const adapter = createIrcAdapter(makeDeps());
-      const result = await adapter.fetchMessages("#comis");
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("does not support");
-      }
-    });
-
-    it("sendAttachment returns err and logs warning", async () => {
-      const deps = makeDeps();
-      const adapter = createIrcAdapter(deps);
-      const result = await adapter.sendAttachment("#comis", {
-        type: "image",
-        url: "https://example.com/image.png",
-      } as any);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("does not support attachments");
-      }
-      expect(deps.logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          channelType: "irc",
-          chatId: "#comis",
-          hint: "IRC is a text-only protocol and does not support attachments",
-          errorKind: "validation",
-        }),
-        "Send attachment failed",
-      );
+      expect(adapter.editMessage).toBeUndefined();
+      expect(adapter.reactToMessage).toBeUndefined();
+      expect(adapter.removeReaction).toBeUndefined();
+      expect(adapter.deleteMessage).toBeUndefined();
+      expect(adapter.fetchMessages).toBeUndefined();
+      expect(adapter.sendAttachment).toBeUndefined();
     });
   });
 

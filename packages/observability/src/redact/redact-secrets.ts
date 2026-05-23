@@ -20,109 +20,69 @@
  *   - **Primitives** (number / boolean / null / undefined) pass through.
  *
  * `sanitizeForPersistence(value)` is the canonical "safe-to-disk"
- * composition for diagnostic artifacts:
+ * composition for diagnostic artifacts.
  *
- *   `redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value)))`
- *
- * Order matters: `limitPayloadValue` first bounds size/depth, then
- * `sanitizeDiagnosticPayload` drops credential-keyed fields entirely
- * and applies image-shape rewrites, and finally `redactSecrets` masks
- * any credential bodies that survived (e.g., inside free-text fields).
+ * Order matters: bounding runs first (so size/depth/cycle caps fire
+ * before any string/credential scanning sees the bytes), then sanitize
+ * drops credential-keyed fields and rewrites image objects, and finally
+ * redact masks any credential bodies that survived (e.g., inside
+ * free-text fields). Reversing this order risks a truncated-prefix leak
+ * of oversize credentials.
  *
  * Pure function — no I/O, no clock, no fs.
+ *
+ * The pre-fusion implementation composed three full-graph walks
+ * (`redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value)))`).
+ * Each walk allocated its own WeakSet, its own `isPlainObject` predicate
+ * copy, and its own value-graph allocation. Post-fusion,
+ * `sanitizeForPersistence` is a single
+ * `combinedWalk(value, {boundCheck, sanitizeNode, redactNode}, overrides)`
+ * call — ONE WeakSet, ONE descent, ONE value-graph allocation. Public
+ * signatures (`redactSecrets`, `sanitizeForPersistence`) are UNCHANGED.
  *
  * @module
  */
 
 import {
-  limitPayloadValue,
-  type PayloadBoundsOverrides,
-} from "../shared/bounded-payload.js";
-import { isCredentialFieldName } from "../shared/sanitize-diagnostic-payload.js";
-import { sanitizeDiagnosticPayload } from "../shared/sanitize-diagnostic-payload.js";
-
-import { maskToken } from "./edge-keeping.js";
-import { redactSecretsInText } from "./redact-text.js";
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function walk(value: unknown, seen: WeakSet<object>): unknown {
-  if (typeof value === "string") {
-    return redactSecretsInText(value);
-  }
-
-  if (Array.isArray(value)) {
-    if (seen.has(value)) return "[Circular]";
-    seen.add(value);
-    const mapped = value.map((entry) => walk(entry, seen));
-    seen.delete(value);
-    return mapped;
-  }
-
-  if (isPlainObject(value)) {
-    if (seen.has(value)) return "[Circular]";
-    seen.add(value);
-
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value)) {
-      // Read via Object.keys + indexed access; treat the entry as
-      // `unknown` to keep this generic for arbitrary structures.
-      const v = (value as Record<string, unknown>)[key];
-
-      if (isCredentialFieldName(key)) {
-        if (typeof v === "string") {
-          // Value-mode mask: edge-keeping over the string.
-          out[key] = maskToken(v);
-        } else {
-          // Non-string (number, boolean, object) under a credential
-          // key — collapse to the short-token sentinel since there is
-          // no body to mask.
-          out[key] = "***";
-        }
-        continue;
-      }
-
-      out[key] = walk(v, seen);
-    }
-
-    seen.delete(value);
-    return out;
-  }
-
-  // Primitives (number, boolean, null, undefined, symbol, bigint).
-  return value;
-}
+  combinedWalk,
+  boundCheckHook,
+  sanitizeNodeHook,
+  redactNodeHook,
+} from "../shared/combined-walker.js";
+import { type PayloadBoundsOverrides } from "../shared/bounded-payload.js";
 
 /**
  * Apply the structured-walk redactor to `value`.
  *
- * The result is a NEW value graph (input is not mutated). Credential-
- * keyed fields are masked at the value level; string bodies are scanned
- * for embedded credentials; cycles are flagged with `"[Circular]"`.
+ * Delegates to `combinedWalk` with the redact-node hook only.
+ * The result is a NEW value graph (input is not mutated). Credential-keyed
+ * fields are masked at the value level; string bodies are scanned for
+ * embedded credentials; cycles are flagged with `"[Circular]"`.
  *
  * @param value - arbitrary JavaScript value
  * @returns the redacted graph
  */
 export function redactSecrets<T = unknown>(value: T): unknown {
-  const seen = new WeakSet<object>();
-  return walk(value, seen);
+  return combinedWalk(value, { redactNode: redactNodeHook });
 }
 
 /**
  * Canonical "safe to persist to disk" pipeline.
  *
- * `redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value, overrides)))`
- *
  * Used by every artifact writer (trajectory, system-prompt-report,
  * config-audit, cache-trace) before writing a diagnostic payload.
  *
- * The optional `overrides` argument is forwarded to `limitPayloadValue`
- * so callers (cache-trace runtime, 260520-wcf) can opt specific payload
- * slots out of the 32 KB / 64-item caps. See {@link PayloadBoundsOverrides}
- * for the per-key exemption contract. Default behavior (no overrides) is
- * identical to pre-260520-wcf.
+ * The optional `overrides` argument is forwarded to the bounded-payload
+ * stage so callers (cache-trace runtime) can opt specific payload slots
+ * out of the 32 KB / 64-item caps. See
+ * {@link PayloadBoundsOverrides} for the per-key exemption contract.
+ * Default behavior (no overrides) is identical.
+ *
+ * **Hook order at every node** is `boundCheck → sanitizeNode → redactNode`
+ * (bounding BEFORE redacting prevents truncated-prefix leak of
+ * oversize credentials). Cycles emit the record-shape sentinel
+ * `{__bounded__: 'bounded-payload-cycle-detected'}` because `boundCheck`
+ * is active.
  *
  * @param value - arbitrary JavaScript value
  * @param overrides - optional per-key exemption overrides
@@ -132,5 +92,13 @@ export function sanitizeForPersistence(
   value: unknown,
   overrides?: PayloadBoundsOverrides,
 ): unknown {
-  return redactSecrets(sanitizeDiagnosticPayload(limitPayloadValue(value, overrides)));
+  return combinedWalk(
+    value,
+    {
+      boundCheck: boundCheckHook,
+      sanitizeNode: sanitizeNodeHook,
+      redactNode: redactNodeHook,
+    },
+    overrides,
+  );
 }

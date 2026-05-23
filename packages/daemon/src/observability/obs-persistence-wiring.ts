@@ -89,7 +89,6 @@ export function tokenUsageEventToRow(
     traceId: payload.traceId,
     agentId: payload.agentId,
     channelId: payload.channelId,
-    executionId: payload.executionId,
     sessionKey: payload.sessionKey,
     provider: payload.provider,
     model: payload.model,

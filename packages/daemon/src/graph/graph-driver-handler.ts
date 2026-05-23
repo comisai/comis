@@ -137,7 +137,7 @@ export function handleDriverTurnCompleted(
         "Driver node partial completion recovered",
       );
 
-      // Persist partial output via fs-safe substrate (Phase 48 OBS-HARD-03).
+      // Persist partial output via fs-safe substrate.
       if (gs.sharedDir) {
         try {
           void writeRegularFile({ path: safePath(gs.sharedDir, `${nodeId}-output.md`), content: partialOutput, confinedBaseDir: gs.sharedDir });
@@ -323,7 +323,7 @@ export function handleDriverTimeout(
       "Driver node timeout partial completion recovered",
     );
 
-    // Persist partial output via fs-safe substrate (timeout-recovery, Phase 48).
+    // Persist partial output via fs-safe substrate (timeout-recovery).
     if (gs.sharedDir) {
       try {
         void writeRegularFile({ path: safePath(gs.sharedDir, `${nodeId}-output.md`), content: partialOutput, confinedBaseDir: gs.sharedDir });
@@ -688,7 +688,7 @@ export function executeDriverAction(
       persistArtifacts(deps, gs, nodeId, action.artifacts);
       const output = action.output;
 
-      // Persist output via fs-safe substrate (complete-action, Phase 48).
+      // Persist output via fs-safe substrate (complete-action).
       if (gs.sharedDir && output) {
         try {
           void writeRegularFile({ path: safePath(gs.sharedDir, `${nodeId}-output.md`), content: output, confinedBaseDir: gs.sharedDir });

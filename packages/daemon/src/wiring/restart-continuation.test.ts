@@ -332,12 +332,12 @@ describe("buildMcpStatusLine", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 48 OBS-HARD-03: Mode-invariant tests (tmpdir-scoped, real fs).
+// Mode-invariant tests (tmpdir-scoped, real fs).
 //
-// Per Plan 48-05 D-03, the migrated writer must produce artifacts at
-// mode `0o600`. Restart-continuation writes a single JSON file via the
-// fs-safe substrate; the parent dir is the operator's `dataDir`
-// (already `0o700` from the daemon's bootstrap). This test asserts the
+// The migrated writer must produce artifacts at mode `0o600`.
+// Restart-continuation writes a single JSON file via the fs-safe
+// substrate; the parent dir is the operator's `dataDir` (already
+// `0o700` from the daemon's bootstrap). This test asserts the
 // file-mode invariant on the artifact this writer creates.
 // ---------------------------------------------------------------------------
 

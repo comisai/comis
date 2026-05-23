@@ -129,6 +129,24 @@ export async function deliverOutboundMedia(
       fileName,
     };
 
+    if (typeof deps.adapter.sendAttachment !== "function") {
+      // Defensive: sendAttachment is optional on ChannelPort.
+      // Adapters whose platform lacks attachments (e.g. IRC) omit the method;
+      // the capability gate (features.attachments) should normally have blocked
+      // outbound-media earlier in the pipeline. If we reach here the gate was
+      // bypassed — log and skip, do NOT crash.
+      deps.logger.warn(
+        {
+          url,
+          hint: "Channel adapter has no sendAttachment — capability gate (features.attachments) should have blocked this call",
+          errorKind: "validation" as const,
+        },
+        "Outbound media skipped: adapter does not implement sendAttachment",
+      );
+      failed++;
+      suppressError(unlink(tempPath), "outbound media temp cleanup after capability skip");
+      continue;
+    }
     const sendResult = await deps.adapter.sendAttachment(deps.channelId, payload, deps.sendOptions);
     if (!sendResult.ok) {
       deps.logger.warn(

@@ -9,7 +9,7 @@
 
 import type { SecurityUpdateMonitorConfig } from "@comis/core";
 import type { HeartbeatSourcePort, HeartbeatCheckResult } from "@comis/scheduler";
-import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
+import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { envWithoutSystemdNotify } from "./exec-helpers.js";

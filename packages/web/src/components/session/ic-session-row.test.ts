@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { IcSessionRow } from "./ic-session-row.js";
-import type { SessionInfo } from "../../api/types/index.js";
+import type { SessionListItem } from "../../api/types/index.js";
 
 // Side-effect import to register custom element
 import "./ic-session-row.js";
@@ -9,20 +9,17 @@ import "./ic-session-row.js";
 /** Create a session with a parseable key.
  *  Session keys do not carry an `agent:<agentId>:` prefix; the agent
  *  identity is sourced from the session row's `agentId` field instead. */
-function makeSession(overrides: Partial<SessionInfo> = {}): SessionInfo {
+function makeSession(overrides: Partial<SessionListItem> = {}): SessionListItem {
   return {
-    key: "myTenant:user123:telegram",
+    sessionKey: "myTenant:user123:telegram",
     agentId: "default",
-    channelType: "telegram",
+    userId: "user123",
+    channelId: "telegram",
+    kind: "telegram",
     messageCount: 47,
     totalTokens: 23400,
-    inputTokens: 15234,
-    outputTokens: 8166,
-    toolCalls: 12,
-    compactions: 1,
-    resetCount: 0,
     createdAt: Date.now() - 7200000,
-    lastActiveAt: Date.now() - 60000, // 1 min ago -> active
+    updatedAt: Date.now() - 60000, // 1 min ago -> active
     ...overrides,
   };
 }
@@ -57,7 +54,7 @@ describe("IcSessionRow", () => {
   it("falls back to truncated key on parse failure", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
       session: makeSession({
-        key: "some-unparseable-raw-key-string",
+        sessionKey: "some-unparseable-raw-key-string",
       }),
     });
     const displayName = el.shadowRoot?.querySelector(".display-name");
@@ -67,7 +64,7 @@ describe("IcSessionRow", () => {
 
   it("shows short unparseable key without truncation", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
-      session: makeSession({ key: "short" }),
+      session: makeSession({ sessionKey: "short" }),
     });
     const displayName = el.shadowRoot?.querySelector(".display-name");
     expect(displayName?.textContent).toBe("short");
@@ -95,7 +92,7 @@ describe("IcSessionRow", () => {
 
   it("shows correct status indicator for active session", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
-      session: makeSession({ lastActiveAt: Date.now() - 60000 }), // 1 min ago
+      session: makeSession({ updatedAt: Date.now() - 60000 }), // 1 min ago
     });
     const dot = el.shadowRoot?.querySelector(".status-dot") as HTMLElement;
     expect(dot?.title).toBe("active");
@@ -105,7 +102,7 @@ describe("IcSessionRow", () => {
 
   it("shows correct status indicator for idle session", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
-      session: makeSession({ lastActiveAt: Date.now() - 30 * 60 * 1000 }), // 30 min ago
+      session: makeSession({ updatedAt: Date.now() - 30 * 60 * 1000 }), // 30 min ago
     });
     const dot = el.shadowRoot?.querySelector(".status-dot") as HTMLElement;
     expect(dot?.title).toBe("idle");
@@ -114,7 +111,7 @@ describe("IcSessionRow", () => {
 
   it("shows correct status indicator for expired session", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
-      session: makeSession({ lastActiveAt: Date.now() - 2 * 60 * 60 * 1000 }), // 2 hours ago
+      session: makeSession({ updatedAt: Date.now() - 2 * 60 * 60 * 1000 }), // 2 hours ago
     });
     const dot = el.shadowRoot?.querySelector(".status-dot") as HTMLElement;
     expect(dot?.title).toBe("expired");
@@ -131,8 +128,8 @@ describe("IcSessionRow", () => {
     row?.click();
 
     expect(handler).toHaveBeenCalledOnce();
-    const detail = (handler.mock.calls[0][0] as CustomEvent<SessionInfo>).detail;
-    expect(detail.key).toBe(session.key);
+    const detail = (handler.mock.calls[0][0] as CustomEvent<SessionListItem>).detail;
+    expect(detail.sessionKey).toBe(session.sessionKey);
   });
 
   it("fires composed event that crosses shadow DOM boundary", async () => {

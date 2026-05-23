@@ -45,8 +45,6 @@ const secretListRowMapper = createRowMapper(
     provider: z.string().nullable(),
     description: z.string().nullable(),
     expires_at: z.number().nullable(),
-    last_used_at: z.number().nullable(),
-    usage_count: z.number(),
     created_at: z.number(),
     updated_at: z.number(),
   }),
@@ -135,20 +133,12 @@ export function createSqliteSecretStore(
     "SELECT name, ciphertext, iv, auth_tag, salt FROM secrets WHERE name != ?",
   );
 
-  const existsStmt = db.prepare(
-    "SELECT 1 FROM secrets WHERE name = ?",
-  );
-
   const listStmt = db.prepare(
-    "SELECT name, provider, description, expires_at, last_used_at, usage_count, created_at, updated_at FROM secrets WHERE name != ?",
+    "SELECT name, provider, description, expires_at, created_at, updated_at FROM secrets WHERE name != ?",
   );
 
   const deleteStmt = db.prepare(
     "DELETE FROM secrets WHERE name = ?",
-  );
-
-  const recordUsageStmt = db.prepare(
-    "UPDATE secrets SET usage_count = usage_count + 1, last_used_at = ? WHERE name = ?",
   );
 
   // Step 9: Return frozen SecretStorePort object
@@ -239,11 +229,6 @@ export function createSqliteSecretStore(
       });
     },
 
-    exists(name: string): boolean {
-      const row = existsStmt.get(name);
-      return row !== undefined;
-    },
-
     list(): Result<SecretMetadata[], Error> {
       const parsed = secretListRowMapper.parseRows(listStmt.all(CANARY_NAME));
       if (!parsed.ok) {
@@ -257,8 +242,6 @@ export function createSqliteSecretStore(
           provider: row.provider ?? undefined,
           description: row.description ?? undefined,
           expiresAt: row.expires_at ?? undefined,
-          lastUsedAt: row.last_used_at ?? undefined,
-          usageCount: row.usage_count,
           createdAt: row.created_at,
           updatedAt: row.updated_at,
         }));
@@ -270,11 +253,6 @@ export function createSqliteSecretStore(
         const result = deleteStmt.run(name);
         return result.changes > 0;
       });
-    },
-
-    recordUsage(name: string): void {
-      const now = systemNowMs();
-      recordUsageStmt.run(now, name);
     },
 
     close(): void {

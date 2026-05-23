@@ -207,6 +207,10 @@ async function runCli(
     delete baseEnv["COMIS_CONFIG_PATHS"];
     delete baseEnv["COMIS_GATEWAY_URL"];
     delete baseEnv["COMIS_GATEWAY_TOKEN"];
+    // VITEST=true propagates to the child node process; under it, withClient
+    // refuses real WebSockets unless COMIS_CLI_E2E=true. Opt in here so the
+    // CLI subprocess can probe the test daemon over a real socket.
+    baseEnv["COMIS_CLI_E2E"] = "true";
     const env: NodeJS.ProcessEnv = { ...baseEnv } as NodeJS.ProcessEnv;
     for (const [k, v] of Object.entries(extraEnv)) {
       if (v === undefined) delete env[k];

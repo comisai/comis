@@ -62,10 +62,6 @@ export type { ImageRouterParams, ImageRouterResult, ImageFallbackChain, ImageFal
 export { createModelAllowlist } from "./model/model-allowlist.js";
 export type { ModelAllowlist } from "./model/model-allowlist.js";
 
-// Model alias resolver
-export { createModelAliasResolver } from "./model/model-alias-resolver.js";
-export type { ModelAliasResolver, ModelAliasResolverDeps } from "./model/model-alias-resolver.js";
-
 // Context window resolver
 export { createContextWindowResolver } from "./model/context-window-resolver.js";
 export type { ContextWindowResolver, ContextWindowResolverDeps } from "./model/context-window-resolver.js";
@@ -157,8 +153,6 @@ export { loadIdentityFiles } from "./identity/identity-loader.js";
 export type { IdentityFiles } from "./identity/identity-loader.js";
 export { createIdentityUpdater } from "./identity/identity-updater.js";
 export type { IdentityUpdater, PendingUpdate } from "./identity/identity-updater.js";
-export { createIdentityLinkResolver } from "./identity/identity-link-resolver.js";
-export type { IdentityLinkResolver, IdentityLinkResolverDeps } from "./identity/identity-link-resolver.js";
 
 // Greeting (LLM-powered session greeting for /new and /reset)
 export { createGreetingGenerator } from "./greeting/session-greeting.js";
@@ -169,11 +163,10 @@ export { runMemoryReview } from "./memory/memory-review-job.js";
 export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 
 // RAG (Retrieval-Augmented Generation)
-export { createRagRetriever, formatMemorySection } from "./rag/rag-retriever.js";
-export type { RagRetriever, RagRetrieverDeps } from "./rag/rag-retriever.js";
+export { formatMemorySection } from "./rag/rag-retriever.js";
 
 // Queue symbols live in @comis/orchestrator:
-// createCommandQueue, CommandQueue, DebounceBuffer, FollowupTrigger, PriorityScheduler,
+// createCommandQueue, CommandQueue, DebounceBuffer, FollowupTrigger,
 // coalesceMessages, applyOverflowPolicy, SessionLane, and all related *Deps / *Stats types
 // live at packages/orchestrator/src/queue/ and re-export from @comis/orchestrator.
 

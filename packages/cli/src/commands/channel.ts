@@ -14,7 +14,7 @@ import { ConfigReadContract } from "@comis/core";
 import { callTyped, withClient } from "../client/rpc-client.js";
 import { error, info, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
-import { renderTable } from "../output/table.js";
+import { renderFindings, type Section } from "../util/render-findings.js";
 
 /**
  * Channel status entry returned from the daemon.
@@ -79,10 +79,21 @@ export function registerChannelCommand(program: Command): void {
           return;
         }
 
-        renderTable(
-          ["Channel", "Type", "Status", "Details"],
-          channels.map((ch) => [ch.name, ch.type, colorStatus(ch.status), ch.details ?? "-"]),
-        );
+        // Flat-listing case: a single untitled table section (no bold heading).
+        const sections: Section[] = [
+          {
+            kind: "table",
+            headers: ["Channel", "Type", "Status", "Details"],
+            rows: channels.map((ch) => [
+              ch.name,
+              ch.type,
+              colorStatus(ch.status),
+              ch.details ?? "-",
+            ]),
+            emptyMessage: "No channels configured",
+          },
+        ];
+        renderFindings({ kind: "sections", sections });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to get channel status: ${msg}`);

@@ -43,7 +43,6 @@ function makeObsStore(overrides: Record<string, unknown> = {}) {
     insertDelivery: vi.fn(),
     insertDiagnostic: vi.fn(),
     insertChannelSnapshot: vi.fn(),
-    queryTokenUsage: vi.fn().mockReturnValue([]),
     prune: vi.fn().mockReturnValue({ tokenUsage: 0, delivery: 0, diagnostics: 0, channels: 0 }),
     latestSystemPromptReport: vi.fn().mockReturnValue(undefined),
     listSystemPromptReports: vi.fn().mockReturnValue([]),

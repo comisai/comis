@@ -2,7 +2,11 @@
 import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
 
-import { sanitizeDiagnosticPayload } from "./sanitize-diagnostic-payload.js";
+import {
+  sanitizeDiagnosticPayload,
+  isCredentialFieldName,
+  CREDENTIAL_KEYS,
+} from "./sanitize-diagnostic-payload.js";
 
 describe("sanitizeDiagnosticPayload — credential field-name drop", () => {
   it("drops a field literally named 'password'", () => {
@@ -147,7 +151,7 @@ describe("sanitizeDiagnosticPayload — in-string credential regex (passthrough)
   it("preserves diagnostic strings that match a case-sensitive ENV regex like 'Unrecognized key: \"llm\"'", () => {
     // The Comis case-sensitive ENV regex is uppercase-only (`[A-Z][A-Z0-9_]+`),
     // so lowercase keys ("llm") and the surrounding diagnostic must pass through
-    // unchanged — research §10 closing note.
+    // unchanged.
     const input = { msg: 'Unrecognized key: "llm"' };
     expect(sanitizeDiagnosticPayload(input)).toEqual(input);
   });
@@ -187,5 +191,86 @@ describe("sanitizeDiagnosticPayload — passthrough for non-credential / non-ima
     expect(
       sanitizeDiagnosticPayload([{ a: 1 }, { b: 2 }]),
     ).toEqual([{ a: 1 }, { b: 2 }]);
+  });
+});
+
+describe("CREDENTIAL_KEYS contract", () => {
+  it("CREDENTIAL_KEYS exports widened entries", () => {
+    // Widening keys (bare/lowercased forms)
+    expect(CREDENTIAL_KEYS.has("credentials")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("key")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("passphrase")).toBe(true);
+    // Widening keys (snake_case forms — needed for Pino path)
+    expect(CREDENTIAL_KEYS.has("connection_string")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("access_key")).toBe(true);
+    // camelCase forms required for case-sensitive
+    // Pino redact.paths (the load-bearing reason the Set is exported).
+    expect(CREDENTIAL_KEYS.has("apiKey")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("botToken")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("accessToken")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("refreshToken")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("privateKey")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("webhookSecret")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("clientSecret")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("connectionString")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("accessKey")).toBe(true);
+    // snake_case OAuth keys (these are what the
+    // pre-fix Pino hand-table was missing).
+    expect(CREDENTIAL_KEYS.has("access_token")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("refresh_token")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("api_key")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("bot_token")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("webhook_secret")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("private_key")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("client_secret")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("auth")).toBe(true);
+    // Minimum size invariant — set must be at least 26 entries to
+    // cover the three lanes (bare + snake_case + camelCase).
+    expect(CREDENTIAL_KEYS.size).toBeGreaterThanOrEqual(26);
+  });
+
+  it("isCredentialFieldName allowlist mitigates `key` false-positives", () => {
+    // The bare `key` token is a credential.
+    expect(isCredentialFieldName("key")).toBe(true);
+    // The 10 allowlisted `key*` operational forms are NOT redacted.
+    expect(isCredentialFieldName("keyName")).toBe(false);
+    expect(isCredentialFieldName("key_name")).toBe(false);
+    expect(isCredentialFieldName("keyPath")).toBe(false);
+    expect(isCredentialFieldName("key_path")).toBe(false);
+    expect(isCredentialFieldName("cacheKey")).toBe(false);
+    expect(isCredentialFieldName("cache_key")).toBe(false);
+    expect(isCredentialFieldName("sessionKey")).toBe(false);
+    expect(isCredentialFieldName("session_key")).toBe(false);
+    expect(isCredentialFieldName("eventKey")).toBe(false);
+    expect(isCredentialFieldName("event_key")).toBe(false);
+  });
+
+  it("(regression) sanitizer correctly redacts new bare credentials and preserves allowlisted operational keys", () => {
+    // The new widening keys cause field-drop in the sanitizer.
+    expect(sanitizeDiagnosticPayload({ keep: "ok", key: "API-KEY-VALUE" })).toEqual({
+      keep: "ok",
+    });
+    expect(sanitizeDiagnosticPayload({ keep: "ok", passphrase: "pp" })).toEqual({
+      keep: "ok",
+    });
+    expect(sanitizeDiagnosticPayload({ keep: "ok", credentials: "x" })).toEqual({
+      keep: "ok",
+    });
+    // The new allowlist entries preserve operational fields.
+    expect(
+      sanitizeDiagnosticPayload({
+        keyName: "primary",
+        cacheKey: "/foo/bar",
+        sessionKey: "sess-42",
+        eventKey: "evt.user.create",
+        normal: "ok",
+      }),
+    ).toEqual({
+      keyName: "primary",
+      cacheKey: "/foo/bar",
+      sessionKey: "sess-42",
+      eventKey: "evt.user.create",
+      normal: "ok",
+    });
   });
 });

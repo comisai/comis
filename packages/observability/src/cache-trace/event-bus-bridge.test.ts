@@ -7,7 +7,7 @@
  *   - attaches_token_counts_to_next_session_after_emit (the round-trip
  *     from bus → setLatestTokenUsage → recordStage("session:after"))
  *
- * Plan 48-07 multi-event mapping additions:
+ * Multi-event mapping cases:
  *   - subscribes_to_session_started_and_emits_session_start_stage
  *   - subscribes_to_session_ended_and_emits_session_end_stage
  *   - twin_emits_prompt_before_and_prompt_after_from_single_prompt_submitted
@@ -70,9 +70,9 @@ function makeTrace(filePath: string): CacheTrace {
 
 /**
  * Build a fake CacheTrace whose `recordStage` + `setLatestTokenUsage` are
- * vitest spies. Plan 48-07's multi-event tests assert directly on the
- * spy calls (no disk round-trip), which is faster + lets us inspect the
- * raw payloads without sanitization side-effects.
+ * vitest spies. The multi-event tests assert directly on the spy calls
+ * (no disk round-trip), which is faster + lets us inspect the raw
+ * payloads without sanitization side-effects.
  */
 function makeFakeTrace(
   spies: {
@@ -152,7 +152,7 @@ describe("attachCacheTraceToEventBus", () => {
       cacheEligible: true,
     });
 
-    // New lifecycle contract (260520-uh0): callers do NOT emit
+    // New lifecycle contract: callers do NOT emit
     // session:after directly. The terminal emit in flushAndClose drains
     // the stashed token usage onto exactly one session:after record.
     await trace.flushAndClose();
@@ -167,7 +167,7 @@ describe("attachCacheTraceToEventBus", () => {
   });
 });
 
-describe("attachCacheTraceToEventBus multi-event mapping (Plan 48-07)", () => {
+describe("attachCacheTraceToEventBus multi-event mapping", () => {
   // Each test builds a fake trace with a recordStage spy + fresh bus.
 
   it("subscribes_to_session_started_and_emits_session_start_stage", () => {

@@ -20,6 +20,7 @@ import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
+import { confirm } from "../util/confirm.js";
 
 /**
  * Memory search result entry.
@@ -244,27 +245,15 @@ export function registerMemoryCommand(program: Command): void {
       }
 
       if (!options.yes) {
-        const readline = await import("node:readline");
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-        });
-
         const filterDesc = Object.entries(params)
           .map(([k, v]) => `${k}=${v}`)
           .join(", ");
 
-        const answer = await new Promise<string>((resolve) => {
-          rl.question(
-            chalk.yellow(`Clear memory entries matching [${filterDesc}]? (y/N) `),
-            (ans) => {
-              rl.close();
-              resolve(ans.trim().toLowerCase());
-            },
-          );
-        });
-
-        if (answer !== "y" && answer !== "yes") {
+        if (
+          !(await confirm({
+            message: `Clear memory entries matching [${filterDesc}]?`,
+          }))
+        ) {
           info("Cancelled");
           return;
         }

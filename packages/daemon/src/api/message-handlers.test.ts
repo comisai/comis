@@ -34,6 +34,10 @@ function makeFakeDeliveryService(): DeliveryService {
         totalChars: text.length,
       });
     }),
+    // DeliveryService gained drainInFlight().
+    // Default fake returns empty drain telemetry; tests that exercise drain
+    // semantics override this field.
+    drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
 }
 
@@ -65,6 +69,13 @@ function createMockDeps(workspaceDir: string): MessageHandlerDeps {
     workspaceDirs: new Map([["agent-1", workspaceDir]]),
     defaultWorkspaceDir: workspaceDir,
     defaultAgentId: "agent-1",
+    // channelPlugins is REQUIRED on ChannelsApiDeps. Default to an empty
+    // Map; per-test overrides (capability guard suite) replace this with
+    // a populated Map. Empty Map maps `assertCapability` to the
+    // "unknown channel type → skip" branch (`plugins.get() === undefined`),
+    // matching prior behavior of message.send / fetch / etc. in tests that
+    // don't exercise the plugin gate.
+    channelPlugins: new Map<string, ChannelPluginPort>(),
     logger: {
       debug: vi.fn(),
       info: vi.fn(),
@@ -349,24 +360,15 @@ function createMockPlugin(featuresOverride: Partial<ChannelCapability["features"
     version: "1.0.0",
     channelType: "telegram",
     capabilities: {
-      chatTypes: ["dm", "group"],
       features: {
         reactions: true,
         editMessages: true,
         deleteMessages: true,
         fetchHistory: false,
         attachments: true,
-        threads: false,
-        mentions: false,
-        formatting: [],
-        buttons: false,
-        cards: false,
-        effects: false,
         ...featuresOverride,
       },
       limits: { maxMessageChars: 4096 },
-      streaming: { supported: false, throttleMs: 300, method: "none" },
-      threading: { supported: false, threadType: "none" },
     },
     adapter: createMockAdapter(),
     start: vi.fn(async () => ok(undefined)),
@@ -440,16 +442,6 @@ describe("capability guard", () => {
     deps.channelPlugins = new Map([["telegram", createMockPlugin({ fetchHistory: true })]]);
     const handlers = createMessageHandlers(deps);
 
-    const result = await handlers["message.fetch"]({ channel_type: "telegram", channel_id: "123" });
-    expect(result).toEqual({ messages: [], channelId: "123" });
-  });
-
-  it("falls through when channelPlugins is undefined (backward compat)", async () => {
-    const deps = createMockDeps(workspaceDir);
-    // channelPlugins is not set — default undefined
-    const handlers = createMessageHandlers(deps);
-
-    // fetchMessages mock returns ok([]), so this succeeds despite Telegram not supporting fetch
     const result = await handlers["message.fetch"]({ channel_type: "telegram", channel_id: "123" });
     expect(result).toEqual({ messages: [], channelId: "123" });
   });

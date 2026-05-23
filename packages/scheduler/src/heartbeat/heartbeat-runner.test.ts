@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import { TypedEventBus } from "@comis/core";
-import { ok } from "@comis/shared";
+import { ok, HEARTBEAT_OK_TOKEN } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { HeartbeatRunnerDeps, HeartbeatNotification } from "./heartbeat-runner.js";
 import type { HeartbeatSourcePort, HeartbeatCheckResult } from "./heartbeat-source.js";
 import type { QuietHoursConfig } from "./quiet-hours.js";
 import { createHeartbeatRunner } from "./heartbeat-runner.js";
-import { HEARTBEAT_OK_TOKEN } from "./relevance-filter.js";
 
 function makeSource(
   id: string,

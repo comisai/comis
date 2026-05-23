@@ -29,10 +29,6 @@ import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/feedback/ic-toast.js";
 import { extractVariables, substituteVariables } from "../../utils/extract-variables.js";
 import { systemClearTimeout, systemSetTimeout } from "@comis/core";
-import {
-  createPipelineBuilderController,
-  type PipelineBuilderController,
-} from "./pipeline-builder-controller.js";
 
 /** Grid size for snap-to-grid and nudge operations (px) */
 const GRID_SIZE = 24;
@@ -102,32 +98,8 @@ export class IcPipelineBuilder extends LitElement {
   };
   private _builderHash = "";
 
-  /** Controller owns RPC orchestration (thin façade — view keeps @state +
-   *  render + createGraphBuilderState consumer + 11 @property bindings to
-   *  ic-graph-canvas verbatim). */
-  private _controller: PipelineBuilderController | null = null;
-
-  /** Captured rpcClient reference -- recreate the controller if rpcClient changes. */
-  private _capturedRpcClient: RpcClient | null = null;
-
-  /** Lazily instantiate (and rebind) controller; matches the dashboard.ts
-   *  pattern, with rpcClient-swap detection. */
-  private _ensureController(): PipelineBuilderController | null {
-    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
-      this.removeController(this._controller);
-      this._controller = null;
-      this._capturedRpcClient = null;
-    }
-    if (!this._controller && this.rpcClient) {
-      this._capturedRpcClient = this.rpcClient;
-      this._controller = createPipelineBuilderController(this, this.rpcClient);
-    }
-    return this._controller;
-  }
-
   override connectedCallback(): void {
     super.connectedCallback();
-    this._ensureController();
     this._graphState = createGraphBuilderState();
     this._stateUnsub = this._graphState.subscribe(() => {
       const snap = this._graphState!.getSnapshot();
@@ -193,9 +165,6 @@ export class IcPipelineBuilder extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has("rpcClient")) {
-      this._ensureController();
-    }
     if (changed.has("rpcClient") && this.rpcClient && this.graphId && !this._serverLoadDone) {
       this._rpcStatusUnsub?.();
       if (this.rpcClient.status === "connected") {
@@ -348,8 +317,7 @@ export class IcPipelineBuilder extends LitElement {
 
   /** Handle Validate button -- call graph.define RPC. */
   private async _onValidate(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller || !this._graphState) return;
+    if (!this.rpcClient || !this._graphState) return;
     const snap = this._graphState.getSnapshot();
 
     // Build RPC payload: map PipelineNode.id -> nodeId, derive dependsOn from edges
@@ -379,7 +347,7 @@ export class IcPipelineBuilder extends LitElement {
     };
 
     try {
-      const result = await controller.defineGraph(payload);
+      const result = await this.rpcClient.call("graph.define", payload);
       const r = result as Record<string, unknown>;
       this._validateResultText = `Valid: ${r.nodeCount ?? snap.nodes.length} nodes${
         Array.isArray(r.executionOrder) ? `, order: ${(r.executionOrder as string[]).join(" -> ")}` : ""
@@ -753,10 +721,9 @@ export class IcPipelineBuilder extends LitElement {
   private async _loadGraph(): Promise<void> {
     if (!this._graphState || !this.graphId) return;
 
-    const controller = this._ensureController();
-    if (controller) {
+    if (this.rpcClient) {
       try {
-        const serverGraph = await controller.loadGraph(this.graphId);
+        const serverGraph = await this.rpcClient.call<{ label?: string; nodes: Array<Record<string, unknown>>; edges: PipelineEdge[]; settings: GraphSettings }>("graph.load", { id: this.graphId });
         if (serverGraph && this._graphState) {
           this._graphState.reset();
 
@@ -855,14 +822,13 @@ export class IcPipelineBuilder extends LitElement {
     if (!this._graphState) return;
     const snap = this._graphState.getSnapshot();
 
-    const controller = this._ensureController();
-    if (!controller) {
+    if (!this.rpcClient) {
       IcToast.show("Cannot save: not connected to daemon", "error");
       return;
     }
 
     try {
-      await controller.saveGraph({
+      await this.rpcClient.call("graph.save", {
         id: this._draftId,
         label: snap.settings.label,
         nodes: snap.nodes,
@@ -881,8 +847,7 @@ export class IcPipelineBuilder extends LitElement {
 
   /** Handle run event from settings bar -- call graph.execute RPC. */
   private async _onRun(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller || !this._graphState) return;
+    if (!this.rpcClient || !this._graphState) return;
     const snap = this._graphState.getSnapshot();
 
     // Check for ${VAR} user-variable placeholders before executing
@@ -903,8 +868,7 @@ export class IcPipelineBuilder extends LitElement {
     e: CustomEvent<{ values: Record<string, string> }>,
   ): Promise<void> {
     this._showVariablePrompt = false;
-    const controller = this._ensureController();
-    if (!controller || !this._graphState) return;
+    if (!this.rpcClient || !this._graphState) return;
     const snap = this._graphState.getSnapshot();
 
     // Substitute variables in each node's task text
@@ -917,8 +881,7 @@ export class IcPipelineBuilder extends LitElement {
 
   /** Build payload and call graph.execute RPC with the given task texts. */
   private async _executeGraph(taskTexts: string[]): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller || !this._graphState) return;
+    if (!this.rpcClient || !this._graphState) return;
     const snap = this._graphState.getSnapshot();
 
     const payload = {
@@ -946,7 +909,7 @@ export class IcPipelineBuilder extends LitElement {
     };
 
     try {
-      const result = await controller.executeGraph(payload);
+      const result = await this.rpcClient.call<{ graphId: string }>("graph.execute", payload);
       // Navigate to monitor view
       this.dispatchEvent(new CustomEvent("navigate", {
         detail: `pipelines/${result.graphId}`,

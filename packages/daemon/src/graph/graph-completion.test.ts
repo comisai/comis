@@ -352,7 +352,6 @@ describe("buildGraphAnnouncement", () => {
 
 // ---------------------------------------------------------------------------
 // graph-completion honors §1.4 mode invariants on substrate-routed writes
-// (OBS-HARD-03, Plan 48-06)
 //
 // The graph-completion writer's _run-metadata.json write is now routed
 // through `writeRegularFile`. The substrate uses `fs.openSync` +
@@ -361,7 +360,7 @@ describe("buildGraphAnnouncement", () => {
 // level `vi.mock("node:fs", ...)`. The substrate's chmod-by-fd is the
 // load-bearing primitive the §1.4 invariant relies on.
 // ---------------------------------------------------------------------------
-describe("graph-completion honors §1.4 file mode invariant (OBS-HARD-03, Plan 48-06)", () => {
+describe("graph-completion honors §1.4 file mode invariant", () => {
   it("write_regular_file_substrate_produces_run_metadata_at_mode_0o600", async () => {
     // Direct substrate-level test: write to a tmp file using the same
     // primitive the migrated graph-completion code uses; assert the

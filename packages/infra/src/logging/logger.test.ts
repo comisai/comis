@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Writable } from "node:stream";
 import { describe, it, expect } from "vitest";
-import { createLogger } from "./logger.js";
+import { createLogger, DEFAULT_REDACT_PATHS } from "./logger.js";
 import { isValidLogLevel } from "@comis/core";
 
 /**
@@ -629,5 +629,160 @@ describe("createLogger", () => {
       expect(lines[0]!.apiKey).toBe("[REDACTED]");
       expect(lines[0]!.password).toBe("[REDACTED]");
     });
+  });
+
+  // ---------------------------------------------------------------------
+  // CREDENTIAL_KEYS-driven redaction
+  //
+  // These tests exercise the PRODUCTION `DEFAULT_REDACT_PATHS` exported
+  // from `./logger.js` (NOT the hand-coded list in `createTestLogger`).
+  // The pre-fix `DEFAULT_REDACT_PATHS` is a 64-entry hand-table missing
+  // every snake_case OAuth key + bare `auth` + `client_secret`; post-fix
+  // it is generated from `@comis/observability`'s `CREDENTIAL_KEYS` Set,
+  // which widens to include BOTH snake_case AND camelCase forms (Pino
+  // redact.paths is case-sensitive). The regression suite below proves
+  // the camelCase coverage is preserved across the swap.
+  // ---------------------------------------------------------------------
+  describe("CREDENTIAL_KEYS-driven redaction", () => {
+    // Build a Pino logger using the PRODUCTION `DEFAULT_REDACT_PATHS`
+    // imported from `./logger.js`. Writes to an in-memory stream so
+    // the test stays in-process (no worker-thread transport).
+    async function makeProductionPathsLogger() {
+      const { default: pino } = await import("pino");
+      const capture = captureOutput();
+      const logger = pino(
+        {
+          name: "redact-paths-test",
+          level: "trace",
+          redact: {
+            paths: DEFAULT_REDACT_PATHS,
+            censor: "[REDACTED]",
+          },
+          formatters: {
+            level(label: string, number: number) {
+              return { level: label, levelValue: number };
+            },
+          },
+        },
+        capture.stream,
+      );
+      return { logger, capture };
+    }
+
+    // Build a payload with `field: value` at the requested nesting depth.
+    // depth 0: { [field]: value }
+    // depth 1: { wrap: { [field]: value } }
+    // depth 2: { wrap: { wrap: { [field]: value } } }
+    // depth 3: { wrap: { wrap: { wrap: { [field]: value } } } }
+    function buildNested(
+      field: string,
+      value: string,
+      depth: number,
+    ): Record<string, unknown> {
+      let result: Record<string, unknown> = { [field]: value };
+      for (let i = 0; i < depth; i++) {
+        result = { wrap: result };
+      }
+      return result;
+    }
+
+    // Emit one log line carrying `field` at the requested nesting depth,
+    // parse the captured JSON, and return the value at that depth (which
+    // Pino either passes through unchanged or replaces with its
+    // redaction marker).
+    async function redactAtDepth(
+      field: string,
+      value: string,
+      depth: 0 | 1 | 2 | 3,
+    ): Promise<unknown> {
+      const { logger, capture } = await makeProductionPathsLogger();
+      logger.info(buildNested(field, value, depth), "test-msg");
+      const lines = capture.lines();
+      expect(lines).toHaveLength(1);
+      let node: Record<string, unknown> | undefined = lines[0];
+      for (let i = 0; i < depth; i++) {
+        node = node?.["wrap"] as Record<string, unknown> | undefined;
+      }
+      return node?.[field];
+    }
+
+    const SNAKE_CASE_KEYS = [
+      "access_token",
+      "refresh_token",
+      "api_key",
+      "bot_token",
+      "webhook_secret",
+      "private_key",
+      "auth",
+      "client_secret",
+    ] as const;
+
+    const CAMEL_CASE_KEYS = [
+      "apiKey",
+      "botToken",
+      "accessToken",
+      "refreshToken",
+      "privateKey",
+      "webhookSecret",
+      "clientSecret",
+      "accessKey",
+      "connectionString",
+    ] as const;
+
+    const WIDENING_KEYS = ["credentials", "passphrase", "key"] as const;
+
+    const ALLOWLIST_KEYS = [
+      "keyName",
+      "cacheKey",
+      "sessionKey",
+      "eventKey",
+    ] as const;
+
+    for (const key of SNAKE_CASE_KEYS) {
+      for (const depth of [0, 1, 2, 3] as const) {
+        it(`redacts snake_case ${key} at depth ${depth}`, async () => {
+          const result = await redactAtDepth(
+            key,
+            "SHOULD-BE-REDACTED",
+            depth,
+          );
+          // Pino's structured-field censor replaces the value; the
+          // exact masked form may be the literal "[REDACTED]" (in
+          // this test) or an edge-keeping mask (in the production
+          // factory). The invariant is that the plaintext is gone.
+          expect(result).not.toBe("SHOULD-BE-REDACTED");
+        });
+      }
+    }
+
+    for (const key of CAMEL_CASE_KEYS) {
+      for (const depth of [0, 1, 2, 3] as const) {
+        it(`(regression) redacts camelCase ${key} at depth ${depth}`, async () => {
+          const result = await redactAtDepth(
+            key,
+            "SHOULD-BE-REDACTED",
+            depth,
+          );
+          expect(result).not.toBe("SHOULD-BE-REDACTED");
+        });
+      }
+    }
+
+    for (const key of WIDENING_KEYS) {
+      it(`redacts widening key ${key} at depth 0`, async () => {
+        const result = await redactAtDepth(key, "SHOULD-BE-REDACTED", 0);
+        expect(result).not.toBe("SHOULD-BE-REDACTED");
+      });
+    }
+
+    for (const key of ALLOWLIST_KEYS) {
+      it(`(allowlist) does NOT redact ${key} at depth 0`, async () => {
+        // Allowlist key value passes through unchanged. These names
+        // are absent from CREDENTIAL_KEYS, so Pino has no path entry
+        // for them and the value is emitted verbatim.
+        const result = await redactAtDepth(key, "SAFE-VALUE", 0);
+        expect(result).toBe("SAFE-VALUE");
+      });
+    }
   });
 });

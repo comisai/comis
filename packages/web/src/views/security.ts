@@ -8,11 +8,53 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import type { SecurityEvent, InputSecurityGuardSummary, ProviderHealthCard, FailoverEvent, AuthCooldownEntry } from "../api/types/security-types.js";
-import {
-  createSecurityController,
-  type SecurityController,
-  type SecurityConfig,
-} from "./security-controller.js";
+
+/** Security config section shape (matches SecurityConfigSchema). */
+interface SecurityConfig {
+  logRedaction?: boolean;
+  auditLog?: boolean;
+  permission?: {
+    enableNodePermissions?: boolean;
+    allowedFsPaths?: string[];
+    allowedNetHosts?: string[];
+  };
+  actionConfirmation?: {
+    requireForDestructive?: boolean;
+    requireForSensitive?: boolean;
+    autoApprove?: string[];
+  };
+  agentToAgent?: {
+    enabled?: boolean;
+    maxPingPongTurns?: number;
+    allowAgents?: string[];
+    subAgentRetentionMs?: number;
+    waitTimeoutMs?: number;
+    subAgentMaxSteps?: number;
+    subAgentToolGroups?: string[];
+    subAgentMcpTools?: string;
+  };
+  secrets?: {
+    enabled?: boolean;
+    dbPath?: string;
+  };
+  approvalRules?: {
+    defaultMode: string;
+    timeoutMs: number;
+  };
+}
+
+/** agent.cacheStats response shape. */
+interface ProviderCacheStats {
+  providers: Array<{
+    provider: string;
+    model: string;
+    callCount: number;
+    totalCost: number;
+    totalCacheSaved: number;
+    cacheHitRate: number;
+  }>;
+  totalCacheSaved: number;
+}
 
 // Side-effect imports for sub-components
 import "../components/nav/ic-tabs.js";
@@ -249,29 +291,6 @@ export class IcSecurityView extends LitElement {
 
   private _healthReloadDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  /** RPC façade controller. Wraps config.read, config.patch,
-   *  agent.cacheStats so the view contains zero direct daemon RPC sites. */
-  private _controller: SecurityController | null = null;
-
-  /** Captured rpcClient reference -- recreate the controller if rpcClient
-   *  changes (logout→login while mounted, test-time reassignment). */
-  private _capturedRpcClient: RpcClient | null = null;
-
-  /** Lazily instantiate (and rebind) controller; matches the Wave-6
-   *  _ensureController pattern, with rpcClient-swap detection. */
-  private _ensureController(): SecurityController | null {
-    if (this._controller && this._capturedRpcClient !== this.rpcClient) {
-      this.removeController(this._controller);
-      this._controller = null;
-      this._capturedRpcClient = null;
-    }
-    if (!this._controller && this.rpcClient) {
-      this._capturedRpcClient = this.rpcClient;
-      this._controller = createSecurityController(this, this.rpcClient);
-    }
-    return this._controller;
-  }
-
   private _scheduleHealthReload(delayMs = 300): void {
     if (this._healthReloadDebounce !== null) systemClearTimeout(this._healthReloadDebounce);
     this._healthReloadDebounce = systemSetTimeout(() => {
@@ -282,7 +301,6 @@ export class IcSecurityView extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this._ensureController();
     this._initSse();
   }
 
@@ -296,7 +314,6 @@ export class IcSecurityView extends LitElement {
 
   override updated(changed: Map<string, unknown>): void {
     if (changed.has("rpcClient") && this.rpcClient) {
-      this._ensureController();
       this._loadData();
     }
     if (changed.has("eventDispatcher") && this.eventDispatcher && !this._sse) {
@@ -431,20 +448,6 @@ export class IcSecurityView extends LitElement {
         };
         this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
       },
-      "secret:modified": (data) => {
-        const d = data as Record<string, unknown>;
-        const secretName = (d.secretName as string) ?? "unknown";
-        const action = (d.action as string) ?? "modified";
-        const evt: SecurityEvent = {
-          id: `sec-${systemNowMs()}-${Math.random().toString(36).slice(2, 6)}`,
-          type: "secret_access",
-          severity: "medium",
-          message: `Secret '${secretName}' ${action}`,
-          details: { secretName, action },
-          timestamp: systemNowMs(),
-        };
-        this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
-      },
       "provider:degraded": (data) => {
         const d = data as Record<string, unknown>;
         const provider = (d.provider as string) ?? "";
@@ -508,10 +511,9 @@ export class IcSecurityView extends LitElement {
   // --- Data loading ---
 
   private async _loadProviderHealth(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
     try {
-      const result = await controller.getProviderCacheStats();
+      const result = await this.rpcClient.call<ProviderCacheStats>("agent.cacheStats");
 
       const now = systemNowMs();
       const fiveMinAgo = now - 5 * 60 * 1000;
@@ -555,14 +557,13 @@ export class IcSecurityView extends LitElement {
   }
 
   private async _loadData(): Promise<void> {
-    const controller = this._ensureController();
-    if (!controller) return;
+    if (!this.rpcClient) return;
 
     this._loadState = "loading";
     this._error = "";
 
     try {
-      const configResult = await controller.readConfig();
+      const configResult = await this.rpcClient.call<{ config: { security?: SecurityConfig }; sections: string[] }>("config.read");
 
       this._securityConfig = configResult.config.security ?? {};
       this._loadState = "loaded";
@@ -575,13 +576,12 @@ export class IcSecurityView extends LitElement {
   }
 
   private async _patchConfig(path: string, value: unknown): Promise<boolean> {
-    const controller = this._ensureController();
-    if (!controller) return false;
+    if (!this.rpcClient) return false;
     try {
       const dotIdx = path.indexOf(".");
       const section = dotIdx > 0 ? path.slice(0, dotIdx) : path;
       const key = dotIdx > 0 ? path.slice(dotIdx + 1) : undefined;
-      await controller.patchConfig(section, key, value);
+      await this.rpcClient.call("config.patch", { section, key, value });
       IcToast.show("Configuration updated", "success");
       return true;
     } catch (err) {

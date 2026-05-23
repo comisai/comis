@@ -21,7 +21,7 @@ import type { AgentExecutor, CostTracker, GreetingGenerator } from "@comis/agent
 import { parseSlashCommand } from "@comis/orchestrator";
 import type { CommandDirectives } from "@comis/orchestrator";
 import type { MemoryApi, SqliteMemoryAdapter, createSessionStore } from "@comis/memory";
-import type { RpcCall } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import {
   createDynamicMethodRouter,
   createRpcAdapters,

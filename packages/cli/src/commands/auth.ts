@@ -472,10 +472,9 @@ export function registerAuthCommand(program: Command): void {
       if (storage === "encrypted") {
         await requireDaemonOrExit();
         try {
-          // callTyped enforces the AuthListContract request/response
-          // schemas under the VALIDATE gate (dev or
-          // COMIS_CLI_VALIDATE=1). Production skips the parse for
-          // cold-start budget compliance — the daemon side always parses.
+          // callTyped always enforces the AuthListContract request/response
+          // schemas (Zod parse on both sides). The daemon side has always
+          // parsed; the CLI side now matches (no env gating).
           const result = await withClient(async (client) =>
             callTyped(
               client,
@@ -537,7 +536,8 @@ export function registerAuthCommand(program: Command): void {
       if (storage === "encrypted") {
         await requireDaemonOrExit();
         try {
-          // callTyped enforces AuthLogoutContract under the VALIDATE gate.
+          // callTyped always enforces AuthLogoutContract request/response
+          // schemas (no env gating; daemon already always parses).
           const result = await withClient(async (client) =>
             callTyped(client, AuthLogoutContract, {
               profileId: opts.profile,
@@ -621,7 +621,8 @@ export function registerAuthCommand(program: Command): void {
       if (storage === "encrypted") {
         await requireDaemonOrExit();
         try {
-          // callTyped enforces AuthListContract under the VALIDATE gate.
+          // callTyped always enforces AuthListContract request/response
+          // schemas (no env gating; daemon already always parses).
           // The contract response shape (RedactedOAuthProfileSchema) is
           // assignable to DisplayProfile (same fields plus structural
           // optionality on email + displayName).

@@ -19,129 +19,11 @@ describe("ObservabilityStore", () => {
   // Token usage CRUD
   // -----------------------------------------------------------------------
 
-  describe("token usage", () => {
-    const baseEntry = {
-      timestamp: 1710000000000,
-      traceId: "trace-1",
-      agentId: "agent-a",
-      channelId: "ch-1",
-      executionId: "exec-1",
-      sessionKey: "sess-1",
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-      promptTokens: 100,
-      completionTokens: 50,
-      totalTokens: 150,
-      cacheReadTokens: 10,
-      cacheWriteTokens: 5,
-      costInput: 0.003,
-      costOutput: 0.0015,
-      costTotal: 0.0045,
-      costCacheRead: 0.001,
-      costCacheWrite: 0.002,
-      cacheSaved: 0.005,
-      latencyMs: 1200,
-    };
-
-    it("inserts and queries a single row with all fields round-tripping", () => {
-      store.insertTokenUsage(baseEntry);
-      const rows = store.queryTokenUsage();
-      expect(rows).toHaveLength(1);
-
-      const row = rows[0]!;
-      expect(row.id).toBeDefined();
-      expect(row.timestamp).toBe(baseEntry.timestamp);
-      expect(row.traceId).toBe("trace-1");
-      expect(row.agentId).toBe("agent-a");
-      expect(row.channelId).toBe("ch-1");
-      expect(row.executionId).toBe("exec-1");
-      expect(row.sessionKey).toBe("sess-1");
-      expect(row.provider).toBe("anthropic");
-      expect(row.model).toBe("claude-sonnet-4-20250514");
-      expect(row.promptTokens).toBe(100);
-      expect(row.completionTokens).toBe(50);
-      expect(row.totalTokens).toBe(150);
-      expect(row.cacheReadTokens).toBe(10);
-      expect(row.cacheWriteTokens).toBe(5);
-      expect(row.costInput).toBeCloseTo(0.003);
-      expect(row.costOutput).toBeCloseTo(0.0015);
-      expect(row.costTotal).toBeCloseTo(0.0045);
-      expect(row.costCacheRead).toBeCloseTo(0.001);
-      expect(row.costCacheWrite).toBeCloseTo(0.002);
-      expect(row.cacheSaved).toBeCloseTo(0.005);
-      expect(row.latencyMs).toBe(1200);
-    });
-
-    it("round-trips cache cost fields", () => {
-      store.insertTokenUsage({
-        ...baseEntry,
-        costCacheRead: 0.0012,
-        costCacheWrite: 0.0024,
-        cacheSaved: 0.008,
-      });
-      const rows = store.queryTokenUsage();
-      expect(rows[0]!.costCacheRead).toBeCloseTo(0.0012);
-      expect(rows[0]!.costCacheWrite).toBeCloseTo(0.0024);
-      expect(rows[0]!.cacheSaved).toBeCloseTo(0.008);
-    });
-
-    it("queries with sinceMs filter", () => {
-      store.insertTokenUsage({ ...baseEntry, timestamp: 1000 });
-      store.insertTokenUsage({ ...baseEntry, timestamp: 2000 });
-      store.insertTokenUsage({ ...baseEntry, timestamp: 3000 });
-
-      const rows = store.queryTokenUsage({ sinceMs: 2000 });
-      expect(rows).toHaveLength(2);
-      expect(rows.every((r) => r.timestamp >= 2000)).toBe(true);
-    });
-
-    it("queries with agentId filter", () => {
-      store.insertTokenUsage({ ...baseEntry, agentId: "agent-a" });
-      store.insertTokenUsage({ ...baseEntry, agentId: "agent-b" });
-
-      const rows = store.queryTokenUsage({ agentId: "agent-a" });
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.agentId).toBe("agent-a");
-    });
-
-    it("queries with provider filter", () => {
-      store.insertTokenUsage({ ...baseEntry, provider: "anthropic" });
-      store.insertTokenUsage({ ...baseEntry, provider: "openai" });
-
-      const rows = store.queryTokenUsage({ provider: "openai" });
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.provider).toBe("openai");
-    });
-
-    it("queries with sessionKey filter", () => {
-      store.insertTokenUsage({ ...baseEntry, sessionKey: "sess-1" });
-      store.insertTokenUsage({ ...baseEntry, sessionKey: "sess-2" });
-
-      const rows = store.queryTokenUsage({ sessionKey: "sess-2" });
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.sessionKey).toBe("sess-2");
-    });
-
-    it("respects limit parameter", () => {
-      for (let i = 0; i < 5; i++) {
-        store.insertTokenUsage({ ...baseEntry, timestamp: baseEntry.timestamp + i });
-      }
-
-      const rows = store.queryTokenUsage({ limit: 3 });
-      expect(rows).toHaveLength(3);
-    });
-
-    it("orders results by timestamp DESC", () => {
-      store.insertTokenUsage({ ...baseEntry, timestamp: 1000 });
-      store.insertTokenUsage({ ...baseEntry, timestamp: 3000 });
-      store.insertTokenUsage({ ...baseEntry, timestamp: 2000 });
-
-      const rows = store.queryTokenUsage();
-      expect(rows[0]!.timestamp).toBe(3000);
-      expect(rows[1]!.timestamp).toBe(2000);
-      expect(rows[2]!.timestamp).toBe(1000);
-    });
-  });
+  // NOTE: describe("token usage") was removed in a prior port-trim cleanup
+  // along with the ObservabilityStore.queryTokenUsage method. The
+  // insertTokenUsage surface is still exercised via the prune/resetAll/
+  // resetTable tests below (which insert rows and verify row counts via SQL
+  // directly).
 
   // -----------------------------------------------------------------------
   // Aggregations
@@ -589,8 +471,10 @@ describe("ObservabilityStore", () => {
       expect(result.diagnostics).toBe(1);
       expect(result.channels).toBe(1);
 
-      // Verify recent rows survive
-      expect(store.queryTokenUsage()).toHaveLength(1);
+      // Verify recent rows survive (direct SQL read; queryTokenUsage was removed
+      // in a prior port-trim cleanup)
+      const tokenRow = db.prepare("SELECT COUNT(*) as count FROM obs_token_usage").get() as { count: number };
+      expect(tokenRow.count).toBe(1);
       expect(store.queryDelivery()).toHaveLength(1);
       expect(store.queryDiagnostics()).toHaveLength(1);
     });
@@ -640,8 +524,10 @@ describe("ObservabilityStore", () => {
       expect(result.diagnostics).toBe(1);
       expect(result.channels).toBe(1);
 
-      // All tables should be empty
-      expect(store.queryTokenUsage()).toHaveLength(0);
+      // All tables should be empty (direct SQL read; queryTokenUsage was removed
+      // in a prior port-trim cleanup)
+      const tokenRow = db.prepare("SELECT COUNT(*) as count FROM obs_token_usage").get() as { count: number };
+      expect(tokenRow.count).toBe(0);
       expect(store.queryDelivery()).toHaveLength(0);
       expect(store.queryDiagnostics()).toHaveLength(0);
       expect(store.latestChannelSnapshots()).toHaveLength(0);
@@ -684,8 +570,10 @@ describe("ObservabilityStore", () => {
       const count = store.resetTable("token_usage");
       expect(count).toBe(1);
 
-      // Only token_usage should be empty
-      expect(store.queryTokenUsage()).toHaveLength(0);
+      // Only token_usage should be empty (direct SQL read; queryTokenUsage was
+      // removed in a prior port-trim cleanup)
+      const tokenRow = db.prepare("SELECT COUNT(*) as count FROM obs_token_usage").get() as { count: number };
+      expect(tokenRow.count).toBe(0);
       // Other tables should still have data
       expect(store.queryDelivery()).toHaveLength(1);
       expect(store.queryDiagnostics()).toHaveLength(1);
@@ -739,62 +627,10 @@ describe("ObservabilityStore", () => {
         cacheSaved: 0,
         latencyMs: 100,
       });
-      expect(store.queryTokenUsage()).toHaveLength(1);
+      // Direct SQL read; queryTokenUsage was removed in a prior port-trim cleanup
+      const tokenRow = db.prepare("SELECT COUNT(*) as count FROM obs_token_usage").get() as { count: number };
+      expect(tokenRow.count).toBe(1);
     });
   });
 
-  // -----------------------------------------------------------------------
-  // DDL migration (17 -> 20 columns)
-  // -----------------------------------------------------------------------
-
-  describe("DDL migration", () => {
-    it("migrates existing 17-column schema to 20 columns", () => {
-      const freshDb = new Database(":memory:");
-      // Create the OLD schema (17 columns, no cache cost columns)
-      freshDb.exec(`
-        CREATE TABLE IF NOT EXISTS obs_token_usage (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          timestamp INTEGER NOT NULL,
-          trace_id TEXT NOT NULL,
-          agent_id TEXT NOT NULL,
-          channel_id TEXT DEFAULT '',
-          execution_id TEXT DEFAULT '',
-          session_key TEXT DEFAULT '',
-          provider TEXT NOT NULL,
-          model TEXT NOT NULL,
-          prompt_tokens INTEGER NOT NULL,
-          completion_tokens INTEGER NOT NULL,
-          total_tokens INTEGER NOT NULL,
-          cache_read_tokens INTEGER DEFAULT 0,
-          cache_write_tokens INTEGER DEFAULT 0,
-          cost_input REAL NOT NULL,
-          cost_output REAL NOT NULL,
-          cost_total REAL NOT NULL,
-          latency_ms INTEGER NOT NULL
-        );
-      `);
-      // Run initSchema -- should add 3 columns via ALTER TABLE without crashing
-      initSchema(freshDb, 768);
-      // Verify columns exist
-      const columns = freshDb.prepare("PRAGMA table_info(obs_token_usage)").all() as Array<{ name: string }>;
-      const colNames = columns.map((c) => c.name);
-      expect(colNames).toContain("cost_cache_read");
-      expect(colNames).toContain("cost_cache_write");
-      expect(colNames).toContain("cache_saved");
-      // Verify can insert with new store and round-trip
-      const migratedStore = createObservabilityStore(freshDb);
-      migratedStore.insertTokenUsage({
-        timestamp: 1000, traceId: "t1", agentId: "a1", provider: "anthropic",
-        model: "claude", promptTokens: 100, completionTokens: 50, totalTokens: 150,
-        costInput: 0.003, costOutput: 0.0015, costTotal: 0.0045,
-        costCacheRead: 0.001, costCacheWrite: 0.002, cacheSaved: 0.005,
-        latencyMs: 1200,
-      });
-      const rows = migratedStore.queryTokenUsage();
-      expect(rows[0]!.costCacheRead).toBeCloseTo(0.001);
-      expect(rows[0]!.costCacheWrite).toBeCloseTo(0.002);
-      expect(rows[0]!.cacheSaved).toBeCloseTo(0.005);
-      freshDb.close();
-    });
-  });
 });

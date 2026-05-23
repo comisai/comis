@@ -1,6 +1,6 @@
 {
-  "totalMinified": 105986,
-  "totalGzipped": 9806,
+  "totalMinified": 105833,
+  "totalGzipped": 9779,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -49,7 +49,7 @@
     "config.diff": 331,
     "config.gc": 381,
     "config.history": 835,
-    "config.patch": 1039,
+    "config.patch": 1014,
     "config.read": 280,
     "config.rollback": 500,
     "config.schema": 466,
@@ -70,8 +70,8 @@
     "daemon.setLogLevel": 611,
     "delivery.queue.status": 476,
     "discord.action": 268,
-    "env.list": 813,
-    "env.set": 555,
+    "env.list": 751,
+    "env.set": 544,
     "gateway.restart": 375,
     "gateway.status": 544,
     "graph.cancel": 387,
@@ -158,7 +158,7 @@
     "scheduler.wake": 345,
     "secrets.delete": 379,
     "secrets.get": 403,
-    "secrets.list": 652,
+    "secrets.list": 577,
     "secrets.set": 516,
     "session.compact": 639,
     "session.delete": 778,

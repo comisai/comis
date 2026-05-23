@@ -2,7 +2,12 @@
 import { describe, it, expect } from "vitest";
 import type { ImageGenerationPort, ImageGenInput } from "./provider.js";
 
-describe("Provider interface", () => {
+describe("ImageGenerationPort interface", () => {
+  // NOTE: Inlined the previous Provider<TInput, TOutput> generic into
+  // ImageGenerationPort and dropped the optional estimateCost field
+  // (zero production callers). Tests that exercised estimateCost or the
+  // generic-as-Provider shape were dropped in the same commit.
+
   /**
    * Type-level test: a mock implementation satisfies ImageGenerationPort.
    */
@@ -14,7 +19,6 @@ describe("Provider interface", () => {
         ok: true as const,
         value: { buffer: Buffer.from("test"), mimeType: "image/png" },
       }),
-      estimateCost: (_input: ImageGenInput) => 0.02,
     };
   }
 
@@ -33,12 +37,7 @@ describe("Provider interface", () => {
     expect(provider.isAvailable()).toBe(true);
   });
 
-  it("estimateCost returns a number", () => {
-    const provider = createMockProvider();
-    expect(provider.estimateCost!({ prompt: "test" })).toBe(0.02);
-  });
-
-  it("provider without estimateCost satisfies interface", async () => {
+  it("provider without optional fields satisfies interface", async () => {
     const provider: ImageGenerationPort = {
       id: "minimal",
       isAvailable: () => false,
@@ -47,7 +46,6 @@ describe("Provider interface", () => {
         error: new Error("not available"),
       }),
     };
-    expect(provider.estimateCost).toBeUndefined();
     const result = await provider.execute({ prompt: "test" });
     expect(result.ok).toBe(false);
   });

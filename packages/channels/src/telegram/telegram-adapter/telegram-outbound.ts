@@ -6,7 +6,7 @@
  * State-first wrappers around every outbound operation that the adapter
  * handle exposes:
  *   - sendMessage / editMessage / reactToMessage / removeReaction
- *     / deleteMessage / fetchMessages / sendAttachment
+ *     / deleteMessage / sendAttachment
  *   - platformAction (the big switch covering pin/unpin/poll/sticker/
  *     chat_info/member_count/get_admins/sendTyping/set_title/
  *     set_description/ban/unban/promote/createForumTopic/
@@ -25,8 +25,6 @@ import { systemNowMs } from "@comis/core";
 import type { Result } from "@comis/shared";
 import type {
   AttachmentPayload,
-  FetchedMessage,
-  FetchMessagesOptions,
   SendMessageOptions,
 } from "@comis/core";
 import { renderTelegramButtons, renderTelegramCards } from "../rich-renderer.js";
@@ -181,7 +179,7 @@ export async function editMessage(
 }
 
 // ---------------------------------------------------------------------------
-// reactToMessage / removeReaction / deleteMessage / fetchMessages
+// reactToMessage / removeReaction / deleteMessage
 // ---------------------------------------------------------------------------
 
 export async function reactToMessage(
@@ -231,19 +229,6 @@ export async function deleteMessage(
     const message = error instanceof Error ? error.message : String(error);
     return err(new Error(`Failed to delete message: ${message}`));
   }
-}
-
-export async function fetchMessages(
-  _state: TelegramAdapterState,
-  _deps: TelegramAdapterDeps,
-  _channelId: string,
-  _options?: FetchMessagesOptions,
-): Promise<Result<FetchedMessage[], Error>> {
-  return err(
-    new Error(
-      "Fetching message history is not supported on Telegram. Bots can only see messages they receive in real-time.",
-    ),
-  );
 }
 
 // ---------------------------------------------------------------------------

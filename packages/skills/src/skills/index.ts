@@ -44,10 +44,6 @@ export type { PlatformToolProvider } from "./bridge/tool-bridge.js";
 // Bridge -- Metadata enforcement
 export { wrapWithMetadataEnforcement } from "./bridge/tool-metadata-enforcement.js";
 
-// Bridge -- Credential injection
-export { createCredentialInjector } from "./bridge/credential-injector.js";
-export type { CredentialInjector } from "./bridge/credential-injector.js";
-
 // Bridge -- AgentTool to ToolDefinition adapter
 export { agentToolsToToolDefinitions } from "./bridge/tool-definition-adapter.js";
 
@@ -211,14 +207,7 @@ export type { ImageGenRateLimiter } from "../tools/integrations/image-gen/index.
 // index.ts) -- they're consumed there by registry.ts and by per-factory
 // tests; daemon never names them directly.
 //
-// Type RpcCall is still re-exported from cron-tool via ./platform-tools/
-// index.ts; consumers that need the bare type import from
-// "@comis/skills/platform-tools" or import it through their own factory
-// signature.
+// Type RpcCall is re-exported from cron-tool via ./platform-tools/index.ts;
+// consumers import the bare type from "@comis/skills/platform-tools" or
+// through their own factory signature.
 // ===========================================================================
-
-// Re-export RpcCall on the `.` subpath for daemon-internal type compatibility
-// (BrowserService deps, RpcDispatchPort signatures, etc. -- all in daemon's
-// daemon-types.ts and rpc-dispatch.ts). This will narrow when daemon imports
-// RpcCall from `@comis/skills/platform-tools` directly.
-export type { RpcCall } from "../platform-tools/index.js";

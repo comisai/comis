@@ -38,7 +38,7 @@ import { stringify as yamlStringify } from "yaml";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "./config-audit-hook.js";
+import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "../../config/audit-hook.js";
 
 import type { RpcHandler } from "../types.js";
 import {
@@ -90,26 +90,20 @@ export function bindConfigWriteHandlers(
       }
 
       const startMs = systemNowMs();
-      // Bespoke pre-Zod: extract section from path fallback BEFORE contract parse,
-      // because the contract's `section` is optional + the bespoke message is
-      // friendlier than Zod's. The legacy `path: "a.b.c"` shape resolves to
-      // section + key here; the contract parse below accepts either canonical
-      // or legacy shapes.
-      const rawPath = typeof rawParams.path === "string" ? rawParams.path : undefined;
-      const section = (rawParams.section ?? (rawPath ? rawPath.split(".")[0] : undefined)) as string | undefined;
+      // Bespoke pre-Zod: require `section` BEFORE contract parse so the
+      // error message is more actionable than Zod's. Legacy `path: "a.b.c"`
+      // shape was removed; callers must send the canonical
+      // {section, key, value} shape.
+      const section = rawParams.section as string | undefined;
       if (!section) {
         throw new Error('Missing required parameter "section" for config.patch');
       }
-      const key = (rawParams.key ?? (rawPath && rawPath.includes(".") ? rawPath.slice(rawPath.indexOf(".") + 1) : undefined)) as string | undefined;
+      const key = rawParams.key as string | undefined;
       // Strip dispatcher internals + run contract parse for type narrowing +
       // dev-mode defense-in-depth. The contract accepts loose value
       // shape (union of string|number|boolean|record).
       const userParams = stripInternalFields(rawParams);
-      // Inject the resolved section/key BEFORE the parse so the wire-format
-      // (section, key, value) and the legacy (path, value) forms both parse
-      // through the same shape.
-      const parseInput = { ...userParams, section, ...(key ? { key } : {}) };
-      ConfigPatchContract.request.parse(parseInput);
+      ConfigPatchContract.request.parse(userParams);
       const value = rawParams.value;
       const subSchema = resolveSchemaForPath(AppConfigSchema, section, key);
       const coercedValue = coerceConfigValue(value, subSchema);
@@ -128,10 +122,10 @@ export function bindConfigWriteHandlers(
         deps.auditEnabled === false ? undefined : buildConfigAuditBase(localPathForAudit);
       let wroteFile = false;
       let writeError: { code?: string; message?: string } | undefined;
-      // Fix D1 (log-review): track the validator's rejection message so
-      // the `finally` block can thread it into the audit outcome. Pre-fix
-      // the message was scoped to the `catch` block and the `rejected`
-      // audit record carried no reason.
+      // Track the validator's rejection message so the `finally` block
+      // can thread it into the audit outcome. Previously the message was
+      // scoped to the `catch` block and the `rejected` audit record
+      // carried no reason.
       let rejectionMessage: string | undefined;
 
       try {
@@ -340,7 +334,7 @@ export function bindConfigWriteHandlers(
       } catch (e: unknown) {
         const durationMs = systemNowMs() - startMs;
         const errMsg = e instanceof Error ? e.message : String(e);
-        // Fix D1: surface the rejection reason to the `finally` block so
+        // Surface the rejection reason to the `finally` block so
         // the audit outcome carries it.
         rejectionMessage = errMsg;
 
@@ -365,7 +359,7 @@ export function bindConfigWriteHandlers(
         throw e;
       } finally {
         // Emit a JSONL config-audit record alongside the EventBus audit:event.
-        // Fix D1: thread rejectionMessage (set in the catch block) so the
+        // Thread rejectionMessage (set in the catch block) so the
         // persisted `errorMessage` field carries the validator's rejection text.
         const outcome = wroteFile
           ? ({ kind: "rename" } as const)

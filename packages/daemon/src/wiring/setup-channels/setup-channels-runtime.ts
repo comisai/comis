@@ -26,7 +26,9 @@ import {
   createLifecycleReactor,
   reactWithFallback,
   type LifecycleReactor,
+  type ChannelRegistry,
 } from "@comis/channels";
+import { buildReadOnlyChannelRegistry } from "./setup-channels-registry-builder.js";
 import { createChannelManager, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
 import { RetryConfigSchema, createRetryEngine } from "@comis/core";
 import {
@@ -34,14 +36,13 @@ import {
   resolveOutputFormat,
   parseOutboundMedia,
   type SsrfGuardedFetcher,
-  type RpcCall,
   type LinkRunner,
   type AudioConverter,
   type MediaTempManager,
   type MediaSemaphore,
 } from "@comis/skills";
+import type { RpcCall } from "@comis/skills/platform-tools";
 import type { TTSPort, QueueConfig } from "@comis/core";
-import type { ChannelCapabilityInfo } from "../setup-channels-adapters.js";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 
 /**
@@ -58,7 +59,9 @@ export interface ChannelManagerBuildDeps {
   linkRunner: LinkRunner;
   deliveryService: DeliveryService;
   adaptersByType: Map<string, ChannelPort>;
-  channelCapabilities: Map<string, ChannelCapabilityInfo>;
+  /** Per-channel plugin map; consumers read `plugin.capabilities` for
+   *  features.reactions, replyToMetaKey, etc. */
+  channelPlugins: Map<string, ChannelPluginPort>;
   preprocessMessageCallback: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package is not re-exported; pass-through matches setup-channels-media.ts
   preflightFn?: (msg: NormalizedMessage) => Promise<any>;
@@ -74,7 +77,6 @@ export interface ChannelManagerBuildDeps {
   activeRunRegistry?: ActiveRunRegistry;
   sessionResolver?: BackgroundSessionResolver;
   rpcCall?: RpcCall;
-  onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
   onMessageReceived?: (msg: NormalizedMessage, channelType: string) => void;
   onMessageProcessed?: (msg: NormalizedMessage, channelType: string) => void;
   approvalGate?: import("@comis/core").ApprovalGate;
@@ -100,6 +102,7 @@ export interface ChannelManagerBuildResult {
   commandQueue?: CommandQueue;
 }
 
+
 /**
  * Construct and start the ChannelManager (voice response pipeline +
  * command queue + slash-command handler + retry engine), then wire the
@@ -120,7 +123,7 @@ export async function buildAndStartChannelManager(
     ssrfFetcher,
     deliveryService,
     adaptersByType,
-    channelCapabilities,
+    channelPlugins,
     preprocessMessageCallback,
     preflightFn,
   } = deps;
@@ -191,6 +194,12 @@ export async function buildAndStartChannelManager(
     const retryConfig = RetryConfigSchema.parse({});
     const retryEngine = createRetryEngine(retryConfig, container.eventBus, channelsLogger);
 
+    // Lightweight read-only ChannelRegistry over the bootstrapped
+    // channelPlugins Map. Orchestrator reads
+    // `getCapabilities(...).replyToMetaKey` (REPLY_TO_META_KEY Record was
+    // deleted). Channel lifecycle is owned by setup-channels-adapters.
+    const channelRegistry: ChannelRegistry = buildReadOnlyChannelRegistry(channelPlugins);
+
     channelManager = createChannelManager({
       eventBus: container.eventBus,
       messageRouter,
@@ -199,6 +208,7 @@ export async function buildAndStartChannelManager(
       retryEngine,
       deliveryQueue: deps.deliveryQueue,
       deliveryService,
+      channelRegistry,
       // Required dep — orchestrator-side inbound pipeline entrypoint.
       // Routed through ChannelManagerDeps so channels does not create a
       // back-edge import of @comis/orchestrator.
@@ -257,8 +267,6 @@ export async function buildAndStartChannelManager(
           return `Config command failed: ${err instanceof Error ? err.message : String(err)}`;
         }
       } : undefined,
-      // Task extraction callback (gated by config.scheduler.tasks.enabled)
-      onTaskExtraction: deps.onTaskExtraction,
       onMessageReceived: deps.onMessageReceived,
       onMessageProcessed: deps.onMessageProcessed,
       // Graph report button callback intercept: deliver full report as .md file attachment
@@ -349,6 +357,22 @@ export async function buildAndStartChannelManager(
           const filePath = safePath(graphDir, leafOutputFile);
           const nodeId = leafOutputFile.replace(/-output\.md$/, "");
           const caption = `Full report — ${nodeId} (graph ${graphId.slice(0, 8)})`;
+
+          // sendAttachment is now optional on ChannelPort. Adapters
+          // whose platform lacks attachments (e.g. IRC) omit the method; degrade
+          // gracefully by sending a text message that references the caption.
+          if (typeof adapter.sendAttachment !== "function") {
+            await adapter.sendMessage(
+              channelId,
+              `${caption}\n(attachment not supported on this channel — full report at ${filePath})`,
+              threadId ? { extra: { threadId } } : undefined,
+            );
+            channelsLogger.debug(
+              { graphId, nodeId, channelId, hint: "channel lacks sendAttachment; sent caption + path text" },
+              "Graph report delivered as text (no attachment capability)",
+            );
+            return;
+          }
 
           await adapter.sendAttachment(channelId, {
             type: "file",
@@ -499,8 +523,9 @@ export async function buildAndStartChannelManager(
     // -----------------------------------------------------------------------
     if (lifecycleEnabled) {
       for (const [channelType, adapter] of adaptersByType) {
-        const caps = channelCapabilities.get(channelType);
-        if (!caps?.supportsReactions) {
+        const plugin = channelPlugins.get(channelType);
+        const caps = plugin?.capabilities;
+        if (!caps?.features.reactions) {
           channelsLogger.debug({ channelType }, "Lifecycle reactor skipped: reactions not supported");
           continue;
         }
@@ -509,6 +534,15 @@ export async function buildAndStartChannelManager(
         const perChannelConfig = lifecycleReactionsConfig.perChannel[channelType];
         if (perChannelConfig?.enabled === false) {
           channelsLogger.debug({ channelType }, "Lifecycle reactor skipped: per-channel disabled");
+          continue;
+        }
+
+        // replyToMetaKey is required by the lifecycle reactor to translate
+        // the inbound message's platform id back into a reply target. Skip
+        // any channel whose plugin does not declare one (e.g. echo today —
+        // added defensively).
+        if (!caps.replyToMetaKey) {
+          channelsLogger.debug({ channelType }, "Lifecycle reactor skipped: replyToMetaKey not declared in plugin capabilities");
           continue;
         }
 
@@ -550,10 +584,10 @@ export async function buildAndStartChannelManager(
     approvalNotifier.start();
     channelsLogger.debug("Approval notifier started");
 
-    // Clean up notifier on shutdown
-    container.eventBus.on("system:shutdown", () => {
-      approvalNotifier?.stop();
-    });
+    // eventBus.on("system:shutdown", () => approvalNotifier?.stop())
+    // subscriber deleted. The notifier handle is already in the return shape;
+    // the composition root invokes its .stop() directly via
+    // ShutdownDeps.approvalNotifierStop.
   }
 
   return { channelManager, lifecycleReactors, approvalNotifier, commandQueue };

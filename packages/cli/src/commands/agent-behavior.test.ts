@@ -198,7 +198,13 @@ describe("agent create sends correct RPC", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    callSpy = vi.fn().mockResolvedValue({});
+    // AgentsCreateContract.response = { agentId, config, created: true, workspaceDir }
+    callSpy = vi.fn().mockImplementation(async (_method: string, params: { agentId: string; config?: Record<string, unknown> }) => ({
+      agentId: params.agentId,
+      config: params.config ?? {},
+      created: true,
+      workspaceDir: `/tmp/test-workspace/${params.agentId}`,
+    }));
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
     });
@@ -248,7 +254,13 @@ describe("agent create initializes workspace", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    callSpy = vi.fn().mockResolvedValue({});
+    // AgentsCreateContract.response = { agentId, config, created: true, workspaceDir }
+    callSpy = vi.fn().mockImplementation(async (_method: string, params: { agentId: string; config?: Record<string, unknown> }) => ({
+      agentId: params.agentId,
+      config: params.config ?? {},
+      created: true,
+      workspaceDir: `/tmp/test-workspace/${params.agentId}`,
+    }));
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
     });
@@ -289,7 +301,12 @@ describe("agent configure sends only specified fields", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    callSpy = vi.fn().mockResolvedValue({});
+    // AgentsUpdateContract.response = { agentId, config, updated: true }
+    callSpy = vi.fn().mockImplementation(async (_method: string, params: { agentId: string; config?: Record<string, unknown> }) => ({
+      agentId: params.agentId,
+      config: params.config ?? {},
+      updated: true,
+    }));
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
     });
@@ -384,7 +401,11 @@ describe("agent delete with --yes calls agents.delete", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    callSpy = vi.fn().mockResolvedValue({});
+    // AgentsDeleteContract.response = { agentId, deleted: true }
+    callSpy = vi.fn().mockImplementation(async (_method: string, params: { agentId: string }) => ({
+      agentId: params.agentId,
+      deleted: true,
+    }));
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
     });

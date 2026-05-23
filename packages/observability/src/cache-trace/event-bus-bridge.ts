@@ -33,8 +33,8 @@
  *     inside the StreamFn wrapper; an EventBus round-trip would add no
  *     information).
  *   - `cache_trace.write_failures` — control-plane sentinel emitted by
- *     the runtime's `recordStage` closure (Plan 48-03 D-10 inline) plus
- *     the `flushAndClose` summary (D-11). Never bridged.
+ *     the runtime's `recordStage` closure (inline) plus the
+ *     `flushAndClose` summary. Never bridged.
  *   - `session:after` — emitted by the pi-executor turn-end path plus the
  *     terminal emit in `flushAndClose`. The bridge stashes token totals
  *     for that emit via the token-stash side-effect handler.
@@ -54,9 +54,9 @@ import type { CacheTraceStage } from "./types.js";
 /**
  * Bridge mapping table — keys are `EventMap` event names that the bridge
  * translates 1:1 into cache-trace stages. The architecture test
- * (`cache-trace-stages-known.test.ts`, Plan 48-08 OBS-HARD-11) walks
- * this table plus the direct `recordStage` call sites to verify every
- * application stage in `CACHE_TRACE_STAGES` has at least one producer.
+ * (`cache-trace-stages-known.test.ts`) walks this table plus the direct
+ * `recordStage` call sites to verify every application stage in
+ * `CACHE_TRACE_STAGES` has at least one producer.
  *
  * Adding a new bridge entry must be paired with an entry in
  * `translateBridgedPayload` (TypeScript's exhaustive-switch will flag a

@@ -2,12 +2,8 @@
 import { describe, it, expect } from "vitest";
 import {
   BeforeAgentStartResultSchema,
-  BeforeToolCallResultSchema,
-  ToolResultPersistResultSchema,
   BeforeCompactionResultSchema,
   mergeBeforeAgentStart,
-  mergeBeforeToolCall,
-  mergeToolResultPersist,
   mergeBeforeCompaction,
 } from "./hook-strategies.js";
 
@@ -37,7 +33,7 @@ describe("BeforeAgentStartResultSchema", () => {
     ).toThrow();
   });
 
-  it("rejects wrong types", () => {
+  it("rejects wrong types for systemPrompt field", () => {
     expect(() =>
       BeforeAgentStartResultSchema.parse({ systemPrompt: 42 }),
     ).toThrow();
@@ -74,67 +70,6 @@ describe("BeforeAgentStartResultSchema", () => {
     const first = BeforeAgentStartResultSchema.parse(input);
     const second = BeforeAgentStartResultSchema.parse(first);
     expect(second).toEqual(first);
-  });
-});
-
-describe("BeforeToolCallResultSchema", () => {
-  it("parses valid result with skip=false equivalent (block=false)", () => {
-    const result = BeforeToolCallResultSchema.parse({ block: false });
-    expect(result.block).toBe(false);
-  });
-
-  it("parses result with block=true and blockReason", () => {
-    const input = { block: true, blockReason: "unsafe" };
-    const result = BeforeToolCallResultSchema.parse(input);
-    expect(result.block).toBe(true);
-    expect(result.blockReason).toBe("unsafe");
-  });
-
-  it("parses result with params override", () => {
-    const input = { params: { key: "value" } };
-    const result = BeforeToolCallResultSchema.parse(input);
-    expect(result.params).toEqual({ key: "value" });
-  });
-
-  it("parses an empty object (all fields optional)", () => {
-    const result = BeforeToolCallResultSchema.parse({});
-    expect(result).toEqual({});
-  });
-
-  it("rejects extra properties (strictObject)", () => {
-    expect(() =>
-      BeforeToolCallResultSchema.parse({ block: true, unknown: "field" }),
-    ).toThrow();
-  });
-
-  it("rejects wrong types for block", () => {
-    expect(() =>
-      BeforeToolCallResultSchema.parse({ block: "yes" }),
-    ).toThrow();
-  });
-});
-
-describe("ToolResultPersistResultSchema", () => {
-  it("parses a valid result", () => {
-    const result = ToolResultPersistResultSchema.parse({ result: "modified output" });
-    expect(result.result).toBe("modified output");
-  });
-
-  it("parses an empty object (result is optional)", () => {
-    const result = ToolResultPersistResultSchema.parse({});
-    expect(result.result).toBeUndefined();
-  });
-
-  it("rejects extra properties (strictObject)", () => {
-    expect(() =>
-      ToolResultPersistResultSchema.parse({ result: "ok", extra: true }),
-    ).toThrow();
-  });
-
-  it("rejects wrong types for result", () => {
-    expect(() =>
-      ToolResultPersistResultSchema.parse({ result: 123 }),
-    ).toThrow();
   });
 });
 
@@ -198,53 +133,6 @@ describe("mergeBeforeAgentStart", () => {
     merged = mergeBeforeAgentStart(merged, r3);
     expect(merged.systemPrompt).toBe("final");
     expect(merged.prependContext).toBe("middle-ctx");
-  });
-});
-
-describe("mergeBeforeToolCall", () => {
-  it("applies last-writer-wins for block field", () => {
-    const a = { block: false };
-    const b = { block: true, blockReason: "security" };
-    const merged = mergeBeforeToolCall(a, b);
-    expect(merged.block).toBe(true);
-    expect(merged.blockReason).toBe("security");
-  });
-
-  it("preserves non-conflicting fields across merges", () => {
-    const a = { params: { key: "val" } };
-    const b = { block: true, blockReason: "unsafe" };
-    const merged = mergeBeforeToolCall(a, b);
-    expect(merged.params).toEqual({ key: "val" });
-    expect(merged.block).toBe(true);
-    expect(merged.blockReason).toBe("unsafe");
-  });
-
-  it("merging with undefined acc preserves next", () => {
-    const next = { block: true, blockReason: "denied" };
-    const merged = mergeBeforeToolCall(undefined, next);
-    expect(merged).toEqual(next);
-  });
-});
-
-describe("mergeToolResultPersist", () => {
-  it("applies last-writer-wins for result field", () => {
-    const a = { result: "original" };
-    const b = { result: "modified" };
-    const merged = mergeToolResultPersist(a, b);
-    expect(merged.result).toBe("modified");
-  });
-
-  it("undefined result in next falls back to acc", () => {
-    const a = { result: "keep" };
-    const b = {};
-    const merged = mergeToolResultPersist(a, b);
-    expect(merged.result).toBe("keep");
-  });
-
-  it("merging with undefined acc preserves next", () => {
-    const next = { result: "output" };
-    const merged = mergeToolResultPersist(undefined, next);
-    expect(merged.result).toBe("output");
   });
 });
 

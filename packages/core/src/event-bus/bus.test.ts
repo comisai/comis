@@ -3,31 +3,39 @@ import { describe, it, expect, vi } from "vitest";
 import type { EventMap } from "./events.js";
 import { TypedEventBus } from "./bus.js";
 
+// This file uses "system:error" as its canonical sample event for bus-API
+// coverage when a typed payload is required, plus "config:patched" /
+// "session:created" / "audit:event" for tests that already used a
+// different event.
+
 describe("TypedEventBus", () => {
   it("emit triggers on handler with correct payload", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
 
-    bus.on("system:shutdown", handler);
-    bus.emit("system:shutdown", { reason: "test", graceful: true });
+    bus.on("system:error", handler);
+    const payload = { error: new Error("test"), source: "unit-test" };
+    bus.emit("system:error", payload);
 
     expect(handler).toHaveBeenCalledOnce();
-    expect(handler).toHaveBeenCalledWith({ reason: "test", graceful: true });
+    expect(handler).toHaveBeenCalledWith(payload);
   });
 
   it("once fires only once", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
 
-    bus.once("system:shutdown", handler);
-    bus.emit("system:shutdown", { reason: "first", graceful: true });
-    bus.emit("system:shutdown", { reason: "second", graceful: false });
+    bus.once("system:error", handler);
+    const firstPayload = { error: new Error("first"), source: "unit-test" };
+    const secondPayload = { error: new Error("second"), source: "unit-test" };
+    bus.emit("system:error", firstPayload);
+    bus.emit("system:error", secondPayload);
 
     expect(handler).toHaveBeenCalledOnce();
-    expect(handler).toHaveBeenCalledWith({ reason: "first", graceful: true });
+    expect(handler).toHaveBeenCalledWith(firstPayload);
   });
 
-  it("off removes handler", () => {
+  it("off removes the registered handler so subsequent emits do not invoke it", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
 
@@ -44,14 +52,14 @@ describe("TypedEventBus", () => {
     const handler2 = vi.fn();
     const otherHandler = vi.fn();
 
-    bus.on("system:shutdown", handler1);
-    bus.on("system:shutdown", handler2);
-    bus.on("system:error", otherHandler);
+    bus.on("system:error", handler1);
+    bus.on("system:error", handler2);
+    bus.on("background_task:cancelled", otherHandler);
 
-    bus.removeAllListeners("system:shutdown");
+    bus.removeAllListeners("system:error");
 
-    bus.emit("system:shutdown", { reason: "test", graceful: true });
     bus.emit("system:error", { error: new Error("test"), source: "unit-test" });
+    bus.emit("background_task:cancelled", { agentId: "a", taskId: "t", toolName: "tool", timestamp: Date.now() });
 
     expect(handler1).not.toHaveBeenCalled();
     expect(handler2).not.toHaveBeenCalled();
@@ -63,13 +71,13 @@ describe("TypedEventBus", () => {
     const handler1 = vi.fn();
     const handler2 = vi.fn();
 
-    bus.on("system:shutdown", handler1);
-    bus.on("system:error", handler2);
+    bus.on("system:error", handler1);
+    bus.on("background_task:cancelled", handler2);
 
     bus.removeAllListeners();
 
-    bus.emit("system:shutdown", { reason: "test", graceful: true });
     bus.emit("system:error", { error: new Error("test"), source: "unit-test" });
+    bus.emit("background_task:cancelled", { agentId: "a", taskId: "t", toolName: "tool", timestamp: Date.now() });
 
     expect(handler1).not.toHaveBeenCalled();
     expect(handler2).not.toHaveBeenCalled();
@@ -101,11 +109,11 @@ describe("TypedEventBus", () => {
     const handler2 = vi.fn();
     const handler3 = vi.fn();
 
-    bus.on("system:shutdown", handler1);
-    bus.on("system:shutdown", handler2);
-    bus.on("system:shutdown", handler3);
+    bus.on("system:error", handler1);
+    bus.on("system:error", handler2);
+    bus.on("system:error", handler3);
 
-    bus.emit("system:shutdown", { reason: "multi", graceful: false });
+    bus.emit("system:error", { error: new Error("multi"), source: "unit-test" });
 
     expect(handler1).toHaveBeenCalledOnce();
     expect(handler2).toHaveBeenCalledOnce();
@@ -166,13 +174,13 @@ describe("TypedEventBus", () => {
     const bus = new TypedEventBus();
 
     // Correct usage compiles fine
-    bus.emit("system:shutdown", { reason: "ok", graceful: true });
+    bus.emit("system:error", { error: new Error("ok"), source: "unit-test" });
 
-    // @ts-expect-error - missing required "graceful" field
-    bus.emit("system:shutdown", { reason: "missing-field" });
+    // @ts-expect-error - missing required "source" field
+    bus.emit("system:error", { error: new Error("missing-field") });
 
-    // @ts-expect-error - wrong type for "graceful" (string instead of boolean)
-    bus.emit("system:shutdown", { reason: "wrong-type", graceful: "yes" });
+    // @ts-expect-error - wrong type for "error" (string instead of Error)
+    bus.emit("system:error", { error: "not-an-error-instance", source: "unit-test" });
 
     // @ts-expect-error - nonexistent event name
     bus.emit("nonexistent:event", { foo: "bar" });
@@ -182,16 +190,16 @@ describe("TypedEventBus", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
 
-    const result = bus.on("system:shutdown", handler);
+    const result = bus.on("system:error", handler);
     expect(result).toBe(bus);
 
-    const result2 = bus.off("system:shutdown", handler);
+    const result2 = bus.off("system:error", handler);
     expect(result2).toBe(bus);
 
-    const result3 = bus.once("system:shutdown", handler);
+    const result3 = bus.once("system:error", handler);
     expect(result3).toBe(bus);
 
-    const result4 = bus.removeAllListeners("system:shutdown");
+    const result4 = bus.removeAllListeners("system:error");
     expect(result4).toBe(bus);
 
     const result5 = bus.setMaxListeners(20);

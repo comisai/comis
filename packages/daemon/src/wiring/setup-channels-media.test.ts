@@ -213,4 +213,57 @@ describe("buildMediaPipeline", () => {
     const compositeCall = vi.mocked(createCompositeResolver).mock.calls[0][0];
     expect(compositeCall.resolvers).toHaveLength(0);
   });
+
+  // ---------------------------------------------------------------------------
+  // onSuspiciousContent forwarding into preprocessMessage deps
+  // ---------------------------------------------------------------------------
+
+  it("forwards onSuspiciousContent into preprocessMessage deps when provided", async () => {
+    const callback = vi.fn();
+    mockCompositeResolver.resolve.mockResolvedValueOnce({ ok: true, value: { buffer: Buffer.from("d") } });
+    const deps = makeDeps({ onSuspiciousContent: callback });
+
+    const result = await buildMediaPipeline(deps);
+
+    const msg: NormalizedMessage = {
+      id: "m1",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "u1",
+      text: "hello",
+      timestamp: Date.now(),
+      attachments: [{ url: "tg://file/abc", type: "image", mimeType: "image/jpeg" }],
+    };
+
+    await result.preprocessMessage(msg);
+
+    expect(preprocessMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ onSuspiciousContent: callback }),
+      expect.anything(),
+    );
+  });
+
+  it("forwards undefined onSuspiciousContent when not provided", async () => {
+    mockCompositeResolver.resolve.mockResolvedValueOnce({ ok: true, value: { buffer: Buffer.from("d") } });
+    const deps = makeDeps(); // no onSuspiciousContent
+
+    const result = await buildMediaPipeline(deps);
+
+    const msg: NormalizedMessage = {
+      id: "m1",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "u1",
+      text: "hello",
+      timestamp: Date.now(),
+      attachments: [{ url: "tg://file/abc", type: "image", mimeType: "image/jpeg" }],
+    };
+
+    await result.preprocessMessage(msg);
+
+    expect(preprocessMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ onSuspiciousContent: undefined }),
+      expect.anything(),
+    );
+  });
 });

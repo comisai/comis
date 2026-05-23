@@ -41,8 +41,6 @@ export interface DeliveryQueueEntry {
   /** Serialized DeliverToChannelOptions */
   readonly optionsJson: string;
   readonly origin: string;
-  readonly formatApplied: boolean;
-  readonly chunkingApplied: boolean;
   readonly status: "pending" | "in_flight" | "delivered" | "failed" | "expired";
   readonly attemptCount: number;
   readonly maxAttempts: number;
@@ -52,8 +50,6 @@ export interface DeliveryQueueEntry {
   readonly lastAttemptAt: number | null;
   readonly nextRetryAt: number | null;
   readonly lastError: string | null;
-  readonly markdownFallbackApplied: boolean;
-  readonly deliveredMessageId: string | null;
   readonly traceId: string | null;
 }
 
@@ -63,7 +59,7 @@ export interface DeliveryQueueEntry {
  */
 export type DeliveryQueueEnqueueInput = Omit<
   DeliveryQueueEntry,
-  "id" | "status" | "attemptCount" | "lastAttemptAt" | "nextRetryAt" | "lastError" | "markdownFallbackApplied" | "deliveredMessageId"
+  "id" | "status" | "attemptCount" | "lastAttemptAt" | "nextRetryAt" | "lastError"
 >;
 
 /**
@@ -126,11 +122,6 @@ export interface DeliveryQueuePort {
    * @returns The number of entries pruned.
    */
   pruneExpired(): Promise<Result<number, Error>>;
-
-  /**
-   * Count of entries in active states (pending + in_flight).
-   */
-  depth(): Promise<Result<number, Error>>;
 
   /**
    * Per-status count breakdown for observability.

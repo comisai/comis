@@ -321,9 +321,8 @@ function buildEvent(input: BuildEventInput): TrajectoryEvent {
   const envelope: Mutable<TrajectoryEvent> = {
     traceSchema: "comis-trajectory",
     schemaVersion: 1,
-    // All recorder-driven emits are runtime-sourced. The other two
-    // values ("transcript", "export") are reserved for future
-    // post-processors and are NOT used by the live recorder
+    // Live recorder emits — `source` is a single-member union
+    // preserved for forward-compatibility of on-disk JSONL artifacts
     // (design §6.2 + §1.4).
     source: "runtime",
     type: input.type,

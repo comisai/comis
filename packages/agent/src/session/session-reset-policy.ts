@@ -63,8 +63,8 @@ export interface SessionResetSchedulerDeps {
    * a dep so agent does not import `@comis/scheduler` directly.
    */
   computeDailyResetNextRun: ComputeDailyResetNextRun;
-  /** Injectable clock for testing. Defaults to Date.now. */
-  nowMs?: () => number;
+  /** Wall-clock reads for sweep timing decisions. Caller wires from ClockPort. */
+  nowMs: () => number;
   /** Timer scheduling. Sweep-interval uses .unref() so it does not block shutdown. */
   timers: TimerPort;
 }
@@ -240,7 +240,7 @@ export function checkReset(
 export function createSessionResetScheduler(
   deps: SessionResetSchedulerDeps,
 ): SessionResetScheduler {
-  const getNow = deps.nowMs ?? Date.now;
+  const getNow = deps.nowMs;
   let timer: TimerHandle | null = null;
 
   function sweep(): void {

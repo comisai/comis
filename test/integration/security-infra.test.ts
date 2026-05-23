@@ -21,7 +21,6 @@ import {
   PathTraversalError,
   validateUrl,
   createPluginRegistry,
-  TypedEventBus,
 } from "@comis/core";
 import type { PluginPort } from "@comis/core";
 import { ok } from "@comis/shared";
@@ -117,20 +116,8 @@ describe("SEC-INF-03: SSRF Guard URL Validation", () => {
 // =============================================================================
 
 describe("SEC-INF-04: Plugin Registry Security Model", () => {
-  it("emits plugin:registered event on TypedEventBus with correct pluginId and hookCount", () => {
-    const eventBus = new TypedEventBus();
-    const registry = createPluginRegistry({ eventBus });
-
-    let receivedEvent: {
-      pluginId: string;
-      pluginName: string;
-      hookCount: number;
-      timestamp: number;
-    } | null = null;
-
-    eventBus.on("plugin:registered", (payload) => {
-      receivedEvent = payload;
-    });
+  it("registers a plugin and exposes its hooks via getHooksByName", () => {
+    const registry = createPluginRegistry();
 
     const testPlugin: PluginPort = {
       id: "test-plugin-event",
@@ -138,56 +125,19 @@ describe("SEC-INF-04: Plugin Registry Security Model", () => {
       version: "1.0.0",
       register(api) {
         api.registerHook("before_agent_start", async () => undefined);
-        api.registerHook("agent_end", async () => undefined);
+        api.registerHook("session_start", async () => undefined);
         return ok(undefined);
       },
     };
 
     const result = registry.register(testPlugin);
     expect(result.ok).toBe(true);
-    expect(receivedEvent).not.toBeNull();
-    expect(receivedEvent!.pluginId).toBe("test-plugin-event");
-    expect(receivedEvent!.pluginName).toBe("Test Plugin Event");
-    expect(receivedEvent!.hookCount).toBe(2);
-    expect(receivedEvent!.timestamp).toBeGreaterThan(0);
-  });
-
-  it("stores Zod config schema via registerConfigSchema, retrievable via getRegisteredConfigSchemas()", () => {
-    const registry = createPluginRegistry();
-
-    const configSchema = z.object({
-      endpoint: z.string().url(),
-      retries: z.number().int().positive(),
-    });
-
-    const testPlugin: PluginPort = {
-      id: "config-schema-plugin",
-      name: "Config Schema Plugin",
-      version: "1.0.0",
-      register(api) {
-        api.registerConfigSchema("myPlugin", configSchema);
-        return ok(undefined);
-      },
-    };
-
-    const result = registry.register(testPlugin);
-    expect(result.ok).toBe(true);
-
-    const schemas = registry.getRegisteredConfigSchemas();
-    expect(schemas.has("myPlugin")).toBe(true);
-
-    // Validate that the stored schema works correctly
-    const validParse = schemas.get("myPlugin")!.safeParse({
-      endpoint: "https://example.com",
-      retries: 3,
-    });
-    expect(validParse.success).toBe(true);
-
-    const invalidParse = schemas.get("myPlugin")!.safeParse({
-      endpoint: "not-a-url",
-      retries: -1,
-    });
-    expect(invalidParse.success).toBe(false);
+    // The prior assertion observed a `plugin:registered`
+    // event-bus event, which was removed alongside the other plugin-lifecycle
+    // events. The surviving observation is direct PluginRegistry state
+    // inspection via getHooksByName.
+    expect(registry.getHooksByName("before_agent_start")).toHaveLength(1);
+    expect(registry.getHooksByName("session_start")).toHaveLength(1);
   });
 
   it("returns err Result for duplicate plugin registration", () => {

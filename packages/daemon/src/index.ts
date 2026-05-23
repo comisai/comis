@@ -1,5 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // @comis/daemon - production daemon entry point
+//
+// Test-only root re-exports policy:
+// The four `createXxx`/`createYyy`/etc. re-exports below all have real
+// in-repo test consumers — each line carries a per-consumer breadcrumb.
+// They survive the BC-shim sweep because:
+//   1. Tests live under test/**, which the public-export-consumers AST
+//      walker explicitly excludes — so the entries appear as "orphans"
+//      to the walker but ARE consumed (Path B preserve-with-docs).
+//   2. The test/support/public-api-policy.ts entry for `@comis/daemon`
+//      tracks these four symbols + their consumer file paths.
+// Do NOT delete these re-exports without retargeting the consumers
+// listed in test/support/public-api-policy.ts (per AGENTS.md §2.9).
 
 // Daemon entry point and types for integration test harness
 export { main } from "./daemon.js";
@@ -7,12 +19,14 @@ export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 
 // Announcement dead-letter queue (canonical surface lives in
 // packages/orchestrator/src/cross-session/; re-exported here so the
-// daemon's public API contract documented in test/support/public-api-policy.ts
-// stays stable for the resilience-e2e-dead-letter integration test).
+// daemon's public API contract stays stable for the
+// resilience-e2e-dead-letter integration test).
+// Consumer: test/integration/resilience-e2e-dead-letter.test.ts:22
 export { createAnnouncementDeadLetterQueue } from "@comis/orchestrator";
 export type { AnnouncementDeadLetterQueue, DeadLetterEntry } from "@comis/orchestrator";
 
 // Context handlers: DAG context engine RPC handlers
+// Consumer: test/integration/context-dag-integration.test.ts:52-53
 export { createContextHandlers } from "./api/context-handlers.js";
 export type { ContextHandlerDeps } from "./api/context-handlers.js";
 
@@ -20,6 +34,7 @@ export type { ContextHandlerDeps } from "./api/context-handlers.js";
 // integration test can drive the actual `agents.update` RPC handler against a
 // shared `agents` map, mirroring the daemon-runtime container.config.agents
 // pattern at daemon.ts:594/634.
+// Consumer: test/integration/oauth-multi-account.test.ts:80,580
 export { createAgentHandlers } from "./api/agent-handlers.js";
 export type { AgentHandlerDeps } from "./api/agent-handlers.js";
 
@@ -35,5 +50,6 @@ export type { AgentHandlerDeps } from "./api/agent-handlers.js";
 // walker at test/architecture/source-rules.test.ts does not trip its own
 // invariant (the walker source-greps `packages/*\/src/**` for that exact
 // byte sequence).
+// Consumer: test/support/daemon-harness.ts:434-442 (DYNAMIC require)
 export { createTracingLogger } from "./observability/trace-logger.js";
 export type { TracingLoggerOptions } from "./observability/trace-logger.js";

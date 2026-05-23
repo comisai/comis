@@ -7,8 +7,6 @@ import {
   DebounceBufferConfigSchema,
   PerChannelQueueConfigSchema,
   FollowupConfigSchema,
-  PriorityLaneConfigSchema,
-  LaneAssignmentConfigSchema,
   QueueConfigSchema,
 } from "./schema-queue.js";
 
@@ -146,45 +144,6 @@ describe("FollowupConfigSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PriorityLaneConfigSchema
-// ---------------------------------------------------------------------------
-
-describe("PriorityLaneConfigSchema", () => {
-  it("produces valid defaults for optional fields", () => {
-    const result = PriorityLaneConfigSchema.safeParse({ name: "normal" });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.concurrency).toBe(3);
-      expect(result.data.priority).toBe(0);
-      expect(result.data.agingPromotionMs).toBe(30_000);
-    }
-  });
-
-  it("rejects empty name", () => {
-    const result = PriorityLaneConfigSchema.safeParse({ name: "" });
-    expect(result.success).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// LaneAssignmentConfigSchema
-// ---------------------------------------------------------------------------
-
-describe("LaneAssignmentConfigSchema", () => {
-  it("produces valid defaults", () => {
-    const result = LaneAssignmentConfigSchema.safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.defaultLane).toBe("normal");
-      expect(result.data.dmLane).toBe("high");
-      expect(result.data.mentionLane).toBe("normal");
-      expect(result.data.followupLane).toBe("normal");
-      expect(result.data.scheduledLane).toBe("low");
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
 // QueueConfigSchema
 // ---------------------------------------------------------------------------
 
@@ -200,40 +159,6 @@ describe("QueueConfigSchema", () => {
       expect(result.data.defaultDebounceMs).toBe(0);
       expect(result.data.perChannel).toEqual({});
       expect(result.data.perChannelDebounce).toEqual({});
-      expect(result.data.priorityEnabled).toBe(false);
-    }
-  });
-
-  it("includes default priorityLanes with 3 lanes (high/normal/low)", () => {
-    const result = QueueConfigSchema.safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.priorityLanes).toHaveLength(3);
-
-      const high = result.data.priorityLanes.find((l) => l.name === "high");
-      expect(high).toBeDefined();
-      expect(high!.concurrency).toBe(3);
-      expect(high!.priority).toBe(2);
-
-      const normal = result.data.priorityLanes.find((l) => l.name === "normal");
-      expect(normal).toBeDefined();
-      expect(normal!.concurrency).toBe(5);
-      expect(normal!.priority).toBe(1);
-
-      const low = result.data.priorityLanes.find((l) => l.name === "low");
-      expect(low).toBeDefined();
-      expect(low!.concurrency).toBe(2);
-      expect(low!.priority).toBe(0);
-    }
-  });
-
-  it("includes laneAssignment defaults", () => {
-    const result = QueueConfigSchema.safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.laneAssignment.defaultLane).toBe("normal");
-      expect(result.data.laneAssignment.dmLane).toBe("high");
-      expect(result.data.laneAssignment.scheduledLane).toBe("low");
     }
   });
 

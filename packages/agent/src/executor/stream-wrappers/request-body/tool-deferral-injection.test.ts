@@ -4,8 +4,8 @@
  * guard inside injectToolDeferral.
  *
  * These tests exist as a regression guard against the broken
- * `discover_tools → tool_search_tool_regex_20251119` swap (yfinance trace,
- * plan 260520-e9x). Auto-discovery stubs (`createAutoDiscoveryStubs` in
+ * `discover_tools → tool_search_tool_regex_20251119` swap (yfinance trace).
+ * Auto-discovery stubs (`createAutoDiscoveryStubs` in
  * `tool-deferral.ts`) tag the stub tool object with `[DEFERRAL_STUB_MARKER]:
  * true`. The stub-filter wrapper later strips those stubs from the API
  * payload by name, but `injectToolDeferral` runs FIRST in the onPayload

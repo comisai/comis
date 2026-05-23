@@ -46,8 +46,8 @@ export interface RpcClient {
   /**
    * Send a JSON-RPC 2.0 request and await the response.
    *
-   * For compile-time method name checking, use `createTypedRpc(rpc)` from
-   * `api/types/rpc-registry.js` which wraps this method with full type safety.
+   * Compile-time method-name validation runs via the generated CONTRACTS
+   * dispatch table (`./contracts.generated.ts`) and its `typedCall` helper.
    */
   call<T>(method: string, params?: unknown): Promise<T>;
   /** Subscribe to connection status changes. Returns an unsubscribe function. */

@@ -1,0 +1,144 @@
+# Comis Test Configuration — Daemon Shutdown Teardowns
+#
+# Variant of config.test-daemon-shutdown.yaml that enables the maximal set of
+# subsystems required to exercise all 9 ShutdownDeps teardown components:
+#   1. background-processes (setup-tools shutdownBackgroundProcesses)
+#   2. mcp-client-manager (setup-tools mcpClientManagerDisconnectAll)
+#   3. background-completion-runner (setup-background-completion-runner)
+#   4. proxy-typing (setup-cross-session-events registerProxyTypingListeners)
+#   5. approval-notifier (setup-channels-runtime approval notifier)
+#   6. delivery-queue (setup-delivery shutdownDeliveryQueue)
+#   7. delivery-mirror (setup-delivery shutdownMirror)
+#   8. output-retention (setup-output-retention)
+#   9. channel-health-monitor (channels-helpers setupChannelHealthMonitor)
+#
+# Uses port 8472 to avoid conflicts with other test configs
+# (4766 = default, 8457 = lifecycle, 8470 = channel-crash, 8471 = shutdown,
+#  8479 = background-completion).
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "TeardownAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+    # Enable background tasks so setupBackgroundCompletionRunner instantiates
+    # and so shutdownBackgroundProcesses has the background-process registry
+    # wired through setup-tools.
+    backgroundTasks:
+      enabled: true
+      autoBackgroundMs: 100
+      maxPerAgent: 5
+      maxTotal: 20
+      maxBackgroundDurationMs: 30000
+      maxBackgroundHops: 3
+      excludeTools: []
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8472
+  tokens:
+    - id: "test-teardown-token"
+      secret: "test-teardown-secret-key-for-integration-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-daemon-shutdown-teardown.db"
+
+# Enable channel-health-monitor (independent of adapter count — the monitor
+# wires up whenever healthCheck.enabled is true).
+#
+# NOTE: no real channel adapter is enabled here. The integration test
+# verifies the 8 teardown components that wire INDEPENDENTLY of
+# adaptersByType.size > 0. The 9th component (approval-notifier) only wires
+# when at least one channel adapter is created — but channel adapters
+# require live credential validation against external services (Telegram /
+# Discord / Slack APIs) which would make the test flaky. The integration
+# test treats approval-notifier as "wired if present, skipped if absent"
+# and the implementation tasks ensure its teardown is fired exactly once
+# whenever it IS wired (covered by setup-shutdown.ts unit tests).
+channels:
+  healthCheck:
+    enabled: true
+    pollIntervalMs: 30000
+    staleThresholdMs: 600000
+    idleThresholdMs: 300000
+    errorThreshold: 5
+    stuckThresholdMs: 600000
+    startupGraceMs: 30000
+
+# Delivery queue must be enabled so setupDeliveryQueue returns a non-no-op
+# `shutdown` and channels-helpers wires it (and the mirror) into the
+# AgentsHandle.
+deliveryQueue:
+  enabled: true
+  drainOnStartup: true
+  drainBudgetMs: 60000
+  drainIntervalMs: 1000
+  pruneIntervalMs: 300000
+  defaultMaxAttempts: 3
+  defaultExpireMs: 3600000
+  maxQueueDepth: 10000
+
+# Approval notifier requires approvals.enabled so the approvalGate ref reaches
+# the channel-manager runtime block.
+approvals:
+  enabled: true
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic

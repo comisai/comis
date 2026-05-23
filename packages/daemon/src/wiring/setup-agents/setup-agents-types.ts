@@ -55,7 +55,7 @@ export interface SingleAgentDeps {
   canaryFallbackSecret?: string;
   injectionRateLimiter?: InjectionRateLimiter;
   embeddingQueue?: { enqueue(entryId: string, content: string): void };
-  contextStore?: import("@comis/core").ContextStorePort;
+  contextStore?: import("@comis/core").ContextEngineStore;
   db?: unknown;
   /** Global provider health monitor shared across all agents */
   providerHealth?: ProviderHealthMonitor;
