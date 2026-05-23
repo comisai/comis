@@ -10,8 +10,6 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 const mockAssembleToolPipeline = vi.hoisted(() => vi.fn(async () => []));
 const mockCreateCronTool = vi.hoisted(() => vi.fn(() => ({ name: "cron" })));
-const mockCreateUnifiedMemoryTool = vi.hoisted(() => vi.fn(() => ({ name: "memory_tool" })));
-const mockCreateUnifiedSessionTool = vi.hoisted(() => vi.fn(() => ({ name: "session_tool" })));
 const mockCreateUnifiedContextTool = vi.hoisted(() => vi.fn(() => ({ name: "context_tool" })));
 const mockCreateMessageTool = vi.hoisted(() => vi.fn(() => ({ name: "message" })));
 const mockCreateDiscordActionTool = vi.hoisted(() => vi.fn(() => ({ name: "discord_action" })));
@@ -152,7 +150,6 @@ vi.mock("@comis/skills/platform-tools", () => ({
     { name: "memory_manage", category: "memory", build: (_ctx: any) => ({ name: "memory_manage" }) },
     { name: "memory_search", category: "memory", build: (_ctx: any) => ({ name: "memory_search" }) },
     { name: "memory_store", category: "memory", build: (_ctx: any) => ({ name: "memory_store" }) },
-    { name: "unified_memory", category: "memory", build: (ctx: any) => mockCreateUnifiedMemoryTool(ctx.rpcCall, ctx.approvalGate) },
     { name: "discord_action", category: "messaging", build: (ctx: any) => mockCreateDiscordActionTool(ctx.rpcCall, ctx.skillsLogger) },
     { name: "message", category: "messaging", build: (ctx: any) => mockCreateMessageTool(ctx.rpcCall) },
     { name: "notify", category: "messaging", build: (ctx: any) => mockCreateNotifyTool(ctx.rpcCall) },
@@ -172,7 +169,6 @@ vi.mock("@comis/skills/platform-tools", () => ({
     { name: "sessions_manage", category: "session", build: (ctx: any) => mockCreateSessionsManageTool(ctx.rpcCall, ctx.approvalGate) },
     { name: "sessions_send", category: "session", build: (ctx: any) => mockCreateSessionsSendTool(ctx.rpcCall) },
     { name: "sessions_spawn", category: "session", build: (ctx: any) => mockCreateSessionsSpawnTool(ctx.rpcCall) },
-    { name: "unified_session", category: "session", build: (ctx: any) => mockCreateUnifiedSessionTool(ctx.rpcCall) },
   ]),
 }));
 
@@ -381,18 +377,14 @@ describe("setupTools", () => {
 
     const tools = pipelineArgs.platformTools();
 
-    // Verify base tools are created (28 base tools + apply_patch = 29 without conditional ones)
+    // Verify base tools are created (26 base tools + apply_patch = 27 without conditional ones)
     expect(mockCreateCronTool).toHaveBeenCalled();
-    expect(mockCreateUnifiedMemoryTool).toHaveBeenCalled();
-    expect(mockCreateUnifiedSessionTool).toHaveBeenCalled();
     expect(mockCreateMessageTool).toHaveBeenCalled();
     expect(mockCreateApplyPatchTool).toHaveBeenCalled();
 
     // Tools should include all base platform tools
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).toContain("cron");
-    expect(toolNames).toContain("memory_tool");
-    expect(toolNames).toContain("session_tool");
     expect(toolNames).toContain("apply_patch");
     expect(toolNames).toContain("gateway");
     expect(toolNames).toContain("skills_manage");
@@ -944,7 +936,7 @@ describe("setupTools", () => {
 
       // Non-coding tools should be filtered out
       expect(toolNames).not.toContain("cron");
-      expect(toolNames).not.toContain("memory_tool");
+      expect(toolNames).not.toContain("memory_get");
       expect(toolNames).not.toContain("sessions_spawn");
       expect(toolNames).not.toContain("gateway");
     });
@@ -964,7 +956,7 @@ describe("setupTools", () => {
 
       // Should include all base platform tools
       expect(toolNames).toContain("cron");
-      expect(toolNames).toContain("memory_tool");
+      expect(toolNames).toContain("memory_get");
       expect(toolNames).toContain("gateway");
       expect(toolNames).toContain("sessions_spawn");
     });
@@ -984,7 +976,7 @@ describe("setupTools", () => {
 
       // full profile should return ALL base tools (same as no toolGroups)
       expect(toolNames).toContain("cron");
-      expect(toolNames).toContain("memory_tool");
+      expect(toolNames).toContain("memory_get");
       expect(toolNames).toContain("gateway");
       expect(toolNames).toContain("sessions_spawn");
     });
@@ -1057,7 +1049,7 @@ describe("setupTools", () => {
       const tools = pipelineArgs.platformTools();
       const toolNames = tools.map((t: any) => t.name);
       expect(toolNames).toContain("cron");
-      expect(toolNames).toContain("memory_tool");
+      expect(toolNames).toContain("memory_get");
     });
   });
 

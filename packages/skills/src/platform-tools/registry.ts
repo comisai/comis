@@ -35,8 +35,6 @@ import type { ComisLogger, WrapExternalContentOptions } from "@comis/core";
 // Import every platform-tool factory function. Local relative paths because
 // the factory files live under `./tools/`.
 import { createCronTool } from "./tools/cron-tool.js";
-import { createUnifiedMemoryTool } from "./tools/unified-memory-tool.js";
-import { createUnifiedSessionTool } from "./tools/unified-session-tool.js";
 import { createUnifiedContextTool } from "./tools/unified-context-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createDiscordActionTool } from "./tools/discord-action-tool.js";
@@ -337,11 +335,6 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       category: "memory",
       build: (ctx) => createMemoryStoreTool(ctx.rpcCall as never),
     },
-    {
-      name: "unified_memory",
-      category: "memory",
-      build: (ctx) => createUnifiedMemoryTool(ctx.rpcCall as never, ctx.approvalGate as never),
-    },
 
     // ---- messaging ----
     {
@@ -452,11 +445,6 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       name: "sessions_spawn",
       category: "session",
       build: (ctx) => createSessionsSpawnTool(ctx.rpcCall as never),
-    },
-    {
-      name: "unified_session",
-      category: "session",
-      build: (ctx) => createUnifiedSessionTool(ctx.rpcCall as never),
     },
   ];
 }
