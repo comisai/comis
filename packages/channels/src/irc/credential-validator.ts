@@ -11,7 +11,6 @@
 
 import { ok, err, type Result } from "@comis/shared";
 import { Client } from "irc-framework";
-import { createCredentialValidator } from "../shared/credential-validator-factory.js";
 import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 /** Information returned on successful IRC connection probe. */
@@ -42,66 +41,61 @@ const VALIDATE_TIMEOUT_MS = 10_000;
  * server info and disconnects. Returns an error on timeout or connection
  * failure.
  */
-export const validateIrcConnection: (opts: ValidateIrcOpts) => Promise<Result<IrcBotInfo, Error>> =
-  createCredentialValidator<ValidateIrcOpts, IrcBotInfo>({
-    platform: "IRC",
-    validateInputs: (opts) => {
-      if (!opts.host || opts.host.trim() === "") {
-        return "host must not be empty";
+export async function validateIrcConnection(
+  opts: ValidateIrcOpts,
+): Promise<Result<IrcBotInfo, Error>> {
+  if (!opts.host || opts.host.trim() === "") {
+    return err(new Error("Invalid IRC credentials: host must not be empty"));
+  }
+  if (!opts.nick || opts.nick.trim() === "") {
+    return err(new Error("Invalid IRC credentials: nick must not be empty"));
+  }
+  return new Promise<Result<IrcBotInfo, Error>>((resolve) => {
+    const bot = new Client();
+    let settled = false;
+
+    const settle = (result: Result<IrcBotInfo, Error>): void => {
+      if (settled) return;
+      settled = true;
+      try {
+        bot.quit("validation complete");
+      } catch {
+        // Best effort cleanup
       }
-      if (!opts.nick || opts.nick.trim() === "") {
-        return "nick must not be empty";
-      }
-      return undefined;
-    },
-    callApi: (opts) => {
-      return new Promise<Result<IrcBotInfo, Error>>((resolve) => {
-        const bot = new Client();
-        let settled = false;
+      systemClearTimeout(timer);
+      resolve(result);
+    };
 
-        const settle = (result: Result<IrcBotInfo, Error>): void => {
-          if (settled) return;
-          settled = true;
-          try {
-            bot.quit("validation complete");
-          } catch {
-            // Best effort cleanup
-          }
-          systemClearTimeout(timer);
-          resolve(result);
-        };
+    const timer = systemSetTimeout(() => {
+      settle(err(new Error(`IRC connection to ${opts.host} timed out after ${VALIDATE_TIMEOUT_MS}ms`)));
+    }, VALIDATE_TIMEOUT_MS);
 
-        const timer = systemSetTimeout(() => {
-          settle(err(new Error(`IRC connection to ${opts.host} timed out after ${VALIDATE_TIMEOUT_MS}ms`)));
-        }, VALIDATE_TIMEOUT_MS);
-
-        bot.on("registered", () => {
-          settle(
-            ok({
-              host: opts.host,
-              nick: bot.user.nick,
-              serverName: bot.network.name || opts.host,
-            }),
-          );
-        });
-
-        bot.on("error", (event: { message: string }) => {
-          settle(err(new Error(`IRC connection error: ${event.message}`)));
-        });
-
-        bot.on("close", () => {
-          settle(err(new Error(`IRC connection to ${opts.host} closed before registration`)));
-        });
-
-        const useTls = opts.tls ?? true;
-        bot.connect({
+    bot.on("registered", () => {
+      settle(
+        ok({
           host: opts.host,
-          port: opts.port ?? (useTls ? 6697 : 6667),
-          nick: opts.nick,
-          tls: useTls,
-          auto_reconnect: false,
-          auto_reconnect_max_retries: 0,
-        });
-      });
-    },
+          nick: bot.user.nick,
+          serverName: bot.network.name || opts.host,
+        }),
+      );
+    });
+
+    bot.on("error", (event: { message: string }) => {
+      settle(err(new Error(`IRC connection error: ${event.message}`)));
+    });
+
+    bot.on("close", () => {
+      settle(err(new Error(`IRC connection to ${opts.host} closed before registration`)));
+    });
+
+    const useTls = opts.tls ?? true;
+    bot.connect({
+      host: opts.host,
+      port: opts.port ?? (useTls ? 6697 : 6667),
+      nick: opts.nick,
+      tls: useTls,
+      auto_reconnect: false,
+      auto_reconnect_max_retries: 0,
+    });
   });
+}
