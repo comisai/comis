@@ -15,6 +15,7 @@
  */
 
 import { systemSetInterval, systemClearInterval, type SystemIntervalHandle } from "@comis/core";
+import PQueue from "p-queue";
 import type { McpClientManagerDeps, McpClientManagerState, McpServerConfig } from "./mcp-client-types.js";
 import { handleDisconnection } from "./mcp-client-reconnect.js";
 
@@ -52,26 +53,31 @@ export function stopKeepaliveTicker(state: McpClientManagerState, serverName: st
 }
 
 /**
- * Tick callback. Enqueues a Client.ping() through the per-server PQueue
- * (RELY-03 — same queue as tool calls; stdio single-pipe serialization).
- * Bails out when the queue is busy: recent activity is stronger than a
- * synthetic probe.
+ * Tick callback. Routes a Client.ping() based on the primary call queue's
+ * concurrency (Phase 67 CAP-02):
  *
- * On ping failure, triggers handleDisconnection(..., "keepalive_failed")
- * — the existing reconnect engine handles the recovery from there.
+ *  - concurrency === 1 (default/stdio): the ping shares the primary PQueue
+ *    (RELY-03 — stdio single-pipe serialization) and is SKIPPED when the
+ *    queue is busy. Recent tool-call activity is a stronger liveness signal
+ *    than a synthetic probe. (Phase 64 behavior — unchanged.)
+ *
+ *  - concurrency > 1 (supportsParallelToolCalls): a synthetic ping must not
+ *    interleave with real parallel tool calls. The ping is enqueued on a
+ *    DEDICATED concurrency-1 queue whose body first awaits the primary
+ *    queue's onIdle() (NOT onEmpty — onEmpty resolves while in-flight calls
+ *    still run). The dedicated queue is lazily created here and torn down on
+ *    disconnect / idle-eviction (mirrors callQueues), so it cannot leak.
+ *
+ * On ping failure, triggers handleDisconnection(..., "keepalive_failed") in
+ * BOTH routes — the existing reconnect engine handles recovery from there.
  */
 function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: McpClientManagerDeps, serverName: string): void {
-  const queue = state.callQueues.get(serverName);
-  if (!queue) return; // disconnected race
-  if (queue.size > 0 || queue.pending > 0) {
-    // Recent activity → connection alive enough; skip tick
-    deps.logger.debug?.({ serverName, queueSize: queue.size, queuePending: queue.pending }, "MCP keepalive ping skipped (queue busy)");
-    return;
-  }
+  const primary = state.callQueues.get(serverName);
+  if (!primary) return; // disconnected race
   const conn = state.connections.get(serverName);
   if (!conn || conn.status !== "connected") return;
 
-  void queue.add(async () => {
+  const doPing = async (): Promise<void> => {
     try {
       await conn.client.ping();
     } catch (err) {
@@ -82,5 +88,28 @@ function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: McpClient
       );
       handleDisconnection(state, deps, serverName, "keepalive_failed");
     }
-  });
+  };
+
+  if (primary.concurrency > 1) {
+    // CAP-02: route through a dedicated cc-1 queue and wait for the primary
+    // queue to drain so the ping never interleaves with parallel tool calls.
+    let keepalive = state.keepaliveQueues.get(serverName);
+    if (!keepalive) {
+      keepalive = new PQueue({ concurrency: 1 });
+      state.keepaliveQueues.set(serverName, keepalive);
+    }
+    void keepalive.add(async () => {
+      await primary.onIdle();
+      await doPing();
+    });
+    return;
+  }
+
+  // Existing concurrency-1 path: skip when busy, share the primary queue.
+  if (primary.size > 0 || primary.pending > 0) {
+    // Recent activity → connection alive enough; skip tick
+    deps.logger.debug?.({ serverName, queueSize: primary.size, queuePending: primary.pending }, "MCP keepalive ping skipped (queue busy)");
+    return;
+  }
+  void primary.add(doPing);
 }

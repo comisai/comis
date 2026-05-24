@@ -367,16 +367,29 @@ export interface McpClientManagerState {
   readonly generations: Map<string, number>;
   /** server-name -> PQueue serializing tool calls to respect server concurrency limits. */
   readonly callQueues: Map<string, PQueue>;
+  /**
+   * Phase 67 CAP-02: server-name -> dedicated concurrency-1 keepalive queue,
+   * used ONLY when the primary call queue concurrency > 1
+   * (supportsParallelToolCalls mode). The ping body awaits the primary
+   * queue's onIdle() before pinging, so a synthetic keepalive can never
+   * interleave with parallel tool calls. Lazily created in
+   * maybeEnqueueKeepalivePing; torn down (clear + delete) on disconnect and
+   * idle-eviction alongside callQueues so it cannot leak across reconnect
+   * generations. When primary concurrency === 1 (default/stdio) this map is
+   * never populated — the ping shares the primary queue (Phase 64 behavior).
+   */
+  readonly keepaliveQueues: Map<string, PQueue>;
   /** server-name -> consecutive onerror count (absorbed below threshold, triggers reconnect at threshold). */
   readonly consecutiveErrors: Map<string, number>;
   /**
    * Phase 64 RELY-01/02: server-name -> systemSetInterval handle for the
    * keepalive ticker (started on connect, stopped on disconnect).
    *
-   * Phase 67 CAP-02: revisit keepalive queue routing for parallel-tool-call
-   * mode. Today the ticker shares the per-server PQueue with tool calls
-   * (stdio concurrency = 1 enforces serialization). Phase 67 will refactor
-   * if supportsParallelToolCalls lands; do NOT pre-anticipate here.
+   * Phase 67 CAP-02 (landed): with concurrency === 1 the ticker still shares
+   * the per-server PQueue with tool calls (stdio single-pipe serialization).
+   * With concurrency > 1 the ping routes through the dedicated cc-1
+   * `keepaliveQueues` entry above and waits for primary.onIdle(), so it never
+   * interleaves with parallel tool calls. See mcp-client-keepalive.ts.
    */
   readonly keepaliveTickers: Map<string, SystemIntervalHandle>;
   /**
