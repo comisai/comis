@@ -4535,6 +4535,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "default": {
       "callToolTimeoutMs": 120000,
       "httpDefaultConcurrency": 4,
+      "osvCacheTtlMs": 86400000,
+      "osvCheckEnabled": true,
+      "safetyAllowedEnvKeys": [],
       "servers": [],
       "stdioDefaultConcurrency": 1
     },
@@ -4553,6 +4556,24 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "immutable": true,
     "path": "integrations.mcp.httpDefaultConcurrency",
     "type": "integer"
+  },
+  {
+    "default": 86400000,
+    "immutable": true,
+    "path": "integrations.mcp.osvCacheTtlMs",
+    "type": "integer"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "integrations.mcp.osvCheckEnabled",
+    "type": "boolean"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "integrations.mcp.safetyAllowedEnvKeys",
+    "type": "array"
   },
   {
     "default": [],
@@ -9744,6 +9765,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "mcp": {
         "callToolTimeoutMs": 120000,
         "httpDefaultConcurrency": 4,
+        "osvCacheTtlMs": 86400000,
+        "osvCheckEnabled": true,
+        "safetyAllowedEnvKeys": [],
         "servers": [],
         "stdioDefaultConcurrency": 1
       },
@@ -9919,6 +9943,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": {
       "callToolTimeoutMs": 120000,
       "httpDefaultConcurrency": 4,
+      "osvCacheTtlMs": 86400000,
+      "osvCheckEnabled": true,
+      "safetyAllowedEnvKeys": [],
       "servers": [],
       "stdioDefaultConcurrency": 1
     },
@@ -9937,6 +9964,24 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": true,
     "path": "integrations.mcp.httpDefaultConcurrency",
     "type": "integer"
+  },
+  {
+    "default": 86400000,
+    "immutable": true,
+    "path": "integrations.mcp.osvCacheTtlMs",
+    "type": "integer"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "integrations.mcp.osvCheckEnabled",
+    "type": "boolean"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "integrations.mcp.safetyAllowedEnvKeys",
+    "type": "array"
   },
   {
     "default": [],
@@ -18602,6 +18647,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
       "default": {
         "callToolTimeoutMs": 120000,
         "httpDefaultConcurrency": 4,
+        "osvCacheTtlMs": 86400000,
+        "osvCheckEnabled": true,
+        "safetyAllowedEnvKeys": [],
         "servers": [],
         "stdioDefaultConcurrency": 1
       },
@@ -18617,6 +18665,24 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
+        },
+        "osvCacheTtlMs": {
+          "default": 86400000,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "osvCheckEnabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "safetyAllowedEnvKeys": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
         },
         "servers": {
           "default": [],
@@ -18636,6 +18702,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "cwd": {
                 "minLength": 1,
                 "type": "string"
+              },
+              "disablePlaintextSecretCheck": {
+                "type": "boolean"
               },
               "enabled": {
                 "default": true,
@@ -18668,6 +18737,27 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
                 "minLength": 1,
                 "pattern": "^[a-zA-Z0-9_-]+$",
                 "type": "string"
+              },
+              "rlimits": {
+                "additionalProperties": false,
+                "properties": {
+                  "as": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "cpu": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "nofile": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
               },
               "transport": {
                 "enum": [
@@ -18702,7 +18792,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
         "servers",
         "callToolTimeoutMs",
         "stdioDefaultConcurrency",
-        "httpDefaultConcurrency"
+        "httpDefaultConcurrency",
+        "safetyAllowedEnvKeys",
+        "osvCheckEnabled",
+        "osvCacheTtlMs"
       ],
       "type": "object"
     },
@@ -27556,6 +27649,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "mcp": {
           "callToolTimeoutMs": 120000,
           "httpDefaultConcurrency": 4,
+          "osvCacheTtlMs": 86400000,
+          "osvCheckEnabled": true,
+          "safetyAllowedEnvKeys": [],
           "servers": [],
           "stdioDefaultConcurrency": 1
         },
@@ -27787,6 +27883,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "default": {
             "callToolTimeoutMs": 120000,
             "httpDefaultConcurrency": 4,
+            "osvCacheTtlMs": 86400000,
+            "osvCheckEnabled": true,
+            "safetyAllowedEnvKeys": [],
             "servers": [],
             "stdioDefaultConcurrency": 1
           },
@@ -27802,6 +27901,24 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
+            },
+            "osvCacheTtlMs": {
+              "default": 86400000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "osvCheckEnabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "safetyAllowedEnvKeys": {
+              "default": [],
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
             },
             "servers": {
               "default": [],
@@ -27821,6 +27938,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "cwd": {
                     "minLength": 1,
                     "type": "string"
+                  },
+                  "disablePlaintextSecretCheck": {
+                    "type": "boolean"
                   },
                   "enabled": {
                     "default": true,
@@ -27853,6 +27973,27 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "minLength": 1,
                     "pattern": "^[a-zA-Z0-9_-]+$",
                     "type": "string"
+                  },
+                  "rlimits": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "as": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "cpu": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "nofile": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
                   },
                   "transport": {
                     "enum": [
@@ -27887,7 +28028,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "servers",
             "callToolTimeoutMs",
             "stdioDefaultConcurrency",
-            "httpDefaultConcurrency"
+            "httpDefaultConcurrency",
+            "safetyAllowedEnvKeys",
+            "osvCheckEnabled",
+            "osvCacheTtlMs"
           ],
           "type": "object"
         },
