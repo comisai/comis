@@ -17,7 +17,7 @@
  * 4 resources/prompts methods.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   listResourcesForServer,
@@ -44,10 +44,17 @@ function makeManager(conn: McpConnection | undefined): McpClientManager {
   } as unknown as McpClientManager;
 }
 
-/** Build a connected McpConnection wrapping the given stub SDK client. */
+/**
+ * Build a connected McpConnection wrapping the given stub SDK client.
+ *
+ * Defaults `capabilities` to BOTH resources + prompts advertised so the
+ * happy-path adapter tests pass the CR-01 runtime capability gate. Override
+ * `capabilities` (e.g. `{}`) to drive the gate-rejection cases.
+ */
 function makeConnection(
   client: Partial<Client>,
   status: McpConnectionStatus = "connected",
+  overrides: Partial<McpConnection> = {},
 ): McpConnection {
   return {
     name: "fs",
@@ -58,6 +65,8 @@ function makeConnection(
     reconnectAttempt: 0,
     maxReconnectAttempts: 5,
     generation: 0,
+    capabilities: { resources: {}, prompts: {} },
+    ...overrides,
   };
 }
 
@@ -115,13 +124,15 @@ describe("resources/prompts RPC adapters delegate to the per-server SDK client",
   });
 
   it("delegates readResourceFromServer to client.readResource and maps contents", async () => {
+    // Use a custom MCP scheme (not file:/http:/https:, which CR-01 blocks for
+    // SSRF). The returned content uri is opaque and just round-trips.
     const conn = makeConnection({
-      readResource: async () => ({ contents: [{ uri: "file://a", text: "hello" }] }),
+      readResource: async () => ({ contents: [{ uri: "res://a", text: "hello" }] }),
     });
-    const result = await readResourceFromServer(makeManager(conn), "fs", "file://a");
+    const result = await readResourceFromServer(makeManager(conn), "fs", "res://a");
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value).toEqual([{ uri: "file://a", text: "hello" }]);
+      expect(result.value).toEqual([{ uri: "res://a", text: "hello" }]);
     }
   });
 
@@ -149,5 +160,90 @@ describe("resources/prompts RPC adapters delegate to the per-server SDK client",
       expect(result.value.description).toBe("prompt:greet");
       expect(result.value.messages).toHaveLength(1);
     }
+  });
+
+});
+
+// ---------------------------------------------------------------------------
+// CR-01: runtime capability gate + URI validation
+// ---------------------------------------------------------------------------
+
+describe("CR-01 runtime capability gate — adapters reject when capability not advertised", () => {
+  it("rejects listResourcesForServer when the live connection advertises no resources capability", async () => {
+    // SDK stub WOULD succeed; the gate must short-circuit before delegating.
+    const listResources = vi.fn(async () => ({ resources: [{ uri: "x://a", name: "a" }] }));
+    const conn = makeConnection({ listResources }, "connected", { capabilities: {} });
+    const result = await listResourcesForServer(makeManager(conn), "fs");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("does not advertise resources capability");
+    }
+    expect(listResources).not.toHaveBeenCalled();
+  });
+
+  it("rejects readResourceFromServer when resources capability is absent (post-reconnect drop)", async () => {
+    const readResource = vi.fn(async () => ({ contents: [] }));
+    const conn = makeConnection({ readResource }, "connected", { capabilities: {} });
+    const result = await readResourceFromServer(makeManager(conn), "fs", "x://a");
+    expect(result.ok).toBe(false);
+    expect(readResource).not.toHaveBeenCalled();
+  });
+
+  it("rejects the resources adapters when enableResources === false even with the capability present", async () => {
+    const listResources = vi.fn(async () => ({ resources: [] }));
+    const conn = makeConnection({ listResources }, "connected", {
+      capabilities: { resources: {} },
+      enableResources: false,
+    });
+    const result = await listResourcesForServer(makeManager(conn), "fs");
+    expect(result.ok).toBe(false);
+    expect(listResources).not.toHaveBeenCalled();
+  });
+
+  it("rejects listPromptsForServer when the live connection advertises no prompts capability", async () => {
+    const listPrompts = vi.fn(async () => ({ prompts: [] }));
+    const conn = makeConnection({ listPrompts }, "connected", { capabilities: {} });
+    const result = await listPromptsForServer(makeManager(conn), "fs");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("does not advertise prompts capability");
+    }
+    expect(listPrompts).not.toHaveBeenCalled();
+  });
+
+  it("rejects getPromptFromServer when prompts capability is absent", async () => {
+    const getPrompt = vi.fn(async () => ({ messages: [] }));
+    const conn = makeConnection({ getPrompt }, "connected", { capabilities: {} });
+    const result = await getPromptFromServer(makeManager(conn), "fs", "greet");
+    expect(result.ok).toBe(false);
+    expect(getPrompt).not.toHaveBeenCalled();
+  });
+});
+
+describe("CR-01 readResourceFromServer rejects SSRF-prone URI schemes", () => {
+  // The caller-controlled uri flows to client.readResource({ uri }); a remote
+  // MCP server could be driven to fetch internal network/local resources.
+  // http/https/file are rejected at the adapter boundary; the SDK call must
+  // not be reached for those.
+  it.each(["http://169.254.169.254/latest/meta-data/", "https://internal.local/secret", "file:///etc/passwd"])(
+    "rejects %s before delegating to client.readResource",
+    async (uri) => {
+      const readResource = vi.fn(async () => ({ contents: [] }));
+      const conn = makeConnection({ readResource });
+      const result = await readResourceFromServer(makeManager(conn), "fs", uri);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain("scheme");
+      }
+      expect(readResource).not.toHaveBeenCalled();
+    },
+  );
+
+  it("allows MCP-conventional resource schemes (e.g. custom server namespaces)", async () => {
+    const readResource = vi.fn(async () => ({ contents: [{ uri: "screen://display", text: "ok" }] }));
+    const conn = makeConnection({ readResource });
+    const result = await readResourceFromServer(makeManager(conn), "fs", "screen://display");
+    expect(result.ok).toBe(true);
+    expect(readResource).toHaveBeenCalledWith({ uri: "screen://display" });
   });
 });

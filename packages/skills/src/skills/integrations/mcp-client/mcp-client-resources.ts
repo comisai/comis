@@ -19,6 +19,14 @@
  * when the capability is present (mitigates Cursor's 40-tool ceiling on
  * resources-noisy servers).
  *
+ * CR-01: the registry's conditional predicate gates at tool-REGISTRATION
+ * time, but a capability can disappear on a reconnect (generation bump) while
+ * the descriptor stays registered until the next agent assembly. Each adapter
+ * therefore RE-ENFORCES the same gate (serverAdvertisesResources/Prompts) on
+ * the LIVE connection before delegating to the SDK, and readResourceFromServer
+ * additionally rejects SSRF-prone URI schemes (http/https/file) since the uri
+ * is caller-controlled.
+ *
  * Tool surface: 4 GLOBAL platform tools that take `server: string` as a
  * required parameter (see platform-tools/tools/mcp-resources-tool.ts +
  * mcp-prompts-tool.ts). Global (not per-server) keeps the descriptor count
@@ -69,14 +77,43 @@ export interface PromptGetResult {
 }
 
 // ---------------------------------------------------------------------------
+// CR-01: SSRF-prone resource URI schemes
+// ---------------------------------------------------------------------------
+//
+// The `uri` passed to readResourceFromServer is caller-controlled (the LLM
+// supplies it via the read_resource platform tool) and flows verbatim to
+// `client.readResource({ uri })`, where the MCP server resolves it. A remote
+// (http/sse) MCP server could be coerced into fetching internal network or
+// local-filesystem targets. We reject the network/local-fetch schemes at the
+// adapter boundary — MCP resource URIs are otherwise the server's own opaque
+// namespace (custom schemes like screen://, git://, postgres://), which the
+// server validates itself, so anything else is allowed through.
+const BLOCKED_RESOURCE_SCHEMES = new Set(["http:", "https:", "file:"]);
+
+/**
+ * Extract the lowercased `scheme:` prefix from a URI, or undefined if the
+ * string has no RFC-3986 scheme. Scheme grammar: ALPHA *( ALPHA / DIGIT /
+ * "+" / "-" / "." ) followed by ":".
+ */
+function uriScheme(uri: string): string | undefined {
+  const match = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(uri);
+  return match ? `${match[1]!.toLowerCase()}:` : undefined;
+}
+
+// ---------------------------------------------------------------------------
 // RPC adapters
 // ---------------------------------------------------------------------------
 
 /**
  * List the resources advertised by a connected MCP server.
  *
- * Returns `err` when the server is unknown or not in the `connected` state;
- * any SDK throw is caught and translated to `err` (never bubbles).
+ * Returns `err` when the server is unknown, not in the `connected` state, or
+ * (CR-01) does not advertise the resources capability on the LIVE connection
+ * / has opted out via enableResources:false. The registry's conditional
+ * predicate filters at tool-registration time, but a capability can disappear
+ * on reconnect while the descriptor is still registered — so the gate is
+ * re-enforced here at the RPC adapter layer. Any SDK throw is caught and
+ * translated to `err` (never bubbles).
  */
 export async function listResourcesForServer(
   manager: McpClientManager,
@@ -85,6 +122,9 @@ export async function listResourcesForServer(
   const conn = manager.getConnection(server);
   if (!conn || conn.status !== "connected") {
     return err(new Error(`MCP server "${server}" not connected`));
+  }
+  if (!serverAdvertisesResources(conn.capabilities, conn.enableResources)) {
+    return err(new Error(`MCP server "${server}" does not advertise resources capability`));
   }
   try {
     const result = await conn.client.listResources();
@@ -103,6 +143,11 @@ export async function listResourcesForServer(
 
 /**
  * Read the contents of a single resource (by URI) from a connected server.
+ *
+ * CR-01: enforces the resources capability gate on the live connection AND
+ * rejects SSRF-prone URI schemes (http/https/file) before delegating — the
+ * `uri` is caller-controlled and a remote server could otherwise be driven to
+ * fetch internal targets.
  */
 export async function readResourceFromServer(
   manager: McpClientManager,
@@ -112,6 +157,17 @@ export async function readResourceFromServer(
   const conn = manager.getConnection(server);
   if (!conn || conn.status !== "connected") {
     return err(new Error(`MCP server "${server}" not connected`));
+  }
+  if (!serverAdvertisesResources(conn.capabilities, conn.enableResources)) {
+    return err(new Error(`MCP server "${server}" does not advertise resources capability`));
+  }
+  const scheme = uriScheme(uri);
+  if (scheme !== undefined && BLOCKED_RESOURCE_SCHEMES.has(scheme)) {
+    return err(
+      new Error(
+        `Resource URI scheme "${scheme}" is not allowed (http/https/file are blocked to prevent SSRF)`,
+      ),
+    );
   }
   try {
     const result = await conn.client.readResource({ uri });
@@ -130,6 +186,9 @@ export async function readResourceFromServer(
 
 /**
  * List the prompts advertised by a connected MCP server.
+ *
+ * CR-01: re-enforces the prompts capability gate on the live connection
+ * (see listResourcesForServer for the rationale).
  */
 export async function listPromptsForServer(
   manager: McpClientManager,
@@ -138,6 +197,9 @@ export async function listPromptsForServer(
   const conn = manager.getConnection(server);
   if (!conn || conn.status !== "connected") {
     return err(new Error(`MCP server "${server}" not connected`));
+  }
+  if (!serverAdvertisesPrompts(conn.capabilities, conn.enablePrompts)) {
+    return err(new Error(`MCP server "${server}" does not advertise prompts capability`));
   }
   try {
     const result = await conn.client.listPrompts();
@@ -166,6 +228,9 @@ export async function getPromptFromServer(
   const conn = manager.getConnection(server);
   if (!conn || conn.status !== "connected") {
     return err(new Error(`MCP server "${server}" not connected`));
+  }
+  if (!serverAdvertisesPrompts(conn.capabilities, conn.enablePrompts)) {
+    return err(new Error(`MCP server "${server}" does not advertise prompts capability`));
   }
   try {
     const result = await conn.client.getPrompt({
