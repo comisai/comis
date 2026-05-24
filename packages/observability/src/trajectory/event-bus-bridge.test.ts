@@ -607,3 +607,352 @@ describe("attachTrajectoryToEventBus -- context engine", () => {
     expect("cacheFenceIndex" in data).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// BRIDGE-01/03/04 — Queue, Execution, Security, Sender bridge tests
+// ---------------------------------------------------------------------------
+
+describe("BRIDGE-01/03/04 queue + execution + sender", () => {
+  // ---- BRIDGE-01: Queue lifecycle events ----
+
+  it("queue_enqueued_maps_to_queue.enqueued with channelType/queueDepth/mode; sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("queue:enqueued", {
+      sessionKey: "t1:u1:c1" as any,
+      channelType: "telegram",
+      queueDepth: 1,
+      mode: "collect",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("queue.enqueued");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.channelType).toBe("telegram");
+    expect(data.queueDepth).toBe(1);
+    expect(data.mode).toBe("collect");
+    // Envelope-only — must NOT appear in data.
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+    expect(data.agentId).toBeUndefined();
+  });
+
+  it("incident_replay_2026_05_24_double_enqueue_produces_two_queue.enqueued_events_with_queueDepth_1_then_2", () => {
+    // Incident replay: the 2026-05-24 duplicate-adapter bug caused the same
+    // sessionKey to be enqueued twice. Two queue.enqueued events with
+    // queueDepth 1 then 2 on the same sessionKey would have diagnosed this
+    // in a single trajectory query.
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    const sessionKey = "incident-session:user1:telegram" as any;
+
+    // First enqueue.
+    bus.emit("queue:enqueued", {
+      sessionKey,
+      channelType: "telegram",
+      queueDepth: 1,
+      mode: "collect",
+      timestamp: Date.now(),
+    });
+
+    // Second enqueue (duplicate adapter fires again).
+    bus.emit("queue:enqueued", {
+      sessionKey,
+      channelType: "telegram",
+      queueDepth: 2,
+      mode: "collect",
+      timestamp: Date.now(),
+    });
+
+    // Exactly two queue.enqueued trajectory events.
+    expect(recorder.calls).toHaveLength(2);
+    expect(recorder.calls[0].type).toBe("queue.enqueued");
+    expect(recorder.calls[1].type).toBe("queue.enqueued");
+
+    const data0 = recorder.calls[0].data as Record<string, unknown>;
+    const data1 = recorder.calls[1].data as Record<string, unknown>;
+
+    // Depths 1 then 2 — the headline diagnostic signal.
+    expect(data0.queueDepth).toBe(1);
+    expect(data1.queueDepth).toBe(2);
+  });
+
+  it("queue_dequeued_maps_to_queue.dequeued with channelType/waitTimeMs; sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("queue:dequeued", {
+      sessionKey: "t1:u1:c1" as any,
+      channelType: "discord",
+      waitTimeMs: 250,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("queue.dequeued");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.channelType).toBe("discord");
+    expect(data.waitTimeMs).toBe(250);
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("queue_overflow_maps_to_queue.overflow with channelType/policy/droppedCount; sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("queue:overflow", {
+      sessionKey: "t1:u1:c1" as any,
+      channelType: "slack",
+      policy: "drop_oldest",
+      droppedCount: 3,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("queue.overflow");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.channelType).toBe("slack");
+    expect(data.policy).toBe("drop_oldest");
+    expect(data.droppedCount).toBe(3);
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("queue_coalesced_maps_to_queue.coalesced with channelType/messageCount; sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("queue:coalesced", {
+      sessionKey: "t1:u1:c1" as any,
+      channelType: "telegram",
+      messageCount: 5,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("queue.coalesced");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.channelType).toBe("telegram");
+    expect(data.messageCount).toBe(5);
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- BRIDGE-03: Execution lifecycle events ----
+
+  it("execution_aborted_maps_to_execution.aborted with reason; sessionKey/agentId stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:aborted", {
+      sessionKey: "t1:u1:c1" as any,
+      reason: "user_stop",
+      agentId: "agent-1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.aborted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.reason).toBe("user_stop");
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("execution_budget_warning_maps_to_execution.budget_warning with totalTokens/llmCallCount/projectedCallsLeft; sessionKey/agentId stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:budget_warning", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      totalTokens: 85000,
+      llmCallCount: 12,
+      projectedCallsLeft: 3,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.budget_warning");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.totalTokens).toBe(85000);
+    expect(data.llmCallCount).toBe(12);
+    expect(data.projectedCallsLeft).toBe(3);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("execution_prompt_timeout_maps_to_execution.prompt_timeout with timeoutMs; sessionKey/agentId stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:prompt_timeout", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timeoutMs: 30000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.prompt_timeout");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.timeoutMs).toBe(30000);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("execution_output_escalated_maps_to_execution.output_escalated with originalMaxTokens/escalatedMaxTokens; sessionKey/agentId stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:output_escalated", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      originalMaxTokens: 4096,
+      escalatedMaxTokens: 8192,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.output_escalated");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.originalMaxTokens).toBe(4096);
+    expect(data.escalatedMaxTokens).toBe(8192);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("execution_signed_replay_recovered_maps_to_execution.replay_recovered (NOT execution.signed_replay_recovered) with blocksRemoved/thoughtSignaturesStripped/succeeded; agentId/sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:signed_replay_recovered", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      blocksRemoved: 2,
+      thoughtSignaturesStripped: 1,
+      succeeded: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    // Must map to "execution.replay_recovered" — NOT "execution.signed_replay_recovered".
+    expect(recorder.calls[0].type).toBe("execution.replay_recovered");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.blocksRemoved).toBe(2);
+    expect(data.thoughtSignaturesStripped).toBe(1);
+    expect(data.succeeded).toBe(true);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- BRIDGE-04 (scanned subset): Security + Sender ----
+
+  it("security_injection_detected_maps_to_security.injection_detected with source/riskLevel only; patterns[] MUST NOT be forwarded (L4 security invariant)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("security:injection_detected", {
+      source: "user_input",
+      patterns: ["IGNORE ALL PRIOR INSTRUCTIONS", "jailbreak_attempt"],
+      riskLevel: "high",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("security.injection_detected");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Only source + riskLevel in data.
+    expect(data.source).toBe("user_input");
+    expect(data.riskLevel).toBe("high");
+
+    // patterns[] must NOT appear — forwarding injection strings is a security anti-pattern (L4).
+    expect(data.patterns).toBeUndefined();
+    expect("patterns" in data).toBe(false);
+
+    // Envelope-only fields must be stripped.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("sender_blocked_maps_to_sender.blocked with channelType only; senderId/channelId MUST NOT be forwarded (L4/L2 PII invariant)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("sender:blocked", {
+      channelType: "telegram",
+      senderId: "12345678901",
+      channelId: "chan-private-1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("sender.blocked");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Only channelType in data.
+    expect(data.channelType).toBe("telegram");
+
+    // senderId (user identifier) must NOT appear in trajectory data (L4/L2).
+    expect(data.senderId).toBeUndefined();
+    expect("senderId" in data).toBe(false);
+
+    // channelId must NOT appear.
+    expect(data.channelId).toBeUndefined();
+    expect("channelId" in data).toBe(false);
+
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- Coverage spot-check ----
+
+  it("TRAJECTORY_BRIDGE_MAPPING contains all 11 new BRIDGE-01/03/04 keys", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    const expected = [
+      "queue:enqueued",
+      "queue:dequeued",
+      "queue:overflow",
+      "queue:coalesced",
+      "execution:aborted",
+      "execution:budget_warning",
+      "execution:prompt_timeout",
+      "execution:output_escalated",
+      "execution:signed_replay_recovered",
+      "security:injection_detected",
+      "sender:blocked",
+    ];
+    for (const key of expected) {
+      expect(mapping[key], `TRAJECTORY_BRIDGE_MAPPING missing key: ${key}`).toBeDefined();
+    }
+    // Total bridge size should be ≥ 29 (18 existing + 11 new).
+    expect(Object.keys(mapping).length).toBeGreaterThanOrEqual(29);
+  });
+});
