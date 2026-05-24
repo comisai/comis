@@ -589,6 +589,58 @@ describe("setupMcp", () => {
     expect(callArg).not.toHaveProperty("idleTtlMs");
   });
 
+  // CAP-02 (Phase 67) — supportsParallelToolCalls parsed by McpServerEntrySchema
+  // MUST reach the runtime McpServerConfig handed to manager.connect(), else the
+  // PQueue concurrency derivation never sees the opt-in (silent no-op, the
+  // Phase 65 CR-02 trap). Would have failed RED on the pre-patch construction site.
+  it("forwards supportsParallelToolCalls: true to McpServerConfig", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "parallel",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        {
+          name: "parallel",
+          transport: "stdio",
+          command: "mcp-server",
+          enabled: true,
+          supportsParallelToolCalls: true,
+        },
+      ],
+      logger,
+    });
+
+    expect(mockConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "parallel",
+        supportsParallelToolCalls: true,
+      }),
+    );
+  });
+
+  it("omits supportsParallelToolCalls from McpServerConfig when absent on the entry", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "serial",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        { name: "serial", transport: "stdio", command: "mcp-server", enabled: true },
+      ],
+      logger,
+    });
+
+    const callArg = mockConnect.mock.calls[0][0];
+    expect(callArg).not.toHaveProperty("supportsParallelToolCalls");
+  });
+
   it("logs tool names from connected servers", async () => {
     mockConnect.mockResolvedValueOnce(ok({
       name: "context7",

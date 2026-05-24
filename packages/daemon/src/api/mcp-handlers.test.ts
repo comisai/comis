@@ -1443,6 +1443,67 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
+  // CAP-02 (Phase 67) — mcp.connect forwards the persisted supportsParallelToolCalls
+  // into the runtime McpServerConfig handed to manager.connect. mcp.connect accepts
+  // no CLI param for it (config-only forward), so the source is the persisted entry.
+  // A reconnect-after-disconnect routes through this handler; without the forward the
+  // PQueue concurrency opt-in is lost (silent no-op). Would have failed RED pre-patch.
+  describe("mcp.connect forwards persisted supportsParallelToolCalls to manager.connect (CAP-02)", () => {
+    it("forwards supportsParallelToolCalls: true from the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "ctx7",
+          transport: "stdio",
+          command: "npx",
+          enabled: true,
+          supportsParallelToolCalls: true,
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "ctx7",
+          supportsParallelToolCalls: true,
+        }),
+      );
+    });
+
+    it("omits supportsParallelToolCalls when absent on the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "ctx7", transport: "stdio", command: "npx", enabled: true } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const callArg = (manager.connect as any).mock.calls[0][0];
+      expect(callArg).not.toHaveProperty("supportsParallelToolCalls");
+    });
+  });
+
   describe("mcp.connect rlimits accepted, forwarded, and persisted (Phase 63 CR-03)", () => {
     it("forwards rlimits to manager.connect (spawn-time) on a fresh connect with no prior persisted entry", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
