@@ -79,6 +79,18 @@ export type {
 // Phase 66 OAUTH-10: the connect-time needs_oauth_login signal guard — surfaced
 // so the daemon can tell the operator to run `comis mcp login <server>`.
 export { isNeedsOAuthLoginError } from "./integrations/mcp-client/index.js";
+// Phase 66 OAUTH-05 + OAUTH-11 (66h): the 401 refresh-deduper. Surfaced so the
+// full-cycle integration gate (test/integration/mcp-oauth-roundtrip.test.ts)
+// can drive rotation + Stripe-Account + 100-concurrent dedup against the mock
+// authorization server through the PUBLIC package barrel (not src internals).
+export { createRefreshDeduper } from "./integrations/mcp-client/index.js";
+export type {
+  RefreshDeduper,
+  RefreshDeduperDeps,
+  RefreshResult,
+  DedupedRefreshArgs,
+  RefreshFn,
+} from "./integrations/mcp-client/index.js";
 // Phase 63 SAFETY-01/02: stdio env-scrub primitives (built-in allowlist
 // constant + pure scrub function). Consumed by the daemon RPC handler
 // (`mcp-handlers.ts`) and the architecture / integration tests under

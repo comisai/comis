@@ -69,6 +69,13 @@ export interface MockOAuthServer {
  * Build a realistic-shape JWT for the default token response. The signature is
  * a literal placeholder — tests do NOT verify signatures. Payload defaults match
  * a plausible OpenAI Codex access token (1h expiry, profile email, account id).
+ *
+ * Per-call nonce (`jti`): two issuances within the same event-loop turn both
+ * have the same `exp` second, which would otherwise yield IDENTICAL JWTs. The
+ * full-cycle integration roundtrip (test/integration/mcp-oauth-roundtrip.test.ts)
+ * asserts that an access token CHANGES across a refresh, so each issuance must
+ * be unique. The `jti` is RFC 7519 standard (JWT ID) and ignored by all the
+ * existing tests' assertions, so this is backward-compatible.
  */
 function makeRealisticJwt(payloadOverrides: Record<string, unknown> = {}): string {
   const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
@@ -76,6 +83,7 @@ function makeRealisticJwt(payloadOverrides: Record<string, unknown> = {}): strin
     exp: Math.floor(Date.now() / 1000) + 3600,
     "https://api.openai.com/profile": { email: "user_a@example.com" },
     "https://api.openai.com/auth": { chatgpt_account_id: "acct_test_001" },
+    jti: randomBytes(16).toString("hex"),
     ...payloadOverrides,
   };
   const payloadB64 = Buffer.from(JSON.stringify(defaultPayload)).toString("base64url");
@@ -243,9 +251,29 @@ export function createMockOAuthServer(): MockOAuthServer {
         return;
       }
 
-      // RFC 7591 — Dynamic Client Registration.
+      // RFC 7591 — Dynamic Client Registration. The MCP SDK validates the
+      // response via OAuthClientInformationFullSchema, which extends
+      // OAuthClientMetadataSchema and so REQUIRES `redirect_uris` (an array of
+      // URLs) on the response. A real DCR provider echoes the request body's
+      // metadata back into the response; we mirror that here so the full-cycle
+      // integration test (test/integration/mcp-oauth-roundtrip.test.ts) passes
+      // the SDK's response-schema validation. Without this echo the SDK throws
+      // `redirect_uris: expected array, received undefined` during DCR.
       if (req.url?.startsWith("/register")) {
         requestCounts.set("register", (requestCounts.get("register") ?? 0) + 1);
+        let requested: Record<string, unknown> = {};
+        try {
+          requested = JSON.parse(body) as Record<string, unknown>;
+        } catch {
+          // Tolerate a malformed body — the SDK always sends JSON.
+        }
+        const echoedRedirectUris = Array.isArray(requested["redirect_uris"])
+          ? (requested["redirect_uris"] as string[])
+          : ["http://127.0.0.1:0/callback"];
+        const echoedClientName =
+          typeof requested["client_name"] === "string"
+            ? (requested["client_name"] as string)
+            : undefined;
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
         res.end(
@@ -254,6 +282,8 @@ export function createMockOAuthServer(): MockOAuthServer {
             client_secret: randomBytes(16).toString("hex"),
             client_id_issued_at: Math.floor(Date.now() / 1000),
             client_secret_expires_at: 0,
+            redirect_uris: echoedRedirectUris,
+            ...(echoedClientName !== undefined ? { client_name: echoedClientName } : {}),
           }),
         );
         return;

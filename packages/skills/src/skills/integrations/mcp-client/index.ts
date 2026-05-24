@@ -81,6 +81,21 @@ export type {
 export { createTokenStore } from "./oauth/token-store.js";
 export type { TokenStore, TokenStoreDeps } from "./oauth/token-store.js";
 
+// Phase 66 OAUTH-05 + OAUTH-11 (66h): the 401 refresh-deduper. Re-exported so
+// the full-cycle integration test (test/integration/mcp-oauth-roundtrip.test.ts)
+// can drive rotation + Stripe-Account + 100-concurrent dedup against the mock
+// authorization server through the PUBLIC package barrel (not src internals).
+// Internally the deduper is wired to per-server callQueues by connectServer;
+// the public re-export is purely for the integration gate's mock coverage.
+export { createRefreshDeduper } from "./oauth/refresh-deduper.js";
+export type {
+  RefreshDeduper,
+  RefreshDeduperDeps,
+  RefreshResult,
+  DedupedRefreshArgs,
+  RefreshFn,
+} from "./oauth/refresh-deduper.js";
+
 export { qualifyToolName, parseQualifiedName } from "./mcp-client-types.js";
 
 // Phase 63 SAFETY-01/02: stdio env-scrub primitives re-exported so the
