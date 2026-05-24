@@ -78,6 +78,22 @@ export type { OsvCheckResult, OsvCheckOptions } from "./mcp-client-osv-check.js"
 export { createRedirectPolicyFetch } from "./mcp-client-redirect-policy.js";
 export type { RedirectPolicyOptions } from "./mcp-client-redirect-policy.js";
 
+// Phase 65 OPUX-10: capability-gate helpers re-exported so the platform-tool
+// registry (../../platform-tools/registry.ts) can gate the resources/prompts
+// descriptors on a connected server advertising the matching capability. The
+// 4 RPC adapters are consumed by the tool factories via the relative
+// mcp-client-resources.js path (same package) and so are not surfaced here.
+export {
+  serverAdvertisesResources,
+  serverAdvertisesPrompts,
+} from "./mcp-client-resources.js";
+export type {
+  ResourceListEntry,
+  ResourceContents,
+  PromptListEntry,
+  PromptGetResult,
+} from "./mcp-client-resources.js";
+
 // ---------------------------------------------------------------------------
 // Factory (state-first composition)
 // ---------------------------------------------------------------------------
