@@ -16,7 +16,7 @@
  * @module
  */
 
-import type { SystemIntervalHandle } from "@comis/core";
+import type { SystemIntervalHandle, SystemTimeoutHandle } from "@comis/core";
 import type PQueue from "p-queue";
 import type {
   CircuitState,
@@ -115,6 +115,8 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
     consecutiveErrors: new Map<string, number>(),
     keepaliveTickers: new Map<string, SystemIntervalHandle>(),
     circuitBreakers: new Map<string, CircuitState>(),
+    idleEvictionTimers: new Map<string, SystemTimeoutHandle>(),
+    lastActivityMs: new Map<string, number>(),
     options,
   };
 

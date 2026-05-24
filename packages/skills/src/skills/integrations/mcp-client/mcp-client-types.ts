@@ -13,7 +13,7 @@
 
 import type { Result } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { SystemIntervalHandle, TypedEventBus } from "@comis/core";
+import type { SystemIntervalHandle, SystemTimeoutHandle, TypedEventBus } from "@comis/core";
 import type PQueue from "p-queue";
 
 // ---------------------------------------------------------------------------
@@ -365,6 +365,16 @@ export interface McpClientManagerState {
    * reconnectionLoop's success block (64-P2 mitigation; mcp-client-reconnect.ts:274).
    */
   readonly circuitBreakers: Map<string, CircuitState>;
+  /**
+   * Phase 65 OPUX-09: server-name -> idle eviction timer handle. Started on
+   * connect when idleTtlMs > 0; cleared on disconnect/evict.
+   */
+  readonly idleEvictionTimers: Map<string, SystemTimeoutHandle>;
+  /**
+   * Phase 65 OPUX-09: server-name -> last successful-call timestamp (ms).
+   * resetIdleActivity updates it; the timer compares against it on fire.
+   */
+  readonly lastActivityMs: Map<string, number>;
   /** Resolved options (timeouts, defaults, reconnect opts) computed once at construction time. */
   readonly options: McpClientManagerOptions;
 }
