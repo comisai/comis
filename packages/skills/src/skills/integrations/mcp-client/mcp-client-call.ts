@@ -70,6 +70,42 @@ export async function callTool(
     return err(new Error(`MCP server "${serverName}" has no call queue (not connected via connect())`));
   }
 
+  // Resolve per-server breaker overrides (?? preserves 0 → falls through to global).
+  const config = state.serverConfigs.get(serverName);
+  const breakerThreshold = config?.circuitBreakerThreshold ?? state.options.circuitBreakerThreshold;
+  const breakerCooldownMs = config?.circuitBreakerCooldownMs ?? state.options.circuitBreakerCooldownMs;
+
+  // Phase 64 RELY-04: per-server circuit breaker pre-check.
+  //
+  // When status === "open" AND cooldown not elapsed, return a synthetic
+  // [server_unavailable] tool-call result IMMEDIATELY (no queue slot
+  // occupied). The bracketed-sentinel return is ok({ isError: true })
+  // -- NOT err(...) -- so the LLM sees a normal-shape tool result with
+  // a readable hint and can self-correct.
+  //
+  // When status === "open" AND cooldown elapsed, transition to "half-open"
+  // and fall through (one probe attempt allowed).
+  //
+  // Phase 67 CAP-02: revisit if supportsParallelToolCalls lands -- today
+  // stdio concurrency = 1 makes per-call breaker semantics straightforward.
+  const breaker = state.circuitBreakers.get(serverName) ?? { status: "closed" as const, failureCount: 0 };
+  if (breaker.status === "open") {
+    const elapsed = systemNowMs() - breaker.openedAtMs;
+    if (elapsed >= breakerCooldownMs) {
+      state.circuitBreakers.set(serverName, { status: "half-open", failureCount: breaker.failureCount });
+      // fall through -- half-open allows one probe
+    } else {
+      const remainingS = Math.ceil((breakerCooldownMs - elapsed) / 1000);
+      return ok({
+        content: [{
+          type: "text" as const,
+          text: `[server_unavailable] MCP server "${serverName}" circuit breaker is open (${remainingS}s until half-open probe).`,
+        }],
+        isError: true,
+      });
+    }
+  }
+
   return queue.add(async () => {
     // Re-check connection status -- may have changed while queued
     const currentConn = state.connections.get(serverName);
@@ -112,6 +148,8 @@ export async function callTool(
 
       // Successful tool call resets consecutive error counter
       state.consecutiveErrors.set(serverName, 0);
+      // Phase 64 RELY-04: pair breaker reset with consecutiveErrors reset.
+      state.circuitBreakers.set(serverName, { status: "closed", failureCount: 0 });
 
       return ok({
         content,
@@ -150,6 +188,33 @@ export async function callTool(
         }
       } else {
         logger.debug?.({ serverName, toolName }, "Tool call timed out, connection status preserved");
+      }
+
+      // Phase 64 RELY-04: increment breaker on non-session-expired failures
+      // (includes timeouts + post-call generation mismatches). isSessionExpired
+      // is EXEMPT above -- it routes through handleDisconnection and the
+      // reconnect-success block re-closes the breaker (64-P2 mitigation).
+      const cur = state.circuitBreakers.get(serverName) ?? { status: "closed" as const, failureCount: 0 };
+      const newCount = cur.failureCount + 1;
+      if (newCount >= breakerThreshold) {
+        state.circuitBreakers.set(serverName, {
+          status: "open",
+          failureCount: newCount,
+          openedAtMs: systemNowMs(),
+        });
+        logger.warn(
+          { serverName, toolName, failureCount: newCount, threshold: breakerThreshold, hint: "Circuit breaker tripped; tool calls will return [server_unavailable] for cooldown", errorKind: "dependency" as const },
+          "MCP circuit breaker opened",
+        );
+      } else if (cur.status === "open") {
+        // Half-open probe failed -> reopen with refreshed openedAtMs.
+        state.circuitBreakers.set(serverName, {
+          status: "open",
+          failureCount: newCount,
+          openedAtMs: systemNowMs(),
+        });
+      } else {
+        state.circuitBreakers.set(serverName, { status: cur.status, failureCount: newCount });
       }
 
       return err(error instanceof Error ? error : new Error(message));
