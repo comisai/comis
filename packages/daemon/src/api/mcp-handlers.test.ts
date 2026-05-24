@@ -1249,6 +1249,110 @@ describe("MCP RPC Handlers", () => {
         args: ["v2", "--verbose"],
       }));
     });
+
+    // -----------------------------------------------------------------------
+    // CR-01 (Phase 67) — SECURITY REGRESSION: the persisted `newEntry` must
+    // RETAIN the config-only fields from the prior persisted entry.
+    //
+    // mcp.connect has NO RPC params for toolAllowlist/toolBlocklist/
+    // enableResources/enablePrompts/supportsParallelToolCalls/idleTtlMs
+    // (config-only by design). The runtime McpServerConfig already forwards
+    // them from `persistedEntry`, but the PERSISTED McpServerEntry (the entry
+    // written back to config.yaml via persistToConfig) dropped them and
+    // hardcoded idleTtlMs:0.
+    //
+    // Consequence — dropping toolAllowlist/toolBlocklist on persist is a
+    // SECURITY REGRESSION: an operator who set `toolAllowlist: ["safe_tool"]`
+    // in config.yaml and then triggers mcp.connect on that server gets the
+    // entry rewritten WITHOUT the allowlist, so on the next daemon restart
+    // ALL tools from that server surface to the agent — bypassing the filter.
+    //
+    // RED on pre-fix code: newEntry omitted these fields, so the persisted
+    // patch entry had no toolAllowlist and idleTtlMs:0.
+    // -----------------------------------------------------------------------
+    it("CR-01: retains toolAllowlist/toolBlocklist/enableResources/enablePrompts/supportsParallelToolCalls + positive idleTtlMs from the prior persisted entry on the persisted patch (security regression)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("guarded", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "guarded",
+          transport: "stdio",
+          command: "npx",
+          args: ["guarded-mcp"],
+          enabled: true,
+          // Config-only fields the operator set in config.yaml — mcp.connect
+          // has no RPC param for any of these.
+          toolAllowlist: ["safe_tool"],
+          toolBlocklist: ["dangerous_tool"],
+          enableResources: false,
+          enablePrompts: false,
+          supportsParallelToolCalls: true,
+          idleTtlMs: 300_000,
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "guarded",
+        transport: "stdio",
+        command: "npx",
+        args: ["guarded-mcp"],
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      const persisted = callOpts.patch.integrations.mcp.servers.find(
+        (s: { name: string }) => s.name === "guarded",
+      );
+      expect(persisted).toBeDefined();
+      // The allowlist/blocklist MUST survive the rewrite — dropping them is the
+      // security regression CR-01 describes.
+      expect(persisted.toolAllowlist).toEqual(["safe_tool"]);
+      expect(persisted.toolBlocklist).toEqual(["dangerous_tool"]);
+      // Resources/prompts opt-outs must survive.
+      expect(persisted.enableResources).toBe(false);
+      expect(persisted.enablePrompts).toBe(false);
+      // Phase 67 parallel-calls opt-in must survive.
+      expect(persisted.supportsParallelToolCalls).toBe(true);
+      // Positive idleTtlMs must be preserved, NOT reset to 0.
+      expect(persisted.idleTtlMs).toBe(300_000);
+    });
+
+    // CR-01 corollary: a server with NO config-only fields set must persist a
+    // clean entry — no spurious allowlist/blocklist keys, idleTtlMs defaults
+    // to 0 (disabled). Guards against the helper accidentally injecting
+    // undefined values via unconditional spreads.
+    it("CR-01: persists idleTtlMs:0 and omits tool filters when the prior entry had none", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("plain", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "plain",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      const persisted = callOpts.patch.integrations.mcp.servers.find(
+        (s: { name: string }) => s.name === "plain",
+      );
+      expect(persisted).toBeDefined();
+      expect(persisted.idleTtlMs).toBe(0);
+      expect(persisted).not.toHaveProperty("toolAllowlist");
+      expect(persisted).not.toHaveProperty("toolBlocklist");
+      expect(persisted).not.toHaveProperty("enableResources");
+      expect(persisted).not.toHaveProperty("enablePrompts");
+      expect(persisted).not.toHaveProperty("supportsParallelToolCalls");
+    });
   });
 
   // -------------------------------------------------------------------------

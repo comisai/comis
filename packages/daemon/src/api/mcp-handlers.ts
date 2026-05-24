@@ -78,6 +78,9 @@ export { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
 import { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
 // Phase 64 RELY-07/08: diff + 500ms debounce + singleton all extracted (Phase 63 precedent).
 import { getCoalescer, computeMcpDiff } from "./mcp-config-mutated-coalescer.js";
+// Phase 67 CR-01: persisted-entry construction extracted (single source of
+// truth for the config-only field set; see mcp-persisted-entry.ts docblock).
+import { buildPersistedMcpEntry } from "./mcp-persisted-entry.js";
 
 // ---------------------------------------------------------------------------
 // Phase 47-02: persistMcpServers helper
@@ -439,32 +442,24 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // persistMcpServers call short-circuits to "skipped" anyway when
       // persistDeps is also absent).
       const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
-      const newEntry: McpServerEntry = {
-        name: params.server_name,
+      // Phase 67 CR-01: shared helper preserves config-only fields from the
+      // prior persisted entry (else the tool filter is dropped on reconnect —
+      // a security regression). See mcp-persisted-entry.ts.
+      const newEntry: McpServerEntry = buildPersistedMcpEntry({
+        serverName: params.server_name,
         transport: params.transport,
-        ...(params.command !== undefined && { command: params.command }),
-        ...(params.args !== undefined && { args: params.args }),
-        ...(params.url !== undefined && { url: params.url }),
-        // Phase 47 (R5): pass params.env (unresolved `${KEY}` references),
-        // NOT the resolved values used for spawn. deepMerge does not
-        // transform string values.
-        ...(params.env !== undefined && { env: params.env }),
-        ...(params.headers !== undefined && { headers: params.headers }),
-        // Phase 63 CR-03: persist rlimits so SAFETY-08 survives restart and
-        // no-op reconnects don't drop the field (resolvedRlimits keeps prior).
-        ...(resolvedRlimits !== undefined && { rlimits: resolvedRlimits }),
-        // Phase 63 CR-04: persist disablePlaintextSecretCheck so the
-        // per-server opt-out survives a daemon restart.
-        ...(userParams.disablePlaintextSecretCheck === true && { disablePlaintextSecretCheck: true as const }),
-        // Phase 64 RELY-07: persist reliability overrides (same posture as rlimits).
-        ...(resolvedKeepaliveIntervalMs !== undefined && { keepaliveIntervalMs: resolvedKeepaliveIntervalMs }),
-        ...(resolvedCircuitBreakerThreshold !== undefined && { circuitBreakerThreshold: resolvedCircuitBreakerThreshold }),
-        ...(resolvedCircuitBreakerCooldownMs !== undefined && { circuitBreakerCooldownMs: resolvedCircuitBreakerCooldownMs }),
-        // Phase 65 OPUX-09: idleTtlMs has a schema default(0) ⇒ required on the
-        // inferred McpServerEntry; mcp.connect has no idle param, so persist 0.
-        idleTtlMs: 0,
-        enabled: true,
-      };
+        command: params.command,
+        args: params.args,
+        url: params.url,
+        env: params.env,
+        headers: params.headers,
+        disablePlaintextSecretCheck: userParams.disablePlaintextSecretCheck === true,
+        resolvedRlimits,
+        resolvedKeepaliveIntervalMs,
+        resolvedCircuitBreakerThreshold,
+        resolvedCircuitBreakerCooldownMs,
+        persistedEntry,
+      });
       const newServers: McpServerEntry[] = [
         ...currentServers.filter((s) => s.name !== params.server_name),
         newEntry,
