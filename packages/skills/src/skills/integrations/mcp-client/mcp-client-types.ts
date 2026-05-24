@@ -55,6 +55,7 @@ export function parseQualifiedName(
 // ---------------------------------------------------------------------------
 
 /** Configuration for a single MCP server connection. */
+// @optional-field-count: User-facing MCP server config. Each optional captures a real operator override across three sub-systems — base transport (command, args, url, env, cwd, headers, maxConcurrency), Phase 63 safety/OSV/rlimits (safetyAllowedEnvKeys, osvCheckEnabled, osvCacheTtlMs, rlimits), and Phase 64 reliability (keepaliveIntervalMs, circuitBreakerThreshold, circuitBreakerCooldownMs). Splitting into per-subsystem sub-objects would force every connect path + persistence/audit hook to walk three nested groups while gaining no type safety (all three sub-systems use the same `??` global-default fallback). The interface fits the single-sub-object pattern used by all other MCP transports; only the optional count grew across phases.
 export interface McpServerConfig {
   /** Unique name identifying this server. */
   readonly name: string;

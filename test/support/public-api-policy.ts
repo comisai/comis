@@ -1391,6 +1391,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "EnsureWorkspaceOptions",
       "WorkspaceFiles",
       "WorkspaceStatus",
+      // Phase 64 Plan 01 / Plan 02: opaque-handle types for
+      // `systemSetInterval` / `systemSetTimeout`. SystemIntervalHandle is
+      // already consumed (mcp-client-types.ts state Map generic + index.ts
+      // factory initializer). SystemTimeoutHandle is the paired surface
+      // intended for Plan 05's mcp-config-mutated-coalescer (trailing-edge
+      // debounce timer); tracked here as a planned-orphan policy entry
+      // until Plan 05 lands.
+      "SystemTimeoutHandle",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
