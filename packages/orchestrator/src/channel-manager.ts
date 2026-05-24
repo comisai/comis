@@ -27,7 +27,8 @@ import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent"
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, runWithContext, getMessageTraceId, systemNowMs } from "@comis/core";
+import { randomUUID } from "node:crypto";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 
@@ -267,44 +268,64 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       for (const adapter of adaptersByType.values()) {
         // Register message handler before starting
         adapter.onMessage(async (msg: NormalizedMessage) => {
-          try {
-            // Pre-agent intercept: graph report button callbacks
-            if (
-              deps.onGraphReportRequest
-              && msg.metadata?.isButtonCallback === true
-              && typeof msg.text === "string"
-              && msg.text.startsWith("graph:report:")
-            ) {
-              const graphId = msg.text.slice("graph:report:".length);
-              if (graphId.length > 0) {
-                await deps.onGraphReportRequest(
-                  graphId,
-                  adapter.channelType,
-                  msg.channelId,
-                  adapter,
-                  msg.metadata?.threadId as string | undefined,
-                );
-                return; // Handled -- do not forward to agent
-              }
-            }
-            // Fire onMessageReceived BEFORE await processInboundMessage so any
-            // mid-processing SIGUSR2 still sees the session in continuation
-            // tracker state. The graph-report intercept above must remain BEFORE
-            // this call so control-plane callbacks bypass both hooks.
-            deps.onMessageReceived?.(msg, adapter.channelType);
-            await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
-            deps.onMessageProcessed?.(msg, adapter.channelType);
-          } catch (error) {
-            deps.logger.error(
-              {
-                err: error instanceof Error ? error : new Error(String(error)),
-                channelId: adapter.channelId,
-                hint: "Check inbound pipeline for unhandled errors in message processing",
-                errorKind: "internal" as const,
-              },
-              "Unhandled error in message handler",
-            );
+          // D1 (Plan 01-03): defense-in-depth wrap. Reuse the traceId minted
+          // at adapter ingress (Plans 01-02, 01-03) via getMessageTraceId;
+          // fall back to randomUUID() if a future adapter bypasses ingress
+          // wrap (catches regressions — channel→queue→agent correlation is
+          // preserved even without the adapter-level wrap).
+          const traceId = getMessageTraceId(msg) ?? randomUUID();
+          if (typeof msg.metadata.traceId !== "string") {
+            msg.metadata.traceId = traceId;
           }
+          await runWithContext(
+            {
+              traceId,
+              startedAt: systemNowMs(),
+              channelType: adapter.channelType,
+              tenantId: "default",
+              trustLevel: "admin",
+            },
+            async () => {
+              try {
+                // Pre-agent intercept: graph report button callbacks
+                if (
+                  deps.onGraphReportRequest
+                  && msg.metadata?.isButtonCallback === true
+                  && typeof msg.text === "string"
+                  && msg.text.startsWith("graph:report:")
+                ) {
+                  const graphId = msg.text.slice("graph:report:".length);
+                  if (graphId.length > 0) {
+                    await deps.onGraphReportRequest(
+                      graphId,
+                      adapter.channelType,
+                      msg.channelId,
+                      adapter,
+                      msg.metadata?.threadId as string | undefined,
+                    );
+                    return; // Handled -- do not forward to agent
+                  }
+                }
+                // Fire onMessageReceived BEFORE await processInboundMessage so any
+                // mid-processing SIGUSR2 still sees the session in continuation
+                // tracker state. The graph-report intercept above must remain BEFORE
+                // this call so control-plane callbacks bypass both hooks.
+                deps.onMessageReceived?.(msg, adapter.channelType);
+                await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
+                deps.onMessageProcessed?.(msg, adapter.channelType);
+              } catch (error) {
+                deps.logger.error(
+                  {
+                    err: error instanceof Error ? error : new Error(String(error)),
+                    channelId: adapter.channelId,
+                    hint: "Check inbound pipeline for unhandled errors in message processing",
+                    errorKind: "internal" as const,
+                  },
+                  "Unhandled error in message handler",
+                );
+              }
+            },
+          );
         });
 
         // Start the adapter
