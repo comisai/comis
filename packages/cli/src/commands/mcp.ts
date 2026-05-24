@@ -122,13 +122,18 @@ export function registerMcpCommand(program: Command): void {
           }),
         );
 
-        if (result.servers.length === 0) {
-          info("No MCP servers configured");
+        // --format json must ALWAYS emit machine-parseable JSON, including the
+        // empty-list case ({ servers: [], total: 0 }) — operators and tooling
+        // pipe `mcp list --format json` and a human-readable "No MCP servers"
+        // line would break the parse. The empty-list friendly message is for
+        // the default (table) format only.
+        if (options.format === "json") {
+          json(result);
           return;
         }
 
-        if (options.format === "json") {
-          json(result);
+        if (result.servers.length === 0) {
+          info("No MCP servers configured");
           return;
         }
 
