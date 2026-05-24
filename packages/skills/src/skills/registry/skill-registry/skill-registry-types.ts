@@ -131,6 +131,17 @@ export interface SkillRegistry {
   /** Number of skills discovered (Level 1 metadata). */
   getMetadataCount(): number;
 
+  /**
+   * Phase 68 BUNDLE-03: enumerate all discovered skill metadata for the
+   * boot-path bundle re-merge orchestrator. Returns the registry's internal
+   * `metadataMap` values as a defensively-shallow-copied readonly array;
+   * consumers MUST NOT mutate the returned array or its elements.
+   *
+   * Additive surface — existing callers unaffected. The orchestrator needs
+   * `.filePath` per discovered skill to re-parse the manifest YAML on boot.
+   */
+  getAllMetadata(): readonly SkillMetadata[];
+
   /** Get cached snapshot of available skills XML, building lazily if needed. */
   getSnapshot(): SkillSnapshot;
   /** Get the current snapshot version without triggering a rebuild. */

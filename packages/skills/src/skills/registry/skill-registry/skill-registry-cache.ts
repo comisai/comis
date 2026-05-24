@@ -215,6 +215,13 @@ export function createSkillRegistry(
       return metadataMap.size;
     },
 
+    getAllMetadata(): readonly SkillMetadata[] {
+      // Defensive shallow copy — consumers MUST NOT observe live mutations
+      // when init() reruns discovery. The SkillMetadata elements themselves
+      // are immutable per the readonly declaration in discovery.ts:53.
+      return Array.from(metadataMap.values());
+    },
+
     getSnapshot(): SkillSnapshot {
       if (cachedSnapshot === null) {
         const descriptions = this.getPromptSkillDescriptions();
