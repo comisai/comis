@@ -151,6 +151,13 @@
         }
       },
       "additionalProperties": false
+    },
+    "_bundleSource": {
+      "type": "string",
+      "minLength": 1
+    },
+    "_bundleArchive": {
+      "$ref": "#"
     }
   },
   "required": [

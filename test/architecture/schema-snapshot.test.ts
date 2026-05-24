@@ -7,11 +7,10 @@
  * field reordering, removal, or rename across parallel phase worktrees.
  * Mitigates X-P2 (schema-additions race per Phase 63 RESEARCH.md para 11).
  *
- * Phase 63 lands the MCP-only shape; Phase 68 BUNDLE-01 will extend to
- * SkillManifestSchema when that schema lands. The `it.skip` placeholder
- * below is the structured extension hook — Phase 68 replaces it with a
- * real `it(...)` that mirrors the McpConfigSchema / McpServerEntrySchema
- * snapshot assertions.
+ * Phase 63 lands the MCP-only shape; Phase 68 BUNDLE-01 extended this to
+ * SkillManifestSchema (Plan 02 Task 4). The pre-Phase-68 placeholder was a
+ * structured TODO hook that mirrored the McpConfigSchema / McpServerEntrySchema
+ * snapshot assertions; the live SkillManifestSchema pin below replaces it.
  *
  * `z.toJSONSchema` options match the canonical production call in
  * `packages/core/src/config/schema-serializer.ts` so the snapshot equals
@@ -22,6 +21,7 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { McpConfigSchema, McpServerEntrySchema } from "@comis/core";
+import { SkillManifestSchema } from "@comis/skills";
 
 describe("CI-03 — schema-snapshot pins JSON-Schema shape across phases", () => {
   it("McpConfigSchema JSON-Schema is stable (additive changes require snapshot update)", async () => {
@@ -38,14 +38,14 @@ describe("CI-03 — schema-snapshot pins JSON-Schema shape across phases", () =>
     );
   });
 
-  // CI-03 future extension: SkillManifestSchema is introduced in Phase 68 (BUNDLE-01).
-  // When that schema lands, replace this `it.skip` with a full `it()` that mirrors
-  // the McpConfigSchema / McpServerEntrySchema snapshot assertions above (same
-  // `z.toJSONSchema(..., { reused: "inline", unrepresentable: "any" })` options;
-  // same `toMatchFileSnapshot("./__snapshots__/SkillManifestSchema.json")` shape).
-  // DO NOT delete this placeholder — it is the structured TODO hook required by
-  // CI-03 in REQUIREMENTS.md.
-  it.skip("pins SkillManifestSchema (Phase 68 BUNDLE-01 wires this)", () => {
-    // placeholder — see Phase 68 BUNDLE-01
+  // Phase 68 BUNDLE-01 wired this in Plan 02 Task 4. The pre-Phase-68 form of
+  // this test was the structured TODO hook required by CI-03 in REQUIREMENTS.md.
+  // Now that SkillManifestSchema lives in @comis/skills (with the optional
+  // mcpServers field added in Plan 02 Task 1), the snapshot pin is real.
+  it("SkillManifestSchema JSON-Schema is stable (additive changes require snapshot update)", async () => {
+    const schema = z.toJSONSchema(SkillManifestSchema, { reused: "inline", unrepresentable: "any" });
+    await expect(JSON.stringify(schema, null, 2)).toMatchFileSnapshot(
+      "./__snapshots__/SkillManifestSchema.json",
+    );
   });
 });
