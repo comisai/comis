@@ -292,6 +292,37 @@ describe("idle eviction — startIdleTicker / evict (OPUX-09)", () => {
     expect(state.connections.get("inflight")).toBeUndefined();
   });
 
+  it("WR-02: the idle-eviction INFO log carries no errorKind (errorKind is for WARN/ERROR only)", async () => {
+    // Per AGENTS.md §2.1 errorKind is required ONLY on ERROR/WARN logs; its
+    // presence on the INFO eviction notification misleads observability tooling
+    // that filters on errorKind into treating normal scheduled eviction as a
+    // degraded/broken condition. RED on pre-fix code: the info() fields included
+    // `errorKind: "dependency"`.
+    const info = vi.fn();
+    const spyLogger: McpClientManagerDeps["logger"] = {
+      info,
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    const state = makeState();
+    wireConnected(state, "loggy", { idleTtlMs: 60_000 });
+    const deps: McpClientManagerDeps = { logger: spyLogger };
+
+    startIdleTicker(state, deps, state.serverConfigs.get("loggy")!);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // Locate the eviction INFO call by its message.
+    const evictionCall = info.mock.calls.find(
+      ([, msg]) => msg === "MCP server idle eviction",
+    );
+    expect(evictionCall).toBeDefined();
+    const fields = evictionCall![0] as Record<string, unknown>;
+    expect(fields).not.toHaveProperty("errorKind");
+    // The serverName identifier remains useful for correlation.
+    expect(fields).toMatchObject({ serverName: "loggy" });
+  });
+
   it("stopIdleTicker clears the handle and lastActivity entry", () => {
     const state = makeState();
     wireConnected(state, "zeta", { idleTtlMs: 60_000 });

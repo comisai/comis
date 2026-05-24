@@ -145,14 +145,11 @@ async function evictIdleServer(
   name: string,
 ): Promise<void> {
   const { logger } = deps;
-  logger.info(
-    {
-      serverName: name,
-      hint: "Idle TTL reached; disconnecting until next callTool",
-      errorKind: "dependency" as const,
-    },
-    "MCP server idle eviction",
-  );
+  // WR-02: idle eviction is normal scheduled behavior, not an error condition.
+  // Per AGENTS.md §2.1 errorKind (and hint) belong on WARN/ERROR logs only —
+  // attaching them to this INFO line misleads observability tooling that
+  // filters on errorKind. The serverName alone is sufficient for correlation.
+  logger.info({ serverName: name }, "MCP server idle eviction");
 
   // Abort any in-flight reconnection (mirrors disconnectServer).
   const ac = state.reconnectionAbortControllers.get(name);
