@@ -71,7 +71,12 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 4. Trajectory writers are stored in an LRU `Map<string, QueuedFileWriter>` that evicts at `MAX_TRAJECTORY_WRITERS = 100`; an architecture test asserts no leak past the cap under synthetic load
 5. Replaying today's incident logs through the bridge produces two `queue.enqueued` trajectory events with the same `messageId` (the signal that would have diagnosed the duplicate-adapter bug in one query)
 
-**Plans**: TBD
+**Plans** (5):
+- [x] 02-01-PLAN.md — Payload bounding core (BOUND-01): `limitTrajectoryPayloadValue` conversion wrapper in runtime.ts mapping shared `__bounded__` sentinels → trajectory `{truncated,reason}` shape; 5MB-string + circular-ref RED tests [wave 1]
+- [ ] 02-02-PLAN.md — File caps + writer LRU + WR-04 (BOUND-02, BOUND-03): 10MB soft cap → inline emitTraceTruncated + stop; 50MB hard cap → errorKind:"resource" WARN; writerRegistry LRU at MAX_TRAJECTORY_WRITERS=100; observable drop counter [wave 2]
+- [ ] 02-03-PLAN.md — Bridge queue/execution/sender (BRIDGE-01, BRIDGE-03, BRIDGE-04 scanned subset): 11 entries + translators incl. headline queue.enqueued incident-replay test; atomic removal of 11 events from EVENTS_NOT_TRAJECTORY_MAPPED [wave 3]
+- [ ] 02-04-PLAN.md — Bridge retry/mcp/channel (BRIDGE-02, BRIDGE-05, BRIDGE-06): 11 entries + translators; channel.lifecycle dual-mapping; chatId/channelId omitted; no allowlist change (non-scanned packages) [wave 4]
+- [ ] 02-05-PLAN.md — Bridge security/compaction/context/approval (BRIDGE-04 rest, BRIDGE-07, BRIDGE-08) + BRIDGE-09 count assertion: 13 entries + translators (params/patterns/message omitted); remove 8 compaction/context events from allowlist; arch test asserts mapping ≥45 [wave 5]
 
 ### Phase 3: Boot Invariants, INFO Promotion & Dedup Detector
 
@@ -184,7 +189,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Trace Propagation & Lifecycle Envelopes | 6/6 | Complete   | 2026-05-24 |
-| 2. Bridge Expansion & Payload Bounding | 0/0 | Not started | - |
+| 2. Bridge Expansion & Payload Bounding | 1/5 | In Progress|  |
 | 3. Boot Invariants, INFO Promotion & Dedup Detector | 0/0 | Not started | - |
 | 4. Session DAG & Bundle Exporter | 0/0 | Not started | - |
 | 5. Trajectory Pointer & Platform-Aware Redaction | 0/0 | Not started | - |
@@ -198,7 +203,7 @@ Per design §16, M1 supports a 2-stream parallel split for ~1 week wall-clock vs
 
 - **Phase 1 and Phase 2** are sequentially gated (Phase 2 schema entries reference Phase 1 fields).
 - **Within Phase 1**: D1 (TraceId at ingress) is independent of D4 (lifecycle envelopes); these two can be parallelized inside the phase plan.
-- **Within Phase 2**: D6 (bridge expansion) and D7 (payload bounding) are independent; can be parallelized inside the phase plan.
+- **Within Phase 2**: D6 (bridge expansion) and D7 (payload bounding) are independent in principle, but the plan set serializes them by file ownership — all bridge plans edit the same two files (`event-bus-bridge.ts` + `types.ts`) and the two bounding plans both edit `runtime.ts`, so concurrent edits would conflict. Bounding (waves 1–2) lands before bridge expansion (waves 3–5) so the new event volume is capped as it arrives.
 - **Phase 4 and Phase 5** can be parallelized in part (POINTER-01/02 in Phase 5 is independent of BUNDLE-01..04 in Phase 4), but the redaction-at-export-boundary (REDACT-*) depends on Phase 4's exporter — keep that part sequential.
 - **Phase 6** is mostly sequential internally (INDEX-* before CLI search modes that use the index).
 - **Phase 7 and Phase 8** can run in parallel (rotation is config + transport wiring; docs are markdown).

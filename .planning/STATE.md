@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Not started
-last_updated: "2026-05-24T15:28:02.840Z"
+status: completed
+last_updated: "2026-05-24T17:33:54.014Z"
 progress:
   total_phases: 8
   completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  total_plans: 11
+  completed_plans: 7
+  percent: 64
 ---
 
 # Project State: Comis Observability Initiative
@@ -25,19 +25,23 @@ progress:
 
 **Core Value:** A fleet-wide bug (today's worked example: the 2026-05-24 duplicate Telegram adapter that double-fired every inbound) must be diagnosable from **one structured artifact with one command in under five minutes** — not 30 minutes of `grep | jq | python` across three log streams.
 
-**Current Focus:** Phase 1 (Trace Propagation & Lifecycle Envelopes) — pending start.
+**Current Focus:** Phase 1 COMPLETE + verified + reviewed. Phase 2 (Bridge Expansion & Payload Bounding) — pending start.
 
 ## Current Position
 
-**Phase:** 1 of 8 (M1: Foundations)
-**Phase Name:** Trace Propagation & Lifecycle Envelopes
-**Plan:** Not yet planned (run `/gsd-plan-phase 1`)
-**Status:** Not started
-**Progress:** [██████████] 100%
+**Phase:** 2 of 8 (M1: Foundations) — pending start
+**Last Completed:** Phase 1 — Trace Propagation & Lifecycle Envelopes (2026-05-24)
+**Plan:** Not yet planned — resume with `/gsd-autonomous --from 2` (or `/gsd-plan-phase 2`)
+**Status:** Phase 1 done; Phase 2 not started
+**Progress:** [██████░░░░] 64%
 
-**Phase 1 Goal:** Every inbound message carries a traceId from channel ingress through queue, agent, and delivery; every well-formed trajectory emits exactly one `trace.metadata`, one `trace.artifacts`, and a `trace.truncated` sentinel on bound exhaustion.
+**Phase 1 outcome:** 43 commits across core/channels/orchestrator/agent/observability. All 6 requirements (TRACE-01..03, LIFE-01..03) met. Verifier: 5/5 criteria PASSED. Code review: 0 critical / 4 warning / 4 info — none blocking; carry-overs in `phases/01-trace-propagation-lifecycle-envelopes/01-CARRYOVER.md`.
 
-**Phase 1 Requirements (6):** TRACE-01, TRACE-02, TRACE-03, LIFE-01, LIFE-02, LIFE-03
+**Phase 2 Goal:** Trajectory bus-bridge maps ~45 events (up from 18) + defense-in-depth payload bounding. Closes G2 + adopts O4.
+
+**Phase 2 Requirements (12):** BRIDGE-01..09, BOUND-01..03
+
+**Phase 2 inherits from Phase 1:** `emitTraceTruncated()` hook ready for BOUND-02; `TrajectoryEventSource`/`sourceSeq`/`parentEntryId` schema in place; lifecycle envelopes need `sessionStateProvider` wiring (deferred Plan 01-05 — see CARRYOVER WR-01).
 
 ## Roadmap Snapshot
 

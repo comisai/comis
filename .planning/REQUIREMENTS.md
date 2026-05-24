@@ -54,7 +54,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Payload Bounding
 
-- [ ] **BOUND-01**: Trajectory recorder applies recursive `limitTrajectoryPayloadValue(value, depth, seen)` with caps: string ≤ 32,768 chars, array ≤ 64 items, object ≤ 64 keys, depth ≤ 6, per-event ≤ 256 KB
+- [x] **BOUND-01**: Trajectory recorder applies recursive `limitTrajectoryPayloadValue(value, depth, seen)` with caps: string ≤ 32,768 chars, array ≤ 64 items, object ≤ 64 keys, depth ≤ 6, per-event ≤ 256 KB
   - Acceptance: `data: { x: <5MB string> }` becomes `{ truncated: true, reason: "trajectory-field-size-limit", originalChars: 5242880, limitChars: 32768 }`
   - Acceptance: circular object emits `{ truncated: true, reason: "trajectory-circular-reference" }`
   - Design: D7 *(file: `packages/observability/src/trajectory/runtime.ts`)*
@@ -244,7 +244,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | BRIDGE-07 | Phase 2 | Pending |
 | BRIDGE-08 | Phase 2 | Pending |
 | BRIDGE-09 | Phase 2 | Pending |
-| BOUND-01 | Phase 2 | Pending |
+| BOUND-01 | Phase 2 | Complete |
 | BOUND-02 | Phase 2 | Pending |
 | BOUND-03 | Phase 2 | Pending |
 | BOOT-01 | Phase 3 | Pending |
