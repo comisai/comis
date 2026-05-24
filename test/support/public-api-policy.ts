@@ -1747,5 +1747,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // test-API surface; not a baseline orphan.
       "MCP_STDIO_BUILTIN_ENV_ALLOWLIST",
       "scrubStdioEnv",
+      // Phase 63 SAFETY-05/06 (plan 04): consumed by the integration test
+      // `test/integration/mcp-osv-check.test.ts` — outside packages/skills/,
+      // so the source-only consumer scan does not pick them up.
+      // Internal-to-skills consumers live in mcp-client-connect.ts (where
+      // the OSV check is invoked pre-spawn). Documented test-API surface;
+      // not a baseline orphan.
+      "osvMalwareCheck",
+      "extractMcpPackageName",
+      "DEFAULT_OSV_CACHE_DIR",
+      "OsvCheckResult",
+      "OsvCheckOptions",
     ])],
   ]);
