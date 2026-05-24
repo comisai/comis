@@ -135,6 +135,21 @@ export interface McpServerConfig {
    * Cooldown between open → half-open transitions. Undefined ⇒ global default.
    */
   readonly circuitBreakerCooldownMs?: number;
+  /** Phase 65 OPUX-08: per-server tool allowlist. Read by setup-tools.ts's
+   *  serverFiltersFn closure (Plan 03); applied at mcp-tool-bridge.ts only. */
+  readonly toolAllowlist?: readonly string[];
+  /** Phase 65 OPUX-08: per-server tool blocklist. Read by setup-tools.ts's
+   *  serverFiltersFn closure (Plan 03); applied at mcp-tool-bridge.ts only. */
+  readonly toolBlocklist?: readonly string[];
+  /** Phase 65 OPUX-09: per-server idle eviction TTL (ms). 0 ⇒ disabled
+   *  (opt-in). Consumed by mcp-client-idle-eviction.ts (Plan 04). */
+  readonly idleTtlMs?: number;
+  /** Phase 65 OPUX-10: opt-out for resources utility tools. undefined ⇒
+   *  auto-register if capabilities.resources present. Read by Plan 05. */
+  readonly enableResources?: boolean;
+  /** Phase 65 OPUX-10: opt-out for prompts utility tools. undefined ⇒
+   *  auto-register if capabilities.prompts present. Read by Plan 05. */
+  readonly enablePrompts?: boolean;
 }
 
 /** Connection status for an MCP server. */
