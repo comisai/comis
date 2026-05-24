@@ -300,9 +300,32 @@ async function persistMcpServers(
       // (not the IntegrationsConfig type) so the structuredClone result is
       // freely reassignable through the same key paths.
       type MutableIntegrations = Record<string, Record<string, unknown>>;
-      const cloned = structuredClone(
-        (deps.container.config.integrations ?? {}) as MutableIntegrations,
-      );
+      const integrationsIn = deps.container.config.integrations as
+        | MutableIntegrations
+        | undefined;
+      // WR-05: when integrations is missing in-memory we still need to
+      // build a swap value — but the data-loss case (any disk-state
+      // braveSearch/media/autoReply silently dropped from the in-memory
+      // view until next reload) deserves an observable log line so the
+      // operator notices the defense-in-depth path firing. In production
+      // IntegrationsConfigSchema's strict-object defaults guarantee
+      // `integrations` is present, so this branch only ever fires in
+      // partial-load failure modes or test fixtures that omit it.
+      if (integrationsIn === undefined) {
+        deps.persistDeps.logger.warn(
+          {
+            method: actionType,
+            entityId,
+            hint:
+              "container.config.integrations was undefined at the in-memory swap " +
+              "site — any sibling subkeys (braveSearch, media, autoReply) " +
+              "from disk are NOT visible in-memory until the next reload",
+            errorKind: "config" as const,
+          },
+          "MCP persist swap: integrations subtree was undefined in-memory",
+        );
+      }
+      const cloned = structuredClone((integrationsIn ?? {}) as MutableIntegrations);
       if (!cloned.mcp) cloned.mcp = {};
       cloned.mcp.servers = servers;
       // Atomic single-property write. Readers reach `.integrations` via a

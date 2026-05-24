@@ -1235,6 +1235,104 @@ describe("MCP RPC Handlers", () => {
   // Fix: add `rlimits` to McpConnectContract.request, forward to both the
   // spawn-time McpServerConfig and the persisted McpServerEntry.
   // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Phase 63 WR-05 — in-memory swap preserves sibling integrations subkeys.
+  //
+  // Pre-fix the swap `(deps.container.config as ...).integrations = cloned`
+  // overwrote the entire integrations subtree. When the prior in-memory
+  // `container.config.integrations` had sibling subkeys (braveSearch,
+  // media, autoReply), the structuredClone of `integrations ?? {}` preserved
+  // them — so the post-persist value carried them through. BUT the
+  // documented edge case ("`integrations` is undefined") replaced the
+  // subtree with an object that had ONLY `mcp` — silently dropping any
+  // disk-state braveSearch/media/autoReply until the next daemon reload.
+  //
+  // The fix preserves the sibling subkeys by cloning the existing
+  // `integrations` subtree (or starting from `{}` if it was undefined),
+  // overwriting ONLY `.mcp.servers` (or assigning the whole .mcp if it
+  // was undefined). Test pins this contract: a pre-state containing
+  // braveSearch+media must yield a post-state STILL containing
+  // braveSearch+media + the updated mcp.servers entry.
+  // -------------------------------------------------------------------------
+  describe("WR-05 — in-memory persist swap preserves sibling integrations subkeys", () => {
+    it("preserves braveSearch and media siblings through the mcp.connect persist swap", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+
+      // Build a container with the FULL integrations shape — mcp PLUS
+      // siblings the test will assert survive the swap.
+      const initialIntegrations = {
+        braveSearch: { apiKey: "test-key", maxResultsDefault: 5 },
+        media: { transcription: { provider: "openai" } },
+        autoReply: { enabled: false, rules: [] },
+        mcp: { servers: [] },
+      };
+      const sharedContainer = {
+        config: { integrations: initialIntegrations },
+      };
+      const persistDeps = {
+        container: { ...sharedContainer, eventBus: { emit: vi.fn() } },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/default-config.yaml"],
+        logger: makeLogger(),
+      } as any;
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container: sharedContainer,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      // braveSearch / media / autoReply must remain in the in-memory swap.
+      const swapped = sharedContainer.config.integrations as any;
+      expect(swapped.braveSearch).toEqual({ apiKey: "test-key", maxResultsDefault: 5 });
+      expect(swapped.media).toEqual({ transcription: { provider: "openai" } });
+      expect(swapped.autoReply).toEqual({ enabled: false, rules: [] });
+      // mcp.servers gets the new entry.
+      expect(swapped.mcp.servers).toHaveLength(1);
+      expect(swapped.mcp.servers[0]).toEqual(expect.objectContaining({ name: "ctx7" }));
+    });
+
+    it("does not crash when in-memory integrations is undefined; mcp.servers becomes the only key", async () => {
+      // Edge case (defense-in-depth path). The pre-fix behaviour kept this
+      // working but silently dropped any DISK-state siblings. The new
+      // behaviour matches that — there is nothing in memory to preserve,
+      // so the swap produces an integrations subtree with only `mcp`. Disk
+      // state on the next reload supplies the rest. We just need to
+      // confirm the call doesn't crash and produces a usable result.
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+
+      const sharedContainer: any = { config: {} }; // integrations key absent
+      const persistDeps = {
+        container: { ...sharedContainer, eventBus: { emit: vi.fn() } },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/default-config.yaml"],
+        logger: makeLogger(),
+      } as any;
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container: sharedContainer,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(sharedContainer.config.integrations).toBeDefined();
+      expect(sharedContainer.config.integrations.mcp.servers).toHaveLength(1);
+    });
+  });
+
   describe("mcp.connect rlimits accepted, forwarded, and persisted (Phase 63 CR-03)", () => {
     it("forwards rlimits to manager.connect (spawn-time) on a fresh connect with no prior persisted entry", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
