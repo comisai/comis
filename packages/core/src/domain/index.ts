@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Domain types - Zod schemas as single source of truth
 
-export { AttachmentSchema, VoiceMetaSchema, NormalizedMessageSchema, parseMessage } from "./normalized-message.js";
+export { AttachmentSchema, VoiceMetaSchema, NormalizedMessageSchema, parseMessage, getMessageTraceId } from "./normalized-message.js";
 export type { Attachment, VoiceMeta, NormalizedMessage } from "./normalized-message.js";
 
 export {

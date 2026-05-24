@@ -6,6 +6,7 @@ export {
   AttachmentSchema,
   NormalizedMessageSchema,
   parseMessage,
+  getMessageTraceId,
   // MemoryEntry
   TrustLevelSchema,
   MemorySourceSchema,
