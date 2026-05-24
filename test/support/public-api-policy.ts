@@ -596,6 +596,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "AttachmentSchema",
       "NormalizedMessageSchema",
       "parseMessage",
+      // getMessageTraceId: typed accessor for NormalizedMessage.metadata.traceId (TRACE-03, Plan 01-01).
+      // Consumers: orchestrator channel-manager.ts (Plans 02-04) will read msg.metadata.traceId via this helper.
+      "getMessageTraceId",
       "TrustLevelSchema",
       "MemorySourceSchema",
       "MemoryEntrySchema",
