@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import type { RequestContext } from "./context.js";
 import { RequestContextSchema, getContext, tryGetContext, runWithContext } from "./context.js";
@@ -310,6 +313,122 @@ describe("RequestContext", () => {
       const ctx = makeContext({ channelType: "discord" });
       const result = runWithContext(ctx, () => getContext());
       expect(result.channelType).toBe("discord");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Task 1 (TRACE-01, Plan 01-01): ingress-context without userId/sessionKey
+  // ---------------------------------------------------------------------------
+  describe("ingress context without userId/sessionKey (D1, Plan 01-01)", () => {
+    it("runWithContext accepts ingress context with only traceId + channelType (no userId/sessionKey)", () => {
+      // This test is RED on the pre-patch schema (userId/sessionKey are .min(1) required).
+      // After the patch (userId/sessionKey → .optional()), this MUST succeed.
+      const traceId = randomUUID();
+      const ctx = RequestContextSchema.parse({
+        traceId,
+        channelType: "telegram",
+        startedAt: Date.now(),
+      });
+      const result = runWithContext(ctx, () => getContext());
+      expect(result.traceId).toBe(traceId);
+      expect(result.userId).toBeUndefined();
+      expect(result.sessionKey).toBeUndefined();
+      expect(result.channelType).toBe("telegram");
+    });
+
+    it("still rejects empty-string userId (z.string().min(1).optional() — only undefined is acceptable, not empty)", () => {
+      // An empty string "" is NOT an acceptable userId — only omission (undefined) is.
+      const result = RequestContextSchema.safeParse({
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        userId: "",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("still accepts full userId + sessionKey when both are present (post-queue callers unaffected)", () => {
+      const result = RequestContextSchema.safeParse({
+        userId: "user-1",
+        sessionKey: "tenant-1:user-1:chan-1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.userId).toBe("user-1");
+        expect(result.data.sessionKey).toBe("tenant-1:user-1:chan-1");
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Task 1 (TRACE-01, Plan 01-01): shrink-only audit — getContext().userId derefs
+  // ---------------------------------------------------------------------------
+  describe("getContext().userId/.sessionKey deref audit (shrink-only)", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const REPO_ROOT = resolve(here, "../../../../..");
+    const EXCLUDED_DIRS = new Set([
+      "dist",
+      "node_modules",
+      "__tests__",
+      "__test-helpers",
+      "fixtures",
+      "__snapshots__",
+    ]);
+
+    function walkTsFiles(rootDir: string): string[] {
+      const out: string[] = [];
+      function recur(dir: string): void {
+        let entries;
+        try {
+          entries = readdirSync(dir);
+        } catch {
+          return;
+        }
+        for (const name of entries) {
+          if (name.startsWith(".")) continue;
+          if (EXCLUDED_DIRS.has(name)) continue;
+          const p = join(dir, name);
+          let stat;
+          try {
+            stat = statSync(p);
+          } catch {
+            continue;
+          }
+          if (stat.isDirectory()) {
+            recur(p);
+          } else if (
+            stat.isFile() &&
+            p.endsWith(".ts") &&
+            !name.endsWith(".test.ts") &&
+            !name.endsWith(".test.tsx") &&
+            !name.endsWith(".d.ts")
+          ) {
+            out.push(p);
+          }
+        }
+      }
+      recur(rootDir);
+      return out;
+    }
+
+    it("zero production call sites dereference getContext().userId or getContext().sessionKey outside post-queue scope", () => {
+      const packagesDir = resolve(REPO_ROOT, "packages");
+      const files = walkTsFiles(packagesDir);
+      const DEREF_RE = /getContext\(\)\s*\.\s*(userId|sessionKey)/;
+      const violations: string[] = [];
+      for (const f of files) {
+        const content = readFileSync(f, "utf8");
+        if (DEREF_RE.test(content)) {
+          violations.push(f.slice(REPO_ROOT.length + 1));
+        }
+      }
+      expect(
+        violations,
+        `Found getContext().userId or getContext().sessionKey deref in production code. ` +
+          `Use tryGetContext()?.userId ?? fallback — userId/sessionKey are .optional() since Plan 01-01. ` +
+          `Violating files:\n${violations.map((v) => `  ${v}`).join("\n")}`,
+      ).toEqual([]);
     });
   });
 });
