@@ -25,6 +25,12 @@
  *    bridge for config-defined / reconnected servers. These sites only COPY
  *    the values config→runtime; they contain no filter LOGIC (the
  *    allowlist/blocklist comparison stays solely in the bridge).
+ *  - the persisted-entry builder
+ *    (`packages/daemon/src/api/mcp-persisted-entry.ts`), extracted from
+ *    mcp-handlers.ts by Phase 67 CR-01. It PRESERVES the persisted fields
+ *    (incl. toolAllowlist/toolBlocklist) onto the entry written back to
+ *    config.yaml — pure passthrough, same plumbing role as the mcp.connect
+ *    site it was carved out of; no filter LOGIC.
  *
  * The schema snapshot fixture carries the literal field-name strings and is
  * allowlisted too (Pitfall 8). `*.test.ts` files are skipped — test data
@@ -62,6 +68,11 @@ const ALLOWED_SITES: readonly string[] = [
   // servers.
   "packages/daemon/src/wiring/setup-mcp.ts",
   "packages/daemon/src/api/mcp-handlers.ts",
+  // Phase 67 CR-01: persisted-entry builder extracted from mcp-handlers.ts.
+  // Preserves persisted fields (incl. toolAllowlist/toolBlocklist) onto the
+  // config.yaml entry — pure passthrough, no filter logic (same role as the
+  // mcp.connect site it was carved out of).
+  "packages/daemon/src/api/mcp-persisted-entry.ts",
   // Schema snapshot fixture contains the literal strings (Pitfall 8).
   "test/architecture/__snapshots__/McpServerEntrySchema.json",
 ];
