@@ -293,6 +293,17 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const manager = deps.mcpClientManager;
 
+      // Phase 63 SAFETY-02: copy the operator-extension allowlist from
+      // the config root so it reaches `scrubStdioEnv` at spawn time
+      // (packages/skills/src/skills/integrations/mcp-client/mcp-client-discover.ts).
+      // The optional chain mirrors the McpConnect persist site below —
+      // test fixtures construct deps without a `container`, in which case
+      // the built-in `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` is the only
+      // protection in effect for that spawn.
+      const mcpConfigRoot = deps.container?.config?.integrations?.mcp as
+        | { safetyAllowedEnvKeys?: readonly string[] }
+        | undefined;
+
       const config: McpServerConfig = {
         name: params.server_name,
         transport: params.transport,
@@ -302,6 +313,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         env: params.env,
         headers: params.headers,
         enabled: true,
+        safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,
       };
 
       // Reject connects that reference env vars not in the secrets store.
