@@ -211,6 +211,12 @@ export async function connectServer(
       instructions: metadata.instructions,
       capabilities: metadata.capabilities,
       serverInfo: metadata.serverInfo,
+      // Phase 65 OPUX-10: mirror the per-server resources/prompts opt-out onto
+      // the connection so the platform-tool registry's capability-gate
+      // predicate honors enableResources/enablePrompts:false without a
+      // separate config lookup (the manager surfaces only runtime connections).
+      ...(config.enableResources !== undefined && { enableResources: config.enableResources }),
+      ...(config.enablePrompts !== undefined && { enablePrompts: config.enablePrompts }),
     };
 
     state.connections.set(config.name, connection);

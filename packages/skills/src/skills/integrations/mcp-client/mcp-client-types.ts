@@ -212,6 +212,21 @@ export interface McpConnection {
   readonly serverInfo?: { name: string; version: string };
   /** Connection generation counter -- increments on each reconnection. */
   readonly generation: number;
+  /**
+   * Phase 65 OPUX-10: mirror of the per-server config opt-out for the
+   * resources utility tools. Populated from McpServerConfig.enableResources
+   * at connect time so the platform-tool registry's capability-gate
+   * predicate can honor the opt-out WITHOUT a separate config lookup
+   * (the manager surfaces only runtime connections). undefined ⇒ auto-register
+   * when capabilities.resources is present; false ⇒ suppress.
+   */
+  readonly enableResources?: boolean;
+  /**
+   * Phase 65 OPUX-10: mirror of the per-server config opt-out for the prompts
+   * utility tools. Populated from McpServerConfig.enablePrompts at connect
+   * time. Same semantics as enableResources but for capabilities.prompts.
+   */
+  readonly enablePrompts?: boolean;
 }
 
 /** A tool definition discovered from an MCP server. */

@@ -426,6 +426,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         skillsLogger,
         approvalGate,
         eventBus,
+        // OPUX-10: gates the resources/prompts descriptors. The manager dep is
+        // already in scope (ToolsDeps.mcpClientManager); the registry's
+        // conditional predicates register list_resources/read_resource/
+        // list_prompts/get_prompt only when a connected server advertises the
+        // matching capability without a per-server opt-out.
+        mcpClientManager,
         onSuspiciousContent,
         imageGenProvider: deps.imageGenProvider,
         backgroundTaskManager: deps.backgroundTaskManager,
