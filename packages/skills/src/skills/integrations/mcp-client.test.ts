@@ -18,6 +18,7 @@ const mockConnect = vi.fn();
 const mockClose = vi.fn();
 const mockListTools = vi.fn();
 const mockCallTool = vi.fn();
+const mockPing = vi.fn();
 const mockGetInstructions = vi.fn();
 const mockGetServerCapabilities = vi.fn();
 const mockGetServerVersion = vi.fn();
@@ -28,6 +29,7 @@ let clientInstances: Array<{
   close: typeof mockClose;
   listTools: typeof mockListTools;
   callTool: typeof mockCallTool;
+  ping: typeof mockPing;
   onclose?: () => void;
   onerror?: (error: Error) => void;
   getInstructions: ReturnType<typeof vi.fn>;
@@ -42,6 +44,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
       close: mockClose,
       listTools: mockListTools,
       callTool: mockCallTool,
+      ping: mockPing,
       onclose: undefined as (() => void) | undefined,
       onerror: undefined as ((error: Error) => void) | undefined,
       getInstructions: mockGetInstructions,
@@ -1582,5 +1585,171 @@ describe("McpClientManager", () => {
       const results = await Promise.all(promises);
       results.forEach((r) => expect(r.ok).toBe(true));
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 67 CAP-02 — keepalive queue routing (concurrency-aware)
+// ---------------------------------------------------------------------------
+//
+// When the primary call queue concurrency is 1 (default/stdio) the keepalive
+// ping shares the primary queue and is skipped while the queue is busy
+// (Phase 64 behavior — preserved here as a regression guard). When the primary
+// concurrency > 1 (supportsParallelToolCalls from 67-01), the ping must NOT
+// interleave with parallel tool calls: it routes through a dedicated
+// concurrency-1 queue whose body first awaits primary.onIdle().
+
+describe("Phase 67 CAP-02 — keepalive queue routing", () => {
+  /** Deferred promise helper for timing control. */
+  function createDeferred<T>(): {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (error: Error) => void;
+  } {
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  const TOOL_RESULT = { content: [{ type: "text", text: "ok" }], isError: false };
+
+  /** Flush a few microtask turns so PQueue schedules + queue.add bodies run. */
+  async function flush(turns = 4): Promise<void> {
+    for (let i = 0; i < turns; i++) await Promise.resolve();
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    clientInstances = [];
+    mockConnect.mockReset().mockResolvedValue(undefined);
+    mockClose.mockReset().mockResolvedValue(undefined);
+    mockListTools.mockReset().mockResolvedValue(MOCK_TOOLS);
+    mockCallTool.mockReset().mockResolvedValue(TOOL_RESULT);
+    mockPing.mockReset().mockResolvedValue({});
+    mockGetInstructions.mockReturnValue(undefined);
+    mockGetServerCapabilities.mockReturnValue(undefined);
+    mockGetServerVersion.mockReturnValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("concurrency>1: keepalive ping waits for primary idle, then pings once (dedicated queue)", async () => {
+    const mgr = createMcpClientManager(makeDeps());
+    // 67-01 derivation: stdio + supportsParallelToolCalls → concurrency 4.
+    await mgr.connect(makeStdioConfig({ supportsParallelToolCalls: true, keepaliveIntervalMs: 60_000 }));
+
+    // Hold the primary queue open with a slow in-flight tool call so the
+    // keepalive tick fires while primary.pending > 0.
+    const deferred = createDeferred<typeof TOOL_RESULT>();
+    mockCallTool.mockReturnValueOnce(deferred.promise);
+    const callPromise = mgr.callTool("mcp:test-server/search", { query: "1" });
+    await flush();
+
+    // Tick the keepalive interval while the slow call is still in flight.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush();
+
+    // Pre-patch FAILS here: the old tick returns early when the queue is busy
+    // and never pings. The new dedicated-queue route must NOT ping yet either
+    // (it awaits primary.onIdle()), but crucially must ping AFTER idle.
+    expect(mockPing).toHaveBeenCalledTimes(0);
+
+    // Resolve the slow call → primary queue goes idle → the dedicated keepalive
+    // queue's awaited primary.onIdle() resolves and the ping fires exactly once.
+    deferred.resolve(TOOL_RESULT);
+    await callPromise;
+    await flush();
+    expect(mockPing).toHaveBeenCalledTimes(1);
+  });
+
+  it("concurrency>1: ping never interleaves — it does not run while parallel calls are pending", async () => {
+    const mgr = createMcpClientManager(makeDeps());
+    await mgr.connect(makeStdioConfig({ supportsParallelToolCalls: true, keepaliveIntervalMs: 60_000 }));
+
+    // Two parallel in-flight calls (concurrency 4 admits both simultaneously).
+    const d1 = createDeferred<typeof TOOL_RESULT>();
+    const d2 = createDeferred<typeof TOOL_RESULT>();
+    mockCallTool.mockReturnValueOnce(d1.promise).mockReturnValueOnce(d2.promise);
+    const p1 = mgr.callTool("mcp:test-server/search", { query: "1" });
+    const p2 = mgr.callTool("mcp:test-server/search", { query: "2" });
+    await flush();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush();
+    // Both calls still in flight → ping must be gated.
+    expect(mockPing).toHaveBeenCalledTimes(0);
+
+    // Resolve only the first; second still pending → still gated.
+    d1.resolve(TOOL_RESULT);
+    await p1;
+    await flush();
+    expect(mockPing).toHaveBeenCalledTimes(0);
+
+    // Resolve the second → primary idle → ping fires once.
+    d2.resolve(TOOL_RESULT);
+    await p2;
+    await flush();
+    expect(mockPing).toHaveBeenCalledTimes(1);
+  });
+
+  it("concurrency=1 (default stdio): ping skipped while busy, fires when idle (Phase 64 preserved)", async () => {
+    const mgr = createMcpClientManager(makeDeps());
+    await mgr.connect(makeStdioConfig({ keepaliveIntervalMs: 60_000 }));
+
+    // Slow call holds the single-pipe queue open → tick must SKIP (Phase 64).
+    const deferred = createDeferred<typeof TOOL_RESULT>();
+    mockCallTool.mockReturnValueOnce(deferred.promise);
+    const callPromise = mgr.callTool("mcp:test-server/search", { query: "1" });
+    await flush();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush();
+    expect(mockPing).toHaveBeenCalledTimes(0);
+
+    // Drain the call; next tick with an idle queue pings on the primary queue.
+    deferred.resolve(TOOL_RESULT);
+    await callPromise;
+    await flush();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush();
+    expect(mockPing).toHaveBeenCalledTimes(1);
+  });
+
+  it("ping-failure path triggers keepalive_failed disconnect — concurrency=1", async () => {
+    const eventBus = makeEventBus();
+    const mgr = createMcpClientManager(makeDeps({ eventBus }));
+    await mgr.connect(makeStdioConfig({ keepaliveIntervalMs: 60_000 }));
+
+    mockPing.mockReset().mockRejectedValueOnce(new Error("pipe closed"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush(6);
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "mcp:server:disconnected",
+      expect.objectContaining({ serverName: "test-server", reason: "keepalive_failed" }),
+    );
+  });
+
+  it("ping-failure path triggers keepalive_failed disconnect — concurrency>1 (dedicated queue)", async () => {
+    const eventBus = makeEventBus();
+    const mgr = createMcpClientManager(makeDeps({ eventBus }));
+    await mgr.connect(makeStdioConfig({ supportsParallelToolCalls: true, keepaliveIntervalMs: 60_000 }));
+
+    // No in-flight calls → primary is already idle → the dedicated-queue body
+    // awaits onIdle() (resolves immediately) then pings, which rejects.
+    mockPing.mockReset().mockRejectedValueOnce(new Error("pipe closed"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush(6);
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "mcp:server:disconnected",
+      expect.objectContaining({ serverName: "test-server", reason: "keepalive_failed" }),
+    );
   });
 });
