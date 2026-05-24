@@ -207,6 +207,9 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
           ...(server.toolBlocklist !== undefined && { toolBlocklist: server.toolBlocklist }),
           ...(server.enableResources !== undefined && { enableResources: server.enableResources }),
           ...(server.enablePrompts !== undefined && { enablePrompts: server.enablePrompts }),
+          // CAP-02: forward the parallel-tool-calls opt-in so the manager's
+          // PQueue concurrency derivation (mcp-client-connect.ts) sees it.
+          ...(server.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: server.supportsParallelToolCalls }),
         };
         return { server, result: await manager.connect(config) };
       }),

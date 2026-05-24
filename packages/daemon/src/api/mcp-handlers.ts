@@ -399,16 +399,16 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         keepaliveIntervalMs: resolvedKeepaliveIntervalMs,
         circuitBreakerThreshold: resolvedCircuitBreakerThreshold,
         circuitBreakerCooldownMs: resolvedCircuitBreakerCooldownMs,
-        // CR-02: forward the five Phase 65 fields from the persisted (config)
-        // entry — mcp.connect has no CLI params for them, so without this a
-        // reconnect-after-disconnect drops config-set idle eviction / tool
-        // filtering / resources-prompts opt-outs. idleTtlMs only when >0
-        // (0 ⇒ disabled, per startIdleTicker opt-in).
+        // CR-02 (Phase 65) + CAP-02 (Phase 67): forward config-only fields from the
+        // persisted entry (mcp.connect has no CLI params for them) — else a reconnect
+        // drops idle eviction / tool filtering / resources-prompts / parallel-calls
+        // opt-ins. idleTtlMs only when >0 (0 ⇒ disabled, per startIdleTicker opt-in).
         ...(persistedEntry?.idleTtlMs !== undefined && persistedEntry.idleTtlMs > 0 && { idleTtlMs: persistedEntry.idleTtlMs }),
         ...(persistedEntry?.toolAllowlist !== undefined && { toolAllowlist: persistedEntry.toolAllowlist }),
         ...(persistedEntry?.toolBlocklist !== undefined && { toolBlocklist: persistedEntry.toolBlocklist }),
         ...(persistedEntry?.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
         ...(persistedEntry?.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
+        ...(persistedEntry?.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: persistedEntry.supportsParallelToolCalls }),
       };
 
       // Reject connects that reference env vars not in the secrets store.
