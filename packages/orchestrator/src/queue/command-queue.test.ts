@@ -724,7 +724,7 @@ describe("Logger lifecycle tracing", () => {
     vi.useRealTimers();
   });
 
-  it("emits DEBUG on enqueue when logger provided", async () => {
+  it("emits INFO on enqueue when logger provided", async () => {
     const { createMockLogger } = await import("../../../../test/support/mock-logger.js");
     const logger = createMockLogger();
     const eventBus = createMockEventBus();
@@ -733,7 +733,7 @@ describe("Logger lifecycle tracing", () => {
 
     await queue.enqueue(SESSION_A, createMockMessage("msg-1"), "telegram", async () => {});
 
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ channelType: "telegram" }),
       expect.any(String),
     );
