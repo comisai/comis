@@ -341,11 +341,18 @@ export async function runOauthLogin(
   } catch (err) {
     // T-66-27: no throw escapes — discovery cascade fail / callback timeout /
     // CSRF drop / exchange error all return failed. NEVER log token/verifier/code.
+    //
+    // WR-03: pass `err` as the OBJECT (Error or fallback wrapper), not its
+    // `.message` string. The Pino serializer reads the canonical `err` field
+    // and emits `type`/`message`/`stack` plus any custom properties together —
+    // logging `err.message` here would discard the stack trace and any
+    // attached error metadata (e.g. an `errorKind` on a discovery-cascade
+    // error). Mirrors refresh-deduper.ts:274 which already logs `{ ..., err }`.
     logger.warn(
       {
         submodule: SUBMODULE,
         serverName,
-        err: err instanceof Error ? err.message : String(err),
+        err: err instanceof Error ? err : new Error(String(err)),
         errorKind: "auth" as const,
       },
       "OAuth login failed",
