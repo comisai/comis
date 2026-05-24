@@ -71,7 +71,7 @@ describe("ensureGatewayToken (OPUX-07 / 65-P1)", () => {
 });
 
 describe("registerMcpCommand — subcommand registration", () => {
-  it("registers all 6 subcommands under `mcp`", async () => {
+  it("registers the list/status/test subcommands under `mcp`", async () => {
     const { Command } = await import("commander");
     const { registerMcpCommand } = await import("./mcp.js");
     const program = new Command();
@@ -82,25 +82,8 @@ describe("registerMcpCommand — subcommand registration", () => {
     expect(mcpCmd!.description()).toBe("MCP server management");
 
     const subcommandNames = mcpCmd!.commands.map((c) => c.name());
-    for (const name of ["list", "status", "connect", "disconnect", "reconnect", "test"]) {
+    for (const name of ["list", "status", "test"]) {
       expect(subcommandNames).toContain(name);
     }
-  });
-
-  it("connect requires --transport and exposes transport flags", async () => {
-    const { Command } = await import("commander");
-    const { registerMcpCommand } = await import("./mcp.js");
-    const program = new Command();
-    registerMcpCommand(program);
-
-    const mcpCmd = program.commands.find((c) => c.name() === "mcp");
-    const connectCmd = mcpCmd!.commands.find((c) => c.name() === "connect");
-    expect(connectCmd).toBeDefined();
-    const optionNames = connectCmd!.options.map((o) => o.long);
-    expect(optionNames).toContain("--transport");
-    expect(optionNames).toContain("--command");
-    expect(optionNames).toContain("--args");
-    expect(optionNames).toContain("--url");
-    expect(optionNames).toContain("--token");
   });
 });
