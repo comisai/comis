@@ -43,7 +43,7 @@ import { createDiscordVoiceSender } from "./voice-sender.js";
 // / deleteMessage / fetchMessages all use asTextLike, the structural-subset
 // narrowing helper that discord-actions.ts also uses.
 import { asTextLike } from "./discord-adapter-types.js";
-import { systemNowMs } from "@comis/core";
+import { runWithContext, systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -147,37 +147,51 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
 
         _lastMessageAt = systemNowMs();
         const normalized = mapDiscordToNormalized(msg);
+
+        // D1 (Plan 01-02): mint traceId at ingress, stamp into metadata
+        const traceId = randomUUID();
+        normalized.metadata.traceId = traceId;
+
         deps.logger.info(
-          { channelType: "discord", messageId: normalized.id, chatId: msg.channelId, previewLen: (normalized.text ?? "").length },
+          { channelType: "discord", messageId: normalized.id, chatId: msg.channelId, previewLen: (normalized.text ?? "").length, traceId },
           "Inbound message",
         );
 
         // Fire-and-forget: don't block the event loop
-        for (const handler of handlers) {
-          try {
-            Promise.resolve(handler(normalized)).catch((handlerErr) => {
-              deps.logger.error(
-                {
-                  err: handlerErr,
-                  channelId: msg.channelId,
-                  hint: "Check Discord bot permissions and message handler logic",
-                  errorKind: "internal" as const,
-                },
-                "Message handler error",
-              );
-            });
-          } catch (handlerErr) {
-            deps.logger.error(
-              {
-                err: handlerErr,
-                channelId: msg.channelId,
-                hint: "Check Discord bot permissions and message handler logic",
-                errorKind: "internal" as const,
-              },
-              "Message handler error",
-            );
-          }
-        }
+        runWithContext(
+          {
+            traceId,
+            startedAt: systemNowMs(),
+            channelType: "discord",
+          },
+          () => {
+            for (const handler of handlers) {
+              try {
+                Promise.resolve(handler(normalized)).catch((handlerErr) => {
+                  deps.logger.error(
+                    {
+                      err: handlerErr,
+                      channelId: msg.channelId,
+                      hint: "Check Discord bot permissions and message handler logic",
+                      errorKind: "internal" as const,
+                    },
+                    "Message handler error",
+                  );
+                });
+              } catch (handlerErr) {
+                deps.logger.error(
+                  {
+                    err: handlerErr,
+                    channelId: msg.channelId,
+                    hint: "Check Discord bot permissions and message handler logic",
+                    errorKind: "internal" as const,
+                  },
+                  "Message handler error",
+                );
+              }
+            }
+          },
+        );
       });
 
       // Shard lifecycle event handlers for reconnection visibility
@@ -232,31 +246,43 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
             },
           };
 
-          for (const handler of handlers) {
-            try {
-              Promise.resolve(handler(normalized)).catch((handlerErr) => {
-                deps.logger.error(
-                  {
-                    err: handlerErr,
-                    channelId: interaction.channelId,
-                    hint: "Check message callback handler for unhandled errors",
-                    errorKind: "internal" as const,
-                  },
-                  "Interaction handler error",
-                );
-              });
-            } catch (handlerErr) {
-              deps.logger.error(
-                {
-                  err: handlerErr,
-                  channelId: interaction.channelId,
-                  hint: "Check message callback handler for unhandled errors",
-                  errorKind: "internal" as const,
-                },
-                "Interaction handler error",
-              );
-            }
-          }
+          // D1 (Plan 01-02): mint traceId at ingress for interaction dispatch
+          const traceId = randomUUID();
+          normalized.metadata.traceId = traceId;
+          runWithContext(
+            {
+              traceId,
+              startedAt: systemNowMs(),
+              channelType: "discord",
+            },
+            () => {
+              for (const handler of handlers) {
+                try {
+                  Promise.resolve(handler(normalized)).catch((handlerErr) => {
+                    deps.logger.error(
+                      {
+                        err: handlerErr,
+                        channelId: interaction.channelId,
+                        hint: "Check message callback handler for unhandled errors",
+                        errorKind: "internal" as const,
+                      },
+                      "Interaction handler error",
+                    );
+                  });
+                } catch (handlerErr) {
+                  deps.logger.error(
+                    {
+                      err: handlerErr,
+                      channelId: interaction.channelId,
+                      hint: "Check message callback handler for unhandled errors",
+                      errorKind: "internal" as const,
+                    },
+                    "Interaction handler error",
+                  );
+                }
+              }
+            },
+          );
         } catch (error) {
           deps.logger.warn(
             {
