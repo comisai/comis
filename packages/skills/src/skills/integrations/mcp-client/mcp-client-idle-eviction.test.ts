@@ -37,6 +37,16 @@ import type {
   McpServerConfig,
 } from "./mcp-client-types.js";
 
+// Stub reconnectServer so the lazy-reconnect branch in callTool can be driven
+// without a live transport. The stub repopulates state.connections + the call
+// queue (what a real reconnect would do) so the subsequent callTool succeeds.
+// All other mcp-client-connect.js exports are preserved via importActual.
+const { reconnectStub } = vi.hoisted(() => ({ reconnectStub: vi.fn() }));
+vi.mock("./mcp-client-connect.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./mcp-client-connect.js")>();
+  return { ...actual, reconnectServer: reconnectStub };
+});
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
@@ -234,5 +244,117 @@ describe("idle eviction — startIdleTicker / evict (OPUX-09)", () => {
     // No ticker armed.
     resetIdleActivity(state, "eta");
     expect(state.lastActivityMs.has("eta")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lazy reconnect (getOrReconnect branch in callTool)
+// ---------------------------------------------------------------------------
+
+/**
+ * Wire an "idle-evicted" state: serverConfigs retains the entry but there is
+ * NO connection and NO call queue, and userDisconnectedFlags is empty. This is
+ * exactly the post-evictIdleServer shape the lazy-reconnect branch must heal.
+ */
+function wireEvicted(state: McpClientManagerState, name: string): McpServerConfig {
+  const config: McpServerConfig = {
+    name,
+    transport: "stdio",
+    command: "node",
+    args: ["server.js"],
+    enabled: true,
+  };
+  state.serverConfigs.set(name, config);
+  state.generations.set(name, 1);
+  // Deliberately: no connections entry, no call queue, flag NOT set.
+  return config;
+}
+
+describe("idle eviction — lazy reconnect on missing connection (OPUX-09)", () => {
+  beforeEach(() => {
+    reconnectStub.mockReset();
+  });
+
+  it("Test 1: callTool after eviction reconnects transparently and succeeds", async () => {
+    const state = makeState();
+    wireEvicted(state, "alpha");
+    const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+
+    // Stub repopulates connections + call queue, as a real reconnect would.
+    reconnectStub.mockImplementation(async (s: McpClientManagerState, _d: unknown, name: string) => {
+      wireConnected(s, name);
+      return { ok: true, value: s.connections.get(name) };
+    });
+
+    const result = await callTool(state, deps, qualifyToolName("alpha", "some_tool"), {});
+
+    expect(reconnectStub).toHaveBeenCalledTimes(1);
+    expect(reconnectStub).toHaveBeenCalledWith(state, deps, "alpha");
+    expect(result.ok).toBe(true);
+    expect(state.connections.get("alpha")).toBeDefined();
+  });
+
+  it("Test 2: no reconnect when the server is user-disconnected", async () => {
+    const state = makeState();
+    wireEvicted(state, "beta");
+    state.userDisconnectedFlags.add("beta"); // operator disconnect — stay down
+    const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+
+    const result = await callTool(state, deps, qualifyToolName("beta", "some_tool"), {});
+
+    expect(reconnectStub).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("not connected");
+  });
+
+  it("Test 3: no reconnect when there is no stored config", async () => {
+    const state = makeState();
+    // No serverConfigs entry, no connection.
+    const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+
+    const result = await callTool(state, deps, qualifyToolName("gamma", "some_tool"), {});
+
+    expect(reconnectStub).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("not connected");
+  });
+
+  it("Test 3b: surfaces an idle-reconnect failure as an error", async () => {
+    const state = makeState();
+    wireEvicted(state, "delta");
+    const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+
+    reconnectStub.mockResolvedValue({ ok: false, error: new Error("spawn failed") });
+
+    const result = await callTool(state, deps, qualifyToolName("delta", "some_tool"), {});
+
+    expect(reconnectStub).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("idle-reconnect failed");
+  });
+
+  it("Test 4: a successful tool call resets idle activity", async () => {
+    vi.useFakeTimers();
+    try {
+      const state = makeState();
+      wireConnected(state, "epsilon", { idleTtlMs: 60_000 });
+      const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+
+      // Arm the idle ticker, then let real time advance under fake timers.
+      startIdleTicker(state, deps, state.serverConfigs.get("epsilon")!);
+      const seeded = state.lastActivityMs.get("epsilon");
+      expect(seeded).toBeDefined();
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      const result = await callTool(state, deps, qualifyToolName("epsilon", "some_tool"), {});
+      expect(result.ok).toBe(true);
+
+      // The success path must have refreshed lastActivityMs (resetIdleActivity).
+      const refreshed = state.lastActivityMs.get("epsilon");
+      expect(refreshed).toBeDefined();
+      expect(refreshed!).toBeGreaterThan(seeded!);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
