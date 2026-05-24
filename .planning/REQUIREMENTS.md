@@ -76,7 +76,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Forensic INFO Promotion
 
-- [ ] **INFO-01**: Forensic events promoted from DEBUG → INFO regardless of operator log level — `Adapter registered`, `Message enqueued`, `Message dequeued`, `Execution started`, `Execution complete`, `Memory store complete`, `Outbound message`. Closes G5.
+- [x] **INFO-01**: Forensic events promoted from DEBUG → INFO regardless of operator log level — `Adapter registered`, `Message enqueued`, `Message dequeued`, `Execution started`, `Execution complete`, `Memory store complete`, `Outbound message`. Closes G5.
   - Acceptance: production `logLevel: "info"` daemon still shows the queue-enqueue lines that would diagnose today's bug class
   - Acceptance: per-turn INFO count grows from ~5 to ~10 (bounded)
   - Design: D11
@@ -251,7 +251,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | BOUND-03 | Phase 2 | Complete |
 | BOOT-01 | Phase 3 Plan 01 | **Complete** |
 | BOOT-02 | Phase 3 Plan 01 | **Complete** |
-| INFO-01 | Phase 3 | Pending |
+| INFO-01 | Phase 3 | Complete |
 | DEDUP-01 | Phase 3 | Pending |
 | DEDUP-02 | Phase 3 | Pending |
 | DEDUP-03 | Phase 3 | Pending |
