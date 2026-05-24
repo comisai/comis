@@ -67,6 +67,13 @@ export {
   _resetSigusr1Timer,
   _resetMutationFence,
 } from "./api/shared/persist-to-config.js";
+// Phase 64 RELY-08 test seam: 500ms trailing-edge coalescer holds
+// closure-captured state across all persistMcpServers calls in a daemon
+// process. Integration tests call this in `beforeEach` to clear pending
+// added/removed maps and cancel any armed timer, mirroring the
+// _resetSigusr1Timer / _resetMutationFence pattern at persist-to-config.ts.
+// Consumer: test/integration/mcp-config-refresh.test.ts (Plan 06).
+export { _resetConfigMutatedCoalescer } from "./api/mcp-config-mutated-coalescer.js";
 
 // Re-export createTracingLogger so the test daemon harness can thread the
 // `LoggerOptions.disableRedaction` opt-in through to the SAME logger
