@@ -30,7 +30,7 @@ import {
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createMockLogger } from "../../../../../test/support/mock-logger.js";
+import { createMockLogger } from "../../../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
 // Test fixtures + harness
