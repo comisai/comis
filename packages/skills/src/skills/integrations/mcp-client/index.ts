@@ -28,6 +28,7 @@ import type {
   McpServerConfig,
   McpToolDefinition,
 } from "./mcp-client-types.js";
+import type { RefreshResult } from "./oauth/refresh-deduper.js";
 import {
   connectServer,
   disconnectServer,
@@ -134,6 +135,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
     circuitBreakers: new Map<string, CircuitState>(),
     idleEvictionTimers: new Map<string, SystemTimeoutHandle>(),
     lastActivityMs: new Map<string, number>(),
+    inflightRefreshes: new Map<string, Promise<RefreshResult>>(),
     options,
   };
 

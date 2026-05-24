@@ -16,6 +16,8 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { SystemIntervalHandle, SystemTimeoutHandle, TypedEventBus } from "@comis/core";
 import type PQueue from "p-queue";
 
+import type { RefreshResult } from "./oauth/refresh-deduper.js";
+
 // ---------------------------------------------------------------------------
 // Qualified name helpers (pure; co-located with types to break no-cycles)
 // ---------------------------------------------------------------------------
@@ -422,6 +424,16 @@ export interface McpClientManagerState {
    * resetIdleActivity updates it; the timer compares against it on fire.
    */
   readonly lastActivityMs: Map<string, number>;
+  /**
+   * Phase 66 OAUTH-05: expired-access-token -> in-flight refresh shared future
+   * (401 dedup; 5s straggler cache). The dedup state lives on the manager — NOT
+   * module scope — so concurrent 401s for the same token coalesce into exactly
+   * one `refresh_token` POST (66-P4). Keyed by the EXPIRED access token; an
+   * entry is retained for the straggler-cache TTL after it resolves and evicted
+   * immediately on a refresh failure (no poisoned future, 66-P13). Managed by
+   * `oauth/refresh-deduper.ts`.
+   */
+  readonly inflightRefreshes: Map<string, Promise<RefreshResult>>;
   /** Resolved options (timeouts, defaults, reconnect opts) computed once at construction time. */
   readonly options: McpClientManagerOptions;
 }
