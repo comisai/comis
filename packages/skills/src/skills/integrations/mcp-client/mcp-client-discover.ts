@@ -28,6 +28,7 @@ import type {
   McpToolDefinition,
 } from "./mcp-client-types.js";
 import { qualifyToolName } from "./mcp-client-types.js";
+import { createRedirectPolicyFetch } from "./mcp-client-redirect-policy.js";
 
 // ---------------------------------------------------------------------------
 // Phase 63 SAFETY-01/02: stdio env allowlist
@@ -188,6 +189,12 @@ export function createTransport(config: McpServerConfig) {
       requestInit: config.headers
         ? { headers: config.headers }
         : undefined,
+      // Phase 63 SAFETY-07: cross-host redirect header scrub. Strips
+      // Authorization / Cookie / Proxy-Authorization on cross-host redirect
+      // (URL.host string mismatch including port); preserves on same-host
+      // (including http to https upgrade); throws [max_redirects_exceeded]
+      // after 20 hops. See mcp-client-redirect-policy.ts for the full policy.
+      fetch: createRedirectPolicyFetch({ maxRedirections: 20 }),
     });
   } else if (config.transport === "http") {
     if (!config.url) {
@@ -197,6 +204,9 @@ export function createTransport(config: McpServerConfig) {
       requestInit: config.headers
         ? { headers: config.headers }
         : undefined,
+      // Phase 63 SAFETY-07: cross-host redirect header scrub. Same policy as
+      // the SSE branch above; see mcp-client-redirect-policy.ts.
+      fetch: createRedirectPolicyFetch({ maxRedirections: 20 }),
     });
   }
   throw new Error(`MCP server "${config.name}": unsupported transport "${config.transport as string}"`);

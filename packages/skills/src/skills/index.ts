@@ -80,6 +80,13 @@ export {
   DEFAULT_OSV_CACHE_DIR,
 } from "./integrations/mcp-client/index.js";
 export type { OsvCheckResult, OsvCheckOptions } from "./integrations/mcp-client/index.js";
+
+// Phase 63 SAFETY-07: custom FetchLike with cross-host redirect header
+// scrub for SSE + Streamable HTTP MCP transports. Consumed by
+// `mcp-client-discover.ts` (transport construction) and the integration
+// test at `test/integration/mcp-redirect-scrub.test.ts`.
+export { createRedirectPolicyFetch } from "./integrations/mcp-client/index.js";
+export type { RedirectPolicyOptions } from "./integrations/mcp-client/index.js";
 export type {
   McpClientManager,
   McpClientManagerDeps,

@@ -1758,5 +1758,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DEFAULT_OSV_CACHE_DIR",
       "OsvCheckResult",
       "OsvCheckOptions",
+      // Phase 63 SAFETY-07 (plan 05): consumed by the integration test
+      // `test/integration/mcp-redirect-scrub.test.ts` — outside
+      // packages/skills/, so the source-only consumer scan does not pick
+      // them up. Internal-to-skills consumer lives in
+      // mcp-client-discover.ts (where the wrapped FetchLike is wired into
+      // both SSE and Streamable HTTP transport branches). Documented
+      // test-API surface; not a baseline orphan.
+      "createRedirectPolicyFetch",
+      "RedirectPolicyOptions",
     ])],
   ]);

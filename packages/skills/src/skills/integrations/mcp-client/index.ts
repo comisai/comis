@@ -70,6 +70,12 @@ export {
 } from "./mcp-client-osv-check.js";
 export type { OsvCheckResult, OsvCheckOptions } from "./mcp-client-osv-check.js";
 
+// Phase 63 SAFETY-07: custom FetchLike with cross-host redirect header scrub
+// for SSE + Streamable HTTP MCP transports. Re-exported so the integration
+// test under test/integration/ can consume it via @comis/skills.
+export { createRedirectPolicyFetch } from "./mcp-client-redirect-policy.js";
+export type { RedirectPolicyOptions } from "./mcp-client-redirect-policy.js";
+
 // ---------------------------------------------------------------------------
 // Factory (state-first composition)
 // ---------------------------------------------------------------------------
