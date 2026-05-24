@@ -76,20 +76,30 @@ export function resetIdleActivity(state: McpClientManagerState, name: string): v
 
 /**
  * Schedule (or reschedule) the single-fire eviction timer. On fire it compares
- * elapsed idle time against the TTL: evict when idle long enough, otherwise
- * reschedule for the remaining window (so activity since the last schedule
- * transparently defers eviction).
+ * elapsed idle time against the FULL TTL: evict when idle long enough,
+ * otherwise reschedule for the remaining window (so activity since the last
+ * schedule transparently defers eviction).
+ *
+ * WR-01: `originalTtl` is the configured idleTtlMs and is threaded UNCHANGED
+ * through every reschedule — the eviction always fires at last-activity +
+ * idleTtlMs. `remainingMs` is only the timer delay for the NEXT fire
+ * (defaults to `originalTtl` on the first call). Pre-fix the reschedule passed
+ * `ttl - idleFor` as the new `ttl`, which shrank the comparison threshold on
+ * every activity bounce — bursty servers drifted toward premature eviction
+ * (and ever-shorter poll intervals).
  */
 function scheduleNextEviction(
   state: McpClientManagerState,
   deps: McpClientManagerDeps,
   name: string,
-  ttl: number,
+  originalTtl: number,
+  remainingMs?: number,
 ): void {
   // Clear any prior pending timer for safety (idempotent reschedule).
   const prior = state.idleEvictionTimers.get(name);
   if (prior !== undefined) systemClearTimeout(prior);
 
+  const delay = remainingMs ?? originalTtl;
   const handle = systemSetTimeout(() => {
     const lastActivity = state.lastActivityMs.get(name);
     const conn = state.connections.get(name);
@@ -99,13 +109,14 @@ function scheduleNextEviction(
       return;
     }
     const idleFor = systemNowMs() - lastActivity;
-    if (idleFor >= ttl) {
+    if (idleFor >= originalTtl) {
       void evictIdleServer(state, deps, name);
       return;
     }
-    // Activity since last schedule → reschedule for the remaining window.
-    scheduleNextEviction(state, deps, name, ttl - idleFor);
-  }, ttl);
+    // Activity since last schedule → reschedule for the remaining window
+    // measured against the ORIGINAL TTL (deadline = lastActivity + originalTtl).
+    scheduleNextEviction(state, deps, name, originalTtl, originalTtl - idleFor);
+  }, delay);
   // No .unref() here: daemon shutdown routes through disconnectAllServers →
   // disconnectServer → stopIdleTicker, which clears the handle deterministically.
   state.idleEvictionTimers.set(name, handle);

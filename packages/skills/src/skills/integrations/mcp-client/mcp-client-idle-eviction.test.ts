@@ -224,6 +224,39 @@ describe("idle eviction — startIdleTicker / evict (OPUX-09)", () => {
     expect(state.connections.get("epsilon")).toBeUndefined();
   });
 
+  it("WR-01: eviction always fires at last-activity + full idleTtlMs even after multiple activity bounces", async () => {
+    // Regression for the TTL-drift bug: pre-fix each reschedule passed
+    // `ttl - idleFor` as the NEW ttl, so the effective eviction threshold
+    // shrank with every bounce, causing premature eviction. With TTL=60s and
+    // two bounces, the buggy code evicted after only ~50s of true idleness.
+    const state = makeState();
+    wireConnected(state, "drift", { idleTtlMs: 60_000 });
+    const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+
+    startIdleTicker(state, deps, state.serverConfigs.get("drift")!);
+
+    // Bounce 1: activity at t=50s.
+    await vi.advanceTimersByTimeAsync(50_000);
+    resetIdleActivity(state, "drift"); // lastActivity = 50_000
+
+    // Timer fires at t=60s (idleFor=10s) and must reschedule for the FULL
+    // remaining window relative to the original TTL, not a shrunk one.
+    await vi.advanceTimersByTimeAsync(10_000); // t=60s
+
+    // Bounce 2: activity at t=105s.
+    await vi.advanceTimersByTimeAsync(45_000); // t=105s
+    resetIdleActivity(state, "drift"); // lastActivity = 105_000
+
+    // At t=160s only 55s have elapsed since the last activity (< 60s TTL), so
+    // the server MUST still be connected. Buggy code evicts here (~t=155s).
+    await vi.advanceTimersByTimeAsync(55_000); // t=160s
+    expect(state.connections.get("drift")).toBeDefined();
+
+    // After the full 60s idle window from the last activity (t=165s) it evicts.
+    await vi.advanceTimersByTimeAsync(10_000); // t=170s (>= 105_000 + 60_000)
+    expect(state.connections.get("drift")).toBeUndefined();
+  });
+
   it("stopIdleTicker clears the handle and lastActivity entry", () => {
     const state = makeState();
     wireConnected(state, "zeta", { idleTtlMs: 60_000 });
