@@ -127,6 +127,35 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "channel:health_changed": "channel.health_changed",
   "channel:registered": "channel.lifecycle",
   "channel:deregistered": "channel.lifecycle",
+
+  // BRIDGE-04 rest: Security (non-scanned emitters — packages/daemon + packages/core/security)
+  // SECURITY INVARIANT: patterns[] (verbatim taint strings — L4) and message (may reference
+  // secret names/config paths — L5) are intentionally NOT forwarded.
+  "security:memory_tainted": "security.memory_tainted",
+  "security:warn": "security.warn",
+
+  // BRIDGE-07: Compaction signals (events-messaging.ts; emitters in packages/agent — arch-scanned)
+  // All 3 are in EVENTS_NOT_TRAJECTORY_MAPPED and must be removed when bridged (L7).
+  "compaction:started": "compaction.started",
+  "compaction:flush": "compaction.flush",
+  "compaction:recommended": "compaction.recommended",
+
+  // BRIDGE-07: Context engine internals (events-messaging.ts; emitters in packages/agent — arch-scanned)
+  // 5 of 6 are in EVENTS_NOT_TRAJECTORY_MAPPED and must be removed when bridged.
+  // context:integrity uses optional chaining (?.emit) — not in arch-test scope; no allowlist change needed.
+  "context:evicted": "context.evicted",
+  "context:masked": "context.masked",
+  "context:reread": "context.reread",
+  "context:overflow": "context.overflow",
+  "context:integrity": "context.integrity",
+  "context:rehydrated": "context.rehydrated",
+
+  // BRIDGE-08: Approval / human-in-the-loop (events-infra.ts; emitter packages/core/approval — not arch-scanned)
+  // SECURITY INVARIANT (T-02-11): approval:requested.params is raw unconstrained tool arguments
+  // (file paths, message bodies, credentials — HIGHEST risk field in the phase, L2).
+  // Translator MUST omit params entirely — sanitizeForPersistence is defense-in-depth only.
+  "approval:requested": "approval.requested",
+  "approval:resolved": "approval.resolved",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**
@@ -591,6 +620,127 @@ function translatePayload(
         channelType: payload.channelType,
         pluginId: payload.pluginId,
         event: "deregistered",
+      };
+
+    // ---- Security rest (BRIDGE-04 non-scanned subset) ----
+    // SECURITY INVARIANT: patterns[] (verbatim taint strings, L4) and
+    // message (may reference secret names/config paths, L5) are intentionally
+    // NOT forwarded. sanitizeForPersistence is a defense-in-depth backstop.
+
+    case "security:memory_tainted":
+      // patterns[] must NEVER be forwarded — they are verbatim injection strings (L4).
+      // Only trust levels + blocked flag enter the trajectory.
+      return {
+        originalTrustLevel: payload.originalTrustLevel,
+        adjustedTrustLevel: payload.adjustedTrustLevel,
+        blocked: payload.blocked,
+      };
+
+    case "security:warn":
+      // message may contain diagnostic text referencing secret names or config paths (L5).
+      // Only category enters the trajectory.
+      return {
+        category: payload.category,
+      };
+
+    // ---- Compaction signals (BRIDGE-07) ----
+    // agentId and sessionKey are envelope-only per design §6.2 — stripped from data.
+
+    case "compaction:started":
+      // All source fields (agentId, sessionKey, timestamp) are envelope-only (L6).
+      // Return empty object — event is a pure lifecycle signal; type is the diagnostic.
+      return {};
+
+    case "compaction:flush":
+      return {
+        memoriesWritten: payload.memoriesWritten,
+        trigger: payload.trigger,
+        success: payload.success,
+      };
+
+    case "compaction:recommended":
+      return {
+        contextPercent: payload.contextPercent,
+        contextTokens: payload.contextTokens,
+        contextWindow: payload.contextWindow,
+      };
+
+    // ---- Context engine internals (BRIDGE-07) ----
+    // agentId and sessionKey are envelope-only per design §6.2 — stripped from data.
+    // Content fields (message bodies, raw text) are NOT in any of these payloads;
+    // only counts, sizes, and category tags are forwarded.
+
+    case "context:evicted":
+      return {
+        evictedCount: payload.evictedCount,
+        evictedChars: payload.evictedChars,
+        categories: payload.categories,
+      };
+
+    case "context:masked":
+      return {
+        maskedCount: payload.maskedCount,
+        totalChars: payload.totalChars,
+        persistedToDisk: payload.persistedToDisk,
+      };
+
+    case "context:reread":
+      return {
+        rereadCount: payload.rereadCount,
+        rereadTools: payload.rereadTools,
+      };
+
+    case "context:overflow":
+      return {
+        contextTokens: payload.contextTokens,
+        budgetTokens: payload.budgetTokens,
+        recoveryAction: payload.recoveryAction,
+      };
+
+    case "context:integrity":
+      // conversationId is the DAG conversation identifier — not an envelope field.
+      // agentId + sessionKey remain envelope-only and are stripped.
+      return {
+        conversationId: payload.conversationId,
+        issueCount: payload.issueCount,
+        repairsApplied: payload.repairsApplied,
+        errorsLogged: payload.errorsLogged,
+        issueTypes: payload.issueTypes,
+        durationMs: payload.durationMs,
+      };
+
+    case "context:rehydrated":
+      return {
+        sectionsInjected: payload.sectionsInjected,
+        filesInjected: payload.filesInjected,
+        skillsInjected: payload.skillsInjected,
+        overflowStripped: payload.overflowStripped,
+      };
+
+    // ---- Approval / human-in-the-loop (BRIDGE-08) ----
+    // SECURITY INVARIANT (T-02-11): approval:requested.params is raw unconstrained
+    // tool arguments — file paths, message bodies, or credentials. MUST be omitted
+    // entirely. agentId, sessionKey, createdAt are envelope-only — stripped from data.
+    // channelType is optional on the source event — conditional spread.
+    // approval:resolved.reason is optional — conditional spread.
+    // resolvedAt is envelope noise — stripped from data.
+
+    case "approval:requested":
+      return {
+        requestId: payload.requestId,
+        toolName: payload.toolName,
+        action: payload.action,
+        trustLevel: payload.trustLevel,
+        timeoutMs: payload.timeoutMs,
+        ...(payload.channelType !== undefined ? { channelType: payload.channelType } : {}),
+      };
+
+    case "approval:resolved":
+      return {
+        requestId: payload.requestId,
+        approved: payload.approved,
+        approvedBy: payload.approvedBy,
+        ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
       };
 
     default: {

@@ -115,6 +115,27 @@ export const TRAJECTORY_EVENT_TYPES = [
   // (dual-mapping; translator adds synthetic event discriminator).
   "channel.health_changed",
   "channel.lifecycle",
+
+  // Security rest (D6 / BRIDGE-04)
+  "security.memory_tainted",
+  "security.warn",
+
+  // Compaction (D6 / BRIDGE-07)
+  "compaction.started",
+  "compaction.flush",
+  "compaction.recommended",
+
+  // Context engine (D6 / BRIDGE-07)
+  "context.evicted",
+  "context.masked",
+  "context.reread",
+  "context.overflow",
+  "context.integrity",
+  "context.rehydrated",
+
+  // Approval / human-in-the-loop (D6 / BRIDGE-08)
+  "approval.requested",
+  "approval.resolved",
 ] as const;
 
 /** Closed union of trajectory event type strings. */
