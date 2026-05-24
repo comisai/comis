@@ -79,9 +79,9 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
 
   // -------------------------------------------------------------------
   // Security / safety — fed by separate alerting paths; trajectory
-  // intentionally does not record raw injection patterns.
+  // records security.injection_detected (source+riskLevel only, no
+  // patterns). The below events are intentionally out of scope.
   // -------------------------------------------------------------------
-  "security:injection_detected",
   "security:injection_rate_exceeded",
   "security:memory_tainted",
   "sender:trust_resolved",
@@ -184,17 +184,12 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "background_task:reentered",
 
   // -------------------------------------------------------------------
-  // Coalescing + buffering at the orchestrator queue level — not on
-  // the trajectory (the trajectory captures the post-coalesced
-  // execution path via prompt.submitted etc.).
+  // Coalescing + buffering at the orchestrator queue level (debounce
+  // signals only — queue:* events are now in TRAJECTORY_BRIDGE_MAPPING).
   // -------------------------------------------------------------------
   "coalesce:flushed",
   "debounce:buffered",
   "debounce:flushed",
-  "queue:coalesced",
-  "queue:dequeued",
-  "queue:enqueued",
-  "queue:overflow",
 
   // -------------------------------------------------------------------
   // Context-engine internals — granular pipeline signals; the
@@ -224,16 +219,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "elevated:model_routed",
 
   // -------------------------------------------------------------------
-  // Execution-level orchestrator signals — captured indirectly via
-  // tool.result / model.completed; the trajectory does not duplicate.
-  // -------------------------------------------------------------------
-  "execution:aborted",
-  "execution:budget_warning",
-  "execution:output_escalated",
-  "execution:prompt_timeout",
-  "execution:signed_replay_recovered",
-
-  // -------------------------------------------------------------------
   // Follow-up handler events - internal scheduler.
   // -------------------------------------------------------------------
   "followup:depth_exceeded",
@@ -259,8 +244,8 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
 
   // -------------------------------------------------------------------
   // Sender / send-policy events - access control, not observability.
+  // sender:blocked is now in TRAJECTORY_BRIDGE_MAPPING (channelType only).
   // -------------------------------------------------------------------
-  "sender:blocked",
   "sendpolicy:allowed",
   "sendpolicy:denied",
   "sendpolicy:override_changed",
