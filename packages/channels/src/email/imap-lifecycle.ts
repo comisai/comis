@@ -13,7 +13,8 @@
 import { ImapFlow } from "imapflow";
 import { ok, err, fromPromise, type Result } from "@comis/shared";
 import type { ComisLogger } from "@comis/core";
-import { systemClearInterval, systemClearTimeout, systemNowMs, systemSetInterval, systemSetTimeout } from "@comis/core";
+import { systemClearInterval, systemClearTimeout, systemNowMs, systemSetInterval, systemSetTimeout, runWithContext } from "@comis/core";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -115,9 +116,22 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
         const source = msg.source as Buffer;
         const uid = msg.uid;
         const envelope = msg.envelope;
-        for (const handler of handlers) {
-          handler(source, uid, envelope);
-        }
+        // D1 (Plan 01-03): wrap the raw-IMAP handler dispatch in runWithContext.
+        // This is a pre-normalization dispatch (handlers receive Buffer, uid,
+        // envelope — not NormalizedMessage). The email-adapter handler that
+        // runs inside this wrap will mint a proper traceId after normalization
+        // and override the context with a second runWithContext call. The wrap
+        // here satisfies the arch test's shrink-only requirement that every
+        // `for (const handler of handlers)` dispatch site runs inside runWithContext.
+        const preTraceId = randomUUID();
+        void runWithContext(
+          { traceId: preTraceId, startedAt: systemNowMs(), channelType: "email", tenantId: "default", trustLevel: "admin" },
+          () => {
+            for (const handler of handlers) {
+              handler(source, uid, envelope);
+            }
+          },
+        );
       }
     } catch (e) {
       opts.logger.warn(
