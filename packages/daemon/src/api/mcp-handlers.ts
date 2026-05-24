@@ -52,11 +52,6 @@ import {
 // from `@comis/core` (packages/core/src/exports/config.ts:188), so a
 // direct named import is the correct path here (no deep-path subpath).
 import type { McpServerEntry } from "@comis/core";
-import { persistToConfig } from "./shared/persist-to-config.js";
-import {
-  buildConfigAuditBase,
-  appendConfigAuditWithOutcome,
-} from "../config/audit-hook.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -76,155 +71,18 @@ export type { McpHandlerDeps };
 // `@comis/daemon` barrel.
 export { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
 import { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
-// Phase 64 RELY-07/08: diff + 500ms debounce + singleton all extracted (Phase 63 precedent).
-import { getCoalescer, computeMcpDiff } from "./mcp-config-mutated-coalescer.js";
 // Phase 67 CR-01: persisted-entry construction extracted (single source of
 // truth for the config-only field set; see mcp-persisted-entry.ts docblock).
 import { buildPersistedMcpEntry } from "./mcp-persisted-entry.js";
 
-// ---------------------------------------------------------------------------
-// Phase 47-02: persistMcpServers helper
-// ---------------------------------------------------------------------------
-
-/**
- * D-04 outcome shape — the persistMcpServers result spliced into
- * McpConnect/McpDisconnect responses.
- */
-interface PersistMcpResult {
-  persistence: "persisted" | "runtime_only" | "skipped";
-  warning?: string;
-}
-
-/**
- * Phase 47: Persist the full integrations.mcp.servers array to config.yaml
- * + emit one config-audit JSONL record. Idempotent — re-calling with the
- * same actionType/entityId produces multiple JSONL records but converges
- * the YAML to the desired state.
- *
- * Mirrors the channels.enable persist call (channel-handlers.ts:232-248)
- * with three deviations:
- *   1. Full-array patch (deepMerge replaces arrays; caller computes it).
- *   2. Direct appendConfigAuditWithOutcome call after persistToConfig
- *      because persistToConfig's audit:event has no JSONL subscriber
- *      (RESEARCH.md §"R8 Audit JSONL Field-Name Verification").
- *   3. Returns D-04 outcome for the caller to splice into the response.
- *
- * @param deps - Mcp handler deps slice (must contain persistDeps for the
- *   persist path to fire; otherwise short-circuits to "skipped").
- * @param servers - The FULL new integrations.mcp.servers array. Caller is
- *   responsible for the read-current + filter-by-name + append/remove
- *   computation (deepMerge replaces arrays wholesale).
- * @param actionType - "mcp.connect" or "mcp.disconnect". Becomes the
- *   JSONL record's callerSource and the persistToConfig actionType.
- * @param entityId - The server_name; surfaced in audit:event provenance.
- * @param ctx - Internal _context bag with optional userId + traceId.
- */
-async function persistMcpServers(
-  deps: McpHandlerDeps,
-  servers: McpServerEntry[],
-  actionType: "mcp.connect" | "mcp.disconnect",
-  entityId: string,
-  ctx: { userId?: string; traceId?: string } | undefined,
-): Promise<PersistMcpResult> {
-  if (!deps.persistDeps) {
-    return { persistence: "skipped" };
-  }
-
-  // Local config path: LAST entry of configPaths if non-empty, else LAST
-  // of defaultConfigPaths. Mirrors persist-to-config's own resolution.
-  const localPath = deps.persistDeps.configPaths.length > 0
-    ? deps.persistDeps.configPaths[deps.persistDeps.configPaths.length - 1]!
-    : deps.persistDeps.defaultConfigPaths[deps.persistDeps.defaultConfigPaths.length - 1]!;
-
-  // PHASE 1: capture pre-write state (previousHash, stat snapshot).
-  const auditBase = buildConfigAuditBase(localPath, actionType);
-
-  // PHASE 2: write.
-  const persistResult = await persistToConfig(deps.persistDeps, {
-    patch: { integrations: { mcp: { servers } } },
-    skipRestart: true,
-    actionType,
-    entityId,
-    ...(ctx?.userId !== undefined && { actingUser: ctx.userId }),
-    ...(ctx?.traceId !== undefined && { traceId: ctx.traceId }),
-  });
-
-  // PHASE 3: finalize audit JSONL + return outcome.
-  if (persistResult.ok) {
-    appendConfigAuditWithOutcome(auditBase, { kind: "rename" }, deps.persistDeps.logger);
-
-    // D-07/D-08/PERSIST-08: in-memory atomic swap. Disk write succeeded; refresh
-    // `container.config.integrations` so concurrent readers (obs_query, mcp.list,
-    // dashboards) see the new entry without a restart. Per D-08, clone the FULL
-    // integrations subtree (NOT just .mcp.servers) so mid-update readers observe
-    // the pre- OR post-state, never a partial array. Optional-chain on
-    // `deps.container?.config` (test fixtures omit container). structuredClone is
-    // a Node 22 built-in.
-    if (deps.container?.config) {
-      // Treat the subtree as a mutable record shape — IntegrationsConfigSchema
-      // applies its strict-object defaults at config-load time, so by the
-      // time this code runs in production `integrations.mcp` is always
-      // present. Tests that pass through this path provide at least
-      // `{ integrations: { mcp: { servers } } }`. We use a record shape
-      // (not the IntegrationsConfig type) so the structuredClone result is
-      // freely reassignable through the same key paths.
-      type MutableIntegrations = Record<string, Record<string, unknown>>;
-      const integrationsIn = deps.container.config.integrations as
-        | MutableIntegrations
-        | undefined;
-      // WR-05: integrations missing in-memory still needs a swap value, but the
-      // data-loss case (disk-state braveSearch/media/autoReply dropped from the
-      // in-memory view until reload) gets an observable log line. In production
-      // IntegrationsConfigSchema defaults guarantee `integrations` is present, so
-      // this branch only fires in partial-load failures or test fixtures.
-      if (integrationsIn === undefined) {
-        deps.persistDeps.logger.warn(
-          {
-            method: actionType,
-            entityId,
-            hint:
-              "container.config.integrations was undefined at the in-memory swap " +
-              "site — any sibling subkeys (braveSearch, media, autoReply) " +
-              "from disk are NOT visible in-memory until the next reload",
-            errorKind: "config" as const,
-          },
-          "MCP persist swap: integrations subtree was undefined in-memory",
-        );
-      }
-      // Phase 64 RELY-08: diff BEFORE swap; trailing-edge 500ms emit AFTER swap.
-      const prev = (integrationsIn?.mcp?.servers as McpServerEntry[] | undefined) ?? [];
-      const { added, removed } = computeMcpDiff(prev, servers);
-      const cloned = structuredClone((integrationsIn ?? {}) as MutableIntegrations);
-      if (!cloned.mcp) cloned.mcp = {};
-      cloned.mcp.servers = servers;
-      // Atomic single-property write. Readers reach `.integrations` via a
-      // single property access on `container.config`; this assignment is
-      // a single write, so JS's single-threaded execution model guarantees
-      // observers see pre-OR-post, never partial.
-      (deps.container.config as { integrations: unknown }).integrations = cloned;
-      if (deps.eventBus) getCoalescer(deps.eventBus, deps.persistDeps.logger).schedule(added, removed);
-    }
-
-    return { persistence: "persisted" };
-  } else {
-    appendConfigAuditWithOutcome(
-      auditBase,
-      { kind: "failed", message: persistResult.error },
-      deps.persistDeps.logger,
-    );
-    deps.persistDeps.logger.warn(
-      {
-        method: actionType,
-        entityId,
-        err: persistResult.error,
-        hint: "MCP server runtime-mutated but config.yaml write failed",
-        errorKind: "config" as const,
-      },
-      "MCP config persistence failed",
-    );
-    return { persistence: "runtime_only", warning: persistResult.error };
-  }
-}
+// Phase 68 BUNDLE-01: persistMcpServers helper extracted to a sibling module
+// so Phase 68 Plan 04 (bundle-install) and Plan 05 (boot-orchestrator) can
+// import it WITHOUT pushing mcp-handlers.ts past the 800-line cap. The
+// helper is the single sanctioned writer to integrations.mcp.servers; see
+// shared/persist-mcp-servers.ts for the full docblock. Behavior unchanged
+// — the only structural delta is a widened actionType union (the two new
+// "skills.bundle.*" literals reserved for Plans 04/05).
+import { persistMcpServers } from "./shared/persist-mcp-servers.js";
 
 // ---------------------------------------------------------------------------
 // Factory

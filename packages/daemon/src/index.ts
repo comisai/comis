@@ -66,6 +66,11 @@ export type { McpOauthHandlerDeps } from "./api/mcp-oauth-handlers.js";
 // import via @comis/daemon, alongside the daemon-side mcp.connect
 // integration tests in packages/daemon/src/api/mcp-handlers.test.ts).
 export { looksLikePlaintextSecret } from "./api/mcp-handlers.js";
+// Phase 68 BUNDLE-01: extracted single-writer for integrations.mcp.servers.
+// Consumers: Phase 68 Plan 04 (bundle-install helper) + Plan 05 (boot-path
+// orchestrator). Both reach the helper through this barrel re-export so
+// neither plan needs a direct daemon-internal import.
+export { persistMcpServers, type PersistMcpResult } from "./api/shared/persist-mcp-servers.js";
 export {
   _resetSigusr1Timer,
   _resetMutationFence,

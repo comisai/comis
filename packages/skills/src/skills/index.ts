@@ -34,6 +34,15 @@
 export { createSkillRegistry } from "./registry/skill-registry/index.js";
 export type { SkillRegistry, SkillWatcherHandle } from "./registry/skill-registry/index.js";
 
+// Manifest schema + parser (Phase 68 BUNDLE-01)
+// SkillManifestSchema lives at `./manifest/schema.ts:137-164` and parseSkillManifest at
+// `./manifest/parser.ts:80-95`. Re-exported here so daemon-side consumers
+// (Plan 04 bundle-install helper, Plan 05 boot-path orchestrator) can read
+// freshly-written SKILL.md content + validate the optional mcpServers block
+// WITHOUT reaching into `@comis/skills/src/skills/manifest/...` deep-paths.
+export { SkillManifestSchema, type SkillManifestParsed } from "./manifest/schema.js";
+export { parseSkillManifest } from "./manifest/parser.js";
+
 // Eligibility
 export { createRuntimeEligibilityContext } from "./registry/eligibility.js";
 
