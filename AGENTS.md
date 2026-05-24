@@ -135,6 +135,18 @@ Eight allowlist arrays live in `test/support/architecture-allowlist.ts` and are 
 
 Not supported. Per the project's no-BC policy, never add migration code, default-to-old-behavior fallbacks, alias re-exports, deprecated-parameter shims, or `@deprecated` JSDoc — `no-backward-compat.test.ts` keeps them out. Intentional behavior breaks are released in the changelog, not absorbed by a shim. When a rename or signature change is needed, change the call sites in the same diff.
 
+### 2.10 Test-Driven Development (Red → Green → Refactor)
+
+Every behavior change in production source (`packages/*/src/**`) starts with a failing test. Bug fixes get a regression test that fails on the current codebase; new features get a contract test that pins the new behavior. The test is written, runs RED, and then the production patch flips it to GREEN — in that order, never the reverse.
+
+- **Scope.** Applies to fixes and feature work. Pure docs, comments, formatting, and build-tooling-only changes (CI YAML, tsconfig, `.vscode`) are exempt because they have nothing to assert against. When in doubt, the change needs a test.
+- **Commit ordering.** Prefer landing the RED commit first (test-only, failing on current `main`) and the GREEN commit second (the production patch). Combining RED + GREEN into one commit is acceptable when the test would not compile against the pre-patch code, when the bug is too narrow to surface from a separate commit, or when shipping a security patch — the rationale belongs in the commit message either way.
+- **What the test must prove.** A test that passes both before and after the patch proves nothing — it must demonstrably FAIL on the pre-patch code. If a reviewer cannot reproduce the RED state by checking out the test commit alone, the test does not satisfy this rule.
+- **Refactor (optional third step).** After GREEN, simplify if the patch leaves duplication or awkward seams. Refactor commits keep all tests green; if behavior shifts, that is a new fix or feature and the cycle restarts.
+- **Pure refactor PRs.** A refactor that does not change behavior preserves the existing tests as the green signal. New tests are not required, but no existing test may be deleted or weakened to make a refactor pass.
+
+Architecture and lint rules (see §2.8) are enforced by their own tests — that is the same Red → Green loop applied to the protocol itself.
+
 ## 3) Naming Contract
 
 | Kind | Convention | Example |
@@ -160,7 +172,7 @@ When uncertain, classify higher.
 
 1. **Read before write** — inspect existing port interfaces, adapter patterns, and adjacent tests before editing.
 2. **Define scope** — one concern per change; no mixed feature+refactor+infra patches.
-3. **Test-first** — write the failing test before the code (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. Red → green → refactor.
+3. **Test-first (TDD)** — per §2.10, write the failing test before the production patch (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. RED must be reproducible on the pre-patch code; the patch is the GREEN step.
 4. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
 5. **Validate** — `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`) must all pass.
 6. **Document impact** — update comments/docs for behavior changes, risk, side effects.
@@ -248,6 +260,7 @@ If full validation is impractical, document what was run and what was skipped.
 - Use string interpolation in structured log calls — Pino object-first only.
 - Include personal identity or sensitive data in tests, examples, docs, or commits.
 - Add entries to architecture allowlists (`test/support/architecture-allowlist.ts`) — they are shrink-only. Closing a violation requires deleting the entry, not adding a new one.
+- Land a fix or feature commit without a test that demonstrably failed on the pre-patch code (see §2.10). "I tested it locally" is not a substitute for an automated RED → GREEN cycle.
 
 ## 9) Conventions
 
