@@ -42,6 +42,7 @@ import {
   THREAD_PROPAGATION_KEYS,
   type ExecutionPipelineDeps,
 } from "./execution-pipeline.js";
+import { tryGetContext, runWithContext, systemNowMs } from "@comis/core";
 import { TELEGRAM_THREAD_META_KEYS } from "@comis/channels";
 
 // ---------------------------------------------------------------------------
@@ -1701,6 +1702,67 @@ describe("executeAndDeliver", () => {
       expect(capturedPacerConfig).toBeDefined();
       expect(capturedPacerConfig!.externalSignal).toBeDefined();
       expect(capturedPacerConfig!.externalSignal!.aborted).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // TRACE-01: policy-retry path runWithContext must reuse ingress traceId
+  // -------------------------------------------------------------------
+  describe("TRACE-01 — policy-retry runWithContext reuses ingress traceId", () => {
+    it("policy-deny path: executor sees ingress traceId, not a fresh mint (TRACE-01)", async () => {
+      // The policy-deny path in executeAndDeliver (line ~291 in execution-pipeline.ts)
+      // calls runWithContext with traceId: randomUUID() — the second mint site (G1).
+      // After Plan 01-04, it must reuse tryGetContext()?.traceId from the outer scope.
+      const ingressTraceId = "550e8400-e29b-41d4-a716-446655440003";
+
+      let capturedTraceId: string | undefined;
+      const executor = makeExecutor({
+        execute: vi.fn(async () => {
+          capturedTraceId = tryGetContext()?.traceId;
+          return {
+            response: "agent-response",
+            sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
+            tokensUsed: { input: 10, output: 5, total: 15 },
+            cost: { total: 0 },
+            stepsExecuted: 0,
+            llmCalls: 1,
+            finishReason: "stop" as const,
+          };
+        }),
+      });
+
+      const deps = makeDeps({
+        sendPolicyConfig: {
+          enabled: true,
+          defaultAction: "deny",
+          rules: [],
+        },
+      });
+
+      // Simulate the outer ingress context from channel-manager / echo-adapter wrap
+      await runWithContext(
+        {
+          traceId: ingressTraceId,
+          startedAt: systemNowMs(),
+          channelType: "echo",
+        },
+        () =>
+          executeAndDeliver(
+            deps,
+            makeAdapter(),
+            makeMessage(),
+            makeMessage(),
+            executor,
+            makeSessionKey(),
+            "agent-1",
+            makeBlockStreamCfg(),
+            new Set(),
+            makeSendOverrides(),
+          ),
+      );
+
+      // TRACE-01: policy-retry path must inherit the ingress traceId
+      expect(capturedTraceId, "policy-deny executor should see ingress traceId, not a fresh mint").toBe(ingressTraceId);
     });
   });
 });
