@@ -124,10 +124,15 @@ export async function callTool(
     );
   }
 
-  // Serialize through per-server concurrency queue
+  // Serialize through per-server concurrency queue.
+  // WR-05: by this point getOrReconnect has returned a connected conn, so the
+  // common "never connected" framing of the old message was misleading on the
+  // lazy-reconnect path (the caller DID go through connect). A missing queue
+  // here means the queue was torn down concurrently (e.g. a racing
+  // disconnect/eviction) or PQueue setup failed during (re)connect — say so.
   const queue = state.callQueues.get(serverName);
   if (!queue) {
-    return err(new Error(`MCP server "${serverName}" has no call queue (not connected via connect())`));
+    return err(new Error(`MCP server "${serverName}" has no call queue — connection torn down or setup failed during (re)connect; retry`));
   }
 
   // Resolve per-server breaker overrides (?? preserves 0 → falls through to global).

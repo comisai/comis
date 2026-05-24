@@ -257,6 +257,39 @@ describe("idle eviction — startIdleTicker / evict (OPUX-09)", () => {
     expect(state.connections.get("drift")).toBeUndefined();
   });
 
+  it("WR-05: does not evict while a tool call is in-flight on the server's queue", async () => {
+    // Race guard: the idle timer fires exactly while a callTool is still
+    // running on the per-server PQueue. An in-flight call IS activity — the
+    // connection must survive (eviction would race the in-flight call and
+    // surface a misleading error). Once the call drains, eviction resumes.
+    const state = makeState();
+    wireConnected(state, "inflight", { idleTtlMs: 60_000 });
+    const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+
+    startIdleTicker(state, deps, state.serverConfigs.get("inflight")!);
+
+    // Enqueue a long-running task that stays pending past the TTL deadline.
+    const queue = state.callQueues.get("inflight")!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    void queue.add(async () => { await gate; });
+    // Let the task start running so queue.pending becomes 1.
+    await Promise.resolve();
+    expect(queue.pending).toBe(1);
+
+    // Timer fires at the TTL deadline while the call is in-flight: must NOT evict.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(state.connections.get("inflight")).toBeDefined();
+    expect(state.idleEvictionTimers.has("inflight")).toBe(true);
+
+    // Drain the in-flight call; with no further activity the next full window
+    // elapses and the server evicts.
+    release();
+    await queue.onIdle();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(state.connections.get("inflight")).toBeUndefined();
+  });
+
   it("stopIdleTicker clears the handle and lastActivity entry", () => {
     const state = makeState();
     wireConnected(state, "zeta", { idleTtlMs: 60_000 });

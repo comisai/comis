@@ -110,6 +110,18 @@ function scheduleNextEviction(
     }
     const idleFor = systemNowMs() - lastActivity;
     if (idleFor >= originalTtl) {
+      // WR-05: never tear down a connection with an outstanding tool call.
+      // The success path resets lastActivityMs, but a call that is in-flight
+      // (or queued) when the timer fires has not reached that reset yet — an
+      // in-flight callTool IS activity. Treat a non-empty call queue as a
+      // deferral signal and reschedule a fresh full window rather than
+      // evicting mid-flight (which would race callTool's queue.add /
+      // generation-capture and surface a misleading error to the caller).
+      const queue = state.callQueues.get(name);
+      if (queue && (queue.pending > 0 || queue.size > 0)) {
+        scheduleNextEviction(state, deps, name, originalTtl);
+        return;
+      }
       void evictIdleServer(state, deps, name);
       return;
     }
