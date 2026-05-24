@@ -26,11 +26,14 @@
  * @module
  */
 
-import { readFileSync } from "node:fs";
-import type { McpServerEntry } from "@comis/core";
+import { readFileSync, mkdirSync } from "node:fs";
+import { isAbsolute, resolve as pathResolve } from "node:path";
+import { safePath, SkillsConfigSchema } from "@comis/core";
+import type { AppContainer, McpServerEntry, PerAgentConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { parseSkillManifest } from "@comis/skills";
+import { parseSkillManifest, createSkillRegistry } from "@comis/skills";
 import type { SkillRegistry } from "@comis/skills";
+import { resolveWorkspaceDir } from "@comis/core";
 import { persistMcpServers } from "../api/shared/persist-mcp-servers.js";
 import { resolveBundle } from "../skills/bundle-mcp-resolver.js";
 import type { WorkspaceApiDeps } from "../api/types.js";
@@ -267,4 +270,98 @@ function deepEqualServers(
 ): boolean {
   if (a.length !== b.length) return false;
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// ---------------------------------------------------------------------------
+// Discovery-only pre-pass — invoked by daemon.ts BEFORE setupMcp
+// ---------------------------------------------------------------------------
+
+/**
+ * Sequencing-gate helper (68-P-NEW-4 mitigation).
+ *
+ * Builds a thin Map<agentId, SkillRegistry> for the boot-path bundle
+ * orchestrator BEFORE `setupAgents` runs. Each registry is constructed with
+ * the same `createSkillRegistry` factory the production per-agent setup
+ * uses, but with NO eligibility context and NO logger overrides — the
+ * orchestrator only consumes `getAllMetadata()` (filePath + name), which
+ * doesn't depend on either.
+ *
+ * The discovery pass mirrors `setup-agents-runtime.ts` lines 318-340:
+ *   - Per-agent `effectiveConfig.skills` (falls back to schema default)
+ *   - Per-agent workspace `<agentWorkspace>/skills` prepended to
+ *     discoveryPaths (first-loaded-wins)
+ *   - Relative discoveryPaths resolved against `container.config.dataDir`
+ *
+ * The registries returned here are DISCARDED after `setupSkillBundles` runs.
+ * The real per-agent registries (with eligibility + watcher) are built later
+ * inside `setupAgents`; the discovery is idempotent so the two passes don't
+ * race or leak state.
+ *
+ * @param container Daemon container (config.agents + config.dataDir consumed).
+ * @param logger Logger forwarded into createSkillRegistry (filtered to the
+ *   SkillsLogger interface internally).
+ * @returns Map<agentId, SkillRegistry> with `getAllMetadata()` populated.
+ */
+export function buildSkillRegistriesForBundles(
+  container: AppContainer,
+  logger: ComisLogger,
+): ReadonlyMap<string, SkillRegistry> {
+  const registries = new Map<string, SkillRegistry>();
+  const dataDir =
+    container.config.dataDir && container.config.dataDir.length > 0
+      ? container.config.dataDir
+      : ".";
+  const agents = container.config.agents as Record<string, PerAgentConfig>;
+
+  for (const [agentId, agentConfig] of Object.entries(agents)) {
+    const effectiveConfig = agentConfig;
+    const skillsConfig = effectiveConfig.skills ?? SkillsConfigSchema.parse({});
+
+    // Mirror setup-agents-runtime.ts lines 324-339: agent workspace skills
+    // dir prepended; relative discoveryPaths resolved against dataDir.
+    let agentDir: string;
+    try {
+      agentDir = resolveWorkspaceDir(effectiveConfig, agentId);
+    } catch (e) {
+      logger.warn(
+        {
+          agentId,
+          err: e instanceof Error ? e.message : String(e),
+          hint: "Boot bundle pre-pass: cannot resolve agent workspace; skipping this agent's bundle discovery on this boot.",
+          errorKind: "config" as const,
+        },
+        "buildSkillRegistriesForBundles: workspace resolution failed",
+      );
+      continue;
+    }
+    const agentSkillsDir = safePath(agentDir, "skills");
+    try {
+      mkdirSync(agentSkillsDir, { recursive: true });
+    } catch {
+      // Non-fatal — discovery will just produce zero skills for this path.
+    }
+    const resolvedPaths = skillsConfig.discoveryPaths.map((p: string) =>
+      isAbsolute(p) ? p : pathResolve(dataDir, p),
+    );
+    if (!resolvedPaths.includes(agentSkillsDir)) {
+      resolvedPaths.unshift(agentSkillsDir);
+    }
+    const resolvedSkillsConfig = { ...skillsConfig, discoveryPaths: resolvedPaths };
+
+    const registry = createSkillRegistry(
+      resolvedSkillsConfig,
+      container.eventBus,
+      { agentId, tenantId: container.config.tenantId, userId: "system" },
+      // No SkillsLogger forwarded — discovery prints to its own debug stream;
+      // the boot orchestrator surfaces operator-visible WARN logs itself.
+      undefined,
+      // No eligibility context — boot orchestrator does not care about the
+      // os/binary/env-var filter; it walks every discovered skill on disk.
+      undefined,
+    );
+    registry.init();
+    registries.set(agentId, registry);
+  }
+
+  return registries;
 }

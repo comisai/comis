@@ -132,6 +132,8 @@ import {
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
   setupMcp,
+  setupSkillBundles,
+  buildSkillRegistriesForBundles,
   setupOutputRetention,
   type SetupOutputRetentionHandle,
 } from "./wiring/index.js";
@@ -1602,6 +1604,35 @@ async function bootAgents(
     agentsConfig.default ??
     ({} as PerAgentConfig);
   const defaultWorkspaceDir = resolveWorkspaceDir(defaultAgentConfig, defaultAgentId);
+
+  // Phase 68 BUNDLE-03: boot-path skill-bundle re-merge MUST run BEFORE
+  // setupMcp (Pitfall 68-P-NEW-4 sequencing gate). The orchestrator
+  // re-runs the bundle resolver across every installed skill's mcpServers
+  // block and persists the merged array via persistMcpServers — which
+  // mutates container.config.integrations.mcp.servers via its in-memory
+  // swap. setupMcp on the next line then connects from the POST-merge
+  // state. Reversing the order leaves setupMcp connecting to the pre-merge
+  // list (a new bundle entry persists on disk but stays disconnected).
+  //
+  // Pre-pass: build thin discovery-only skill registries inline (the real
+  // per-agent registries with eligibility + watcher are built later inside
+  // setupAgents). createSkillRegistry is idempotent so the two passes
+  // don't race; the discovery-only registries are discarded after the
+  // orchestrator returns.
+  const skillRegistriesForBundles = buildSkillRegistriesForBundles(container, skillsLogger);
+  await setupSkillBundles({
+    container,
+    skillRegistries: skillRegistriesForBundles,
+    persistDeps: {
+      container,
+      configPaths: foundation.configPaths,
+      defaultConfigPaths: DEFAULT_CONFIG_PATHS,
+      configGitManager: foundation.configGitManager,
+      logger: skillsLogger,
+    },
+    eventBus: container.eventBus,
+    logger: skillsLogger,
+  });
 
   // Construct daemon-global MCP manager BEFORE setupAgents (ordering constraint
   // -- per-agent ToolCapabilityPort adapters close over mcpClientManager).
