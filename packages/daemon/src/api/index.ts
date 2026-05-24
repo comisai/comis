@@ -17,6 +17,7 @@ export { createModelHandlers, type ModelHandlerDeps } from "./model-handlers.js"
 export { createChannelHandlers, type ChannelHandlerDeps } from "./channel-handlers.js";
 export { createTokenHandlers, createTokenRegistry, type TokenHandlerDeps, type TokenRegistry } from "./token-handlers.js";
 export { createMcpHandlers, type McpHandlerDeps } from "./mcp-handlers.js";
+export { createMcpOauthHandlers, type McpOauthHandlerDeps } from "./mcp-oauth-handlers.js";
 export { createWorkspaceHandlers, type WorkspaceHandlerDeps } from "./workspace-handlers.js";
 export { createContextHandlers, type ContextHandlerDeps } from "./context-handlers.js";
 export { createDaemonHandlers, type DaemonHandlerDeps } from "./daemon-handlers.js";

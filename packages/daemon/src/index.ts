@@ -53,6 +53,9 @@ export type { AgentHandlerDeps } from "./api/agent-handlers.js";
 // docs at packages/daemon/src/api/shared/persist-to-config.ts:12-43).
 export { createMcpHandlers } from "./api/mcp-handlers.js";
 export type { McpHandlerDeps } from "./api/mcp-handlers.js";
+// Phase 66 OAUTH-10: mcp.oauth_login / mcp.oauth_logout RPC handlers.
+export { createMcpOauthHandlers } from "./api/mcp-oauth-handlers.js";
+export type { McpOauthHandlerDeps } from "./api/mcp-oauth-handlers.js";
 // Phase 63 SAFETY-09: re-exported so the architecture-tier negative +
 // positive control table at
 // test/architecture/mcp-plaintext-secret-false-positives.test.ts can pin
