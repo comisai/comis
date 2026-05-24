@@ -680,3 +680,110 @@ describe("createTrajectoryRecorder -- traceId resolution", () => {
     expect(lines[0].traceId).toBe(fixedTrace);
   });
 });
+
+describe("BOUND-01 trajectory payload bounding sentinels", () => {
+  // These tests assert the trajectory-specific sentinel shape produced by
+  // limitTrajectoryPayloadValue — which must convert the shared
+  // __bounded__ sentinel (from sanitizeForPersistence) into the
+  // trajectory { truncated: true, reason: "trajectory-*", ... } shape
+  // demanded by BOUND-01 acceptance criteria.
+  //
+  // On pre-patch code (no wrapper), the recorder emits __bounded__ records,
+  // so all four assertions on `truncated` / `reason` / `originalChars` /
+  // `limitChars` will FAIL — confirming RED state.
+
+  it("5MB string field is recorded as trajectory-field-size-limit sentinel", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-bound01-str",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+
+    const fiveMB = "A".repeat(5 * 1024 * 1024);
+    recorder!.recordEvent("session.started", { x: fiveMB });
+    await recorder!.flush();
+
+    const lines = readLines(recorder!.filePath) as Array<{
+      data: { x: Record<string, unknown> };
+    }>;
+    expect(lines).toHaveLength(1);
+    const sentinel = lines[0].data.x;
+    expect(sentinel.truncated).toBe(true);
+    expect(sentinel.reason).toBe("trajectory-field-size-limit");
+    expect(sentinel.originalChars).toBe(5 * 1024 * 1024);
+    expect(sentinel.limitChars).toBe(32768);
+  });
+
+  it("circular object is recorded as trajectory-circular-reference sentinel", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-bound01-circ",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+
+    const c: Record<string, unknown> = { sibling: "ok" };
+    c.self = c;
+    recorder!.recordEvent("session.started", { c });
+    await recorder!.flush();
+
+    const lines = readLines(recorder!.filePath) as Array<{
+      data: { c: Record<string, unknown> };
+    }>;
+    expect(lines).toHaveLength(1);
+    const sentinel = lines[0].data.c;
+    // The sibling field on the parent object is unaffected; only `self`
+    // (the cyclic key) gets replaced by the sentinel. sanitizeForPersistence
+    // collapses the whole parent if it detects the cycle at parent level.
+    // Either the parent itself is the sentinel, or `data.c.self` carries it.
+    // We verify the trajectory-circular-reference reason appears somewhere.
+    const json = JSON.stringify(lines[0].data);
+    expect(json).toContain("trajectory-circular-reference");
+    expect(json).not.toContain("bounded-payload-cycle-detected");
+  });
+
+  it("over-length array is recorded as trajectory-array-length-limit sentinel", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-bound01-arr",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+
+    const arr = new Array(100).fill(0);
+    recorder!.recordEvent("session.started", { arr });
+    await recorder!.flush();
+
+    const lines = readLines(recorder!.filePath) as Array<{
+      data: { arr: Record<string, unknown> };
+    }>;
+    expect(lines).toHaveLength(1);
+    const sentinel = lines[0].data.arr;
+    expect(sentinel.truncated).toBe(true);
+    expect(sentinel.reason).toBe("trajectory-array-length-limit");
+    expect(sentinel.originalItems).toBe(100);
+    expect(sentinel.limitItems).toBe(64);
+  });
+
+  it("small in-bounds payload is recorded unchanged (no truncated key)", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-bound01-noop",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+
+    recorder!.recordEvent("session.started", { ok: "hello", n: 3 });
+    await recorder!.flush();
+
+    const lines = readLines(recorder!.filePath) as Array<{
+      data: Record<string, unknown>;
+    }>;
+    expect(lines).toHaveLength(1);
+    expect(lines[0].data).toEqual({ ok: "hello", n: 3 });
+    // Ensure no spurious truncation sentinel anywhere.
+    const json = JSON.stringify(lines[0].data);
+    expect(json).not.toContain("truncated");
+  });
+});

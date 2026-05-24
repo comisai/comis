@@ -22,7 +22,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 
 ## Phases
 
-- [ ] **Phase 1: Trace Propagation & Lifecycle Envelopes** — Every inbound carries a traceId from ingress; every turn has metadata/artifacts/truncated envelopes
+- [x] **Phase 1: Trace Propagation & Lifecycle Envelopes** — Every inbound carries a traceId from ingress; every turn has metadata/artifacts/truncated envelopes (completed 2026-05-24)
 - [ ] **Phase 2: Bridge Expansion & Payload Bounding** — Trajectory mapping grows from 18 to ~45 events with defense-in-depth bounds and writer LRU
 - [ ] **Phase 3: Boot Invariants, INFO Promotion & Dedup Detector** — Today's bug visible at boot AND at first message AND at queue layer
 - [ ] **Phase 4: Session DAG & Bundle Exporter** — Parent-linked session entries enable one-command bundle export with manifest + redaction-safe contents
@@ -54,7 +54,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 - [x] 01-03-PLAN.md — Remaining adapter wraps (WhatsApp + Signal + LINE + iMessage + IRC + Email + Echo) + orchestrator channel-manager second-wrap site
 - [x] 01-04-PLAN.md — Reuse ingress traceId at execution-execute.ts:159 + execution-pipeline.ts:292 (close G1) + end-to-end integration test
 - [x] 01-05-PLAN.md — Lifecycle envelopes: buildTraceMetadata + buildTraceArtifacts modules + emit sites in pi-event-bridge and comis-session-manager
-- [ ] 01-06-PLAN.md — emitTraceTruncated public hook + refactor flushAndClose to share codepath (LIFE-03)
+- [x] 01-06-PLAN.md — emitTraceTruncated public hook + refactor flushAndClose to share codepath (LIFE-03)
 
 ### Phase 2: Bridge Expansion & Payload Bounding
 
@@ -183,7 +183,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Trace Propagation & Lifecycle Envelopes | 4/6 | In Progress|  |
+| 1. Trace Propagation & Lifecycle Envelopes | 6/6 | Complete   | 2026-05-24 |
 | 2. Bridge Expansion & Payload Bounding | 0/0 | Not started | - |
 | 3. Boot Invariants, INFO Promotion & Dedup Detector | 0/0 | Not started | - |
 | 4. Session DAG & Bundle Exporter | 0/0 | Not started | - |

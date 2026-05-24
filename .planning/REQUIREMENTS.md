@@ -28,7 +28,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
   - Design: D4 *(files: `packages/observability/src/trajectory/metadata.ts` NEW, `packages/agent/src/executor/...`)*
 - [x] **LIFE-02**: Every well-formed trajectory emits exactly one `trace.artifacts` event before `session.ended`, carrying finalStatus/abort/timeout flags, token usage, prompt-cache hit rate, compaction count, lastToolError
   - Design: D4 *(files: `packages/observability/src/trajectory/artifacts.ts` NEW, `packages/agent/src/executor/...`)*
-- [ ] **LIFE-03**: When the trajectory runtime file fills, the last event written is `trace.truncated` with non-zero `droppedEvents`/`droppedEventBytes`/`limitBytes`
+- [x] **LIFE-03**: When the trajectory runtime file fills, the last event written is `trace.truncated` with non-zero `droppedEvents`/`droppedEventBytes`/`limitBytes`
   - Design: D4 / D7 *(files: `packages/observability/src/trajectory/runtime.ts`)*
 
 ### Bus Bridge Expansion
@@ -234,7 +234,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | TRACE-03 | Phase 1 | Complete |
 | LIFE-01 | Phase 1 | Complete |
 | LIFE-02 | Phase 1 | Complete |
-| LIFE-03 | Phase 1 | Pending |
+| LIFE-03 | Phase 1 | Complete |
 | BRIDGE-01 | Phase 2 | Pending |
 | BRIDGE-02 | Phase 2 | Pending |
 | BRIDGE-03 | Phase 2 | Pending |
