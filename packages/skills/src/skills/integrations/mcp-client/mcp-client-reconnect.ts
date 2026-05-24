@@ -217,8 +217,11 @@ async function reconnectionLoop(
       // Increment generation counter
       state.generations.set(serverName, (state.generations.get(serverName) ?? 0) + 1);
 
-      // Create new transport and client
-      const transport = createTransport(config);
+      // Create new transport and client (logger threaded for Phase 63
+      // SAFETY-08 prlimit-skip WARN; reconnect re-spawns the child each
+      // attempt so the same WARN-once gate in mcp-client-discover.ts applies
+      // across all reconnect attempts in the same daemon process).
+      const transport = createTransport(config, logger);
       // Wire stderr capture for stdio re-spawns
       wireStderrCapture(deps, config, transport);
       const client = createClient(state, deps, serverName);

@@ -99,6 +99,21 @@ export interface McpServerConfig {
    * back to the 24h default at the call site.
    */
   readonly osvCacheTtlMs?: number;
+  /**
+   * Phase 63 SAFETY-08: per-server stdio rlimits override. Copied from the
+   * persisted `McpServerEntrySchema.rlimits` (Plan 01 schema field) by the
+   * daemon RPC handler. Applied via `prlimit(1)` wrap on Linux when set;
+   * partial overrides accepted (`{ cpu: 600 }` emits only `--cpu=600`).
+   * When unset → NO prlimit wrap (existing env-only wrap retained). On
+   * macOS dev (prlimit absent) → WARN once per daemon process + skip. Only
+   * applies to the stdio transport. See mcp-client-discover.ts:wrapStdioCommand
+   * and RESEARCH.md §"Pattern 3" + REQUIREMENTS.md SAFETY-08.
+   */
+  readonly rlimits?: {
+    readonly as?: number;
+    readonly nofile?: number;
+    readonly cpu?: number;
+  };
 }
 
 /** Connection status for an MCP server. */
