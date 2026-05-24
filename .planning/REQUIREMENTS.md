@@ -33,13 +33,13 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Bus Bridge Expansion
 
-- [ ] **BRIDGE-01**: Bridge maps `queue:enqueued/dequeued/overflow/coalesced` to `queue.{enqueued,dequeued,overflow,coalesced}` — closes G2 for the queue layer (would have caught today's bug in one query)
+- [x] **BRIDGE-01**: Bridge maps `queue:enqueued/dequeued/overflow/coalesced` to `queue.{enqueued,dequeued,overflow,coalesced}` — closes G2 for the queue layer (would have caught today's bug in one query)
   - Design: D6 *(file: `packages/observability/src/trajectory/event-bus-bridge.ts:47`)*
 - [ ] **BRIDGE-02**: Bridge maps `retry:attempted/exhausted/markdown_fallback` to `delivery.{retry,retry_exhausted,markdown_fallback}`
   - Design: D6
-- [ ] **BRIDGE-03**: Bridge maps `execution:{aborted,budget_warning,prompt_timeout,output_escalated,signed_replay_recovered}` to corresponding `execution.*` types
+- [x] **BRIDGE-03**: Bridge maps `execution:{aborted,budget_warning,prompt_timeout,output_escalated,signed_replay_recovered}` to corresponding `execution.*` types
   - Design: D6
-- [ ] **BRIDGE-04**: Bridge maps `security:{injection_detected,memory_tainted,warn}` and `sender:blocked` to `security.*` and `sender.blocked`
+- [x] **BRIDGE-04**: Bridge maps `security:{injection_detected,memory_tainted,warn}` and `sender:blocked` to `security.*` and `sender.blocked`
   - Design: D6
 - [ ] **BRIDGE-05**: Bridge maps `mcp:server:{disconnected,reconnecting,reconnect_failed,reconnected,tools_changed}` to `mcp.*` types
   - Design: D6
@@ -235,10 +235,10 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | LIFE-01 | Phase 1 | Complete |
 | LIFE-02 | Phase 1 | Complete |
 | LIFE-03 | Phase 1 | Complete |
-| BRIDGE-01 | Phase 2 | Pending |
+| BRIDGE-01 | Phase 2 | Complete |
 | BRIDGE-02 | Phase 2 | Pending |
-| BRIDGE-03 | Phase 2 | Pending |
-| BRIDGE-04 | Phase 2 | Pending |
+| BRIDGE-03 | Phase 2 | Complete |
+| BRIDGE-04 | Phase 2 | Complete |
 | BRIDGE-05 | Phase 2 | Pending |
 | BRIDGE-06 | Phase 2 | Pending |
 | BRIDGE-07 | Phase 2 | Pending |
