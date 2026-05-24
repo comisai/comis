@@ -13,6 +13,7 @@
 
 import type { Result } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { SystemIntervalHandle, SystemTimeoutHandle, TypedEventBus } from "@comis/core";
 import type PQueue from "p-queue";
 
@@ -171,6 +172,16 @@ export interface McpServerConfig {
     readonly scope?: string;
     readonly stripeAccount?: string;
   };
+  /**
+   * Phase 66 OAUTH-11 (66d): RUNTIME-ONLY OAuthClientProvider adapter. Constructed
+   * in connectServer from the token store keyed by `name` and threaded onto the
+   * runtime config so the PURE `createTransport` helper can attach it to the
+   * sse/http transport when `auth === "oauth"`. NOT persisted — deliberately
+   * absent from `buildPersistedMcpEntry` (it is a live object graph holding the
+   * token store + deduper, not serializable config). Undefined ⇒ no authProvider
+   * attached (the SDK runs without OAuth, surfacing needs_oauth_login on a 401).
+   */
+  readonly oauthProvider?: OAuthClientProvider;
 }
 
 /** Connection status for an MCP server. */

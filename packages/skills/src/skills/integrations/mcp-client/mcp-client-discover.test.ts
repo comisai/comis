@@ -25,15 +25,18 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import {
   scrubStdioEnv,
   MCP_STDIO_BUILTIN_ENV_ALLOWLIST,
   wrapStdioCommand,
+  createTransport,
   getPrlimitAvailable,
   __resetPrlimitWarnForTests,
   __resetPrlimitProbeForTests,
   refreshPrlimitAvailable,
 } from "./mcp-client-discover.js";
+import type { McpServerConfig } from "./mcp-client-types.js";
 
 // ---------------------------------------------------------------------------
 // Env-mutation harness
@@ -398,5 +401,108 @@ describe("WR-02 — lazy probe + refreshPrlimitAvailable", () => {
     refreshPrlimitAvailable();
     wrapStdioCommand("node", ["x.js"], { cpu: 600 }, logger, "srv-3");
     expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 66 Plan 06 (OAUTH-11 / 66d) — createTransport authProvider attach.
+//
+// The OAuthClientProvider adapter is attached to the sse + http transports
+// when (and only when) config.auth === "oauth" AND a config.oauthProvider is
+// present. The Phase 63 SAFETY-07 requestInit + redirect-policy fetch wiring
+// MUST be preserved in BOTH the attached and unattached cases (no regression).
+//
+// The SDK transports store the provider on the private `_authProvider` field
+// and the fetch/requestInit on `_fetch` / `_requestInit` — we assert on those
+// via a typed cast (the transports expose no public getter; the private field
+// is the stable observation point, mirroring how the SDK itself reads them).
+// ---------------------------------------------------------------------------
+
+/** A structurally-minimal OAuthClientProvider stand-in for attach assertions. */
+const FAKE_OAUTH_PROVIDER = {
+  get redirectUrl() {
+    return undefined;
+  },
+  get clientMetadata() {
+    return { redirect_uris: [] };
+  },
+  clientInformation: () => undefined,
+  tokens: () => undefined,
+  saveTokens: () => {},
+  redirectToAuthorization: () => {},
+  saveCodeVerifier: () => {},
+  codeVerifier: () => "",
+} as unknown as OAuthClientProvider;
+
+interface TransportInternals {
+  _authProvider?: unknown;
+  _fetch?: unknown;
+  _requestInit?: unknown;
+}
+
+function baseHttpConfig(overrides: Partial<McpServerConfig>): McpServerConfig {
+  return {
+    name: "remote-oauth",
+    transport: "http",
+    url: "https://mcp.example.com/sse",
+    enabled: true,
+    ...overrides,
+  } as McpServerConfig;
+}
+
+describe("createTransport — authProvider attach (OAUTH-11 / 66d)", () => {
+  it("http branch attaches authProvider when auth:'oauth' + oauthProvider present", () => {
+    const transport = createTransport(
+      baseHttpConfig({ auth: "oauth", oauthProvider: FAKE_OAUTH_PROVIDER }),
+    );
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBe(FAKE_OAUTH_PROVIDER);
+    // No regression: the Phase 63 redirect-policy fetch is still wired.
+    expect(typeof internals._fetch).toBe("function");
+  });
+
+  it("http branch does NOT attach authProvider when auth is unset", () => {
+    const transport = createTransport(baseHttpConfig({}));
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBeUndefined();
+    expect(typeof internals._fetch).toBe("function");
+  });
+
+  it("http branch does NOT attach authProvider when auth:'none'", () => {
+    const transport = createTransport(
+      baseHttpConfig({ auth: "none", oauthProvider: FAKE_OAUTH_PROVIDER }),
+    );
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBeUndefined();
+  });
+
+  it("http branch preserves requestInit headers alongside an attached authProvider", () => {
+    const transport = createTransport(
+      baseHttpConfig({
+        auth: "oauth",
+        oauthProvider: FAKE_OAUTH_PROVIDER,
+        headers: { "x-custom": "v" },
+      }),
+    );
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBe(FAKE_OAUTH_PROVIDER);
+    expect(internals._requestInit).toEqual({ headers: { "x-custom": "v" } });
+    expect(typeof internals._fetch).toBe("function");
+  });
+
+  it("sse branch attaches authProvider when auth:'oauth' + oauthProvider present", () => {
+    const transport = createTransport(
+      baseHttpConfig({ transport: "sse", auth: "oauth", oauthProvider: FAKE_OAUTH_PROVIDER }),
+    );
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBe(FAKE_OAUTH_PROVIDER);
+    expect(typeof internals._fetch).toBe("function");
+  });
+
+  it("sse branch does NOT attach authProvider when auth is unset (fetch preserved)", () => {
+    const transport = createTransport(baseHttpConfig({ transport: "sse" }));
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBeUndefined();
+    expect(typeof internals._fetch).toBe("function");
   });
 });
