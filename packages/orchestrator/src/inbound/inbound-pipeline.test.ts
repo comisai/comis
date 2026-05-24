@@ -739,3 +739,95 @@ describe("general slash command interception", () => {
     expect(executorFn).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// DEDUP-02: dedup-detector wiring in inbound pipeline
+// ---------------------------------------------------------------------------
+
+import { createDedupDetector } from "./dedup-detector.js";
+
+describe("dedup-detector wiring in processInboundMessage", () => {
+  it("duplicate_messageId_emits_dedup:duplicate_inbound_with_correct_fields_and_source_pipeline", async () => {
+    const dedupDetector = createDedupDetector({ windowMs: 10_000, now: () => 1000 });
+    const deps = makeMinimalDeps({ dedupDetector });
+    const adapter = makeAdapterForTest();
+    const msg = makeMsg({ id: "dup-msg-1" });
+    const sendOverrides = { get: () => undefined, set: () => {}, delete: () => {} } as any;
+
+    // First call: registers the messageId
+    await processInboundMessage(deps, adapter, msg, new Set(), sendOverrides);
+
+    // Second call: triggers dedup detection
+    await processInboundMessage(deps, adapter, msg, new Set(), sendOverrides);
+
+    // Assert dedup:duplicate_inbound was emitted on the second call
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const dedupCall = emitCalls.find((c: unknown[]) => c[0] === "dedup:duplicate_inbound");
+    expect(dedupCall).toBeDefined();
+
+    const payload = dedupCall![1] as Record<string, unknown>;
+    expect(payload.messageId).toBe("dup-msg-1");
+    expect(payload.channelType).toBe("telegram");
+    expect(payload.chatId).toBe("chat-1");
+    expect(payload.source).toBe("pipeline");
+    expect(typeof payload.deltaMs).toBe("number");
+    expect(typeof payload.firstSeenAt).toBe("number");
+    expect(typeof payload.duplicateAt).toBe("number");
+  });
+
+  it("duplicate_messageId_logs_WARN_with_errorKind_internal_and_verbatim_hint", async () => {
+    const dedupDetector = createDedupDetector({ windowMs: 10_000, now: () => 1000 });
+    const deps = makeMinimalDeps({ dedupDetector });
+    const adapter = makeAdapterForTest();
+    const msg = makeMsg({ id: "dup-msg-2" });
+    const sendOverrides = { get: () => undefined, set: () => {}, delete: () => {} } as any;
+
+    await processInboundMessage(deps, adapter, msg, new Set(), sendOverrides);
+    await processInboundMessage(deps, adapter, msg, new Set(), sendOverrides);
+
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: "Same messageId processed twice; check channel adapter handler list and queue mode",
+        errorKind: "internal",
+        messageId: "dup-msg-2",
+        channelType: "telegram",
+        chatId: "chat-1",
+      }),
+      "Duplicate inbound message detected",
+    );
+  });
+
+  it("duplicate_messageId_does_NOT_suppress_processing_Phase1_still_reached", async () => {
+    const dedupDetector = createDedupDetector({ windowMs: 10_000, now: () => 1000 });
+    const deps = makeMinimalDeps({ dedupDetector });
+    const adapter = makeAdapterForTest();
+    const msg = makeMsg({ id: "dup-msg-3" });
+    const sendOverrides = { get: () => undefined, set: () => {}, delete: () => {} } as any;
+
+    await processInboundMessage(deps, adapter, msg, new Set(), sendOverrides);
+
+    const firstCallCount = (deps.createExecutor as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(firstCallCount).toBe(1);
+
+    await processInboundMessage(deps, adapter, msg, new Set(), sendOverrides);
+
+    // createExecutor called again — processing NOT suppressed on duplicate
+    const secondCallCount = (deps.createExecutor as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(secondCallCount).toBe(2);
+  });
+
+  it("no_dedupDetector_in_deps_skips_dedup_check_entirely_no_emit", async () => {
+    // Without dedupDetector, no dedup:duplicate_inbound should be emitted even on identical messageId
+    const deps = makeMinimalDeps(); // no dedupDetector
+    const adapter = makeAdapterForTest();
+    const msg = makeMsg({ id: "dup-msg-4" });
+    const sendOverrides = { get: () => undefined, set: () => {}, delete: () => {} } as any;
+
+    await processInboundMessage(deps, adapter, msg, new Set(), sendOverrides);
+    await processInboundMessage(deps, adapter, msg, new Set(), sendOverrides);
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const dedupCall = emitCalls.find((c: unknown[]) => c[0] === "dedup:duplicate_inbound");
+    expect(dedupCall).toBeUndefined();
+  });
+});

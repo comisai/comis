@@ -40,6 +40,7 @@ import { resolveAndPreprocess } from "./resolve-and-preprocess.js";
 import { evaluateInboundGate } from "./inbound-gate.js";
 import { setupAndRoute } from "./setup-and-route.js";
 import { systemNowMs } from "@comis/core";
+import type { DedupDetector } from "./dedup-detector.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -104,6 +105,10 @@ export interface InboundPipelineDeps {
   getEnforceFinalTag?: (agentId: string) => boolean | undefined;
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];
+  /** Optional duplicate-inbound detector (DEDUP-02). When present, the pipeline checks each
+   *  messageId before Phase 1 and emits dedup:duplicate_inbound + WARN on a duplicate within
+   *  the window. Does NOT suppress — processing continues. */
+  dedupDetector?: DedupDetector;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +173,35 @@ export async function processInboundMessage(
       timestamp: systemNowMs(),
     });
     return;
+  }
+
+  // DEDUP-02: detect duplicate messageId before any processing (do NOT suppress — log + continue per design §5 D12)
+  if (deps.dedupDetector) {
+    const dedupResult = deps.dedupDetector.check(msg.id);
+    if (dedupResult.isDuplicate) {
+      const duplicateAt = systemNowMs();
+      deps.eventBus.emit("dedup:duplicate_inbound", {
+        messageId: msg.id,
+        channelType: adapter.channelType,
+        chatId: msg.channelId,
+        firstSeenAt: dedupResult.firstSeenAt ?? duplicateAt,
+        duplicateAt,
+        deltaMs: dedupResult.deltaMs ?? 0,
+        source: "pipeline",
+      });
+      deps.logger.warn(
+        {
+          messageId: msg.id,
+          channelType: adapter.channelType,
+          chatId: msg.channelId,
+          deltaMs: dedupResult.deltaMs ?? 0,
+          hint: "Same messageId processed twice; check channel adapter handler list and queue mode",
+          errorKind: "internal" as const,
+        },
+        "Duplicate inbound message detected",
+      );
+      // intentionally NO return — processing continues
+    }
   }
 
   // Phase 1: Resolve agent + preprocess
