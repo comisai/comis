@@ -37,6 +37,7 @@ import { withClient, callTyped } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable } from "../output/table.js";
+import { registerMcpOauth } from "./mcp-oauth.js";
 
 /**
  * Resolve the gateway bearer token BEFORE `withClient` opens the socket.
@@ -414,4 +415,10 @@ export function registerMcpCommand(program: Command): void {
         process.exit(1);
       }
     });
+
+  // mcp login <name> / mcp logout <name> — Phase 66 OAUTH-10. Registered in a
+  // separate module so the daemon-never-imports-`open` boundary + the OAuth
+  // open-vs-hint branching live away from this file (which stays focused on the
+  // Phase 65 connection-management subcommands).
+  registerMcpOauth(mcp);
 }
