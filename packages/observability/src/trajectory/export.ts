@@ -162,6 +162,8 @@ export interface TrajectoryBundleManifest {
   readonly contents?: Array<{ path: string; mediaType: string; bytes: number }>;
   readonly supplementalFiles?: string[];
   readonly warnings?: TrajectoryBundleWarning[];
+  /** Redaction policy applied at bundle export time (Phase 5 D9 REDACT-03). */
+  readonly redaction?: { readonly policy: string };
 }
 
 // ---------------------------------------------------------------------------
