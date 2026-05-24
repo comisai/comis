@@ -130,34 +130,81 @@ export function scrubStdioEnv(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 63 SAFETY-08: prlimit availability probe (module-init, cached)
+// Phase 63 SAFETY-08: prlimit availability probe (lazy + cached, WR-02)
 // ---------------------------------------------------------------------------
 
 /**
- * Whether `prlimit(1)` is on PATH at daemon startup. Cached at module load
- * to avoid spawnSync cost per connect. Linux util-linux ships it; macOS dev
- * does not. When false, wrapStdioCommand skips rlimit application with a
- * single WARN per daemon process. Per RESEARCH.md §"Pattern 3" + Pitfall 5.
+ * Whether `prlimit(1)` is on PATH. WR-02: probed LAZILY on first
+ * `wrapStdioCommand` invocation rather than at module-load time. The
+ * previous module-init probe (a) blocked module-load by up to the 1s
+ * spawnSync timeout on slow disks, and (b) was permanently false if
+ * the daemon started before `/usr/bin` was mounted (rare but happens
+ * on early-boot systemd units). The lazy approach defers the cost to
+ * the first MCP connect (negligible — connect is multi-second already)
+ * and lets a `prlimit` install that completes between daemon start and
+ * the first connect take effect.
+ *
+ * The probe is still cached on first call — subsequent connects see no
+ * spawnSync overhead. To force a re-probe (e.g., after an operator
+ * installs util-linux post-hoc), expose `refreshPrlimitAvailable()`
+ * below. Per RESEARCH.md §"Pattern 3" + Pitfall 5.
  */
-const PRLIMIT_AVAILABLE: boolean = (() => {
+let prlimitAvailableCache: boolean | null = null;
+
+function probePrlimitAvailable(): boolean {
   try {
     const result = spawnSync("prlimit", ["--version"], { encoding: "utf-8", timeout: 1000 });
     return result.status === 0;
   } catch {
     return false;
   }
-})();
+}
+
+function getPrlimitAvailableCached(): boolean {
+  if (prlimitAvailableCache === null) {
+    prlimitAvailableCache = probePrlimitAvailable();
+  }
+  return prlimitAvailableCache;
+}
 
 /** Guard ensuring the prlimit-unavailable WARN fires AT MOST ONCE per daemon process. */
 let prlimitWarnEmitted = false;
 
-/** Test seam: returns the module-init `PRLIMIT_AVAILABLE` probe result. */
+/**
+ * Test seam: returns the lazily-cached prlimit availability result.
+ * Triggers the probe on first call if not yet cached. Exported so the
+ * co-located test file (mcp-client-discover.test.ts) can gate branches
+ * on the runtime probe outcome.
+ *
+ * @internal — test-only test seam; not re-exported from the package
+ * barrel, but documented as `@internal` per WR-07 so a future
+ * contributor does not promote it to public-API status.
+ */
 export function getPrlimitAvailable(): boolean {
-  return PRLIMIT_AVAILABLE;
+  return getPrlimitAvailableCached();
+}
+
+/**
+ * Force a re-probe of `prlimit(1)` availability. Use after the
+ * operator installs util-linux post-hoc; the next `wrapStdioCommand`
+ * call will pick up the new state. Per WR-02.
+ */
+export function refreshPrlimitAvailable(): boolean {
+  prlimitAvailableCache = probePrlimitAvailable();
+  // Reset the WARN-once flag so a subsequent connect on a host where
+  // prlimit JUST disappeared can re-emit the WARN.
+  prlimitWarnEmitted = false;
+  return prlimitAvailableCache;
 }
 
 /** @internal test-only — resets the module-level WARN-once flag for deterministic tests. */
 export function __resetPrlimitWarnForTests(): void {
+  prlimitWarnEmitted = false;
+}
+
+/** @internal test-only — resets the lazy probe cache for deterministic tests. */
+export function __resetPrlimitProbeForTests(): void {
+  prlimitAvailableCache = null;
   prlimitWarnEmitted = false;
 }
 
@@ -209,14 +256,19 @@ export function wrapStdioCommand(
   }
 
   // Rlimits requested but prlimit unavailable (macOS dev): WARN once + degrade.
-  if (!PRLIMIT_AVAILABLE) {
+  // WR-02: read the LAZILY-cached probe result. The very first call to
+  // wrapStdioCommand triggers the probe; subsequent calls hit the cache.
+  // Operators who install util-linux post-hoc can force a re-probe via
+  // refreshPrlimitAvailable().
+  if (!getPrlimitAvailableCached()) {
     if (!prlimitWarnEmitted) {
       logger.warn(
         {
           serverName,
           hint:
             "prlimit(1) not on PATH; rlimits not applied (Linux util-linux required). " +
-            "Production target is Linux; macOS dev runs without rlimit defense-in-depth.",
+            "Production target is Linux; macOS dev runs without rlimit defense-in-depth. " +
+            "If util-linux was installed AFTER daemon start, call refreshPrlimitAvailable() to re-probe.",
           errorKind: "platform" as const,
         },
         "MCP rlimits skipped — prlimit unavailable",

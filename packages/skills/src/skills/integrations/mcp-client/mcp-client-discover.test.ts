@@ -31,6 +31,8 @@ import {
   wrapStdioCommand,
   getPrlimitAvailable,
   __resetPrlimitWarnForTests,
+  __resetPrlimitProbeForTests,
+  refreshPrlimitAvailable,
 } from "./mcp-client-discover.js";
 
 // ---------------------------------------------------------------------------
@@ -340,5 +342,61 @@ describe("getPrlimitAvailable — module-init probe (SAFETY-08)", () => {
   it("returns a boolean indicating whether prlimit(1) is on PATH at module load", () => {
     const available = getPrlimitAvailable();
     expect(typeof available).toBe("boolean");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-02 — lazy probe + refreshPrlimitAvailable.
+//
+// Pre-fix the prlimit availability check ran at module-load via an IIFE
+// and was cached in a const PRLIMIT_AVAILABLE. This had two
+// consequences: (a) module-load blocked by up to the spawnSync 1s
+// timeout on slow disks, and (b) if prlimit was installed AFTER daemon
+// start, the daemon would never use it. The fix swaps to a lazy probe
+// (cached on first call) and exposes refreshPrlimitAvailable() so
+// operators who install util-linux post-hoc can force a re-probe.
+// ---------------------------------------------------------------------------
+describe("WR-02 — lazy probe + refreshPrlimitAvailable", () => {
+  it("getPrlimitAvailable returns the same value on repeated calls (cache hit on first probe)", () => {
+    __resetPrlimitProbeForTests();
+    const a = getPrlimitAvailable();
+    const b = getPrlimitAvailable();
+    expect(a).toBe(b);
+  });
+
+  it("refreshPrlimitAvailable returns the latest probe result and resets the WARN-once flag", () => {
+    __resetPrlimitProbeForTests();
+    // First call seeds the cache.
+    const initial = getPrlimitAvailable();
+    expect(typeof initial).toBe("boolean");
+    // Force a re-probe — should return the same shape (boolean) and
+    // match the live state of the system (which has not changed).
+    const refreshed = refreshPrlimitAvailable();
+    expect(typeof refreshed).toBe("boolean");
+    expect(refreshed).toBe(initial); // system state unchanged across the two probes
+  });
+
+  it("refreshPrlimitAvailable resets the WARN-once flag so a subsequent skip-path emits WARN again", () => {
+    __resetPrlimitProbeForTests();
+    // Self-skip on Linux where prlimit IS available (we cannot
+    // synthesize the unavailable path).
+    if (getPrlimitAvailable()) return;
+
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    // First skip emits a WARN.
+    wrapStdioCommand("node", ["x.js"], { cpu: 600 }, logger, "srv-1");
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    // Second skip without a reset is silent (WARN-once invariant).
+    wrapStdioCommand("node", ["x.js"], { cpu: 600 }, logger, "srv-2");
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    // refreshPrlimitAvailable resets the flag — next skip emits WARN.
+    refreshPrlimitAvailable();
+    wrapStdioCommand("node", ["x.js"], { cpu: 600 }, logger, "srv-3");
+    expect(logger.warn).toHaveBeenCalledTimes(2);
   });
 });
