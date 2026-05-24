@@ -4396,6 +4396,30 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "rlimits": {
+          "type": "object",
+          "properties": {
+            "as": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "nofile": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cpu": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        "disablePlaintextSecretCheck": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -4860,6 +4884,30 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "rlimits": {
+          "type": "object",
+          "properties": {
+            "as": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "nofile": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cpu": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        "disablePlaintextSecretCheck": {
+          "type": "boolean"
         }
       },
       "required": [

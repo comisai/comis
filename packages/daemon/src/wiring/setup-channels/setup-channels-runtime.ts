@@ -214,7 +214,6 @@ export async function buildAndStartChannelManager(
       // back-edge import of @comis/orchestrator.
       processInboundMessage,
       createExecutor: (agentId: string) => executors.get(agentId) ?? executors.get(defaultAgentId),
-      adapters: Array.from(adaptersByType.values()),
       logger: channelsLogger,
       preprocessMessage: preprocessMessageCallback,
       audioPreflight: preflightFn,

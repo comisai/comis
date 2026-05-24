@@ -46,6 +46,17 @@ import {
   stripInternalFields,
   systemGetEnv,
 } from "@comis/core";
+// `McpServerEntry` — the Zod-inferred shape of a persisted MCP server
+// entry (integrations.mcp.servers[i]) — is the canonical type for the
+// persistMcpServers helper's new-array computation. Already re-exported
+// from `@comis/core` (packages/core/src/exports/config.ts:188), so a
+// direct named import is the correct path here (no deep-path subpath).
+import type { McpServerEntry } from "@comis/core";
+import { persistToConfig } from "./shared/persist-to-config.js";
+import {
+  buildConfigAuditBase,
+  appendConfigAuditWithOutcome,
+} from "../config/audit-hook.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -57,6 +68,160 @@ import type { RpcHandler } from "./types.js";
 // approval, skill, notification handlers).
 import type { WorkspaceApiDeps as McpHandlerDeps } from "./types.js";
 export type { McpHandlerDeps };
+
+// Phase 63 SAFETY-03/04/09: plaintext-secret heuristic. Extracted to
+// `./mcp-plaintext-secret.ts` (keeps this leaf under the 800-line cap).
+// Re-exported so the architecture-tier negative-control test
+// (`mcp-plaintext-secret-false-positives.test.ts`) reaches it via the
+// `@comis/daemon` barrel.
+export { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
+import { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
+
+// ---------------------------------------------------------------------------
+// Phase 47-02: persistMcpServers helper
+// ---------------------------------------------------------------------------
+
+/**
+ * D-04 outcome shape — the persistMcpServers result spliced into
+ * McpConnect/McpDisconnect responses.
+ */
+interface PersistMcpResult {
+  persistence: "persisted" | "runtime_only" | "skipped";
+  warning?: string;
+}
+
+/**
+ * Phase 47: Persist the full integrations.mcp.servers array to config.yaml
+ * + emit one config-audit JSONL record. Idempotent — re-calling with the
+ * same actionType/entityId produces multiple JSONL records but converges
+ * the YAML to the desired state.
+ *
+ * Mirrors the channels.enable persist call (channel-handlers.ts:232-248)
+ * with three deviations:
+ *   1. Full-array patch (deepMerge replaces arrays; caller computes it).
+ *   2. Direct appendConfigAuditWithOutcome call after persistToConfig
+ *      because persistToConfig's audit:event has no JSONL subscriber
+ *      (RESEARCH.md §"R8 Audit JSONL Field-Name Verification").
+ *   3. Returns D-04 outcome for the caller to splice into the response.
+ *
+ * @param deps - Mcp handler deps slice (must contain persistDeps for the
+ *   persist path to fire; otherwise short-circuits to "skipped").
+ * @param servers - The FULL new integrations.mcp.servers array. Caller is
+ *   responsible for the read-current + filter-by-name + append/remove
+ *   computation (deepMerge replaces arrays wholesale).
+ * @param actionType - "mcp.connect" or "mcp.disconnect". Becomes the
+ *   JSONL record's callerSource and the persistToConfig actionType.
+ * @param entityId - The server_name; surfaced in audit:event provenance.
+ * @param ctx - Internal _context bag with optional userId + traceId.
+ */
+async function persistMcpServers(
+  deps: McpHandlerDeps,
+  servers: McpServerEntry[],
+  actionType: "mcp.connect" | "mcp.disconnect",
+  entityId: string,
+  ctx: { userId?: string; traceId?: string } | undefined,
+): Promise<PersistMcpResult> {
+  if (!deps.persistDeps) {
+    return { persistence: "skipped" };
+  }
+
+  // Local config path: LAST entry of configPaths if non-empty, else LAST
+  // of defaultConfigPaths. Mirrors persist-to-config's own resolution.
+  const localPath = deps.persistDeps.configPaths.length > 0
+    ? deps.persistDeps.configPaths[deps.persistDeps.configPaths.length - 1]!
+    : deps.persistDeps.defaultConfigPaths[deps.persistDeps.defaultConfigPaths.length - 1]!;
+
+  // PHASE 1: capture pre-write state (previousHash, stat snapshot).
+  const auditBase = buildConfigAuditBase(localPath, actionType);
+
+  // PHASE 2: write.
+  const persistResult = await persistToConfig(deps.persistDeps, {
+    patch: { integrations: { mcp: { servers } } },
+    skipRestart: true,
+    actionType,
+    entityId,
+    ...(ctx?.userId !== undefined && { actingUser: ctx.userId }),
+    ...(ctx?.traceId !== undefined && { traceId: ctx.traceId }),
+  });
+
+  // PHASE 3: finalize audit JSONL + return outcome.
+  if (persistResult.ok) {
+    appendConfigAuditWithOutcome(auditBase, { kind: "rename" }, deps.persistDeps.logger);
+
+    // D-07/D-08/PERSIST-08: in-memory atomic swap. The disk write
+    // succeeded; now refresh `container.config.integrations` so concurrent
+    // readers (obs_query, mcp.list RPC, observability dashboards) see the
+    // new entry without waiting for a daemon restart. Per D-08, clone the
+    // FULL integrations subtree (NOT just .mcp.servers) so mid-update
+    // readers observe either the pre-state OR the post-state, never a
+    // partial array. Per RESEARCH.md Plan-time risk #7, optional-chain on
+    // `deps.container?.config` — existing test fixtures construct deps
+    // without a container field. Node 22 ships `structuredClone`
+    // built-in; no polyfill required.
+    if (deps.container?.config) {
+      // Treat the subtree as a mutable record shape — IntegrationsConfigSchema
+      // applies its strict-object defaults at config-load time, so by the
+      // time this code runs in production `integrations.mcp` is always
+      // present. Tests that pass through this path provide at least
+      // `{ integrations: { mcp: { servers } } }`. We use a record shape
+      // (not the IntegrationsConfig type) so the structuredClone result is
+      // freely reassignable through the same key paths.
+      type MutableIntegrations = Record<string, Record<string, unknown>>;
+      const integrationsIn = deps.container.config.integrations as
+        | MutableIntegrations
+        | undefined;
+      // WR-05: when integrations is missing in-memory we still need to
+      // build a swap value — but the data-loss case (any disk-state
+      // braveSearch/media/autoReply silently dropped from the in-memory
+      // view until next reload) deserves an observable log line so the
+      // operator notices the defense-in-depth path firing. In production
+      // IntegrationsConfigSchema's strict-object defaults guarantee
+      // `integrations` is present, so this branch only ever fires in
+      // partial-load failure modes or test fixtures that omit it.
+      if (integrationsIn === undefined) {
+        deps.persistDeps.logger.warn(
+          {
+            method: actionType,
+            entityId,
+            hint:
+              "container.config.integrations was undefined at the in-memory swap " +
+              "site — any sibling subkeys (braveSearch, media, autoReply) " +
+              "from disk are NOT visible in-memory until the next reload",
+            errorKind: "config" as const,
+          },
+          "MCP persist swap: integrations subtree was undefined in-memory",
+        );
+      }
+      const cloned = structuredClone((integrationsIn ?? {}) as MutableIntegrations);
+      if (!cloned.mcp) cloned.mcp = {};
+      cloned.mcp.servers = servers;
+      // Atomic single-property write. Readers reach `.integrations` via a
+      // single property access on `container.config`; this assignment is
+      // a single write, so JS's single-threaded execution model guarantees
+      // observers see pre-OR-post, never partial.
+      (deps.container.config as { integrations: unknown }).integrations = cloned;
+    }
+
+    return { persistence: "persisted" };
+  } else {
+    appendConfigAuditWithOutcome(
+      auditBase,
+      { kind: "failed", message: persistResult.error },
+      deps.persistDeps.logger,
+    );
+    deps.persistDeps.logger.warn(
+      {
+        method: actionType,
+        entityId,
+        err: persistResult.error,
+        hint: "MCP server runtime-mutated but config.yaml write failed",
+        errorKind: "config" as const,
+      },
+      "MCP config persistence failed",
+    );
+    return { persistence: "runtime_only", warning: persistResult.error };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -155,9 +320,73 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // never let internals flow into Zod parsing. The parsed `params` provides
       // the same field names with type-narrowing.
       const userParams = stripInternalFields(rawParams);
+
+      // Phase 63 SAFETY-03/04/09: plaintext-secret reject (pre-Zod).
+      // Mirrors the findUnresolvedEnvRefs pattern at lines below.
+      // Reads from userParams.env (raw, pre-parse). Per-server opt-out via
+      // userParams.disablePlaintextSecretCheck = true logs WARN and allows.
+      // Bracketed error code [plaintext_secret_in_env] is LLM-readable for
+      // self-correction; the hint routes the operator to secrets_manage +
+      // ${KEY} indirection.
+      const envBlock = userParams.env as Record<string, string> | undefined;
+      const plaintextOptOut = userParams.disablePlaintextSecretCheck === true;
+      if (envBlock && !plaintextOptOut) {
+        for (const [key, value] of Object.entries(envBlock)) {
+          if (typeof value !== "string") continue;
+          if (looksLikePlaintextSecret(value)) {
+            throw new Error(
+              `[plaintext_secret_in_env] env.${key} (server "${userParams.server_name as string}") ` +
+              `looks like a plaintext credential. ` +
+              `Hint: store it via secrets_manage and reference as "\${${key}}".`,
+            );
+          }
+        }
+      } else if (envBlock && plaintextOptOut) {
+        deps.logger.warn(
+          {
+            method: "mcp.connect",
+            entityId: userParams.server_name as string,
+            hint: "disablePlaintextSecretCheck=true — server bypasses plaintext-secret scan",
+            errorKind: "config" as const,
+          },
+          "MCP plaintext-secret check disabled per-server",
+        );
+      }
+
       const params = McpConnectContract.request.parse(userParams);
 
       const manager = deps.mcpClientManager;
+
+      // Phase 63 SAFETY-02 / SAFETY-06: copy operator-extension allowlist +
+      // OSV check toggles from the config root so they reach the spawn-time
+      // helpers (scrubStdioEnv + osvMalwareCheck) in @comis/skills. The
+      // optional chain mirrors the McpConnect persist site below — test
+      // fixtures construct deps without a `container`, in which case the
+      // built-in `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` is the only protection
+      // and the OSV check falls back to Plan 01's defaults (enabled: true,
+      // ttlMs: 24h) at the call site in mcp-client-connect.ts.
+      const mcpConfigRoot = deps.container?.config?.integrations?.mcp as
+        | {
+            safetyAllowedEnvKeys?: readonly string[];
+            osvCheckEnabled?: boolean;
+            osvCacheTtlMs?: number;
+          }
+        | undefined;
+
+      // Phase 63 SAFETY-08 + CR-03: per-server rlimits resolution.
+      // McpConnectContract.request now accepts an explicit `rlimits` field
+      // (CR-03 — pre-fix the only path was the persisted entry, which
+      // didn't exist on first connect and was never written by the
+      // handler, deadlocking SAFETY-08 for new servers). Resolution
+      // order:
+      //   1. caller-supplied `params.rlimits` (current connect's intent)
+      //   2. otherwise the previously-persisted entry's `rlimits`
+      //   3. otherwise undefined (existing env-only wrap — no prlimit)
+      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as Array<
+        { name: string; rlimits?: { as?: number; nofile?: number; cpu?: number } }
+      >;
+      const persistedEntry = persistedServers.find((s) => s.name === params.server_name);
+      const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
       const config: McpServerConfig = {
         name: params.server_name,
@@ -168,6 +397,10 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         env: params.env,
         headers: params.headers,
         enabled: true,
+        safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,
+        osvCheckEnabled: mcpConfigRoot?.osvCheckEnabled,
+        osvCacheTtlMs: mcpConfigRoot?.osvCacheTtlMs,
+        rlimits: resolvedRlimits,
       };
 
       // Reject connects that reference env vars not in the secrets store.
@@ -189,11 +422,64 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         throw new Error(`Failed to connect MCP server "${params.server_name}": ${result.error.message}`);
       }
 
+      // Phase 47 (R1, R6): compute the full new servers array.
+      // Read-current + filter-by-name + append. deepMerge replaces arrays
+      // wholesale, so we MUST pass the full array, not a partial. The
+      // optional chain on `deps.container` keeps existing test fixtures
+      // green — they construct deps without a container, in which case
+      // the in-memory baseline is treated as empty (and the subsequent
+      // persistMcpServers call short-circuits to "skipped" anyway when
+      // persistDeps is also absent).
+      const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
+      const newEntry: McpServerEntry = {
+        name: params.server_name,
+        transport: params.transport,
+        ...(params.command !== undefined && { command: params.command }),
+        ...(params.args !== undefined && { args: params.args }),
+        ...(params.url !== undefined && { url: params.url }),
+        // Phase 47 (R5): pass params.env (unresolved `${KEY}` references),
+        // NOT the resolved values used for spawn. deepMerge does not
+        // transform string values.
+        ...(params.env !== undefined && { env: params.env }),
+        ...(params.headers !== undefined && { headers: params.headers }),
+        // Phase 63 CR-03: persist rlimits onto the McpServerEntry so the
+        // SAFETY-08 protection survives a daemon restart AND so subsequent
+        // reconnects/connects can read it back. `resolvedRlimits` carries
+        // either the caller-supplied value or (when the caller omitted it)
+        // the prior persisted value — preserving the field across noop
+        // reconnects rather than dropping it.
+        ...(resolvedRlimits !== undefined && { rlimits: resolvedRlimits }),
+        // Phase 63 CR-04: persist disablePlaintextSecretCheck so the
+        // per-server opt-out survives a daemon restart. Pre-fix the
+        // handler honored the flag at runtime but dropped it from the
+        // YAML, so reload + symmetric reconnect could re-fire the guard.
+        ...(userParams.disablePlaintextSecretCheck === true && {
+          disablePlaintextSecretCheck: true as const,
+        }),
+        enabled: true,
+      };
+      const newServers: McpServerEntry[] = [
+        ...currentServers.filter((s) => s.name !== params.server_name),
+        newEntry,
+      ];
+
+      // Phase 47 (R1, R8, D-04): persist + audit JSONL + response-augment.
+      const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
+      const persistOutcome = await persistMcpServers(
+        deps,
+        newServers,
+        "mcp.connect",
+        params.server_name,
+        ctx,
+      );
+
       const response = {
         name: result.value.name,
         status: result.value.status,
         toolCount: result.value.tools.length,
         tools: result.value.tools.map((t) => t.name),
+        persistence: persistOutcome.persistence,
+        ...(persistOutcome.warning !== undefined && { warning: persistOutcome.warning }),
       };
       // Dev-mode response validation gate.
       if (systemGetEnv("NODE_ENV") !== "production") {
@@ -222,7 +508,32 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       }
 
       await manager.disconnect(name);
-      const result = { name, status: "disconnected" as const };
+
+      // Phase 47 (R2, R6): compute the filtered servers array.
+      // Removed entry is named; remaining entries preserved in pre-call
+      // order. Empty result array is intentional — the array slot remains
+      // so subsequent persists repopulate it without recreating the path.
+      // Optional-chain on `deps.container` parallels the McpConnect site
+      // and preserves existing test fixtures that omit container.
+      const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
+      const newServers: McpServerEntry[] = currentServers.filter((s) => s.name !== params.server_name);
+
+      // Phase 47 (R2, R8, D-04): persist + audit JSONL + response-augment.
+      const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
+      const persistOutcome = await persistMcpServers(
+        deps,
+        newServers,
+        "mcp.disconnect",
+        params.server_name,
+        ctx,
+      );
+
+      const result = {
+        name,
+        status: "disconnected" as const,
+        persistence: persistOutcome.persistence,
+        ...(persistOutcome.warning !== undefined && { warning: persistOutcome.warning }),
+      };
       // Dev-mode response validation gate. The success-only
       // `status: z.literal("disconnected")` shape is asserted here.
       if (systemGetEnv("NODE_ENV") !== "production") {
@@ -244,7 +555,67 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // Strip dispatcher-injected _X internals BEFORE contract parse —
       // never let internals flow into Zod parsing.
       const userParams = stripInternalFields(rawParams);
+
+      // Phase 63 CR-02: apply the same pre-spawn safety controls as
+      // mcp.connect. mcp.test IS a pre-spawn surface (it actually spawns
+      // the child to probe it) — Phase 63's hardening of only mcp.connect
+      // left this method as a bypass: an admin (or any code path that
+      // landed at this RPC) could pass a raw `ghp_...` PAT in env or
+      // spawn `npx <malicious-pkg>` and Phase 63's guards would not fire.
+      // Mirror the mcp.connect plaintext-secret guard here. Read from
+      // userParams (raw, pre-parse). Per-server opt-out via
+      // userParams.disablePlaintextSecretCheck = true logs WARN and
+      // allows. Bracketed error code is LLM-readable for self-correction.
+      const envBlock = userParams.env as Record<string, string> | undefined;
+      const plaintextOptOut = userParams.disablePlaintextSecretCheck === true;
+      if (envBlock && !plaintextOptOut) {
+        for (const [key, value] of Object.entries(envBlock)) {
+          if (typeof value !== "string") continue;
+          if (looksLikePlaintextSecret(value)) {
+            throw new Error(
+              `[plaintext_secret_in_env] env.${key} (test for "${userParams.name as string}") ` +
+                `looks like a plaintext credential. ` +
+                `Hint: store it via secrets_manage and reference as "\${${key}}".`,
+            );
+          }
+        }
+      } else if (envBlock && plaintextOptOut) {
+        deps.logger.warn(
+          {
+            method: "mcp.test",
+            entityId: userParams.name as string,
+            hint: "disablePlaintextSecretCheck=true — server bypasses plaintext-secret scan",
+            errorKind: "config" as const,
+          },
+          "MCP plaintext-secret check disabled per-server",
+        );
+      }
+
       const params = McpTestContract.request.parse(userParams);
+
+      // Phase 63 CR-02: plumb operator-extension allowlist + OSV toggles +
+      // persisted rlimits from the config root, same as mcp.connect. The
+      // optional chain mirrors mcp.connect — test fixtures construct deps
+      // without a `container`, in which case the built-in allowlist is
+      // the only protection and OSV/rlimits fall back to defaults.
+      const mcpConfigRoot = deps.container?.config?.integrations?.mcp as
+        | {
+            safetyAllowedEnvKeys?: readonly string[];
+            osvCheckEnabled?: boolean;
+            osvCacheTtlMs?: number;
+          }
+        | undefined;
+
+      // Phase 63 CR-02: rlimits resolution — caller-supplied wins,
+      // otherwise read the persisted entry by the user-supplied `name`
+      // (NOT the internally-namespaced `__test__<name>` — the persisted
+      // entry uses the operator-visible identifier). The handler reads
+      // params.rlimits OR persistedEntry.rlimits OR undefined (no wrap).
+      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as Array<
+        { name: string; rlimits?: { as?: number; nofile?: number; cpu?: number } }
+      >;
+      const persistedEntry = persistedServers.find((s) => s.name === params.name);
+      const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
       const config: McpServerConfig = {
         name: `__test__${params.name}`,
@@ -255,7 +626,25 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         env: params.env,
         headers: params.headers,
         enabled: true,
+        // Phase 63 CR-02 — plumb the same protections as mcp.connect.
+        safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,
+        osvCheckEnabled: mcpConfigRoot?.osvCheckEnabled,
+        osvCacheTtlMs: mcpConfigRoot?.osvCacheTtlMs,
+        rlimits: resolvedRlimits,
       };
+
+      // Phase 63 CR-02: pre-spawn env-ref validation. Mirrors the
+      // mcp.connect site — reject when any env value references a key
+      // not present in the secrets store. Skipped only when secretManager
+      // is unwired (test setups).
+      if (config.env && deps.secretManager) {
+        const sm = deps.secretManager;
+        const unresolved = findUnresolvedEnvRefs(config.env, (key) => sm.get(key));
+        if (unresolved.length > 0) {
+          const missingNames = unresolved.map((u) => u.varName);
+          throw new Error(formatMissingEnvRefError(params.name, missingNames));
+        }
+      }
 
       // Create a temporary manager with short timeout for test
       const tempManager = createMcpClientManager({
@@ -311,13 +700,45 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const nameRaw = rawParams.server_name as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
 
+      const manager = deps.mcpClientManager;
+
+      // Phase 47 (D-02 / R7 SPEC numbering): override-rejection guard.
+      // mcp_manage(reconnect) MUST NOT accept transport/command/args/url/
+      // headers/env when the server has stored runtime config — the contract
+      // is "reconnect re-uses the stored config; to change params, disconnect
+      // then connect". Per RESEARCH.md §"D-02 Error-Key Convention Verification",
+      // throw a raw Error (NOT throwToolError — that lives in @comis/skills,
+      // not @comis/daemon — cross-package boundary) with the bracketed
+      // error-code prefix so the LLM can self-correct.
+      //
+      // Stored-config existence is signalled by manager.getConnection(name)
+      // returning a McpConnection: the client manager stores config and
+      // connection together at connect time (mcp-client-connect.ts:108) and
+      // deletes them together at disconnect time (mcp-client-connect.ts:219),
+      // so the live-connection presence is a sound proxy for "has stored
+      // config". (The plan text used `storedConn?.config != null`, but
+      // McpConnection has no `.config` field — that check is replaced here
+      // with the connection-presence test, preserving the same semantics.)
+      const hasOverride =
+        rawParams.transport !== undefined ||
+        rawParams.command !== undefined ||
+        rawParams.args !== undefined ||
+        rawParams.url !== undefined ||
+        rawParams.headers !== undefined ||
+        rawParams.env !== undefined;
+      const hasStoredConfig = manager.getConnection(nameRaw) !== undefined;
+      if (hasOverride && hasStoredConfig) {
+        throw new Error(
+          "[reconnect_with_overrides_not_allowed] Cannot override transport/command/args/url/headers/env on reconnect when stored config exists. " +
+          "Hint: To change MCP server parameters, disconnect then connect with the new params.",
+        );
+      }
+
       // Strip dispatcher-injected _X internals BEFORE contract parse —
       // never let internals flow into Zod parsing.
       const userParams = stripInternalFields(rawParams);
       const params = McpReconnectContract.request.parse(userParams);
       const name = params.server_name;
-
-      const manager = deps.mcpClientManager;
 
       // Use manager's reconnect (preserves generation counter, uses stored config)
       const result = await manager.reconnect(name);

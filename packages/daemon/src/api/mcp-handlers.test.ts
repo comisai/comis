@@ -4,10 +4,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMcpHandlers } from "./mcp-handlers.js";
-import type { McpClientManager, McpConnection, McpToolDefinition } from "@comis/skills";
-import type { ComisLogger } from "@comis/infra";
-import { createSecretManager } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -33,6 +29,29 @@ vi.mock("@comis/skills", async (importOriginal) => {
     createMcpClientManager: mockCreateMcpClientManager,
   };
 });
+
+// Phase 47-02: mock the persistence + audit-log helpers so unit tests don't
+// hit the real filesystem. Existing tests don't inject persistDeps so they
+// never reach these mocks; the new mcp.connect/disconnect persistence tests
+// below assert directly on the mocked call args.
+vi.mock("./shared/persist-to-config.js", () => ({
+  persistToConfig: vi.fn().mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } }),
+}));
+vi.mock("../config/audit-hook.js", () => ({
+  buildConfigAuditBase: vi.fn().mockReturnValue({ /* opaque audit base stub */ }),
+  appendConfigAuditWithOutcome: vi.fn(),
+}));
+
+import { createMcpHandlers, looksLikePlaintextSecret } from "./mcp-handlers.js";
+import { persistToConfig } from "./shared/persist-to-config.js";
+import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "../config/audit-hook.js";
+import type { McpClientManager, McpConnection, McpToolDefinition } from "@comis/skills";
+import type { ComisLogger } from "@comis/infra";
+import { createSecretManager } from "@comis/core";
+
+const mockPersistToConfig = vi.mocked(persistToConfig);
+const mockBuildConfigAuditBase = vi.mocked(buildConfigAuditBase);
+const mockAppendConfigAuditWithOutcome = vi.mocked(appendConfigAuditWithOutcome);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -265,6 +284,225 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // Phase 63 SAFETY-03/04/09 — plaintext-secret pre-Zod guard on mcp.connect.
+  //
+  // The guard runs IMMEDIATELY AFTER stripInternalFields and BEFORE
+  // McpConnectContract.request.parse. It scans userParams.env values for
+  // (a) known credential prefixes (ghp_, sk-, AKIA, etc.) OR (b) the
+  // entropy backstop (Shannon entropy > 3.5 AND length >= 44). The
+  // per-server `disablePlaintextSecretCheck: true` opt-out from Plan 01's
+  // McpServerEntrySchema is the last-resort escape hatch — WARN-and-allow.
+  //
+  // Length floor 44 (NOT 40) per RESEARCH.md §"Pitfall 6": eliminates the
+  // OpenAI 40-char org-ID false positive without losing any real-token
+  // rejection.
+  // -------------------------------------------------------------------------
+  describe("mcp.connect plaintext-secret guard (Phase 63 SAFETY-03/04/09)", () => {
+    it("rejects ghp_ GitHub PAT prefix with [plaintext_secret_in_env] naming the variable", async () => {
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "gh",
+          transport: "stdio",
+          command: "npx",
+          env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_env\] env\.GITHUB_TOKEN/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    it("rejects sk- OpenAI API key prefix with [plaintext_secret_in_env] naming the variable", async () => {
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "oa",
+          transport: "stdio",
+          command: "npx",
+          env: { OPENAI_API_KEY: "sk-aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdef" },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_env\] env\.OPENAI_API_KEY/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    it("rejects xoxb- Slack bot token prefix with [plaintext_secret_in_env]", async () => {
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "slack",
+          transport: "stdio",
+          command: "npx",
+          env: { SLACK_TOKEN: "xoxb-abcdef1234567890abcdef1234567890" },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_env\]/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    it("rejects AWS AKIA access-key prefix with [plaintext_secret_in_env]", async () => {
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "aws",
+          transport: "stdio",
+          command: "npx",
+          env: { AWS_KEY: "AKIAIOSFODNN7EXAMPLE" },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_env\]/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    it("PASSES Notion DB UUID (36 chars, entropy <3.99, no prefix) — false-positive negative control", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("notion", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await handlers["mcp.connect"]({
+        server_name: "notion",
+        transport: "stdio",
+        command: "npx",
+        env: { NOTION_DB: "8f3b2c1a-9d4e-7f60-b5e2-c8d1a4f7b9c3" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    it("PASSES Stripe customer ID cus_* (length ~17, no sk_ prefix) — false-positive negative control", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("stripe", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await handlers["mcp.connect"]({
+        server_name: "stripe",
+        transport: "stdio",
+        command: "npx",
+        env: { STRIPE_CUST: "cus_NffrFeUfNV2Hib" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    it("PASSES OpenAI org ID org-* (28 chars, length < 44) — false-positive negative control", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("oa-org", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await handlers["mcp.connect"]({
+        server_name: "oa-org",
+        transport: "stdio",
+        command: "npx",
+        env: { OPENAI_ORG: "org-ScmHEqZDkG8eYLJBVxpOTEh1" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    it("PASSES PATH value at length 44 with entropy ~3.31 (below entropy floor)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("pathy", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await handlers["mcp.connect"]({
+        server_name: "pathy",
+        transport: "stdio",
+        command: "npx",
+        env: { PATH_VALUE: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    it("REJECTS high-entropy 44-char random string (entropy backstop catches generic high-entropy keys)", async () => {
+      // 44-character pseudo-random base64-ish string with no known prefix.
+      // Shannon entropy of this string is well above the 3.5 floor.
+      const HIGH_ENTROPY_44_CHAR = "Z9aB3xK7mP2qLr5tEvF8nGwHsJ4uVbCdYxRzNoPqW1Aa";
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "random",
+          transport: "stdio",
+          command: "npx",
+          env: { LONG_RANDOM: HIGH_ENTROPY_44_CHAR },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_env\] env\.LONG_RANDOM/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    it("ALLOWS connect when disablePlaintextSecretCheck:true even with ghp_ prefix; logs WARN with errorKind:config", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("gh-optout", [])));
+      const logger = makeLogger();
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger });
+      await handlers["mcp.connect"]({
+        server_name: "gh-optout",
+        transport: "stdio",
+        command: "npx",
+        env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
+        // Per-server opt-out from McpServerEntrySchema (Plan 01).
+        disablePlaintextSecretCheck: true,
+      } as any);
+      expect(manager.connect).toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: "mcp.connect",
+          entityId: "gh-optout",
+          errorKind: "config",
+        }),
+        expect.stringContaining("plaintext-secret check disabled"),
+      );
+    });
+
+    it("PASSES unresolved env-ref placeholder ${KEY} (handled separately by findUnresolvedEnvRefs)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("envref", [])));
+      const sm = createSecretManager({ GH_TOKEN: "ghp_resolved-value-here-not-a-secret-shape" });
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+      });
+      await handlers["mcp.connect"]({
+        server_name: "envref",
+        transport: "stdio",
+        command: "npx",
+        env: { RESOLVED_REF: "${GH_TOKEN}" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 63 SAFETY-03/09 — looksLikePlaintextSecret pure-function unit tests.
+  //
+  // Direct pure-function coverage so the heuristic shape (prefix list +
+  // entropy >3.5 AND length >=44 backstop) is pinned independent of the
+  // RPC handler integration. Architecture-tier negative-control test
+  // (test/architecture/mcp-plaintext-secret-false-positives.test.ts) is
+  // Task 2's deliverable; this block is the daemon-resident smoke check.
+  // -------------------------------------------------------------------------
+  describe("looksLikePlaintextSecret pure-function heuristic (Phase 63 SAFETY-03/09)", () => {
+    it("returns true for ghp_ GitHub PAT prefix", () => {
+      expect(looksLikePlaintextSecret("ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789")).toBe(true);
+    });
+
+    it("returns true for sk- OpenAI key prefix", () => {
+      expect(looksLikePlaintextSecret("sk-aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdef")).toBe(true);
+    });
+
+    it("returns true for AWS AKIA prefix (short 20-char prefix-only rejection)", () => {
+      expect(looksLikePlaintextSecret("AKIAIOSFODNN7EXAMPLE")).toBe(true);
+    });
+
+    it("returns true for entropy backstop (length 44, entropy >3.5, no known prefix)", () => {
+      expect(looksLikePlaintextSecret("Z9aB3xK7mP2qLr5tEvF8nGwHsJ4uVbCdYxRzNoPqW1Aa")).toBe(true);
+    });
+
+    it("returns false for Notion DB UUID 36-char (no prefix, length < 44)", () => {
+      expect(looksLikePlaintextSecret("8f3b2c1a-9d4e-7f60-b5e2-c8d1a4f7b9c3")).toBe(false);
+    });
+
+    it("returns false for OpenAI org ID 28-char (no prefix, length < 44)", () => {
+      expect(looksLikePlaintextSecret("org-ScmHEqZDkG8eYLJBVxpOTEh1")).toBe(false);
+    });
+
+    it("returns false for Stripe customer ID cus_* (no sk_ prefix)", () => {
+      expect(looksLikePlaintextSecret("cus_NffrFeUfNV2Hib")).toBe(false);
+    });
+
+    it("returns false for unresolved env-ref placeholder ${KEY}", () => {
+      expect(looksLikePlaintextSecret("${GITHUB_TOKEN}")).toBe(false);
+    });
+
+    it("returns false for empty string", () => {
+      expect(looksLikePlaintextSecret("")).toBe(false);
+    });
+  });
+
   describe("mcp.disconnect", () => {
     it("disconnects an existing server", async () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("ctx7"));
@@ -440,6 +678,213 @@ describe("MCP RPC Handlers", () => {
         }),
       );
     });
+
+    // -------------------------------------------------------------------------
+    // Phase 63 CR-02 — mcp.test must apply the same pre-spawn safety controls
+    // as mcp.connect. Pre-fix the handler built McpServerConfig and called
+    // tempManager.connect(config) WITHOUT:
+    //   - plaintext-secret guard (raw tokens could be passed in env and
+    //     would reach the child process)
+    //   - findUnresolvedEnvRefs validation (test would fail at spawn-time
+    //     instead of producing the structured pre-spawn error)
+    //   - safetyAllowedEnvKeys plumb-through (operator-extension keys
+    //     are dropped for the test connect)
+    //   - osvCheckEnabled / osvCacheTtlMs plumb-through (test connects
+    //     used hard-coded defaults, ignoring operator overrides)
+    //   - rlimits plumb-through (test spawns had no resource caps)
+    //
+    // mcp.test IS a pre-spawn surface (it actually spawns the child to
+    // probe it). Phase 63 hardened only mcp.connect — an attacker could
+    // simply call mcp.test instead. The fix mirrors every guard from
+    // mcp.connect onto mcp.test.
+    // -------------------------------------------------------------------------
+    describe("mcp.test Phase 63 safety parity (CR-02)", () => {
+      it("rejects ghp_ plaintext secret with [plaintext_secret_in_env] same as mcp.connect", async () => {
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+        });
+        await expect(
+          handlers["mcp.test"]({
+            name: "gh-test",
+            transport: "stdio",
+            command: "npx",
+            env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
+          }),
+        ).rejects.toThrow(/\[plaintext_secret_in_env\] env\.GITHUB_TOKEN/);
+        expect(mockTempConnect).not.toHaveBeenCalled();
+      });
+
+      it("rejects sk- plaintext secret with [plaintext_secret_in_env] same as mcp.connect", async () => {
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+        });
+        await expect(
+          handlers["mcp.test"]({
+            name: "oa-test",
+            transport: "stdio",
+            command: "npx",
+            env: { OPENAI_API_KEY: "sk-aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdef" },
+          }),
+        ).rejects.toThrow(/\[plaintext_secret_in_env\] env\.OPENAI_API_KEY/);
+        expect(mockTempConnect).not.toHaveBeenCalled();
+      });
+
+      it("ALLOWS plaintext secret when disablePlaintextSecretCheck:true and logs WARN", async () => {
+        mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__optout", [])));
+        const logger = makeLogger();
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger,
+        });
+        await handlers["mcp.test"]({
+          name: "optout",
+          transport: "stdio",
+          command: "npx",
+          env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
+          disablePlaintextSecretCheck: true,
+        } as any);
+        expect(mockTempConnect).toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            method: "mcp.test",
+            errorKind: "config",
+          }),
+          expect.stringContaining("plaintext-secret check disabled"),
+        );
+      });
+
+      it("rejects unresolved ${VAR} env reference with [invalid_value] same as mcp.connect", async () => {
+        const sm = createSecretManager({}); // FOO absent
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+          secretManager: sm,
+        });
+        await expect(
+          handlers["mcp.test"]({
+            name: "missing-env-test",
+            transport: "stdio",
+            command: "npx",
+            args: ["pkg"],
+            env: { FOO: "${MISSING_VAR}" },
+          }),
+        ).rejects.toThrow(/\[invalid_value\].*MCP server "missing-env-test" references env var MISSING_VAR/);
+        expect(mockTempConnect).not.toHaveBeenCalled();
+      });
+
+      it("forwards safetyAllowedEnvKeys from container.config.integrations.mcp to the temp connect", async () => {
+        mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__allowed-keys", [])));
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+          container: {
+            config: {
+              integrations: {
+                mcp: {
+                  safetyAllowedEnvKeys: ["CUSTOM_CA_CERT_PATH"],
+                },
+              },
+            },
+          },
+        } as any);
+        await handlers["mcp.test"]({
+          name: "allowed-keys",
+          transport: "stdio",
+          command: "npx",
+        });
+        expect(mockTempConnect).toHaveBeenCalledWith(
+          expect.objectContaining({
+            safetyAllowedEnvKeys: ["CUSTOM_CA_CERT_PATH"],
+          }),
+        );
+      });
+
+      it("forwards osvCheckEnabled and osvCacheTtlMs from container.config.integrations.mcp to the temp connect", async () => {
+        mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__osv-cfg", [])));
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+          container: {
+            config: {
+              integrations: {
+                mcp: {
+                  osvCheckEnabled: false,
+                  osvCacheTtlMs: 3_600_000,
+                },
+              },
+            },
+          },
+        } as any);
+        await handlers["mcp.test"]({
+          name: "osv-cfg",
+          transport: "stdio",
+          command: "npx",
+        });
+        expect(mockTempConnect).toHaveBeenCalledWith(
+          expect.objectContaining({
+            osvCheckEnabled: false,
+            osvCacheTtlMs: 3_600_000,
+          }),
+        );
+      });
+
+      it("forwards persisted rlimits from container.config.integrations.mcp.servers[name].rlimits", async () => {
+        mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__limited", [])));
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+          container: {
+            config: {
+              integrations: {
+                mcp: {
+                  servers: [
+                    { name: "limited", transport: "stdio", command: "npx", enabled: true, rlimits: { cpu: 600 } },
+                  ],
+                },
+              },
+            },
+          },
+        } as any);
+        await handlers["mcp.test"]({
+          name: "limited",
+          transport: "stdio",
+          command: "npx",
+        });
+        expect(mockTempConnect).toHaveBeenCalledWith(
+          expect.objectContaining({ rlimits: { cpu: 600 } }),
+        );
+      });
+
+      it("caller-supplied rlimits override the persisted entry for mcp.test", async () => {
+        mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__override", [])));
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+          container: {
+            config: {
+              integrations: {
+                mcp: {
+                  servers: [
+                    { name: "override", transport: "stdio", command: "npx", enabled: true, rlimits: { cpu: 300 } },
+                  ],
+                },
+              },
+            },
+          },
+        } as any);
+        await handlers["mcp.test"]({
+          name: "override",
+          transport: "stdio",
+          command: "npx",
+          rlimits: { cpu: 900 },
+        } as any);
+        expect(mockTempConnect).toHaveBeenCalledWith(
+          expect.objectContaining({ rlimits: { cpu: 900 } }),
+        );
+      });
+    });
   });
 
   describe("mcp.reconnect headers", () => {
@@ -591,5 +1036,1091 @@ describe("MCP RPC Handlers", () => {
 
       expect(manager.connect).not.toHaveBeenCalled();
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 47-02: persistence + audit-log integration (R1, R2, R4, R6, R7, R8,
+  // D-02, D-04). Sibling plan 47-04 owns the full coverage matrix — these
+  // tests are the minimum surface 47-02 ships to prove the wiring is correct.
+  // -------------------------------------------------------------------------
+
+  // WR-08: makePersistDeps used to return two DIFFERENT object literals for
+  // `persistDeps.container` and the outer `container` field. In production
+  // wiring (rpc-dispatch.ts:248-267) both refer to the SAME `deps.container`
+  // reference — a bug where the in-memory refresh wrote to the wrong
+  // container would pass tests but fail in production. The fix shares ONE
+  // container so the test fixture matches production semantics.
+  function makePersistDeps(servers: Array<{ name: string; transport: string; command?: string; args?: string[]; enabled?: boolean }> = []) {
+    const container = {
+      config: { integrations: { mcp: { servers } } },
+    } as any;
+    return {
+      persistDeps: {
+        // Share the SAME container reference — pre-fix `persistDeps.container`
+        // was a separate object literal, causing the in-memory refresh to
+        // write to a container that the outer assertion code never observed.
+        container: Object.assign(container, { eventBus: { emit: vi.fn() } }),
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/default-config.yaml"],
+        logger: makeLogger(),
+      } as any,
+      container,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // WR-08 — production parity: makePersistDeps's `persistDeps.container` and
+  // outer `container` MUST refer to the same object. In production wiring
+  // (rpc-dispatch.ts) both reach the same `deps.container`. Pre-fix the
+  // fixture returned two object literals and a bug in the in-memory swap
+  // path that wrote to the wrong container would pass tests but fail in
+  // production.
+  // -------------------------------------------------------------------------
+  describe("makePersistDeps — WR-08 production parity (shared container reference)", () => {
+    it("persistDeps.container and outer container point to the SAME object", () => {
+      const { persistDeps, container } = makePersistDeps([]);
+      expect(persistDeps.container).toBe(container);
+    });
+
+    it("mutating persistDeps.container.config.integrations.mcp.servers is visible through outer container", () => {
+      const { persistDeps, container } = makePersistDeps([]);
+      persistDeps.container.config.integrations.mcp.servers = [
+        { name: "ctx7", transport: "stdio", command: "npx", enabled: true },
+      ];
+      expect(container.config.integrations.mcp.servers).toEqual([
+        { name: "ctx7", transport: "stdio", command: "npx", enabled: true },
+      ]);
+    });
+  });
+
+  beforeEach(() => {
+    mockPersistToConfig.mockClear();
+    mockPersistToConfig.mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } } as never);
+    mockBuildConfigAuditBase.mockClear();
+    mockBuildConfigAuditBase.mockReturnValue({} as any);
+    mockAppendConfigAuditWithOutcome.mockClear();
+  });
+
+  describe("mcp.connect persistence (Phase 47-02)", () => {
+    it("calls persistToConfig with skipRestart:true and mcp.connect actionType after a successful manager.connect", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [makeTool("price")])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+        args: ["yfinance-mcp-ts"],
+      });
+
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      const [callDeps, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callDeps).toBe(persistDeps);
+      expect(callOpts.skipRestart).toBe(true);
+      expect(callOpts.actionType).toBe("mcp.connect");
+      expect(callOpts.entityId).toBe("yfinance");
+      expect(callOpts.patch.integrations.mcp.servers).toEqual([
+        expect.objectContaining({
+          name: "yfinance",
+          transport: "stdio",
+          command: "npx",
+          args: ["yfinance-mcp-ts"],
+          enabled: true,
+        }),
+      ]);
+    });
+
+    it("does NOT call persistToConfig when manager.connect returns err (R4 spawn-failure isolation)", async () => {
+      (manager.connect as any).mockResolvedValue(err(new Error("spawn ENOENT")));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "badmcp",
+          transport: "stdio",
+          command: "nope",
+        }),
+      ).rejects.toThrow("Failed to connect");
+
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
+    it("returns persistence:'skipped' when persistDeps is not wired (existing-test invariant)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("x", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+      const result = await handlers["mcp.connect"]({
+        server_name: "x",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      expect(result.persistence).toBe("skipped");
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
+    it("returns persistence:'persisted' and emits an audit JSONL record on persist success (R8 + D-04)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      expect(result.persistence).toBe("persisted");
+      expect(result.warning).toBeUndefined();
+      expect(mockBuildConfigAuditBase).toHaveBeenCalledWith(expect.any(String), "mcp.connect");
+      expect(mockAppendConfigAuditWithOutcome).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "rename" }),
+        expect.anything(),
+      );
+    });
+
+    it("preserves unresolved env-ref literals in the persisted patch (R5)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ywithenv", [])));
+      const sm = createSecretManager({ YFINANCE_PROXY_LIST: "secret-value-not-in-yaml" });
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ywithenv",
+        transport: "stdio",
+        command: "npx",
+        env: { PROXY: "${YFINANCE_PROXY_LIST}" },
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers[0].env.PROXY).toBe("${YFINANCE_PROXY_LIST}");
+    });
+
+    it("filters existing same-name entry and appends new one (R6 overwrite)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", args: ["v1"], enabled: true },
+        { name: "other", transport: "stdio", command: "npx", args: ["other"], enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+        args: ["v2", "--verbose"],
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      const servers = callOpts.patch.integrations.mcp.servers;
+      expect(servers).toHaveLength(2);
+      expect(servers[0]).toEqual(expect.objectContaining({ name: "other" }));
+      expect(servers[1]).toEqual(expect.objectContaining({
+        name: "yfinance",
+        args: ["v2", "--verbose"],
+      }));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 63 CR-03 — rlimits accepted on mcp.connect AND persisted to the
+  // McpServerEntry, then applied to the spawn-time wrap on this and
+  // subsequent connects.
+  //
+  // Pre-fix the handler computed `rlimits: persistedEntry?.rlimits` from an
+  // already-persisted entry, so a fresh `mcp.connect` of a new server
+  // received `rlimits: undefined` (no prlimit wrap). The newEntry built at
+  // mcp-handlers.ts:511-523 did NOT carry rlimits either, so even a
+  // subsequent reconnect saw the same `undefined`. Combined with R9
+  // (config.patch on integrations.mcp.servers is blocked), operators had
+  // NO supported path to apply rlimits to a new server via mcp_manage.
+  //
+  // Fix: add `rlimits` to McpConnectContract.request, forward to both the
+  // spawn-time McpServerConfig and the persisted McpServerEntry.
+  // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Phase 63 WR-05 — in-memory swap preserves sibling integrations subkeys.
+  //
+  // Pre-fix the swap `(deps.container.config as ...).integrations = cloned`
+  // overwrote the entire integrations subtree. When the prior in-memory
+  // `container.config.integrations` had sibling subkeys (braveSearch,
+  // media, autoReply), the structuredClone of `integrations ?? {}` preserved
+  // them — so the post-persist value carried them through. BUT the
+  // documented edge case ("`integrations` is undefined") replaced the
+  // subtree with an object that had ONLY `mcp` — silently dropping any
+  // disk-state braveSearch/media/autoReply until the next daemon reload.
+  //
+  // The fix preserves the sibling subkeys by cloning the existing
+  // `integrations` subtree (or starting from `{}` if it was undefined),
+  // overwriting ONLY `.mcp.servers` (or assigning the whole .mcp if it
+  // was undefined). Test pins this contract: a pre-state containing
+  // braveSearch+media must yield a post-state STILL containing
+  // braveSearch+media + the updated mcp.servers entry.
+  // -------------------------------------------------------------------------
+  describe("WR-05 — in-memory persist swap preserves sibling integrations subkeys", () => {
+    it("preserves braveSearch and media siblings through the mcp.connect persist swap", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+
+      // Build a container with the FULL integrations shape — mcp PLUS
+      // siblings the test will assert survive the swap.
+      const initialIntegrations = {
+        braveSearch: { apiKey: "test-key", maxResultsDefault: 5 },
+        media: { transcription: { provider: "openai" } },
+        autoReply: { enabled: false, rules: [] },
+        mcp: { servers: [] },
+      };
+      const sharedContainer = {
+        config: { integrations: initialIntegrations },
+      };
+      const persistDeps = {
+        container: { ...sharedContainer, eventBus: { emit: vi.fn() } },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/default-config.yaml"],
+        logger: makeLogger(),
+      } as any;
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container: sharedContainer,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      // braveSearch / media / autoReply must remain in the in-memory swap.
+      const swapped = sharedContainer.config.integrations as any;
+      expect(swapped.braveSearch).toEqual({ apiKey: "test-key", maxResultsDefault: 5 });
+      expect(swapped.media).toEqual({ transcription: { provider: "openai" } });
+      expect(swapped.autoReply).toEqual({ enabled: false, rules: [] });
+      // mcp.servers gets the new entry.
+      expect(swapped.mcp.servers).toHaveLength(1);
+      expect(swapped.mcp.servers[0]).toEqual(expect.objectContaining({ name: "ctx7" }));
+    });
+
+    it("does not crash when in-memory integrations is undefined; mcp.servers becomes the only key", async () => {
+      // Edge case (defense-in-depth path). The pre-fix behaviour kept this
+      // working but silently dropped any DISK-state siblings. The new
+      // behaviour matches that — there is nothing in memory to preserve,
+      // so the swap produces an integrations subtree with only `mcp`. Disk
+      // state on the next reload supplies the rest. We just need to
+      // confirm the call doesn't crash and produces a usable result.
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+
+      const sharedContainer: any = { config: {} }; // integrations key absent
+      const persistDeps = {
+        container: { ...sharedContainer, eventBus: { emit: vi.fn() } },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/default-config.yaml"],
+        logger: makeLogger(),
+      } as any;
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container: sharedContainer,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(sharedContainer.config.integrations).toBeDefined();
+      expect(sharedContainer.config.integrations.mcp.servers).toHaveLength(1);
+    });
+  });
+
+  describe("mcp.connect rlimits accepted, forwarded, and persisted (Phase 63 CR-03)", () => {
+    it("forwards rlimits to manager.connect (spawn-time) on a fresh connect with no prior persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "limited",
+        transport: "stdio",
+        command: "npx",
+        args: ["yfinance-mcp"],
+        rlimits: { cpu: 600 },
+      } as any);
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "limited",
+          rlimits: { cpu: 600 },
+        }),
+      );
+    });
+
+    it("persists rlimits onto the McpServerEntry written to config.yaml", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "limited",
+        transport: "stdio",
+        command: "npx",
+        args: ["yfinance-mcp"],
+        rlimits: { as: 1_073_741_824, nofile: 512, cpu: 600 },
+      } as any);
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({
+          name: "limited",
+          rlimits: { as: 1_073_741_824, nofile: 512, cpu: 600 },
+        }),
+      );
+    });
+
+    it("subsequent connect of the same server reads persisted rlimits when caller omits them", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
+      // Pre-seed the persisted store with an entry already carrying rlimits.
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "limited",
+          transport: "stdio",
+          command: "npx",
+          enabled: true,
+          // Use `any` cast — makePersistDeps's signature doesn't model
+          // rlimits, but the production schema (McpServerEntrySchema)
+          // does, and the handler reads `persistedEntry.rlimits` directly.
+          rlimits: { cpu: 600 },
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      // Caller omits rlimits — handler should fall back to persistedEntry.rlimits.
+      await handlers["mcp.connect"]({
+        server_name: "limited",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "limited",
+          rlimits: { cpu: 600 },
+        }),
+      );
+    });
+
+    it("caller-supplied rlimits override the persisted entry's rlimits", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "limited",
+          transport: "stdio",
+          command: "npx",
+          enabled: true,
+          rlimits: { cpu: 300 },
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "limited",
+        transport: "stdio",
+        command: "npx",
+        rlimits: { cpu: 900 },
+      } as any);
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({ rlimits: { cpu: 900 } }),
+      );
+      // And the persisted entry reflects the caller's value, not the prior one.
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({ rlimits: { cpu: 900 } }),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 63 CR-04 — disablePlaintextSecretCheck:true must be persisted to
+  // the McpServerEntry so the opt-out survives a daemon restart.
+  //
+  // Pre-fix the handler read `userParams.disablePlaintextSecretCheck === true`
+  // at runtime (working correctly at connect-time) but the newEntry built
+  // at mcp-handlers.ts:511-523 did NOT carry the flag to YAML. After a
+  // restart the config was reloaded and the previously-OK env block would
+  // be re-evaluated; any downstream load-time guard or symmetric
+  // mcp.reconnect check would silently re-fire. The schema and the
+  // MutableIntegrations swap both supported the field — only the entry
+  // builder dropped it.
+  //
+  // Fix: persist disablePlaintextSecretCheck:true onto the McpServerEntry.
+  // -------------------------------------------------------------------------
+  describe("mcp.connect disablePlaintextSecretCheck persisted (Phase 63 CR-04)", () => {
+    it("persists disablePlaintextSecretCheck:true onto the McpServerEntry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("optout", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "optout",
+        transport: "stdio",
+        command: "npx",
+        env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
+        disablePlaintextSecretCheck: true,
+      } as any);
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({
+          name: "optout",
+          disablePlaintextSecretCheck: true,
+        }),
+      );
+    });
+
+    it("does NOT persist disablePlaintextSecretCheck key when the caller did not set it", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("normal", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "normal",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers[0]).not.toHaveProperty("disablePlaintextSecretCheck");
+    });
+  });
+
+  describe("mcp.disconnect persistence (Phase 47-02)", () => {
+    it("calls persistToConfig with the filtered array on a successful disconnect (R2 + R7)", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+        { name: "other", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.disconnect"]({ server_name: "yfinance" }) as any;
+
+      expect(result.status).toBe("disconnected");
+      expect(result.persistence).toBe("persisted");
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.skipRestart).toBe(true);
+      expect(callOpts.actionType).toBe("mcp.disconnect");
+      expect(callOpts.entityId).toBe("yfinance");
+      expect(callOpts.patch.integrations.mcp.servers).toEqual([
+        expect.objectContaining({ name: "other" }),
+      ]);
+    });
+
+    it("does NOT call persistToConfig when runtime has no such server (D-01 fail-loud preserved)", async () => {
+      (manager.getConnection as any).mockReturnValue(undefined);
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await expect(
+        handlers["mcp.disconnect"]({ server_name: "nonexistent" }),
+      ).rejects.toThrow('MCP server not found: "nonexistent"');
+
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("mcp.reconnect override-rejection (Phase 47-02 D-02)", () => {
+    it("throws [reconnect_with_overrides_not_allowed] when override params are supplied AND a stored connection exists", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+      await expect(
+        handlers["mcp.reconnect"]({
+          server_name: "yfinance",
+          transport: "stdio",
+        }),
+      ).rejects.toThrow(/\[reconnect_with_overrides_not_allowed\].*disconnect then connect/);
+
+      // The override guard fires BEFORE manager.reconnect.
+      expect(manager.reconnect).not.toHaveBeenCalled();
+    });
+
+    it("does NOT throw the override error when override params are supplied but NO stored connection exists (existing fallback-reconnect path)", async () => {
+      (manager.getConnection as any).mockReturnValue(undefined);
+      (manager.reconnect as any).mockResolvedValue(err(new Error("MCP server \"x\" has no stored config -- use connect() instead")));
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("x", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+      // Override params + no stored connection → falls through to legacy
+      // fallback-reconnect-as-connect path; does NOT throw the override error.
+      const result = await handlers["mcp.reconnect"]({
+        server_name: "x",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      expect(result.status).toBe("connected");
+    });
+  });
+
+  // ===========================================================================
+  // Phase 47-04: per-acceptance-criterion R-tag unit tests
+  //
+  // 47-02 added the baseline persistence test scaffolding (39 tests total);
+  // 47-04 extends it with the explicit per-R-tag tests called out in SPEC.md
+  // and the per-field D-02 loop. Net new behavioral coverage delivered here:
+  //
+  //   - R2 sole-entry (disconnect of the only entry leaves `[]`, not undefined)
+  //   - R7 SPEC skipRestart explicitly asserted on both connect AND disconnect
+  //   - D-02 per-field loop (command, args, url, headers, env in addition to
+  //     the existing transport assertion)
+  //   - D-02 happy-path: reconnect with NO override fields does not fire guard
+  //   - D-04 runtime_only outcome: persist err → response has warning
+  //   - D-04 disconnect happy-path explicitly returns persistence:'persisted'
+  //   - R8 failed-audit branch: appendConfigAuditWithOutcome called with
+  //     {kind:'failed', message} when persistToConfig returns err
+  //
+  // Existing 47-02 tests already cover R1, R4, R5, R6, D-04 skipped + persisted,
+  // D-01 fail-loud. These re-tag-only assertions are intentionally separated
+  // into their own describe blocks so the SPEC's R-tag → test mapping is
+  // unambiguous and the verifier can trace each acceptance criterion to a
+  // distinct `it(...)` line.
+  // ===========================================================================
+
+  describe("Phase 47-04 R2 sole-entry — disconnect of the only entry leaves []", () => {
+    it("persists an empty array (NOT undefined) when removing the sole entry", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", args: [], enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.disconnect"]({ server_name: "yfinance" });
+
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      // The slot key remains; the array value is the empty literal.
+      expect(callOpts.patch.integrations.mcp.servers).toEqual([]);
+      expect(callOpts.patch.integrations.mcp.servers).not.toBeUndefined();
+    });
+  });
+
+  describe("Phase 47-04 R7 SPEC — skipRestart:true on both connect and disconnect persists", () => {
+    it("connect passes skipRestart:true to persistToConfig", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.skipRestart).toBe(true);
+    });
+
+    it("disconnect passes skipRestart:true to persistToConfig", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.disconnect"]({ server_name: "yfinance" });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.skipRestart).toBe(true);
+    });
+  });
+
+  // ===========================================================================
+  // Phase 62-09 R7 in-memory state effect (D-07/D-08/PERSIST-08)
+  //
+  // The orphan-branch persistMcpServers wrote to disk but did NOT update
+  // container.config.integrations.mcp.servers. CONTEXT.md D-07 locks the
+  // in-memory refresh into Phase 62. After a successful persist, the
+  // container.config.integrations subtree is structuredClone'd, .mcp.servers
+  // is overwritten with the new array, and the whole subtree is atomically
+  // swapped onto container.config.integrations.
+  // ===========================================================================
+
+  describe("Phase 62-09 R7 in-memory state effect — container.config refresh after persist (D-07/D-08)", () => {
+    it("connect: container.config.integrations.mcp.servers reflects the new entry after persist", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      // R7: post-call in-memory state has the new entry.
+      expect(container.config.integrations.mcp.servers).toHaveLength(1);
+      expect(container.config.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({ name: "ctx7", transport: "stdio", command: "npx", enabled: true }),
+      );
+    });
+
+    it("disconnect: container.config.integrations.mcp.servers reflects the filtered array after persist", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+        { name: "other", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.disconnect"]({ server_name: "yfinance" });
+
+      // R7: post-call in-memory state has only "other".
+      expect(container.config.integrations.mcp.servers).toHaveLength(1);
+      expect(container.config.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({ name: "other" }),
+      );
+    });
+
+    it("D-08 atomic swap: post-persist integrations object identity differs from the pre-call object", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      // Capture the pre-call integrations object identity. After a successful
+      // persist, D-08 requires the swap to replace the .integrations subtree
+      // with a structuredClone'd copy (NOT mutate the original in place) —
+      // so a reader holding the prior reference observes the pre-state.
+      const preIntegrations = container.config.integrations;
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      // Different object identity: structuredClone produced a new subtree.
+      expect(container.config.integrations).not.toBe(preIntegrations);
+      // The OLD reference still holds the PRE-state servers array (its .mcp
+      // subtree was never mutated in place).
+      expect(preIntegrations.mcp.servers).toEqual([
+        expect.objectContaining({ name: "yfinance" }),
+      ]);
+      // The NEW reference holds the POST-state servers array.
+      expect(container.config.integrations.mcp.servers).toEqual([
+        expect.objectContaining({ name: "yfinance" }),
+        expect.objectContaining({ name: "ctx7" }),
+      ]);
+    });
+
+    it("does NOT throw and skips the swap when deps.container is absent (existing test fixture invariant)", async () => {
+      // persistDeps is still wired so persistToConfig runs; container is OMITTED.
+      // The orphan-branch test fixtures construct deps without container and
+      // the swap MUST optional-chain away cleanly per RESEARCH.md Plan-time
+      // risk #7.
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        // NO container field
+      } as any);
+
+      // Must not throw.
+      const result = await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      expect(result.persistence).toBe("persisted");
+    });
+
+    it("does NOT mutate container.config.integrations when persistToConfig returns err (refresh is gated on success)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      // Make the disk write fail; the in-memory swap must NOT happen.
+      mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "EACCES" } as never);
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      // The handler still returns runtime_only + warning, but the in-memory
+      // state remains the PRE-call value — refresh is gated on persist success.
+      expect(result.persistence).toBe("runtime_only");
+      expect(container.config.integrations.mcp.servers).toHaveLength(1);
+      expect(container.config.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({ name: "yfinance" }),
+      );
+    });
+  });
+
+  describe("Phase 47-04 D-02 per-field — reconnect-override-rejection fires for every override field independently", () => {
+    // Plan 47-02 covered the `transport` override; 47-04 adds explicit coverage
+    // for command, args, url, headers, env so every D-02 override surface is
+    // pinned to a regression-safe assertion.
+    const overrideFields: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+      ["command", { command: "node" }],
+      ["args", { args: ["new"] }],
+      ["url", { url: "http://example.com/sse" }],
+      ["headers", { headers: { "X-New": "1" } }],
+      ["env", { env: { NEW: "1" } }],
+    ];
+
+    for (const [fieldName, overrideParams] of overrideFields) {
+      it(`throws [reconnect_with_overrides_not_allowed] when ${fieldName} provided + stored config exists`, async () => {
+        (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+        const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+        await expect(
+          handlers["mcp.reconnect"]({ server_name: "yfinance", ...overrideParams } as any),
+        ).rejects.toThrow(/\[reconnect_with_overrides_not_allowed\][\s\S]*disconnect then connect/);
+
+        // Guard fires BEFORE manager.reconnect for every field.
+        expect(manager.reconnect).not.toHaveBeenCalled();
+      });
+    }
+
+    it("does NOT throw the override error when NO override fields are passed (reconnect happy path)", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      (manager.reconnect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+      await expect(handlers["mcp.reconnect"]({ server_name: "yfinance" })).resolves.toBeDefined();
+
+      // Guard does NOT fire; manager.reconnect runs.
+      expect(manager.reconnect).toHaveBeenCalledWith("yfinance");
+    });
+  });
+
+  describe("Phase 47-04 D-04 runtime_only — persist err surfaces warning in response", () => {
+    it("returns persistence:'runtime_only' + warning when persistToConfig returns err on connect", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "EACCES: write failed" } as never);
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+      }) as any;
+
+      expect(result.persistence).toBe("runtime_only");
+      expect(result.warning).toBe("EACCES: write failed");
+    });
+
+    it("returns persistence:'runtime_only' + warning when persistToConfig returns err on disconnect", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "ENOSPC: out of disk" } as never);
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.disconnect"]({ server_name: "yfinance" }) as any;
+
+      expect(result.persistence).toBe("runtime_only");
+      expect(result.warning).toBe("ENOSPC: out of disk");
+    });
+
+    it("disconnect happy path explicitly returns persistence:'persisted' (D-04 disconnect mirror)", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      const result = await handlers["mcp.disconnect"]({ server_name: "yfinance" }) as any;
+
+      expect(result).toMatchObject({
+        name: "yfinance",
+        status: "disconnected",
+        persistence: "persisted",
+      });
+      expect(result.warning).toBeUndefined();
+    });
+  });
+
+  describe("Phase 47-04 R8 — failed audit JSONL on persistToConfig err", () => {
+    it("calls appendConfigAuditWithOutcome with {kind:'failed', message} when persist fails on connect", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
+      mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "EACCES: write failed" } as never);
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "yfinance",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(mockAppendConfigAuditWithOutcome).toHaveBeenCalledOnce();
+      const [, outcomeArg] = mockAppendConfigAuditWithOutcome.mock.calls[0] as any;
+      expect(outcomeArg).toEqual({ kind: "failed", message: "EACCES: write failed" });
+    });
+
+    it("calls appendConfigAuditWithOutcome with {kind:'failed', message} when persist fails on disconnect", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "ENOSPC: out of disk" } as never);
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.disconnect"]({ server_name: "yfinance" });
+
+      expect(mockAppendConfigAuditWithOutcome).toHaveBeenCalledOnce();
+      const [, outcomeArg] = mockAppendConfigAuditWithOutcome.mock.calls[0] as any;
+      expect(outcomeArg).toEqual({ kind: "failed", message: "ENOSPC: out of disk" });
+    });
+
+    it("calls buildConfigAuditBase with callerSource='mcp.disconnect' on disconnect", async () => {
+      (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.disconnect"]({ server_name: "yfinance" });
+
+      expect(mockBuildConfigAuditBase).toHaveBeenCalledWith(expect.any(String), "mcp.disconnect");
+    });
+  });
+});
+
+// ===========================================================================
+// Phase 47-04 R9 cross-test — gateway-patch single-writer guard
+//
+// R9 is delivered as the `integrations.mcp.servers is managed by mcp_manage`
+// throw in config-write.ts (47-03). The full positive-and-negative coverage
+// lives in packages/daemon/src/api/config-handlers.test.ts:2154+ (5 tests).
+// This describe block adds a focused mcp-handlers-resident cross-test that
+// asserts the guard fires from the same factory consumers use in production,
+// keeping the SPEC R9 acceptance traceable to a test in the file collocated
+// with the mcp_manage writer surface.
+// ===========================================================================
+
+describe("Phase 47-04 R9 — gateway-patch single-writer guard (cross-test from mcp-handlers test file)", () => {
+  it("rejects config.patch against integrations.mcp.servers and routes the caller to mcp_manage", async () => {
+    // Lazy-load the SUT here so the file-top vi.mock for persist-to-config does
+    // not interfere — config-write.ts imports persist-to-config too, but the
+    // guard fires BEFORE that import is exercised (trust-check → R9 guard →
+    // rate-limit → persist). The mock is therefore a non-issue.
+    const { bindConfigWriteHandlers } = await import("./config-handlers/config-write.js");
+
+    // Minimal handler deps. The guard fires BEFORE deps.container, configPaths,
+    // or the patch bucket are touched, so the test-double can be minimal.
+    const handlers = bindConfigWriteHandlers(
+      {
+        container: { config: {} },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/test-default.yaml"],
+        logger: makeLogger(),
+      } as any,
+      // PatchBucket double: never consume (`tryConsume` always returns allowed)
+      // — the guard is supposed to fire BEFORE this point is reached.
+      { tryConsume: () => ({ allowed: true, retryAfterMs: 0 }) } as any,
+    );
+
+    // Path-format variant (legacy).
+    await expect(
+      handlers["config.patch"]!({
+        path: "integrations.mcp.servers",
+        value: [{ name: "foo", transport: "stdio", command: "echo" }],
+        _trustLevel: "admin",
+      } as any),
+    ).rejects.toThrow(/mcp_manage/);
+  });
+
+  it("rejects sub-paths under integrations.mcp.servers (section/key shape)", async () => {
+    const { bindConfigWriteHandlers } = await import("./config-handlers/config-write.js");
+    const handlers = bindConfigWriteHandlers(
+      {
+        container: { config: {} },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/test-default.yaml"],
+        logger: makeLogger(),
+      } as any,
+      { tryConsume: () => ({ allowed: true, retryAfterMs: 0 }) } as any,
+    );
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers.0.enabled",
+        value: false,
+        _trustLevel: "admin",
+      } as any),
+    ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
+  });
+
+  it("admin-trust check takes precedence over R9 (non-admin trust gets the trust error, not the R9 redirect)", async () => {
+    const { bindConfigWriteHandlers } = await import("./config-handlers/config-write.js");
+    const handlers = bindConfigWriteHandlers(
+      {
+        container: { config: {} },
+        configPaths: ["/tmp/test-config.yaml"],
+        defaultConfigPaths: ["/tmp/test-default.yaml"],
+        logger: makeLogger(),
+      } as any,
+      { tryConsume: () => ({ allowed: true, retryAfterMs: 0 }) } as any,
+    );
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [],
+        _trustLevel: "user",
+      } as any),
+    ).rejects.toThrow(/Admin access required/);
   });
 });

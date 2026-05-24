@@ -76,6 +76,32 @@ export function bindConfigWriteHandlers(
         throw new Error("Admin access required for config modification");
       }
 
+      // R9 single-writer guard (Phase 47): integrations.mcp.servers is managed
+      // by mcp_manage. Precedence: trust → R9 → rate-limit. MUTABLE_CONFIG_OVERRIDES
+      // at immutable-keys.ts:38 stays — only the gateway-patch route is closed.
+      // BL-01 (Phase 62): also catch parent-path shapes whose merged value lands
+      // on integrations.mcp.servers, e.g. { section:"integrations", key:"mcp",
+      // value:{servers:[]} } and the two `path:` variants.
+      {
+        const rp = typeof rawParams.path === "string" ? rawParams.path : undefined;
+        const sec = (rawParams.section ?? (rp ? rp.split(".")[0] : undefined)) as string | undefined;
+        const key = (rawParams.key ?? (rp && rp.includes(".") ? rp.slice(rp.indexOf(".") + 1) : undefined)) as string | undefined;
+        const fp = key ? `${sec}.${key}` : sec ?? "";
+        const v = rawParams.value as Record<string, unknown> | null | undefined;
+        const obj = v !== null && typeof v === "object";
+        if (
+          fp === "integrations.mcp.servers" || fp.startsWith("integrations.mcp.servers.") ||
+          (obj && fp === "integrations.mcp" && "servers" in v!) ||
+          (obj && fp === "integrations" && v!.mcp !== null && typeof v!.mcp === "object" &&
+           "servers" in (v!.mcp as Record<string, unknown>))
+        ) {
+          throw new Error(
+            "integrations.mcp.servers is managed by mcp_manage. " +
+            "Use mcp_manage(action:'connect'|'disconnect') instead."
+          );
+        }
+      }
+
       // Rate limit check (BEFORE contract.request.parse for fail-fast).
       const bucket = patchBucket.tryConsume();
       if (!bucket.allowed) {

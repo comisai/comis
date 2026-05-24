@@ -76,6 +76,44 @@ export interface McpServerConfig {
   readonly headers?: Readonly<Record<string, string>>;
   /** Maximum concurrent tool calls. Undefined = transport-based default. */
   readonly maxConcurrency?: number;
+  /**
+   * Phase 63 SAFETY-02: operator-extension allowlist for the stdio child
+   * env scrub. Copied verbatim from `config.integrations.mcp.safetyAllowedEnvKeys`
+   * by the daemon RPC handler (`mcp-handlers.ts:McpConnect`); the field is
+   * additive over the built-in `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` and only
+   * applies to the stdio transport. Undefined ⇒ built-in allowlist only.
+   */
+  readonly safetyAllowedEnvKeys?: readonly string[];
+  /**
+   * Phase 63 SAFETY-06: OSV malware check toggle. Copied from
+   * `config.integrations.mcp.osvCheckEnabled` (Plan 01 schema field,
+   * default `true`) by the daemon RPC handler. Set `false` in air-gapped
+   * deployments to skip the pre-spawn api.osv.dev check entirely.
+   * Undefined ⇒ Plan 01's default `true` applies at the call site.
+   */
+  readonly osvCheckEnabled?: boolean;
+  /**
+   * Phase 63 SAFETY-06: OSV cache TTL (ms). Copied from
+   * `config.integrations.mcp.osvCacheTtlMs` (Plan 01 schema field, default
+   * 86_400_000 = 24h) by the daemon RPC handler. Undefined ⇒ caller falls
+   * back to the 24h default at the call site.
+   */
+  readonly osvCacheTtlMs?: number;
+  /**
+   * Phase 63 SAFETY-08: per-server stdio rlimits override. Copied from the
+   * persisted `McpServerEntrySchema.rlimits` (Plan 01 schema field) by the
+   * daemon RPC handler. Applied via `prlimit(1)` wrap on Linux when set;
+   * partial overrides accepted (`{ cpu: 600 }` emits only `--cpu=600`).
+   * When unset → NO prlimit wrap (existing env-only wrap retained). On
+   * macOS dev (prlimit absent) → WARN once per daemon process + skip. Only
+   * applies to the stdio transport. See mcp-client-discover.ts:wrapStdioCommand
+   * and RESEARCH.md §"Pattern 3" + REQUIREMENTS.md SAFETY-08.
+   */
+  readonly rlimits?: {
+    readonly as?: number;
+    readonly nofile?: number;
+    readonly cpu?: number;
+  };
 }
 
 /** Connection status for an MCP server. */

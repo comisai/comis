@@ -216,6 +216,98 @@ describe("createChannelManager channelRegistry plugins", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Adapter deduplication (regression for #DOUBLE-FIRE)
+// ---------------------------------------------------------------------------
+
+describe("createChannelManager adapter deduplication", () => {
+  it("deduplicates the same adapter instance appearing in both deps.adapters and deps.channelRegistry (regression for #DOUBLE-FIRE)", async () => {
+    const adapter = makeAdapter({
+      channelType: "telegram",
+      channelId: "telegram-8532799959",
+    });
+    const channelRegistry = {
+      getChannelPlugins: vi.fn(() => [{ adapter }]),
+      register: vi.fn(),
+      getByType: vi.fn(),
+      getAllAdapters: vi.fn(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const deps = makeDeps({
+      adapters: [adapter],
+      channelRegistry,
+    });
+    const mgr = createChannelManager(deps);
+
+    await mgr.startAll();
+
+    expect(adapter.onMessage).toHaveBeenCalledOnce();
+    expect(adapter.start).toHaveBeenCalledOnce();
+    expect(adapter._handlers).toHaveLength(1);
+    expect(mgr.activeCount).toBe(1);
+  });
+
+  it("warns and keeps the first adapter when two distinct adapter objects claim the same channelType", async () => {
+    const adapterA = makeAdapter({
+      channelType: "telegram",
+      channelId: "telegram-AAA",
+    });
+    const adapterB = makeAdapter({
+      channelType: "telegram",
+      channelId: "telegram-BBB",
+    });
+    const channelRegistry = {
+      getChannelPlugins: vi.fn(() => [{ adapter: adapterB }]),
+      register: vi.fn(),
+      getByType: vi.fn(),
+      getAllAdapters: vi.fn(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const logger = createMockLogger();
+    const deps = makeDeps({
+      adapters: [adapterA],
+      channelRegistry,
+      logger,
+    });
+    const mgr = createChannelManager(deps);
+
+    await mgr.startAll();
+
+    expect(adapterA.start).toHaveBeenCalledOnce();
+    expect(adapterB.start).not.toHaveBeenCalled();
+    expect(mgr.activeCount).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelType: "telegram",
+        errorKind: "config",
+        hint: expect.any(String),
+      }),
+      expect.stringMatching(/duplicate|already.*registered|channelType.*collision/i),
+    );
+  });
+
+  it("calls adapter.stop() exactly once for an adapter present in both deps.adapters and deps.channelRegistry", async () => {
+    const adapter = makeAdapter({ channelType: "telegram" });
+    const channelRegistry = {
+      getChannelPlugins: vi.fn(() => [{ adapter }]),
+      register: vi.fn(),
+      getByType: vi.fn(),
+      getAllAdapters: vi.fn(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const deps = makeDeps({
+      adapters: [adapter],
+      channelRegistry,
+    });
+    const mgr = createChannelManager(deps);
+
+    await mgr.startAll();
+    await mgr.stopAll();
+
+    expect(adapter.stop).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // injectMessage adapter-not-found branch
 // ---------------------------------------------------------------------------
 

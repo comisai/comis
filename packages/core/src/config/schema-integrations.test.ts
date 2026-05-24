@@ -4,6 +4,7 @@ import {
   FileExtractionConfigSchema,
   DOCUMENT_MIME_WHITELIST,
   MediaConfigSchema,
+  McpConfigSchema,
   McpServerEntrySchema,
 } from "./schema-integrations.js";
 
@@ -189,6 +190,146 @@ describe("McpServerEntrySchema transport inference", () => {
   it("rejects when transport, command, and url are all missing", () => {
     expect(() =>
       McpServerEntrySchema.parse({ name: "broken" }),
+    ).toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-01 regression — schema must reject inconsistent command + url
+  // combinations BEFORE the runtime gets a chance to silently ignore one
+  // of them. Pre-fix the first matching inference branch (command -> stdio)
+  // won and the unused url field passed through, silently ignored at
+  // runtime by createTransport. Operator misconfiguration produced no
+  // warning.
+  // -------------------------------------------------------------------------
+  it("rejects entries that supply BOTH command and url without an explicit transport (WR-01)", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "both",
+        command: "npx",
+        url: "https://example.com/mcp",
+      }),
+    ).toThrow(/Ambiguous MCP server config|command\b.*\burl|both \`command\` and \`url\`/i);
+  });
+
+  it("ACCEPTS entries with both command and url when an explicit transport='stdio' is given", () => {
+    // The explicit transport disambiguates — the url becomes a no-op
+    // by-design, surfaced via runtime ignore (matches the pre-fix
+    // behaviour but the explicit-transport opts the operator IN).
+    const result = McpServerEntrySchema.parse({
+      name: "both-stdio",
+      transport: "stdio",
+      command: "npx",
+      url: "https://example.com/mcp",
+    });
+    expect(result.transport).toBe("stdio");
+    expect(result.command).toBe("npx");
+    expect(result.url).toBe("https://example.com/mcp");
+  });
+
+  it("ACCEPTS entries with both command and url when an explicit transport='http' is given", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "both-http",
+      transport: "http",
+      command: "npx",
+      url: "https://example.com/mcp",
+    });
+    expect(result.transport).toBe("http");
+    expect(result.url).toBe("https://example.com/mcp");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 63-01 — additive safety-hardening fields (SAFETY-02/04/06/08).
+//
+// Five additive Zod fields land on McpConfigSchema (3) and McpServerEntrySchema
+// (2). The tests pin both default values and validator rejection of bad inputs
+// so the rest of phase 63 can rely on a stable schema contract.
+// ---------------------------------------------------------------------------
+
+describe("McpConfigSchema — Phase 63 safety hardening additive fields", () => {
+  it("produces safety-hardening defaults from an empty input object", () => {
+    const result = McpConfigSchema.parse({});
+    expect(result.safetyAllowedEnvKeys).toEqual([]);
+    expect(result.osvCheckEnabled).toBe(true);
+    expect(result.osvCacheTtlMs).toBe(86_400_000);
+  });
+
+  it("accepts an operator-supplied safetyAllowedEnvKeys array verbatim", () => {
+    const result = McpConfigSchema.parse({
+      safetyAllowedEnvKeys: ["CUSTOM_CA_CERT_PATH", "MY_OPERATOR_KEY"],
+    });
+    expect(result.safetyAllowedEnvKeys).toEqual([
+      "CUSTOM_CA_CERT_PATH",
+      "MY_OPERATOR_KEY",
+    ]);
+  });
+
+  it("accepts osvCheckEnabled=false for air-gapped opt-out", () => {
+    const result = McpConfigSchema.parse({ osvCheckEnabled: false });
+    expect(result.osvCheckEnabled).toBe(false);
+  });
+
+  it("rejects osvCacheTtlMs=0 because positive() is required", () => {
+    expect(() => McpConfigSchema.parse({ osvCacheTtlMs: 0 })).toThrow();
+  });
+
+  it("rejects safetyAllowedEnvKeys entries that are empty strings", () => {
+    expect(() =>
+      McpConfigSchema.parse({ safetyAllowedEnvKeys: [""] }),
+    ).toThrow();
+  });
+});
+
+describe("McpServerEntrySchema — Phase 63 safety hardening additive fields", () => {
+  it("parses without disablePlaintextSecretCheck or rlimits when both are omitted", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "yfinance",
+      transport: "stdio",
+      command: "node",
+    });
+    expect(result.disablePlaintextSecretCheck).toBeUndefined();
+    expect(result.rlimits).toBeUndefined();
+  });
+
+  it("accepts disablePlaintextSecretCheck=true as an opt-out escape hatch", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "yfinance",
+      transport: "stdio",
+      command: "node",
+      disablePlaintextSecretCheck: true,
+    });
+    expect(result.disablePlaintextSecretCheck).toBe(true);
+  });
+
+  it("accepts a partial rlimits override with only cpu set", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "yfinance",
+      transport: "stdio",
+      command: "node",
+      rlimits: { cpu: 600 },
+    });
+    expect(result.rlimits).toEqual({ cpu: 600 });
+  });
+
+  it("rejects rlimits.as values that are not positive integers", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "yfinance",
+        transport: "stdio",
+        command: "node",
+        rlimits: { as: -1 },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects rlimits.nofile values that are not positive integers", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "yfinance",
+        transport: "stdio",
+        command: "node",
+        rlimits: { nofile: 0 },
+      }),
     ).toThrow();
   });
 });

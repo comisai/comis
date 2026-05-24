@@ -63,6 +63,30 @@ export { scanSkillContent, type ContentScanResult, type ContentScanFinding } fro
 
 // Integrations -- MCP client manager
 export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./integrations/mcp-client/index.js";
+// Phase 63 SAFETY-01/02: stdio env-scrub primitives (built-in allowlist
+// constant + pure scrub function). Consumed by the daemon RPC handler
+// (`mcp-handlers.ts`) and the architecture / integration tests under
+// `test/architecture/mcp-prespawn-allowlist.test.ts` + `test/integration/
+// mcp-env-scrub.test.ts`.
+export { MCP_STDIO_BUILTIN_ENV_ALLOWLIST, scrubStdioEnv } from "./integrations/mcp-client/index.js";
+
+// Phase 63 SAFETY-05/06: pre-spawn OSV malware check + package-name
+// extraction for stdio MCP commands. Consumed by `mcp-client-connect.ts`
+// (pre-spawn invocation) and the integration test at
+// `test/integration/mcp-osv-check.test.ts`.
+export {
+  osvMalwareCheck,
+  extractMcpPackageName,
+  DEFAULT_OSV_CACHE_DIR,
+} from "./integrations/mcp-client/index.js";
+export type { OsvCheckResult, OsvCheckOptions } from "./integrations/mcp-client/index.js";
+
+// Phase 63 SAFETY-07: custom FetchLike with cross-host redirect header
+// scrub for SSE + Streamable HTTP MCP transports. Consumed by
+// `mcp-client-discover.ts` (transport construction) and the integration
+// test at `test/integration/mcp-redirect-scrub.test.ts`.
+export { createRedirectPolicyFetch } from "./integrations/mcp-client/index.js";
+export type { RedirectPolicyOptions } from "./integrations/mcp-client/index.js";
 export type {
   McpClientManager,
   McpClientManagerDeps,

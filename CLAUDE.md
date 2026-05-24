@@ -4,6 +4,10 @@ Read `AGENTS.md` before any code change — it is the authoritative engineering 
 
 This file is a Claude-specific operational supplement. If anything here conflicts with `AGENTS.md`, follow `AGENTS.md` and update this file.
 
+## TDD-First
+
+Every fix and every feature in `packages/*/src/**` starts with a failing test that demonstrably fails on the pre-patch code (RED), then a production patch that flips it to green (GREEN). Land the test commit first when practical so the RED state is reproducible from that commit alone. Exempt only: pure docs, comments, formatting, and build-tooling/CI/config edits — when in doubt, write the test. "I tested it locally" is not a substitute. Full normative rule: AGENTS.md §2.10.
+
 ## Project
 
 Comis is a security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo, 15 packages, hexagonal architecture (ports + adapters). Node.js >= 22, Linux-only.

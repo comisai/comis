@@ -26,20 +26,45 @@ export const BraveSearchConfigSchema = z.strictObject({
  * `{name, command, args}` and `{name, url}` parse without
  * requiring an explicit `transport`. Explicit `transport`
  * always wins.
+ *
+ * WR-01 — REJECTS ambiguous entries that supply BOTH `command` AND `url`
+ * without an explicit `transport`. Pre-fix the first matching branch
+ * (command -> stdio) won and the unused field passed through, silently
+ * ignored at runtime by createTransport. The operator never saw a
+ * warning. The fix surfaces a structured error key (via `z.NEVER` —
+ * which converts the entry into a Zod-detected invalid value, producing
+ * a parse error pointing at the ambiguity) so the operator must opt
+ * IN explicitly via `transport: "stdio" | "http" | "sse"`.
  */
-const inferTransport = (input: unknown): unknown => {
+const inferTransport = (input: unknown, ctx: z.RefinementCtx): unknown => {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     // Let the strictObject validator surface the type error.
     return input;
   }
   const entry = input as Record<string, unknown>;
   if (typeof entry.transport === "string" && entry.transport.length > 0) {
+    // Explicit transport always wins — even if both command and url are
+    // present, the operator opted IN to one interpretation.
     return entry;
   }
-  if (typeof entry.command === "string" && entry.command.length > 0) {
+  const hasCommand = typeof entry.command === "string" && entry.command.length > 0;
+  const hasUrl = typeof entry.url === "string" && entry.url.length > 0;
+  if (hasCommand && hasUrl) {
+    // WR-01: ambiguous — operator supplied BOTH command and url with no
+    // explicit transport. Reject loudly rather than silently picking one.
+    ctx.addIssue({
+      code: "custom",
+      message:
+        'Ambiguous MCP server config: both `command` and `url` are set with no explicit `transport`. ' +
+        'Choose one (set `transport: "stdio"` for command-based, or `transport: "http"`/`"sse"` for url-based).',
+      path: [],
+    });
+    return z.NEVER;
+  }
+  if (hasCommand) {
     return { ...entry, transport: "stdio" };
   }
-  if (typeof entry.url === "string" && entry.url.length > 0) {
+  if (hasUrl) {
     return { ...entry, transport: "http" };
   }
   return entry;
@@ -75,6 +100,17 @@ export const McpServerEntrySchema = z.preprocess(
     headers: z.record(z.string(), z.string()).optional(),
     /** Maximum concurrent tool calls to this server. Undefined = auto (transport-based default). */
     maxConcurrency: z.number().int().positive().optional(),
+    /** Per-server opt-out for the plaintext-secret heuristic. Last-resort escape hatch — WARN logged on connect when true. Default: false (heuristic enforced). */
+    disablePlaintextSecretCheck: z.boolean().optional(),
+    /** Per-server stdio rlimits override. Partial overrides allowed: { cpu: 600 } leaves as/nofile at module defaults (as=536_870_912, nofile=256, cpu=300). */
+    rlimits: z.object({
+      /** RLIMIT_AS — virtual-memory ceiling in bytes (module default: 536_870_912 = 512MB). */
+      as: z.number().int().positive().optional(),
+      /** RLIMIT_NOFILE — max open file descriptors (module default: 256). */
+      nofile: z.number().int().positive().optional(),
+      /** RLIMIT_CPU — wall CPU seconds before SIGXCPU (module default: 300). */
+      cpu: z.number().int().positive().optional(),
+    }).optional(),
   }),
 );
 
@@ -91,6 +127,12 @@ export const McpConfigSchema = z.strictObject({
     stdioDefaultConcurrency: z.number().int().positive().default(1),
     /** Default max concurrent tool calls for HTTP/SSE servers (default: 4). */
     httpDefaultConcurrency: z.number().int().positive().default(4),
+    /** Built-in safe-to-pass-through env keys for stdio MCP children, ADDITIVE to MCP_STDIO_BUILTIN_ENV_ALLOWLIST. Operator-named keys (e.g. CUSTOM_CA_CERT_PATH) — default: []. */
+    safetyAllowedEnvKeys: z.array(z.string().min(1)).default([]),
+    /** OSV malware check enabled for stdio MCPs (default: true). Set false in air-gapped deployments. */
+    osvCheckEnabled: z.boolean().default(true),
+    /** OSV cache TTL in milliseconds (default: 24h = 86_400_000). */
+    osvCacheTtlMs: z.number().int().positive().default(86_400_000),
   });
 
 /**
