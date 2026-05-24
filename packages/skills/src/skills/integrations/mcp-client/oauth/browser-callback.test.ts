@@ -197,9 +197,15 @@ describe("runBrowserCallback — loopback callback server", () => {
 
     // A WARN was logged tagged auth (CSRF mismatch is authentication-domain;
     // the closed errorKind union maps "security" semantics onto "auth"; the
-    // "possible CSRF" wording is preserved in the message).
+    // "possible CSRF" wording is preserved in the message). WR-01: the WARN
+    // MUST carry the canonical `submodule` field so structured-log dashboards
+    // can filter this high-priority security event by subsystem (AGENTS.md §2.7).
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ errorKind: "auth", serverName: "notion" }),
+      expect.objectContaining({
+        submodule: "oauth-browser-callback",
+        errorKind: "auth",
+        serverName: "notion",
+      }),
       expect.any(String),
     );
 

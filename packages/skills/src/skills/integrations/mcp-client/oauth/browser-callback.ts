@@ -328,7 +328,16 @@ export function runBrowserCallback(
           // check). Maps to the closed errorKind union's "auth" member; the
           // "security" semantic is preserved in the log message ("possible
           // CSRF") + the submodule ("oauth-browser-callback").
-          { errorKind: "auth" as const, serverName },
+          //
+          // WR-01: the canonical `submodule` field is REQUIRED per AGENTS.md
+          // §2.7 so structured-log dashboards can filter this high-priority
+          // security event by subsystem. Every other WARN/ERROR in this phase
+          // already carries it; this site was the only WARN that omitted it.
+          {
+            submodule: "oauth-browser-callback",
+            errorKind: "auth" as const,
+            serverName,
+          },
           "OAuth callback state mismatch — rejected (possible CSRF)",
         );
         return;
