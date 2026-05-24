@@ -27,7 +27,7 @@
  * that dir. `now` is injected so expiry math is deterministic.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { mkdtempSync, rmSync, statSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,6 +64,10 @@ describe("createTokenStore", () => {
       confinedBaseDir: dir,
       now: () => PINNED_NOW,
       logger,
+      // macOS FSEvents drops ongoing watching under persistent:false (the
+      // production default, kept for clean daemon shutdown on Linux). Tests run
+      // on the dev platform, so opt into persistent watching here.
+      watchPersistent: true,
     });
   });
 
@@ -182,14 +186,16 @@ describe("createTokenStore", () => {
   });
 
   it("invalidates its cache on an EXTERNAL rewrite of <server>.json — OAUTH-04/66-P13", async () => {
-    store.startWatch();
-
+    // Write the baseline BEFORE the watcher starts so it is part of the initial
+    // scan, then await the watcher `ready` so the external write below is
+    // cleanly observed as a `change` (not coalesced into the initial scan).
     await store.saveTokens("notion", {
       access_token: "AT",
       refresh_token: "RT",
       expires_in: 3600,
       token_type: "Bearer",
     });
+    await store.startWatch();
     // Prime the in-memory cache.
     const first = await store.tokens("notion");
     expect(first?.access_token).toBe("AT");
@@ -211,13 +217,12 @@ describe("createTokenStore", () => {
   });
 
   it("keeps the last-good cache and logs WARN on a truncated/partial external write (fail-soft) — 66-P13", async () => {
-    store.startWatch();
-
     await store.saveTokens("notion", {
       access_token: "AT-GOOD",
       expires_in: 3600,
       token_type: "Bearer",
     });
+    await store.startWatch();
     const primed = await store.tokens("notion");
     expect(primed?.access_token).toBe("AT-GOOD");
 
@@ -232,7 +237,7 @@ describe("createTokenStore", () => {
   });
 
   it("close() tears down the watcher (no leaked timers/handles) — OAUTH-04", async () => {
-    store.startWatch();
+    await store.startWatch();
     await store.saveTokens("notion", { access_token: "AT", expires_in: 60, token_type: "Bearer" });
     await expect(store.close()).resolves.toBeUndefined();
     // Idempotent.
