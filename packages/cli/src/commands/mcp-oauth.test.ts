@@ -146,7 +146,23 @@ describe("mcp login — open-vs-hint branching + exit codes", () => {
     expect(out).toMatch(/notion/);
   });
 
-  it("Test 2: authorized with authUrl → open() called exactly once with the URL", async () => {
+  it("Test 2: CR-02: authorized with authUrl → does NOT call open() (URL state is spent)", async () => {
+    // CR-02: When the daemon returns `status: "authorized"`, the token
+    // exchange already completed server-side and the tokens are persisted —
+    // `runOauthLogin` finished the second auth() call and the loopback
+    // callback server is closed. The `authUrl` in the response is the
+    // authorization URL built during the FIRST auth() pass; its `state`
+    // parameter is spent (already used + consumed by the closed callback
+    // server). Opening it now navigates the operator to a confusing
+    // provider error page ("invalid_state" / "code already used") AND
+    // exposes the spent state value to the browser's URL bar/history for
+    // no benefit.
+    //
+    // The browser was already opened at the correct moment in the
+    // non-headless branch of `runOauthLogin` (login.ts:openUrl(authUrl)
+    // before waitForCode). The CLI's second open() on the "authorized"
+    // response was redundant + misleading; the fix is to print success
+    // only, no open().
     wireWithClient();
     const authUrl = "https://provider.example/authorize?client_id=abc&state=xyz";
     vi.mocked(callTyped).mockResolvedValue({
@@ -158,9 +174,13 @@ describe("mcp login — open-vs-hint branching + exit codes", () => {
     const program = buildProgram();
     await program.parseAsync(["node", "test", "mcp", "login", "notion"]);
 
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(open).toHaveBeenCalledWith(authUrl);
+    // The CLI must NOT open the (spent) authUrl on the authorized status.
+    expect(open).not.toHaveBeenCalled();
     expect(exitSpy.spy).not.toHaveBeenCalled();
+    // A success message is still printed (status:"authorized" is the success
+    // surface — tokens are persisted, the server is reconnected).
+    const out = getSpyOutput(consoleSpy.log);
+    expect(out).toMatch(/notion/);
   });
 
   it("Test 3: headless_hint → prints portForwardHint + authUrl, does NOT open()", async () => {

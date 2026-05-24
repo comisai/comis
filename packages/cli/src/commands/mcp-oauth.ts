@@ -13,12 +13,19 @@
  * `mcp.oauth_login` runs the server-side half (loopback callback server,
  * discovery, PKCE, code exchange) and RETURNS the authorization URL — the
  * daemon never imports `open` because it may run on a remote/headless host.
- * This CLI is the interactive host, so it is where the browser actually opens:
+ * The interactive host (local CLI) is where the browser actually opens — but
+ * NOT from this CLI handler. CR-02: the orchestrator's non-headless path
+ * already opens the browser via its injected `openUrl` (login.ts:315) BEFORE
+ * it awaits the callback, so by the time `mcp.oauth_login` returns
+ * `status: "authorized"` the exchange has already completed and the
+ * authorization URL's `state` parameter is spent. Re-opening the URL here
+ * navigates the operator to a provider error page. The CLI surfaces:
  *   - `status:"headless_hint"` → PRINT `portForwardHint` + `authUrl`; do NOT
  *     open a browser (the daemon host has no display — T-66-30 / OAUTH-07).
- *   - otherwise, when an `authUrl` is returned → `open(authUrl)` locally.
- *   - `status:"authorized"` with no `authUrl` (already-authorized fast path) →
- *     print success only.
+ *     The operator forwards the port + opens the URL themselves.
+ *   - `status:"authorized"` → print success only. NEVER call `open()`: the
+ *     URL is spent (CR-02). The daemon-side `openUrl` injected into
+ *     `runOauthLogin` is what opens the browser at the right moment.
  *
  * ── Token resolution (OPUX-07 / 65-P1, T-66-28) ─────────────────────────────
  * Each action calls `ensureGatewayToken(opts.token)` BEFORE `withClient` opens
@@ -39,7 +46,13 @@
 
 import { McpOauthLoginContract, McpOauthLogoutContract } from "@comis/core";
 import type { Command } from "commander";
-import open from "open";
+// CR-02: the `open` import is intentionally absent. The CLI must NOT open
+// the authUrl returned on `status: "authorized"` — its `state` parameter is
+// spent by the time the daemon-side orchestrator returns. The orchestrator
+// itself opens the browser via the daemon's injected `openUrl` at the right
+// moment (login.ts:315). On `headless_hint` the CLI prints the URL for the
+// operator to open manually. Adding `import open from "open"` here would
+// regress this fix.
 import { withClient, callTyped } from "../client/rpc-client.js";
 import { success, error, info } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
@@ -98,17 +111,18 @@ export function registerMcpOauth(mcp: Command): void {
         }
 
         // status === "authorized".
-        if (result.authUrl) {
-          // CLI-side browser launch (resolved_scope #1) — the daemon returned
-          // a URL for THIS interactive host to open.
-          await open(result.authUrl);
-          success(
-            `Opened your browser to authorize MCP server "${name}". Complete the login in the browser; the daemon finishes the exchange and reconnects.`,
-          );
-          return;
-        }
-
-        // Already-authorized fast path (no browser needed).
+        //
+        // CR-02: The orchestrator (runOauthLogin) finished the second auth()
+        // call and persisted the tokens BEFORE returning. The authUrl in the
+        // response is the URL the SDK built during the first auth() pass —
+        // it carries a `state` parameter that has been consumed by the now-
+        // closed loopback callback server. Opening it here:
+        //   1. Navigates the operator to a provider error page
+        //      ("invalid_state" / "code already used") — confusing UX.
+        //   2. Leaks the spent `state` to the browser URL bar + history.
+        //   3. Is redundant — the orchestrator's non-headless branch already
+        //      opened the browser at the correct moment (login.ts:315).
+        // Print success only; do NOT call open().
         success(`MCP server "${name}" authorized.`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
