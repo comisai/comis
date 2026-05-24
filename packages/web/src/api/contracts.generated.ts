@@ -8602,6 +8602,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "agentId": {
           "type": "string"
+        },
+        "force": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -8697,6 +8700,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "agentId": {
           "type": "string"
+        },
+        "force": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -8882,6 +8888,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "agentId": {
           "type": "string"
+        },
+        "force": {
+          "type": "boolean"
         }
       },
       "required": [
