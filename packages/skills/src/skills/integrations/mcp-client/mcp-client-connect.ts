@@ -315,6 +315,16 @@ export async function disconnectServer(
     state.callQueues.delete(name);
   }
 
+  // Phase 67 CAP-02: tear down the dedicated keepalive queue (only populated
+  // when primary concurrency > 1). Mirrors the callQueue teardown so the
+  // queue cannot leak across reconnect generations. stopKeepaliveTicker above
+  // already prevents the ticker from enqueuing a new ping mid-teardown.
+  const keepaliveQueue = state.keepaliveQueues.get(name);
+  if (keepaliveQueue) {
+    keepaliveQueue.clear();
+    state.keepaliveQueues.delete(name);
+  }
+
   state.connections.delete(name);
   state.serverConfigs.delete(name);
   // Keep generations (in case user reconnects later, generation keeps incrementing)

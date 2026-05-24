@@ -190,6 +190,15 @@ async function evictIdleServer(
     state.callQueues.delete(name);
   }
 
+  // Phase 67 CAP-02: tear down the dedicated keepalive queue alongside the
+  // call queue (only populated when primary concurrency > 1). Mirrors
+  // disconnectServer so the queue cannot leak across reconnect generations.
+  const keepaliveQueue = state.keepaliveQueues.get(name);
+  if (keepaliveQueue) {
+    keepaliveQueue.clear();
+    state.keepaliveQueues.delete(name);
+  }
+
   // Stop our own idle ticker (clears handle + lastActivity).
   stopIdleTicker(state, name);
 
