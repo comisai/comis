@@ -400,6 +400,32 @@ describe("InfraEvents payload structure", () => {
     expect(received.message).toBe("Agent accessing secrets without explicit allow config");
   });
 
+  it("mcp:server:result_truncated delivers server, tool, sizes, traceId, timestamp", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["mcp:server:result_truncated"] = {
+      server: "db-server",
+      tool: "search",
+      originalSize: 60_000,
+      truncatedSize: 50_000,
+      traceId: "11111111-1111-1111-1111-111111111111",
+      timestamp: Date.now(),
+    };
+
+    bus.on("mcp:server:result_truncated", handler);
+    bus.emit("mcp:server:result_truncated", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["mcp:server:result_truncated"];
+    expect(received.server).toBe("db-server");
+    expect(received.tool).toBe("search");
+    expect(received.originalSize).toBe(60_000);
+    expect(received.truncatedSize).toBe(50_000);
+    expect(received.truncatedSize).toBeLessThan(received.originalSize);
+    expect(received.traceId).toBe("11111111-1111-1111-1111-111111111111");
+    expect(typeof received.timestamp).toBe("number");
+  });
+
   it("type safety: @ts-expect-error for missing required fields", () => {
     const bus = new TypedEventBus();
 
