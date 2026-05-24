@@ -454,10 +454,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         ...(resolvedKeepaliveIntervalMs !== undefined && { keepaliveIntervalMs: resolvedKeepaliveIntervalMs }),
         ...(resolvedCircuitBreakerThreshold !== undefined && { circuitBreakerThreshold: resolvedCircuitBreakerThreshold }),
         ...(resolvedCircuitBreakerCooldownMs !== undefined && { circuitBreakerCooldownMs: resolvedCircuitBreakerCooldownMs }),
-        // Phase 65 OPUX-09: idleTtlMs carries a schema default(0) ⇒ it is a
-        // required field on the inferred McpServerEntry type. mcp.connect does
-        // not expose an idle-eviction param, so persist the disabled default
-        // (matches McpServerEntrySchema.parse()); operators tune it via config.
+        // Phase 65 OPUX-09: idleTtlMs has a schema default(0) ⇒ required on the
+        // inferred McpServerEntry; mcp.connect has no idle param, so persist 0.
         idleTtlMs: 0,
         enabled: true,
       };
