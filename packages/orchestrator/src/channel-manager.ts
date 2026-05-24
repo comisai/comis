@@ -190,6 +190,12 @@ export interface ChannelManager {
   readonly activeCount: number;
   /** Inject a synthetic inbound message through the normal processing pipeline. Used for restart continuation replay. */
   injectMessage(channelType: string, msg: NormalizedMessage): Promise<void>;
+  /**
+   * Raw onMessage-registration count per channelType, captured pre-dedup in startAll().
+   * Used by the boot invariant collector to detect duplicate-adapter wiring (BOOT-02).
+   * Post-dedup (normal wiring) = 1; regression wiring (same adapter in both slots) = 2.
+   */
+  getRawHandlerCounts(): ReadonlyMap<string, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +217,16 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
 
   /** Adapter lookup map: channelType -> ChannelPort. Populated in startAll(). */
   const adaptersByType = new Map<string, ChannelPort>();
+
+  /**
+   * Raw pre-dedup registration count per channelType.
+   * Incremented once for every adapter seen in the merged list (deps.adapters +
+   * channelRegistry) BEFORE deduplication logic runs. This goes to 2 in the
+   * regression where the same adapter appears in both slots, while adaptersByType
+   * still holds only one entry (silent same-instance dedup). Used by the boot
+   * invariant collector (BOOT-02) to detect duplicate-adapter wiring.
+   */
+  const rawHandlerCounts = new Map<string, number>();
 
   /**
    * Pipeline deps for processInboundMessage at all three call sites
@@ -242,6 +258,9 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
         ? deps.channelRegistry.getChannelPlugins().map((p) => p.adapter)
         : [];
       for (const adapter of [...(deps.adapters ?? []), ...registryAdapters]) {
+        // Count raw registrations before dedup (BOOT-02 seam — goes to 2 in regression).
+        rawHandlerCounts.set(adapter.channelType, (rawHandlerCounts.get(adapter.channelType) ?? 0) + 1);
+
         const existing = adaptersByType.get(adapter.channelType);
         if (existing === undefined) {
           adaptersByType.set(adapter.channelType, adapter);
@@ -440,6 +459,10 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       deps.onMessageReceived?.(msg, channelType);
       await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
       deps.onMessageProcessed?.(msg, channelType);
+    },
+
+    getRawHandlerCounts(): ReadonlyMap<string, number> {
+      return rawHandlerCounts;
     },
   };
 }
