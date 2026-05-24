@@ -118,12 +118,12 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
   - Acceptance: `comis trace export <sessionId>` writes the directory
   - Acceptance: bundle round-trip — reader reconstructs chronological turn timeline from `events.jsonl` alone
   - Design: D5 *(file: `packages/observability/src/trajectory/export.ts` NEW)*
-- [ ] **BUNDLE-02**: Bundle manifest matches `TrajectoryBundleManifest` shape (§6.2), with `contents: [{path, mediaType, bytes}]` auto-populated and `warnings: TrajectoryBundleWarning[]` capped at 20 rows per code
+- [x] **BUNDLE-02**: Bundle manifest matches `TrajectoryBundleManifest` shape (§6.2), with `contents: [{path, mediaType, bytes}]` auto-populated and `warnings: TrajectoryBundleWarning[]` capped at 20 rows per code
   - Design: D5
-- [ ] **BUNDLE-03**: Bundle export honors hard limits — `MAX_TRAJECTORY_RUNTIME_EVENTS = 200_000`, `MAX_TRAJECTORY_TOTAL_EVENTS = 250_000`, `MAX_TRAJECTORY_SESSION_FILE_BYTES = 50 MB`, `MAX_TRAJECTORY_WARNING_ROWS = 20`
+- [x] **BUNDLE-03**: Bundle export honors hard limits — `MAX_TRAJECTORY_RUNTIME_EVENTS = 200_000`, `MAX_TRAJECTORY_TOTAL_EVENTS = 250_000`, `MAX_TRAJECTORY_SESSION_FILE_BYTES = 50 MB`, `MAX_TRAJECTORY_WARNING_ROWS = 20`
   - Acceptance: re-running export over a corrupted JSONL emits structured warnings, never crashes
   - Design: D5
-- [ ] **BUNDLE-04**: Bundle export merges runtime + transcript events with primary `ts` sort and `(source, sourceSeq)` tiebreak
+- [x] **BUNDLE-04**: Bundle export merges runtime + transcript events with primary `ts` sort and `(source, sourceSeq)` tiebreak
   - Design: D5
 
 ### Trajectory Pointer Files
@@ -258,9 +258,9 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | SESSION-01 | Phase 4 | Pending |
 | SESSION-02 | Phase 4 | Pending |
 | BUNDLE-01 | Phase 4 | Pending |
-| BUNDLE-02 | Phase 4 | Pending |
-| BUNDLE-03 | Phase 4 | Pending |
-| BUNDLE-04 | Phase 4 | Pending |
+| BUNDLE-02 | Phase 4 | Complete |
+| BUNDLE-03 | Phase 4 | Complete |
+| BUNDLE-04 | Phase 4 | Complete |
 | POINTER-01 | Phase 5 | Pending |
 | POINTER-02 | Phase 5 | Pending |
 | REDACT-01 | Phase 5 | Pending |

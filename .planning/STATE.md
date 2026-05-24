@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: "Plan 01 complete (3 commits: 97bce0a, ccefa97, b374e1f)."
-last_updated: "2026-05-24T20:51:33.273Z"
+last_updated: "2026-05-24T21:32:30.427Z"
 progress:
   total_phases: 8
   completed_phases: 3
-  total_plans: 15
-  completed_plans: 16
-  percent: 100
+  total_plans: 19
+  completed_plans: 17
+  percent: 89
 ---
 
 # Project State: Comis Observability Initiative
@@ -34,7 +34,7 @@ progress:
 **Last Completed:** Phase 3 Plan 01 — BOOT-01/02 Startup Invariants (2026-05-24)
 **Plan:** Plan 01 of 4 done; continue with 03-02 (INFO-01 forensic promotion)
 **Status:** Phase 3 in progress (1/4 plans complete)
-**Progress:** [██████████] 100%
+**Progress:** [█████████░] 89%
 
 **Phase 3 Plan 01 outcome:** 3 commits (97bce0a, ccefa97, b374e1f). PluginRegistry.count() + ChannelManager.getRawHandlerCounts() seams added. setup-startup-invariants.ts collector emits daemon:startup_invariants INFO + BOOT-02 WARN. Wired into daemon.ts bootShutdown. Arch test green. pnpm build clean; cycles clean. 71 new tests.
 
@@ -72,6 +72,7 @@ progress:
 | Phase 01-trace-propagation-lifecycle-envelopes P02 | 12 | 3 tasks | 6 files |
 | Phase 01-trace-propagation-lifecycle-envelopes P04 | 12m | 3 tasks | 4 files |
 | Phase 03-boot-invariants-info-dedup P04 | 20m | 2 tasks | 5 files |
+| Phase 04-session-dag-bundle-exporter P01 | 8 | 2 tasks | 4 files |
 
 ## Accumulated Context
 

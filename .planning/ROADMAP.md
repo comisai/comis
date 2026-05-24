@@ -112,11 +112,15 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 **Success Criteria** (what must be TRUE):
 1. Every new non-`session` session entry written under `~/.comis/workspace/sessions/.../` carries `parentId` pointing to its predecessor; `readSessionBranch(filePath)` returns `{ header, leafId, branchEntries, warnings }` reconstructed from the leaf backward
 2. A cyclic session emits a `{code: "cyclic-session-branch", row, message}` warning capped at 20 rows and export continues with the reachable suffix; a session with a missing parent emits `{code: "incomplete-session-branch", ...}` and exports the reachable suffix — neither crashes the exporter
-3. `exportTrajectoryBundle(<sessionId>)` produces the directory `<workspaceDir>/.comis/trace-exports/comis-trace-<sid8>-<ts>/` containing all 8 expected files, with `manifest.json` matching `TrajectoryBundleManifest` shape including `contents: [{path, mediaType, bytes}]` auto-populated and `warnings: TrajectoryBundleWarning[]` capped at 20 rows per code
+3. `exportTrajectoryBundle(<sessionId>)` produces the directory `<workspaceDir>/trace-exports/comis-trace-<sid8>-<ts>/` containing all 8 expected files, with `manifest.json` matching `TrajectoryBundleManifest` shape including `contents: [{path, mediaType, bytes}]` auto-populated and `warnings: TrajectoryBundleWarning[]` capped at 20 rows per code (path drops the design's redundant `.comis/` since `<workspaceDir>` already terminates in `.comis/workspace`)
 4. Bundle round-trip works: a reader given only `events.jsonl` reconstructs the chronological turn timeline; the merge respects primary `ts` sort with `(source, sourceSeq)` tiebreak (runtime + transcript events interleaved correctly)
 5. Hard limits are enforced: re-running export over a corrupted JSONL session of >50 MB refuses with structured `errorKind: "resource"`; runtime events >200_000 are capped; warning rows per code >20 are truncated. Bundle exporter never crashes on malformed source data
 
-**Plans**: TBD
+**Plans** (4):
+- [x] 04-01-PLAN.md — Foundations: TrajectoryBundleManifest + TrajectoryBundleWarning types (design §6.2), MAX_TRAJECTORY_* constants (200k/250k/50MB/20), pure helpers buildTranscriptEvents + sortTrajectoryEvents; appends `session.transcript.entry` to closed-union TRAJECTORY_EVENT_TYPES; RED tests pin sort tiebreak determinism (BUNDLE-02, BUNDLE-03 prep, BUNDLE-04 prep) [wave 1]
+- [ ] 04-02-PLAN.md — SESSION-01 verification + SESSION-02 reader: readSessionBranch via SdkSessionManager.open + getEntry leaf-to-root walk with bounded `seen` cycle detection + missing-parent warning + 20-row cap; NO new raw JSONL parser; SESSION-01 verified by reading SDK-written session and asserting parentId on every non-header entry (SDK contract) [wave 2]
+- [ ] 04-03-PLAN.md — exportTrajectoryBundle pipeline: stat → readSessionBranch → read runtime trajectory (pointer file fallback to co-located convention) → buildTranscriptEvents → sortTrajectoryEvents → buildSupplementalCaptures (metadata/artifacts/prompts/tools from latest trace.* events) → write 8-file directory mode 0o700, files 0o600, auto-populated manifest.contents; round-trip RED test + corrupt-JSONL warning paths; path `<workspaceDir>/trace-exports/` (drops redundant `.comis/`); WR-01 NOT folded (deferred to Phase 5) (BUNDLE-01, BUNDLE-02, BUNDLE-04) [wave 3]
+- [ ] 04-04-PLAN.md — BUNDLE-03 hard-limit + BUNDLE-04 sort-merge invariant tests: shrink-only architecture test `test/architecture/bundle-export-shape.test.ts` pins 4 constants + 6-code closed union + 8-file shape + privacy-warning docstring; 3 vitest cases pin 200k runtime cap, mixed-source deterministic sort, 20-row warning cap under cycle pressure (BUNDLE-03, BUNDLE-04) [wave 4]
 
 ### Phase 5: Trajectory Pointer & Platform-Aware Redaction
 
@@ -195,7 +199,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 | 1. Trace Propagation & Lifecycle Envelopes | 6/6 | Complete   | 2026-05-24 |
 | 2. Bridge Expansion & Payload Bounding | 5/5 | Complete   | 2026-05-24 |
 | 3. Boot Invariants, INFO Promotion & Dedup Detector | 4/4 | Complete   | 2026-05-24 |
-| 4. Session DAG & Bundle Exporter | 0/0 | Not started | - |
+| 4. Session DAG & Bundle Exporter | 0/4 | Planned    | - |
 | 5. Trajectory Pointer & Platform-Aware Redaction | 0/0 | Not started | - |
 | 6. Operator CLI & Slash-Command Export | 0/0 | Not started | - |
 | 7. Log Rotation & Alert Budget | 0/0 | Not started | - |
@@ -208,6 +212,7 @@ Per design §16, M1 supports a 2-stream parallel split for ~1 week wall-clock vs
 - **Phase 1 and Phase 2** are sequentially gated (Phase 2 schema entries reference Phase 1 fields).
 - **Within Phase 1**: D1 (TraceId at ingress) is independent of D4 (lifecycle envelopes); these two can be parallelized inside the phase plan.
 - **Within Phase 2**: D6 (bridge expansion) and D7 (payload bounding) are independent in principle, but the plan set serializes them by file ownership — all bridge plans edit the same two files (`event-bus-bridge.ts` + `types.ts`) and the two bounding plans both edit `runtime.ts`, so concurrent edits would conflict. Bounding (waves 1–2) lands before bridge expansion (waves 3–5) so the new event volume is capped as it arrives.
+- **Phase 4**: all 4 plans share `packages/observability/src/trajectory/export.ts` as the central file → serial waves 1→2→3→4. Each wave's plan depends on the previous wave's GREEN commit. Architecture test (Plan 04-04) lands last; it does not modify production source.
 - **Phase 4 and Phase 5** can be parallelized in part (POINTER-01/02 in Phase 5 is independent of BUNDLE-01..04 in Phase 4), but the redaction-at-export-boundary (REDACT-*) depends on Phase 4's exporter — keep that part sequential.
 - **Phase 6** is mostly sequential internally (INDEX-* before CLI search modes that use the index).
 - **Phase 7 and Phase 8** can run in parallel (rotation is config + transport wiring; docs are markdown).
@@ -261,3 +266,5 @@ REQUIREMENTS.md preamble says "52 total" but the actual REQ-IDs sum to 54. This 
 
 *Roadmap created: 2026-05-24 by GSD roadmapper*
 *Granularity: coarse (8 phases). Source: `.planning/design/OBSERVABILITY_DESIGN.md` §7 (D1–D16 grouped into delivery boundaries per the user's coarse granularity choice).*
+</content>
+</invoke>
