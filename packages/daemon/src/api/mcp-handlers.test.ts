@@ -678,6 +678,213 @@ describe("MCP RPC Handlers", () => {
         }),
       );
     });
+
+    // -------------------------------------------------------------------------
+    // Phase 63 CR-02 — mcp.test must apply the same pre-spawn safety controls
+    // as mcp.connect. Pre-fix the handler built McpServerConfig and called
+    // tempManager.connect(config) WITHOUT:
+    //   - plaintext-secret guard (raw tokens could be passed in env and
+    //     would reach the child process)
+    //   - findUnresolvedEnvRefs validation (test would fail at spawn-time
+    //     instead of producing the structured pre-spawn error)
+    //   - safetyAllowedEnvKeys plumb-through (operator-extension keys
+    //     are dropped for the test connect)
+    //   - osvCheckEnabled / osvCacheTtlMs plumb-through (test connects
+    //     used hard-coded defaults, ignoring operator overrides)
+    //   - rlimits plumb-through (test spawns had no resource caps)
+    //
+    // mcp.test IS a pre-spawn surface (it actually spawns the child to
+    // probe it). Phase 63 hardened only mcp.connect — an attacker could
+    // simply call mcp.test instead. The fix mirrors every guard from
+    // mcp.connect onto mcp.test.
+    // -------------------------------------------------------------------------
+    describe("mcp.test Phase 63 safety parity (CR-02)", () => {
+      it("rejects ghp_ plaintext secret with [plaintext_secret_in_env] same as mcp.connect", async () => {
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+        });
+        await expect(
+          handlers["mcp.test"]({
+            name: "gh-test",
+            transport: "stdio",
+            command: "npx",
+            env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
+          }),
+        ).rejects.toThrow(/\[plaintext_secret_in_env\] env\.GITHUB_TOKEN/);
+        expect(mockTempConnect).not.toHaveBeenCalled();
+      });
+
+      it("rejects sk- plaintext secret with [plaintext_secret_in_env] same as mcp.connect", async () => {
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+        });
+        await expect(
+          handlers["mcp.test"]({
+            name: "oa-test",
+            transport: "stdio",
+            command: "npx",
+            env: { OPENAI_API_KEY: "sk-aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdef" },
+          }),
+        ).rejects.toThrow(/\[plaintext_secret_in_env\] env\.OPENAI_API_KEY/);
+        expect(mockTempConnect).not.toHaveBeenCalled();
+      });
+
+      it("ALLOWS plaintext secret when disablePlaintextSecretCheck:true and logs WARN", async () => {
+        mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__optout", [])));
+        const logger = makeLogger();
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger,
+        });
+        await handlers["mcp.test"]({
+          name: "optout",
+          transport: "stdio",
+          command: "npx",
+          env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
+          disablePlaintextSecretCheck: true,
+        } as any);
+        expect(mockTempConnect).toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            method: "mcp.test",
+            errorKind: "config",
+          }),
+          expect.stringContaining("plaintext-secret check disabled"),
+        );
+      });
+
+      it("rejects unresolved ${VAR} env reference with [invalid_value] same as mcp.connect", async () => {
+        const sm = createSecretManager({}); // FOO absent
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+          secretManager: sm,
+        });
+        await expect(
+          handlers["mcp.test"]({
+            name: "missing-env-test",
+            transport: "stdio",
+            command: "npx",
+            args: ["pkg"],
+            env: { FOO: "${MISSING_VAR}" },
+          }),
+        ).rejects.toThrow(/\[invalid_value\].*MCP server "missing-env-test" references env var MISSING_VAR/);
+        expect(mockTempConnect).not.toHaveBeenCalled();
+      });
+
+      it("forwards safetyAllowedEnvKeys from container.config.integrations.mcp to the temp connect", async () => {
+        mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__allowed-keys", [])));
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+          container: {
+            config: {
+              integrations: {
+                mcp: {
+                  safetyAllowedEnvKeys: ["CUSTOM_CA_CERT_PATH"],
+                },
+              },
+            },
+          },
+        } as any);
+        await handlers["mcp.test"]({
+          name: "allowed-keys",
+          transport: "stdio",
+          command: "npx",
+        });
+        expect(mockTempConnect).toHaveBeenCalledWith(
+          expect.objectContaining({
+            safetyAllowedEnvKeys: ["CUSTOM_CA_CERT_PATH"],
+          }),
+        );
+      });
+
+      it("forwards osvCheckEnabled and osvCacheTtlMs from container.config.integrations.mcp to the temp connect", async () => {
+        mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__osv-cfg", [])));
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+          container: {
+            config: {
+              integrations: {
+                mcp: {
+                  osvCheckEnabled: false,
+                  osvCacheTtlMs: 3_600_000,
+                },
+              },
+            },
+          },
+        } as any);
+        await handlers["mcp.test"]({
+          name: "osv-cfg",
+          transport: "stdio",
+          command: "npx",
+        });
+        expect(mockTempConnect).toHaveBeenCalledWith(
+          expect.objectContaining({
+            osvCheckEnabled: false,
+            osvCacheTtlMs: 3_600_000,
+          }),
+        );
+      });
+
+      it("forwards persisted rlimits from container.config.integrations.mcp.servers[name].rlimits", async () => {
+        mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__limited", [])));
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+          container: {
+            config: {
+              integrations: {
+                mcp: {
+                  servers: [
+                    { name: "limited", transport: "stdio", command: "npx", enabled: true, rlimits: { cpu: 600 } },
+                  ],
+                },
+              },
+            },
+          },
+        } as any);
+        await handlers["mcp.test"]({
+          name: "limited",
+          transport: "stdio",
+          command: "npx",
+        });
+        expect(mockTempConnect).toHaveBeenCalledWith(
+          expect.objectContaining({ rlimits: { cpu: 600 } }),
+        );
+      });
+
+      it("caller-supplied rlimits override the persisted entry for mcp.test", async () => {
+        mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__override", [])));
+        const handlers = createMcpHandlers({
+          mcpClientManager: createMockManager(),
+          logger: makeLogger(),
+          container: {
+            config: {
+              integrations: {
+                mcp: {
+                  servers: [
+                    { name: "override", transport: "stdio", command: "npx", enabled: true, rlimits: { cpu: 300 } },
+                  ],
+                },
+              },
+            },
+          },
+        } as any);
+        await handlers["mcp.test"]({
+          name: "override",
+          transport: "stdio",
+          command: "npx",
+          rlimits: { cpu: 900 },
+        } as any);
+        expect(mockTempConnect).toHaveBeenCalledWith(
+          expect.objectContaining({ rlimits: { cpu: 900 } }),
+        );
+      });
+    });
   });
 
   describe("mcp.reconnect headers", () => {

@@ -665,7 +665,67 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // Strip dispatcher-injected _X internals BEFORE contract parse —
       // never let internals flow into Zod parsing.
       const userParams = stripInternalFields(rawParams);
+
+      // Phase 63 CR-02: apply the same pre-spawn safety controls as
+      // mcp.connect. mcp.test IS a pre-spawn surface (it actually spawns
+      // the child to probe it) — Phase 63's hardening of only mcp.connect
+      // left this method as a bypass: an admin (or any code path that
+      // landed at this RPC) could pass a raw `ghp_...` PAT in env or
+      // spawn `npx <malicious-pkg>` and Phase 63's guards would not fire.
+      // Mirror the mcp.connect plaintext-secret guard here. Read from
+      // userParams (raw, pre-parse). Per-server opt-out via
+      // userParams.disablePlaintextSecretCheck = true logs WARN and
+      // allows. Bracketed error code is LLM-readable for self-correction.
+      const envBlock = userParams.env as Record<string, string> | undefined;
+      const plaintextOptOut = userParams.disablePlaintextSecretCheck === true;
+      if (envBlock && !plaintextOptOut) {
+        for (const [key, value] of Object.entries(envBlock)) {
+          if (typeof value !== "string") continue;
+          if (looksLikePlaintextSecret(value)) {
+            throw new Error(
+              `[plaintext_secret_in_env] env.${key} (test for "${userParams.name as string}") ` +
+                `looks like a plaintext credential. ` +
+                `Hint: store it via secrets_manage and reference as "\${${key}}".`,
+            );
+          }
+        }
+      } else if (envBlock && plaintextOptOut) {
+        deps.logger.warn(
+          {
+            method: "mcp.test",
+            entityId: userParams.name as string,
+            hint: "disablePlaintextSecretCheck=true — server bypasses plaintext-secret scan",
+            errorKind: "config" as const,
+          },
+          "MCP plaintext-secret check disabled per-server",
+        );
+      }
+
       const params = McpTestContract.request.parse(userParams);
+
+      // Phase 63 CR-02: plumb operator-extension allowlist + OSV toggles +
+      // persisted rlimits from the config root, same as mcp.connect. The
+      // optional chain mirrors mcp.connect — test fixtures construct deps
+      // without a `container`, in which case the built-in allowlist is
+      // the only protection and OSV/rlimits fall back to defaults.
+      const mcpConfigRoot = deps.container?.config?.integrations?.mcp as
+        | {
+            safetyAllowedEnvKeys?: readonly string[];
+            osvCheckEnabled?: boolean;
+            osvCacheTtlMs?: number;
+          }
+        | undefined;
+
+      // Phase 63 CR-02: rlimits resolution — caller-supplied wins,
+      // otherwise read the persisted entry by the user-supplied `name`
+      // (NOT the internally-namespaced `__test__<name>` — the persisted
+      // entry uses the operator-visible identifier). The handler reads
+      // params.rlimits OR persistedEntry.rlimits OR undefined (no wrap).
+      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as Array<
+        { name: string; rlimits?: { as?: number; nofile?: number; cpu?: number } }
+      >;
+      const persistedEntry = persistedServers.find((s) => s.name === params.name);
+      const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
       const config: McpServerConfig = {
         name: `__test__${params.name}`,
@@ -676,7 +736,25 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         env: params.env,
         headers: params.headers,
         enabled: true,
+        // Phase 63 CR-02 — plumb the same protections as mcp.connect.
+        safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,
+        osvCheckEnabled: mcpConfigRoot?.osvCheckEnabled,
+        osvCacheTtlMs: mcpConfigRoot?.osvCacheTtlMs,
+        rlimits: resolvedRlimits,
       };
+
+      // Phase 63 CR-02: pre-spawn env-ref validation. Mirrors the
+      // mcp.connect site — reject when any env value references a key
+      // not present in the secrets store. Skipped only when secretManager
+      // is unwired (test setups).
+      if (config.env && deps.secretManager) {
+        const sm = deps.secretManager;
+        const unresolved = findUnresolvedEnvRefs(config.env, (key) => sm.get(key));
+        if (unresolved.length > 0) {
+          const missingNames = unresolved.map((u) => u.varName);
+          throw new Error(formatMissingEnvRefError(params.name, missingNames));
+        }
+      }
 
       // Create a temporary manager with short timeout for test
       const tempManager = createMcpClientManager({
