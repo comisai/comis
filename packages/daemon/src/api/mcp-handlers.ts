@@ -76,6 +76,8 @@ export type { McpHandlerDeps };
 // `@comis/daemon` barrel.
 export { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
 import { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
+// Phase 64 RELY-07/08: diff + 500ms debounce + singleton all extracted (Phase 63 precedent).
+import { getCoalescer, computeMcpDiff } from "./mcp-config-mutated-coalescer.js";
 
 // ---------------------------------------------------------------------------
 // Phase 47-02: persistMcpServers helper
@@ -192,6 +194,9 @@ async function persistMcpServers(
           "MCP persist swap: integrations subtree was undefined in-memory",
         );
       }
+      // Phase 64 RELY-08: diff BEFORE swap; trailing-edge 500ms emit AFTER swap.
+      const prev = (integrationsIn?.mcp?.servers as McpServerEntry[] | undefined) ?? [];
+      const { added, removed } = computeMcpDiff(prev, servers);
       const cloned = structuredClone((integrationsIn ?? {}) as MutableIntegrations);
       if (!cloned.mcp) cloned.mcp = {};
       cloned.mcp.servers = servers;
@@ -200,6 +205,7 @@ async function persistMcpServers(
       // a single write, so JS's single-threaded execution model guarantees
       // observers see pre-OR-post, never partial.
       (deps.container.config as { integrations: unknown }).integrations = cloned;
+      if (deps.eventBus) getCoalescer(deps.eventBus, deps.persistDeps.logger).schedule(added, removed);
     }
 
     return { persistence: "persisted" };

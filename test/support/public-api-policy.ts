@@ -1391,14 +1391,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "EnsureWorkspaceOptions",
       "WorkspaceFiles",
       "WorkspaceStatus",
-      // Phase 64 Plan 01 / Plan 02: opaque-handle types for
-      // `systemSetInterval` / `systemSetTimeout`. SystemIntervalHandle is
-      // already consumed (mcp-client-types.ts state Map generic + index.ts
-      // factory initializer). SystemTimeoutHandle is the paired surface
-      // intended for Plan 05's mcp-config-mutated-coalescer (trailing-edge
-      // debounce timer); tracked here as a planned-orphan policy entry
-      // until Plan 05 lands.
-      "SystemTimeoutHandle",
+      // Phase 64 Plan 01 / Plan 02: SystemIntervalHandle was the paired
+      // opaque-handle type for `systemSetInterval`, consumed via
+      // mcp-client-types.ts state Map generic + index.ts factory initializer.
+      // Plan 05 (this commit) introduces the SystemTimeoutHandle consumer in
+      // packages/daemon/src/api/mcp-config-mutated-coalescer.ts (trailing-edge
+      // debounce timer), so the planned-orphan entry that previously tracked
+      // SystemTimeoutHandle is removed here -- the symbol is now consumed.
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
@@ -1456,6 +1455,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // writer (see persist-to-config.ts:12-43 module-level state docs).
       "_resetSigusr1Timer",
       "_resetMutationFence",
+      // Phase 64 Plan 05 RELY-08: _resetConfigMutatedCoalescer is the
+      // process-wide reset for the trailing-edge debounce coalescer that
+      // packs config:mutated emits (per mcp-config-mutated-coalescer.ts).
+      // Consumer is test/integration/mcp-config-refresh.test.ts (Plan 06);
+      // public-export-consumers AST walker excludes test/** so this is the
+      // canonical place to record the planned consumer.
+      "_resetConfigMutatedCoalescer",
       // Phase 63 SAFETY-09: plaintext-secret heuristic helper re-exported
       // so the architecture-tier negative + positive control table at
       // test/architecture/mcp-plaintext-secret-false-positives.test.ts can
