@@ -56,4 +56,29 @@ describe("buildGatewayEnvLayer", () => {
       buildGatewayEnvLayer({ COMIS_GATEWAY_HOST: "0.0.0.0", COMIS_GATEWAY_PORT: "garbage" }),
     ).toEqual({ gateway: { host: "0.0.0.0" } });
   });
+
+  // POINTER-02 RED tests — these MUST fail on pre-patch code because
+  // env-layer.ts only handles gateway vars; COMIS_TRAJECTORY_DIR is unrecognised.
+
+  it("projects COMIS_TRAJECTORY_DIR onto observability.trajectory.dirOverride (POINTER-02)", () => {
+    expect(
+      buildGatewayEnvLayer({ COMIS_TRAJECTORY_DIR: "/var/comis/trj" }),
+    ).toEqual({ observability: { trajectory: { dirOverride: "/var/comis/trj" } } });
+  });
+
+  it("drops empty COMIS_TRAJECTORY_DIR — empty string and undefined produce no observability key (POINTER-02)", () => {
+    expect(buildGatewayEnvLayer({ COMIS_TRAJECTORY_DIR: "" })).not.toHaveProperty("observability");
+    expect(buildGatewayEnvLayer({ COMIS_TRAJECTORY_DIR: undefined })).not.toHaveProperty("observability");
+  });
+
+  it("combines gateway and trajectory env keys when both set (POINTER-02)", () => {
+    const result = buildGatewayEnvLayer({
+      COMIS_GATEWAY_HOST: "0.0.0.0",
+      COMIS_TRAJECTORY_DIR: "/tmp/trj",
+    });
+    expect(result).toEqual({
+      gateway: { host: "0.0.0.0" },
+      observability: { trajectory: { dirOverride: "/tmp/trj" } },
+    });
+  });
 });
