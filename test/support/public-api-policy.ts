@@ -1391,14 +1391,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "EnsureWorkspaceOptions",
       "WorkspaceFiles",
       "WorkspaceStatus",
-      // Phase 64-01 Wave 0 schema-foundation re-exports. The opaque
-      // timer-handle type aliases are surfaced from the @comis/core barrel
-      // ahead of Plans 02/03/05 which will `import type { SystemIntervalHandle,
-      // SystemTimeoutHandle } from "@comis/core"` for the MCP keepalive
-      // ticker + result-coalescer state machines. Tracked as planned-orphan
-      // entries (same posture as FileLockPort above) until those downstream
-      // plans land — at which point both entries can be removed.
-      "SystemIntervalHandle",
+      // Phase 64 Plan 01 / Plan 02: opaque-handle types for
+      // `systemSetInterval` / `systemSetTimeout`. SystemIntervalHandle is
+      // already consumed (mcp-client-types.ts state Map generic + index.ts
+      // factory initializer). SystemTimeoutHandle is the paired surface
+      // intended for Plan 05's mcp-config-mutated-coalescer (trailing-edge
+      // debounce timer); tracked here as a planned-orphan policy entry
+      // until Plan 05 lands.
       "SystemTimeoutHandle",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
