@@ -38,6 +38,9 @@ function makeConnection(client: Partial<Client>): McpConnection {
     reconnectAttempt: 0,
     maxReconnectAttempts: 5,
     generation: 0,
+    // CR-01: the adapters now re-enforce the capability gate on the live
+    // connection, so a connected server must advertise the capability.
+    capabilities: { resources: {}, prompts: {} },
   };
 }
 
@@ -77,7 +80,8 @@ describe("createListResourcesTool / createReadResourceTool global resources tool
     });
     const tool = createReadResourceTool(makeManager(conn));
     expect(tool.name).toBe("read_resource");
-    const result = await tool.execute("call-3", { server: "fs", uri: "file://a" } as never);
+    // CR-01: use a custom MCP scheme — file:/http:/https: are SSRF-blocked.
+    const result = await tool.execute("call-3", { server: "fs", uri: "res://a" } as never);
     expect(result.details).toMatchObject({ success: true });
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     expect(text).toContain("hello");

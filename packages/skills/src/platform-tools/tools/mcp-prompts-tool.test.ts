@@ -35,6 +35,9 @@ function makeConnection(client: Partial<Client>): McpConnection {
     reconnectAttempt: 0,
     maxReconnectAttempts: 5,
     generation: 0,
+    // CR-01: the adapters now re-enforce the capability gate on the live
+    // connection, so a connected server must advertise the capability.
+    capabilities: { resources: {}, prompts: {} },
   };
 }
 
