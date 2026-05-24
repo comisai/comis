@@ -163,6 +163,9 @@ export type {
 export { buildTraceMetadata } from "./trajectory/metadata.js";
 export type { TraceMetadataParams, TraceMetadataPayload } from "./trajectory/metadata.js";
 
+export { buildTraceArtifacts } from "./trajectory/artifacts.js";
+export type { TraceArtifactsRunState, TraceArtifactsPayload } from "./trajectory/artifacts.js";
+
 // ---------------------------------------------------------------------------
 // SystemPromptReport surface.
 // ---------------------------------------------------------------------------
