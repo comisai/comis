@@ -345,3 +345,29 @@ export function mcpToolsToAgentTools(
     };
   });
 }
+
+/**
+ * OPUX-08 / 65-P2: extract the per-server filter lists from a persisted MCP
+ * server entry into the shape `serverFiltersFn` expects.
+ *
+ * This helper lives in the bridge ON PURPOSE: it is the single place that
+ * names the literal `toolAllowlist` / `toolBlocklist` fields, so callers
+ * (e.g. the daemon's setup-tools serverFiltersFn closure) can read the
+ * persisted filters WITHOUT spelling out those identifiers. The 65-P2
+ * architecture-grep (`mcp-tool-filtering-bridge-only.test.ts`) confines the
+ * literals to this file + the schema + the schema snapshot.
+ *
+ * Returns `undefined` when the entry carries neither list, so the bridge's
+ * filter short-circuits (tool passes through) for unfiltered servers.
+ *
+ * @param entry - a persisted MCP server entry (McpServerEntry-shaped)
+ * @returns `{ allowlist?, blocklist? }` or `undefined` when both are absent
+ */
+export function extractServerToolFilters(
+  entry: { toolAllowlist?: readonly string[]; toolBlocklist?: readonly string[] },
+): { readonly allowlist?: readonly string[]; readonly blocklist?: readonly string[] } | undefined {
+  const out: { allowlist?: readonly string[]; blocklist?: readonly string[] } = {};
+  if (entry.toolAllowlist !== undefined) out.allowlist = entry.toolAllowlist;
+  if (entry.toolBlocklist !== undefined) out.blocklist = entry.toolBlocklist;
+  return out.allowlist === undefined && out.blocklist === undefined ? undefined : out;
+}

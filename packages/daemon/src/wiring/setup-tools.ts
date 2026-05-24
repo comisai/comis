@@ -7,7 +7,7 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
-import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort } from "@comis/core";
+import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -37,6 +37,7 @@ import {
   TOOL_GROUPS,
   assembleToolPipeline,
   mcpToolsToAgentTools,
+  extractServerToolFilters,
   type LinkRunner,
   type McpClientManager,
   type ToolSourceProfile,
@@ -118,6 +119,14 @@ export interface ToolsDeps {
    * without requiring a daemon restart.
    */
   mcpClientManager: McpClientManager;
+  /**
+   * Phase 65 OPUX-08: fresh accessor for the current MCP server entries
+   * (container.config.integrations.mcp.servers). Read PER CALL inside the
+   * serverFiltersFn closure passed to mcpToolsToAgentTools so config:mutated
+   * updates (Phase 64 in-memory swap) take effect on the next tool assembly
+   * without a daemon restart — do NOT cache the result.
+   */
+  getMcpServerEntries: () => readonly McpServerEntry[];
   /**
    * Per-agent ToolCapabilityPort resolver. Populated by daemon.ts from the
    * AgentsResult.toolCapabilityPorts map (one adapter per agent constructed
@@ -215,6 +224,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     subprocessEnv,
     onSuspiciousContent,
     mcpClientManager,
+    getMcpServerEntries,
     sandboxProvider,
     sessionTrackerRegistry,
   } = deps;
@@ -306,6 +316,15 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       toolSourceProfiles,
       skillsLogger,
       onSuspiciousContent,
+      // OPUX-08: per-server tool filtering applied at the bridge. Read the
+      // current entries FRESH per call (config:mutated swaps take effect on
+      // the next assembly without a restart). Field extraction is delegated
+      // to extractServerToolFilters so the literal filter-list field names
+      // stay confined to the bridge file (65-P2 architecture-grep).
+      (serverName: string) => {
+        const entry = getMcpServerEntries().find((s) => s.name === serverName);
+        return entry ? extractServerToolFilters(entry) : undefined;
+      },
     );
     return agentMcpTools;
   }

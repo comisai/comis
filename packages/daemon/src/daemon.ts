@@ -1923,7 +1923,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
     eventBus: container.eventBus, skillsLogger, linkRunner,
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     subprocessEnv: handle.execToolEnv, onSuspiciousContent: handle.onSuspiciousContent,
-    mcpClientManager, sandboxProvider, imageGenProvider, backgroundTaskManager,
+    mcpClientManager,
+    // OPUX-08: fresh accessor for per-server tool filtering — read live so
+    // config:mutated server edits surface on the next tool assembly.
+    getMcpServerEntries: () => container.config.integrations?.mcp?.servers ?? [],
+    sandboxProvider, imageGenProvider, backgroundTaskManager,
     sessionTrackerRegistry: handle.sessionTrackerRegistry, getCapabilityPortForAgent,
   });
 

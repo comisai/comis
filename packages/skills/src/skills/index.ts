@@ -50,6 +50,7 @@ export { agentToolsToToolDefinitions } from "./bridge/tool-definition-adapter.js
 // Bridge -- MCP tool bridge
 export {
   mcpToolsToAgentTools,
+  extractServerToolFilters,
   jsonSchemaToTypeBox,
   sanitizeMcpToolName,
   classifyMcpErrorType,
