@@ -44,8 +44,10 @@ const __dirname = dirname(__filename);
 
 /** The built CLI entrypoint the subprocess runs (per CLAUDE.md: not on PATH). */
 const CLI_PATH = resolve(__dirname, "../../packages/cli/dist/cli.js");
-/** The real stdio MCP server fixture the daemon spawns on connect. */
-const MCP_SERVER_FIXTURE = resolve(__dirname, "../support/mcp-test-server.mjs");
+/** The real stdio MCP server fixture the daemon spawns on connect. Lives under
+ *  test/support/__fixtures__/ — the eslint-ignored fixtures home — so the
+ *  Node globals (`process`) the fixture uses do not trip the security lint. */
+const MCP_SERVER_FIXTURE = resolve(__dirname, "../support/__fixtures__/mcp-test-server.mjs");
 
 /** Unique gateway port for this suite (avoids colliding with the 4766 default). */
 const GATEWAY_PORT = 47662;
