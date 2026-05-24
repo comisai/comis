@@ -144,11 +144,34 @@ const PLAINTEXT_SECRET_LENGTH_FLOOR = 44;
 const PLAINTEXT_SECRET_ENTROPY_FLOOR = 3.5;
 
 /**
+ * CR-06: Reject the entropy-backstop ALL values containing URL- /
+ * path- / sentence-delimiter characters. Real credential bodies are
+ * URL-safe base64 / base32 / hex / alphanumeric + `_ - . +`. None of
+ * the curated-prefix tokens (ghp_, sk-, AKIA, etc.) contain any of
+ * these. Connection strings (`postgres://`, `mongodb+srv://`),
+ * filesystem paths (`/usr/...`), URLs (`https://...`), comma-separated
+ * region lists (`us-east-1,us-east-2,...`), and sentence-like config
+ * values (`"this is a 50 character ..."`) all contain at least one of
+ * these chars and are reliably non-secret operator-config shapes.
+ *
+ * Predicate: contains ANY of whitespace, `:`, `/`, `?`, `&`, `=`, `@`,
+ * `,`. If any of these are present the backstop short-circuits to
+ * "not a secret" without consulting entropy. The curated prefix list
+ * (lines above) still matches its real-token positive cases first.
+ */
+const NON_CREDENTIAL_DELIMITER_RE = /[\s:/?&=@,]/;
+
+/**
  * Detect whether a string looks like a real-world plaintext secret.
  * Returns true for:
  *   - Any value with a known credential prefix (ghp_, sk-, AKIA, etc.).
- *   - OR (Shannon entropy > 3.5 AND length >= 44) — backstop for
- *     generic high-entropy keys not matching the curated prefix list.
+ *   - OR (Shannon entropy > 3.5 AND length >= 44 AND no
+ *     URL-/path-/sentence-delimiter chars) — backstop for generic
+ *     high-entropy keys not matching the curated prefix list. The
+ *     delimiter-char predicate (CR-06) excludes URLs, connection
+ *     strings, filesystem paths, comma-separated lists, and
+ *     sentence-shaped operator-config values, all of which had FPs
+ *     under the entropy-only backstop.
  *
  * NON-secrets that PASS (verified by the architecture-tier
  * mcp-plaintext-secret-false-positives.test.ts negative-control table):
@@ -157,7 +180,10 @@ const PLAINTEXT_SECRET_ENTROPY_FLOOR = 3.5;
  *   - Stripe customer IDs `cus_*` (15-25 chars; `cus_` is NOT in the
  *     prefix list — `sk_` is, but `cus_` is an ID not a key)
  *   - OpenAI org IDs (28 chars; entropy ~4.5; length < 44)
- *   - Filesystem PATH values (44+ chars; entropy ~3.3; below entropy floor)
+ *   - Filesystem PATH values (44+ chars; contains `:` `/`)
+ *   - URLs, connection strings, webhook endpoints (contain `://`)
+ *   - Comma-separated region lists (contain `,`)
+ *   - Sentence-shaped config values (contain whitespace)
  *   - Unresolved env-ref placeholders `${KEY}` (handled separately by
  *     findUnresolvedEnvRefs at the same handler boundary)
  *
@@ -173,6 +199,11 @@ export function looksLikePlaintextSecret(value: string): boolean {
   for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
     if (value.startsWith(prefix)) return true;
   }
+  // CR-06: entropy backstop only applies to credential-shaped values
+  // (no URL/path/sentence delimiter chars). This eliminates the
+  // false-positive class around connection strings, file paths, URLs,
+  // comma-lists, and sentence-shaped operator config values.
+  if (NON_CREDENTIAL_DELIMITER_RE.test(value)) return false;
   return (
     value.length >= PLAINTEXT_SECRET_LENGTH_FLOOR &&
     shannonEntropy(value) > PLAINTEXT_SECRET_ENTROPY_FLOOR

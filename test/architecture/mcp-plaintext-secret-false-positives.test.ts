@@ -46,6 +46,22 @@ const NEGATIVE_CASES: ReadonlyArray<{ label: string; sample: string }> = [
   { label: "32-char hex database ID",          sample: "a1b2c3d4e5f6789012345678901234ab" },
   // Notion DB ID undashed (32 hex)
   { label: "Notion DB ID undashed 32-hex",     sample: "8f3b2c1a9d4e7f60b5e2c8d1a4f7b9c3" },
+  // -----------------------------------------------------------------------
+  // CR-06 regressions — common operator-config values that the entropy
+  // backstop must NOT reject. Each value is a realistic non-secret an
+  // operator might place in `integrations.mcp.servers[*].env`. Per the
+  // CR-06 review, the pre-fix heuristic (length >= 44 AND entropy > 3.5)
+  // rejected all of these.
+  // -----------------------------------------------------------------------
+  { label: "PostgreSQL connection string",     sample: "postgres://user:password@localhost:5432/database_production" },
+  { label: "MongoDB SRV connection string",    sample: "mongodb+srv://cluster0.abcdef.mongodb.net/test?retryWrites=true&w=majority" },
+  { label: "S3 bucket URL",                    sample: "https://my-bucket.s3.us-east-1.amazonaws.com/path/to/file.json" },
+  { label: "Long filesystem path",             sample: "/home/runner/.cache/some-tool/wheels/long/path/with/some.whl" },
+  { label: "Comma-separated region list",      sample: "us-east-1,us-east-2,us-west-1,us-west-2,eu-central-1,ap-southeast-1" },
+  { label: "Plain API base URL 44 char",       sample: "http://api.example.com/v1/services/something" },
+  { label: "Sentence-like operator config",    sample: "this is a 50 character meaningful test sentence ok" },
+  { label: "Webhook endpoint URL",             sample: "https://hooks.slack.com/services/T01XX/B02YY/AbCdEf12345" },
+  { label: "Redis connection URI",             sample: "redis://default:abcde@redis-12345.c267.us-east-1-4.ec2.cloud.redislabs.com:12345" },
 ];
 
 const POSITIVE_CASES: ReadonlyArray<{ label: string; sample: string }> = [
