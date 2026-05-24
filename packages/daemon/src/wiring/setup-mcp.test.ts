@@ -88,6 +88,45 @@ describe("setupMcp", () => {
     expect(result.mcpClientManager.getAllConnections()).toEqual([]);
   });
 
+  // WR-03 (Phase 64 gap surfaced in Phase 67): the global reliability config
+  // (integrations.mcp.keepaliveIntervalMs / circuitBreakerThreshold /
+  // circuitBreakerCooldownMs) MUST be forwarded into createMcpClientManager.
+  // Pre-fix setupMcp never passed them, so a daemon-wide override (e.g.
+  // keepaliveIntervalMs: 0 to disable keepalives) was silently ignored for all
+  // startup-connected servers — only per-server overrides via mcp.connect RPC
+  // took effect. RED on pre-fix code: the factory call carried none of the three.
+  it("WR-03: forwards global keepaliveIntervalMs/circuitBreakerThreshold/circuitBreakerCooldownMs into createMcpClientManager", async () => {
+    mockGetAllConnections.mockReturnValue([]);
+    await callSetupMcp({
+      servers: [],
+      logger,
+      keepaliveIntervalMs: 0,
+      circuitBreakerThreshold: 7,
+      circuitBreakerCooldownMs: 12_345,
+    });
+
+    expect(mockCreateMcpClientManager).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keepaliveIntervalMs: 0,
+        circuitBreakerThreshold: 7,
+        circuitBreakerCooldownMs: 12_345,
+      }),
+    );
+  });
+
+  it("WR-03: omits the global reliability fields from the factory call when not provided", async () => {
+    mockGetAllConnections.mockReturnValue([]);
+    await callSetupMcp({ servers: [], logger });
+
+    const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+    // Undefined-valued forwards are acceptable (createMcpClientManager applies
+    // its own ?? defaults), but the keys must not carry a stale non-undefined
+    // value when the operator did not set them.
+    expect(factoryArg.keepaliveIntervalMs).toBeUndefined();
+    expect(factoryArg.circuitBreakerThreshold).toBeUndefined();
+    expect(factoryArg.circuitBreakerCooldownMs).toBeUndefined();
+  });
+
   it("always returns a defined manager when all servers disabled", async () => {
     mockGetAllConnections.mockReturnValue([]);
     const result = await callSetupMcp({

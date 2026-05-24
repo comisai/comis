@@ -1614,6 +1614,12 @@ async function bootAgents(
     eventBus: container.eventBus,
     stdioDefaultConcurrency: container.config.integrations.mcp.stdioDefaultConcurrency,
     httpDefaultConcurrency: container.config.integrations.mcp.httpDefaultConcurrency,
+    // WR-03: forward the global reliability config so daemon-wide
+    // keepalive/circuit-breaker overrides apply to startup-connected servers
+    // (previously only per-server mcp.connect overrides took effect).
+    keepaliveIntervalMs: container.config.integrations.mcp.keepaliveIntervalMs,
+    circuitBreakerThreshold: container.config.integrations.mcp.circuitBreakerThreshold,
+    circuitBreakerCooldownMs: container.config.integrations.mcp.circuitBreakerCooldownMs,
   });
 
   const {
