@@ -365,7 +365,7 @@ export interface InfraEvents {
   /** MCP server connection lost (transport closed or error) */
   "mcp:server:disconnected": {
     serverName: string;
-    reason: "transport_closed" | "transport_error" | "client_closed" | "client_error";
+    reason: "transport_closed" | "transport_error" | "client_closed" | "client_error" | "keepalive_failed";
     timestamp: number;
   };
 

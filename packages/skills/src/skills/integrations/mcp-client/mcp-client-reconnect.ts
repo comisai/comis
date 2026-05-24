@@ -123,7 +123,7 @@ export function handleDisconnection(
   state: McpClientManagerState,
   deps: McpClientManagerDeps,
   serverName: string,
-  reason: "transport_closed" | "transport_error" | "client_closed" | "client_error",
+  reason: "transport_closed" | "transport_error" | "client_closed" | "client_error" | "keepalive_failed",
 ): void {
   // Emit disconnected event
   deps.eventBus?.emit("mcp:server:disconnected", {
