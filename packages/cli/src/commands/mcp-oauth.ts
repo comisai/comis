@@ -43,7 +43,7 @@ import open from "open";
 import { withClient, callTyped } from "../client/rpc-client.js";
 import { success, error, info } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
-import { ensureGatewayToken } from "./mcp.js";
+import { ensureGatewayToken } from "./mcp-token.js";
 
 const TOKEN_FLAG_DESCRIPTION =
   "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).";

@@ -1398,6 +1398,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // packages/daemon/src/api/mcp-config-mutated-coalescer.ts (trailing-edge
       // debounce timer), so the planned-orphan entry that previously tracked
       // SystemTimeoutHandle is removed here -- the symbol is now consumed.
+      // Phase 66 OAUTH-10 (plan 07): the mcp.oauth_login / mcp.oauth_logout
+      // contract registry, mirroring MCP_CONTRACTS / SESSION_CONTRACTS etc.
+      // Consumed by the dispatcher composition + the contract-handler-parity
+      // CI-01 walker, both of which iterate the union of *_CONTRACTS arrays
+      // via patterns the AST consumer-scan does not flag. Documented
+      // public-contract surface; not a baseline orphan.
+      "MCP_OAUTH_CONTRACTS",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
@@ -1474,6 +1481,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Residency-test harness consumers (dynamic require).
       "createTracingLogger",
       "TracingLoggerOptions",
+      // Phase 66 OAUTH-10 (plan 07 daemon handlers): mcp.oauth_login /
+      // mcp.oauth_logout handler factory + deps type. Mounted by the
+      // dispatcher composition root; the public-export-consumers walker
+      // does not pick the boot-path wiring up because the dispatcher
+      // setup imports them via the index barrel for the same reason
+      // createMcpHandlers + McpHandlerDeps appear here (test-API surface
+      // for the integration test mcp-oauth-roundtrip.test.ts to harness
+      // the handlers against a tmpdir token store, mirroring the 47
+      // mcp-persistence precedent). Not a baseline orphan.
+      "createMcpOauthHandlers",
+      "McpOauthHandlerDeps",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
@@ -1781,5 +1799,34 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // test-API surface; not a baseline orphan.
       "createRedirectPolicyFetch",
       "RedirectPolicyOptions",
+      // Phase 66 OAUTH-10/11 (plans 06+07): the OAuth login orchestrator,
+      // its associated config/logger types, and the connect-time
+      // needs_oauth_login signal guard are re-exported so the daemon RPC
+      // handler `mcp-oauth-handlers.ts` can run mcp.oauth_login / oauth_logout
+      // WITHOUT a direct @modelcontextprotocol/sdk dep (the daemon depends
+      // on @comis/skills, not the SDK). Daemon-side consumers live OUTSIDE
+      // packages/skills/, so the source-only consumer scan does not pick
+      // them up; the daemon imports them statically via @comis/skills.
+      // Documented test-API surface; not a baseline orphan.
+      "OAuthLoginConfig",
+      "OAuthLoginLogger",
+      "TokenStoreDeps",
+      "isNeedsOAuthLoginError",
+      // Phase 66 OAUTH-05+11 (plan 09 full-cycle integration gate): the 401
+      // refresh-deduper factory + its types are re-exported so the
+      // integration test `test/integration/mcp-oauth-roundtrip.test.ts` can
+      // drive Notion rotation + Stripe-Account header + 100-concurrent dedup
+      // against the in-process mock authorization server through the PUBLIC
+      // @comis/skills barrel (the plan disallows reaching into src internals
+      // — missing re-exports are added to the barrel). Internal-to-skills
+      // consumer lives in mcp-client-connect.ts (where connectServer wires
+      // the deduper's critical section to state.callQueues). Documented
+      // test-API surface; not a baseline orphan.
+      "createRefreshDeduper",
+      "RefreshDeduper",
+      "RefreshDeduperDeps",
+      "RefreshResult",
+      "DedupedRefreshArgs",
+      "RefreshFn",
     ])],
   ]);

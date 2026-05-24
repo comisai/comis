@@ -1,6 +1,6 @@
 {
-  "totalMinified": 106682,
-  "totalGzipped": 9830,
+  "totalMinified": 107627,
+  "totalGzipped": 9911,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -96,6 +96,8 @@
     "mcp.connect": 1654,
     "mcp.disconnect": 519,
     "mcp.list": 976,
+    "mcp.oauth_login": 515,
+    "mcp.oauth_logout": 407,
     "mcp.reconnect": 927,
     "mcp.status": 1423,
     "mcp.test": 1172,

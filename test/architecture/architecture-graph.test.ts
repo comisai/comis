@@ -113,7 +113,14 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   scheduler: new Set(["shared", "core"]),
   // skills: no infra edge. Logger type imports from @comis/core; isDocker
   // lives at packages/core/src/runtime/is-docker.ts.
-  skills: new Set(["shared", "core"]),
+  //
+  // Phase 66 OAUTH-01/02 (plan 02 token-store): @comis/observability edge —
+  // `writeRegularFile` / `ensureContainedDir` from packages/observability/src/
+  // shared/fs-safe.ts back the 3-file OAuth token store (`<server>.json` /
+  // `<server>.client.json` / `<server>.meta.json` at 0o600 in 0o700 dir under
+  // ~/.comis/mcp-tokens/). Observability depends only on @comis/core +
+  // @comis/shared (both already skills deps) so the edge is acyclic.
+  skills: new Set(["shared", "core", "observability"]),
   // agent: structurally references skills' types only (comments) — no actual
   // import edge, so no skills entry here. No @comis/infra edge: logger
   // contract types canonically live in @comis/core. No @comis/memory edge:

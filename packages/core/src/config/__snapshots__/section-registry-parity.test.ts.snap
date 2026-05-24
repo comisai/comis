@@ -18761,6 +18761,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
                 },
                 "type": "array"
               },
+              "auth": {
+                "enum": [
+                  "none",
+                  "bearer",
+                  "oauth"
+                ],
+                "type": "string"
+              },
               "circuitBreakerCooldownMs": {
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
@@ -18830,6 +18838,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
                 "minLength": 1,
                 "pattern": "^[a-zA-Z0-9_-]+$",
                 "type": "string"
+              },
+              "oauth": {
+                "additionalProperties": false,
+                "properties": {
+                  "authorizationEndpoint": {
+                    "format": "uri",
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  },
+                  "stripeAccount": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
               },
               "rlimits": {
                 "additionalProperties": false,
@@ -28069,6 +28093,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     },
                     "type": "array"
                   },
+                  "auth": {
+                    "enum": [
+                      "none",
+                      "bearer",
+                      "oauth"
+                    ],
+                    "type": "string"
+                  },
                   "circuitBreakerCooldownMs": {
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991,
@@ -28138,6 +28170,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "minLength": 1,
                     "pattern": "^[a-zA-Z0-9_-]+$",
                     "type": "string"
+                  },
+                  "oauth": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "authorizationEndpoint": {
+                        "format": "uri",
+                        "type": "string"
+                      },
+                      "scope": {
+                        "type": "string"
+                      },
+                      "stripeAccount": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
                   },
                   "rlimits": {
                     "additionalProperties": false,

@@ -26,53 +26,21 @@ import {
   McpDisconnectContract,
   McpReconnectContract,
   McpTestContract,
-  systemGetEnv,
-  loadEnvFile,
 } from "@comis/core";
 import type { Command } from "commander";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import chalk from "chalk";
 import { withClient, callTyped } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable } from "../output/table.js";
+import { ensureGatewayToken } from "./mcp-token.js";
 import { registerMcpOauth } from "./mcp-oauth.js";
 
-/**
- * Resolve the gateway bearer token BEFORE `withClient` opens the socket.
- *
- * OPUX-07 / 65-P1 mitigation. Resolution order:
- *   1. `--token <t>` flag wins — written through to `process.env` so the
- *      downstream `withClient` resolver (rpc-client.ts) consumes it.
- *   2. else load `~/.comis/.env` (mirrors rpc-client's own lazy load — and
- *      because the helper runs BEFORE withClient, this makes the value
- *      visible to BOTH this check and the socket resolver), then read
- *      `COMIS_GATEWAY_TOKEN` from the environment.
- *   3. miss → throw an explicit error NAMING the env var. The message MUST
- *      NOT interpolate any token value (T-65-05 information-disclosure
- *      mitigation).
- *
- * @param flagToken - The `--token` option value, or undefined.
- * @throws Error naming COMIS_GATEWAY_TOKEN when no token can be resolved.
- */
-export function ensureGatewayToken(flagToken: string | undefined): void {
-  if (flagToken !== undefined && flagToken.length > 0) {
-    // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager: thread --token into the env so rpc-client's ${COMIS_GATEWAY_TOKEN} config resolver consumes it
-    process.env["COMIS_GATEWAY_TOKEN"] = flagToken;
-    return;
-  }
-  // Load ~/.comis/.env so the env var is visible to this check AND to the
-  // withClient socket resolver. loadEnvFile does not override an already-set
-  // value, so a process-level COMIS_GATEWAY_TOKEN takes precedence.
-  loadEnvFile(join(homedir(), ".comis", ".env"));
-  const existing = systemGetEnv("COMIS_GATEWAY_TOKEN");
-  if (existing !== undefined && existing.length > 0) return;
-  throw new Error(
-    "Missing COMIS_GATEWAY_TOKEN — set in ~/.comis/.env or pass --token <token>.\n" +
-      "Hint: run `comis init` to generate a gateway token, or `comis pm2 setup` to bootstrap the environment file.",
-  );
-}
+// Re-export ensureGatewayToken so existing external consumers that import it
+// from "./mcp.js" (or "@comis/cli/commands/mcp") see no API surface change.
+// The actual implementation lives in mcp-token.ts to break the intra-package
+// `mcp.ts` ↔ `mcp-oauth.ts` cycle (66-09 final-gate Rule 1 fix).
+export { ensureGatewayToken } from "./mcp-token.js";
 
 /**
  * Color-code an MCP connection status string for table/detail output.

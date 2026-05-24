@@ -174,7 +174,7 @@ describe("runBrowserCallback — loopback callback server", () => {
     expect(await isPortOpen(handle.port)).toBe(false);
   });
 
-  it("3. CSRF mismatch → 400, errorKind:'security' WARN, no resolve (timingSafeEqual, no throw on length diff)", async () => {
+  it("3. CSRF mismatch → 400, errorKind:'auth' WARN, no resolve (timingSafeEqual, no throw on length diff)", async () => {
     const state = "c".repeat(64);
     const logger = makeLogger();
     const { handle } = await start({ state, logger });
@@ -195,9 +195,11 @@ describe("runBrowserCallback — loopback callback server", () => {
     );
     expect(res.status).toBe(400);
 
-    // A security WARN was logged.
+    // A WARN was logged tagged auth (CSRF mismatch is authentication-domain;
+    // the closed errorKind union maps "security" semantics onto "auth"; the
+    // "possible CSRF" wording is preserved in the message).
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ errorKind: "security", serverName: "notion" }),
+      expect.objectContaining({ errorKind: "auth", serverName: "notion" }),
       expect.any(String),
     );
 
@@ -313,7 +315,7 @@ describe("isHeadless predicate", () => {
     expect(isHeadless({ env: {}, isTTY: true, existsSync: noFs })).toBe(true);
   });
 
-  it("SSH_CLIENT / SSH_TTY (base helper signals) → headless", () => {
+  it("returns headless when SSH_CLIENT or SSH_TTY is set (base-helper signals)", () => {
     expect(
       isHeadless({ env: { DISPLAY: ":0", SSH_CLIENT: "x" }, isTTY: true, existsSync: noFs }),
     ).toBe(true);

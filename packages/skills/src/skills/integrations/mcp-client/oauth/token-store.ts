@@ -250,7 +250,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
     // to OAuth, but it must not crash construction (the manager surfaces the
     // first read/write error). Log and continue; the first write will re-error.
     logger.warn(
-      { submodule: "oauth-token-store", errorKind: "internal", err: dirResult.error },
+      { submodule: "oauth-token-store", errorKind: "internal" as const, err: dirResult.error },
       "Failed to ensure mcp-tokens dir at 0o700",
     );
   }
@@ -279,7 +279,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
       }
       // Unexpected read error — fail-soft: do not cache, return undefined.
       logger.warn(
-        { submodule: "oauth-token-store", errorKind: "internal", err: e },
+        { submodule: "oauth-token-store", errorKind: "internal" as const, err: e },
         "Failed to read OAuth token-store file",
       );
       return undefined;
@@ -292,7 +292,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
       // may contain tokens). We deliberately do NOT cache the bad value, so a
       // subsequent complete write is re-read on the next access.
       logger.warn(
-        { submodule: "oauth-token-store", errorKind: "validation" },
+        { submodule: "oauth-token-store", errorKind: "validation" as const },
         "OAuth token-store file failed schema validation; serving last-good value",
       );
       return lastGood.get(path) as T | undefined;
@@ -336,7 +336,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
       const code = (e as NodeJS.ErrnoException).code;
       if (code !== "ENOENT") {
         logger.warn(
-          { submodule: "oauth-token-store", errorKind: "internal", err: e },
+          { submodule: "oauth-token-store", errorKind: "internal" as const, err: e },
           "Failed to unlink OAuth token-store file",
         );
       }
@@ -449,7 +449,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
       w.on("add", scheduleCacheInvalidation);
       w.on("error", (watchErr: unknown) => {
         logger.warn(
-          { submodule: "oauth-token-store", errorKind: "internal", err: watchErr },
+          { submodule: "oauth-token-store", errorKind: "internal" as const, err: watchErr },
           "mcp-tokens watcher errored",
         );
       });

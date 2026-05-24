@@ -28,7 +28,7 @@
  * to disk. The callback compares the returned `state` against it via
  * `crypto.timingSafeEqual`. `timingSafeEqual` THROWS on a length mismatch, so a
  * length-guard runs first and treats any length difference as a (non-throwing)
- * mismatch. A mismatch → HTTP 400 + an `errorKind:"security"` WARN, and the
+ * mismatch. A mismatch → HTTP 400 + an `errorKind:"auth"` WARN (CSRF is an
  * code is NOT resolved (the attacker's code is dropped; the server stays up for
  * the legitimate redirect or the timeout).
  *
@@ -76,6 +76,7 @@ import {
   isRemoteEnvironment,
   systemSetTimeout,
   systemClearTimeout,
+  systemEnvSnapshot,
   type SystemTimeoutHandle,
 } from "@comis/core";
 
@@ -276,7 +277,14 @@ export function runBrowserCallback(
   // boundary without ever writing or logging it (OAUTH-12).
   void options.codeVerifier;
 
-  const env = options.env ?? process.env;
+  // Pattern B: env via the sanctioned `systemEnvSnapshot()` from
+  // @comis/core/runtime instead of a direct `process.env` global, satisfying
+  // the architecture globals gate (no new direct-global call sites outside
+  // BOOTSTRAP_PATH_PATTERNS). Tests inject `options.env`; production reads
+  // the snapshot once per invocation, which is the right semantic anyway —
+  // the headless decision is per-login and should not observe later env
+  // mutations within the same process lifetime.
+  const env = options.env ?? systemEnvSnapshot();
   const isTTY = options.isTTY ?? Boolean(process.stdout.isTTY);
   const existsSync = options.existsSync ?? nodeExistsSync;
 
@@ -315,7 +323,12 @@ export function runBrowserCallback(
         res.writeHead(400, { "content-type": "text/plain" });
         res.end("state mismatch");
         logger.warn(
-          { errorKind: "security", serverName },
+          // CSRF state mismatch is an authentication-domain violation (the
+          // attacker's redirect is the OAuth handshake failing the integrity
+          // check). Maps to the closed errorKind union's "auth" member; the
+          // "security" semantic is preserved in the log message ("possible
+          // CSRF") + the submodule ("oauth-browser-callback").
+          { errorKind: "auth" as const, serverName },
           "OAuth callback state mismatch — rejected (possible CSRF)",
         );
         return;

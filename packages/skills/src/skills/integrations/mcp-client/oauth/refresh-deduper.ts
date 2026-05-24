@@ -267,7 +267,11 @@ export function createRefreshDeduper(deps: RefreshDeduperDeps): RefreshDeduper {
       // No poisoned shared future (66-P13): drop the entry so a retry can fire.
       evict(accessToken);
       logger.warn(
-        { submodule: SUBMODULE, serverName, errorKind: "external", err },
+        // A refresh failure is an external-dependency error (the provider's
+        // /token endpoint rejected the refresh — could be a rate limit, a
+        // rotated-out refresh_token, or a transient 5xx). The closed errorKind
+        // union maps this to "dependency".
+        { submodule: SUBMODULE, serverName, errorKind: "dependency" as const, err },
         "OAuth token refresh failed; inflight entry evicted (retryable)",
       );
       // @allow-throw: the caller (the 401 handler) must observe the failure to

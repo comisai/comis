@@ -278,7 +278,7 @@ export async function runOauthLogin(
       }
       // No URL captured on a REDIRECT is a flow bug — fail closed.
       logger.warn(
-        { submodule: SUBMODULE, serverName, errorKind: "config" },
+        { submodule: SUBMODULE, serverName, errorKind: "config" as const },
         "OAuth login: SDK returned REDIRECT without an authorization URL",
       );
       return { status: "failed" };
@@ -327,7 +327,7 @@ export async function runOauthLogin(
 
     if (second !== "AUTHORIZED") {
       logger.warn(
-        { submodule: SUBMODULE, serverName, errorKind: "auth" },
+        { submodule: SUBMODULE, serverName, errorKind: "auth" as const },
         "OAuth login: code exchange did not authorize",
       );
       return { status: "failed", authUrl };
@@ -346,7 +346,7 @@ export async function runOauthLogin(
         submodule: SUBMODULE,
         serverName,
         err: err instanceof Error ? err.message : String(err),
-        errorKind: "auth",
+        errorKind: "auth" as const,
       },
       "OAuth login failed",
     );
