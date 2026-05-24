@@ -1,24 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * config:mutated event coalescer with 500ms trailing-edge debounce
- * for Phase 64 RELY-08.
- *
- * Extracted from `mcp-handlers.ts` to keep that leaf under the 800-line
- * per-file cap (precedent: Phase 63 commit 7e4e7c02 extracted
- * `looksLikePlaintextSecret` for the same reason). Bulk operations like
- * Phase 68 skill-install adding N MCPs produce ONE event per 500ms
- * window with merged `{ added, removed }` diff arrays.
- *
- * Closure-captured CoalescerState (NOT module-scope `let` mutables) --
- * the factory `createConfigMutatedCoalescer` returns a `{ schedule,
- * _resetForTests }` pair. One coalescer per daemon process;
- * `mcp-handlers.ts` instantiates lazily on first persist with eventBus
- * available.
- *
- * Exported `_resetConfigMutatedCoalescer` mirrors the `_resetSigusr1Timer` /
- * `_resetMutationFence` test seam at persist-to-config.ts:72/99, called
- * from every integration test's `beforeEach` to prevent state leakage
- * across vitest processes.
+ * config:mutated event coalescer with 500ms trailing-edge debounce for
+ * Phase 64 RELY-08. Extracted from mcp-handlers.ts to keep that leaf under
+ * the 800-line per-file cap (Phase 63 precedent: looksLikePlaintextSecret).
+ * Bulk operations (Phase 68 skill-install adding N MCPs) produce ONE event
+ * per 500ms window with merged { added, removed } diff arrays. The factory
+ * returns closure-captured state; mcp-handlers.ts goes through getCoalescer
+ * for the process-wide singleton. _resetConfigMutatedCoalescer mirrors the
+ * _resetSigusr1Timer / _resetMutationFence test seam at
+ * persist-to-config.ts:72/99 for beforeEach state isolation.
  *
  * @module
  */
@@ -106,31 +96,27 @@ export function createConfigMutatedCoalescer(
   return { schedule, _resetForTests };
 }
 
-/**
- * Process-level test seam. mcp-handlers.ts owns the lazy singleton; integration
- * tests call _resetConfigMutatedCoalescer in beforeEach to clear pending state
- * and cancel the timer. Holder is undefined until mcp-handlers.ts registers
- * the instance at first persist; before registration the reset is a no-op.
- */
-let registered: ConfigMutatedCoalescer | undefined;
+// Process-wide singleton (one daemon = one config = one event bus). Lazy-init
+// on first persistMcpServers call with eventBus available; getCoalescer returns
+// the same instance after. _resetConfigMutatedCoalescer is the test seam.
+let singleton: ConfigMutatedCoalescer | undefined;
 
-/** Register the process-wide coalescer (called once from mcp-handlers.ts). */
-export function registerCoalescerForTestReset(coalescer: ConfigMutatedCoalescer): void {
-  registered = coalescer;
+/** Lazy get-or-create the process-wide coalescer. Called from mcp-handlers.ts. */
+export function getCoalescer(eventBus: TypedEventBus, logger: ComisLogger): ConfigMutatedCoalescer {
+  if (singleton === undefined) singleton = createConfigMutatedCoalescer(eventBus, logger);
+  return singleton;
 }
 
 /** Test seam mirroring _resetSigusr1Timer / _resetMutationFence. */
 export function _resetConfigMutatedCoalescer(): void {
-  registered?._resetForTests();
+  singleton?._resetForTests();
 }
 
 /**
  * Compute the {added, removed} diff between previous and current
- * `integrations.mcp.servers` arrays. Lives in the coalescer module
- * (NOT inlined at the persistMcpServers call site) so the call site
- * stays narrow and the 800-line cap on `mcp-handlers.ts` is preserved
- * from the start (extraction-first per Phase 63 precedent). Dedup
- * uses entry `name` as the identity key.
+ * `integrations.mcp.servers` arrays. Dedup by entry `name`. Lives in the
+ * coalescer module (NOT inlined at the call site) so mcp-handlers.ts stays
+ * under the 800-line cap by construction (extraction-first; Phase 63 precedent).
  */
 export function computeMcpDiff(
   previous: readonly McpServerEntry[],
