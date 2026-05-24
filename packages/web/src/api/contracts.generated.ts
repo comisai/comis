@@ -4420,6 +4420,21 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "disablePlaintextSecretCheck": {
           "type": "boolean"
+        },
+        "keepaliveIntervalMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "circuitBreakerThreshold": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "circuitBreakerCooldownMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [

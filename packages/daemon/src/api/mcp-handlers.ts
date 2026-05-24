@@ -313,27 +313,18 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     [McpConnectContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod guard — produces the legacy "Missing required
-      // parameter: server_name" UX. The contract's `.min(1)` + enum
-      // gating is defense-in-depth. Transport inference is handled
-      // at the schema layer (McpServerEntrySchema z.preprocess) on
-      // the config-load path; on the RPC path it is inlined at the
-      // mcp_manage tool layer for LLM UX.
+      // Bespoke pre-Zod guard for legacy "Missing required parameter:
+      // server_name" UX. Contract's .min(1) + enum gating is defense-in-depth.
       const nameRaw = rawParams.server_name as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
 
-      // Strip dispatcher-injected _X internals BEFORE contract parse —
-      // never let internals flow into Zod parsing. The parsed `params` provides
-      // the same field names with type-narrowing.
+      // Strip dispatcher-injected _X internals before contract parse.
       const userParams = stripInternalFields(rawParams);
 
-      // Phase 63 SAFETY-03/04/09: plaintext-secret reject (pre-Zod).
-      // Mirrors the findUnresolvedEnvRefs pattern at lines below.
-      // Reads from userParams.env (raw, pre-parse). Per-server opt-out via
-      // userParams.disablePlaintextSecretCheck = true logs WARN and allows.
-      // Bracketed error code [plaintext_secret_in_env] is LLM-readable for
-      // self-correction; the hint routes the operator to secrets_manage +
-      // ${KEY} indirection.
+      // Phase 63 SAFETY-03/04/09: plaintext-secret reject (pre-Zod). Reads
+      // userParams.env raw; per-server opt-out via disablePlaintextSecretCheck
+      // logs WARN and allows. Bracketed [plaintext_secret_in_env] is
+      // LLM-readable; the hint routes the operator to secrets_manage.
       const envBlock = userParams.env as Record<string, string> | undefined;
       const plaintextOptOut = userParams.disablePlaintextSecretCheck === true;
       if (envBlock && !plaintextOptOut) {
@@ -364,13 +355,10 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const manager = deps.mcpClientManager;
 
       // Phase 63 SAFETY-02 / SAFETY-06: copy operator-extension allowlist +
-      // OSV check toggles from the config root so they reach the spawn-time
-      // helpers (scrubStdioEnv + osvMalwareCheck) in @comis/skills. The
-      // optional chain mirrors the McpConnect persist site below — test
-      // fixtures construct deps without a `container`, in which case the
-      // built-in `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` is the only protection
-      // and the OSV check falls back to Plan 01's defaults (enabled: true,
-      // ttlMs: 24h) at the call site in mcp-client-connect.ts.
+      // OSV check toggles from the config root so spawn-time helpers
+      // (scrubStdioEnv + osvMalwareCheck) see them. Optional-chain matches
+      // the persist site below — test fixtures may construct deps without a
+      // container; built-in allowlist + Plan 01 OSV defaults apply then.
       const mcpConfigRoot = deps.container?.config?.integrations?.mcp as
         | {
             safetyAllowedEnvKeys?: readonly string[];
@@ -380,19 +368,24 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         | undefined;
 
       // Phase 63 SAFETY-08 + CR-03: per-server rlimits resolution.
-      // McpConnectContract.request now accepts an explicit `rlimits` field
-      // (CR-03 — pre-fix the only path was the persisted entry, which
-      // didn't exist on first connect and was never written by the
-      // handler, deadlocking SAFETY-08 for new servers). Resolution
-      // order:
-      //   1. caller-supplied `params.rlimits` (current connect's intent)
-      //   2. otherwise the previously-persisted entry's `rlimits`
-      //   3. otherwise undefined (existing env-only wrap — no prlimit)
-      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as Array<
-        { name: string; rlimits?: { as?: number; nofile?: number; cpu?: number } }
-      >;
+      // Resolution order: caller-supplied params.rlimits > persisted-entry
+      // rlimits > undefined (env-only wrap, no prlimit). Pre-CR-03 the only
+      // path was the persisted entry, deadlocking SAFETY-08 for new servers.
+      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as Array<{
+        name: string;
+        rlimits?: { as?: number; nofile?: number; cpu?: number };
+        keepaliveIntervalMs?: number;
+        circuitBreakerThreshold?: number;
+        circuitBreakerCooldownMs?: number;
+      }>;
       const persistedEntry = persistedServers.find((s) => s.name === params.server_name);
       const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
+
+      // Phase 64 RELY-07: per-server reliability overrides. Same resolution
+      // order as resolvedRlimits — current intent > persisted > undefined.
+      const resolvedKeepaliveIntervalMs = params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs;
+      const resolvedCircuitBreakerThreshold = params.circuitBreakerThreshold ?? persistedEntry?.circuitBreakerThreshold;
+      const resolvedCircuitBreakerCooldownMs = params.circuitBreakerCooldownMs ?? persistedEntry?.circuitBreakerCooldownMs;
 
       const config: McpServerConfig = {
         name: params.server_name,
@@ -407,6 +400,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         osvCheckEnabled: mcpConfigRoot?.osvCheckEnabled,
         osvCacheTtlMs: mcpConfigRoot?.osvCacheTtlMs,
         rlimits: resolvedRlimits,
+        keepaliveIntervalMs: resolvedKeepaliveIntervalMs,
+        circuitBreakerThreshold: resolvedCircuitBreakerThreshold,
+        circuitBreakerCooldownMs: resolvedCircuitBreakerCooldownMs,
       };
 
       // Reject connects that reference env vars not in the secrets store.
@@ -448,20 +444,16 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         // transform string values.
         ...(params.env !== undefined && { env: params.env }),
         ...(params.headers !== undefined && { headers: params.headers }),
-        // Phase 63 CR-03: persist rlimits onto the McpServerEntry so the
-        // SAFETY-08 protection survives a daemon restart AND so subsequent
-        // reconnects/connects can read it back. `resolvedRlimits` carries
-        // either the caller-supplied value or (when the caller omitted it)
-        // the prior persisted value — preserving the field across noop
-        // reconnects rather than dropping it.
+        // Phase 63 CR-03: persist rlimits so SAFETY-08 survives restart and
+        // no-op reconnects don't drop the field (resolvedRlimits keeps prior).
         ...(resolvedRlimits !== undefined && { rlimits: resolvedRlimits }),
         // Phase 63 CR-04: persist disablePlaintextSecretCheck so the
-        // per-server opt-out survives a daemon restart. Pre-fix the
-        // handler honored the flag at runtime but dropped it from the
-        // YAML, so reload + symmetric reconnect could re-fire the guard.
-        ...(userParams.disablePlaintextSecretCheck === true && {
-          disablePlaintextSecretCheck: true as const,
-        }),
+        // per-server opt-out survives a daemon restart.
+        ...(userParams.disablePlaintextSecretCheck === true && { disablePlaintextSecretCheck: true as const }),
+        // Phase 64 RELY-07: persist reliability overrides (same posture as rlimits).
+        ...(resolvedKeepaliveIntervalMs !== undefined && { keepaliveIntervalMs: resolvedKeepaliveIntervalMs }),
+        ...(resolvedCircuitBreakerThreshold !== undefined && { circuitBreakerThreshold: resolvedCircuitBreakerThreshold }),
+        ...(resolvedCircuitBreakerCooldownMs !== undefined && { circuitBreakerCooldownMs: resolvedCircuitBreakerCooldownMs }),
         enabled: true,
       };
       const newServers: McpServerEntry[] = [
@@ -617,9 +609,13 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // (NOT the internally-namespaced `__test__<name>` — the persisted
       // entry uses the operator-visible identifier). The handler reads
       // params.rlimits OR persistedEntry.rlimits OR undefined (no wrap).
-      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as Array<
-        { name: string; rlimits?: { as?: number; nofile?: number; cpu?: number } }
-      >;
+      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as Array<{
+        name: string;
+        rlimits?: { as?: number; nofile?: number; cpu?: number };
+        keepaliveIntervalMs?: number;
+        circuitBreakerThreshold?: number;
+        circuitBreakerCooldownMs?: number;
+      }>;
       const persistedEntry = persistedServers.find((s) => s.name === params.name);
       const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 

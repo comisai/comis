@@ -1,6 +1,6 @@
 {
-  "totalMinified": 106439,
-  "totalGzipped": 9797,
+  "totalMinified": 106682,
+  "totalGzipped": 9830,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -93,7 +93,7 @@
     "image.analyze": 501,
     "image.generate": 304,
     "link.process": 455,
-    "mcp.connect": 1387,
+    "mcp.connect": 1654,
     "mcp.disconnect": 519,
     "mcp.list": 976,
     "mcp.reconnect": 927,
