@@ -45,11 +45,11 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
   - Design: D6
 - [x] **BRIDGE-06**: Bridge maps `channel:health_changed`, `channel:registered`, `channel:deregistered` to `channel.{health_changed,lifecycle}`
   - Design: D6
-- [ ] **BRIDGE-07**: Bridge maps `compaction:{started,flush,recommended}` and `context:{evicted,masked,reread,overflow,integrity,rehydrated}` to `compaction.*` and `context.*` types
+- [x] **BRIDGE-07**: Bridge maps `compaction:{started,flush,recommended}` and `context:{evicted,masked,reread,overflow,integrity,rehydrated}` to `compaction.*` and `context.*` types
   - Design: D6
-- [ ] **BRIDGE-08**: Bridge maps `approval:requested` and `approval:resolved` to `approval.*` types (human-in-the-loop trace)
+- [x] **BRIDGE-08**: Bridge maps `approval:requested` and `approval:resolved` to `approval.*` types (human-in-the-loop trace)
   - Design: D6
-- [ ] **BRIDGE-09**: Bridge expansion preserves emit-site architecture test; total mapped events grows from 18 → ≥ 45
+- [x] **BRIDGE-09**: Bridge expansion preserves emit-site architecture test; total mapped events grows from 18 → ≥ 45
   - Design: D6 *(arch test: existing `event-bus-bridge` enumeration grows shrink-only)*
 
 ### Payload Bounding
@@ -241,9 +241,9 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | BRIDGE-04 | Phase 2 | Complete |
 | BRIDGE-05 | Phase 2 | Complete |
 | BRIDGE-06 | Phase 2 | Complete |
-| BRIDGE-07 | Phase 2 | Pending |
-| BRIDGE-08 | Phase 2 | Pending |
-| BRIDGE-09 | Phase 2 | Pending |
+| BRIDGE-07 | Phase 2 | Complete |
+| BRIDGE-08 | Phase 2 | Complete |
+| BRIDGE-09 | Phase 2 | Complete |
 | BOUND-01 | Phase 2 | Complete |
 | BOUND-02 | Phase 2 | Complete |
 | BOUND-03 | Phase 2 | Complete |

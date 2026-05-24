@@ -23,7 +23,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 ## Phases
 
 - [x] **Phase 1: Trace Propagation & Lifecycle Envelopes** — Every inbound carries a traceId from ingress; every turn has metadata/artifacts/truncated envelopes (completed 2026-05-24)
-- [ ] **Phase 2: Bridge Expansion & Payload Bounding** — Trajectory mapping grows from 18 to ~45 events with defense-in-depth bounds and writer LRU
+- [x] **Phase 2: Bridge Expansion & Payload Bounding** — Trajectory mapping grows from 18 to ~45 events with defense-in-depth bounds and writer LRU (completed 2026-05-24)
 - [ ] **Phase 3: Boot Invariants, INFO Promotion & Dedup Detector** — Today's bug visible at boot AND at first message AND at queue layer
 - [ ] **Phase 4: Session DAG & Bundle Exporter** — Parent-linked session entries enable one-command bundle export with manifest + redaction-safe contents
 - [ ] **Phase 5: Trajectory Pointer & Platform-Aware Redaction** — Trajectory storage is relocatable; bundles ship with platform-aware redaction at export boundary
@@ -76,7 +76,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 - [x] 02-02-PLAN.md — File caps + writer LRU + WR-04 (BOUND-02, BOUND-03): 10MB soft cap → inline emitTraceTruncated + stop; 50MB hard cap → errorKind:"resource" WARN; writerRegistry LRU at MAX_TRAJECTORY_WRITERS=100; observable drop counter [wave 2]
 - [x] 02-03-PLAN.md — Bridge queue/execution/sender (BRIDGE-01, BRIDGE-03, BRIDGE-04 scanned subset): 11 entries + translators incl. headline queue.enqueued incident-replay test; atomic removal of 11 events from EVENTS_NOT_TRAJECTORY_MAPPED [wave 3]
 - [x] 02-04-PLAN.md — Bridge retry/mcp/channel (BRIDGE-02, BRIDGE-05, BRIDGE-06): 11 entries + translators; channel.lifecycle dual-mapping; chatId/channelId omitted; no allowlist change (non-scanned packages) [wave 4]
-- [ ] 02-05-PLAN.md — Bridge security/compaction/context/approval (BRIDGE-04 rest, BRIDGE-07, BRIDGE-08) + BRIDGE-09 count assertion: 13 entries + translators (params/patterns/message omitted); remove 8 compaction/context events from allowlist; arch test asserts mapping ≥45 [wave 5]
+- [x] 02-05-PLAN.md — Bridge security/compaction/context/approval (BRIDGE-04 rest, BRIDGE-07, BRIDGE-08) + BRIDGE-09 count assertion: 13 entries + translators (params/patterns/message omitted); remove 8 compaction/context events from allowlist; arch test asserts mapping ≥45 [wave 5]
 
 ### Phase 3: Boot Invariants, INFO Promotion & Dedup Detector
 
@@ -189,7 +189,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Trace Propagation & Lifecycle Envelopes | 6/6 | Complete   | 2026-05-24 |
-| 2. Bridge Expansion & Payload Bounding | 4/5 | In Progress|  |
+| 2. Bridge Expansion & Payload Bounding | 5/5 | Complete   | 2026-05-24 |
 | 3. Boot Invariants, INFO Promotion & Dedup Detector | 0/0 | Not started | - |
 | 4. Session DAG & Bundle Exporter | 0/0 | Not started | - |
 | 5. Trajectory Pointer & Platform-Aware Redaction | 0/0 | Not started | - |
