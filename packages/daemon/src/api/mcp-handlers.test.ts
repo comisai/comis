@@ -1044,22 +1044,54 @@ describe("MCP RPC Handlers", () => {
   // tests are the minimum surface 47-02 ships to prove the wiring is correct.
   // -------------------------------------------------------------------------
 
+  // WR-08: makePersistDeps used to return two DIFFERENT object literals for
+  // `persistDeps.container` and the outer `container` field. In production
+  // wiring (rpc-dispatch.ts:248-267) both refer to the SAME `deps.container`
+  // reference — a bug where the in-memory refresh wrote to the wrong
+  // container would pass tests but fail in production. The fix shares ONE
+  // container so the test fixture matches production semantics.
   function makePersistDeps(servers: Array<{ name: string; transport: string; command?: string; args?: string[]; enabled?: boolean }> = []) {
+    const container = {
+      config: { integrations: { mcp: { servers } } },
+    } as any;
     return {
       persistDeps: {
-        container: {
-          config: { integrations: { mcp: { servers } } },
-          eventBus: { emit: vi.fn() },
-        },
+        // Share the SAME container reference — pre-fix `persistDeps.container`
+        // was a separate object literal, causing the in-memory refresh to
+        // write to a container that the outer assertion code never observed.
+        container: Object.assign(container, { eventBus: { emit: vi.fn() } }),
         configPaths: ["/tmp/test-config.yaml"],
         defaultConfigPaths: ["/tmp/default-config.yaml"],
         logger: makeLogger(),
       } as any,
-      container: {
-        config: { integrations: { mcp: { servers } } },
-      } as any,
+      container,
     };
   }
+
+  // -------------------------------------------------------------------------
+  // WR-08 — production parity: makePersistDeps's `persistDeps.container` and
+  // outer `container` MUST refer to the same object. In production wiring
+  // (rpc-dispatch.ts) both reach the same `deps.container`. Pre-fix the
+  // fixture returned two object literals and a bug in the in-memory swap
+  // path that wrote to the wrong container would pass tests but fail in
+  // production.
+  // -------------------------------------------------------------------------
+  describe("makePersistDeps — WR-08 production parity (shared container reference)", () => {
+    it("persistDeps.container and outer container point to the SAME object", () => {
+      const { persistDeps, container } = makePersistDeps([]);
+      expect(persistDeps.container).toBe(container);
+    });
+
+    it("mutating persistDeps.container.config.integrations.mcp.servers is visible through outer container", () => {
+      const { persistDeps, container } = makePersistDeps([]);
+      persistDeps.container.config.integrations.mcp.servers = [
+        { name: "ctx7", transport: "stdio", command: "npx", enabled: true },
+      ];
+      expect(container.config.integrations.mcp.servers).toEqual([
+        { name: "ctx7", transport: "stdio", command: "npx", enabled: true },
+      ]);
+    });
+  });
 
   beforeEach(() => {
     mockPersistToConfig.mockClear();
