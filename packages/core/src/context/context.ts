@@ -27,11 +27,18 @@ export type UserTrustLevel = z.infer<typeof UserTrustLevelSchema>;
  * tenantId defaults to "default" for single-tenant deployments.
  * traceId is a UUID for distributed tracing / log correlation.
  * trustLevel defaults to "admin" for standard authorization.
+ *
+ * userId/sessionKey are optional — they are NOT known at channel ingress
+ * (D1, Plan 01-01). Channel adapters set traceId + channelType at ingress;
+ * resolveAndPreprocess in inbound-pipeline.ts fills in userId/sessionKey
+ * post-queue. Post-queue callers (execution-execute.ts) continue to set
+ * both fields. An empty string "" is still rejected — only undefined is
+ * acceptable as the "not yet resolved" state.
  */
 export const RequestContextSchema = z.strictObject({
     tenantId: z.string().min(1).default("default"),
-    userId: z.string().min(1),
-    sessionKey: z.string().min(1),
+    userId: z.string().min(1).optional(),
+    sessionKey: z.string().min(1).optional(),
     traceId: z.guid(),
     startedAt: z.number().int().positive(),
     trustLevel: UserTrustLevelSchema.default("admin"),
