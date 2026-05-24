@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: "Plan 01 complete (3 commits: 97bce0a, ccefa97, b374e1f)."
-last_updated: "2026-05-24T22:30:56.766Z"
+last_updated: "2026-05-24T22:53:12.537Z"
 progress:
   total_phases: 8
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 19
-  completed_plans: 19
+  completed_plans: 20
   percent: 100
 ---
 
@@ -26,7 +26,7 @@ progress:
 
 **Core Value:** A fleet-wide bug (today's worked example: the 2026-05-24 duplicate Telegram adapter that double-fired every inbound) must be diagnosable from **one structured artifact with one command in under five minutes** — not 30 minutes of `grep | jq | python` across three log streams.
 
-**Current Focus:** Phase 1 COMPLETE + verified + reviewed. Phase 2 (Bridge Expansion & Payload Bounding) — pending start.
+**Current Focus:** Phase 4 COMPLETE (Plans 01-04). Phase 5 (Trajectory Pointer & Platform-Aware Redaction) — pending start.
 
 ## Current Position
 
@@ -73,6 +73,7 @@ progress:
 | Phase 01-trace-propagation-lifecycle-envelopes P04 | 12m | 3 tasks | 4 files |
 | Phase 03-boot-invariants-info-dedup P04 | 20m | 2 tasks | 5 files |
 | Phase 04-session-dag-bundle-exporter P01 | 8 | 2 tasks | 4 files |
+| Phase 04-session-dag-bundle-exporter P04 | 20m | 1 task | 2 files |
 
 ## Accumulated Context
 
@@ -118,6 +119,11 @@ Per AGENTS.md §2.8. New allowlist entries are forbidden. Existing entries can b
 - `test/architecture/bundle-export-shape.test.ts` (Phase 4, D5)
 - `test/architecture/pipeline-step-coverage.test.ts` (Phase 8, HYGIENE-01)
 
+### Key Decisions (Phase 4 Plan 04)
+
+- **Warning-row cap tested via runtime JSONL path, not session cycle** — readSessionBranch single-path walk breaks on first cycle (count=1); to verify 20-row cap, Case 3 uses 25 invalid runtime JSON lines which accumulate rows[] up to cap.
+- **Architecture test checks bundle-exporter.ts for privacy docstring** — §8.5 privacy warning block lives in bundle-exporter.ts module header (correct locus), not export.ts.
+
 ### Key Decisions (Phase 3 Plan 01)
 
 - **depSlotConsistency passed explicitly by daemon composition root** — not readable from ChannelManager post-boot; the daemon is the only site that knows which adapter slots were used.
@@ -146,9 +152,9 @@ Per AGENTS.md §2.8. New allowlist entries are forbidden. Existing entries can b
 
 ## Session Continuity
 
-**Last session worked on:** Phase 3 Plan 01 — BOOT-01/02 startup invariants.
-**Stopped at:** Plan 01 complete (3 commits: 97bce0a, ccefa97, b374e1f).
-**Next action:** Execute Phase 3 Plan 02 (03-02 — INFO-01 forensic events + dedup detector).
+**Last session worked on:** Phase 4 Plan 04 — BUNDLE-03/04 invariant + architecture tests.
+**Stopped at:** Plan 04 complete (1 commit: bae2735).
+**Next action:** Phase 4 complete — proceed to Phase 5 (Trajectory Pointer & Platform-Aware Redaction).
 
 **Reproducible state:** Files written to `.planning/`:
 
