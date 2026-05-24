@@ -67,48 +67,69 @@ export async function connectServer(
     await disconnectServer(state, deps, config.name);
   }
 
-  try {
-    // Phase 63 SAFETY-05/06: pre-spawn OSV malware check (stdio only).
-    // Fires BEFORE createTransport so a malicious package's code never
-    // runs. Per-server osvCheckEnabled defaults to Plan 01's `true`;
-    // operators set `false` in air-gapped deployments. Unrecognized
-    // commands (node /path/server.js, python3, /bin/sh) skip the check
-    // with INFO log — no registry name to query. Per RESEARCH.md
-    // §"Pattern 4" + Pitfall 4. The throw on malicious-verdict carries
-    // a bracketed [osv_malware_detected] token for LLM self-correction;
-    // the existing catch at line ~157 already maps to error-state via
-    // errorKind: "dependency".
-    if (
-      config.transport === "stdio" &&
-      config.command &&
-      (config.osvCheckEnabled ?? true)
-    ) {
-      const pkg = extractMcpPackageName(config.command, config.args);
-      if (pkg !== null) {
-        const osvResult = await osvMalwareCheck(pkg.name, pkg.ecosystem, {
-          cacheDir: DEFAULT_OSV_CACHE_DIR,
-          ttlMs: config.osvCacheTtlMs ?? 86_400_000,
-          logger,
-        });
-        if (osvResult.verdict === "malicious") {
-          throw new Error(
-            `[osv_malware_detected] MCP package "${pkg.name}" (ecosystem: ${pkg.ecosystem}) ` +
-              `matches OSV malicious-packages advisory: ${osvResult.advisoryIds.join(", ")}. ` +
-              `Hint: do NOT install this package; verify the server name with the publisher.`,
-          );
-        }
-      } else {
-        logger.info(
+  // Phase 63 SAFETY-05/06 + WR-03: pre-spawn OSV malware check (stdio
+  // only) runs OUTSIDE the try block. Pre-fix the check sat inside the
+  // try and a malicious-verdict throw fell into the catch — which wrote
+  // an error-state McpConnection to `state.connections` with
+  // `status: "error"` and the [osv_malware_detected] message. That
+  // orphan error entry persisted across the operator's view (mcp.list
+  // shows it as an "error"-status server), confusing operators into
+  // thinking they could `mcp.reconnect` it. WR-03 fix: run the OSV
+  // check before the try block so the throw bubbles up cleanly to the
+  // caller and `state.connections.get(name)` returns undefined for
+  // malicious-package detections. Per RESEARCH.md §"Pattern 4" +
+  // Pitfall 4.
+  if (
+    config.transport === "stdio" &&
+    config.command &&
+    (config.osvCheckEnabled ?? true)
+  ) {
+    const pkg = extractMcpPackageName(config.command, config.args);
+    if (pkg !== null) {
+      // Fail-open on OSV API errors is encapsulated inside osvMalwareCheck
+      // (logs WARN with errorKind:"network"|"dependency" and returns
+      // verdict:"safe"). The only throw path here is verdict==="malicious".
+      const osvResult = await osvMalwareCheck(pkg.name, pkg.ecosystem, {
+        cacheDir: DEFAULT_OSV_CACHE_DIR,
+        ttlMs: config.osvCacheTtlMs ?? 86_400_000,
+        logger,
+      });
+      if (osvResult.verdict === "malicious") {
+        // Bracketed [osv_malware_detected] code is LLM-readable for
+        // self-correction. Logging at WARN here mirrors the spawn-time
+        // error log we used to emit from the catch — keeps the
+        // observability surface even though we are no longer routing
+        // through the error-state entry.
+        const message =
+          `[osv_malware_detected] MCP package "${pkg.name}" (ecosystem: ${pkg.ecosystem}) ` +
+          `matches OSV malicious-packages advisory: ${osvResult.advisoryIds.join(", ")}. ` +
+          `Hint: do NOT install this package; verify the server name with the publisher.`;
+        logger.warn(
           {
             serverName: config.name,
-            command: config.command,
-            hint: "OSV check skipped — no known package manager detected (npx/uvx/pnpm)",
+            packageName: pkg.name,
+            ecosystem: pkg.ecosystem,
+            advisoryIds: osvResult.advisoryIds,
+            hint: "OSV malicious-package match — connect rejected; no error-state entry created",
+            errorKind: "dependency" as const,
           },
-          "MCP OSV malware check skipped (unknown command)",
+          "MCP OSV malware check rejected connect",
         );
+        return err(new Error(message));
       }
+    } else {
+      logger.info(
+        {
+          serverName: config.name,
+          command: config.command,
+          hint: "OSV check skipped — no known package manager detected (npx/uvx/pnpm)",
+        },
+        "MCP OSV malware check skipped (unknown command)",
+      );
     }
+  }
 
+  try {
     // Create transport (logger threaded for Phase 63 SAFETY-08 prlimit-skip WARN)
     const transport = createTransport(config, logger);
 
