@@ -83,13 +83,13 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Duplicate-Inbound Detection
 
-- [ ] **DEDUP-01**: New bus event `dedup:duplicate_inbound { messageId, channelType, chatId, firstSeenAt, duplicateAt, deltaMs, source }` added to `events-channel.ts` — closes G6
+- [x] **DEDUP-01**: New bus event `dedup:duplicate_inbound { messageId, channelType, chatId, firstSeenAt, duplicateAt, deltaMs, source }` added to `events-channel.ts` — closes G6
   - Design: D12 *(file: `packages/core/src/event-bus/events-channel.ts`)*
-- [ ] **DEDUP-02**: Bounded LRU (~1024 entries, 10 s window) in inbound pipeline emits `dedup:duplicate_inbound` + WARN on duplicate `messageId` within window
+- [x] **DEDUP-02**: Bounded LRU (~1024 entries, 10 s window) in inbound pipeline emits `dedup:duplicate_inbound` + WARN on duplicate `messageId` within window
   - Acceptance: replay today's incident → fires `dedup:duplicate_inbound` with `deltaMs: 1`
   - Acceptance: LRU memory growth bounded
   - Design: D12 *(files: `packages/orchestrator/src/inbound/dedup-detector.ts` NEW, `packages/orchestrator/src/inbound/inbound-pipeline.ts:150`)*
-- [ ] **DEDUP-03**: `dedup:duplicate_inbound` mapped through bridge (BRIDGE-* set) to `dedup.duplicate_inbound` trajectory event
+- [x] **DEDUP-03**: `dedup:duplicate_inbound` mapped through bridge (BRIDGE-* set) to `dedup.duplicate_inbound` trajectory event
   - Design: D12 hand-off to D6
 
 ### Session DAG
@@ -252,9 +252,9 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | BOOT-01 | Phase 3 Plan 01 | **Complete** |
 | BOOT-02 | Phase 3 Plan 01 | **Complete** |
 | INFO-01 | Phase 3 | Complete |
-| DEDUP-01 | Phase 3 | Pending |
-| DEDUP-02 | Phase 3 | Pending |
-| DEDUP-03 | Phase 3 | Pending |
+| DEDUP-01 | Phase 3 | Complete |
+| DEDUP-02 | Phase 3 | Complete |
+| DEDUP-03 | Phase 3 | Complete |
 | SESSION-01 | Phase 4 | Pending |
 | SESSION-02 | Phase 4 | Pending |
 | BUNDLE-01 | Phase 4 | Pending |
