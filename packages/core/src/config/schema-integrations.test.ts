@@ -192,6 +192,50 @@ describe("McpServerEntrySchema transport inference", () => {
       McpServerEntrySchema.parse({ name: "broken" }),
     ).toThrow();
   });
+
+  // -------------------------------------------------------------------------
+  // WR-01 regression — schema must reject inconsistent command + url
+  // combinations BEFORE the runtime gets a chance to silently ignore one
+  // of them. Pre-fix the first matching inference branch (command -> stdio)
+  // won and the unused url field passed through, silently ignored at
+  // runtime by createTransport. Operator misconfiguration produced no
+  // warning.
+  // -------------------------------------------------------------------------
+  it("rejects entries that supply BOTH command and url without an explicit transport (WR-01)", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "both",
+        command: "npx",
+        url: "https://example.com/mcp",
+      }),
+    ).toThrow(/Ambiguous MCP server config|command\b.*\burl|both \`command\` and \`url\`/i);
+  });
+
+  it("ACCEPTS entries with both command and url when an explicit transport='stdio' is given", () => {
+    // The explicit transport disambiguates — the url becomes a no-op
+    // by-design, surfaced via runtime ignore (matches the pre-fix
+    // behaviour but the explicit-transport opts the operator IN).
+    const result = McpServerEntrySchema.parse({
+      name: "both-stdio",
+      transport: "stdio",
+      command: "npx",
+      url: "https://example.com/mcp",
+    });
+    expect(result.transport).toBe("stdio");
+    expect(result.command).toBe("npx");
+    expect(result.url).toBe("https://example.com/mcp");
+  });
+
+  it("ACCEPTS entries with both command and url when an explicit transport='http' is given", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "both-http",
+      transport: "http",
+      command: "npx",
+      url: "https://example.com/mcp",
+    });
+    expect(result.transport).toBe("http");
+    expect(result.url).toBe("https://example.com/mcp");
+  });
 });
 
 // ---------------------------------------------------------------------------
