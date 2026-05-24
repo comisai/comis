@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { ComisLogger } from "@comis/core";
+
 /**
  * Trajectory event v1 schema — closed type union + payload shape.
  *
@@ -304,6 +306,22 @@ export interface TrajectoryRecorderInit {
 
   /** Cluster of optional byte budgets — see TrajectoryRecorderBudgets. */
   readonly budgets?: TrajectoryRecorderBudgets;
+
+  /**
+   * Optional logger for emitting operator-facing diagnostics from within
+   * the recorder. When provided, the hard-cap branch (step 4b in
+   * `recordEvent`) emits a single WARN with `errorKind:"resource"` and
+   * a hint pointing to `observability.logRotation`. The WARN fires at
+   * most once per recorder lifetime (guarded by an internal flag).
+   *
+   * Omit in tests that do not need log-level assertions; the recorder
+   * degrades gracefully to the existing `droppedEvents()` counter.
+   *
+   * Uses `ComisLogger` from `@comis/core` (structural contract, no
+   * coupling to `@comis/infra`) — consistent with the pattern in
+   * `packages/observability/src/system-prompt-report/persist.ts`.
+   */
+  readonly logger?: ComisLogger;
 
   /**
    * Enable/disable. Default true. When false `createTrajectoryRecorder`

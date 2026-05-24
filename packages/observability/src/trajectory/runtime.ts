@@ -49,6 +49,7 @@
 import { randomUUID } from "node:crypto";
 
 import { systemDateFrom, systemGetEnv, systemNowMs, tryGetContext } from "@comis/core";
+import type { ComisLogger } from "@comis/core";
 
 import { getQueuedFileWriter, type QueuedFileWriter } from "../shared/queued-file-writer.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
@@ -360,6 +361,10 @@ export function createTrajectoryRecorder(
     });
   }
 
+  // Extract optional logger for operator diagnostics (SC3 / BOUND-02).
+  // Uses @comis/core's structural ComisLogger contract — no @comis/infra dep.
+  const logger: ComisLogger | undefined = init.logger;
+
   // Mutable per-recorder state. Each recorder owns its own seq counter
   // and write-byte accumulator (the writer chassis is shared across
   // recorders for the same path, but the seq/byte accounting is local).
@@ -369,6 +374,10 @@ export function createTrajectoryRecorder(
     droppedEvents: 0,
     droppedEventBytes: 0,
     closed: false,
+    // Guard: emit the hard-cap WARN at most once per recorder lifetime
+    // (SC3 / BOUND-02). Without this flag, every subsequent call to
+    // recordEvent after the hard-cap fires would re-emit the WARN.
+    hardCapWarnEmitted: false,
   };
 
   // ---------------------------------------------------------------------------
@@ -482,8 +491,24 @@ export function createTrajectoryRecorder(
 
       // 4b. Hard-cap safety net (50 MB). Reserve head-room for the final
       //     trace.truncated sentinel via flushAndClose.
+      //
+      //     SC3 / BOUND-02: emit a single WARN (errorKind:"resource") the
+      //     first time the hard cap fires so operators can observe the
+      //     breach without polling droppedEvents(). The guard flag prevents
+      //     re-emission on every subsequent dropped event.
       if (state.writtenBytes + bytes > usableFileBytes) {
         state.droppedEvents += 1;
+        if (logger !== undefined && !state.hardCapWarnEmitted) {
+          state.hardCapWarnEmitted = true;
+          logger.warn(
+            {
+              errorKind: "resource" as const,
+              limitBytes: usableFileBytes,
+              hint: "Trajectory runtime file hit the hard cap; enable observability.logRotation or raise the diagnostics.trajectory.maxFileBytes budget",
+            },
+            "Trajectory runtime file hit hard cap; writer halted",
+          );
+        }
         return "dropped";
       }
 
