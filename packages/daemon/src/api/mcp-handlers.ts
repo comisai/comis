@@ -70,6 +70,116 @@ import type { WorkspaceApiDeps as McpHandlerDeps } from "./types.js";
 export type { McpHandlerDeps };
 
 // ---------------------------------------------------------------------------
+// Phase 63 SAFETY-03/04/09: plaintext-secret heuristic
+//
+// Pre-Zod guard at the `mcp.connect` boundary rejects env values that
+// look like raw plaintext credentials, forcing operators to route through
+// secrets_manage + ${KEY} indirection instead of pasting raw tokens into
+// `config.yaml::integrations.mcp.servers[*].env`. Per RESEARCH.md
+// §"Pitfall 6": the curated prefix list is the primary signal; the entropy
+// backstop catches generic high-entropy keys without a curated prefix.
+// Length floor 44 (NOT 40) tuned to avoid 40-char OpenAI org-ID FPs.
+//
+// Per-server `disablePlaintextSecretCheck: true` opt-out (from Plan 01's
+// McpServerEntrySchema) is the last-resort escape hatch — WARN-and-allow.
+// ---------------------------------------------------------------------------
+
+/**
+ * Real-world credential prefixes that almost-certainly indicate a raw
+ * secret pasted into MCP env. Per RESEARCH.md §"Pitfall 6" + REQUIREMENTS.md
+ * SAFETY-03. Extended beyond the spec's initial list to add Notion v2
+ * (`ntn_`), Notion legacy (`secret_`), GitLab PAT (`glpat-`), Stripe
+ * live/test (`sk_live_`, `sk_test_`), and GitHub fine-grained PAT
+ * (`github_pat_`).
+ *
+ * Order matters for the early-return scan: list longer / more-specific
+ * prefixes BEFORE their shorter generalizations (e.g. `sk-ant-` before
+ * `sk-`, `github_pat_` before `ghp_` only because ghp_ is a distinct
+ * shape — both are checked) so the first match short-circuits cleanly.
+ */
+const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
+  "ghp_",         // GitHub personal access token
+  "github_pat_",  // GitHub fine-grained PAT
+  "sk-ant-",      // Anthropic API key (check BEFORE sk- to avoid double-match)
+  "sk-",          // OpenAI API key
+  "xoxb-",        // Slack bot token
+  "xoxp-",        // Slack user token
+  "AKIA",         // AWS access key ID
+  "secret_",      // Notion internal v1 (legacy, ~162 chars typical)
+  "ntn_",         // Notion v2 (>= Sept 2024)
+  "glpat-",       // GitLab personal access token
+  "sk_live_",     // Stripe live secret key
+  "sk_test_",     // Stripe test secret key
+];
+
+/**
+ * Shannon entropy in bits-per-character. Used as the heuristic backstop
+ * for generic high-entropy credentials not matching the curated prefix
+ * list. Pure function; no allocations beyond the per-call char map.
+ */
+function shannonEntropy(value: string): number {
+  if (value.length === 0) return 0;
+  const counts: Record<string, number> = {};
+  for (const ch of value) {
+    counts[ch] = (counts[ch] ?? 0) + 1;
+  }
+  const len = value.length;
+  let entropy = 0;
+  for (const ch of Object.keys(counts)) {
+    const p = counts[ch]! / len;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+/**
+ * Length floor for the entropy backstop. Tuned per RESEARCH.md
+ * §"Pitfall 6" to avoid the 40-char OpenAI org-ID false positive.
+ * Real tokens are all ≥ 41 chars; setting the floor at 44 retains
+ * full real-token rejection while clearing the org-ID FP.
+ */
+const PLAINTEXT_SECRET_LENGTH_FLOOR = 44;
+
+/** Entropy floor (bits per char) for the heuristic backstop. */
+const PLAINTEXT_SECRET_ENTROPY_FLOOR = 3.5;
+
+/**
+ * Detect whether a string looks like a real-world plaintext secret.
+ * Returns true for:
+ *   - Any value with a known credential prefix (ghp_, sk-, AKIA, etc.).
+ *   - OR (Shannon entropy > 3.5 AND length >= 44) — backstop for
+ *     generic high-entropy keys not matching the curated prefix list.
+ *
+ * NON-secrets that PASS (verified by the architecture-tier
+ * mcp-plaintext-secret-false-positives.test.ts negative-control table):
+ *   - Notion DB UUIDs (36 chars, entropy ~3.99, no prefix)
+ *   - Linear team UUIDs (36 chars)
+ *   - Stripe customer IDs `cus_*` (15-25 chars; `cus_` is NOT in the
+ *     prefix list — `sk_` is, but `cus_` is an ID not a key)
+ *   - OpenAI org IDs (28 chars; entropy ~4.5; length < 44)
+ *   - Filesystem PATH values (44+ chars; entropy ~3.3; below entropy floor)
+ *   - Unresolved env-ref placeholders `${KEY}` (handled separately by
+ *     findUnresolvedEnvRefs at the same handler boundary)
+ *
+ * Exported so `test/architecture/mcp-plaintext-secret-false-positives.test.ts`
+ * (the SAFETY-09 negative + positive control table) can re-use the helper
+ * via the `@comis/daemon` barrel without duplicating the heuristic shape.
+ */
+export function looksLikePlaintextSecret(value: string): boolean {
+  if (typeof value !== "string" || value.length === 0) return false;
+  // Skip unresolved env-ref placeholders — handled separately by
+  // findUnresolvedEnvRefs at the same RPC handler boundary.
+  if (value.startsWith("${") && value.endsWith("}")) return false;
+  for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
+    if (value.startsWith(prefix)) return true;
+  }
+  return (
+    value.length >= PLAINTEXT_SECRET_LENGTH_FLOOR &&
+    shannonEntropy(value) > PLAINTEXT_SECRET_ENTROPY_FLOOR
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Phase 47-02: persistMcpServers helper
 // ---------------------------------------------------------------------------
 
@@ -289,6 +399,39 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // never let internals flow into Zod parsing. The parsed `params` provides
       // the same field names with type-narrowing.
       const userParams = stripInternalFields(rawParams);
+
+      // Phase 63 SAFETY-03/04/09: plaintext-secret reject (pre-Zod).
+      // Mirrors the findUnresolvedEnvRefs pattern at lines below.
+      // Reads from userParams.env (raw, pre-parse). Per-server opt-out via
+      // userParams.disablePlaintextSecretCheck = true logs WARN and allows.
+      // Bracketed error code [plaintext_secret_in_env] is LLM-readable for
+      // self-correction; the hint routes the operator to secrets_manage +
+      // ${KEY} indirection.
+      const envBlock = userParams.env as Record<string, string> | undefined;
+      const plaintextOptOut = userParams.disablePlaintextSecretCheck === true;
+      if (envBlock && !plaintextOptOut) {
+        for (const [key, value] of Object.entries(envBlock)) {
+          if (typeof value !== "string") continue;
+          if (looksLikePlaintextSecret(value)) {
+            throw new Error(
+              `[plaintext_secret_in_env] env.${key} (server "${userParams.server_name as string}") ` +
+              `looks like a plaintext credential. ` +
+              `Hint: store it via secrets_manage and reference as "\${${key}}".`,
+            );
+          }
+        }
+      } else if (envBlock && plaintextOptOut) {
+        deps.logger.warn(
+          {
+            method: "mcp.connect",
+            entityId: userParams.server_name as string,
+            hint: "disablePlaintextSecretCheck=true — server bypasses plaintext-secret scan",
+            errorKind: "config" as const,
+          },
+          "MCP plaintext-secret check disabled per-server",
+        );
+      }
+
       const params = McpConnectContract.request.parse(userParams);
 
       const manager = deps.mcpClientManager;
