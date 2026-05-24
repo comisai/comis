@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { BackgroundTaskOrigin } from "../domain/background-task-origin.js";
+import type { McpServerEntry } from "../config/schema-integrations.js";
 
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
@@ -42,6 +43,28 @@ export interface InfraEvents {
     section: string;
     key?: string;
     patchedBy: string;
+    timestamp: number;
+  };
+
+  /**
+   * Phase 64 RELY-08: in-memory config subtree replaced atomically after a
+   * successful skipRestart-true persist. Coalesced with 500ms trailing-edge
+   * debounce so bulk operations (Phase 68 skill-install adding N MCPs)
+   * produce ONE event with combined diffs.
+   *
+   * - `path`: the subtree key that was swapped. Closed literal union;
+   *   future phases may extend with additional swap paths.
+   * - `added`: McpServerEntry[] inserted into integrations.mcp.servers since
+   *   last emit.
+   * - `removed`: McpServerEntry[] removed from integrations.mcp.servers since
+   *   last emit.
+   * - `timestamp`: ms-epoch of the emit (NOT the underlying persist -- the
+   *   debounce delays it by up to 500ms).
+   */
+  "config:mutated": {
+    path: "integrations.mcp.servers";
+    added: McpServerEntry[];
+    removed: McpServerEntry[];
     timestamp: number;
   };
 
