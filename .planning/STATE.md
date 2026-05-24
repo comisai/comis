@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-last_updated: "2026-05-24T18:39:13.946Z"
+last_updated: "2026-05-24T19:30:00.529Z"
 progress:
   total_phases: 8
   completed_phases: 2
-  total_plans: 11
-  completed_plans: 11
-  percent: 100
+  total_plans: 15
+  completed_plans: 13
+  percent: 87
 ---
 
 # Project State: Comis Observability Initiative
@@ -29,19 +29,15 @@ progress:
 
 ## Current Position
 
-**Phase:** 2 of 8 (M1: Foundations) — pending start
-**Last Completed:** Phase 1 — Trace Propagation & Lifecycle Envelopes (2026-05-24)
-**Plan:** Not yet planned — resume with `/gsd-autonomous --from 2` (or `/gsd-plan-phase 2`)
-**Status:** Phase 1 done; Phase 2 not started
-**Progress:** [██████████] 100%
+**Phase:** 3 of 8 (M1: Foundations) — Plan 01 complete
+**Last Completed:** Phase 3 Plan 01 — BOOT-01/02 Startup Invariants (2026-05-24)
+**Plan:** Plan 01 of 4 done; continue with 03-02 (INFO-01 forensic promotion)
+**Status:** Phase 3 in progress (1/4 plans complete)
+**Progress:** [████████░░] 87%
 
-**Phase 1 outcome:** 43 commits across core/channels/orchestrator/agent/observability. All 6 requirements (TRACE-01..03, LIFE-01..03) met. Verifier: 5/5 criteria PASSED. Code review: 0 critical / 4 warning / 4 info — none blocking; carry-overs in `phases/01-trace-propagation-lifecycle-envelopes/01-CARRYOVER.md`.
+**Phase 3 Plan 01 outcome:** 3 commits (97bce0a, ccefa97, b374e1f). PluginRegistry.count() + ChannelManager.getRawHandlerCounts() seams added. setup-startup-invariants.ts collector emits daemon:startup_invariants INFO + BOOT-02 WARN. Wired into daemon.ts bootShutdown. Arch test green. pnpm build clean; cycles clean. 71 new tests.
 
-**Phase 2 Goal:** Trajectory bus-bridge maps ~45 events (up from 18) + defense-in-depth payload bounding. Closes G2 + adopts O4.
-
-**Phase 2 Requirements (12):** BRIDGE-01..09, BOUND-01..03
-
-**Phase 2 inherits from Phase 1:** `emitTraceTruncated()` hook ready for BOUND-02; `TrajectoryEventSource`/`sourceSeq`/`parentEntryId` schema in place; lifecycle envelopes need `sessionStateProvider` wiring (deferred Plan 01-05 — see CARRYOVER WR-01).
+**Phase 3 Goal:** Boot invariants + forensic INFO promotion + dedup detector. Closes G3 (no startup invariants) + G5 (forensic events at DEBUG) + G6 (no dedup detection). M1 capstone.
 
 ## Roadmap Snapshot
 
@@ -119,6 +115,12 @@ Per AGENTS.md §2.8. New allowlist entries are forbidden. Existing entries can b
 - `test/architecture/bundle-export-shape.test.ts` (Phase 4, D5)
 - `test/architecture/pipeline-step-coverage.test.ts` (Phase 8, HYGIENE-01)
 
+### Key Decisions (Phase 3 Plan 01)
+
+- **depSlotConsistency passed explicitly by daemon composition root** — not readable from ChannelManager post-boot; the daemon is the only site that knows which adapter slots were used.
+- **channelManager.getRawHandlerCounts() optional-chained** — channelManager can be undefined in no-channel daemon test configs; `?? new Map()` fallback preserves behavior.
+- **mcpServerCount = 0** — `getAllConnections()` not exposed at the StartupInvariantsDeps level; `toolCatalogSize` via `getTools().length` is the meaningful MCP signal.
+
 ### Todos
 
 *(Populated as phases progress.)*
@@ -141,9 +143,9 @@ Per AGENTS.md §2.8. New allowlist entries are forbidden. Existing entries can b
 
 ## Session Continuity
 
-**Last session worked on:** Project initialization (PROJECT.md + REQUIREMENTS.md + ROADMAP.md + STATE.md).
-**Last command run:** `/gsd-new-project` orchestrator → roadmapper subagent.
-**Next action:** Run `/gsd-plan-phase 1` to decompose Phase 1 (Trace Propagation & Lifecycle Envelopes) into executable plans.
+**Last session worked on:** Phase 3 Plan 01 — BOOT-01/02 startup invariants.
+**Stopped at:** Plan 01 complete (3 commits: 97bce0a, ccefa97, b374e1f).
+**Next action:** Execute Phase 3 Plan 02 (03-02 — INFO-01 forensic events + dedup detector).
 
 **Reproducible state:** Files written to `.planning/`:
 

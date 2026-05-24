@@ -95,7 +95,11 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 
 **M1 Acceptance Gate (validated at Phase 3 close):** Spawn a fresh daemon in a sandbox, revert commit `96d62b16` (re-introduce the duplicate-adapter regression), boot, send one Telegram message. Expected: (a) boot WARN fires with handlersPerAdapter telegram=2; (b) two `queue.enqueued` trajectory events with same messageId; (c) `dedup:duplicate_inbound` event within 1 ms. If any of (a)/(b)/(c) fails, Phase 3 is not complete.
 
-**Plans**: TBD
+**Plans** (4):
+- [ ] 03-01-PLAN.md — BOOT-01/02 startup invariants: PluginRegistry.count() + ChannelManager raw-handler-count seam; setup-startup-invariants.ts collector; emit daemon:startup_invariants INFO after the boot banner; BOOT-02 WARN (errorKind:config, AGENTS.md §6.1 hint) on handlersPerAdapter>1 before traffic [wave 1]
+- [ ] 03-02-PLAN.md — INFO-01 forensic promotion: flip 4 real DEBUG->INFO sites (Message enqueued, Memory store complete, Outbound message x8 adapters) + ADD new Message dequeued INFO; update the 2 breaking tests; shrink-only forensic-events-info-level arch test [wave 1]
+- [ ] 03-03-PLAN.md — DEDUP-01+02+03 (single coherent plan, same-wave arch-test constraint): dedup:duplicate_inbound bus event; synchronous bounded-LRU dedup-detector (1024/10s); wired check in inbound-pipeline (emit + WARN errorKind:internal, no suppress); bridge entry #54 -> dedup.duplicate_inbound + trajectory type [wave 1]
+- [ ] 03-04-PLAN.md — M1 capstone replay gate (design 9.2): incident-replay-2026-05-24 integration test proving 3-layer visibility (boot WARN + dedup deltaMs~1 + two queue:enqueued) + dedup-detector load test (8.4, 10x throughput) [wave 2]
 
 ### Phase 4: Session DAG & Bundle Exporter
 
@@ -190,7 +194,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 |-------|----------------|--------|-----------|
 | 1. Trace Propagation & Lifecycle Envelopes | 6/6 | Complete   | 2026-05-24 |
 | 2. Bridge Expansion & Payload Bounding | 5/5 | Complete   | 2026-05-24 |
-| 3. Boot Invariants, INFO Promotion & Dedup Detector | 0/0 | Not started | - |
+| 3. Boot Invariants, INFO Promotion & Dedup Detector | 1/4 | In Progress | 2026-05-24 (Plan 01) |
 | 4. Session DAG & Bundle Exporter | 0/0 | Not started | - |
 | 5. Trajectory Pointer & Platform-Aware Redaction | 0/0 | Not started | - |
 | 6. Operator CLI & Slash-Command Export | 0/0 | Not started | - |

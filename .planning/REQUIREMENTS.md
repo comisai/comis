@@ -65,12 +65,14 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Startup Invariants
 
-- [ ] **BOOT-01**: Daemon emits one `daemon:startup_invariants` INFO record per startup, asserting `adaptersByChannelType`, `handlersPerAdapter`, `pluginRegistryCount`, `channelRegistryCount`, `depSlotConsistency`, `agentCount`, `toolCatalogSize`, `mcpServerCount` — closes G3
+- [x] **BOOT-01**: Daemon emits one `daemon:startup_invariants` INFO record per startup, asserting `adaptersByChannelType`, `handlersPerAdapter`, `pluginRegistryCount`, `channelRegistryCount`, `depSlotConsistency`, `agentCount`, `toolCatalogSize`, `mcpServerCount` — closes G3
   - Acceptance: boot log contains the record exactly once
   - Design: D10 *(files: `packages/daemon/src/wiring/setup-startup-invariants.ts` NEW, `packages/daemon/src/daemon.ts:1241`)*
-- [ ] **BOOT-02**: If `handlersPerAdapter[<type>] > 1`, daemon emits WARN with `hint: "Duplicate adapter registration detected; see AGENTS.md §6.1"` and `errorKind: "config"` *before* the daemon accepts traffic
+  - **Completed:** Phase 3 Plan 01 (commits 97bce0a, ccefa97, b374e1f)
+- [x] **BOOT-02**: If `handlersPerAdapter[<type>] > 1`, daemon emits WARN with `hint: "Duplicate adapter registration detected; see AGENTS.md §6.1"` and `errorKind: "config"` *before* the daemon accepts traffic
   - Acceptance: replay 2026-05-24 incident → WARN fires at boot
   - Design: D10
+  - **Completed:** Phase 3 Plan 01 (commits 97bce0a, ccefa97, b374e1f)
 
 ### Forensic INFO Promotion
 
@@ -247,8 +249,8 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | BOUND-01 | Phase 2 | Complete |
 | BOUND-02 | Phase 2 | Complete |
 | BOUND-03 | Phase 2 | Complete |
-| BOOT-01 | Phase 3 | Pending |
-| BOOT-02 | Phase 3 | Pending |
+| BOOT-01 | Phase 3 Plan 01 | **Complete** |
+| BOOT-02 | Phase 3 Plan 01 | **Complete** |
 | INFO-01 | Phase 3 | Pending |
 | DEDUP-01 | Phase 3 | Pending |
 | DEDUP-02 | Phase 3 | Pending |
