@@ -53,7 +53,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 - [x] 01-02-PLAN.md — Telegram + Discord + Slack ingress wraps (6 wrap sites in the three multi-entry adapters)
 - [x] 01-03-PLAN.md — Remaining adapter wraps (WhatsApp + Signal + LINE + iMessage + IRC + Email + Echo) + orchestrator channel-manager second-wrap site
 - [x] 01-04-PLAN.md — Reuse ingress traceId at execution-execute.ts:159 + execution-pipeline.ts:292 (close G1) + end-to-end integration test
-- [ ] 01-05-PLAN.md — Lifecycle envelopes: buildTraceMetadata + buildTraceArtifacts modules + emit sites in pi-event-bridge and comis-session-manager
+- [x] 01-05-PLAN.md — Lifecycle envelopes: buildTraceMetadata + buildTraceArtifacts modules + emit sites in pi-event-bridge and comis-session-manager
 - [ ] 01-06-PLAN.md — emitTraceTruncated public hook + refactor flushAndClose to share codepath (LIFE-03)
 
 ### Phase 2: Bridge Expansion & Payload Bounding
