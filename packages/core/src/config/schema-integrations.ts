@@ -75,6 +75,17 @@ export const McpServerEntrySchema = z.preprocess(
     headers: z.record(z.string(), z.string()).optional(),
     /** Maximum concurrent tool calls to this server. Undefined = auto (transport-based default). */
     maxConcurrency: z.number().int().positive().optional(),
+    /** Per-server opt-out for the plaintext-secret heuristic. Last-resort escape hatch — WARN logged on connect when true. Default: false (heuristic enforced). */
+    disablePlaintextSecretCheck: z.boolean().optional(),
+    /** Per-server stdio rlimits override. Partial overrides allowed: { cpu: 600 } leaves as/nofile at module defaults (as=536_870_912, nofile=256, cpu=300). */
+    rlimits: z.object({
+      /** RLIMIT_AS — virtual-memory ceiling in bytes (module default: 536_870_912 = 512MB). */
+      as: z.number().int().positive().optional(),
+      /** RLIMIT_NOFILE — max open file descriptors (module default: 256). */
+      nofile: z.number().int().positive().optional(),
+      /** RLIMIT_CPU — wall CPU seconds before SIGXCPU (module default: 300). */
+      cpu: z.number().int().positive().optional(),
+    }).optional(),
   }),
 );
 
@@ -91,6 +102,12 @@ export const McpConfigSchema = z.strictObject({
     stdioDefaultConcurrency: z.number().int().positive().default(1),
     /** Default max concurrent tool calls for HTTP/SSE servers (default: 4). */
     httpDefaultConcurrency: z.number().int().positive().default(4),
+    /** Built-in safe-to-pass-through env keys for stdio MCP children, ADDITIVE to MCP_STDIO_BUILTIN_ENV_ALLOWLIST. Operator-named keys (e.g. CUSTOM_CA_CERT_PATH) — default: []. */
+    safetyAllowedEnvKeys: z.array(z.string().min(1)).default([]),
+    /** OSV malware check enabled for stdio MCPs (default: true). Set false in air-gapped deployments. */
+    osvCheckEnabled: z.boolean().default(true),
+    /** OSV cache TTL in milliseconds (default: 24h = 86_400_000). */
+    osvCacheTtlMs: z.number().int().positive().default(86_400_000),
   });
 
 /**
