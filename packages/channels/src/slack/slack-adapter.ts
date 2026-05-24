@@ -194,6 +194,8 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
               traceId,
               startedAt: systemNowMs(),
               channelType: "slack",
+              tenantId: "default",
+              trustLevel: "admin",
             },
             () => {
               for (const handler of handlers) {
@@ -262,6 +264,8 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
                 traceId,
                 startedAt: systemNowMs(),
                 channelType: "slack",
+                tenantId: "default",
+                trustLevel: "admin",
               },
               () => {
                 for (const handler of handlers) {

@@ -77,6 +77,8 @@ export function handleInboundMessage(
       traceId,
       startedAt: systemNowMs(),
       channelType: "telegram",
+      tenantId: "default",
+      trustLevel: "admin",
     },
     () => {
       for (const handler of state.handlers) {
@@ -212,6 +214,8 @@ export function bindInboundHandlers(
           traceId,
           startedAt: systemNowMs(),
           channelType: "telegram",
+          tenantId: "default",
+          trustLevel: "admin",
         },
         () => {
           for (const handler of state.handlers) {

@@ -163,6 +163,8 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
             traceId,
             startedAt: systemNowMs(),
             channelType: "discord",
+            tenantId: "default",
+            trustLevel: "admin",
           },
           () => {
             for (const handler of handlers) {
@@ -254,6 +256,8 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
               traceId,
               startedAt: systemNowMs(),
               channelType: "discord",
+              tenantId: "default",
+              trustLevel: "admin",
             },
             () => {
               for (const handler of handlers) {
