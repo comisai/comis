@@ -18,6 +18,13 @@
  *  - the runtime config mirror that DECLARES the fields on `McpServerConfig`
  *    (`packages/skills/.../mcp-client/mcp-client-types.ts`, landed in Plan
  *    65-01). This is a passive type-shape mirror, not filter logic.
+ *  - the two daemon construction sites that FORWARD the persisted fields into
+ *    the runtime `McpServerConfig` (`packages/daemon/src/wiring/setup-mcp.ts`
+ *    at startup + `packages/daemon/src/api/mcp-handlers.ts` mcp.connect),
+ *    added by CR-02. Without this plumbing the filter never reaches the
+ *    bridge for config-defined / reconnected servers. These sites only COPY
+ *    the values config→runtime; they contain no filter LOGIC (the
+ *    allowlist/blocklist comparison stays solely in the bridge).
  *
  * The schema snapshot fixture carries the literal field-name strings and is
  * allowlisted too (Pitfall 8). `*.test.ts` files are skipped — test data
@@ -49,6 +56,12 @@ const ALLOWED_SITES: readonly string[] = [
   // The runtime config mirror (McpServerConfig) that declares the fields —
   // landed in Plan 65-01; a passive type-shape mirror, not filter logic.
   "packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts",
+  // CR-02: daemon construction sites that FORWARD persisted fields into the
+  // runtime McpServerConfig. Pure config→runtime plumbing (no filter logic);
+  // required so the bridge receives the filter for config-defined/reconnected
+  // servers.
+  "packages/daemon/src/wiring/setup-mcp.ts",
+  "packages/daemon/src/api/mcp-handlers.ts",
   // Schema snapshot fixture contains the literal strings (Pitfall 8).
   "test/architecture/__snapshots__/McpServerEntrySchema.json",
 ];

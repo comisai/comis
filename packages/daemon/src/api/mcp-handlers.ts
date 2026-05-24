@@ -371,18 +371,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // Resolution order: caller-supplied params.rlimits > persisted-entry
       // rlimits > undefined (env-only wrap, no prlimit). Pre-CR-03 the only
       // path was the persisted entry, deadlocking SAFETY-08 for new servers.
-      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as Array<{
-        name: string;
-        rlimits?: { as?: number; nofile?: number; cpu?: number };
-        keepaliveIntervalMs?: number;
-        circuitBreakerThreshold?: number;
-        circuitBreakerCooldownMs?: number;
-        idleTtlMs?: number;
-        toolAllowlist?: readonly string[];
-        toolBlocklist?: readonly string[];
-        enableResources?: boolean;
-        enablePrompts?: boolean;
-      }>;
+      // CR-02: typed as McpServerEntry[] (Zod-inferred schema type) so every
+      // persisted field — rlimits, Phase 64 reliability, Phase 65 — is readable.
+      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
       const persistedEntry = persistedServers.find((s) => s.name === params.server_name);
       const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
@@ -391,18 +382,6 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const resolvedKeepaliveIntervalMs = params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs;
       const resolvedCircuitBreakerThreshold = params.circuitBreakerThreshold ?? persistedEntry?.circuitBreakerThreshold;
       const resolvedCircuitBreakerCooldownMs = params.circuitBreakerCooldownMs ?? persistedEntry?.circuitBreakerCooldownMs;
-
-      // CR-02: forward the five Phase 65 fields from the persisted entry.
-      // mcp.connect accepts no CLI params for these (see McpConnectContract),
-      // so the only source is the config-file-set persisted entry. Forwarding
-      // them here means a mcp.reconnect-after-disconnect (which routes through
-      // this handler) preserves idle eviction / tool filtering /
-      // resources-prompts opt-outs instead of silently dropping them.
-      const resolvedIdleTtlMs = persistedEntry?.idleTtlMs;
-      const resolvedToolAllowlist = persistedEntry?.toolAllowlist;
-      const resolvedToolBlocklist = persistedEntry?.toolBlocklist;
-      const resolvedEnableResources = persistedEntry?.enableResources;
-      const resolvedEnablePrompts = persistedEntry?.enablePrompts;
 
       const config: McpServerConfig = {
         name: params.server_name,
@@ -420,14 +399,16 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         keepaliveIntervalMs: resolvedKeepaliveIntervalMs,
         circuitBreakerThreshold: resolvedCircuitBreakerThreshold,
         circuitBreakerCooldownMs: resolvedCircuitBreakerCooldownMs,
-        // CR-02 (Phase 65): only forward idleTtlMs when positive (0 ⇒ disabled,
-        // matches startIdleTicker opt-in). The other four are plain pass-through
-        // (undefined ⇒ auto/no-filter at their respective call sites).
-        ...(resolvedIdleTtlMs !== undefined && resolvedIdleTtlMs > 0 && { idleTtlMs: resolvedIdleTtlMs }),
-        ...(resolvedToolAllowlist !== undefined && { toolAllowlist: resolvedToolAllowlist }),
-        ...(resolvedToolBlocklist !== undefined && { toolBlocklist: resolvedToolBlocklist }),
-        ...(resolvedEnableResources !== undefined && { enableResources: resolvedEnableResources }),
-        ...(resolvedEnablePrompts !== undefined && { enablePrompts: resolvedEnablePrompts }),
+        // CR-02: forward the five Phase 65 fields from the persisted (config)
+        // entry — mcp.connect has no CLI params for them, so without this a
+        // reconnect-after-disconnect drops config-set idle eviction / tool
+        // filtering / resources-prompts opt-outs. idleTtlMs only when >0
+        // (0 ⇒ disabled, per startIdleTicker opt-in).
+        ...(persistedEntry?.idleTtlMs !== undefined && persistedEntry.idleTtlMs > 0 && { idleTtlMs: persistedEntry.idleTtlMs }),
+        ...(persistedEntry?.toolAllowlist !== undefined && { toolAllowlist: persistedEntry.toolAllowlist }),
+        ...(persistedEntry?.toolBlocklist !== undefined && { toolBlocklist: persistedEntry.toolBlocklist }),
+        ...(persistedEntry?.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
+        ...(persistedEntry?.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
       };
 
       // Reject connects that reference env vars not in the secrets store.
@@ -637,13 +618,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // (NOT the internally-namespaced `__test__<name>` — the persisted
       // entry uses the operator-visible identifier). The handler reads
       // params.rlimits OR persistedEntry.rlimits OR undefined (no wrap).
-      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as Array<{
-        name: string;
-        rlimits?: { as?: number; nofile?: number; cpu?: number };
-        keepaliveIntervalMs?: number;
-        circuitBreakerThreshold?: number;
-        circuitBreakerCooldownMs?: number;
-      }>;
+      // Typed as McpServerEntry[] (Zod-inferred schema type) — see mcp.connect.
+      const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
       const persistedEntry = persistedServers.find((s) => s.name === params.name);
       const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
