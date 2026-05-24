@@ -185,21 +185,11 @@ export interface McpServerConfig {
    * attached (the SDK runs without OAuth, surfacing needs_oauth_login on a 401).
    */
   readonly oauthProvider?: OAuthClientProvider;
-  /**
-   * Phase 66 OAUTH-05 / CR-01: RUNTIME-ONLY FetchLike that wraps the
-   * redirect-policy fetch with the deduped-refresh 401 path. Constructed in
-   * `prepareOAuthProvider` (alongside `oauthProvider`) ONLY for an
-   * `auth: "oauth"` server with the OAuth seam wired; threaded onto the
-   * runtime config so the PURE `createTransport` helper installs it as the
-   * transport's `fetch` option in place of the default
-   * `createRedirectPolicyFetch(...)`. The deduper's critical section is
-   * `state.callQueues[serverName]` (the same concurrency-1 PQueue that
-   * serializes tool calls), so N concurrent 401s coalesce into ONE refresh
-   * POST (66-P4 thundering herd → 1 refresh / OAUTH-05). NOT persisted —
-   * deliberately absent from buildPersistedMcpEntry (live object graph).
-   * Undefined ⇒ the transport falls back to the bare redirect-policy fetch
-   * (legacy connect path; the SDK's own auth() handles 401s without dedup).
-   */
+  /** Phase 66 CR-01: RUNTIME-ONLY FetchLike wrapping the redirect-policy
+   *  fetch with the deduped-refresh 401 path (oauth/deduped-fetch.ts). Built
+   *  by prepareOAuthProvider for auth:"oauth" + the OAuth seam; createTransport
+   *  installs it as the SSE/HTTP transport's fetch. NOT persisted. Undefined ⇒
+   *  bare redirect-policy fetch (SDK's own auth() handles 401 without dedup). */
   readonly oauthFetch?: FetchLike;
 }
 

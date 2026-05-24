@@ -1828,5 +1828,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RefreshResult",
       "DedupedRefreshArgs",
       "RefreshFn",
+      // Phase 66 CR-01: the deduped-refresh fetch wrapper that wires the
+      // RefreshDeduper into the production 401 path on the SSE/HTTP transport.
+      // Re-exported so the production-path integration test
+      // `test/integration/mcp-oauth-deduped-fetch.test.ts` can prove 100
+      // concurrent in-flight tool calls hitting a 401 collapse to ONE refresh
+      // POST WITHOUT calling dedupedRefresh directly. Internal-to-skills
+      // consumer lives in mcp-client-oauth-connect.ts (prepareOAuthProvider
+      // composes the wrapper onto `effectiveConfig.oauthFetch`) +
+      // mcp-client-discover.ts (createTransport uses `config.oauthFetch ??
+      // createRedirectPolicyFetch(...)` as the SSE/HTTP transport's `fetch`
+      // option). Documented test-API surface; not a baseline orphan.
+      "createDedupedRefreshFetch",
+      "DedupedRefreshFetchDeps",
     ])],
   ]);
