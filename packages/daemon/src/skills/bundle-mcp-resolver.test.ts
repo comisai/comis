@@ -367,4 +367,70 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
     // Byte-equal determinism: identical input ⇒ identical output.
     expect(JSON.stringify(r1.value.nextServers)).toBe(JSON.stringify(r2.value.nextServers));
   });
+
+  // -------------------------------------------------------------------------
+  // 9. Determinism (BUNDLE-03 invariant): two runs with identical input
+  //    produce byte-equal nextServers. Also verifies the sort-by-name
+  //    deterministic-output gate from the plan's "additional sub-assertion".
+  // -------------------------------------------------------------------------
+  it("idempotent: identical input produces byte-equal nextServers across runs", async () => {
+    const input: ResolveBundleInput = {
+      skillId: "test-skill",
+      manifestMcpServers: [
+        stdioEntry("z-server", ["clean-pkg-z"]),
+        stdioEntry("a-server", ["clean-pkg-a"]),
+      ],
+      currentServers: [],
+      force: false,
+      logger: makeStubLogger(),
+    };
+
+    const r1 = await resolveBundle(input);
+    const r2 = await resolveBundle(input);
+
+    expect(r1.ok).toBe(true);
+    expect(r2.ok).toBe(true);
+    if (r1.ok && r2.ok) {
+      expect(JSON.stringify(r1.value.nextServers)).toBe(
+        JSON.stringify(r2.value.nextServers),
+      );
+      // Also: sort-by-name determinism, so a-server precedes z-server.
+      expect(r1.value.nextServers[0]?.name).toBe("a-server");
+      expect(r1.value.nextServers[1]?.name).toBe("z-server");
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 10. Fixed-point invariant (boot re-merge correctness): applying the
+  //     resolver to its OWN output is a no-op. Simulates the boot path
+  //     re-running setupSkillBundles on disk state already produced by
+  //     a prior boot. resolver(resolver(x)) === resolver(x) for the
+  //     nextServers component.
+  // -------------------------------------------------------------------------
+  it("idempotent: applying resolver to its own output is a fixed point (boot re-merge invariant)", async () => {
+    const baseInput: ResolveBundleInput = {
+      skillId: "boot-skill",
+      manifestMcpServers: [stdioEntry("yfinance", ["yfinance-mcp"])],
+      currentServers: [],
+      force: false,
+      logger: makeStubLogger(),
+    };
+    const r1 = await resolveBundle(baseInput);
+
+    expect(r1.ok).toBe(true);
+    if (!r1.ok) return;
+
+    // Second run feeds r1's output back in as currentServers — simulates
+    // a boot re-merge against on-disk state from the previous boot.
+    const r2 = await resolveBundle({
+      ...baseInput,
+      currentServers: r1.value.nextServers,
+    });
+
+    expect(r2.ok).toBe(true);
+    if (!r2.ok) return;
+    expect(JSON.stringify(r2.value.nextServers)).toBe(
+      JSON.stringify(r1.value.nextServers),
+    );
+  });
 });
