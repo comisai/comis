@@ -189,6 +189,7 @@ import { createInboundMessageIdResolver, type InboundMessageIdResolver } from ".
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
 import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-preflight.js";
+import { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
 import os from "node:os";
 import { dirname as pathDirname } from "node:path";
 import { inspect } from "node:util";
@@ -2388,6 +2389,24 @@ async function bootShutdown(
     container, daemonLogger, daemonVersion, agents, adaptersByType, configPaths,
     db, secretStore, cachedPort, ttsAdapter, visionRegistry,
     startupStartMs, instanceId,
+  });
+
+  // 9.1. Boot invariant record (BOOT-01) + duplicate-wiring WARN (BOOT-02).
+  // Emitted AFTER the startup banner so the INFO record follows the human-readable
+  // "Comis daemon started" line in log streams, and BEFORE saveLastKnownGood /
+  // DaemonInstance return so WARNs fire before the daemon accepts traffic.
+  // depSlotConsistency is passed explicitly — the daemon composition root is the
+  // only site that knows which adapter slots were used (post-fix: channelRegistry
+  // only, adaptersList removed from setup-channels-runtime.ts).
+  emitStartupInvariants({
+    logger: daemonLogger,
+    adaptersByType,
+    rawHandlerCounts: channelManager?.getRawHandlerCounts() ?? new Map(),
+    channelPlugins: gateway.channelPlugins ?? new Map(),
+    pluginRegistry: container.pluginRegistry ?? { count: () => 0 },
+    mcpClientManager: mcpClientManager ?? { getTools: () => [] },
+    agentsConfig: agents,
+    depSlotConsistency: { adaptersList: false, channelRegistry: true },
   });
 
   // Snapshot current config as last-known-good after successful startup.
