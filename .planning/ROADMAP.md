@@ -73,7 +73,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 
 **Plans** (5):
 - [x] 02-01-PLAN.md — Payload bounding core (BOUND-01): `limitTrajectoryPayloadValue` conversion wrapper in runtime.ts mapping shared `__bounded__` sentinels → trajectory `{truncated,reason}` shape; 5MB-string + circular-ref RED tests [wave 1]
-- [ ] 02-02-PLAN.md — File caps + writer LRU + WR-04 (BOUND-02, BOUND-03): 10MB soft cap → inline emitTraceTruncated + stop; 50MB hard cap → errorKind:"resource" WARN; writerRegistry LRU at MAX_TRAJECTORY_WRITERS=100; observable drop counter [wave 2]
+- [x] 02-02-PLAN.md — File caps + writer LRU + WR-04 (BOUND-02, BOUND-03): 10MB soft cap → inline emitTraceTruncated + stop; 50MB hard cap → errorKind:"resource" WARN; writerRegistry LRU at MAX_TRAJECTORY_WRITERS=100; observable drop counter [wave 2]
 - [ ] 02-03-PLAN.md — Bridge queue/execution/sender (BRIDGE-01, BRIDGE-03, BRIDGE-04 scanned subset): 11 entries + translators incl. headline queue.enqueued incident-replay test; atomic removal of 11 events from EVENTS_NOT_TRAJECTORY_MAPPED [wave 3]
 - [ ] 02-04-PLAN.md — Bridge retry/mcp/channel (BRIDGE-02, BRIDGE-05, BRIDGE-06): 11 entries + translators; channel.lifecycle dual-mapping; chatId/channelId omitted; no allowlist change (non-scanned packages) [wave 4]
 - [ ] 02-05-PLAN.md — Bridge security/compaction/context/approval (BRIDGE-04 rest, BRIDGE-07, BRIDGE-08) + BRIDGE-09 count assertion: 13 entries + translators (params/patterns/message omitted); remove 8 compaction/context events from allowlist; arch test asserts mapping ≥45 [wave 5]
@@ -189,7 +189,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Trace Propagation & Lifecycle Envelopes | 6/6 | Complete   | 2026-05-24 |
-| 2. Bridge Expansion & Payload Bounding | 1/5 | In Progress|  |
+| 2. Bridge Expansion & Payload Bounding | 2/5 | In Progress|  |
 | 3. Boot Invariants, INFO Promotion & Dedup Detector | 0/0 | Not started | - |
 | 4. Session DAG & Bundle Exporter | 0/0 | Not started | - |
 | 5. Trajectory Pointer & Platform-Aware Redaction | 0/0 | Not started | - |

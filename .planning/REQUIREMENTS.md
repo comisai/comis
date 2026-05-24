@@ -58,9 +58,9 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
   - Acceptance: `data: { x: <5MB string> }` becomes `{ truncated: true, reason: "trajectory-field-size-limit", originalChars: 5242880, limitChars: 32768 }`
   - Acceptance: circular object emits `{ truncated: true, reason: "trajectory-circular-reference" }`
   - Design: D7 *(file: `packages/observability/src/trajectory/runtime.ts`)*
-- [ ] **BOUND-02**: Trajectory file hits 10 MB soft / 50 MB hard cap → recording stops → final event is `trace.truncated`
+- [x] **BOUND-02**: Trajectory file hits 10 MB soft / 50 MB hard cap → recording stops → final event is `trace.truncated`
   - Design: D7
-- [ ] **BOUND-03**: Trajectory writers stored in LRU `Map<string, QueuedFileWriter>` evicting at `MAX_TRAJECTORY_WRITERS = 100`
+- [x] **BOUND-03**: Trajectory writers stored in LRU `Map<string, QueuedFileWriter>` evicting at `MAX_TRAJECTORY_WRITERS = 100`
   - Design: D7
 
 ### Startup Invariants
@@ -245,8 +245,8 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | BRIDGE-08 | Phase 2 | Pending |
 | BRIDGE-09 | Phase 2 | Pending |
 | BOUND-01 | Phase 2 | Complete |
-| BOUND-02 | Phase 2 | Pending |
-| BOUND-03 | Phase 2 | Pending |
+| BOUND-02 | Phase 2 | Complete |
+| BOUND-03 | Phase 2 | Complete |
 | BOOT-01 | Phase 3 | Pending |
 | BOOT-02 | Phase 3 | Pending |
 | INFO-01 | Phase 3 | Pending |
