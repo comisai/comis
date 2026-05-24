@@ -113,6 +113,122 @@ describe("extractMcpPackageName — unknown commands return null (SAFETY-05 Pitf
 });
 
 // ---------------------------------------------------------------------------
+// CR-05 regressions — closing extractMcpPackageName OSV-bypass surfaces.
+//
+// The pre-fix parser had several silent OSV-skip paths a malicious operator
+// (or LLM-driven config) could exploit:
+//
+//   1. `uvx --from <pkg> <tool>` was NOT recognized: `argList[0]` was
+//      `--from` (starts with `-`), so the parser returned null and the OSV
+//      check was silently skipped with INFO log. uvx's documented
+//      `--from <package>` invocation lets an operator point at any pypi
+//      package while the binary name is unrelated.
+//   2. Version-suffix regex `/@[\d.^~><=*]+$/` was too narrow — it stripped
+//      `@1.2.3` and `@^1.0` but NOT dist-tags (`@latest`, `@beta`,
+//      `@next`), pre-release suffixes (`@1.0.0-beta.1`), git URLs
+//      (`@git+https://...`), file specs (`@file:./pkg`). OSV would be
+//      queried with e.g. `yfinance@latest` — not a valid OSV package name,
+//      no advisory match, malicious package proceeds.
+//   3. `endsWith("npx")` matched any command suffixing with "npx", e.g.
+//      `/tmp/mynpx` (symlink to attacker's binary). Constraint should be
+//      `basename(command) === "npx"`.
+//   4. Multi-arg flag handling: `npx --prefer-online -y pkg` would be
+//      truncated to look at `argList[0] === "-y"` only.
+// ---------------------------------------------------------------------------
+describe("extractMcpPackageName — CR-05 dist-tag and pre-release suffix strip (SAFETY-05)", () => {
+  it("strips @latest dist-tag from npx -y pkg@latest", () => {
+    expect(extractMcpPackageName("npx", ["-y", "yfinance@latest"])).toEqual({
+      ecosystem: "npm",
+      name: "yfinance",
+    });
+  });
+
+  it("strips @beta dist-tag from npx pkg@beta", () => {
+    expect(extractMcpPackageName("npx", ["yfinance@beta"])).toEqual({
+      ecosystem: "npm",
+      name: "yfinance",
+    });
+  });
+
+  it("strips pre-release suffix from npx -y pkg@1.0.0-beta.1", () => {
+    expect(extractMcpPackageName("npx", ["-y", "yfinance@1.0.0-beta.1"])).toEqual({
+      ecosystem: "npm",
+      name: "yfinance",
+    });
+  });
+
+  it("strips build-metadata suffix from npx -y pkg@1.0.0+build.123", () => {
+    expect(extractMcpPackageName("npx", ["-y", "yfinance@1.0.0+build.123"])).toEqual({
+      ecosystem: "npm",
+      name: "yfinance",
+    });
+  });
+
+  it("strips git URL spec from npx -y pkg@git+https://...", () => {
+    expect(extractMcpPackageName("npx", ["-y", "yfinance@git+https://github.com/x/y.git"])).toEqual({
+      ecosystem: "npm",
+      name: "yfinance",
+    });
+  });
+
+  it("strips @1.0 scoped pre-release from @scope/pkg@^1.0.0-beta.1", () => {
+    expect(extractMcpPackageName("npx", ["-y", "@scope/pkg@^1.0.0-beta.1"])).toEqual({
+      ecosystem: "npm",
+      name: "@scope/pkg",
+    });
+  });
+
+  it("strips @latest from scoped package @scope/pkg@latest", () => {
+    expect(extractMcpPackageName("npx", ["-y", "@scope/pkg@latest"])).toEqual({
+      ecosystem: "npm",
+      name: "@scope/pkg",
+    });
+  });
+});
+
+describe("extractMcpPackageName — CR-05 uvx --from support (SAFETY-05)", () => {
+  it("parses uvx --from <pkg> <tool> with --from preceding pkg as pypi", () => {
+    expect(extractMcpPackageName("uvx", ["--from", "evil-pkg", "some-tool"])).toEqual({
+      ecosystem: "pypi",
+      name: "evil-pkg",
+    });
+  });
+
+  it("parses uvx --from <pkg> <tool> when --from precedes after other flags", () => {
+    expect(
+      extractMcpPackageName("uvx", ["--quiet", "--from", "evil-pkg", "some-tool"]),
+    ).toEqual({ ecosystem: "pypi", name: "evil-pkg" });
+  });
+});
+
+describe("extractMcpPackageName — CR-05 basename match (SAFETY-05)", () => {
+  it("returns null for command whose basename merely ends with 'npx' (suffix collision)", () => {
+    // /tmp/mynpx is a hypothetical attacker symlink — the parser must NOT
+    // treat it as npx via endsWith heuristic.
+    expect(extractMcpPackageName("/tmp/mynpx", ["-y", "evil"])).toBeNull();
+  });
+
+  it("returns null for command 'fakeuvx' that endsWith 'uvx' but is not uvx", () => {
+    expect(extractMcpPackageName("/usr/local/bin/fakeuvx", ["pkg"])).toBeNull();
+  });
+
+  it("matches absolute path /usr/local/bin/npx via basename", () => {
+    expect(extractMcpPackageName("/usr/local/bin/npx", ["-y", "pkg"])).toEqual({
+      ecosystem: "npm",
+      name: "pkg",
+    });
+  });
+});
+
+describe("extractMcpPackageName — CR-05 multi-flag arg skipping (SAFETY-05)", () => {
+  it("skips ALL leading dash-prefixed flags for npx, not just -y", () => {
+    expect(
+      extractMcpPackageName("npx", ["--prefer-online", "-y", "yfinance@1.2.3"]),
+    ).toEqual({ ecosystem: "npm", name: "yfinance" });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // osvMalwareCheck — API + on-disk cache behavior
 // ---------------------------------------------------------------------------
 

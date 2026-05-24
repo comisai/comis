@@ -18,6 +18,7 @@
 import { safePath, systemNowMs } from "@comis/core";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
+import { basename } from "node:path";
 import { z } from "zod";
 import type { McpClientManagerDeps } from "./mcp-client-types.js";
 
@@ -187,46 +188,120 @@ export async function osvMalwareCheck(
 }
 
 /**
+ * Strip any `@<version-or-spec>` suffix from a package specifier, returning
+ * the bare package name. Handles ALL npm spec shapes:
+ *   - `foo@1.2.3`           -> `foo`         (semver)
+ *   - `foo@latest`          -> `foo`         (dist-tag — CR-05 case 2)
+ *   - `foo@^1.0.0-beta.1`   -> `foo`         (pre-release)
+ *   - `foo@1.0.0+build.123` -> `foo`         (build metadata)
+ *   - `foo@git+https://...` -> `foo`         (git URL — CR-05 case 2)
+ *   - `foo@file:./local`    -> `foo`         (file spec)
+ *   - `@scope/pkg@1.0`      -> `@scope/pkg`  (scoped semver)
+ *   - `@scope/pkg@latest`   -> `@scope/pkg`  (scoped dist-tag)
+ *
+ * For unscoped names: split at the first `@`.
+ * For scoped names: split at the SECOND `@` (the first one is the scope
+ * marker at position 0).
+ *
+ * Pre-fix code used the regex `/@[\d.^~><=*]+$/` which only matched
+ * semver-shaped suffixes — dist-tags, pre-release, git URLs and file
+ * specs slipped through unstripped, causing OSV queries to use the
+ * literal `pkg@latest` package name (no match) and silently passing
+ * malicious packages. Per CR-05 + RESEARCH.md §"Pattern 4".
+ */
+function stripVersionSpec(pkg: string): string {
+  // Scoped name: `@scope/pkg[@spec]` — preserve the leading `@scope/`.
+  // The version separator is the SECOND `@`, found via indexOf("@", 1).
+  // Unscoped name: split at the FIRST `@`.
+  const atIdx = pkg.startsWith("@") ? pkg.indexOf("@", 1) : pkg.indexOf("@");
+  return atIdx > 0 ? pkg.slice(0, atIdx) : pkg;
+}
+
+/**
+ * Find the index of the first non-flag arg (one that does NOT start with
+ * `-`). Lets the parser skip over any number of leading flags
+ * (`npx --prefer-online -y pkg`) rather than just `-y` / `--yes`.
+ */
+function firstNonFlagIndex(argList: readonly string[], start = 0): number {
+  let idx = start;
+  while (idx < argList.length && argList[idx]!.startsWith("-")) {
+    idx++;
+  }
+  return idx;
+}
+
+/**
  * Extract `{ ecosystem, name }` from an MCP server's `command + args`.
- * Recognized: `npx [-y] <pkg>` (npm), `uvx <pkg>` (pypi),
- * `pnpm dlx <pkg>` (npm). Absolute paths match via `endsWith`;
- * version suffixes (`pkg@1.2.3`) stripped. Returns `null` for unrecognized
- * commands (`node`, `python3`, `/bin/sh`) — caller logs INFO and skips
- * OSV check. Per RESEARCH.md §"Pattern 4" + Pitfall 4.
+ * Recognized:
+ *   - `npx [flags...] <pkg>[@spec]`           -> npm
+ *   - `uvx [flags...] <pkg>` OR
+ *     `uvx [flags...] --from <pkg> <tool>`    -> pypi (CR-05 fix: --from)
+ *   - `pnpm dlx [flags...] <pkg>[@spec]`      -> npm
+ *
+ * Command match is by `basename(command)` — exact, NOT `endsWith` (which
+ * matched `/tmp/mynpx` as npx, a CR-05 surface). Version suffixes
+ * (`pkg@1.2.3`, `pkg@latest`, scoped, pre-release, git URLs, file specs)
+ * are stripped uniformly via `stripVersionSpec`.
+ *
+ * Returns `null` for unrecognized commands (`node`, `python3`,
+ * `/bin/sh`) — caller logs INFO and skips OSV check.
+ *
+ * Per RESEARCH.md §"Pattern 4" + Pitfall 4 + Phase 63 CR-05.
  */
 export function extractMcpPackageName(
   command: string,
   args: readonly string[] | undefined,
 ): { ecosystem: "npm" | "pypi"; name: string } | null {
+  // CR-05: exact basename match instead of endsWith. `/tmp/mynpx` is not
+  // npx — endsWith treated it as npx and parsed the first arg as a
+  // package name. basename strips the directory and gives the executable
+  // name, which we exact-match against the package-manager allowlist.
+  const cmd = basename(command);
   const argList = args ?? [];
 
-  // npx [-y|--yes] <pkg> [args...]
-  if (command.endsWith("npx")) {
-    const idx = argList[0] === "-y" || argList[0] === "--yes" ? 1 : 0;
+  // npx [flags...] <pkg> [args...]
+  if (cmd === "npx") {
+    const idx = firstNonFlagIndex(argList);
     const pkg = argList[idx];
     if (pkg && !pkg.startsWith("-")) {
-      // Last `@` + version-shape suffix; scoped names ("@org/pkg") survive.
-      const name = pkg.replace(/@[\d.^~><=*]+$/, "");
-      return { ecosystem: "npm", name };
+      return { ecosystem: "npm", name: stripVersionSpec(pkg) };
     }
     return null;
   }
 
-  // uvx <pkg> [args...]
-  if (command.endsWith("uvx")) {
-    const pkg = argList[0];
+  // uvx [flags...] [--from <pkg>] <tool>
+  // CR-05: handle `--from <pkg>` — uvx's documented invocation for the
+  // common case where the package name differs from the executable's
+  // binary name. Pre-fix the parser saw `--from` (starts with `-`) and
+  // returned null, silently skipping the OSV check.
+  if (cmd === "uvx") {
+    // Scan for `--from` in the leading flags region. If found, the NEXT
+    // arg is the pypi package name. Otherwise fall through to "first
+    // non-flag arg is the pypi package name".
+    let i = 0;
+    while (i < argList.length && argList[i]!.startsWith("-")) {
+      if (argList[i] === "--from") {
+        const pkg = argList[i + 1];
+        if (pkg && !pkg.startsWith("-")) {
+          return { ecosystem: "pypi", name: pkg };
+        }
+        return null;
+      }
+      i++;
+    }
+    const pkg = argList[i];
     if (pkg && !pkg.startsWith("-")) {
       return { ecosystem: "pypi", name: pkg };
     }
     return null;
   }
 
-  // pnpm dlx <pkg> [args...]
-  if (command.endsWith("pnpm") && argList[0] === "dlx") {
-    const pkg = argList[1];
+  // pnpm dlx [flags...] <pkg>[@spec] [args...]
+  if (cmd === "pnpm" && argList[0] === "dlx") {
+    const idx = firstNonFlagIndex(argList, 1);
+    const pkg = argList[idx];
     if (pkg && !pkg.startsWith("-")) {
-      const name = pkg.replace(/@[\d.^~><=*]+$/, "");
-      return { ecosystem: "npm", name };
+      return { ecosystem: "npm", name: stripVersionSpec(pkg) };
     }
     return null;
   }
