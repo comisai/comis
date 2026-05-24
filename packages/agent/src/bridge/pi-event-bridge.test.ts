@@ -4653,3 +4653,178 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(body).not.toMatch(/eventBus\.emit\("session:ended"/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// LIFE-01: trace.metadata emit after session:started (Plan 01-05)
+// ---------------------------------------------------------------------------
+
+describe("LIFE-01 — trace.metadata direct emit after session:started", () => {
+  it("emits trace.metadata exactly once per session via recorder.recordEvent (not eventBus)", () => {
+    const recordEvents: Array<string> = [];
+    const mockRecorder = {
+      recordEvent: (type: string) => { recordEvents.push(type); return "queued" as const; },
+      flush: vi.fn(),
+      flushAndClose: vi.fn(),
+      filePath: "/tmp/test.trajectory.jsonl",
+    };
+
+    let marked = false;
+    const fakeRegistry = {
+      hasSessionStartedBeenEmitted: (_: string): boolean => marked,
+      markSessionStarted: (_: string): void => { marked = true; },
+      getRecorder: (_: string) => mockRecorder,
+      getOrCreate: vi.fn(),
+      close: vi.fn(),
+      closeAll: vi.fn(),
+    } as any;
+
+    const deps = createMockDeps({
+      trajectoryRegistry: fakeRegistry,
+      runtimeSnapshot: {
+        harness: { type: "comis" as const, version: "1.0.41", os: "linux", node: "v22.0.0" },
+        model: { provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+        config: { appName: "comis" },
+        plugins: [],
+        skills: [],
+        prompting: {},
+        redaction: { policy: "platform-aware" },
+      },
+    });
+    const { listener } = createPiEventBridge(deps);
+
+    // First agent_start: should emit session:started (bus) AND trace.metadata (recorder)
+    listener({ type: "agent_start" } as any);
+
+    const traceMetadataEmits = recordEvents.filter((t) => t === "trace.metadata");
+    expect(traceMetadataEmits).toHaveLength(1);
+
+    // Second agent_start (same session — per-turn re-suppress): should NOT emit again
+    listener({ type: "agent_start" } as any);
+    const afterSecond = recordEvents.filter((t) => t === "trace.metadata");
+    expect(afterSecond).toHaveLength(1);
+  });
+
+  it("emits trace.metadata AFTER session:started bus emit (order check)", () => {
+    const order: string[] = [];
+    const mockRecorder = {
+      recordEvent: (type: string) => { order.push(`recorder:${type}`); return "queued" as const; },
+      flush: vi.fn(),
+      flushAndClose: vi.fn(),
+      filePath: "/tmp/test.trajectory.jsonl",
+    };
+
+    let marked = false;
+    const fakeRegistry = {
+      hasSessionStartedBeenEmitted: (_: string): boolean => marked,
+      markSessionStarted: (_: string): void => { marked = true; },
+      getRecorder: (_: string) => mockRecorder,
+      getOrCreate: vi.fn(),
+      close: vi.fn(),
+      closeAll: vi.fn(),
+    } as any;
+
+    const mockEmit = vi.fn().mockImplementation((event: string) => {
+      order.push(`bus:${event}`);
+    });
+
+    const deps = createMockDeps({
+      trajectoryRegistry: fakeRegistry,
+      runtimeSnapshot: {
+        harness: { type: "comis" as const, version: "1.0.41", os: "linux", node: "v22.0.0" },
+        model: { provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+        config: {},
+        plugins: [],
+        skills: [],
+        prompting: {},
+        redaction: { policy: "platform-aware" },
+      },
+      eventBus: {
+        emit: mockEmit,
+        on: vi.fn(),
+        off: vi.fn(),
+        once: vi.fn(),
+        listenerCount: vi.fn().mockReturnValue(0),
+      } as any,
+    });
+    const { listener } = createPiEventBridge(deps);
+    listener({ type: "agent_start" } as any);
+
+    const sessionStartedIdx = order.findIndex((e) => e === "bus:session:started");
+    const traceMetadataIdx = order.findIndex((e) => e === "recorder:trace.metadata");
+
+    expect(sessionStartedIdx).toBeGreaterThanOrEqual(0);
+    expect(traceMetadataIdx).toBeGreaterThan(sessionStartedIdx);
+  });
+
+  it("emitted trace.metadata payload contains the 7 expected top-level keys", () => {
+    const capturedPayloads: Array<Record<string, unknown>> = [];
+    const mockRecorder = {
+      recordEvent: (type: string, data?: Record<string, unknown>) => {
+        if (type === "trace.metadata" && data !== undefined) capturedPayloads.push(data);
+        return "queued" as const;
+      },
+      flush: vi.fn(),
+      flushAndClose: vi.fn(),
+      filePath: "/tmp/test.trajectory.jsonl",
+    };
+
+    let marked = false;
+    const fakeRegistry = {
+      hasSessionStartedBeenEmitted: (_: string): boolean => marked,
+      markSessionStarted: (_: string): void => { marked = true; },
+      getRecorder: (_: string) => mockRecorder,
+      getOrCreate: vi.fn(),
+      close: vi.fn(),
+      closeAll: vi.fn(),
+    } as any;
+
+    const deps = createMockDeps({
+      trajectoryRegistry: fakeRegistry,
+      runtimeSnapshot: {
+        harness: { type: "comis" as const, version: "1.0.41", os: "linux", node: "v22.0.0" },
+        model: { provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+        config: { appName: "comis" },
+        plugins: [{ name: "my-plugin", version: "1.0.0" }],
+        skills: [],
+        prompting: { systemPromptDigest: "sha256:abc" },
+        redaction: { policy: "platform-aware" },
+      },
+    });
+    const { listener } = createPiEventBridge(deps);
+    listener({ type: "agent_start" } as any);
+
+    expect(capturedPayloads).toHaveLength(1);
+    const payload = capturedPayloads[0];
+    expect(Object.keys(payload).sort()).toEqual(
+      ["config", "harness", "model", "plugins", "prompting", "redaction", "skills"].sort(),
+    );
+  });
+
+  it("does NOT emit trace.metadata when runtimeSnapshot is absent", () => {
+    const recordEvents: string[] = [];
+    const mockRecorder = {
+      recordEvent: (type: string) => { recordEvents.push(type); return "queued" as const; },
+      flush: vi.fn(),
+      flushAndClose: vi.fn(),
+      filePath: "/tmp/test.trajectory.jsonl",
+    };
+
+    let marked = false;
+    const fakeRegistry = {
+      hasSessionStartedBeenEmitted: (_: string): boolean => marked,
+      markSessionStarted: (_: string): void => { marked = true; },
+      getRecorder: (_: string) => mockRecorder,
+      getOrCreate: vi.fn(),
+      close: vi.fn(),
+      closeAll: vi.fn(),
+    } as any;
+
+    // No runtimeSnapshot in deps
+    const deps = createMockDeps({ trajectoryRegistry: fakeRegistry });
+    const { listener } = createPiEventBridge(deps);
+    listener({ type: "agent_start" } as any);
+
+    const metadataEmits = recordEvents.filter((t) => t === "trace.metadata");
+    expect(metadataEmits).toHaveLength(0);
+  });
+});
