@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Bundle-time value-shape redactors (Phase 5 D9, REDACT-01).
+ * Bundle-time value-shape redactors (Phase 5 D9, REDACT-01 + REDACT-02).
  *
  * The 11 patterns target the bundle export pipeline — distinct from
  * the Pino-level credential patterns in patterns.ts (which carry
@@ -8,8 +8,13 @@
  *
  * Application contract:
  *   - redactString applies all 11 patterns to a string leaf.
- *   - walkAndRedactStrings recurses through arrays/objects, redacting
- *     string leaves and leaving numbers/booleans/null untouched. This
+ *   - substitutePathsInString replaces literal filesystem paths with
+ *     $WORKSPACE_DIR / $STATE_DIR / $HOME placeholders, longest-first
+ *     (REDACT-02, Plan 05-03). Uses String.replaceAll for literal
+ *     matching — no regex metachar hazards on path strings.
+ *   - walkAndRedactStrings recurses through arrays/objects, applying
+ *     redactString then substitutePathsInString to every string-typed
+ *     leaf. Numbers, booleans, and null pass through untouched. This
  *     prevents false positives on number-typed timestamps and counts
  *     (landmine §7.1 from 05-RESEARCH.md).
  *   - redactEventForExport wraps walkAndRedactStrings for a TrajectoryEvent's
@@ -22,6 +27,12 @@
  * payload-field, identifier-field) so a literal "Authorization: Basic …"
  * is caught by basic-auth first, with the residual "Authorization"
  * substring caught by the field-name pass.
+ *
+ * Path substitution ordering (REDACT-02): workspaceDir before stateDir
+ * before homeDir — sorted by literal path length descending so the
+ * most-specific (longest) prefix always wins. Using String.replaceAll
+ * with a literal string (not a regex) avoids metachar surprises in
+ * paths like `/Users/me/.comis/[brackets]`.
  *
  * Performance: all replacements go through replacePatternBounded for
  * ReDoS protection (CHUNK_SIZE=16384, SINGLE_PASS_THRESHOLD=32768).
@@ -200,6 +211,54 @@ function decodeSentinels(s: string, tokens: string[]): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Replace literal filesystem path occurrences in `s` with safe placeholders.
+ *
+ * Substitution order is longest-first (by character length) so a more-specific
+ * nested path (e.g. `/Users/alice/.comis/workspace`) is substituted before its
+ * parent (`/Users/alice`). Uses `String.prototype.replaceAll` with a plain
+ * string argument — no regex compilation — so paths containing regex
+ * meta-characters (brackets, dots, parens, etc.) are handled correctly.
+ *
+ * Placeholder mapping:
+ *   - `opts.workspaceDir` → `$WORKSPACE_DIR`
+ *   - `opts.stateDir`     → `$STATE_DIR`
+ *   - `opts.homeDir`      → `$HOME`
+ *
+ * When `opts` has no defined path entries, or all entries are empty strings,
+ * `s` is returned unchanged.
+ *
+ * @param s - the string to process
+ * @param opts - path hints from the bundle export context
+ * @returns the string with literal paths replaced by placeholders
+ */
+export function substitutePathsInString(s: string, opts: RedactionOpts): string {
+  // Build pairs: [literalPath, placeholder]. Skip undefined / empty.
+  const pairs: Array<[string, string]> = [];
+  if (opts.workspaceDir !== undefined && opts.workspaceDir.length > 0) {
+    pairs.push([opts.workspaceDir, "$WORKSPACE_DIR"]);
+  }
+  if (opts.stateDir !== undefined && opts.stateDir.length > 0) {
+    pairs.push([opts.stateDir, "$STATE_DIR"]);
+  }
+  if (opts.homeDir !== undefined && opts.homeDir.length > 0) {
+    pairs.push([opts.homeDir, "$HOME"]);
+  }
+
+  if (pairs.length === 0) return s;
+
+  // Sort by path length descending so the longest (most-specific) match wins.
+  pairs.sort((a, b) => b[0].length - a[0].length);
+
+  let out = s;
+  for (const [literal, placeholder] of pairs) {
+    // String.prototype.replaceAll with a plain string is a literal-string
+    // replacement — no regex metachar processing.
+    out = out.replaceAll(literal, placeholder);
+  }
+  return out;
+}
+
+/**
  * Returns the frozen array of all 11 value-shape patterns.
  * Each pattern has `id`, `regex`, and `sentinel` fields.
  * The sentinel is exactly `<REDACTED:${id}>`.
@@ -254,8 +313,13 @@ export function redactString(value: string): string {
 
 /**
  * Pure-data walker. Recurses through arrays and plain objects, applying
- * `redactString` to every string-typed leaf. Numbers, booleans, null,
- * and undefined pass through unchanged.
+ * `redactString` then `substitutePathsInString` to every string-typed leaf.
+ * Numbers, booleans, null, and undefined pass through unchanged.
+ *
+ * On string leaves the order is: value-shape patterns FIRST (redactString),
+ * then path substitution (substitutePathsInString). This ensures credentials
+ * embedded inside path-like strings are caught before path substitution
+ * normalizes the surrounding path prefix.
  *
  * Cycle detection via a `WeakSet<object>`. Back-edges return
  * `{ __cycle: true }` instead of throwing or infinite-recursing.
@@ -263,14 +327,19 @@ export function redactString(value: string): string {
  * Returns a new value graph — the input is never mutated.
  *
  * @param value - any JavaScript value
+ * @param opts - optional path substitution hints (REDACT-02, Plan 05-03)
  * @param seen - internal WeakSet for cycle detection (callers omit this)
  * @returns the redacted copy of `value` with the same shape
  */
 export function walkAndRedactStrings(
   value: unknown,
+  opts: RedactionOpts = {},
   seen: WeakSet<object> = new WeakSet(),
 ): unknown {
-  if (typeof value === "string") return redactString(value);
+  if (typeof value === "string") {
+    const shaped = redactString(value);
+    return substitutePathsInString(shaped, opts);
+  }
   if (value === null || value === undefined) return value;
   // Numbers, booleans, bigints, symbols — pass through untouched.
   if (typeof value !== "object") return value;
@@ -280,36 +349,34 @@ export function walkAndRedactStrings(
   seen.add(obj);
 
   if (Array.isArray(obj)) {
-    return (obj as unknown[]).map((v) => walkAndRedactStrings(v, seen));
+    return (obj as unknown[]).map((v) => walkAndRedactStrings(v, opts, seen));
   }
 
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-    out[k] = walkAndRedactStrings(v, seen);
+    out[k] = walkAndRedactStrings(v, opts, seen);
   }
   return out;
 }
 
 /**
- * Walk `event.data`, apply the 11 value-shape patterns to every
- * string-typed leaf, and return a new event with the redacted data.
- * Envelope fields (`ts`, `seq`, `traceId`, `sessionId`, etc.) are
- * byte-equal pre/post — only `data` is transformed.
+ * Walk `event.data`, apply the 11 value-shape patterns then path
+ * substitution (REDACT-02) to every string-typed leaf, and return a
+ * new event with the redacted data. Envelope fields (`ts`, `seq`,
+ * `traceId`, `sessionId`, etc.) are byte-equal pre/post — only `data`
+ * is transformed.
  *
  * Returns the event reference unchanged when `event.data` is undefined.
  *
- * The `opts` parameter is reserved for path substitution (REDACT-02,
- * Plan 05-03) and is unused here.
- *
  * @param event - a TrajectoryEvent whose data field will be redacted
- * @param opts - path substitution hints (reserved, not yet consumed)
+ * @param opts - path substitution hints (REDACT-02, Plan 05-03)
  * @returns a new TrajectoryEvent with redacted data, or the original event
  */
 export function redactEventForExport(
   event: TrajectoryEvent,
-  _opts: RedactionOpts = {},
+  opts: RedactionOpts = {},
 ): TrajectoryEvent {
   if (event.data === undefined) return event;
-  const redactedData = walkAndRedactStrings(event.data) as Record<string, unknown>;
+  const redactedData = walkAndRedactStrings(event.data, opts) as Record<string, unknown>;
   return { ...event, data: redactedData };
 }

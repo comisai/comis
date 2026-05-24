@@ -125,6 +125,7 @@ export {
   redactString,
   walkAndRedactStrings,
   getValueShapePatterns,
+  substitutePathsInString,
 } from "./redact/value-shapes.js";
 export type { ValueShapePattern, RedactionOpts } from "./redact/value-shapes.js";
 
