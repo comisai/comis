@@ -91,6 +91,12 @@ export type {
   DedupedRefreshArgs,
   RefreshFn,
 } from "./integrations/mcp-client/index.js";
+// Phase 66 CR-01: the deduped-refresh fetch wrapper (the production 401 path).
+// Surfaced so the production-path integration test
+// (test/integration/mcp-oauth-deduped-fetch.test.ts) can drive the wiring
+// through the public barrel.
+export { createDedupedRefreshFetch } from "./integrations/mcp-client/index.js";
+export type { DedupedRefreshFetchDeps } from "./integrations/mcp-client/index.js";
 // Phase 63 SAFETY-01/02: stdio env-scrub primitives (built-in allowlist
 // constant + pure scrub function). Consumed by the daemon RPC handler
 // (`mcp-handlers.ts`) and the architecture / integration tests under

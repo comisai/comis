@@ -14,6 +14,7 @@
 import type { Result } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { SystemIntervalHandle, SystemTimeoutHandle, TypedEventBus } from "@comis/core";
 import type PQueue from "p-queue";
 
@@ -184,6 +185,22 @@ export interface McpServerConfig {
    * attached (the SDK runs without OAuth, surfacing needs_oauth_login on a 401).
    */
   readonly oauthProvider?: OAuthClientProvider;
+  /**
+   * Phase 66 OAUTH-05 / CR-01: RUNTIME-ONLY FetchLike that wraps the
+   * redirect-policy fetch with the deduped-refresh 401 path. Constructed in
+   * `prepareOAuthProvider` (alongside `oauthProvider`) ONLY for an
+   * `auth: "oauth"` server with the OAuth seam wired; threaded onto the
+   * runtime config so the PURE `createTransport` helper installs it as the
+   * transport's `fetch` option in place of the default
+   * `createRedirectPolicyFetch(...)`. The deduper's critical section is
+   * `state.callQueues[serverName]` (the same concurrency-1 PQueue that
+   * serializes tool calls), so N concurrent 401s coalesce into ONE refresh
+   * POST (66-P4 thundering herd → 1 refresh / OAUTH-05). NOT persisted —
+   * deliberately absent from buildPersistedMcpEntry (live object graph).
+   * Undefined ⇒ the transport falls back to the bare redirect-policy fetch
+   * (legacy connect path; the SDK's own auth() handles 401s without dedup).
+   */
+  readonly oauthFetch?: FetchLike;
 }
 
 /** Connection status for an MCP server. */

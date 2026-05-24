@@ -271,12 +271,16 @@ export function createTransport(
       requestInit: config.headers
         ? { headers: config.headers }
         : undefined,
+      // CR-01: an auth:"oauth" server with the OAuth seam wired uses the
+      // deduped-refresh fetch (which itself composes the redirect-policy fetch
+      // inside it, so SAFETY-07 cross-host header scrub still applies). The
+      // bare redirect-policy fetch is the legacy/non-OAuth fallback.
       // Phase 63 SAFETY-07: cross-host redirect header scrub. Strips
       // Authorization / Cookie / Proxy-Authorization on cross-host redirect
       // (URL.host string mismatch including port); preserves on same-host
       // (including http to https upgrade); throws [max_redirects_exceeded]
       // after 20 hops. See mcp-client-redirect-policy.ts for the full policy.
-      fetch: createRedirectPolicyFetch({ maxRedirections: 20 }),
+      fetch: config.oauthFetch ?? createRedirectPolicyFetch({ maxRedirections: 20 }),
       // Phase 66 OAUTH-11: attach the OAuthClientProvider adapter ONLY for
       // auth:"oauth" servers with a constructed provider (threaded onto the
       // runtime config by connectServer). The SDK then drives tokens()/
@@ -294,9 +298,12 @@ export function createTransport(
       requestInit: config.headers
         ? { headers: config.headers }
         : undefined,
+      // CR-01: deduped-refresh fetch for auth:"oauth" (symmetric with the SSE
+      // branch). The wrapper composes on top of the redirect-policy fetch so
+      // SAFETY-07 cross-host header scrub still applies.
       // Phase 63 SAFETY-07: cross-host redirect header scrub. Same policy as
       // the SSE branch above; see mcp-client-redirect-policy.ts.
-      fetch: createRedirectPolicyFetch({ maxRedirections: 20 }),
+      fetch: config.oauthFetch ?? createRedirectPolicyFetch({ maxRedirections: 20 }),
       // Phase 66 OAUTH-11: attach the OAuthClientProvider adapter ONLY for
       // auth:"oauth" servers with a constructed provider (symmetric with the SSE
       // branch). requestInit + fetch above are untouched.

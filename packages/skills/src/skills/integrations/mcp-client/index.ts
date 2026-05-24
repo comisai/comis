@@ -96,6 +96,18 @@ export type {
   RefreshFn,
 } from "./oauth/refresh-deduper.js";
 
+// Phase 66 CR-01: the deduped-refresh fetch wrapper that wires the deduper into
+// the production 401 path on the SSE/HTTP transport. Re-exported so the
+// production-path integration test
+// (test/integration/mcp-oauth-deduped-fetch.test.ts) can prove 100 concurrent
+// in-flight tool calls hitting a 401 collapse to ONE refresh POST WITHOUT
+// calling dedupedRefresh directly. Internally the wrapper is composed onto
+// `effectiveConfig.oauthFetch` by `prepareOAuthProvider` (mcp-client-oauth-
+// connect.ts) and the SSE/HTTP transport's `fetch` option in
+// `createTransport`.
+export { createDedupedRefreshFetch } from "./oauth/deduped-fetch.js";
+export type { DedupedRefreshFetchDeps } from "./oauth/deduped-fetch.js";
+
 export { qualifyToolName, parseQualifiedName } from "./mcp-client-types.js";
 
 // Phase 63 SAFETY-01/02: stdio env-scrub primitives re-exported so the

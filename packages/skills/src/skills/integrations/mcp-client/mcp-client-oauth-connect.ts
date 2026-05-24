@@ -26,6 +26,10 @@ import type {
 } from "./mcp-client-types.js";
 import { createOAuthClientProvider } from "./oauth/provider.js";
 import { createRefreshDeduper } from "./oauth/refresh-deduper.js";
+import { createDedupedRefreshFetch } from "./oauth/deduped-fetch.js";
+import { createRedirectPolicyFetch } from "./mcp-client-redirect-policy.js";
+
+const MAX_REDIRECTIONS = 20;
 
 /**
  * The `needs_oauth_login` tag. An `auth:"oauth"` server that connects WITHOUT a
@@ -123,5 +127,27 @@ export async function prepareOAuthProvider(
     });
   }
 
-  return { ...config, oauthProvider: provider };
+  // CR-01: build the deduped-refresh fetch wrapper for this server. The SDK
+  // transport routes a 401 through its internal `auth()` → `refreshAuthorization`
+  // path which BYPASSES the deduper, so this wrapper composes ON TOP of the
+  // redirect-policy fetch and intercepts 401 responses BEFORE the SDK sees them.
+  // The shared-future deduper (already constructed above with state.callQueues
+  // as its critical section) coalesces N concurrent 401s into ONE refresh POST
+  // (66-P4) and persists the rotated tokens via tokenStore.saveTokens (66-P11).
+  // The hook for the Stripe-Account header on refresh is sourced from the same
+  // adapter provider so connected-account auth threads through the 401 path
+  // too (66-P12).
+  const innerFetch = createRedirectPolicyFetch({ maxRedirections: MAX_REDIRECTIONS });
+  const oauthFetch = createDedupedRefreshFetch({
+    serverName: config.name,
+    tokenStore,
+    deduper,
+    innerFetch,
+    ...(provider.addClientAuthentication !== undefined
+      ? { addClientAuthentication: provider.addClientAuthentication }
+      : {}),
+    logger,
+  });
+
+  return { ...config, oauthProvider: provider, oauthFetch };
 }
