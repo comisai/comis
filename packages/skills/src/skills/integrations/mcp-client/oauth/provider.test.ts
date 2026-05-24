@@ -293,6 +293,93 @@ describe("createOAuthClientProvider", () => {
     expect(await adapter.tokens()).toBeUndefined();
   });
 
+  it("CR-03: invalidateCredentials('verifier') zeroes the verifier BUFFER in place (not just nulls the ref)", async () => {
+    // OAUTH-12 / 66-P5: the PKCE code_verifier must be cryptographically
+    // zeroed after use, not just released via `= undefined`. JavaScript
+    // strings are immutable; assigning a string holder to undefined releases
+    // the reference but does NOT overwrite the underlying memory — a heap
+    // snapshot taken between the assignment and the next GC pass can recover
+    // the verifier bytes.
+    //
+    // The fix stores the verifier in a Buffer and runs Buffer.fill(0) on it
+    // before dropping the reference. Spy on zeroVerifier to prove the
+    // adapter calls it with the LIVE buffer carrying the verifier bytes,
+    // then assert the buffer is all-zero AFTER invalidation.
+
+    // Capture the Buffer that the adapter passed to zeroVerifier so we can
+    // inspect it AFTER the call returns. The adapter must (a) store the
+    // verifier as a Buffer and (b) call zeroVerifier(buf) before dropping it.
+    const browserCallback = await import("./browser-callback.js");
+    const capturedBuffers: Buffer[] = [];
+    const zeroSpy = vi
+      .spyOn(browserCallback, "zeroVerifier")
+      .mockImplementation((buf: Buffer): void => {
+        capturedBuffers.push(buf);
+        // Still apply the real zeroing so subsequent assertions reflect
+        // post-call state.
+        buf.fill(0);
+      });
+
+    const adapter = createOAuthClientProvider({
+      serverName: "notion",
+      oauthConfig: {},
+      tokenStore: store,
+      deduper,
+      logger,
+    });
+
+    const SECRET = "PKCE_VERIFIER_BYTES_THAT_MUST_BE_ZEROED_abc123";
+    await adapter.saveCodeVerifier(SECRET);
+    // codeVerifier() round-trips the SECRET unchanged (the buffer holds the
+    // bytes verbatim) — the SDK may call this multiple times in one login.
+    expect(await adapter.codeVerifier()).toBe(SECRET);
+
+    // Invalidate the verifier scope. The adapter MUST pass the closure-held
+    // buffer to zeroVerifier BEFORE releasing the reference.
+    await adapter.invalidateCredentials?.("verifier");
+
+    expect(zeroSpy).toHaveBeenCalledTimes(1);
+    expect(capturedBuffers.length).toBe(1);
+    const passedBuf = capturedBuffers[0]!;
+    // The buffer the adapter passed to zeroVerifier had the verifier bytes
+    // in it just before the zero call (we cannot observe pre-zero directly,
+    // but the buffer length matches the verifier byte length — a Number, not
+    // a string — proving the holder is a Buffer, not a string).
+    expect(Buffer.isBuffer(passedBuf)).toBe(true);
+    expect(passedBuf.length).toBe(Buffer.byteLength(SECRET, "utf8"));
+    // Post-zero: all bytes are 0x00 (Buffer.fill(0) overwrites in place).
+    expect(passedBuf.equals(Buffer.alloc(passedBuf.length))).toBe(true);
+
+    // Subsequent codeVerifier() call (e.g. a flow bug or a second SDK call)
+    // throws because the holder is undefined.
+    expect(() => adapter.codeVerifier()).toThrow(/code_verifier/);
+
+    zeroSpy.mockRestore();
+  });
+
+  it("CR-03: invalidateCredentials('all') also zeroes the verifier buffer (every disk-scope path)", async () => {
+    const browserCallback = await import("./browser-callback.js");
+    const zeroSpy = vi.spyOn(browserCallback, "zeroVerifier");
+
+    const adapter = createOAuthClientProvider({
+      serverName: "notion",
+      oauthConfig: {},
+      tokenStore: store,
+      deduper,
+      logger,
+    });
+
+    await adapter.saveCodeVerifier("verifier-on-all-path");
+    await adapter.invalidateCredentials?.("all");
+
+    // The "all" scope drops disk creds AND the in-memory verifier — the
+    // verifier zero MUST run on this path too (pre-fix it only set the
+    // string holder to undefined, leaving the bytes in memory).
+    expect(zeroSpy).toHaveBeenCalledTimes(1);
+
+    zeroSpy.mockRestore();
+  });
+
   it("exposes clientMetadata with the loopback redirect URI when a redirect URL is provided", () => {
     const adapter = createOAuthClientProvider({
       serverName: "notion",

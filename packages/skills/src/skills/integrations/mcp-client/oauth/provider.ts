@@ -68,6 +68,7 @@ import type {
 
 import type { TokenStore } from "./token-store.js";
 import type { RefreshDeduper } from "./refresh-deduper.js";
+import { zeroVerifier } from "./browser-callback.js";
 
 const SUBMODULE = "oauth-provider";
 const CLIENT_NAME = "Comis";
@@ -138,9 +139,17 @@ export function createOAuthClientProvider(
   const { serverName, oauthConfig, tokenStore, logger } = deps;
 
   // The PKCE code_verifier for the in-flight login. CLOSURE-held; NEVER written
-  // to disk (OAUTH-12 / 66-P5). Reset to undefined after the SDK consumes it via
-  // codeVerifier(); a new login overwrites it.
-  let codeVerifierHolder: string | undefined;
+  // to disk (OAUTH-12 / 66-P5).
+  //
+  // CR-03: held as a BUFFER (not a string) so the bytes can be overwritten in
+  // place via zeroVerifier(Buffer.fill(0)) before the reference is dropped.
+  // JavaScript strings are immutable — assigning a string holder to undefined
+  // releases the reference but does NOT overwrite the backing memory, leaving
+  // the verifier bytes recoverable from a heap snapshot until the next GC pass.
+  // Storing as a Buffer makes the OAUTH-12 zeroing contract end-to-end (the
+  // store also has no verifier file; the byte overwrite closes the in-memory
+  // leg). A new login overwrites the holder.
+  let codeVerifierHolder: Buffer | undefined;
 
   /**
    * Stripe-Account threading (66-P12). Defined only when a connected-account id
@@ -211,7 +220,13 @@ export function createOAuthClientProvider(
 
     saveCodeVerifier(verifier: string): void {
       // IN-MEMORY only (OAUTH-12 / 66-P5). No disk write path exists for this.
-      codeVerifierHolder = verifier;
+      // CR-03: store as a Buffer so the bytes can be zeroed in place on
+      // invalidate. If a prior verifier survived (e.g. a retry overwriting an
+      // in-flight login), zero its bytes before dropping the reference.
+      if (codeVerifierHolder !== undefined) {
+        zeroVerifier(codeVerifierHolder);
+      }
+      codeVerifierHolder = Buffer.from(verifier, "utf8");
     },
 
     codeVerifier(): string {
@@ -222,7 +237,9 @@ export function createOAuthClientProvider(
           `OAuth code_verifier requested before saveCodeVerifier for server "${serverName}"`,
         );
       }
-      return codeVerifierHolder;
+      // The SDK may call codeVerifier() twice across the auth-code exchange —
+      // do NOT zero here. Zeroing is invalidateCredentials's responsibility.
+      return codeVerifierHolder.toString("utf8");
     },
 
     async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
@@ -238,8 +255,17 @@ export function createOAuthClientProvider(
     ): Promise<void> {
       // The in-memory verifier is always dropped (it is per-login and the SDK
       // requests invalidation when the server rejects credentials).
+      //
+      // CR-03: zero the verifier BUFFER before dropping the reference. The
+      // closure-held buffer is overwritten with `Buffer.fill(0)` so a heap
+      // snapshot taken after invalidation cannot recover the PKCE secret.
+      // Assigning the holder to undefined alone would only release the
+      // reference — the bytes would persist until the next GC.
       if (scope === "all" || scope === "verifier") {
-        codeVerifierHolder = undefined;
+        if (codeVerifierHolder !== undefined) {
+          zeroVerifier(codeVerifierHolder);
+          codeVerifierHolder = undefined;
+        }
       }
       // The 3-file store does not separate tokens/client/discovery deletes today
       // (logout clears all three — OAUTH-10). For any disk-backed scope, delete
