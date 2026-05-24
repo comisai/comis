@@ -167,6 +167,25 @@ export { buildTraceArtifacts } from "./trajectory/artifacts.js";
 export type { TraceArtifactsRunState, TraceArtifactsPayload } from "./trajectory/artifacts.js";
 
 // ---------------------------------------------------------------------------
+// Trajectory bundle export (Phase 4 D5).
+// ---------------------------------------------------------------------------
+
+export {
+  buildTranscriptEvents,
+  sortTrajectoryEvents,
+  MAX_TRAJECTORY_RUNTIME_EVENTS,
+  MAX_TRAJECTORY_TOTAL_EVENTS,
+  MAX_TRAJECTORY_SESSION_FILE_BYTES,
+  MAX_TRAJECTORY_WARNING_ROWS,
+} from "./trajectory/export.js";
+export type {
+  TrajectoryBundleManifest,
+  TrajectoryBundleWarning,
+  TranscriptEventBase,
+  TranscriptSourceEntry,
+} from "./trajectory/export.js";
+
+// ---------------------------------------------------------------------------
 // SystemPromptReport surface.
 // ---------------------------------------------------------------------------
 

@@ -141,6 +141,14 @@ export const TRAJECTORY_EVENT_TYPES = [
 
   // Dedup (D12 / DEDUP-03)
   "dedup.duplicate_inbound",
+
+  // Session transcript (Phase 4 D5 / BUNDLE-04).
+  // Synthesized by buildTranscriptEvents in export.ts when the bundle
+  // exporter merges session JSONL branch entries with runtime events.
+  // The SDK SessionEntry.type is not in this closed union — it is carried
+  // verbatim in data.entryType so downstream consumers can branch on it.
+  // One literal covers all SDK entry types; the union grows 44 → 45.
+  "session.transcript.entry",
 ] as const;
 
 /** Closed union of trajectory event type strings. */
