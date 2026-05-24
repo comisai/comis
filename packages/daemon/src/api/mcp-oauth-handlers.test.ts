@@ -304,5 +304,43 @@ describe("MCP OAuth RPC handlers", () => {
         "Missing required parameter: server_name",
       );
     });
+
+    it("WR-02: throws when the server is unknown — does NOT call deleteAll for arbitrary names", async () => {
+      // The login handler already guards on findServerEntry; logout pre-fix
+      // skipped this check and called deleteAll for ANY string `safePath`
+      // accepted. This lets an admin-scope caller clear token files for a
+      // server they did not configure (typo, or another daemon's files in
+      // the shared mcp-tokens/ dir).
+      //
+      // The fix: mirror the login handler's findServerEntry pre-flight so
+      // an unknown name surfaces a clear error rather than a silent
+      // cleared:true.
+      const deleteAll = vi.fn(async () => undefined);
+      const closeStore = vi.fn(async () => undefined);
+      const deps = makeDeps("notion", {
+        entry: null,
+        createTokenStore: () =>
+          ({
+            deleteAll,
+            close: closeStore,
+            // Unused by the logout handler — present to satisfy the interface.
+            tokens: vi.fn(),
+            saveTokens: vi.fn(),
+            clientInformation: vi.fn(),
+            saveClientInformation: vi.fn(),
+            discoveryState: vi.fn(),
+            saveDiscoveryState: vi.fn(),
+            startWatch: vi.fn(),
+          }) as unknown as TokenStore,
+      });
+      const handlers = createMcpOauthHandlers(deps);
+      await expect(
+        handlers[McpOauthLogoutContract.method]({ server_name: "ghost" }),
+      ).rejects.toThrow(/not found/);
+      // The unknown-server guard runs BEFORE any token-store side effect —
+      // deleteAll must NEVER be called for a name that is not in the persisted
+      // server list. (Pre-fix this was called regardless.)
+      expect(deleteAll).not.toHaveBeenCalled();
+    });
   });
 });

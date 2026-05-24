@@ -214,6 +214,19 @@ export function createMcpOauthHandlers(
       // CI-01: reference server_name literally (it keys the token-store deletion).
       const server_name = params.server_name;
 
+      // WR-02: gate the destructive deleteAll() on the same persisted-server
+      // existence check the login handler uses. Without this guard an
+      // admin-scope caller could clear token files for ANY string the
+      // `safePath` substrate accepts under mcp-tokens/ — including names that
+      // were never configured (a typo, or another daemon's tokens in a shared
+      // directory). The schema-level `/^[a-zA-Z0-9_-]+$/` constraint lives on
+      // McpServerEntrySchema, NOT on the RPC contract, so the contract alone
+      // does not stop arbitrary names. Mirror the login handler's guard.
+      const entry = findServerEntry(deps, server_name);
+      if (!entry) {
+        throw new Error(`MCP server not found: "${server_name}"`);
+      }
+
       // Clear the three token files (<server>.json / .client.json / .meta.json).
       // deleteAll is idempotent — clearing an already-absent set still succeeds,
       // so cleared:true reflects "no credentials remain" (OAUTH-10). A close()
