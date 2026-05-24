@@ -26,6 +26,7 @@ import {
   type ErrorKind,
 } from "@comis/core";
 import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
+import { buildTraceMetadata } from "@comis/observability";
 import type { ComisLogger } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { randomUUID } from "node:crypto";
@@ -226,6 +227,16 @@ export interface PiEventBridgeDeps {
    * pre-tlx unconditional emit so existing harnesses keep working.
    */
   trajectoryRegistry?: SessionTrajectoryHandleRegistry;
+  /**
+   * Snapshot passed into `trace.metadata` once per session, immediately
+   * after `session.started`. Contains harness/model/config/plugins/skills/
+   * prompting/redaction. When omitted, the trace.metadata lifecycle envelope
+   * is skipped for this session. Plan 01-05 (LIFE-01).
+   *
+   * The config field is run through `sanitizeForPersistence` inside
+   * `buildTraceMetadata` — raw config may contain secrets.
+   */
+  runtimeSnapshot?: import("@comis/observability").TraceMetadataParams;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -367,6 +378,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             timestamp: systemNowMs(),
           });
           deps.trajectoryRegistry?.markSessionStarted(formattedKey);
+          // LIFE-01 (Plan 01-05): emit the trace.metadata lifecycle envelope
+          // directly via the recorder — no bus event source per design §6.2
+          // Appendix B "(NEW D4) direct".
+          if (deps.runtimeSnapshot !== undefined) {
+            const recorder = deps.trajectoryRegistry?.getRecorder?.(formattedKey);
+            if (recorder != null) {
+              recorder.recordEvent("trace.metadata", buildTraceMetadata(deps.runtimeSnapshot));
+            }
+          }
           break;
         }
 

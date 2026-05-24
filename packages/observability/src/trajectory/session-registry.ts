@@ -114,6 +114,18 @@ export interface SessionTrajectoryHandleRegistry {
   closeAll(): Promise<void>;
 
   /**
+   * Return the recorder for `formattedKey` if it exists, `undefined`
+   * otherwise. Pure-read accessor — no creation side-effects. Returns
+   * `null` when the entry was created with env-disabled / `enabled:false`
+   * init (i.e., the entry exists but the recorder itself is null). Returns
+   * `undefined` when no entry exists at all.
+   *
+   * Used by LIFE-01 / LIFE-02 direct-emit sites to call
+   * `recorder.recordEvent(...)` without going through the bus bridge.
+   */
+  getRecorder(formattedKey: string): TrajectoryRecorder | null | undefined;
+
+  /**
    * Returns `true` once `markSessionStarted(formattedKey)` has been
    * called for this session's registry lifetime, `false` otherwise.
    *
@@ -205,6 +217,14 @@ export function createSessionTrajectoryHandleRegistry(): SessionTrajectoryHandle
         // completes.
         await this.close(k);
       }
+    },
+
+    getRecorder(formattedKey: string): TrajectoryRecorder | null | undefined {
+      const entry = entries.get(formattedKey);
+      if (entry === undefined) return undefined;
+      // Return null when env-disabled (recorder is null but entry exists),
+      // or the recorder itself when it was constructed successfully.
+      return entry.recorder;
     },
 
     hasSessionStartedBeenEmitted(formattedKey: string): boolean {
