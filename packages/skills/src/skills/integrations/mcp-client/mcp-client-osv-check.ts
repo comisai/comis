@@ -16,8 +16,9 @@
  */
 
 import { safePath, systemNowMs } from "@comis/core";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
+import { z } from "zod";
 import type { McpClientManagerDeps } from "./mcp-client-types.js";
 
 /** Default cache root for OSV responses. Operator-overridable via opts.cacheDir. */
@@ -30,6 +31,26 @@ interface OsvCacheEntry {
   readonly verdict: "safe" | "malicious";
   readonly advisoryIds: readonly string[];
 }
+
+/**
+ * Cache-entry shape validator. Used at cache READ time to reject
+ * adversarially-shaped cache files (CR-01): a previously-installed
+ * malicious package, or any actor with write access to the cache dir,
+ * cannot poison the cache with `verdict: "Malicious"` (capital M) or
+ * other near-misses that would silently pass the downstream
+ * `verdict === "malicious"` exact-match check at
+ * mcp-client-connect.ts:93. The schema is intentionally STRICT:
+ *   - `verdict` must be exactly `"safe"` or `"malicious"`.
+ *   - `advisoryIds` must be an array of strings.
+ *   - `fetchedAt` must be a non-negative integer.
+ * Any deviation falls through to a fresh fetch (treats cache as miss).
+ */
+const OsvCacheEntrySchema = z.object({
+  fetchedAt: z.number().int().nonnegative(),
+  verdict: z.enum(["safe", "malicious"]),
+  advisoryIds: z.array(z.string()),
+});
+
 interface OsvVuln { readonly id: string; }
 interface OsvResponse { readonly vulns?: readonly OsvVuln[]; }
 type ComisLoggerLike = McpClientManagerDeps["logger"];
@@ -69,14 +90,22 @@ export async function osvMalwareCheck(
   const cacheFileName = `${ecosystem}-${packageName.replace(/\//g, "_")}.json`;
   const cachePath = safePath(cacheDir, cacheFileName);
 
-  // Cache read
+  // Cache read — CR-01: validate the entry shape via Zod BEFORE trusting
+  // it. The pre-fix code did `JSON.parse(raw) as OsvCacheEntry` (an
+  // unsafe cast that lies). A previously-installed malicious package
+  // could write `{ "verdict": "Malicious", ... }` (capital M) — the
+  // downstream `verdict === "malicious"` exact-match check would NOT
+  // fire, and the package would be treated as safe. Validation rejects
+  // any cache entry whose shape does not match OsvCacheEntrySchema, and
+  // falls through to a fresh fetch (treats the malformed entry as miss).
   if (existsSync(cachePath)) {
     try {
       const raw = readFileSync(cachePath, "utf-8");
-      const cached = JSON.parse(raw) as OsvCacheEntry;
-      if (systemNowMs() - cached.fetchedAt < ttlMs) {
-        return { verdict: cached.verdict, advisoryIds: cached.advisoryIds };
+      const parsed = OsvCacheEntrySchema.safeParse(JSON.parse(raw));
+      if (parsed.success && systemNowMs() - parsed.data.fetchedAt < ttlMs) {
+        return { verdict: parsed.data.verdict, advisoryIds: parsed.data.advisoryIds };
       }
+      // Shape-invalid OR stale → fall through to fresh fetch.
     } catch {
       // Corrupted cache or stat race — fall through to fresh fetch.
     }
@@ -130,7 +159,14 @@ export async function osvMalwareCheck(
   };
 
   try {
+    // CR-01: `fs.mkdirSync(dir, { mode })` ONLY sets perms on a NEWLY-
+    // created dir. If `cacheDir` pre-exists with looser perms (inherited
+    // from a shared parent, or a prior install) the cache files inside
+    // go in at 0o600 but the parent dir's perms — which control whether
+    // a different user can list/replace files — stay loose. `chmodSync`
+    // enforces the tight 0o700 on existing dirs too.
     mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
+    chmodSync(cacheDir, 0o700);
     const tmpPath = `${cachePath}.tmp.${process.pid}`;
     writeFileSync(tmpPath, JSON.stringify(result), { mode: 0o600 });
     renameSync(tmpPath, cachePath);
