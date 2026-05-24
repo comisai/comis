@@ -137,7 +137,11 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 4. Any literal `/Users/<name>/projects/...` path inside the bundle is substituted with `$WORKSPACE_DIR` / `$HOME` / `$STATE_DIR` placeholders (verified by `grep -r "/Users/" bundle/` returning zero matches for paths under the daemon's workspace/home/state roots)
 5. Redaction test fixtures in `packages/observability/src/redact/__tests__/` cover each pattern (`SECRET_FIELD_RE`, `PAYLOAD_FIELD_RE`, `IDENTIFIER_FIELD_RE`, `AWS_ACCESS_KEY_ID_RE`, `JWT_RE`, `URL_USERINFO_RE`, `URL_PARAM_RE`, `EMAIL_RE`, `LONG_DECIMAL_ID_RE`, `BASIC_AUTH_RE`, `COOKIE_HEADER_RE`) in both true-positive and false-positive directions, plus a bundle-time integration test exercising all patterns together
 
-**Plans**: TBD
+**Plans** (4):
+- [x] 05-01-PLAN.md — POINTER-01 verification tests + POINTER-02 schema (observability.trajectory.dirOverride) + env-layer (COMIS_TRAJECTORY_DIR) + daemon recorder wiring [wave 1]
+- [ ] 05-02-PLAN.md — Value-shape redaction primitive (REDACT-01 / REDACT-03 fixtures): 11 D9 patterns + redactString + walkAndRedactStrings + redactEventForExport in new value-shapes.ts; per-pattern positive + negative tests; barrel exports [wave 1, type: tdd]
+- [ ] 05-03-PLAN.md — Path substitution (REDACT-02) + bundle pipeline integration (REDACT-03): substitutePathsInString longest-first; Step 6b in bundle-exporter.ts wraps `capped` before write; prompts/metadata/artifacts/tools/branchEntries pass through walkAndRedactStrings; manifest.redaction = {policy:"platform-aware-v1"}; integration test: real-shape bundle has 0 unredacted long-decimal IDs [wave 2, depends 05-02]
+- [ ] 05-04-PLAN.md — WR-01 + WR-02 carry-over fold: extend PiExecutorDeps.skillRegistry with optional getSnapshot; populate runtimeSnapshot.skills from snapshot; install buildPromptingSnapshot helper that routes userPromptPrefixText through redactString + substitutePathsInString before assignment [wave 2, depends 05-02]
 
 ### Phase 6: Operator CLI & Slash-Command Export
 
@@ -200,7 +204,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 | 2. Bridge Expansion & Payload Bounding | 5/5 | Complete   | 2026-05-24 |
 | 3. Boot Invariants, INFO Promotion & Dedup Detector | 4/4 | Complete   | 2026-05-24 |
 | 4. Session DAG & Bundle Exporter | 4/4 | Complete   | 2026-05-24 |
-| 5. Trajectory Pointer & Platform-Aware Redaction | 0/0 | Not started | - |
+| 5. Trajectory Pointer & Platform-Aware Redaction | 0/4 | In progress | - |
 | 6. Operator CLI & Slash-Command Export | 0/0 | Not started | - |
 | 7. Log Rotation & Alert Budget | 0/0 | Not started | - |
 | 8. Pipeline-Tag Discipline & Operator Docs | 0/0 | Not started | - |

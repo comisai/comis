@@ -128,9 +128,9 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Trajectory Pointer Files
 
-- [ ] **POINTER-01**: Each session writes a `<sessionFile>.trajectory-pointer.json` sidecar (mode `0o600`, `O_NOFOLLOW` where supported) pointing to the runtime trajectory file
+- [x] **POINTER-01**: Each session writes a `<sessionFile>.trajectory-pointer.json` sidecar (mode `0o600`, `O_NOFOLLOW` where supported) pointing to the runtime trajectory file
   - Design: D8 *(files: `packages/observability/src/trajectory/{paths,runtime}.ts`)*
-- [ ] **POINTER-02**: `observability.trajectory.dirOverride?: string` config knob honored (defaults to env `COMIS_TRAJECTORY_DIR` at gateway env-layer)
+- [x] **POINTER-02**: `observability.trajectory.dirOverride?: string` config knob honored (defaults to env `COMIS_TRAJECTORY_DIR` at gateway env-layer)
   - Acceptance: bundle export reads the pointer to locate the runtime file
   - Design: D8 *(file: `packages/core/src/config/schema-observability.ts`)*
 
@@ -261,8 +261,8 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | BUNDLE-02 | Phase 4 | Complete |
 | BUNDLE-03 | Phase 4 | Complete |
 | BUNDLE-04 | Phase 4 | Complete |
-| POINTER-01 | Phase 5 | Pending |
-| POINTER-02 | Phase 5 | Pending |
+| POINTER-01 | Phase 5 | Complete |
+| POINTER-02 | Phase 5 | Complete |
 | REDACT-01 | Phase 5 | Pending |
 | REDACT-02 | Phase 5 | Pending |
 | REDACT-03 | Phase 5 | Pending |

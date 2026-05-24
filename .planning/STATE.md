@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Plan 01 complete (3 commits: 97bce0a, ccefa97, b374e1f)."
-last_updated: "2026-05-24T22:53:12.537Z"
+stopped_at: "Plan 04 complete (1 commit: bae2735)."
+last_updated: "2026-05-24T23:36:24.080Z"
 progress:
   total_phases: 8
   completed_phases: 4
-  total_plans: 19
-  completed_plans: 20
-  percent: 100
+  total_plans: 23
+  completed_plans: 21
+  percent: 91
 ---
 
 # Project State: Comis Observability Initiative
@@ -34,7 +34,7 @@ progress:
 **Last Completed:** Phase 3 Plan 01 — BOOT-01/02 Startup Invariants (2026-05-24)
 **Plan:** Plan 01 of 4 done; continue with 03-02 (INFO-01 forensic promotion)
 **Status:** Phase 3 in progress (1/4 plans complete)
-**Progress:** [██████████] 100%
+**Progress:** [█████████░] 91%
 
 **Phase 3 Plan 01 outcome:** 3 commits (97bce0a, ccefa97, b374e1f). PluginRegistry.count() + ChannelManager.getRawHandlerCounts() seams added. setup-startup-invariants.ts collector emits daemon:startup_invariants INFO + BOOT-02 WARN. Wired into daemon.ts bootShutdown. Arch test green. pnpm build clean; cycles clean. 71 new tests.
 
@@ -74,6 +74,7 @@ progress:
 | Phase 03-boot-invariants-info-dedup P04 | 20m | 2 tasks | 5 files |
 | Phase 04-session-dag-bundle-exporter P01 | 8 | 2 tasks | 4 files |
 | Phase 04-session-dag-bundle-exporter P04 | 20m | 1 task | 2 files |
+| Phase 05-trajectory-pointer-redaction P01 | 11 | 2 tasks | 9 files |
 
 ## Accumulated Context
 
