@@ -20,6 +20,14 @@ function makeRedirect(location: string): Response {
   } as unknown as Response;
 }
 
+function makeRedirectWithStatus(status: number, location: string): Response {
+  return {
+    status,
+    headers: new Headers({ location }),
+    ok: false,
+  } as unknown as Response;
+}
+
 function makeOk(): Response {
   return {
     status: 200,
@@ -218,5 +226,158 @@ describe("createRedirectPolicyFetch — Phase 63 SAFETY-07 cross-host header scr
     expect(baseFetch).toHaveBeenCalledTimes(1);
     const firstInit = baseFetch.mock.calls[0]![1] as RequestInit;
     expect(firstInit.headers).toBeDefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-04 — RFC 7231 / 7538 method+body rewrite on redirect.
+  //
+  // Pre-fix the policy carried `body`, `method`, and every other init
+  // field forward unchanged via `{ ...currentInit, headers: nextHeaders }`.
+  // On a 302/303 redirect, browsers convert POST -> GET and DROP the
+  // body (RFC 7231 §6.4.3 / §6.4.4). The MCP SDK uses POST for
+  // tools/list and tool calls; if a cross-host attacker controls the
+  // redirect target, they can have the body (which may contain sensitive
+  // request data) re-POSTed to their server. Authorization was already
+  // stripped pre-fix, but the request body was not.
+  //
+  // RFC 7538 (307/308 — "Permanent / Temporary Redirect") explicitly
+  // PRESERVES both method and body. The fix differentiates by status
+  // code.
+  // -------------------------------------------------------------------------
+  it("cross-host 302 rewrites POST to GET and clears body (WR-04)", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirectWithStatus(302, "http://other.example.com/v1"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    await wrapped("http://api.example.com/v1", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ secret: "do-not-re-POST-cross-host" }),
+    });
+    const secondInit = baseFetch.mock.calls[1]![1] as RequestInit;
+    expect(secondInit.method).toBe("GET");
+    expect(secondInit.body).toBeUndefined();
+  });
+
+  it("same-host 302 rewrites POST to GET and clears body (WR-04)", async () => {
+    // Per RFC, 302 rewrites POST to GET regardless of host. Cross-host
+    // is the security-critical case for body protection, but same-host
+    // 302s must still match the RFC contract.
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirectWithStatus(302, "/v2"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    await wrapped("http://api.example.com/v1", {
+      method: "POST",
+      body: JSON.stringify({ a: 1 }),
+    });
+    const secondInit = baseFetch.mock.calls[1]![1] as RequestInit;
+    expect(secondInit.method).toBe("GET");
+    expect(secondInit.body).toBeUndefined();
+  });
+
+  it("cross-host 303 rewrites POST to GET and clears body (RFC 7231 §6.4.4)", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirectWithStatus(303, "http://other.example.com/v1"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    await wrapped("http://api.example.com/v1", {
+      method: "POST",
+      body: JSON.stringify({ secret: "see-other" }),
+    });
+    const secondInit = baseFetch.mock.calls[1]![1] as RequestInit;
+    expect(secondInit.method).toBe("GET");
+    expect(secondInit.body).toBeUndefined();
+  });
+
+  it("cross-host 307 PRESERVES method and body (RFC 7538 — Temporary Redirect)", async () => {
+    // 307 explicitly preserves the original method and body. Cross-host
+    // still strips Authorization (the existing cross-host header scrub),
+    // but the body and method survive.
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirectWithStatus(307, "http://other.example.com/v1"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    const originalBody = JSON.stringify({ rpc: "tools/list" });
+    await wrapped("http://api.example.com/v1", {
+      method: "POST",
+      headers: { authorization: "Bearer secret" },
+      body: originalBody,
+    });
+    const secondInit = baseFetch.mock.calls[1]![1] as RequestInit;
+    expect(secondInit.method).toBe("POST");
+    expect(secondInit.body).toBe(originalBody);
+    // Authorization header is still stripped on cross-host.
+    const secondHeaders = new Headers(secondInit.headers as HeadersInit);
+    expect(secondHeaders.get("authorization")).toBeNull();
+  });
+
+  it("cross-host 308 PRESERVES method and body (RFC 7538 — Permanent Redirect)", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirectWithStatus(308, "http://other.example.com/v1"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    const originalBody = JSON.stringify({ rpc: "tools/call", method: "foo" });
+    await wrapped("http://api.example.com/v1", {
+      method: "POST",
+      body: originalBody,
+    });
+    const secondInit = baseFetch.mock.calls[1]![1] as RequestInit;
+    expect(secondInit.method).toBe("POST");
+    expect(secondInit.body).toBe(originalBody);
+  });
+
+  it("same-host 307 PRESERVES method and body", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirectWithStatus(307, "/v2"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    const originalBody = JSON.stringify({ a: 2 });
+    await wrapped("http://api.example.com/v1", {
+      method: "POST",
+      body: originalBody,
+    });
+    const secondInit = baseFetch.mock.calls[1]![1] as RequestInit;
+    expect(secondInit.method).toBe("POST");
+    expect(secondInit.body).toBe(originalBody);
+  });
+
+  it("GET request on 302 preserves the GET method (no rewrite needed, body is already absent)", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirectWithStatus(302, "/v2"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    await wrapped("http://api.example.com/v1", { method: "GET" });
+    const secondInit = baseFetch.mock.calls[1]![1] as RequestInit;
+    expect(secondInit.method).toBe("GET");
+    expect(secondInit.body).toBeUndefined();
   });
 });
