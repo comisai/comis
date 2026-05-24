@@ -166,6 +166,24 @@ export const McpServerEntrySchema = z.preprocess(
         stripeAccount: z.string().optional(),
       })
       .optional(),
+    // Phase 68 BUNDLE-02: skill-bundle provenance marker. SYSTEM-MANAGED -- operators
+    // inspect via `comis mcp list --show-bundle-overrides`. Set by the bundle resolver
+    // when a bundle entry lands; absent on user-authored entries. Optional + min(1) so
+    // empty strings cannot accidentally claim a bundle source (T-68-02-05 -- spoofing
+    // defence).
+    _bundleSource: z.string().min(1).optional(),
+
+    // Phase 68 BUNDLE-04: archived bundle entry when a user override (or a second
+    // skill's bundle entry with --force) replaced it. Recursive shape: an
+    // _bundleArchive may itself carry _bundleSource (the original skill's marker).
+    // z.lazy() defers the self-reference at type-check time; the runtime closure
+    // resolves at parse time (68-P-NEW-5 / Pitfall 10 -- TS circular-type error
+    // without it). The explicit `z.ZodTypeAny` annotation on the lazy callback
+    // matches the Zod 4 "Resolve recursive type inference errors" guidance --
+    // without it tsc fires TS7022 (self-reference in initializer). Not modelled
+    // past one level: archive of an archive is replaced last-write-wins on the
+    // archive slot.
+    _bundleArchive: z.lazy((): z.ZodTypeAny => McpServerEntrySchema).optional(),
   }),
 );
 

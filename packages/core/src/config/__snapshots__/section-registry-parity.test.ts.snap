@@ -18557,6 +18557,177 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("gat
 
 exports[`section-registry parity > schema-serializer view > getConfigSchema("integrations") 1`] = `
 "{
+  "$defs": {
+    "__schema0": {
+      "additionalProperties": false,
+      "properties": {
+        "_bundleArchive": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "_bundleSource": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "auth": {
+          "enum": [
+            "none",
+            "bearer",
+            "oauth"
+          ],
+          "type": "string"
+        },
+        "circuitBreakerCooldownMs": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "circuitBreakerThreshold": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "command": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "cwd": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "disablePlaintextSecretCheck": {
+          "type": "boolean"
+        },
+        "enablePrompts": {
+          "type": "boolean"
+        },
+        "enableResources": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "idleTtlMs": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keepaliveIntervalMs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxConcurrency": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "name": {
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "type": "string"
+        },
+        "oauth": {
+          "additionalProperties": false,
+          "properties": {
+            "authorizationEndpoint": {
+              "format": "uri",
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "stripeAccount": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "rlimits": {
+          "additionalProperties": false,
+          "properties": {
+            "as": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "cpu": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "nofile": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "supportsParallelToolCalls": {
+          "type": "boolean"
+        },
+        "toolAllowlist": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "toolBlocklist": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "transport": {
+          "enum": [
+            "stdio",
+            "sse",
+            "http"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "transport",
+        "enabled",
+        "idleTtlMs"
+      ],
+      "type": "object"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -18753,166 +18924,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
         "servers": {
           "default": [],
           "items": {
-            "additionalProperties": false,
-            "properties": {
-              "args": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "auth": {
-                "enum": [
-                  "none",
-                  "bearer",
-                  "oauth"
-                ],
-                "type": "string"
-              },
-              "circuitBreakerCooldownMs": {
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "circuitBreakerThreshold": {
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "command": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "cwd": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "disablePlaintextSecretCheck": {
-                "type": "boolean"
-              },
-              "enablePrompts": {
-                "type": "boolean"
-              },
-              "enableResources": {
-                "type": "boolean"
-              },
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "env": {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "propertyNames": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              "headers": {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "propertyNames": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              "idleTtlMs": {
-                "default": 0,
-                "maximum": 9007199254740991,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "keepaliveIntervalMs": {
-                "maximum": 9007199254740991,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "maxConcurrency": {
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "name": {
-                "minLength": 1,
-                "pattern": "^[a-zA-Z0-9_-]+$",
-                "type": "string"
-              },
-              "oauth": {
-                "additionalProperties": false,
-                "properties": {
-                  "authorizationEndpoint": {
-                    "format": "uri",
-                    "type": "string"
-                  },
-                  "scope": {
-                    "type": "string"
-                  },
-                  "stripeAccount": {
-                    "type": "string"
-                  }
-                },
-                "type": "object"
-              },
-              "rlimits": {
-                "additionalProperties": false,
-                "properties": {
-                  "as": {
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  },
-                  "cpu": {
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  },
-                  "nofile": {
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  }
-                },
-                "type": "object"
-              },
-              "supportsParallelToolCalls": {
-                "type": "boolean"
-              },
-              "toolAllowlist": {
-                "items": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "toolBlocklist": {
-                "items": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "transport": {
-                "enum": [
-                  "stdio",
-                  "sse",
-                  "http"
-                ],
-                "type": "string"
-              },
-              "url": {
-                "format": "uri",
-                "type": "string"
-              }
-            },
-            "required": [
-              "name",
-              "transport",
-              "enabled",
-              "idleTtlMs"
-            ],
-            "type": "object"
+            "$ref": "#/$defs/__schema0"
           },
           "type": "array"
         },
@@ -21212,6 +21224,177 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("too
 
 exports[`section-registry parity > schema-serializer view > getConfigSchema() â€” full schema 1`] = `
 "{
+  "$defs": {
+    "__schema0": {
+      "additionalProperties": false,
+      "properties": {
+        "_bundleArchive": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "_bundleSource": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "auth": {
+          "enum": [
+            "none",
+            "bearer",
+            "oauth"
+          ],
+          "type": "string"
+        },
+        "circuitBreakerCooldownMs": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "circuitBreakerThreshold": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "command": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "cwd": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "disablePlaintextSecretCheck": {
+          "type": "boolean"
+        },
+        "enablePrompts": {
+          "type": "boolean"
+        },
+        "enableResources": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "idleTtlMs": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keepaliveIntervalMs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxConcurrency": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "name": {
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "type": "string"
+        },
+        "oauth": {
+          "additionalProperties": false,
+          "properties": {
+            "authorizationEndpoint": {
+              "format": "uri",
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "stripeAccount": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "rlimits": {
+          "additionalProperties": false,
+          "properties": {
+            "as": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "cpu": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "nofile": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "supportsParallelToolCalls": {
+          "type": "boolean"
+        },
+        "toolAllowlist": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "toolBlocklist": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "transport": {
+          "enum": [
+            "stdio",
+            "sse",
+            "http"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "transport",
+        "enabled",
+        "idleTtlMs"
+      ],
+      "type": "object"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -28085,166 +28268,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "servers": {
               "default": [],
               "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "args": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "auth": {
-                    "enum": [
-                      "none",
-                      "bearer",
-                      "oauth"
-                    ],
-                    "type": "string"
-                  },
-                  "circuitBreakerCooldownMs": {
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  },
-                  "circuitBreakerThreshold": {
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  },
-                  "command": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "cwd": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "disablePlaintextSecretCheck": {
-                    "type": "boolean"
-                  },
-                  "enablePrompts": {
-                    "type": "boolean"
-                  },
-                  "enableResources": {
-                    "type": "boolean"
-                  },
-                  "enabled": {
-                    "default": true,
-                    "type": "boolean"
-                  },
-                  "env": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "type": "object"
-                  },
-                  "headers": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "type": "object"
-                  },
-                  "idleTtlMs": {
-                    "default": 0,
-                    "maximum": 9007199254740991,
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "keepaliveIntervalMs": {
-                    "maximum": 9007199254740991,
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "maxConcurrency": {
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  },
-                  "name": {
-                    "minLength": 1,
-                    "pattern": "^[a-zA-Z0-9_-]+$",
-                    "type": "string"
-                  },
-                  "oauth": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "authorizationEndpoint": {
-                        "format": "uri",
-                        "type": "string"
-                      },
-                      "scope": {
-                        "type": "string"
-                      },
-                      "stripeAccount": {
-                        "type": "string"
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "rlimits": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "as": {
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991,
-                        "type": "integer"
-                      },
-                      "cpu": {
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991,
-                        "type": "integer"
-                      },
-                      "nofile": {
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991,
-                        "type": "integer"
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "supportsParallelToolCalls": {
-                    "type": "boolean"
-                  },
-                  "toolAllowlist": {
-                    "items": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "toolBlocklist": {
-                    "items": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "transport": {
-                    "enum": [
-                      "stdio",
-                      "sse",
-                      "http"
-                    ],
-                    "type": "string"
-                  },
-                  "url": {
-                    "format": "uri",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "name",
-                  "transport",
-                  "enabled",
-                  "idleTtlMs"
-                ],
-                "type": "object"
+                "$ref": "#/$defs/__schema0"
               },
               "type": "array"
             },

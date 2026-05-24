@@ -494,3 +494,66 @@ describe("McpServerEntrySchema — Phase 66 OAuth opt-in fields", () => {
     ).toThrow();
   });
 });
+
+describe("McpServerEntrySchema — Phase 68 BUNDLE-04 bundle provenance + archive", () => {
+  it("persists _bundleSource when supplied (provenance marker survives parse)", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "x",
+      transport: "stdio",
+      command: "npx",
+      _bundleSource: "my-skill",
+    });
+    expect(result._bundleSource).toBe("my-skill");
+  });
+
+  it("parses a baseline entry without _bundleSource (no regression on existing fixtures)", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "x",
+      transport: "stdio",
+      command: "npx",
+    });
+    expect(result._bundleSource).toBeUndefined();
+    expect(result._bundleArchive).toBeUndefined();
+  });
+
+  it("persists a recursive _bundleArchive (a McpServerEntry inside a McpServerEntry, z.lazy)", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "x",
+      transport: "http",
+      url: "https://example.com/mcp",
+      _bundleSource: "skill-b",
+      _bundleArchive: {
+        name: "x",
+        transport: "stdio",
+        command: "npx",
+        _bundleSource: "skill-a",
+      },
+    });
+    expect(result._bundleArchive).toBeDefined();
+    expect(result._bundleArchive?.name).toBe("x");
+    expect(result._bundleArchive?._bundleSource).toBe("skill-a");
+    expect(result._bundleArchive?.transport).toBe("stdio");
+  });
+
+  it("rejects an empty-string _bundleSource (T-68-02-05 spoofing defence — min(1))", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "x",
+        transport: "stdio",
+        command: "npx",
+        _bundleSource: "",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a non-string _bundleSource (Zod type error)", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "x",
+        transport: "stdio",
+        command: "npx",
+        _bundleSource: 123,
+      }),
+    ).toThrow();
+  });
+});
