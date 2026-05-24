@@ -76,6 +76,14 @@ export interface McpServerConfig {
   readonly headers?: Readonly<Record<string, string>>;
   /** Maximum concurrent tool calls. Undefined = transport-based default. */
   readonly maxConcurrency?: number;
+  /**
+   * Phase 63 SAFETY-02: operator-extension allowlist for the stdio child
+   * env scrub. Copied verbatim from `config.integrations.mcp.safetyAllowedEnvKeys`
+   * by the daemon RPC handler (`mcp-handlers.ts:McpConnect`); the field is
+   * additive over the built-in `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` and only
+   * applies to the stdio transport. Undefined ⇒ built-in allowlist only.
+   */
+  readonly safetyAllowedEnvKeys?: readonly string[];
 }
 
 /** Connection status for an MCP server. */

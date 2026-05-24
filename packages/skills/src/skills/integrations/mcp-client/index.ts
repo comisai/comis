@@ -55,6 +55,11 @@ export type {
 
 export { qualifyToolName, parseQualifiedName } from "./mcp-client-types.js";
 
+// Phase 63 SAFETY-01/02: stdio env-scrub primitives re-exported so the
+// daemon RPC handler + architecture / integration tests can consume them
+// via @comis/skills.
+export { MCP_STDIO_BUILTIN_ENV_ALLOWLIST, scrubStdioEnv } from "./mcp-client-discover.js";
+
 // ---------------------------------------------------------------------------
 // Factory (state-first composition)
 // ---------------------------------------------------------------------------
