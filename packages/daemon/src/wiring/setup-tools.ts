@@ -17,6 +17,7 @@ import {
   parseFormattedSessionKey,
   safePath,
   formatSessionKey,
+  systemNowMs,
 } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
 import type { SessionTrackerRegistry } from "@comis/agent";
@@ -325,6 +326,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         const entry = getMcpServerEntries().find((s) => s.name === serverName);
         return entry ? extractServerToolFilters(entry) : undefined;
       },
+      // CAP-03: emit the typed truncation telemetry event. The bridge stays
+      // decoupled from the bus (narrow callback); the daemon — where eventBus is
+      // in scope — stamps the timestamp and does the emit. Payload carries only
+      // sizes + identifiers, never the truncated content.
+      (e) => eventBus.emit("mcp:server:result_truncated", { ...e, timestamp: systemNowMs() }),
     );
     return agentMcpTools;
   }

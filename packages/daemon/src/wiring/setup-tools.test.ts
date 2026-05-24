@@ -178,6 +178,9 @@ vi.mock("@comis/core", () => ({
   tryGetContext: mockTryGetContext,
   parseFormattedSessionKey: mockParseFormattedSessionKey,
   sanitizeLogString: mockSanitizeLogString,
+  // CAP-03: getMcpTools stamps the truncation event timestamp via systemNowMs.
+  // Deterministic stub so the emit closure has a numeric clock under test.
+  systemNowMs: () => 1_700_000_000_000,
   safePath: (...segments: string[]) => segments.join("/"),
   // Trivial stub for session-lifetime tracker resolution path. Real impl lives
   // in @comis/core/session-key; this test only needs a deterministic string.
