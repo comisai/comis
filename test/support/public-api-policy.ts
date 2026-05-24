@@ -1729,5 +1729,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "expandGroups",
       "ToolFilterReason",
       "ToolPolicyResult",
+      // Phase 63 SAFETY-01/02 (plan 02): consumed by the architecture
+      // test `test/architecture/mcp-prespawn-allowlist.test.ts` and the
+      // integration test `test/integration/mcp-env-scrub.test.ts` — both
+      // outside packages/skills/, so the source-only consumer scan does
+      // not pick them up. Internal-to-skills consumers live in
+      // mcp-client-discover.ts (where they are also defined). Documented
+      // test-API surface; not a baseline orphan.
+      "MCP_STDIO_BUILTIN_ENV_ALLOWLIST",
+      "scrubStdioEnv",
     ])],
   ]);
