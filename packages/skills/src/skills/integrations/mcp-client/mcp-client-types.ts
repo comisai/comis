@@ -84,6 +84,21 @@ export interface McpServerConfig {
    * applies to the stdio transport. Undefined ⇒ built-in allowlist only.
    */
   readonly safetyAllowedEnvKeys?: readonly string[];
+  /**
+   * Phase 63 SAFETY-06: OSV malware check toggle. Copied from
+   * `config.integrations.mcp.osvCheckEnabled` (Plan 01 schema field,
+   * default `true`) by the daemon RPC handler. Set `false` in air-gapped
+   * deployments to skip the pre-spawn api.osv.dev check entirely.
+   * Undefined ⇒ Plan 01's default `true` applies at the call site.
+   */
+  readonly osvCheckEnabled?: boolean;
+  /**
+   * Phase 63 SAFETY-06: OSV cache TTL (ms). Copied from
+   * `config.integrations.mcp.osvCacheTtlMs` (Plan 01 schema field, default
+   * 86_400_000 = 24h) by the daemon RPC handler. Undefined ⇒ caller falls
+   * back to the 24h default at the call site.
+   */
+  readonly osvCacheTtlMs?: number;
 }
 
 /** Connection status for an MCP server. */

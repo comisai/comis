@@ -69,6 +69,17 @@ export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./i
 // `test/architecture/mcp-prespawn-allowlist.test.ts` + `test/integration/
 // mcp-env-scrub.test.ts`.
 export { MCP_STDIO_BUILTIN_ENV_ALLOWLIST, scrubStdioEnv } from "./integrations/mcp-client/index.js";
+
+// Phase 63 SAFETY-05/06: pre-spawn OSV malware check + package-name
+// extraction for stdio MCP commands. Consumed by `mcp-client-connect.ts`
+// (pre-spawn invocation) and the integration test at
+// `test/integration/mcp-osv-check.test.ts`.
+export {
+  osvMalwareCheck,
+  extractMcpPackageName,
+  DEFAULT_OSV_CACHE_DIR,
+} from "./integrations/mcp-client/index.js";
+export type { OsvCheckResult, OsvCheckOptions } from "./integrations/mcp-client/index.js";
 export type {
   McpClientManager,
   McpClientManagerDeps,

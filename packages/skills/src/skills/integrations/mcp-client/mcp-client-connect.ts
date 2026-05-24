@@ -37,6 +37,11 @@ import {
 } from "./mcp-client-discover.js";
 import { qualifyToolName } from "./mcp-client-types.js";
 import { wireClientLifecycleCallbacks } from "./mcp-client-reconnect.js";
+import {
+  osvMalwareCheck,
+  extractMcpPackageName,
+  DEFAULT_OSV_CACHE_DIR,
+} from "./mcp-client-osv-check.js";
 
 // ---------------------------------------------------------------------------
 // connect (state-first)
@@ -63,6 +68,47 @@ export async function connectServer(
   }
 
   try {
+    // Phase 63 SAFETY-05/06: pre-spawn OSV malware check (stdio only).
+    // Fires BEFORE createTransport so a malicious package's code never
+    // runs. Per-server osvCheckEnabled defaults to Plan 01's `true`;
+    // operators set `false` in air-gapped deployments. Unrecognized
+    // commands (node /path/server.js, python3, /bin/sh) skip the check
+    // with INFO log — no registry name to query. Per RESEARCH.md
+    // §"Pattern 4" + Pitfall 4. The throw on malicious-verdict carries
+    // a bracketed [osv_malware_detected] token for LLM self-correction;
+    // the existing catch at line ~157 already maps to error-state via
+    // errorKind: "dependency".
+    if (
+      config.transport === "stdio" &&
+      config.command &&
+      (config.osvCheckEnabled ?? true)
+    ) {
+      const pkg = extractMcpPackageName(config.command, config.args);
+      if (pkg !== null) {
+        const osvResult = await osvMalwareCheck(pkg.name, pkg.ecosystem, {
+          cacheDir: DEFAULT_OSV_CACHE_DIR,
+          ttlMs: config.osvCacheTtlMs ?? 86_400_000,
+          logger,
+        });
+        if (osvResult.verdict === "malicious") {
+          throw new Error(
+            `[osv_malware_detected] MCP package "${pkg.name}" (ecosystem: ${pkg.ecosystem}) ` +
+              `matches OSV malicious-packages advisory: ${osvResult.advisoryIds.join(", ")}. ` +
+              `Hint: do NOT install this package; verify the server name with the publisher.`,
+          );
+        }
+      } else {
+        logger.info(
+          {
+            serverName: config.name,
+            command: config.command,
+            hint: "OSV check skipped — no known package manager detected (npx/uvx/pnpm)",
+          },
+          "MCP OSV malware check skipped (unknown command)",
+        );
+      }
+    }
+
     // Create transport
     const transport = createTransport(config);
 
