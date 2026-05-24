@@ -465,6 +465,82 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       ],
       timestamp: 0,
     },
+    // BRIDGE-01 queue events
+    "queue:enqueued": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      queueDepth: 1,
+      mode: "collect",
+      timestamp: 0,
+    },
+    "queue:dequeued": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      waitTimeMs: 100,
+      timestamp: 0,
+    },
+    "queue:overflow": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      policy: "drop_oldest",
+      droppedCount: 1,
+      timestamp: 0,
+    },
+    "queue:coalesced": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      messageCount: 3,
+      timestamp: 0,
+    },
+    // BRIDGE-03 execution events
+    "execution:aborted": {
+      sessionKey: "t1:u1:c1",
+      reason: "user_stop",
+      agentId: "agent-1",
+      timestamp: 0,
+    },
+    "execution:budget_warning": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      totalTokens: 50000,
+      llmCallCount: 8,
+      projectedCallsLeft: 2,
+      timestamp: 0,
+    },
+    "execution:prompt_timeout": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timeoutMs: 30000,
+      timestamp: 0,
+    },
+    "execution:output_escalated": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      originalMaxTokens: 4096,
+      escalatedMaxTokens: 8192,
+      timestamp: 0,
+    },
+    "execution:signed_replay_recovered": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      blocksRemoved: 1,
+      thoughtSignaturesStripped: 1,
+      succeeded: true,
+      timestamp: 0,
+    },
+    // BRIDGE-04 scanned subset
+    "security:injection_detected": {
+      source: "user_input",
+      patterns: ["test"],
+      riskLevel: "low",
+      timestamp: 0,
+    },
+    "sender:blocked": {
+      channelType: "telegram",
+      senderId: "123",
+      channelId: "chan-1",
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(

@@ -80,6 +80,23 @@ export const TRAJECTORY_EVENT_TYPES = [
   // (e.g., symlinked parent, ENOSPC). Emitted at flushAndClose when
   // QueuedFileWriter.failureCount() > 0.
   "trace.write_failures",
+
+  // Queue lifecycle (D6 / BRIDGE-01)
+  "queue.enqueued",
+  "queue.dequeued",
+  "queue.overflow",
+  "queue.coalesced",
+
+  // Execution control (D6 / BRIDGE-03)
+  "execution.aborted",
+  "execution.budget_warning",
+  "execution.prompt_timeout",
+  "execution.output_escalated",
+  "execution.replay_recovered",
+
+  // Security + sender (D6 / BRIDGE-04 scanned subset)
+  "security.injection_detected",
+  "sender.blocked",
 ] as const;
 
 /** Closed union of trajectory event type strings. */

@@ -85,6 +85,27 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // pipeline snapshot at emit time (the producer reuses the same
   // payload-fence semantics for both events).
   "context:pipeline": "context.compiled",
+
+  // ---- Queue / Execution / Sender (D6) ----
+  // BRIDGE-01: Queue lifecycle — events-channel.ts
+  "queue:enqueued": "queue.enqueued",
+  "queue:dequeued": "queue.dequeued",
+  "queue:overflow": "queue.overflow",
+  "queue:coalesced": "queue.coalesced",
+
+  // BRIDGE-03: Execution control — events-messaging.ts
+  "execution:aborted": "execution.aborted",
+  "execution:budget_warning": "execution.budget_warning",
+  "execution:prompt_timeout": "execution.prompt_timeout",
+  "execution:output_escalated": "execution.output_escalated",
+  // Maps to "execution.replay_recovered" (NOT "execution.signed_replay_recovered")
+  // per research table canonical name (design §13 Appendix B).
+  "execution:signed_replay_recovered": "execution.replay_recovered",
+
+  // BRIDGE-04 (scanned subset): Security + Sender
+  // patterns[] and senderId are intentionally omitted in translatePayload (L4/L2).
+  "security:injection_detected": "security.injection_detected",
+  "sender:blocked": "sender.blocked",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**
@@ -368,6 +389,89 @@ function translatePayload(
         durationMs: payload.durationMs,
         layerCount: payload.layerCount,
         layers: payload.layers,
+      };
+
+    // ---- Queue lifecycle (BRIDGE-01) ----
+    // sessionKey is envelope-only per design §6.2 — stripped from data.
+
+    case "queue:enqueued":
+      return {
+        channelType: payload.channelType,
+        queueDepth: payload.queueDepth,
+        mode: payload.mode,
+      };
+
+    case "queue:dequeued":
+      return {
+        channelType: payload.channelType,
+        waitTimeMs: payload.waitTimeMs,
+      };
+
+    case "queue:overflow":
+      return {
+        channelType: payload.channelType,
+        policy: payload.policy,
+        droppedCount: payload.droppedCount,
+      };
+
+    case "queue:coalesced":
+      return {
+        channelType: payload.channelType,
+        messageCount: payload.messageCount,
+      };
+
+    // ---- Execution control (BRIDGE-03) ----
+    // agentId and sessionKey are envelope-only per design §6.2 — stripped from data.
+
+    case "execution:aborted":
+      return {
+        reason: payload.reason,
+      };
+
+    case "execution:budget_warning":
+      return {
+        totalTokens: payload.totalTokens,
+        llmCallCount: payload.llmCallCount,
+        projectedCallsLeft: payload.projectedCallsLeft,
+      };
+
+    case "execution:prompt_timeout":
+      return {
+        timeoutMs: payload.timeoutMs,
+      };
+
+    case "execution:output_escalated":
+      return {
+        originalMaxTokens: payload.originalMaxTokens,
+        escalatedMaxTokens: payload.escalatedMaxTokens,
+      };
+
+    case "execution:signed_replay_recovered":
+      return {
+        blocksRemoved: payload.blocksRemoved,
+        thoughtSignaturesStripped: payload.thoughtSignaturesStripped,
+        succeeded: payload.succeeded,
+      };
+
+    // ---- Security + Sender (BRIDGE-04 scanned subset) ----
+    // SECURITY INVARIANT: patterns[] (verbatim injection strings — L4) and
+    // senderId (user identifier — L4/L2) are intentionally NOT forwarded.
+    // sanitizeForPersistence is a defense-in-depth backstop but the
+    // translator is the primary control.
+
+    case "security:injection_detected":
+      // patterns[] must NEVER be forwarded — they are verbatim attacker
+      // injection strings. Only source + riskLevel enter the trajectory.
+      return {
+        source: payload.source,
+        riskLevel: payload.riskLevel,
+      };
+
+    case "sender:blocked":
+      // senderId (user identifier) and channelId must NEVER be forwarded.
+      // Only channelType enters the trajectory.
+      return {
+        channelType: payload.channelType,
       };
 
     default: {
