@@ -62,3 +62,19 @@ describe("McpServerEntrySchema — Phase 65 OPUX additive fields", () => {
     expect(parsed.enablePrompts).toBeUndefined();
   });
 });
+
+describe("McpServerEntrySchema — Phase 67 CAP-02 supportsParallelToolCalls", () => {
+  it("accepts supportsParallelToolCalls: true", () => {
+    const parsed = McpServerEntrySchema.parse({ ...base, supportsParallelToolCalls: true });
+    expect(parsed.supportsParallelToolCalls).toBe(true);
+  });
+
+  it("leaves supportsParallelToolCalls undefined when omitted (no backward-compat break)", () => {
+    const parsed = McpServerEntrySchema.parse({ ...base });
+    expect(parsed.supportsParallelToolCalls).toBeUndefined();
+  });
+
+  it("rejects a non-boolean supportsParallelToolCalls", () => {
+    expect(() => McpServerEntrySchema.parse({ ...base, supportsParallelToolCalls: "yes" as unknown as boolean })).toThrow();
+  });
+});

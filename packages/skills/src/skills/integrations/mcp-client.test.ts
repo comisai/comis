@@ -1149,6 +1149,74 @@ describe("McpClientManager", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Phase 67 CAP-02: supportsParallelToolCalls -> per-server PQueue concurrency
+  //
+  // Observed via parallel dispatch: a slow mockCallTool that never resolves
+  // lets us count how many calls the per-server PQueue admits simultaneously.
+  // mockCallTool invocation count == in-flight count == queue concurrency.
+  // -----------------------------------------------------------------------
+
+  describe("CAP-02 parallel tool calls (supportsParallelToolCalls)", () => {
+    /**
+     * Installs a callTool mock that records every invocation and blocks
+     * forever (resolves only manually). Returns the live in-flight counter.
+     */
+    function installBlockingCallTool(): { inFlight: () => number } {
+      let started = 0;
+      mockCallTool.mockImplementation(
+        () => new Promise<unknown>(() => {
+          started += 1;
+        }),
+      );
+      return { inFlight: () => started };
+    }
+
+    it("admits 4 concurrent calls for a stdio server with supportsParallelToolCalls: true", async () => {
+      const mgr = createMcpClientManager(makeDeps());
+      await mgr.connect(makeStdioConfig({ supportsParallelToolCalls: true }));
+
+      const { inFlight } = installBlockingCallTool();
+      // Fire 6 calls; only the queue's concurrency window runs immediately.
+      for (let i = 0; i < 6; i++) {
+        void mgr.callTool("mcp:test-server/search", { query: `q${i}` });
+      }
+      // Let the queue dispatch its admitted window.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(inFlight()).toBe(4);
+    });
+
+    it("keeps concurrency 1 for a stdio server WITHOUT the flag (unchanged)", async () => {
+      const mgr = createMcpClientManager(makeDeps());
+      await mgr.connect(makeStdioConfig());
+
+      const { inFlight } = installBlockingCallTool();
+      for (let i = 0; i < 6; i++) {
+        void mgr.callTool("mcp:test-server/search", { query: `q${i}` });
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(inFlight()).toBe(1);
+    });
+
+    it("explicit maxConcurrency overrides the flag's default of 4", async () => {
+      const mgr = createMcpClientManager(makeDeps());
+      await mgr.connect(makeStdioConfig({ supportsParallelToolCalls: true, maxConcurrency: 2 }));
+
+      const { inFlight } = installBlockingCallTool();
+      for (let i = 0; i < 6; i++) {
+        void mgr.callTool("mcp:test-server/search", { query: `q${i}` });
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(inFlight()).toBe(2);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // session expiry detection
   // -----------------------------------------------------------------------
 
