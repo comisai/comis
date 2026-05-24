@@ -57,6 +57,7 @@ import { sanitizeForPersistence } from "../redact/redact-secrets.js";
 import { resolveTrajectoryFilePath } from "./paths.js";
 import { writeTrajectoryPointerFileBestEffort } from "./pointer-file.js";
 import type {
+  TraceTruncatedParams,
   TrajectoryEvent,
   TrajectoryEventType,
   TrajectoryRecorder,
@@ -155,6 +156,39 @@ export function createTrajectoryRecorder(
     closed: false,
   };
 
+  // ---------------------------------------------------------------------------
+  // Shared internal helper for trace.truncated sentinel emission.
+  //
+  // Called both by the public `emitTraceTruncated` hook AND by the
+  // close-time emit in `flushAndClose`, ensuring identical envelope shape
+  // in both code paths. Bypasses the file-cap accounting — the
+  // sentinelReserveBytes head-room (default 2 KB) is what makes this safe
+  // even when the cap is exhausted.
+  // ---------------------------------------------------------------------------
+  function emitTruncatedInternal(params: TraceTruncatedParams): "queued" | "dropped" {
+    state.seq += 1;
+    const sanitized: Record<string, unknown> = {
+      reason: params.reason,
+      droppedEvents: params.droppedEvents,
+    };
+    if (params.droppedEventBytes !== undefined) {
+      sanitized.droppedEventBytes = params.droppedEventBytes;
+    }
+    if (params.limitBytes !== undefined) {
+      sanitized.limitBytes = params.limitBytes;
+    }
+    const sentinel = buildEvent({
+      type: "trace.truncated",
+      init,
+      seq: state.seq,
+      sanitized,
+    });
+    const line = encodeLine(sentinel);
+    // Bypass file-cap accounting — the sentinelReserveBytes head-room
+    // (default 2 KB) is what makes this safe even when the cap is exhausted.
+    return writer.write(line);
+  }
+
   const recorder: TrajectoryRecorder = {
     filePath,
     recordEvent(
@@ -231,26 +265,19 @@ export function createTrajectoryRecorder(
       state.closed = true;
       await writer.flush();
 
-      // Local seq bump shared across the two sentinel branches so we
-      // never reuse a seq number when both fire in the same close.
-      let sentinelSeq = state.seq;
-
       if (state.droppedEvents > 0) {
-        sentinelSeq += 1;
-        const sentinel = buildEvent({
-          type: "trace.truncated",
-          init,
-          seq: sentinelSeq,
-          sanitized: {
-            droppedEvents: state.droppedEvents,
-            reason: "file-or-queue-cap-exceeded",
-          },
+        // Close-time sentinel — delegates to the same codepath as the
+        // public hook so behaviour matches. Passes the legacy reason
+        // string; does NOT pass droppedEventBytes / limitBytes because
+        // the close-time path only has the drop count, not the byte
+        // accounting (that lives in Phase 2 D7).
+        // state.seq is mutated by emitTruncatedInternal (increments by 1)
+        // so the subsequent trace.write_failures branch below picks up
+        // the bumped value without a separate sentinelSeq variable.
+        emitTruncatedInternal({
+          reason: "file-or-queue-cap-exceeded",
+          droppedEvents: state.droppedEvents,
         });
-        // Sentinel emit is unconditional — bypasses the file-cap
-        // accounting so the operator's bookkeeping is preserved even
-        // when the cap is exhausted. The 2 KB reserve makes this safe.
-        const line = encodeLine(sentinel);
-        writer.write(line);
       }
 
       // Emit trace.write_failures when the underlying queued writer
@@ -264,12 +291,12 @@ export function createTrajectoryRecorder(
       // sentinel record lands on disk.
       const failureCount = writer.failureCount();
       if (failureCount > 0) {
-        sentinelSeq += 1;
+        state.seq += 1;
         const lastError = writer.lastError();
         const sentinel = buildEvent({
           type: "trace.write_failures",
           init,
-          seq: sentinelSeq,
+          seq: state.seq,
           sanitized: {
             reason: "queued_writer_rejected",
             count: failureCount,
@@ -282,6 +309,11 @@ export function createTrajectoryRecorder(
       }
 
       await writer.flushAndClose();
+    },
+
+    emitTraceTruncated(params: TraceTruncatedParams): "queued" | "dropped" {
+      if (state.closed) return "dropped";
+      return emitTruncatedInternal(params);
     },
   };
 

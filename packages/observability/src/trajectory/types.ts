@@ -262,6 +262,29 @@ export interface TrajectoryRecorderInit {
 }
 
 /**
+ * Parameters for the public `trace.truncated` emit hook.
+ *
+ * Used by:
+ *   - Internal close-time sentinel emit in `flushAndClose` (passes
+ *     `reason: "file-or-queue-cap-exceeded"`).
+ *   - Phase 2 D7 bounded-payload writer (passes reasons like
+ *     `"trajectory-runtime-file-size-limit"`).
+ *
+ * @see design §5 D4 / D7
+ */
+export interface TraceTruncatedParams {
+  /** Human-readable reason code. E.g. "file-or-queue-cap-exceeded",
+   *  "trajectory-runtime-file-size-limit", "trajectory-event-byte-limit". */
+  readonly reason: string;
+  /** Running total of dropped events at the time of the call. */
+  readonly droppedEvents: number;
+  /** Total dropped bytes (cumulative). Omitted when not yet tracked. */
+  readonly droppedEventBytes?: number;
+  /** The file or event limit that was hit, in bytes. Omitted when not applicable. */
+  readonly limitBytes?: number;
+}
+
+/**
  * Writer interface returned by `createTrajectoryRecorder`. A no-op
  * disabled state is conveyed via a `null` return — consumers null-check
  * once at the construction site.
@@ -308,4 +331,17 @@ export interface TrajectoryRecorder {
    * the writer from the registry.
    */
   flushAndClose(): Promise<void>;
+
+  /**
+   * Emit a `trace.truncated` event with operator-supplied reason and
+   * bound metadata. Used by D7 (Phase 2) to signal bound-exhaustion
+   * at any write-time location, NOT only at close.
+   *
+   * The internal close-time sentinel emit in flushAndClose calls the
+   * SAME codepath with reason `"file-or-queue-cap-exceeded"`.
+   *
+   * Returns "queued" on accept, "dropped" when the per-writer queue
+   * cap is exceeded.
+   */
+  emitTraceTruncated(params: TraceTruncatedParams): "queued" | "dropped";
 }
