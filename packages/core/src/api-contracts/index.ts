@@ -3,14 +3,15 @@
  * `@comis/core/api-contracts` aggregator (barrel-only public surface).
  * External consumers always import from `"@comis/core"`.
  *
- * One contract file per logical domain; this file aggregates the 14
+ * One contract file per logical domain; this file aggregates the 15
  * domain registries into a single deterministic registry. Imports are
  * alphabetically sorted so future contract authors get deterministic
  * git diffs (alphabetical position of the domain).
  *
  * Domain order: agents → auth → channels → config → daemon → mcp →
- * media → memory → observability → orchestrator → secrets → sessions →
- * tokens → workspace. Note: `mcp` < `media` alphabetically.
+ * mcp-oauth → media → memory → observability → orchestrator → secrets →
+ * sessions → tokens → workspace. Note: `mcp` < `mcp-oauth` < `media`
+ * alphabetically.
  *
  * The bidirectional 1:1 test in
  * `test/architecture/api-contracts-bidirectional.test.ts` is the
@@ -29,6 +30,7 @@ import { CHANNELS_CONTRACTS } from "./channels.js";
 import { CONFIG_CONTRACTS } from "./config.js";
 import { DAEMON_CONTRACTS } from "./daemon.js";
 import { MCP_CONTRACTS } from "./mcp.js";
+import { MCP_OAUTH_CONTRACTS } from "./mcp-oauth.js";
 import { MEDIA_CONTRACTS } from "./media.js";
 import { MEMORY_CONTRACTS } from "./memory.js";
 import { OBSERVABILITY_CONTRACTS } from "./observability.js";
@@ -50,6 +52,7 @@ export const API_CONTRACTS_ORDERED: readonly ApiContract<ZodTypeAny, ZodTypeAny>
   ...CONFIG_CONTRACTS,
   ...DAEMON_CONTRACTS,
   ...MCP_CONTRACTS,
+  ...MCP_OAUTH_CONTRACTS,
   ...MEDIA_CONTRACTS,
   ...MEMORY_CONTRACTS,
   ...OBSERVABILITY_CONTRACTS,
@@ -76,6 +79,7 @@ export * from "./channels.js";
 export * from "./config.js";
 export * from "./daemon.js";
 export * from "./mcp.js";
+export * from "./mcp-oauth.js";
 export * from "./media.js";
 export * from "./memory.js";
 export * from "./observability.js";
