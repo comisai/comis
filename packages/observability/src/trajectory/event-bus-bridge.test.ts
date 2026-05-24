@@ -541,6 +541,84 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       channelId: "chan-1",
       timestamp: 0,
     },
+    // BRIDGE-02 retry events
+    "retry:attempted": {
+      channelId: "chan-1",
+      chatId: "12345678901",
+      attempt: 1,
+      maxAttempts: 5,
+      delayMs: 500,
+      error: "ETIMEDOUT",
+      timestamp: 0,
+    },
+    "retry:exhausted": {
+      channelId: "chan-1",
+      chatId: "12345678901",
+      totalAttempts: 5,
+      finalError: "ECONNREFUSED",
+      timestamp: 0,
+    },
+    "retry:markdown_fallback": {
+      channelId: "chan-1",
+      chatId: "12345678901",
+      originalParseMode: "MarkdownV2",
+      timestamp: 0,
+    },
+    // BRIDGE-05 mcp events
+    "mcp:server:disconnected": {
+      serverName: "fs-server",
+      reason: "transport_closed",
+      timestamp: 0,
+    },
+    "mcp:server:reconnecting": {
+      serverName: "fs-server",
+      attempt: 1,
+      maxAttempts: 5,
+      nextDelayMs: 1000,
+      timestamp: 0,
+    },
+    "mcp:server:reconnect_failed": {
+      serverName: "fs-server",
+      attempts: 5,
+      lastError: "ECONNREFUSED",
+      timestamp: 0,
+    },
+    "mcp:server:reconnected": {
+      serverName: "fs-server",
+      attempt: 2,
+      toolCount: 10,
+      durationMs: 200,
+      timestamp: 0,
+    },
+    "mcp:server:tools_changed": {
+      serverName: "fs-server",
+      previousToolCount: 10,
+      currentToolCount: 11,
+      addedTools: ["new_tool"],
+      removedTools: [],
+      timestamp: 0,
+    },
+    // BRIDGE-06 channel events
+    "channel:health_changed": {
+      channelType: "telegram",
+      previousState: "healthy",
+      currentState: "degraded",
+      connectionMode: "polling",
+      error: null,
+      lastMessageAt: null,
+      timestamp: 0,
+    },
+    "channel:registered": {
+      channelType: "telegram",
+      pluginId: "tg",
+      capabilities: {} as any,
+      timestamp: 0,
+    },
+    "channel:deregistered": {
+      channelType: "telegram",
+      pluginId: "tg",
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
@@ -1030,5 +1108,391 @@ describe("BRIDGE-01/03/04 queue + execution + sender", () => {
     }
     // Total bridge size should be ≥ 29 (18 existing + 11 new).
     expect(Object.keys(mapping).length).toBeGreaterThanOrEqual(29);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BRIDGE-02/05/06 — Retry (delivery), MCP server, Channel lifecycle + health
+// ---------------------------------------------------------------------------
+
+describe("BRIDGE-02/05/06 retry + mcp + channel", () => {
+  // ---- BRIDGE-02: Retry (delivery reliability) events ----
+
+  it("retry_attempted_maps_to_delivery.retry with attempt/maxAttempts/delayMs/error; chatId+channelId MUST NOT be forwarded (L3 PII invariant)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("retry:attempted", {
+      channelId: "chan-tg-1",
+      chatId: "12345678901",
+      attempt: 2,
+      maxAttempts: 5,
+      delayMs: 1000,
+      error: "ETIMEDOUT",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("delivery.retry");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Retry telemetry fields must be present.
+    expect(data.attempt).toBe(2);
+    expect(data.maxAttempts).toBe(5);
+    expect(data.delayMs).toBe(1000);
+    expect(data.error).toBe("ETIMEDOUT");
+
+    // chatId (Telegram long-decimal ID, L3) must NEVER appear.
+    expect(data.chatId).toBeUndefined();
+    expect("chatId" in data).toBe(false);
+
+    // channelId (channel correlator) must NEVER appear.
+    expect(data.channelId).toBeUndefined();
+    expect("channelId" in data).toBe(false);
+
+    // timestamp is envelope noise — omit.
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("retry_exhausted_maps_to_delivery.retry_exhausted with totalAttempts/finalError; chatId+channelId omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("retry:exhausted", {
+      channelId: "chan-tg-1",
+      chatId: "98765432100",
+      totalAttempts: 5,
+      finalError: "Connection refused",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("delivery.retry_exhausted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.totalAttempts).toBe(5);
+    expect(data.finalError).toBe("Connection refused");
+
+    // chatId (L3) and channelId must NEVER appear.
+    expect(data.chatId).toBeUndefined();
+    expect("chatId" in data).toBe(false);
+    expect(data.channelId).toBeUndefined();
+    expect("channelId" in data).toBe(false);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("retry_markdown_fallback_maps_to_delivery.markdown_fallback with originalParseMode; chatId+channelId omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("retry:markdown_fallback", {
+      channelId: "chan-tg-1",
+      chatId: "11122233344",
+      originalParseMode: "MarkdownV2",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("delivery.markdown_fallback");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.originalParseMode).toBe("MarkdownV2");
+
+    // chatId (L3) and channelId must NEVER appear.
+    expect(data.chatId).toBeUndefined();
+    expect("chatId" in data).toBe(false);
+    expect(data.channelId).toBeUndefined();
+    expect("channelId" in data).toBe(false);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- BRIDGE-05: MCP server reliability events ----
+
+  it("mcp_server_disconnected_maps_to_mcp.disconnected with serverName+reason; timestamp omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("mcp:server:disconnected", {
+      serverName: "filesystem-server",
+      reason: "transport_closed",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("mcp.disconnected");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.serverName).toBe("filesystem-server");
+    expect(data.reason).toBe("transport_closed");
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("mcp_server_reconnecting_maps_to_mcp.reconnecting with serverName/attempt/maxAttempts/nextDelayMs; timestamp omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("mcp:server:reconnecting", {
+      serverName: "filesystem-server",
+      attempt: 2,
+      maxAttempts: 5,
+      nextDelayMs: 2000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("mcp.reconnecting");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.serverName).toBe("filesystem-server");
+    expect(data.attempt).toBe(2);
+    expect(data.maxAttempts).toBe(5);
+    expect(data.nextDelayMs).toBe(2000);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("mcp_server_reconnect_failed_maps_to_mcp.reconnect_failed with serverName/attempts/lastError; timestamp omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("mcp:server:reconnect_failed", {
+      serverName: "filesystem-server",
+      attempts: 5,
+      lastError: "ECONNREFUSED",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("mcp.reconnect_failed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.serverName).toBe("filesystem-server");
+    expect(data.attempts).toBe(5);
+    expect(data.lastError).toBe("ECONNREFUSED");
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("mcp_server_reconnected_maps_to_mcp.reconnected with serverName/attempt/toolCount/durationMs; timestamp omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("mcp:server:reconnected", {
+      serverName: "filesystem-server",
+      attempt: 2,
+      toolCount: 12,
+      durationMs: 350,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("mcp.reconnected");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.serverName).toBe("filesystem-server");
+    expect(data.attempt).toBe(2);
+    expect(data.toolCount).toBe(12);
+    expect(data.durationMs).toBe(350);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("mcp_server_tools_changed_maps_to_mcp.tools_changed with serverName/previousToolCount/currentToolCount/addedTools/removedTools; timestamp omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("mcp:server:tools_changed", {
+      serverName: "filesystem-server",
+      previousToolCount: 10,
+      currentToolCount: 12,
+      addedTools: ["read_file", "write_file"],
+      removedTools: [],
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("mcp.tools_changed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.serverName).toBe("filesystem-server");
+    expect(data.previousToolCount).toBe(10);
+    expect(data.currentToolCount).toBe(12);
+    expect(data.addedTools).toEqual(["read_file", "write_file"]);
+    expect(data.removedTools).toEqual([]);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- BRIDGE-06: Channel lifecycle + health events ----
+
+  it("channel_health_changed_maps_to_channel.health_changed with channelType/previousState/currentState/connectionMode; lastMessageAt+timestamp omitted; error forwarded conditionally", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:health_changed", {
+      channelType: "telegram",
+      previousState: "healthy",
+      currentState: "degraded",
+      connectionMode: "polling",
+      error: "Connection timeout",
+      lastMessageAt: Date.now() - 60000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("channel.health_changed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.channelType).toBe("telegram");
+    expect(data.previousState).toBe("healthy");
+    expect(data.currentState).toBe("degraded");
+    expect(data.connectionMode).toBe("polling");
+    expect(data.error).toBe("Connection timeout");
+
+    // lastMessageAt and timestamp are noise — omit.
+    expect(data.lastMessageAt).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("channel_health_changed_omits_error_from_data_when_error_is_null (conditional spread)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:health_changed", {
+      channelType: "discord",
+      previousState: "degraded",
+      currentState: "healthy",
+      connectionMode: "socket",
+      error: null,
+      lastMessageAt: null,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.channelType).toBe("discord");
+    expect(data.currentState).toBe("healthy");
+    // error: null → should NOT appear in data (conditional spread).
+    expect(data.error).toBeUndefined();
+    expect("error" in data).toBe(false);
+  });
+
+  it("channel_registered_maps_to_channel.lifecycle with channelType/pluginId/event:registered; capabilities omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:registered", {
+      channelType: "telegram",
+      pluginId: "tg-plugin",
+      capabilities: { supportsEditing: true, supportsReactions: false } as any,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("channel.lifecycle");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.channelType).toBe("telegram");
+    expect(data.pluginId).toBe("tg-plugin");
+    // Synthetic discriminator — distinguishes registered from deregistered.
+    expect(data.event).toBe("registered");
+
+    // capabilities is omitted (noisy, not diagnostically useful for trajectory).
+    expect(data.capabilities).toBeUndefined();
+    expect("capabilities" in data).toBe(false);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("channel_deregistered_maps_to_channel.lifecycle with channelType/pluginId/event:deregistered (same type, different discriminator)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:deregistered", {
+      channelType: "discord",
+      pluginId: "discord-plugin",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    // SAME type as channel:registered — channel.lifecycle.
+    expect(recorder.calls[0].type).toBe("channel.lifecycle");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.channelType).toBe("discord");
+    expect(data.pluginId).toBe("discord-plugin");
+    // Synthetic discriminator must be "deregistered" (not "registered").
+    expect(data.event).toBe("deregistered");
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("channel_lifecycle_dual_mapping: registered and deregistered produce same type but different event discriminators", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:registered", {
+      channelType: "telegram",
+      pluginId: "tg-plugin",
+      capabilities: {} as any,
+      timestamp: Date.now(),
+    });
+
+    bus.emit("channel:deregistered", {
+      channelType: "telegram",
+      pluginId: "tg-plugin",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(2);
+
+    // Both produce channel.lifecycle.
+    expect(recorder.calls[0].type).toBe("channel.lifecycle");
+    expect(recorder.calls[1].type).toBe("channel.lifecycle");
+
+    const data0 = recorder.calls[0].data as Record<string, unknown>;
+    const data1 = recorder.calls[1].data as Record<string, unknown>;
+
+    // But discriminators are distinct.
+    expect(data0.event).toBe("registered");
+    expect(data1.event).toBe("deregistered");
+  });
+
+  // ---- Coverage spot-check ----
+
+  it("TRAJECTORY_BRIDGE_MAPPING contains all 11 new BRIDGE-02/05/06 keys and total mapping is ≥ 40", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    const expected = [
+      // BRIDGE-02 retry
+      "retry:attempted",
+      "retry:exhausted",
+      "retry:markdown_fallback",
+      // BRIDGE-05 mcp
+      "mcp:server:disconnected",
+      "mcp:server:reconnecting",
+      "mcp:server:reconnect_failed",
+      "mcp:server:reconnected",
+      "mcp:server:tools_changed",
+      // BRIDGE-06 channel
+      "channel:health_changed",
+      "channel:registered",
+      "channel:deregistered",
+    ];
+    for (const key of expected) {
+      expect(mapping[key], `TRAJECTORY_BRIDGE_MAPPING missing key: ${key}`).toBeDefined();
+    }
+    // Both channel registration events map to channel.lifecycle.
+    expect(mapping["channel:registered"]).toBe("channel.lifecycle");
+    expect(mapping["channel:deregistered"]).toBe("channel.lifecycle");
+    // Total bridge size should be ≥ 40 (29 existing + 11 new).
+    expect(Object.keys(mapping).length).toBeGreaterThanOrEqual(40);
   });
 });
