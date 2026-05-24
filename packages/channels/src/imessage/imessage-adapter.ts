@@ -266,8 +266,8 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
 
       _lastMessageAt = systemNowMs();
       _lastError = undefined;
-      deps.logger.debug(
-        { channelType: "imessage" as const, messageId, chatId, preview: text.slice(0, 1500) },
+      deps.logger.info(
+        { channelType: "imessage" as const, messageId, chatId },
         "Outbound message",
       );
 

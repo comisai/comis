@@ -291,8 +291,8 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         const messageId = sent?.key?.id ?? "";
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
-        deps.logger.debug(
-          { channelType: "whatsapp", messageId, chatId: channelId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { channelType: "whatsapp", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(messageId);
@@ -326,8 +326,8 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
           text,
           edit: { remoteJid: channelId, id: messageId, fromMe: true },
         } as Parameters<typeof sock.sendMessage>[1]);
-        deps.logger.debug(
-          { channelType: "whatsapp", messageId, chatId: channelId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { channelType: "whatsapp", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(undefined);

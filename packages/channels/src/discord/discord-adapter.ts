@@ -417,8 +417,8 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
 
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
-        deps.logger.debug(
-          { channelType: "discord", messageId: firstMessage.id, chatId: channelId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { channelType: "discord", messageId: firstMessage.id, chatId: channelId },
           "Outbound message",
         );
         return ok(firstMessage.id);
@@ -457,8 +457,8 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         const msg = await tc.messages.fetch(messageId);
         await msg.edit(truncatedText);
 
-        deps.logger.debug(
-          { channelType: "discord", messageId, chatId: channelId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { channelType: "discord", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(undefined);

@@ -294,8 +294,8 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
         // otherwise return a synthetic identifier
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
-        deps.logger.debug(
-          { channelType: "irc" as const, messageId: "sent", chatId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { channelType: "irc" as const, messageId: "sent", chatId },
           "Outbound message",
         );
 

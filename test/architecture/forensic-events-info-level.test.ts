@@ -123,7 +123,12 @@ interface Violation {
  * Walk backward from the message-string line to find the enclosing logger
  * call. Look within LOOKBEHIND lines. Returns "info", "debug", or "unknown".
  */
-const LOOKBEHIND = 6;
+/**
+ * Large enough to cover even multi-hundred-line log payloads
+ * (e.g. "Execution complete" in executor-post-execution.ts spans ~100 lines).
+ * Bounded to avoid false positives from unrelated earlier calls.
+ */
+const LOOKBEHIND = 200;
 
 function findEnclosingLevel(lines: readonly string[], messageLineIdx: number): "info" | "debug" | "unknown" {
   const start = Math.max(0, messageLineIdx - LOOKBEHIND);

@@ -298,8 +298,8 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
 
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
-        deps.logger.debug(
-          { channelType: "line" as const, messageId, chatId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { channelType: "line" as const, messageId, chatId },
           "Outbound message",
         );
 

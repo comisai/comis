@@ -384,8 +384,8 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         const messageId = String(result.ts ?? "");
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
-        deps.logger.debug(
-          { channelType: "slack", messageId, chatId: channelId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { channelType: "slack", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(messageId);
@@ -419,8 +419,8 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           ts: messageId,
           text,
         });
-        deps.logger.debug(
-          { channelType: "slack", messageId, chatId: channelId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { channelType: "slack", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(undefined);

@@ -258,8 +258,8 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
 
       _lastMessageAt = systemNowMs();
       _lastError = undefined;
-      deps.logger.debug(
-        { channelType: "signal" as const, messageId, chatId, preview: text.slice(0, 1500) },
+      deps.logger.info(
+        { channelType: "signal" as const, messageId, chatId },
         "Outbound message",
       );
 
