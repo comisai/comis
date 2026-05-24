@@ -89,6 +89,21 @@
               }
             },
             "additionalProperties": false
+          },
+          "keepaliveIntervalMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "circuitBreakerThreshold": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "circuitBreakerCooldownMs": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
           }
         },
         "required": [
@@ -134,6 +149,24 @@
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 9007199254740991
+    },
+    "keepaliveIntervalMs": {
+      "default": 180000,
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "circuitBreakerThreshold": {
+      "default": 3,
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "circuitBreakerCooldownMs": {
+      "default": 60000,
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -143,7 +176,10 @@
     "httpDefaultConcurrency",
     "safetyAllowedEnvKeys",
     "osvCheckEnabled",
-    "osvCacheTtlMs"
+    "osvCacheTtlMs",
+    "keepaliveIntervalMs",
+    "circuitBreakerThreshold",
+    "circuitBreakerCooldownMs"
   ],
   "additionalProperties": false
 }

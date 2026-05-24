@@ -333,3 +333,68 @@ describe("McpServerEntrySchema — Phase 63 safety hardening additive fields", (
     ).toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 64-01 — additive reliability fields (RELY-02 keepalive, RELY-05
+// circuit breaker). Combined RED+GREEN per AGENTS.md §2.10 exception: the
+// tests cannot COMPILE against the pre-patch schema because the new fields
+// are not on the inferred type (`result.keepaliveIntervalMs` would be a TS
+// error). Schema additions and tests therefore land in the same commit.
+//
+// The 3 new global defaults on McpConfigSchema plus the 3 new optional
+// per-server overrides on McpServerEntrySchema unblock Wave 1 plans
+// (02 wiring, 03 keepalive ticker, 04 breaker) — every downstream plan
+// reads `state.options.keepaliveIntervalMs` etc. without TS errors.
+// ---------------------------------------------------------------------------
+
+describe("McpConfigSchema — Phase 64 reliability additive fields", () => {
+  it("produces reliability defaults from an empty input object", () => {
+    const result = McpConfigSchema.parse({});
+    expect(result.keepaliveIntervalMs).toBe(180_000);
+    expect(result.circuitBreakerThreshold).toBe(3);
+    expect(result.circuitBreakerCooldownMs).toBe(60_000);
+  });
+  it("accepts keepaliveIntervalMs: 0 to disable the ticker", () => {
+    expect(McpConfigSchema.parse({ keepaliveIntervalMs: 0 }).keepaliveIntervalMs).toBe(0);
+  });
+  it("rejects negative keepaliveIntervalMs", () => {
+    expect(() => McpConfigSchema.parse({ keepaliveIntervalMs: -1 })).toThrow();
+  });
+  it("rejects circuitBreakerThreshold = 0 (positive required)", () => {
+    expect(() => McpConfigSchema.parse({ circuitBreakerThreshold: 0 })).toThrow();
+  });
+  it("rejects circuitBreakerCooldownMs = 0 (positive required)", () => {
+    expect(() => McpConfigSchema.parse({ circuitBreakerCooldownMs: 0 })).toThrow();
+  });
+});
+
+describe("McpServerEntrySchema — Phase 64 per-server reliability overrides", () => {
+  it("accepts an explicit keepaliveIntervalMs override", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "test",
+      transport: "stdio",
+      command: "/usr/bin/test",
+      keepaliveIntervalMs: 60_000,
+    });
+    expect(result.keepaliveIntervalMs).toBe(60_000);
+  });
+  it("leaves keepaliveIntervalMs undefined when override omitted", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "test",
+      transport: "stdio",
+      command: "/usr/bin/test",
+    });
+    expect(result.keepaliveIntervalMs).toBeUndefined();
+  });
+  it("accepts per-server circuit-breaker overrides", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "test",
+      transport: "stdio",
+      command: "/usr/bin/test",
+      circuitBreakerThreshold: 5,
+      circuitBreakerCooldownMs: 30_000,
+    });
+    expect(result.circuitBreakerThreshold).toBe(5);
+    expect(result.circuitBreakerCooldownMs).toBe(30_000);
+  });
+});
