@@ -18782,6 +18782,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "disablePlaintextSecretCheck": {
                 "type": "boolean"
               },
+              "enablePrompts": {
+                "type": "boolean"
+              },
+              "enableResources": {
+                "type": "boolean"
+              },
               "enabled": {
                 "default": true,
                 "type": "boolean"
@@ -18803,6 +18809,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
                   "type": "string"
                 },
                 "type": "object"
+              },
+              "idleTtlMs": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
               },
               "keepaliveIntervalMs": {
                 "maximum": 9007199254740991,
@@ -18840,6 +18852,20 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
                 },
                 "type": "object"
               },
+              "toolAllowlist": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "toolBlocklist": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "transport": {
                 "enum": [
                   "stdio",
@@ -18856,7 +18882,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
             "required": [
               "name",
               "transport",
-              "enabled"
+              "enabled",
+              "idleTtlMs"
             ],
             "type": "object"
           },
@@ -28060,6 +28087,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "disablePlaintextSecretCheck": {
                     "type": "boolean"
                   },
+                  "enablePrompts": {
+                    "type": "boolean"
+                  },
+                  "enableResources": {
+                    "type": "boolean"
+                  },
                   "enabled": {
                     "default": true,
                     "type": "boolean"
@@ -28081,6 +28114,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                       "type": "string"
                     },
                     "type": "object"
+                  },
+                  "idleTtlMs": {
+                    "default": 0,
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
                   },
                   "keepaliveIntervalMs": {
                     "maximum": 9007199254740991,
@@ -28118,6 +28157,20 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     },
                     "type": "object"
                   },
+                  "toolAllowlist": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "toolBlocklist": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
                   "transport": {
                     "enum": [
                       "stdio",
@@ -28134,7 +28187,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "required": [
                   "name",
                   "transport",
-                  "enabled"
+                  "enabled",
+                  "idleTtlMs"
                 ],
                 "type": "object"
               },

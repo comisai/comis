@@ -83,10 +83,12 @@ describe("CLI entry point", () => {
       "auth",
       // Cache stats.
       "cache",
+      // Phase 65 OPUX: MCP server management surface.
+      "mcp",
     ] as const;
 
-    it("registers exactly 21 commands", () => {
-      expect(program.commands).toHaveLength(21);
+    it("registers exactly 22 commands", () => {
+      expect(program.commands).toHaveLength(22);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

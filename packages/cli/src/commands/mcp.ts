@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception. ensureGatewayToken throws a named-env-var error that each subcommand's catch converts to error()/process.exit(1).
 /**
  * MCP server management commands: list, status, connect, disconnect, reconnect, test.
  *
