@@ -138,6 +138,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Approval / human-in-the-loop (D6 / BRIDGE-08)
   "approval.requested",
   "approval.resolved",
+
+  // Dedup (D12 / DEDUP-03)
+  "dedup.duplicate_inbound",
 ] as const;
 
 /** Closed union of trajectory event type strings. */

@@ -156,6 +156,10 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // Translator MUST omit params entirely — sanitizeForPersistence is defense-in-depth only.
   "approval:requested": "approval.requested",
   "approval:resolved": "approval.resolved",
+
+  // DEDUP-03 (D12): Duplicate inbound detection (events-channel.ts; emitter packages/orchestrator — arch-scanned)
+  // firstSeenAt and duplicateAt omitted by translator — envelope ts covers timing (design §13 Appendix B).
+  "dedup:duplicate_inbound": "dedup.duplicate_inbound",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**
@@ -741,6 +745,19 @@ function translatePayload(
         approved: payload.approved,
         approvedBy: payload.approvedBy,
         ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+      };
+
+    // ---- Dedup (DEDUP-03 / D12) ----
+    // firstSeenAt and duplicateAt are intentionally omitted — envelope ts covers timing
+    // per design §13 Appendix B. chatId redaction is the Phase 5 bundle-boundary concern.
+
+    case "dedup:duplicate_inbound":
+      return {
+        messageId: payload.messageId,
+        channelType: payload.channelType,
+        chatId: payload.chatId,
+        deltaMs: payload.deltaMs,
+        source: payload.source,
       };
 
     default: {

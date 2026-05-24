@@ -27,6 +27,7 @@ import type { EventMap } from "@comis/core";
 
 import { attachTrajectoryToEventBus, TRAJECTORY_BRIDGE_MAPPING } from "./event-bus-bridge.js";
 import type { TrajectoryEventType, TrajectoryRecorder } from "./types.js";
+import { TRAJECTORY_EVENT_TYPES } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Test-double recorder — records the calls into a captured array
@@ -725,6 +726,17 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       approved: true,
       approvedBy: "owner",
       resolvedAt: 0,
+    },
+    // DEDUP-03 (D12)
+    "dedup:duplicate_inbound": {
+      messageId: "m1",
+      channelType: "telegram",
+      chatId: "123",
+      firstSeenAt: 1000,
+      duplicateAt: 1001,
+      deltaMs: 1,
+      source: "pipeline",
+      timestamp: 0,
     },
   };
 
@@ -2066,5 +2078,66 @@ describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () =>
     }
     // Total bridge mapping should reach ≥ 53 (40 existing + 13 new).
     expect(Object.keys(mapping).length).toBeGreaterThanOrEqual(53);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DEDUP-03 (D12): dedup:duplicate_inbound → dedup.duplicate_inbound
+// ---------------------------------------------------------------------------
+
+describe("attachTrajectoryToEventBus -- DEDUP-03 dedup events", () => {
+  it("dedup_duplicate_inbound_maps_to_dedup.duplicate_inbound_trajectory_type", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("dedup:duplicate_inbound", {
+      messageId: "m1",
+      channelType: "telegram",
+      chatId: "123",
+      firstSeenAt: 1000,
+      duplicateAt: 1001,
+      deltaMs: 1,
+      source: "pipeline",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("dedup.duplicate_inbound");
+  });
+
+  it("dedup_duplicate_inbound_translator_returns_5_field_subset_omitting_firstSeenAt_and_duplicateAt", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("dedup:duplicate_inbound", {
+      messageId: "m1",
+      channelType: "telegram",
+      chatId: "123",
+      firstSeenAt: 1000,
+      duplicateAt: 1001,
+      deltaMs: 1,
+      source: "pipeline",
+    });
+
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // 5-field subset forwarded
+    expect(data.messageId).toBe("m1");
+    expect(data.channelType).toBe("telegram");
+    expect(data.chatId).toBe("123");
+    expect(data.deltaMs).toBe(1);
+    expect(data.source).toBe("pipeline");
+    // firstSeenAt and duplicateAt intentionally omitted (envelope ts covers timing, design §13 Appendix B)
+    expect("firstSeenAt" in data).toBe(false);
+    expect("duplicateAt" in data).toBe(false);
+  });
+
+  it("TRAJECTORY_BRIDGE_MAPPING_dedup:duplicate_inbound_key_maps_to_dedup.duplicate_inbound", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["dedup:duplicate_inbound"]).toBe("dedup.duplicate_inbound");
+  });
+
+  it("TRAJECTORY_EVENT_TYPES_includes_dedup.duplicate_inbound", () => {
+    expect(Array.from(TRAJECTORY_EVENT_TYPES as readonly string[])).toContain("dedup.duplicate_inbound");
   });
 });
