@@ -114,7 +114,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Bundle Export
 
-- [ ] **BUNDLE-01**: `exportTrajectoryBundle(sessionId)` produces a directory under `<workspaceDir>/.comis/trace-exports/comis-trace-<sid8>-<ts>/` containing `manifest.json` + `events.jsonl` + `session-branch.json` + `metadata.json` + `artifacts.json` + `prompts.json` + `system-prompt.txt` + `tools.json`
+- [x] **BUNDLE-01**: `exportTrajectoryBundle(sessionId)` produces a directory under `<workspaceDir>/.comis/trace-exports/comis-trace-<sid8>-<ts>/` containing `manifest.json` + `events.jsonl` + `session-branch.json` + `metadata.json` + `artifacts.json` + `prompts.json` + `system-prompt.txt` + `tools.json`
   - Acceptance: `comis trace export <sessionId>` writes the directory
   - Acceptance: bundle round-trip — reader reconstructs chronological turn timeline from `events.jsonl` alone
   - Design: D5 *(file: `packages/observability/src/trajectory/export.ts` NEW)*
@@ -257,7 +257,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | DEDUP-03 | Phase 3 | Complete |
 | SESSION-01 | Phase 4 | Complete |
 | SESSION-02 | Phase 4 | Complete |
-| BUNDLE-01 | Phase 4 | Pending |
+| BUNDLE-01 | Phase 4 | Complete |
 | BUNDLE-02 | Phase 4 | Complete |
 | BUNDLE-03 | Phase 4 | Complete |
 | BUNDLE-04 | Phase 4 | Complete |
