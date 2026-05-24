@@ -273,6 +273,12 @@ async function reconnectionLoop(
       };
       state.connections.set(serverName, newConnection);
 
+      // Phase 64 RELY-06 (64-P2 mitigation): reset the circuit breaker on
+      // every successful reconnect. Per-generation lifecycle -- breaker
+      // state does NOT survive across reconnect (enforced by architecture
+      // test test/architecture/mcp-circuit-breaker-reset-on-reconnect.test.ts).
+      state.circuitBreakers.set(serverName, { status: "closed", failureCount: 0 });
+
       // Emit reconnected event
       deps.eventBus?.emit("mcp:server:reconnected", {
         serverName,
