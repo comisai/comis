@@ -449,4 +449,19 @@ export interface ChannelEvents {
     timestamp: number;
   };
 
+  // -------------------------------------------------------------------------
+  // Dedup events (D12 / DEDUP-01)
+  // -------------------------------------------------------------------------
+
+  /** Duplicate inbound message detected within dedup window */
+  "dedup:duplicate_inbound": {
+    messageId:   string;
+    channelType: string;
+    chatId:      string;
+    firstSeenAt: number;
+    duplicateAt: number;
+    deltaMs:     number;
+    source:      "queue" | "channel" | "pipeline";
+  };
+
 }
