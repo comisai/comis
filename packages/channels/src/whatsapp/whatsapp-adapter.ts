@@ -34,7 +34,8 @@ import {
 import { validateWhatsAppAuth } from "./credential-validator.js";
 import { mapBaileysToNormalized, type BaileysMessage } from "./message-mapper.js";
 import { createWhatsAppVoiceSender } from "./voice-sender.js";
-import { systemNowMs, systemSetTimeout } from "@comis/core";
+import { systemNowMs, systemSetTimeout, runWithContext } from "@comis/core";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -173,19 +174,29 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
 
         _lastMessageAt = systemNowMs();
         const normalized = mapBaileysToNormalized(m as BaileysMessage);
+
+        // D1 (Plan 01-03): mint traceId at ingress, stamp into metadata
+        const traceId = randomUUID();
+        normalized.metadata.traceId = traceId;
+
         deps.logger.info(
-          { channelType: "whatsapp", messageId: normalized.id, chatId: m.key.remoteJid ?? "", previewLen: (normalized.text ?? "").length },
+          { channelType: "whatsapp", messageId: normalized.id, chatId: m.key.remoteJid ?? "", previewLen: (normalized.text ?? "").length, traceId },
           "Inbound message",
         );
-        for (const handler of handlers) {
-          try {
-            Promise.resolve(handler(normalized)).catch((e) =>
-              deps.logger.error({ err: e, hint: "Check WhatsApp message handler logic", errorKind: "internal" as const }, "Handler error"),
-            );
-          } catch (e) {
-            deps.logger.error({ err: e, hint: "Check WhatsApp message handler logic", errorKind: "internal" as const }, "Handler error");
-          }
-        }
+        void runWithContext(
+          { traceId, startedAt: systemNowMs(), channelType: "whatsapp", tenantId: "default", trustLevel: "admin" },
+          () => {
+            for (const handler of handlers) {
+              try {
+                Promise.resolve(handler(normalized)).catch((e) =>
+                  deps.logger.error({ err: e, hint: "Check WhatsApp message handler logic", errorKind: "internal" as const }, "Handler error"),
+                );
+              } catch (e) {
+                deps.logger.error({ err: e, hint: "Check WhatsApp message handler logic", errorKind: "internal" as const }, "Handler error");
+              }
+            }
+          },
+        );
       }
     });
 

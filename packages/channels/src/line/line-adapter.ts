@@ -30,7 +30,8 @@ import { ok, err } from "@comis/shared";
 import { messagingApi, webhook } from "@line/bot-sdk";
 import { buildFlexMessage, type FlexTemplate } from "./flex-builder.js";
 import { mapLineToNormalized, isMessageEvent } from "./message-mapper.js";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, runWithContext } from "@comis/core";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -123,20 +124,30 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
     }
 
     _lastMessageAt = systemNowMs();
+
+    // D1 (Plan 01-03): mint traceId at ingress, stamp into metadata
+    const traceId = randomUUID();
+    normalized.metadata.traceId = traceId;
+
     deps.logger.info(
-      { channelType: "line" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length },
+      { channelType: "line" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length, traceId },
       "Inbound message",
     );
 
-    for (const handler of handlers) {
-      try {
-        Promise.resolve(handler(normalized)).catch((handlerErr) => {
-          deps.logger.error({ err: handlerErr, hint: "Check LINE message handler logic", errorKind: "internal" as const }, "LINE message handler error");
-        });
-      } catch (handlerErr) {
-        deps.logger.error({ err: handlerErr, hint: "Check LINE message handler logic", errorKind: "internal" as const }, "LINE message handler error");
-      }
-    }
+    void runWithContext(
+      { traceId, startedAt: systemNowMs(), channelType: "line", tenantId: "default", trustLevel: "admin" },
+      () => {
+        for (const handler of handlers) {
+          try {
+            Promise.resolve(handler(normalized)).catch((handlerErr) => {
+              deps.logger.error({ err: handlerErr, hint: "Check LINE message handler logic", errorKind: "internal" as const }, "LINE message handler error");
+            });
+          } catch (handlerErr) {
+            deps.logger.error({ err: handlerErr, hint: "Check LINE message handler logic", errorKind: "internal" as const }, "LINE message handler error");
+          }
+        }
+      },
+    );
   }
 
   /**

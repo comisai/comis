@@ -25,7 +25,8 @@ import type { Result } from "@comis/shared";
 import { ok, err, fromPromise } from "@comis/shared";
 import { Client } from "irc-framework";
 import { mapIrcToNormalized } from "./message-mapper.js";
-import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
+import { systemClearTimeout, systemNowMs, systemSetTimeout, runWithContext } from "@comis/core";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -132,20 +133,29 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
       tags: event.tags,
     });
 
+    // D1 (Plan 01-03): mint traceId at ingress, stamp into metadata
+    const traceId = randomUUID();
+    normalized.metadata.traceId = traceId;
+
     deps.logger.info(
-      { channelType: "irc" as const, messageId: normalized.id, chatId: event.target, previewLen: (normalized.text ?? "").length },
+      { channelType: "irc" as const, messageId: normalized.id, chatId: event.target, previewLen: (normalized.text ?? "").length, traceId },
       "Inbound message",
     );
 
-    for (const handler of handlers) {
-      try {
-        Promise.resolve(handler(normalized)).catch((handlerErr) => {
-          deps.logger.error({ err: handlerErr, nick: event.nick, hint: "Check IRC message handler logic", errorKind: "internal" as const }, "IRC message handler error");
-        });
-      } catch (handlerErr) {
-        deps.logger.error({ err: handlerErr, nick: event.nick, hint: "Check IRC message handler logic", errorKind: "internal" as const }, "IRC message handler error");
-      }
-    }
+    void runWithContext(
+      { traceId, startedAt: systemNowMs(), channelType: "irc", tenantId: "default", trustLevel: "admin" },
+      () => {
+        for (const handler of handlers) {
+          try {
+            Promise.resolve(handler(normalized)).catch((handlerErr) => {
+              deps.logger.error({ err: handlerErr, nick: event.nick, hint: "Check IRC message handler logic", errorKind: "internal" as const }, "IRC message handler error");
+            });
+          } catch (handlerErr) {
+            deps.logger.error({ err: handlerErr, nick: event.nick, hint: "Check IRC message handler logic", errorKind: "internal" as const }, "IRC message handler error");
+          }
+        }
+      },
+    );
   }
 
   const adapter: ChannelPort = {

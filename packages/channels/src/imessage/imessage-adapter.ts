@@ -29,7 +29,8 @@ import { ok, err } from "@comis/shared";
 import { createImsgClient, type ImsgClient } from "./imessage-client.js";
 import { validateIMessageConnection } from "./credential-validator.js";
 import { mapImsgToNormalized, type ImsgMessageParams } from "./message-mapper.js";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, runWithContext } from "@comis/core";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -133,36 +134,45 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
           _lastMessageAt = systemNowMs();
           const normalized = mapImsgToNormalized(messageParams);
 
+          // D1 (Plan 01-03): mint traceId at ingress, stamp into metadata
+          const traceId = randomUUID();
+          normalized.metadata.traceId = traceId;
+
           deps.logger.info(
-            { channelType: "imessage" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length },
+            { channelType: "imessage" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length, traceId },
             "Inbound message",
           );
 
-          for (const handler of handlers) {
-            try {
-              Promise.resolve(handler(normalized)).catch((handlerErr) => {
-                deps.logger.error(
-                  {
-                    err: handlerErr,
-                    chatId: normalized.channelId,
-                    hint: "Check iMessage notification handler logic",
-                    errorKind: "internal" as const,
-                  },
-                  "iMessage handler error",
-                );
-              });
-            } catch (handlerErr) {
-              deps.logger.error(
-                {
-                  err: handlerErr,
-                  chatId: normalized.channelId,
-                  hint: "Check iMessage notification handler logic",
-                  errorKind: "internal" as const,
-                },
-                "iMessage handler error",
-              );
-            }
-          }
+          void runWithContext(
+            { traceId, startedAt: systemNowMs(), channelType: "imessage", tenantId: "default", trustLevel: "admin" },
+            () => {
+              for (const handler of handlers) {
+                try {
+                  Promise.resolve(handler(normalized)).catch((handlerErr) => {
+                    deps.logger.error(
+                      {
+                        err: handlerErr,
+                        chatId: normalized.channelId,
+                        hint: "Check iMessage notification handler logic",
+                        errorKind: "internal" as const,
+                      },
+                      "iMessage handler error",
+                    );
+                  });
+                } catch (handlerErr) {
+                  deps.logger.error(
+                    {
+                      err: handlerErr,
+                      chatId: normalized.channelId,
+                      hint: "Check iMessage notification handler logic",
+                      errorKind: "internal" as const,
+                    },
+                    "iMessage handler error",
+                  );
+                }
+              }
+            },
+          );
         }
       });
 
