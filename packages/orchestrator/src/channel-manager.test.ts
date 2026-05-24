@@ -258,7 +258,10 @@ describe("createChannelManager", () => {
   describe("startAll()", () => {
     it("calls start() on all adapters", async () => {
       const adapter1 = makeAdapter();
-      const adapter2 = makeAdapter({ channelId: "telegram-456" });
+      // Distinct channelType — startAll() dedupes adapters by channelType
+      // (see channel-manager-branches.test.ts "adapter deduplication"). The
+      // intent here is multi-adapter lifecycle, not "two telegrams".
+      const adapter2 = makeAdapter({ channelType: "discord", channelId: "discord-456" });
       const deps = makeDeps({ adapters: [adapter1, adapter2] });
       const manager = createChannelManager(deps);
 
@@ -270,7 +273,7 @@ describe("createChannelManager", () => {
 
     it("registers message handlers on all adapters", async () => {
       const adapter1 = makeAdapter();
-      const adapter2 = makeAdapter({ channelId: "telegram-456" });
+      const adapter2 = makeAdapter({ channelType: "discord", channelId: "discord-456" });
       const deps = makeDeps({ adapters: [adapter1, adapter2] });
       const manager = createChannelManager(deps);
 
@@ -294,7 +297,9 @@ describe("createChannelManager", () => {
         channelId: "telegram-fail",
         start: vi.fn(async () => err(new Error("Connection failed"))),
       });
-      const goodAdapter = makeAdapter({ channelId: "telegram-good" });
+      // Distinct channelType so the good adapter isn't deduped against the
+      // failing one — the intent is "one fails, another succeeds".
+      const goodAdapter = makeAdapter({ channelType: "discord", channelId: "discord-good" });
       const deps = makeDeps({ adapters: [failAdapter, goodAdapter] });
       const manager = createChannelManager(deps);
 
@@ -853,7 +858,7 @@ describe("createChannelManager", () => {
   describe("stopAll()", () => {
     it("calls stop() on all adapters", async () => {
       const adapter1 = makeAdapter();
-      const adapter2 = makeAdapter({ channelId: "telegram-456" });
+      const adapter2 = makeAdapter({ channelType: "discord", channelId: "discord-456" });
       const deps = makeDeps({ adapters: [adapter1, adapter2] });
       const manager = createChannelManager(deps);
       await manager.startAll();
@@ -1307,11 +1312,14 @@ describe("createChannelManager", () => {
   describe("activeCount", () => {
     it("reflects started adapters", async () => {
       const adapter1 = makeAdapter();
+      // Distinct channelTypes — multi-adapter activeCount accounting must
+      // not dedupe these three. With one start() failure, activeCount = 2.
       const adapter2 = makeAdapter({
-        channelId: "telegram-fail",
+        channelType: "discord",
+        channelId: "discord-fail",
         start: vi.fn(async () => err(new Error("fail"))),
       });
-      const adapter3 = makeAdapter({ channelId: "telegram-good" });
+      const adapter3 = makeAdapter({ channelType: "slack", channelId: "slack-good" });
       const deps = makeDeps({ adapters: [adapter1, adapter2, adapter3] });
       const manager = createChannelManager(deps);
 
