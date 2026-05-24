@@ -64,6 +64,21 @@ export { scanSkillContent, type ContentScanResult, type ContentScanFinding } fro
 
 // Integrations -- MCP client manager
 export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./integrations/mcp-client/index.js";
+// Phase 66 OAUTH-10 (66f): OAuth login orchestrator + disk token-store factory.
+// Consumed by the daemon RPC handler (`mcp-oauth-handlers.ts`) so it can run
+// mcp.oauth_login / mcp.oauth_logout without a direct MCP SDK dependency.
+export { runOauthLogin, createTokenStore } from "./integrations/mcp-client/index.js";
+export type {
+  OAuthLoginResult,
+  RunOauthLoginDeps,
+  OAuthLoginConfig,
+  OAuthLoginLogger,
+  TokenStore,
+  TokenStoreDeps,
+} from "./integrations/mcp-client/index.js";
+// Phase 66 OAUTH-10: the connect-time needs_oauth_login signal guard — surfaced
+// so the daemon can tell the operator to run `comis mcp login <server>`.
+export { isNeedsOAuthLoginError } from "./integrations/mcp-client/index.js";
 // Phase 63 SAFETY-01/02: stdio env-scrub primitives (built-in allowlist
 // constant + pure scrub function). Consumed by the daemon RPC handler
 // (`mcp-handlers.ts`) and the architecture / integration tests under

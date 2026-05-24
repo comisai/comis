@@ -65,6 +65,22 @@ export type {
 // failure (→ tell the operator to run `comis mcp login`) from a generic failure.
 export { isNeedsOAuthLoginError } from "./mcp-client-connect.js";
 
+// Phase 66 OAUTH-10 (66f): the interactive OAuth login orchestrator + the disk
+// token-store factory. Re-exported so the daemon RPC handler
+// (`mcp-oauth-handlers.ts`) can run `mcp.oauth_login` (server-side discovery +
+// callback + SDK auth() + saveTokens) and `mcp.oauth_logout` (token-store
+// deleteAll) WITHOUT importing the MCP SDK directly (the daemon depends on
+// @comis/skills, not the SDK). The login orchestrator owns the SDK auth() call.
+export { runOauthLogin } from "./oauth/login.js";
+export type {
+  OAuthLoginResult,
+  RunOauthLoginDeps,
+  OAuthLoginConfig,
+  OAuthLoginLogger,
+} from "./oauth/login.js";
+export { createTokenStore } from "./oauth/token-store.js";
+export type { TokenStore, TokenStoreDeps } from "./oauth/token-store.js";
+
 export { qualifyToolName, parseQualifiedName } from "./mcp-client-types.js";
 
 // Phase 63 SAFETY-01/02: stdio env-scrub primitives re-exported so the
