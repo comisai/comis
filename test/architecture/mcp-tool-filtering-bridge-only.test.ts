@@ -73,6 +73,12 @@ const ALLOWED_SITES: readonly string[] = [
   // config.yaml entry — pure passthrough, no filter logic (same role as the
   // mcp.connect site it was carved out of).
   "packages/daemon/src/api/mcp-persisted-entry.ts",
+  // Phase 68 BUNDLE-06 (Plan 04): bundle-install-helper's buildRuntimeConfig
+  // projects a persisted McpServerEntry into McpServerConfig for
+  // manager.connect. Same plumbing role as setup-mcp.ts + mcp-handlers.ts —
+  // a passive config→runtime forward (no filter logic). The bridge still
+  // owns the actual allowlist/blocklist comparison.
+  "packages/daemon/src/skills/bundle-install-helper.ts",
   // Schema snapshot fixture contains the literal strings (Pitfall 8).
   "test/architecture/__snapshots__/McpServerEntrySchema.json",
 ];

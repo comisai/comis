@@ -37,6 +37,7 @@ import type { McpServerEntry } from "@comis/core";
  * intent wins over the prior persisted value); the config-only fields are read
  * directly from `persistedEntry` because the RPC has no params for them.
  */
+// @optional-field-count: 14 optional fields covering the McpServerEntry persistence-projection surface. Each field maps 1:1 to a persisted McpServerEntrySchema field that the helper conditionally spreads when defined (so a no-param reconnect does not strip an operator-set value). Splitting this interface would create N parallel projection helpers — the rule-of-three test catches duplication; the optional-field cap exists to flag undermodeled types, NOT a well-bounded projection like this one. Phase 68 BUNDLE-02/04 added _bundleSource + _bundleArchive (the 13th and 14th); both are direct projections of new McpServerEntrySchema optionals. Audit-stamped per the architecture allowlist policy.
 export interface BuildPersistedMcpEntryInput {
   /** The validated `server_name` RPC param. */
   readonly serverName: string;

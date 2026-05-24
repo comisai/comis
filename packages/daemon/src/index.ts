@@ -83,6 +83,21 @@ export {
 // Consumer: test/integration/mcp-config-refresh.test.ts (Plan 06).
 export { _resetConfigMutatedCoalescer } from "./api/mcp-config-mutated-coalescer.js";
 
+// Phase 68 BUNDLE-06/03 (Plan 04 + Plan 05): bundle-install helper + boot
+// orchestrator surfaced through the daemon barrel so the Plan 05 integration
+// test (test/integration/skill-bundle-install.test.ts) can drive the
+// atomic-install Phase A reject path + the boot re-merge idempotence path
+// against the REAL persistToConfig + audit JSONL pipeline pointed at a
+// tmpdir config path. Mirrors the createMcpHandlers / persistMcpServers
+// re-export pattern above.
+export { applyBundleInstall } from "./skills/bundle-install-helper.js";
+export type {
+  ApplyBundleInstallArgs,
+  ApplyBundleInstallResult,
+} from "./skills/bundle-install-helper.js";
+export { setupSkillBundles, buildSkillRegistriesForBundles } from "./wiring/setup-skill-bundles.js";
+export type { SetupSkillBundlesDeps } from "./wiring/setup-skill-bundles.js";
+
 // Re-export createTracingLogger so the test daemon harness can thread the
 // `LoggerOptions.disableRedaction` opt-in through to the SAME logger
 // instance the daemon uses for production code paths. Consumer is

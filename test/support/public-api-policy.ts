@@ -1492,6 +1492,33 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // mcp-persistence precedent). Not a baseline orphan.
       "createMcpOauthHandlers",
       "McpOauthHandlerDeps",
+      // Phase 68 BUNDLE-06/03 (Plan 04 + Plan 05): bundle-install helper +
+      // boot-orchestrator + thin discovery-only registry pre-pass surfaced
+      // through the daemon barrel so the Plan 05 integration test at
+      // test/integration/skill-bundle-install.test.ts can drive the
+      // atomic-install Phase A reject path + the boot re-merge idempotence
+      // path against the REAL persistToConfig + audit JSONL pipeline. Mirrors
+      // the createMcpHandlers / persistMcpServers precedents above
+      // (public-export-consumers AST walker excludes test/** so the orphan
+      // list is the canonical place to record planned test consumers).
+      "applyBundleInstall",
+      "ApplyBundleInstallArgs",
+      "ApplyBundleInstallResult",
+      "setupSkillBundles",
+      "buildSkillRegistriesForBundles",
+      "SetupSkillBundlesDeps",
+      // Phase 68 BUNDLE Plan 01: extracted single-writer persistMcpServers.
+      // Surfaced through the daemon barrel as the rule-of-three fulfillment
+      // (Phase 62 CONTEXT.md <deferred>: "Helper extraction — defer until
+      // Phase 68 becomes the second consumer."). Direct in-repo consumers
+      // live in packages/daemon/src/ leaf modules (bundle-install-helper,
+      // setup-skill-bundles, mcp-handlers) — all of which import via the
+      // LEAF path (`./api/shared/persist-mcp-servers.js`) rather than the
+      // barrel to avoid a self-cycle through packages/daemon/src/index.ts.
+      // The barrel re-export is the documented test-API surface (mirrors
+      // the createMcpHandlers / _resetSigusr1Timer precedents above).
+      "persistMcpServers",
+      "PersistMcpResult",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
@@ -1841,5 +1868,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // option). Documented test-API surface; not a baseline orphan.
       "createDedupedRefreshFetch",
       "DedupedRefreshFetchDeps",
+      // Phase 68 BUNDLE-01 / 68-02: SkillManifestSchema + SkillManifestParsed
+      // are re-exported through the @comis/skills barrel so daemon-side
+      // consumers (Plan 04 bundle-install helper + Plan 05 boot orchestrator)
+      // can validate the optional mcpServers block on freshly-written
+      // SKILL.md content WITHOUT reaching into the manifest deep-path. The
+      // direct in-repo consumers live OUTSIDE packages/skills/
+      // (parseSkillManifest is invoked from packages/daemon/src/skills/),
+      // so the public-export-consumers AST walker — which only scans
+      // packages/*/src/** — does not pick them up. Documented test-API +
+      // cross-package integration surface; not a baseline orphan.
+      "SkillManifestSchema",
+      "SkillManifestParsed",
     ])],
   ]);

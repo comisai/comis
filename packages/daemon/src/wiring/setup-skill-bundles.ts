@@ -336,6 +336,7 @@ export function buildSkillRegistriesForBundles(
     }
     const agentSkillsDir = safePath(agentDir, "skills");
     try {
+      // fs-safe-allowed: per-agent workspace skills dir (`<agentWorkspace>/skills`); workspace dir is operator-configured, not ~/.comis/ directly — mirrors setup-agents-runtime.ts:328 precedent
       mkdirSync(agentSkillsDir, { recursive: true });
     } catch {
       // Non-fatal — discovery will just produce zero skills for this path.
