@@ -160,6 +160,9 @@ export type {
   SessionTrajectoryFilter,
 } from "./trajectory/session-registry.js";
 
+export { buildTraceMetadata } from "./trajectory/metadata.js";
+export type { TraceMetadataParams, TraceMetadataPayload } from "./trajectory/metadata.js";
+
 // ---------------------------------------------------------------------------
 // SystemPromptReport surface.
 // ---------------------------------------------------------------------------
