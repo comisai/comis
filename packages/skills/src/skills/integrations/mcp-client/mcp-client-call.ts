@@ -19,11 +19,67 @@ import { systemNowMs } from "@comis/core";
 import type {
   McpClientManagerDeps,
   McpClientManagerState,
+  McpConnection,
   McpToolCallContent,
   McpToolCallResult,
 } from "./mcp-client-types.js";
 import { parseQualifiedName } from "./mcp-client-types.js";
 import { handleDisconnection } from "./mcp-client-reconnect.js";
+import { reconnectServer } from "./mcp-client-connect.js";
+import { resetIdleActivity } from "./mcp-client-idle-eviction.js";
+
+// ---------------------------------------------------------------------------
+// Lazy reconnect (OPUX-09)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a live connection for a server, lazily reconnecting when it is
+ * missing. Phase 65 OPUX-09: a server that was idle-evicted has its connection
+ * deleted but its serverConfig RETAINED and userDisconnectedFlags UNSET — so a
+ * subsequent callTool transparently reconnects via reconnectServer.
+ *
+ * Synchronous fast path: when the connection is already present this returns
+ * `ok(conn)` WITHOUT awaiting (it is not async), so the overwhelmingly common
+ * case introduces no extra microtask tick before the PQueue drain — preserving
+ * the pre-patch timing the generation-counter fake-timer tests rely on. Only
+ * the missing-connection path is async (reconnectLazily).
+ *
+ * Returns err("...not connected") for the two cases that must NOT reconnect:
+ * no stored config, or an operator-initiated disconnect (flag set). On a
+ * successful reconnect, re-fetches the connection from state so the caller
+ * operates on the fresh generation (Pitfall 6 — never reuse a pre-reconnect
+ * conn reference).
+ */
+function getOrReconnect(
+  state: McpClientManagerState,
+  deps: McpClientManagerDeps,
+  serverName: string,
+): Result<McpConnection, Error> | Promise<Result<McpConnection, Error>> {
+  const existing = state.connections.get(serverName);
+  if (existing) return ok(existing);
+  return reconnectLazily(state, deps, serverName);
+}
+
+async function reconnectLazily(
+  state: McpClientManagerState,
+  deps: McpClientManagerDeps,
+  serverName: string,
+): Promise<Result<McpConnection, Error>> {
+  const storedConfig = state.serverConfigs.get(serverName);
+  if (!storedConfig || state.userDisconnectedFlags.has(serverName)) {
+    return err(new Error(`MCP server "${serverName}" not connected`));
+  }
+  const reconnectResult = await reconnectServer(state, deps, serverName);
+  if (!reconnectResult.ok) {
+    return err(
+      new Error(`MCP server "${serverName}" idle-reconnect failed: ${reconnectResult.error.message}`),
+    );
+  }
+  const conn = state.connections.get(serverName);
+  return conn
+    ? ok(conn)
+    : err(new Error(`MCP server "${serverName}" reconnected but state missing — race`));
+}
 
 // ---------------------------------------------------------------------------
 // callTool (state-first)
@@ -52,11 +108,15 @@ export async function callTool(
   }
 
   const { serverName, toolName } = parsed;
-  const conn = state.connections.get(serverName);
 
-  if (!conn) {
-    return err(new Error(`MCP server "${serverName}" not connected`));
-  }
+  // Phase 65 OPUX-09: resolve the connection, lazily reconnecting an
+  // idle-evicted server (connection gone, config retained, flag unset). The
+  // happy path is synchronous (no extra await before the PQueue drain); only
+  // the missing-connection path returns a Promise.
+  const resolved = getOrReconnect(state, deps, serverName);
+  const connResult = resolved instanceof Promise ? await resolved : resolved;
+  if (!connResult.ok) return err(connResult.error);
+  const conn = connResult.value;
 
   if (conn.status !== "connected") {
     return err(
@@ -150,6 +210,9 @@ export async function callTool(
       state.consecutiveErrors.set(serverName, 0);
       // Phase 64 RELY-04: pair breaker reset with consecutiveErrors reset.
       state.circuitBreakers.set(serverName, { status: "closed", failureCount: 0 });
+      // Phase 65 OPUX-09: a successful call is the idle-eviction activity
+      // signal — refresh lastActivityMs (NO-OP when no idle ticker is armed).
+      resetIdleActivity(state, serverName);
 
       return ok({
         content,

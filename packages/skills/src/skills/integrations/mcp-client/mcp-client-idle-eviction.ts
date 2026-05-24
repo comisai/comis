@@ -21,12 +21,7 @@
  * @module
  */
 
-import {
-  systemClearTimeout,
-  systemNowMs,
-  systemSetTimeout,
-  type SystemTimeoutHandle,
-} from "@comis/core";
+import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 import type {
   McpClientManagerDeps,
   McpClientManagerState,

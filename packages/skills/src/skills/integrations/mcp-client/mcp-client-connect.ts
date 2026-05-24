@@ -38,6 +38,7 @@ import {
 import { qualifyToolName } from "./mcp-client-types.js";
 import { wireClientLifecycleCallbacks } from "./mcp-client-reconnect.js";
 import { startKeepaliveTicker, stopKeepaliveTicker } from "./mcp-client-keepalive.js";
+import { startIdleTicker, stopIdleTicker } from "./mcp-client-idle-eviction.js";
 import {
   osvMalwareCheck,
   extractMcpPackageName,
@@ -225,6 +226,12 @@ export async function connectServer(
     // is preserved.
     startKeepaliveTicker(state, deps, config);
 
+    // Phase 65 OPUX-09: per-server idle eviction ticker. NO-OP when
+    // idleTtlMs === 0/undefined (opt-in). Disconnects the transport after
+    // idle without setting userDisconnectedFlags, so the next callTool
+    // lazily reconnects (see mcp-client-call.ts getOrReconnect).
+    startIdleTicker(state, deps, config);
+
     logger.info(`MCP server "${config.name}" connected: ${tools.length} tool(s) discovered`);
 
     return ok(connection);
@@ -285,6 +292,9 @@ export async function disconnectServer(
   // queue (so the ticker cannot fire one last queue.add against a queue
   // we are about to delete).
   stopKeepaliveTicker(state, name);
+
+  // Phase 65 OPUX-09: stop the idle-eviction ticker alongside keepalive.
+  stopIdleTicker(state, name);
 
   // Clear and remove call queue -- pending .add() callers get no resolution
   // but that's acceptable since the connection is gone anyway
