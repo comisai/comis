@@ -130,6 +130,9 @@
           },
           "enablePrompts": {
             "type": "boolean"
+          },
+          "supportsParallelToolCalls": {
+            "type": "boolean"
           }
         },
         "required": [
