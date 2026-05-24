@@ -966,4 +966,99 @@ describe("BOUND-02/03 file caps + writer LRU", () => {
     // This import would fail to compile on pre-patch code (export doesn't exist).
     expect(TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES).toBe(10 * 1024 * 1024);
   });
+
+  // ---------------------------------------------------------------------------
+  // Test 5 — Hard-cap 50 MB safety net emits errorKind:"resource" WARN once
+  //
+  // The 50 MB hard-cap branch (step 4b in recordEvent) is distinct from the
+  // 10 MB soft cap (step 4a). The hard cap fires when writtenBytes would
+  // exceed usableFileBytes (maxRuntimeFileBytes - sentinelReserveBytes).
+  // It silently drops the event — but SC3 + BOUND-02 require a WARN with
+  // errorKind:"resource" and hint pointing to observability.logRotation.
+  //
+  // The WARN must fire ONCE per recorder (not once per dropped event after
+  // the cap — a flag guards repeat emission).
+  //
+  // Fails RED because:
+  //   (a) TrajectoryRecorderInit has no `logger` field
+  //   (b) the hard-cap branch emits no logger.warn call
+  // ---------------------------------------------------------------------------
+  it("hard_cap_50mb_emits_errorKind_resource_WARN_once_via_injected_logger (SC3/BOUND-02)", async () => {
+    const warnCalls: Array<[Record<string, unknown>, string]> = [];
+    const mockLogger = {
+      level: "warn",
+      trace: () => {},
+      debug: () => {},
+      info: () => {},
+      warn: (obj: Record<string, unknown>, msg: string) => {
+        warnCalls.push([obj, msg]);
+      },
+      error: () => {},
+      fatal: () => {},
+      audit: () => {},
+      child: () => mockLogger,
+    };
+
+    // Set up a recorder where the soft cap is LARGER than usableFileBytes
+    // so the hard cap fires first. This requires captureMaxBytes > usableFileBytes.
+    //
+    // Budget layout:
+    //   maxRuntimeFileBytes = 10 KB
+    //   sentinelReserveBytes = 512 B  → usableFileBytes = ~9.5 KB
+    //   captureMaxBytes = 20 KB        → soft cap > hard cap → hard cap fires first
+    const maxFileBytes = 10 * 1024;
+    const sentinelReserveBytes = 512;
+    const usableFileBytes = maxFileBytes - sentinelReserveBytes;
+
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-hc",
+      sessionId: "sid-hardcap-warn",
+      trajectoryDir: tmpDir,
+      maxRuntimeFileBytes: maxFileBytes,
+      budgets: {
+        sentinelReserveBytes,
+        captureMaxBytes: 20 * 1024, // larger than maxRuntimeFileBytes → hard cap fires first
+      },
+      logger: mockLogger,
+    });
+    expect(recorder).not.toBeNull();
+
+    // Write events until the hard cap fires (writtenBytes + bytes > usableFileBytes).
+    // Each event is ~240 bytes. We need ~40+ events to cross 9.5 KB.
+    let hardCapHit = false;
+    for (let i = 0; i < 100; i++) {
+      const result = recorder!.recordEvent("tool.result", { i, pad: "x".repeat(30) });
+      if (result === "dropped") {
+        hardCapHit = true;
+        // Write 5 more events to confirm WARN fires only once.
+        for (let j = 0; j < 5; j++) {
+          recorder!.recordEvent("tool.result", { j, extra: true });
+        }
+        break;
+      }
+    }
+    expect(hardCapHit).toBe(true);
+
+    // (a) logger.warn must have been called at least once
+    expect(warnCalls.length).toBeGreaterThanOrEqual(1);
+
+    // (b) exactly ONE warn with errorKind:"resource" (not one per drop)
+    const resourceWarns = warnCalls.filter(([obj]) => obj.errorKind === "resource");
+    expect(resourceWarns).toHaveLength(1);
+
+    // (c) the warn payload must include limitBytes (the usableFileBytes value)
+    const [warnObj, warnMsg] = resourceWarns[0];
+    expect(typeof (warnObj.limitBytes as number)).toBe("number");
+    expect((warnObj.limitBytes as number)).toBe(usableFileBytes);
+
+    // (d) the hint field must reference observability.logRotation
+    expect(typeof warnObj.hint).toBe("string");
+    expect((warnObj.hint as string).toLowerCase()).toContain("observability.logrotation");
+
+    // (e) message is a non-empty string
+    expect(typeof warnMsg).toBe("string");
+    expect(warnMsg.length).toBeGreaterThan(0);
+
+    await recorder!.flushAndClose();
+  });
 });
