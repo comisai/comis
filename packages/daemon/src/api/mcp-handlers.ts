@@ -153,16 +153,13 @@ async function persistMcpServers(
   if (persistResult.ok) {
     appendConfigAuditWithOutcome(auditBase, { kind: "rename" }, deps.persistDeps.logger);
 
-    // D-07/D-08/PERSIST-08: in-memory atomic swap. The disk write
-    // succeeded; now refresh `container.config.integrations` so concurrent
-    // readers (obs_query, mcp.list RPC, observability dashboards) see the
-    // new entry without waiting for a daemon restart. Per D-08, clone the
-    // FULL integrations subtree (NOT just .mcp.servers) so mid-update
-    // readers observe either the pre-state OR the post-state, never a
-    // partial array. Per RESEARCH.md Plan-time risk #7, optional-chain on
-    // `deps.container?.config` — existing test fixtures construct deps
-    // without a container field. Node 22 ships `structuredClone`
-    // built-in; no polyfill required.
+    // D-07/D-08/PERSIST-08: in-memory atomic swap. Disk write succeeded; refresh
+    // `container.config.integrations` so concurrent readers (obs_query, mcp.list,
+    // dashboards) see the new entry without a restart. Per D-08, clone the FULL
+    // integrations subtree (NOT just .mcp.servers) so mid-update readers observe
+    // the pre- OR post-state, never a partial array. Optional-chain on
+    // `deps.container?.config` (test fixtures omit container). structuredClone is
+    // a Node 22 built-in.
     if (deps.container?.config) {
       // Treat the subtree as a mutable record shape — IntegrationsConfigSchema
       // applies its strict-object defaults at config-load time, so by the
@@ -175,14 +172,11 @@ async function persistMcpServers(
       const integrationsIn = deps.container.config.integrations as
         | MutableIntegrations
         | undefined;
-      // WR-05: when integrations is missing in-memory we still need to
-      // build a swap value — but the data-loss case (any disk-state
-      // braveSearch/media/autoReply silently dropped from the in-memory
-      // view until next reload) deserves an observable log line so the
-      // operator notices the defense-in-depth path firing. In production
-      // IntegrationsConfigSchema's strict-object defaults guarantee
-      // `integrations` is present, so this branch only ever fires in
-      // partial-load failure modes or test fixtures that omit it.
+      // WR-05: integrations missing in-memory still needs a swap value, but the
+      // data-loss case (disk-state braveSearch/media/autoReply dropped from the
+      // in-memory view until reload) gets an observable log line. In production
+      // IntegrationsConfigSchema defaults guarantee `integrations` is present, so
+      // this branch only fires in partial-load failures or test fixtures.
       if (integrationsIn === undefined) {
         deps.persistDeps.logger.warn(
           {
@@ -412,6 +406,11 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         ...(persistedEntry?.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
         ...(persistedEntry?.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
         ...(persistedEntry?.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: persistedEntry.supportsParallelToolCalls }),
+        // OAUTH-10/11 (Phase 66): forward auth/oauth from the persisted entry
+        // (no RPC param) so createTransport wires the OAuthClientProvider on
+        // reconnect — else the server downgrades to no-auth (CR-01 / T-66-02).
+        ...(persistedEntry?.auth !== undefined && { auth: persistedEntry.auth }),
+        ...(persistedEntry?.oauth !== undefined && { oauth: persistedEntry.oauth }),
       };
 
       // Reject connects that reference env vars not in the secrets store.
@@ -458,6 +457,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         resolvedKeepaliveIntervalMs,
         resolvedCircuitBreakerThreshold,
         resolvedCircuitBreakerCooldownMs,
+        // OAUTH-10/11 (Phase 66): auth/oauth have no RPC param — buildPersistedMcpEntry
+        // resolves them from persistedEntry (CR-01 fallback) so the persist keeps
+        // them (T-66-02). No explicit pass-through needed.
         persistedEntry,
       });
       const newServers: McpServerEntry[] = [
@@ -632,6 +634,10 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         osvCheckEnabled: mcpConfigRoot?.osvCheckEnabled,
         osvCacheTtlMs: mcpConfigRoot?.osvCacheTtlMs,
         rlimits: resolvedRlimits,
+        // OAUTH-10/11 (Phase 66): source auth/oauth from the persisted entry so
+        // a test connection of an oauth server wires the provider too.
+        ...(persistedEntry?.auth !== undefined && { auth: persistedEntry.auth }),
+        ...(persistedEntry?.oauth !== undefined && { oauth: persistedEntry.oauth }),
       };
 
       // Phase 63 CR-02: pre-spawn env-ref validation. Mirrors the
@@ -703,23 +709,13 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const manager = deps.mcpClientManager;
 
-      // Phase 47 (D-02 / R7 SPEC numbering): override-rejection guard.
-      // mcp_manage(reconnect) MUST NOT accept transport/command/args/url/
-      // headers/env when the server has stored runtime config — the contract
-      // is "reconnect re-uses the stored config; to change params, disconnect
-      // then connect". Per RESEARCH.md §"D-02 Error-Key Convention Verification",
-      // throw a raw Error (NOT throwToolError — that lives in @comis/skills,
-      // not @comis/daemon — cross-package boundary) with the bracketed
-      // error-code prefix so the LLM can self-correct.
-      //
-      // Stored-config existence is signalled by manager.getConnection(name)
-      // returning a McpConnection: the client manager stores config and
-      // connection together at connect time (mcp-client-connect.ts:108) and
-      // deletes them together at disconnect time (mcp-client-connect.ts:219),
-      // so the live-connection presence is a sound proxy for "has stored
-      // config". (The plan text used `storedConn?.config != null`, but
-      // McpConnection has no `.config` field — that check is replaced here
-      // with the connection-presence test, preserving the same semantics.)
+      // Phase 47 (D-02 / R7): override-rejection guard. reconnect MUST NOT accept
+      // transport/command/args/url/headers/env when stored runtime config exists
+      // (contract: reconnect re-uses stored config; to change params, disconnect
+      // then connect). Throw a raw Error with a bracketed error-code prefix (NOT
+      // throwToolError — that lives in @comis/skills, a cross-package boundary).
+      // Stored-config presence is proxied by manager.getConnection(name): config
+      // and connection are stored/deleted together (mcp-client-connect.ts:108/219).
       const hasOverride =
         rawParams.transport !== undefined ||
         rawParams.command !== undefined ||
@@ -749,6 +745,12 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           if (!params.transport) {
             throw new Error(`MCP server "${name}" not found and no transport specified.`);
           }
+          // OAUTH-10/11 (Phase 66): fallback builds from RPC params (no
+          // auth/oauth) — source them from the persisted entry so a
+          // reconnect-with-params still wires the provider (T-66-02).
+          const reconnectPersisted = (
+            (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[]
+          ).find((s) => s.name === name);
           const config: McpServerConfig = {
             name,
             transport: params.transport,
@@ -758,6 +760,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
             env: params.env,
             headers: params.headers,
             enabled: true,
+            ...(reconnectPersisted?.auth !== undefined && { auth: reconnectPersisted.auth }),
+            ...(reconnectPersisted?.oauth !== undefined && { oauth: reconnectPersisted.oauth }),
           };
           const connectResult = await manager.connect(config);
           if (!connectResult.ok) {

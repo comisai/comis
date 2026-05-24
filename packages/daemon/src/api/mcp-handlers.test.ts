@@ -1287,6 +1287,10 @@ describe("MCP RPC Handlers", () => {
           enablePrompts: false,
           supportsParallelToolCalls: true,
           idleTtlMs: 300_000,
+          // Phase 66 OAUTH-10/11: auth/oauth are config-only on mcp.connect too —
+          // dropping them on persist downgrades the server to no-auth (T-66-02).
+          auth: "oauth",
+          oauth: { scope: "read", stripeAccount: "acct_1" },
         } as any,
       ]);
       const handlers = createMcpHandlers({
@@ -1319,6 +1323,9 @@ describe("MCP RPC Handlers", () => {
       expect(persisted.supportsParallelToolCalls).toBe(true);
       // Positive idleTtlMs must be preserved, NOT reset to 0.
       expect(persisted.idleTtlMs).toBe(300_000);
+      // Phase 66: auth/oauth must survive the persist rewrite (T-66-02).
+      expect(persisted.auth).toBe("oauth");
+      expect(persisted.oauth).toEqual({ scope: "read", stripeAccount: "acct_1" });
     });
 
     // CR-01 corollary: a server with NO config-only fields set must persist a
@@ -1352,6 +1359,8 @@ describe("MCP RPC Handlers", () => {
       expect(persisted).not.toHaveProperty("enableResources");
       expect(persisted).not.toHaveProperty("enablePrompts");
       expect(persisted).not.toHaveProperty("supportsParallelToolCalls");
+      expect(persisted).not.toHaveProperty("auth");
+      expect(persisted).not.toHaveProperty("oauth");
     });
   });
 
@@ -1605,6 +1614,71 @@ describe("MCP RPC Handlers", () => {
 
       const callArg = (manager.connect as any).mock.calls[0][0];
       expect(callArg).not.toHaveProperty("supportsParallelToolCalls");
+    });
+  });
+
+  // OAUTH-10/11 (Phase 66) — mcp.connect forwards the persisted auth/oauth into
+  // the runtime McpServerConfig handed to manager.connect. mcp.connect accepts no
+  // CLI param for them (config-only forward), so the source is the persisted entry.
+  // A reconnect-after-disconnect routes through this handler; without the forward
+  // the OAuthClientProvider is never wired (silent downgrade to no-auth — T-66-02).
+  // Would have failed RED pre-patch.
+  describe("mcp.connect forwards persisted auth/oauth to manager.connect (OAUTH-10/11)", () => {
+    it("forwards auth='oauth' + oauth block from the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("notion", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "notion",
+          transport: "http",
+          url: "https://mcp.notion.com/mcp",
+          enabled: true,
+          auth: "oauth",
+          oauth: { scope: "read", stripeAccount: "acct_1" },
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "notion",
+        transport: "http",
+        url: "https://mcp.notion.com/mcp",
+      });
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "notion",
+          auth: "oauth",
+          oauth: { scope: "read", stripeAccount: "acct_1" },
+        }),
+      );
+    });
+
+    it("omits auth/oauth when absent on the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "ctx7", transport: "stdio", command: "npx", enabled: true } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const callArg = (manager.connect as any).mock.calls[0][0];
+      expect(callArg).not.toHaveProperty("auth");
+      expect(callArg).not.toHaveProperty("oauth");
     });
   });
 

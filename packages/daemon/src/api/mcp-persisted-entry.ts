@@ -58,6 +58,15 @@ export interface BuildPersistedMcpEntryInput {
   readonly resolvedCircuitBreakerThreshold?: number;
   readonly resolvedCircuitBreakerCooldownMs?: number;
   /**
+   * Phase 66 OAUTH-10/11: per-server auth scheme + OAuth hints. Config-only on
+   * the mcp.connect path (no RPC params) — the caller resolves them as
+   * `params.X ?? persistedEntry?.X` (current intent > persisted) and passes the
+   * result here. Conditionally spread so a no-param reconnect does NOT strip a
+   * server's `auth:"oauth"` requirement (T-66-02 — downgrade to no-auth).
+   */
+  readonly auth?: McpServerEntry["auth"];
+  readonly oauth?: McpServerEntry["oauth"];
+  /**
    * The existing persisted entry for this server (if any). The CR-01
    * config-only fields are propagated from here so a reconnect / re-add does
    * not strip operator-set values.
@@ -95,6 +104,14 @@ export function buildPersistedMcpEntry(input: BuildPersistedMcpEntryInput): McpS
     ...(input.resolvedKeepaliveIntervalMs !== undefined && { keepaliveIntervalMs: input.resolvedKeepaliveIntervalMs }),
     ...(input.resolvedCircuitBreakerThreshold !== undefined && { circuitBreakerThreshold: input.resolvedCircuitBreakerThreshold }),
     ...(input.resolvedCircuitBreakerCooldownMs !== undefined && { circuitBreakerCooldownMs: input.resolvedCircuitBreakerCooldownMs }),
+    // Phase 66 OAUTH-10/11: persist auth/oauth so a reconnect cannot strip the
+    // server's OAuth requirement (T-66-02 — the CR-01 drop-on-reconnect class).
+    // mcp.connect has no RPC params for them, so a no-param reconnect arrives
+    // with input.auth/oauth undefined — fall back to the persisted entry (the
+    // same source the tool-filter fields below read directly). Current intent
+    // (a direct input value) still wins over the persisted value.
+    ...((input.auth ?? persistedEntry?.auth) !== undefined && { auth: input.auth ?? persistedEntry?.auth }),
+    ...((input.oauth ?? persistedEntry?.oauth) !== undefined && { oauth: input.oauth ?? persistedEntry?.oauth }),
     // Phase 65 CR-02 / Phase 67 CR-01: preserve config-only fields from the
     // prior persisted entry — mcp.connect has no RPC params for them, so the
     // existing persisted entry is the only source. Dropping toolAllowlist /

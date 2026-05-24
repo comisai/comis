@@ -227,6 +227,11 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
           // CAP-02: forward the parallel-tool-calls opt-in so the manager's
           // PQueue concurrency derivation (mcp-client-connect.ts) sees it.
           ...(server.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: server.supportsParallelToolCalls }),
+          // OAUTH-10/11 (Phase 66): forward auth/oauth so createTransport wires
+          // the OAuthClientProvider for config-defined servers — else the boot
+          // path silently downgrades an oauth server to no-auth (T-66-02).
+          ...(server.auth !== undefined && { auth: server.auth }),
+          ...(server.oauth !== undefined && { oauth: server.oauth }),
         };
         return { server, result: await manager.connect(config) };
       }),

@@ -680,6 +680,61 @@ describe("setupMcp", () => {
     expect(callArg).not.toHaveProperty("supportsParallelToolCalls");
   });
 
+  // OAUTH-10/11 (Phase 66) — auth/oauth parsed by McpServerEntrySchema MUST reach
+  // the runtime McpServerConfig handed to manager.connect(), else createTransport
+  // never wires the OAuthClientProvider (silent downgrade to no-auth — the Phase
+  // 65 CR-02 / Phase 67 CR-01 trap). Fails RED on the pre-patch boot-path build.
+  it("forwards auth/oauth to McpServerConfig", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "notion",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        {
+          name: "notion",
+          transport: "http",
+          url: "https://mcp.notion.com/mcp",
+          enabled: true,
+          auth: "oauth",
+          oauth: { scope: "read", stripeAccount: "acct_1" },
+        },
+      ],
+      logger,
+    });
+
+    expect(mockConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "notion",
+        auth: "oauth",
+        oauth: { scope: "read", stripeAccount: "acct_1" },
+      }),
+    );
+  });
+
+  it("omits auth/oauth from McpServerConfig when absent on the entry", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "plain",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        { name: "plain", transport: "stdio", command: "mcp-server", enabled: true },
+      ],
+      logger,
+    });
+
+    const callArg = mockConnect.mock.calls[0][0];
+    expect(callArg).not.toHaveProperty("auth");
+    expect(callArg).not.toHaveProperty("oauth");
+  });
+
   it("logs tool names from connected servers", async () => {
     mockConnect.mockResolvedValueOnce(ok({
       name: "context7",

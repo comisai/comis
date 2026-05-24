@@ -127,6 +127,30 @@
     },
     "supportsParallelToolCalls": {
       "type": "boolean"
+    },
+    "auth": {
+      "type": "string",
+      "enum": [
+        "none",
+        "bearer",
+        "oauth"
+      ]
+    },
+    "oauth": {
+      "type": "object",
+      "properties": {
+        "authorizationEndpoint": {
+          "type": "string",
+          "format": "uri"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "stripeAccount": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "required": [
