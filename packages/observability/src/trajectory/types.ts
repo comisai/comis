@@ -197,6 +197,12 @@ export interface TrajectoryRecorderBudgets {
   readonly maxQueuedBytes?: number;
   /** Head-room reserved inside file cap for trace.truncated emit. Default 2 KB. */
   readonly sentinelReserveBytes?: number;
+  /**
+   * Soft capture cap: recording stops inline (trace.truncated emitted) when
+   * writtenBytes would cross this threshold. Default TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES
+   * (10 MB). Overridable per-recorder for tests. Must be ≤ maxRuntimeFileBytes.
+   */
+  readonly captureMaxBytes?: number;
 }
 
 export interface TrajectoryRecorderInit {
@@ -344,4 +350,13 @@ export interface TrajectoryRecorder {
    * cap is exceeded.
    */
   emitTraceTruncated(params: TraceTruncatedParams): "queued" | "dropped";
+
+  /**
+   * Returns the running count of events dropped by this recorder (both
+   * soft-cap and hard-cap drops). Observable counter for WR-04: callers
+   * at lifecycle-envelope emit sites can read this to detect silent drops.
+   *
+   * Incremented on each call to `recordEvent` that returns `"dropped"`.
+   */
+  droppedEvents(): number;
 }

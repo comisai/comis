@@ -78,6 +78,20 @@ const DEFAULT_MAX_QUEUED_BYTES = 4 * 1024 * 1024;
 const DEFAULT_SENTINEL_RESERVE_BYTES = 2 * 1024;
 const EVENT_SIZE_SENTINEL_REASON = "trajectory-event-size-limit";
 
+/**
+ * Soft capture cap (BOUND-02 / design §5 D7).
+ *
+ * When `recordEvent` would push `writtenBytes` past this threshold the
+ * recorder emits `trace.truncated` INLINE (via `emitTruncatedInternal`)
+ * with `reason: "trajectory-runtime-file-size-limit"` and sets
+ * `state.closed = true`, stopping all further recording. The 50 MB hard
+ * cap on the underlying `QueuedFileWriter` chassis remains unchanged as a
+ * last-resort safety net.
+ *
+ * Overridable per-recorder via `budgets.captureMaxBytes` for test isolation.
+ */
+export const TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES = 10 * 1024 * 1024;
+
 // Trajectory-specific bounding constants.  The numeric values are
 // identical to PAYLOAD_BOUNDS in bounded-payload.ts (which enforces the
 // limits numerically via sanitizeForPersistence). These constants are
@@ -252,6 +266,11 @@ export function createTrajectoryRecorder(
   const maxQueuedBytes =
     init.budgets?.maxQueuedBytes ?? DEFAULT_MAX_QUEUED_BYTES;
   const usableFileBytes = Math.max(0, maxRuntimeFileBytes - sentinelReserveBytes);
+  // Soft capture cap — BOUND-02 per-recorder override (default 10 MB).
+  // Must be ≤ usableFileBytes in practice; values larger than the 50 MB
+  // hard cap simply mean the hard cap fires first.
+  const captureMaxBytes =
+    init.budgets?.captureMaxBytes ?? TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES;
 
   const writer = getQueuedFileWriter(writerRegistry, filePath, {
     maxQueuedBytes,
@@ -285,6 +304,7 @@ export function createTrajectoryRecorder(
     seq: 0,
     writtenBytes: 0,
     droppedEvents: 0,
+    droppedEventBytes: 0,
     closed: false,
   };
 
@@ -376,8 +396,29 @@ export function createTrajectoryRecorder(
         bytes = Buffer.byteLength(line, "utf8");
       }
 
-      // 4. Per-file budget. Reserve head-room for the final
-      //    trace.truncated sentinel via flushAndClose.
+      // 4a. Soft capture cap (BOUND-02 / design §5 D7). When writtenBytes
+      //     would cross TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES (default 10 MB,
+      //     overridable via budgets.captureMaxBytes), emit trace.truncated
+      //     INLINE and stop recording. emitTruncatedInternal bypasses the
+      //     file-cap accounting via sentinelReserveBytes head-room, so the
+      //     sentinel still lands even though state.closed is set.
+      if (state.writtenBytes + bytes > captureMaxBytes) {
+        state.droppedEvents += 1;
+        state.droppedEventBytes += bytes;
+        // Emit the inline sentinel before setting closed so emitTruncatedInternal
+        // can write to the file (it checks state.closed via emitTraceTruncated).
+        emitTruncatedInternal({
+          reason: "trajectory-runtime-file-size-limit",
+          droppedEvents: state.droppedEvents,
+          droppedEventBytes: state.droppedEventBytes,
+          limitBytes: captureMaxBytes,
+        });
+        state.closed = true;
+        return "dropped";
+      }
+
+      // 4b. Hard-cap safety net (50 MB). Reserve head-room for the final
+      //     trace.truncated sentinel via flushAndClose.
       if (state.writtenBytes + bytes > usableFileBytes) {
         state.droppedEvents += 1;
         return "dropped";
@@ -401,11 +442,22 @@ export function createTrajectoryRecorder(
     },
 
     async flushAndClose(): Promise<void> {
-      if (state.closed) return;
-      state.closed = true;
+      // Soft-cap inline close (BOUND-02): state.closed may already be true
+      // if the soft cap fired inline during recordEvent. In that case we must
+      // still flush+close the underlying writer — the sentinel was already
+      // written inline, so we skip the droppedEvents branch but DO drain
+      // the write queue and close the file handle.
+      const alreadyClosed = state.closed;
+      if (!alreadyClosed) {
+        state.closed = true;
+      }
       await writer.flush();
 
-      if (state.droppedEvents > 0) {
+      // Only emit the close-time sentinel when the recorder was NOT
+      // already closed by an inline soft-cap event. An inline soft-cap
+      // close already emitted trace.truncated; emitting again here would
+      // produce a duplicate sentinel and a wrong droppedEvents count.
+      if (!alreadyClosed && state.droppedEvents > 0) {
         // Close-time sentinel — delegates to the same codepath as the
         // public hook so behaviour matches. Passes the legacy reason
         // string; does NOT pass droppedEventBytes / limitBytes because
@@ -454,6 +506,13 @@ export function createTrajectoryRecorder(
     emitTraceTruncated(params: TraceTruncatedParams): "queued" | "dropped" {
       if (state.closed) return "dropped";
       return emitTruncatedInternal(params);
+    },
+
+    // WR-04 carry-over: expose the running dropped-event counter so callers
+    // at lifecycle-envelope emit sites (pi-event-bridge, comis-session-manager)
+    // can detect and log drops instead of silently ignoring the "dropped" signal.
+    droppedEvents(): number {
+      return state.droppedEvents;
     },
   };
 
