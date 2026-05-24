@@ -295,6 +295,16 @@ export const McpConnectContract = defineContract({
     // McpServerEntry so the opt-out survives a daemon restart. Default:
     // false (heuristic enforced). Mirrors McpServerEntrySchema.
     disablePlaintextSecretCheck: z.boolean().optional(),
+    // Phase 64 RELY-07: per-server reliability overrides accepted on
+    // `mcp.connect` so callers can supply them at first-connect time.
+    // Mirrors McpServerEntrySchema. The handler forwards each into both
+    // the spawn-time McpServerConfig (consumed by start/stop keepalive +
+    // circuit-breaker pre-check) AND the persisted McpServerEntry (so the
+    // override survives a daemon restart). Undefined => fall back to the
+    // McpConfigSchema global defaults at the call site.
+    keepaliveIntervalMs: z.number().int().nonnegative().optional(),
+    circuitBreakerThreshold: z.number().int().positive().optional(),
+    circuitBreakerCooldownMs: z.number().int().positive().optional(),
   }),
   response: z.object({
     name: z.string(),
