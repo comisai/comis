@@ -107,9 +107,18 @@ export function getCoalescer(eventBus: TypedEventBus, logger: ComisLogger): Conf
   return singleton;
 }
 
-/** Test seam mirroring _resetSigusr1Timer / _resetMutationFence. */
+/**
+ * Test seam mirroring _resetSigusr1Timer / _resetMutationFence. Cancels the
+ * armed timer + clears pending diff Maps, AND drops the singleton so the
+ * next getCoalescer call re-creates with the current test's eventBus +
+ * logger references. Without dropping the singleton, an integration test
+ * that constructs a fresh container per test (the mcp-persistence harness
+ * pattern) would see the timer fire against the prior test's eventBus
+ * mock — silently no-op'ing the assertion on the current mock.
+ */
 export function _resetConfigMutatedCoalescer(): void {
   singleton?._resetForTests();
+  singleton = undefined;
 }
 
 /**
