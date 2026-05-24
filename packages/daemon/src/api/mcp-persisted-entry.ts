@@ -67,6 +67,22 @@ export interface BuildPersistedMcpEntryInput {
   readonly auth?: McpServerEntry["auth"];
   readonly oauth?: McpServerEntry["oauth"];
   /**
+   * Phase 68 BUNDLE-02: skill-bundle provenance. Set by the bundle resolver
+   * when persisting a bundled entry; absent on direct mcp.connect calls. INPUT-DRIVEN:
+   * a no-marker reconnect from a manual mcp.connect intentionally clears the marker
+   * (operator has explicitly overridden the bundle entry). Differs from the CR-01
+   * config-only fields below which fall back to persistedEntry -- those would silently
+   * survive an override; the bundle marker MUST be cleared so audits reflect operator
+   * intent.
+   */
+  readonly _bundleSource?: string;
+  /**
+   * Phase 68 BUNDLE-04: archived bundle entry when a user override (or --force from
+   * a second bundle) replaced it. Forwarded verbatim from input to output. Recursive
+   * shape -- McpServerEntry self-reference resolved at parse time via z.lazy().
+   */
+  readonly _bundleArchive?: McpServerEntry;
+  /**
    * The existing persisted entry for this server (if any). The CR-01
    * config-only fields are propagated from here so a reconnect / re-add does
    * not strip operator-set values.
@@ -121,6 +137,15 @@ export function buildPersistedMcpEntry(input: BuildPersistedMcpEntryInput): McpS
     ...(persistedEntry?.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
     ...(persistedEntry?.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
     ...(persistedEntry?.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: persistedEntry.supportsParallelToolCalls }),
+    // Phase 68 BUNDLE-02 / BUNDLE-04: bundle provenance + archive. INPUT-DRIVEN
+    // (NOT carried from persistedEntry) -- a no-marker reconnect from a manual
+    // mcp.connect explicitly clears _bundleSource so the audit reflects operator
+    // intent (the deliberate semantic: a direct mcp.connect HAS overridden the
+    // bundle entry). Contrast with the CR-01 config-only fields above where the
+    // persistedEntry fallback prevents accidental strip on a no-param reconnect.
+    // See 68-RESEARCH.md Assumption A6 / Plan-Time Risk 2.
+    ...(input._bundleSource !== undefined && { _bundleSource: input._bundleSource }),
+    ...(input._bundleArchive !== undefined && { _bundleArchive: input._bundleArchive }),
     // Phase 65 OPUX-09 + Phase 67 CR-01: idleTtlMs has a schema default(0) ⇒
     // required on the inferred McpServerEntry. mcp.connect has no idle param,
     // so preserve the operator-configured positive value (don't reset to 0);

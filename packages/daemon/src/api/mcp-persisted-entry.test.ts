@@ -96,3 +96,91 @@ describe("buildPersistedMcpEntry — Phase 66 auth/oauth persistence (CR-01 / T-
     expect(entry.oauth).toEqual({ scope: "write" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 68 BUNDLE-04: _bundleSource + _bundleArchive forwarding.
+//
+// Differs from the OAuth fields above: bundle markers are INPUT-DRIVEN (not
+// persistedEntry-fallback). A no-marker reconnect from a manual mcp.connect
+// explicitly clears them so the audit record reflects operator-intent
+// override. Closes the Assumption A6 gap from 68-RESEARCH.md / Plan-Time
+// Risk 2 (without forwarding, _bundleSource never survives mcp.connect ->
+// restart, breaking the resolver-driven provenance contract).
+// ---------------------------------------------------------------------------
+
+describe("buildPersistedMcpEntry — Phase 68 _bundleSource + _bundleArchive forwarding (BUNDLE-04 persist half)", () => {
+  it("forwards _bundleSource verbatim from input to output", () => {
+    const entry = buildPersistedMcpEntry({
+      serverName: "x",
+      transport: "stdio",
+      command: "npx",
+      disablePlaintextSecretCheck: false,
+      _bundleSource: "my-skill",
+    });
+    expect(entry._bundleSource).toBe("my-skill");
+  });
+
+  it("forwards a recursive _bundleArchive (preserves the prior entry's _bundleSource)", () => {
+    const archive: McpServerEntry = {
+      name: "x",
+      transport: "stdio",
+      command: "npx",
+      _bundleSource: "old-skill",
+      enabled: true,
+      idleTtlMs: 0,
+    } as McpServerEntry;
+
+    const entry = buildPersistedMcpEntry({
+      serverName: "x",
+      transport: "http",
+      url: "https://example.com/mcp",
+      disablePlaintextSecretCheck: false,
+      _bundleSource: "new-skill",
+      _bundleArchive: archive,
+    });
+
+    expect(entry._bundleSource).toBe("new-skill");
+    expect(entry._bundleArchive).toBeDefined();
+    expect(entry._bundleArchive?.name).toBe("x");
+    expect(entry._bundleArchive?._bundleSource).toBe("old-skill");
+  });
+
+  it("omits _bundleSource / _bundleArchive keys entirely when both are undefined (conditional spread)", () => {
+    const entry = buildPersistedMcpEntry({
+      serverName: "x",
+      transport: "stdio",
+      command: "npx",
+      disablePlaintextSecretCheck: false,
+    });
+    expect(Object.prototype.hasOwnProperty.call(entry, "_bundleSource")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(entry, "_bundleArchive")).toBe(false);
+  });
+
+  it("INPUT-DRIVEN semantic: does NOT preserve _bundleSource from persistedEntry when input._bundleSource is undefined (operator override clears the marker)", () => {
+    // The deliberate semantic: bundle markers are NOT in the CR-01 fallback set.
+    // A manual `mcp.connect` from the operator HAS overridden the bundle entry --
+    // the persistedEntry's _bundleSource MUST be cleared so the audit reflects
+    // operator intent. This contrasts with toolAllowlist/auth/oauth/rlimits
+    // which DO fall back to persistedEntry to prevent accidental strip on a
+    // no-param reconnect.
+    const prior: McpServerEntry = {
+      name: "x",
+      transport: "stdio",
+      command: "npx",
+      _bundleSource: "auto-installed-by-yfinance-skill",
+      enabled: true,
+      idleTtlMs: 0,
+    } as McpServerEntry;
+
+    const entry = buildPersistedMcpEntry({
+      serverName: "x",
+      transport: "stdio",
+      command: "npx",
+      disablePlaintextSecretCheck: false,
+      persistedEntry: prior,
+      // _bundleSource intentionally omitted -- this is a manual mcp.connect
+    });
+
+    expect(Object.prototype.hasOwnProperty.call(entry, "_bundleSource")).toBe(false);
+  });
+});
