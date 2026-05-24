@@ -27,6 +27,39 @@ export const DEFAULT_OSV_CACHE_DIR = safePath(homedir(), ".comis", "cache", "osv
 /** Fetch timeout — guards against api.osv.dev hangs. */
 const OSV_FETCH_TIMEOUT_MS = 5000;
 
+// ---------------------------------------------------------------------------
+// WR-06: in-process concurrency cap on OSV API calls.
+//
+// Pre-fix every `osvMalwareCheck` call independently invoked
+// `fetch(api.osv.dev/v1/query)`. A daemon starting with 5+ MCP servers
+// in config would fire 5 parallel requests simultaneously; per OSV's
+// terms sustained parallel queries can rate-limit (429), which the
+// fail-open path classifies as a transient outage — leaving a window
+// where a malicious package can slip through. A coordinated attacker
+// could trigger the bombardment.
+//
+// Fix: a process-wide promise chain serializes the NETWORK portion of
+// the check. Cache hits still short-circuit before reaching the
+// semaphore. Concurrent calls for the SAME package coalesce onto the
+// same in-flight promise (cache read after wait, so callers 2..N get
+// the cache hit written by caller 1).
+// ---------------------------------------------------------------------------
+let osvFetchChain: Promise<unknown> = Promise.resolve();
+/**
+ * Append `task` to the global OSV fetch chain. Each task runs strictly
+ * after the previous task settles (success or rejection). Rejections
+ * are caught locally so a single task's failure does not derail the
+ * chain.
+ */
+function runOnOsvFetchChain<T>(task: () => Promise<T>): Promise<T> {
+  const next = osvFetchChain.then(task, task);
+  // Swallow rejections on the shared chain so the NEXT task is not
+  // poisoned. The caller still observes the rejection via the returned
+  // promise above.
+  osvFetchChain = next.catch(() => undefined);
+  return next;
+}
+
 interface OsvCacheEntry {
   readonly fetchedAt: number;
   readonly verdict: "safe" | "malicious";
@@ -99,55 +132,91 @@ export async function osvMalwareCheck(
   // fire, and the package would be treated as safe. Validation rejects
   // any cache entry whose shape does not match OsvCacheEntrySchema, and
   // falls through to a fresh fetch (treats the malformed entry as miss).
-  if (existsSync(cachePath)) {
+  const readCache = (): OsvCheckResult | null => {
+    if (!existsSync(cachePath)) return null;
     try {
       const raw = readFileSync(cachePath, "utf-8");
       const parsed = OsvCacheEntrySchema.safeParse(JSON.parse(raw));
       if (parsed.success && systemNowMs() - parsed.data.fetchedAt < ttlMs) {
         return { verdict: parsed.data.verdict, advisoryIds: parsed.data.advisoryIds };
       }
-      // Shape-invalid OR stale → fall through to fresh fetch.
     } catch {
-      // Corrupted cache or stat race — fall through to fresh fetch.
+      // Corrupted cache or stat race — fall through.
     }
-  }
+    return null;
+  };
 
-  // API call
-  let response: OsvResponse;
-  try {
-    const res = await fetcher("https://api.osv.dev/v1/query", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ package: { name: packageName, ecosystem } }),
-      signal: AbortSignal.timeout(OSV_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) {
+  const firstCacheHit = readCache();
+  if (firstCacheHit) return firstCacheHit;
+
+  // WR-06: serialize the NETWORK portion via the process-wide chain.
+  // Parallel daemon startup with N MCP servers fires N osvMalwareCheck
+  // calls; pre-fix all N hit api.osv.dev simultaneously and could
+  // trigger rate-limiting (429), which the fail-open path classifies
+  // as a transient outage. With the chain, callers run strictly one at
+  // a time; concurrent callers for the same package re-read the cache
+  // after taking their chain slot and observe the cache hit written
+  // by the leader.
+  return runOnOsvFetchChain(async () => {
+    // Re-read cache after chain wait — a leader call for the same
+    // package may have just written it. Saves the network round-trip
+    // for parallel callers sharing a package name.
+    const cacheHitAfterWait = readCache();
+    if (cacheHitAfterWait) return cacheHitAfterWait;
+
+    // API call
+    let response: OsvResponse;
+    try {
+      const res = await fetcher("https://api.osv.dev/v1/query", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ package: { name: packageName, ecosystem } }),
+        signal: AbortSignal.timeout(OSV_FETCH_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        logger.warn(
+          {
+            packageName,
+            ecosystem,
+            status: res.status,
+            hint: "OSV API non-2xx; failing open per SAFETY-05",
+            errorKind: "dependency" as const,
+          },
+          "OSV API non-2xx — failing open",
+        );
+        return { verdict: "safe", advisoryIds: [] };
+      }
+      response = (await res.json()) as OsvResponse;
+    } catch (error: unknown) {
       logger.warn(
         {
           packageName,
           ecosystem,
-          status: res.status,
-          hint: "OSV API non-2xx; failing open per SAFETY-05",
-          errorKind: "dependency" as const,
+          err: error instanceof Error ? error.message : String(error),
+          hint: "OSV API network/timeout error; failing open per SAFETY-05",
+          errorKind: "network" as const,
         },
-        "OSV API non-2xx — failing open",
+        "OSV API error — failing open",
       );
       return { verdict: "safe", advisoryIds: [] };
     }
-    response = (await res.json()) as OsvResponse;
-  } catch (error: unknown) {
-    logger.warn(
-      {
-        packageName,
-        ecosystem,
-        err: error instanceof Error ? error.message : String(error),
-        hint: "OSV API network/timeout error; failing open per SAFETY-05",
-        errorKind: "network" as const,
-      },
-      "OSV API error — failing open",
-    );
-    return { verdict: "safe", advisoryIds: [] };
-  }
+    return resolveAndWriteCache(response, packageName, ecosystem, cacheDir, cachePath, logger);
+  });
+}
+
+/**
+ * Resolve the OSV verdict from a response and write the cache file.
+ * Extracted so the on-chain function in osvMalwareCheck can return the
+ * verdict from a single tail call (post-WR-06 refactor).
+ */
+function resolveAndWriteCache(
+  response: OsvResponse,
+  packageName: string,
+  ecosystem: "npm" | "pypi",
+  cacheDir: string,
+  cachePath: string,
+  logger: ComisLoggerLike,
+): OsvCheckResult {
 
   // Verdict resolution + atomic cache write (tmp + rename)
   const malIds = (response.vulns ?? [])

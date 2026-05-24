@@ -475,6 +475,83 @@ describe("osvMalwareCheck — verdict resolution against OSV API (SAFETY-05)", (
   });
 });
 
+// ---------------------------------------------------------------------------
+// WR-06 — process-wide concurrency cap on OSV API calls.
+//
+// Pre-fix N parallel osvMalwareCheck calls fired N parallel fetches at
+// api.osv.dev. The fix serializes the NETWORK portion via a shared
+// promise chain, so the fetch calls are ordered strictly. Cache hits
+// (including post-wait re-reads for parallel callers of the same pkg)
+// short-circuit before reaching the network call.
+// ---------------------------------------------------------------------------
+describe("osvMalwareCheck — WR-06 process-wide network serialization", () => {
+  it("serializes 5 concurrent osvMalwareCheck calls onto the shared fetch chain", async () => {
+    // Track when each fetch begins / ends to detect overlap.
+    const fetchEvents: Array<{ pkg: string; phase: "start" | "end"; t: number }> = [];
+    let counter = 0;
+    const mockFetch = vi.fn().mockImplementation(async (_, init) => {
+      // Decode the body to find which package this call is for.
+      const body = JSON.parse((init as RequestInit).body as string);
+      const pkg = body.package.name as string;
+      fetchEvents.push({ pkg, phase: "start", t: ++counter });
+      // Force the fetches to take "time" — without await, vi runs them
+      // sequentially in microtask order anyway, but this models a real
+      // network call's async gap.
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      fetchEvents.push({ pkg, phase: "end", t: ++counter });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+      } as unknown as Response;
+    });
+
+    // Fire 5 concurrent calls on 5 unique packages so cache short-
+    // circuits don't mask the serialization behavior.
+    const results = await Promise.all([
+      osvMalwareCheck("wr06-pkg-1", "npm", { cacheDir: tempDir, ttlMs: 86_400_000, logger, fetchImpl: mockFetch as unknown as typeof fetch }),
+      osvMalwareCheck("wr06-pkg-2", "npm", { cacheDir: tempDir, ttlMs: 86_400_000, logger, fetchImpl: mockFetch as unknown as typeof fetch }),
+      osvMalwareCheck("wr06-pkg-3", "npm", { cacheDir: tempDir, ttlMs: 86_400_000, logger, fetchImpl: mockFetch as unknown as typeof fetch }),
+      osvMalwareCheck("wr06-pkg-4", "npm", { cacheDir: tempDir, ttlMs: 86_400_000, logger, fetchImpl: mockFetch as unknown as typeof fetch }),
+      osvMalwareCheck("wr06-pkg-5", "npm", { cacheDir: tempDir, ttlMs: 86_400_000, logger, fetchImpl: mockFetch as unknown as typeof fetch }),
+    ]);
+    expect(results).toHaveLength(5);
+    expect(results.every((r) => r.verdict === "safe")).toBe(true);
+
+    // Each pkg's start->end span must close before the next pkg's start.
+    // For 5 unique packages we expect 10 events total in start/end/start/end pattern.
+    expect(fetchEvents).toHaveLength(10);
+    for (let i = 0; i < 5; i++) {
+      const startEvent = fetchEvents[i * 2]!;
+      const endEvent = fetchEvents[i * 2 + 1]!;
+      expect(startEvent.phase).toBe("start");
+      expect(endEvent.phase).toBe("end");
+      expect(startEvent.pkg).toBe(endEvent.pkg); // start matches its end
+    }
+  });
+
+  it("concurrent osvMalwareCheck calls for the SAME package coalesce: only ONE fetch fires", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    } as unknown as Response);
+
+    // Fire 4 parallel calls on the SAME package — caller 1 writes the
+    // cache, callers 2..4 take their chain slot, re-read the cache,
+    // observe the hit, and short-circuit before reaching the fetch.
+    const results = await Promise.all([
+      osvMalwareCheck("wr06-coalesce", "npm", { cacheDir: tempDir, ttlMs: 86_400_000, logger, fetchImpl: mockFetch as unknown as typeof fetch }),
+      osvMalwareCheck("wr06-coalesce", "npm", { cacheDir: tempDir, ttlMs: 86_400_000, logger, fetchImpl: mockFetch as unknown as typeof fetch }),
+      osvMalwareCheck("wr06-coalesce", "npm", { cacheDir: tempDir, ttlMs: 86_400_000, logger, fetchImpl: mockFetch as unknown as typeof fetch }),
+      osvMalwareCheck("wr06-coalesce", "npm", { cacheDir: tempDir, ttlMs: 86_400_000, logger, fetchImpl: mockFetch as unknown as typeof fetch }),
+    ]);
+    expect(results.every((r) => r.verdict === "safe")).toBe(true);
+    // Coalescing target: 1 leader fetch, the remaining 3 callers cache-hit.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("osvMalwareCheck — fail-open semantics (SAFETY-05)", () => {
   it("osvMalwareCheck triggers fail-open with dependency errorKind on OSV API non-200", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
