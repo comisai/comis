@@ -17,7 +17,7 @@
  * @module
  */
 
-import { systemNowMs } from "@comis/core";
+import { runWithContext, systemNowMs } from "@comis/core";
 import type { NormalizedMessage } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mapGrammyToNormalized } from "../message-mapper.js";
@@ -59,20 +59,38 @@ export function handleInboundMessage(
 
   state.lastMessageAt = systemNowMs();
   const normalized = mapGrammyToNormalized(msg, chatId, state.botIdentity);
+
+  // D1 (Plan 01-02): mint traceId at ingress, stamp into metadata
+  // so the orchestrator's adapter.onMessage wrap (Plan 01-04) can
+  // reuse it. The Pino mixin reads ALS automatically — the
+  // "Inbound message" log line below picks up traceId once we
+  // enter the runWithContext scope.
+  const traceId = randomUUID();
+  normalized.metadata.traceId = traceId;
+
   deps.logger.info(
-    { channelType: "telegram", messageId: normalized.id, chatId: String(chatId), previewLen: (normalized.text ?? "").length },
+    { channelType: "telegram", messageId: normalized.id, chatId: String(chatId), previewLen: (normalized.text ?? "").length, traceId },
     "Inbound message",
   );
-  for (const handler of state.handlers) {
-    // Fire-and-forget: don't block Grammy middleware
-    try {
-      Promise.resolve(handler(normalized)).catch((handlerErr) => {
-        deps.logger.error({ err: handlerErr, chatId: String(chatId), hint: "Check Telegram message handler logic", errorKind: "internal" as const }, "Message handler error");
-      });
-    } catch (handlerErr) {
-      deps.logger.error({ err: handlerErr, chatId: String(chatId), hint: "Check Telegram message handler logic", errorKind: "internal" as const }, "Message handler error");
-    }
-  }
+  runWithContext(
+    {
+      traceId,
+      startedAt: systemNowMs(),
+      channelType: "telegram",
+    },
+    () => {
+      for (const handler of state.handlers) {
+        // Fire-and-forget: don't block Grammy middleware
+        try {
+          Promise.resolve(handler(normalized)).catch((handlerErr) => {
+            deps.logger.error({ err: handlerErr, chatId: String(chatId), hint: "Check Telegram message handler logic", errorKind: "internal" as const }, "Message handler error");
+          });
+        } catch (handlerErr) {
+          deps.logger.error({ err: handlerErr, chatId: String(chatId), hint: "Check Telegram message handler logic", errorKind: "internal" as const }, "Message handler error");
+        }
+      }
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +119,10 @@ export function bindInboundHandlers(
     }
   });
 
-  // Poll result handler: normalize Telegram poll updates and forward
+  // D1 exception (Plan 01-02): poll events bypass runWithContext —
+  // they are aggregated votes via deps.onPollResult, not per-user
+  // inbound messages. No traceId semantic. See RESEARCH.md
+  // per-adapter map entry #2.
   state.bot.on("poll", (ctx) => {
     if (!ctx.poll) return;
     const poll = ctx.poll;
@@ -183,31 +204,43 @@ export function bindInboundHandlers(
         }
       }
 
-      for (const handler of state.handlers) {
-        try {
-          Promise.resolve(handler(normalized)).catch((handlerErr) => {
-            deps.logger.error(
-              {
-                err: handlerErr,
-                chatId: String(ctx.from.id),
-                hint: "Check Telegram callback handler for unhandled errors",
-                errorKind: "internal" as const,
-              },
-              "Callback query handler error",
-            );
-          });
-        } catch (handlerErr) {
-          deps.logger.error(
-            {
-              err: handlerErr,
-              chatId: String(ctx.from.id),
-              hint: "Check Telegram callback handler for unhandled errors",
-              errorKind: "internal" as const,
-            },
-            "Callback query handler error",
-          );
-        }
-      }
+      // D1 (Plan 01-02): mint traceId at ingress for callback_query dispatch
+      const traceId = randomUUID();
+      normalized.metadata.traceId = traceId;
+      runWithContext(
+        {
+          traceId,
+          startedAt: systemNowMs(),
+          channelType: "telegram",
+        },
+        () => {
+          for (const handler of state.handlers) {
+            try {
+              Promise.resolve(handler(normalized)).catch((handlerErr) => {
+                deps.logger.error(
+                  {
+                    err: handlerErr,
+                    chatId: String(ctx.from.id),
+                    hint: "Check Telegram callback handler for unhandled errors",
+                    errorKind: "internal" as const,
+                  },
+                  "Callback query handler error",
+                );
+              });
+            } catch (handlerErr) {
+              deps.logger.error(
+                {
+                  err: handlerErr,
+                  chatId: String(ctx.from.id),
+                  hint: "Check Telegram callback handler for unhandled errors",
+                  errorKind: "internal" as const,
+                },
+                "Callback query handler error",
+              );
+            }
+          }
+        },
+      );
     } catch (error) {
       deps.logger.warn(
         {
