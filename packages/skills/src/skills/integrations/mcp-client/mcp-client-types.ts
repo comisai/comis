@@ -13,7 +13,7 @@
 
 import type { Result } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { TypedEventBus } from "@comis/core";
+import type { SystemIntervalHandle, TypedEventBus } from "@comis/core";
 import type PQueue from "p-queue";
 
 // ---------------------------------------------------------------------------
@@ -114,10 +114,49 @@ export interface McpServerConfig {
     readonly nofile?: number;
     readonly cpu?: number;
   };
+  /**
+   * Phase 64 RELY-02: per-server override of mcp.keepaliveIntervalMs (ms).
+   * `0` disables the keepalive ticker for this server (use for chatty
+   * servers that already receive frequent tool calls). Undefined ⇒ global
+   * `state.options.keepaliveIntervalMs` default applies.
+   * Resolution: `config.keepaliveIntervalMs ?? state.options.keepaliveIntervalMs`
+   * — use `??` (nullish coalescing), NOT `||`, so `0` is preserved (RESEARCH.md Pitfall 4).
+   */
+  readonly keepaliveIntervalMs?: number;
+  /**
+   * Phase 64 RELY-05: per-server override of mcp.circuitBreakerThreshold.
+   * Setting `1` effectively disables the breaker (opens on first failure
+   * but cooldown still applies). Undefined ⇒ global default applies.
+   */
+  readonly circuitBreakerThreshold?: number;
+  /**
+   * Phase 64 RELY-05: per-server override of mcp.circuitBreakerCooldownMs.
+   * Cooldown between open → half-open transitions. Undefined ⇒ global default.
+   */
+  readonly circuitBreakerCooldownMs?: number;
 }
 
 /** Connection status for an MCP server. */
 export type McpConnectionStatus = "connected" | "disconnected" | "connecting" | "reconnecting" | "error";
+
+/**
+ * Per-server circuit breaker state (Phase 64 RELY-04/05/06).
+ *
+ * Discriminated union — `status` is the closed string-literal discriminator;
+ * exhaustive switch sites must include `const _exhaustive: never = state.status`
+ * default branches (AGENTS.md §2.8 closed-union discriminators).
+ *
+ * Lifecycle:
+ *   closed --(failureCount ≥ threshold)--> open
+ *   open --(now - openedAtMs ≥ cooldownMs)--> half-open
+ *   half-open --(probe call success)--> closed
+ *   half-open --(probe call failure)--> open (reset openedAtMs)
+ *   * --(reconnect success)--> closed (per-generation; 64-P2 mitigation)
+ */
+export type CircuitState =
+  | { readonly status: "closed"; readonly failureCount: number }
+  | { readonly status: "open"; readonly failureCount: number; readonly openedAtMs: number }
+  | { readonly status: "half-open"; readonly failureCount: number };
 
 /** Configuration for automatic reconnection behavior. */
 export interface McpReconnectOptions {
@@ -213,6 +252,12 @@ export interface McpClientManagerDeps {
   readonly stdioDefaultConcurrency?: number;
   /** Default max concurrent tool calls for HTTP/SSE servers (default: 4). */
   readonly httpDefaultConcurrency?: number;
+  /** Phase 64 RELY-02: default keepalive interval (ms). 0 disables. Resolved at factory construction. */
+  readonly keepaliveIntervalMs?: number;
+  /** Phase 64 RELY-05: default circuit breaker failure threshold. Resolved at factory construction. */
+  readonly circuitBreakerThreshold?: number;
+  /** Phase 64 RELY-05: default circuit breaker cooldown (ms). Resolved at factory construction. */
+  readonly circuitBreakerCooldownMs?: number;
 }
 
 /** MCP Client Manager: manages connections to MCP servers and their tools. */
@@ -256,6 +301,12 @@ export interface McpClientManagerOptions {
   readonly stdioDefaultConcurrency: number;
   readonly httpDefaultConcurrency: number;
   readonly reconnectOpts: McpReconnectOptions;
+  /** Phase 64 RELY-02: global default keepalive interval (ms). 0 = disabled. Per-server override on McpServerConfig. */
+  readonly keepaliveIntervalMs: number;
+  /** Phase 64 RELY-05: global default consecutive failure threshold before breaker opens. Per-server override on McpServerConfig. */
+  readonly circuitBreakerThreshold: number;
+  /** Phase 64 RELY-05: global default cooldown (ms) between open → half-open transitions. Per-server override on McpServerConfig. */
+  readonly circuitBreakerCooldownMs: number;
 }
 
 /**
@@ -282,6 +333,22 @@ export interface McpClientManagerState {
   readonly callQueues: Map<string, PQueue>;
   /** server-name -> consecutive onerror count (absorbed below threshold, triggers reconnect at threshold). */
   readonly consecutiveErrors: Map<string, number>;
+  /**
+   * Phase 64 RELY-01/02: server-name -> systemSetInterval handle for the
+   * keepalive ticker (started on connect, stopped on disconnect).
+   *
+   * Phase 67 CAP-02: revisit keepalive queue routing for parallel-tool-call
+   * mode. Today the ticker shares the per-server PQueue with tool calls
+   * (stdio concurrency = 1 enforces serialization). Phase 67 will refactor
+   * if supportsParallelToolCalls lands; do NOT pre-anticipate here.
+   */
+  readonly keepaliveTickers: Map<string, SystemIntervalHandle>;
+  /**
+   * Phase 64 RELY-04/05/06: server-name -> circuit breaker state.
+   * Per-generation — reset to { status: "closed", failureCount: 0 } in
+   * reconnectionLoop's success block (64-P2 mitigation; mcp-client-reconnect.ts:274).
+   */
+  readonly circuitBreakers: Map<string, CircuitState>;
   /** Resolved options (timeouts, defaults, reconnect opts) computed once at construction time. */
   readonly options: McpClientManagerOptions;
 }
