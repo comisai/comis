@@ -227,18 +227,44 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
 
   return {
     async startAll(): Promise<void> {
-      // Build combined adapter list: direct adapters + plugin-registered adapters
+      // Dedup adapters by channelType. Both deps.adapters and
+      // deps.channelRegistry.getChannelPlugins() may reference the same
+      // adapter instance (the daemon composition root historically fed
+      // both — see fix in setup-channels-runtime.ts). Iterating a
+      // channelType-keyed Map ensures adapter.onMessage / adapter.start
+      // fire exactly once per channelType even if a future caller
+      // re-introduces a duplicate source. Collision between DISTINCT
+      // adapter objects claiming the same channelType is logged as a
+      // structured WARN — first-wins because deps.adapters enumerates
+      // before channelRegistry in source order.
       const registryAdapters = deps.channelRegistry
         ? deps.channelRegistry.getChannelPlugins().map((p) => p.adapter)
         : [];
-      const allAdapters = [...(deps.adapters ?? []), ...registryAdapters];
-
-      // Populate adapter lookup map for inject-message routing
-      for (const adapter of allAdapters) {
-        adaptersByType.set(adapter.channelType, adapter);
+      for (const adapter of [...(deps.adapters ?? []), ...registryAdapters]) {
+        const existing = adaptersByType.get(adapter.channelType);
+        if (existing === undefined) {
+          adaptersByType.set(adapter.channelType, adapter);
+          continue;
+        }
+        if (existing === adapter) {
+          // Same instance from both sources — silent dedup (the documented
+          // pre-fix daemon wiring). No warn; this is benign.
+          continue;
+        }
+        // Distinct adapter object collision — wiring mistake.
+        deps.logger.warn(
+          {
+            channelType: adapter.channelType,
+            firstAdapterId: existing.channelId,
+            skippedAdapterId: adapter.channelId,
+            hint: "Two distinct adapter objects claim the same channelType; check setup-channels-adapters.ts for duplicate plugin registration.",
+            errorKind: "config" as const,
+          },
+          "Duplicate channelType registered; keeping first adapter, skipping subsequent",
+        );
       }
 
-      for (const adapter of allAdapters) {
+      for (const adapter of adaptersByType.values()) {
         // Register message handler before starting
         adapter.onMessage(async (msg: NormalizedMessage) => {
           try {
@@ -335,13 +361,10 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
         );
       }
 
-      // Build combined adapter list: direct adapters + plugin-registered adapters
-      const registryAdapters = deps.channelRegistry
-        ? deps.channelRegistry.getChannelPlugins().map((p) => p.adapter)
-        : [];
-      const allAdapters = [...(deps.adapters ?? []), ...registryAdapters];
-
-      for (const adapter of allAdapters) {
+      // Iterate the channelType-keyed Map populated in startAll(). This
+      // matches startAll's iteration and ensures adapter.stop() fires
+      // exactly once per channelType.
+      for (const adapter of adaptersByType.values()) {
         const result = await adapter.stop();
         if (!result.ok) {
           deps.logger.error(
