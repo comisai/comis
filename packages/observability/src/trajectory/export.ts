@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Trajectory bundle export — types, constants, and pure helpers.
+ * Trajectory bundle export — types, constants, pure helpers, and
+ * SDK-based session reader.
  *
  * This file is the Phase 4 source-of-truth for:
  *
  *   §5 D5 — Hard limits + bundle exporter pipeline helpers.
+ *   §5 D3 — Session DAG reader with cycle + missing-parent detection.
  *   §6.2  — TrajectoryBundleManifest + TrajectoryBundleWarning shape.
  *
  * **Plan sequence:**
- *   - Plan 04-01 (this plan): types, 4 hard-limit constants,
+ *   - Plan 04-01: types, 4 hard-limit constants,
  *     `buildTranscriptEvents`, `sortTrajectoryEvents`.
- *   - Plan 04-02: adds `readSessionBranch(filePath)` to this file.
+ *   - Plan 04-02 (this plan): adds `readSessionBranch(filePath)` and
+ *     `ReadSessionBranchResult` — SESSION-02 DAG-aware reader.
  *   - Plan 04-03: adds `exportTrajectoryBundle(opts)` to this file.
  *
  * **TYPE MAPPING (session.transcript.entry):**
@@ -26,9 +29,20 @@
  * functions over typed inputs. Callers in Plan 04-03 enforce the
  * hard-limit caps before invoking them.
  *
+ * **readSessionBranch is a soft-fail reader** — corrupt input returns
+ * structured warnings, never throws. No raw JSONL parser is introduced;
+ * the SDK's `SessionManager.open()` is the trust anchor.
+ *
  * @module
  */
 
+import { statSync } from "node:fs";
+import { dirname } from "node:path";
+import {
+  SessionManager as SdkSessionManager,
+  type SessionEntry,
+  type SessionHeader,
+} from "@earendil-works/pi-coding-agent";
 import type { TrajectoryEvent, TrajectoryEventSource } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -59,6 +73,35 @@ export const MAX_TRAJECTORY_SESSION_FILE_BYTES = 52_428_800 as const;
  * `count` but are not added to the array.
  */
 export const MAX_TRAJECTORY_WARNING_ROWS = 20 as const;
+
+// ---------------------------------------------------------------------------
+// Private warning-construction helper (used by readSessionBranch).
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a single `TrajectoryBundleWarning` value.
+ *
+ * Caps `rows` at `MAX_TRAJECTORY_WARNING_ROWS` ONLY at construction time —
+ * so callers accumulate the full `count` while building rows[], then pass
+ * both to this helper. `count` preserves the true detection total.
+ *
+ * @internal
+ */
+function buildWarning(
+  source: TrajectoryBundleWarning["source"],
+  code: TrajectoryBundleWarning["code"],
+  count: number,
+  rows: number[],
+  message: string,
+): TrajectoryBundleWarning {
+  return {
+    source,
+    code,
+    count,
+    rows: rows.slice(0, MAX_TRAJECTORY_WARNING_ROWS),
+    message,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // TrajectoryBundleWarning (design §6.2)
@@ -254,4 +297,217 @@ export function sortTrajectoryEvents(events: ReadonlyArray<TrajectoryEvent>): Tr
 
     return 0;
   });
+}
+
+// ---------------------------------------------------------------------------
+// ReadSessionBranchResult + readSessionBranch (SESSION-02, Plan 04-02)
+// ---------------------------------------------------------------------------
+
+/**
+ * Output of `readSessionBranch`.
+ *
+ * - `header`: SDK session header, or `null` when the file does not exist
+ *   or the session is empty/header-only.
+ * - `leafId`: the leaf entry id at read time (SDK's current pointer),
+ *   or `null` when the session is empty.
+ * - `branchEntries`: chronologically-ordered branch from root to leaf
+ *   (reverse of the leaf-to-root walk). Excludes the header. Empty when
+ *   no entries are reachable.
+ * - `warnings`: structured warnings emitted during the walk
+ *   (cycle / missing-parent / invalid-json). Each warning code's `rows`
+ *   field is capped at `MAX_TRAJECTORY_WARNING_ROWS`; `count` preserves
+ *   the true detection count.
+ */
+export interface ReadSessionBranchResult {
+  readonly header: SessionHeader | null;
+  readonly leafId: string | null;
+  readonly branchEntries: ReadonlyArray<SessionEntry>;
+  readonly warnings: ReadonlyArray<TrajectoryBundleWarning>;
+}
+
+/** Empty-result shorthand for pre-flight failures. */
+function emptyResult(warnings: TrajectoryBundleWarning[]): ReadSessionBranchResult {
+  return { header: null, leafId: null, branchEntries: [], warnings };
+}
+
+/**
+ * Read a session JSONL file via the SDK SessionManager and walk
+ * leaf-to-root via parentId chain, emitting structured warnings on
+ * cycles and missing parents.
+ *
+ * Algorithm (design §5 D3 + research §8):
+ *   1. Pre-flight stat. If file > MAX_TRAJECTORY_SESSION_FILE_BYTES,
+ *      return invalid-session-json warning, no throw, no SDK open.
+ *   2. SdkSessionManager.open(filePath, dirname(filePath)) inside try/catch.
+ *      On throw → invalid-session-json warning, return empty result.
+ *   3. sm.getHeader() → header (may be null).
+ *   4. sm.getLeafEntry() → leaf (may be undefined → return empty branch).
+ *   5. Walk: bounded loop from leaf backward through parentId chain.
+ *      - `seen` Set detects cycles (emits cyclic-session-branch).
+ *      - `sm.getEntry(parentId)` returning undefined → missing-parent
+ *        (emits incomplete-session-branch), stops walk.
+ *      - Hard iteration cap at MAX_TRAJECTORY_TOTAL_EVENTS (defense-in-depth).
+ *   6. branchEntries = reversedBranch.reverse() (root → leaf, chronological).
+ *   7. Build warnings: one entry per code; cap rows at MAX_TRAJECTORY_WARNING_ROWS.
+ *
+ * Returns a `ReadSessionBranchResult`-shaped plain object.
+ * **Never throws.** Corrupt input → warning + reachable suffix.
+ *
+ * **No raw JSONL parsing:** the SDK's SessionManager.open is the only
+ * JSONL parser — no second `JSON.parse` pass on the file contents.
+ *
+ * @public
+ */
+export function readSessionBranch(filePath: string): ReadSessionBranchResult {
+  // -------------------------------------------------------------------------
+  // Step 1a: pre-flight stat — ENOENT or any error returns invalid-session-json.
+  // -------------------------------------------------------------------------
+  let statResult: { size: number };
+  try {
+    statResult = statSync(filePath);
+  } catch {
+    return emptyResult([
+      buildWarning("session", "invalid-session-json", 1, [], "Session file not readable"),
+    ]);
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 1b: size cap (50 MiB defense-in-depth; Plan 04-03 also stats).
+  // -------------------------------------------------------------------------
+  if (statResult.size > MAX_TRAJECTORY_SESSION_FILE_BYTES) {
+    return emptyResult([
+      buildWarning(
+        "session",
+        "invalid-session-json",
+        1,
+        [],
+        "Session file exceeds MAX_TRAJECTORY_SESSION_FILE_BYTES (50 MB)",
+      ),
+    ]);
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 2: open session via SDK — the only JSONL parser.
+  // -------------------------------------------------------------------------
+  let sm: ReturnType<typeof SdkSessionManager.open>;
+  try {
+    sm = SdkSessionManager.open(filePath, dirname(filePath));
+  } catch {
+    // Do NOT include the SDK error message — defense against adversarial
+    // error strings carrying attacker-controlled bytes (T-04-02-05).
+    return emptyResult([
+      buildWarning("session", "invalid-session-json", 1, [], "SDK SessionManager.open failed"),
+    ]);
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 3: header (may be null for malformed / empty files).
+  // -------------------------------------------------------------------------
+  const header = sm.getHeader();
+
+  // -------------------------------------------------------------------------
+  // Step 4: leaf entry — undefined means header-only or empty session.
+  //         Header-only is well-formed; no warning.
+  // -------------------------------------------------------------------------
+  const leafEntry = sm.getLeafEntry();
+  if (leafEntry === undefined) {
+    return { header, leafId: null, branchEntries: [], warnings: [] };
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 5: leaf-to-root walk with cycle + missing-parent detection.
+  // -------------------------------------------------------------------------
+  const seen = new Set<string>();
+  const reversedBranch: SessionEntry[] = [];
+
+  // Accumulators for warning metadata (rows + counts, uncapped during walk).
+  const cycleRowIndices: number[] = [];
+  let cycleCount = 0;
+  const missingParentRowIndices: number[] = [];
+  let missingParentCount = 0;
+
+  let current: SessionEntry | undefined = leafEntry;
+  let iterCapHit = false;
+
+  for (let iter = 0; iter < MAX_TRAJECTORY_TOTAL_EVENTS && current !== undefined; iter++) {
+    // Cycle detection: if we have already visited this entry's id, stop.
+    if (seen.has(current.id)) {
+      cycleCount += 1;
+      cycleRowIndices.push(iter);
+      break;
+    }
+
+    seen.add(current.id);
+    reversedBranch.push(current);
+
+    // Stop at the root (parentId === null means this is the branch root).
+    if (current.parentId === null) {
+      break;
+    }
+
+    // Walk to parent.
+    const parent = sm.getEntry(current.parentId);
+    if (parent === undefined) {
+      missingParentCount += 1;
+      missingParentRowIndices.push(iter);
+      break;
+    }
+
+    current = parent;
+
+    // Safety: if this is the last iteration and the loop exits without
+    // terminating cleanly, record as a cycle (defense-in-depth against
+    // a session that somehow defeats `seen`). Check at the END of each
+    // iteration — the cap fires only if we consumed all iterations.
+    if (iter === MAX_TRAJECTORY_TOTAL_EVENTS - 1) {
+      iterCapHit = true;
+    }
+  }
+
+  // If the hard cap was hit, record as a cyclic warning (T-04-02-04).
+  if (iterCapHit && cycleCount === 0 && missingParentCount === 0) {
+    cycleCount += 1;
+    cycleRowIndices.push(MAX_TRAJECTORY_TOTAL_EVENTS - 1);
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 6: reverse to chronological order (root → leaf).
+  // -------------------------------------------------------------------------
+  const branchEntries = reversedBranch.reverse();
+
+  // -------------------------------------------------------------------------
+  // Step 7: build warnings array (at most one entry per code).
+  // -------------------------------------------------------------------------
+  const warnings: TrajectoryBundleWarning[] = [];
+
+  if (cycleCount > 0) {
+    warnings.push(
+      buildWarning(
+        "session",
+        "cyclic-session-branch",
+        cycleCount,
+        cycleRowIndices,
+        "Cyclic parentId chain detected in session JSONL",
+      ),
+    );
+  }
+
+  if (missingParentCount > 0) {
+    warnings.push(
+      buildWarning(
+        "session",
+        "incomplete-session-branch",
+        missingParentCount,
+        missingParentRowIndices,
+        "Session entry references a parentId that could not be resolved",
+      ),
+    );
+  }
+
+  return {
+    header,
+    leafId: leafEntry.id,
+    branchEntries,
+    warnings,
+  };
 }

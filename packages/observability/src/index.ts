@@ -173,6 +173,7 @@ export type { TraceArtifactsRunState, TraceArtifactsPayload } from "./trajectory
 export {
   buildTranscriptEvents,
   sortTrajectoryEvents,
+  readSessionBranch,
   MAX_TRAJECTORY_RUNTIME_EVENTS,
   MAX_TRAJECTORY_TOTAL_EVENTS,
   MAX_TRAJECTORY_SESSION_FILE_BYTES,
@@ -183,6 +184,7 @@ export type {
   TrajectoryBundleWarning,
   TranscriptEventBase,
   TranscriptSourceEntry,
+  ReadSessionBranchResult,
 } from "./trajectory/export.js";
 
 // ---------------------------------------------------------------------------
