@@ -14,6 +14,7 @@ import {
   redactEventForExport,
   walkAndRedactStrings,
   getValueShapePatterns,
+  substitutePathsInString,
   type ValueShapePattern,
 } from "./value-shapes.js";
 import type { TrajectoryEvent } from "../trajectory/types.js";
@@ -373,5 +374,102 @@ describe("redactEventForExport", () => {
     expect((result.data?.["chatId"] as string)).toBe("<REDACTED:long-decimal-id>");
     expect((result.data?.["email"] as string)).toContain("<REDACTED:email>");
     expect(result.data?.["note"]).toBe("a benign note");
+  });
+
+  it("opts.workspaceDir path substitution applied to string data fields", () => {
+    const event = makeEvent({
+      sessionPath: "/Users/alice/.comis/workspace/sessions/x",
+    });
+    const opts = { workspaceDir: "/Users/alice/.comis/workspace" };
+    const result = redactEventForExport(event, opts);
+    expect(result.data?.["sessionPath"]).toBe("$WORKSPACE_DIR/sessions/x");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// substitutePathsInString (REDACT-02)
+// ---------------------------------------------------------------------------
+
+describe("substitutePathsInString", () => {
+  it("replaces homeDir with $HOME placeholder", () => {
+    const result = substitutePathsInString("/Users/alice/foo", { homeDir: "/Users/alice" });
+    expect(result).toBe("$HOME/foo");
+  });
+
+  it("longest-first: workspaceDir wins over homeDir and stateDir when all nest", () => {
+    const result = substitutePathsInString(
+      "/Users/alice/.comis/workspace/sessions/abc/file.jsonl",
+      {
+        homeDir: "/Users/alice",
+        stateDir: "/Users/alice/.comis",
+        workspaceDir: "/Users/alice/.comis/workspace",
+      },
+    );
+    // workspaceDir is the longest match — must win, NOT $HOME/.comis/workspace/...
+    expect(result).toBe("$WORKSPACE_DIR/sessions/abc/file.jsonl");
+    expect(result).not.toContain("/Users/alice");
+  });
+
+  it("returns unchanged string when no path matches", () => {
+    const result = substitutePathsInString("/var/log/foo", { homeDir: "/Users/alice" });
+    expect(result).toBe("/var/log/foo");
+  });
+
+  it("returns unchanged string when opts is empty", () => {
+    const result = substitutePathsInString("text without paths", {});
+    expect(result).toBe("text without paths");
+  });
+
+  it("substitutes only the literal path occurrences (not pre-existing $HOME)", () => {
+    // The string contains a literal $HOME and the real path — only the real path is substituted.
+    const result = substitutePathsInString("$HOME is /Users/alice", { homeDir: "/Users/alice" });
+    // The "$HOME" substring is left alone; the literal "/Users/alice" is substituted.
+    expect(result).toBe("$HOME is $HOME");
+  });
+
+  it("handles paths with regex meta chars (brackets) correctly (literal match, not regex)", () => {
+    const result = substitutePathsInString(
+      "/Users/alice/[brackets].txt",
+      { homeDir: "/Users/alice" },
+    );
+    expect(result).toBe("$HOME/[brackets].txt");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// walkAndRedactStrings with opts (REDACT-02)
+// ---------------------------------------------------------------------------
+
+describe("walkAndRedactStrings with RedactionOpts", () => {
+  it("substitutes homeDir path in string leaves", () => {
+    const result = walkAndRedactStrings(
+      { path: "/Users/alice/file" },
+      { homeDir: "/Users/alice" },
+    ) as Record<string, unknown>;
+    expect(result["path"]).toBe("$HOME/file");
+  });
+
+  it("combines value-shape redaction and path substitution on the same string", () => {
+    // Long decimal ID in a path-containing value: first redact the ID, then sub the path.
+    // chatId is a 10-digit string that gets redacted; workspacePath is a path that gets substituted.
+    const result = walkAndRedactStrings(
+      {
+        workspacePath: "/Users/alice/.comis/workspace/x",
+        chatId: "1234567890",
+      },
+      {
+        workspaceDir: "/Users/alice/.comis/workspace",
+        homeDir: "/Users/alice",
+      },
+    ) as Record<string, unknown>;
+    expect(result["workspacePath"]).toBe("$WORKSPACE_DIR/x");
+    expect(result["chatId"]).toBe("<REDACTED:long-decimal-id>");
+  });
+
+  it("walkAndRedactStrings without opts still works (backward-compat)", () => {
+    const jwt =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+    const result = walkAndRedactStrings(jwt);
+    expect(result).toContain("<REDACTED:jwt>");
   });
 });
