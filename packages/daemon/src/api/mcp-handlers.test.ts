@@ -42,7 +42,7 @@ vi.mock("../config/audit-hook.js", () => ({
   appendConfigAuditWithOutcome: vi.fn(),
 }));
 
-import { createMcpHandlers } from "./mcp-handlers.js";
+import { createMcpHandlers, looksLikePlaintextSecret } from "./mcp-handlers.js";
 import { persistToConfig } from "./shared/persist-to-config.js";
 import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "../config/audit-hook.js";
 import type { McpClientManager, McpConnection, McpToolDefinition } from "@comis/skills";
@@ -281,6 +281,225 @@ describe("MCP RPC Handlers", () => {
       await expect(
         handlers["mcp.connect"]({ server_name: "bad", transport: "stdio", command: "nope" }),
       ).rejects.toThrow("Failed to connect");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 63 SAFETY-03/04/09 — plaintext-secret pre-Zod guard on mcp.connect.
+  //
+  // The guard runs IMMEDIATELY AFTER stripInternalFields and BEFORE
+  // McpConnectContract.request.parse. It scans userParams.env values for
+  // (a) known credential prefixes (ghp_, sk-, AKIA, etc.) OR (b) the
+  // entropy backstop (Shannon entropy > 3.5 AND length >= 44). The
+  // per-server `disablePlaintextSecretCheck: true` opt-out from Plan 01's
+  // McpServerEntrySchema is the last-resort escape hatch — WARN-and-allow.
+  //
+  // Length floor 44 (NOT 40) per RESEARCH.md §"Pitfall 6": eliminates the
+  // OpenAI 40-char org-ID false positive without losing any real-token
+  // rejection.
+  // -------------------------------------------------------------------------
+  describe("mcp.connect plaintext-secret guard (Phase 63 SAFETY-03/04/09)", () => {
+    it("rejects ghp_ GitHub PAT prefix with [plaintext_secret_in_env] naming the variable", async () => {
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "gh",
+          transport: "stdio",
+          command: "npx",
+          env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_env\] env\.GITHUB_TOKEN/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    it("rejects sk- OpenAI API key prefix with [plaintext_secret_in_env] naming the variable", async () => {
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "oa",
+          transport: "stdio",
+          command: "npx",
+          env: { OPENAI_API_KEY: "sk-aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdef" },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_env\] env\.OPENAI_API_KEY/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    it("rejects xoxb- Slack bot token prefix with [plaintext_secret_in_env]", async () => {
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "slack",
+          transport: "stdio",
+          command: "npx",
+          env: { SLACK_TOKEN: "xoxb-abcdef1234567890abcdef1234567890" },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_env\]/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    it("rejects AWS AKIA access-key prefix with [plaintext_secret_in_env]", async () => {
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "aws",
+          transport: "stdio",
+          command: "npx",
+          env: { AWS_KEY: "AKIAIOSFODNN7EXAMPLE" },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_env\]/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    it("PASSES Notion DB UUID (36 chars, entropy <3.99, no prefix) — false-positive negative control", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("notion", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await handlers["mcp.connect"]({
+        server_name: "notion",
+        transport: "stdio",
+        command: "npx",
+        env: { NOTION_DB: "8f3b2c1a-9d4e-7f60-b5e2-c8d1a4f7b9c3" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    it("PASSES Stripe customer ID cus_* (length ~17, no sk_ prefix) — false-positive negative control", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("stripe", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await handlers["mcp.connect"]({
+        server_name: "stripe",
+        transport: "stdio",
+        command: "npx",
+        env: { STRIPE_CUST: "cus_NffrFeUfNV2Hib" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    it("PASSES OpenAI org ID org-* (28 chars, length < 44) — false-positive negative control", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("oa-org", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await handlers["mcp.connect"]({
+        server_name: "oa-org",
+        transport: "stdio",
+        command: "npx",
+        env: { OPENAI_ORG: "org-ScmHEqZDkG8eYLJBVxpOTEh1" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    it("PASSES PATH value at length 44 with entropy ~3.31 (below entropy floor)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("pathy", [])));
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await handlers["mcp.connect"]({
+        server_name: "pathy",
+        transport: "stdio",
+        command: "npx",
+        env: { PATH_VALUE: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    it("REJECTS high-entropy 44-char random string (entropy backstop catches generic high-entropy keys)", async () => {
+      // 44-character pseudo-random base64-ish string with no known prefix.
+      // Shannon entropy of this string is well above the 3.5 floor.
+      const HIGH_ENTROPY_44_CHAR = "Z9aB3xK7mP2qLr5tEvF8nGwHsJ4uVbCdYxRzNoPqW1Aa";
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "random",
+          transport: "stdio",
+          command: "npx",
+          env: { LONG_RANDOM: HIGH_ENTROPY_44_CHAR },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_env\] env\.LONG_RANDOM/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    it("ALLOWS connect when disablePlaintextSecretCheck:true even with ghp_ prefix; logs WARN with errorKind:config", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("gh-optout", [])));
+      const logger = makeLogger();
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger });
+      await handlers["mcp.connect"]({
+        server_name: "gh-optout",
+        transport: "stdio",
+        command: "npx",
+        env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
+        // Per-server opt-out from McpServerEntrySchema (Plan 01).
+        disablePlaintextSecretCheck: true,
+      } as any);
+      expect(manager.connect).toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: "mcp.connect",
+          entityId: "gh-optout",
+          errorKind: "config",
+        }),
+        expect.stringContaining("plaintext-secret check disabled"),
+      );
+    });
+
+    it("PASSES unresolved env-ref placeholder ${KEY} (handled separately by findUnresolvedEnvRefs)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("envref", [])));
+      const sm = createSecretManager({ GH_TOKEN: "ghp_resolved-value-here-not-a-secret-shape" });
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+      });
+      await handlers["mcp.connect"]({
+        server_name: "envref",
+        transport: "stdio",
+        command: "npx",
+        env: { RESOLVED_REF: "${GH_TOKEN}" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 63 SAFETY-03/09 — looksLikePlaintextSecret pure-function unit tests.
+  //
+  // Direct pure-function coverage so the heuristic shape (prefix list +
+  // entropy >3.5 AND length >=44 backstop) is pinned independent of the
+  // RPC handler integration. Architecture-tier negative-control test
+  // (test/architecture/mcp-plaintext-secret-false-positives.test.ts) is
+  // Task 2's deliverable; this block is the daemon-resident smoke check.
+  // -------------------------------------------------------------------------
+  describe("looksLikePlaintextSecret pure-function heuristic (Phase 63 SAFETY-03/09)", () => {
+    it("returns true for ghp_ GitHub PAT prefix", () => {
+      expect(looksLikePlaintextSecret("ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789")).toBe(true);
+    });
+
+    it("returns true for sk- OpenAI key prefix", () => {
+      expect(looksLikePlaintextSecret("sk-aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdef")).toBe(true);
+    });
+
+    it("returns true for AWS AKIA prefix (short 20-char prefix-only rejection)", () => {
+      expect(looksLikePlaintextSecret("AKIAIOSFODNN7EXAMPLE")).toBe(true);
+    });
+
+    it("returns true for entropy backstop (length 44, entropy >3.5, no known prefix)", () => {
+      expect(looksLikePlaintextSecret("Z9aB3xK7mP2qLr5tEvF8nGwHsJ4uVbCdYxRzNoPqW1Aa")).toBe(true);
+    });
+
+    it("returns false for Notion DB UUID 36-char (no prefix, length < 44)", () => {
+      expect(looksLikePlaintextSecret("8f3b2c1a-9d4e-7f60-b5e2-c8d1a4f7b9c3")).toBe(false);
+    });
+
+    it("returns false for OpenAI org ID 28-char (no prefix, length < 44)", () => {
+      expect(looksLikePlaintextSecret("org-ScmHEqZDkG8eYLJBVxpOTEh1")).toBe(false);
+    });
+
+    it("returns false for Stripe customer ID cus_* (no sk_ prefix)", () => {
+      expect(looksLikePlaintextSecret("cus_NffrFeUfNV2Hib")).toBe(false);
+    });
+
+    it("returns false for unresolved env-ref placeholder ${KEY}", () => {
+      expect(looksLikePlaintextSecret("${GITHUB_TOKEN}")).toBe(false);
+    });
+
+    it("returns false for empty string", () => {
+      expect(looksLikePlaintextSecret("")).toBe(false);
     });
   });
 
