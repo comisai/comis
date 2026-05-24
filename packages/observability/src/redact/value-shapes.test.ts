@@ -1,0 +1,364 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Value-shape redactor tests (REDACT-01 / REDACT-03).
+ *
+ * Per-pattern positive + negative fixtures; walker tests; per-event redactor tests.
+ * This file is the RED gate — tests fail before value-shapes.ts lands.
+ *
+ * @module
+ */
+
+import { describe, it, expect } from "vitest";
+import {
+  redactString,
+  redactEventForExport,
+  walkAndRedactStrings,
+  getValueShapePatterns,
+  type ValueShapePattern,
+} from "./value-shapes.js";
+import type { TrajectoryEvent } from "../trajectory/types.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function patternById(id: string): ValueShapePattern {
+  const patterns = getValueShapePatterns();
+  const p = patterns.find((x) => x.id === id);
+  if (!p) throw new Error(`pattern id "${id}" missing from value-shape set`);
+  return p;
+}
+
+/** Recompile fresh RegExp so /g lastIndex doesn't leak. */
+function patternMatches(p: ValueShapePattern, sample: string): boolean {
+  const re = new RegExp(p.regex.source, p.regex.flags);
+  return re.test(sample);
+}
+
+function makeEvent(data?: Record<string, unknown>): TrajectoryEvent {
+  return {
+    traceSchema: "comis-trajectory",
+    schemaVersion: 1,
+    source: "runtime",
+    type: "session.started",
+    ts: "2026-05-25T00:00:00.000Z",
+    seq: 1,
+    agentId: "agent-1",
+    sessionId: "sess-abc",
+    traceId: "trace-xyz",
+    entryId: "entry-001",
+    data,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pattern set surface (11 patterns)
+// ---------------------------------------------------------------------------
+
+describe("value-shape pattern set — surface", () => {
+  it("returns exactly 11 patterns", () => {
+    expect(getValueShapePatterns().length).toBe(11);
+  });
+
+  it("every pattern has id, regex, and sentinel fields", () => {
+    for (const p of getValueShapePatterns()) {
+      expect(typeof p.id).toBe("string");
+      expect(p.regex).toBeInstanceOf(RegExp);
+      expect(typeof p.sentinel).toBe("string");
+    }
+  });
+
+  it("every sentinel is exactly `<REDACTED:${id}>`", () => {
+    for (const p of getValueShapePatterns()) {
+      expect(p.sentinel).toBe(`<REDACTED:${p.id}>`);
+    }
+  });
+
+  it("pattern ids are unique", () => {
+    const ids = getValueShapePatterns().map((p) => p.id);
+    expect(new Set(ids).size).toBe(11);
+  });
+
+  it("every pattern has the global flag (g) for replace semantics", () => {
+    for (const p of getValueShapePatterns()) {
+      expect(p.regex.flags).toContain("g");
+    }
+  });
+
+  it("the pattern array is frozen (immutable)", () => {
+    const patterns = getValueShapePatterns();
+    expect(Object.isFrozen(patterns)).toBe(true);
+  });
+
+  it("expected ids present: all 11 known ids", () => {
+    const ids = new Set(getValueShapePatterns().map((p) => p.id));
+    const expected = [
+      "secret-field",
+      "payload-field",
+      "identifier-field",
+      "aws-access-key-id",
+      "jwt",
+      "url-userinfo",
+      "url-param",
+      "email",
+      "long-decimal-id",
+      "basic-auth",
+      "cookie-header",
+    ];
+    for (const id of expected) {
+      expect(ids.has(id), `expected id "${id}" to be present`).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// redactString — per-pattern positive cases (must redact)
+// ---------------------------------------------------------------------------
+
+describe("redactString — per-pattern positive cases", () => {
+  it("secret-field: redacts 'authorization' substring in body text", () => {
+    const result = redactString("the authorization header was leaked");
+    expect(result).toContain("<REDACTED:secret-field>");
+    expect(result).not.toContain("authorization");
+  });
+
+  it("payload-field: redacts 'message' substring in body text", () => {
+    const result = redactString("the message body was received");
+    expect(result).toContain("<REDACTED:payload-field>");
+  });
+
+  it("identifier-field: redacts 'chat_id' substring in body text", () => {
+    const result = redactString("the chat_id was provided");
+    expect(result).toContain("<REDACTED:identifier-field>");
+  });
+
+  it("aws-access-key-id: redacts AKIA + 16 uppercase alphanumeric chars", () => {
+    const result = redactString("key: AKIAIOSFODNN7EXAMPLE");
+    expect(result).toBe("key: <REDACTED:aws-access-key-id>");
+  });
+
+  it("jwt: redacts a three-segment base64url JWT token", () => {
+    // A real-shaped JWT: 3 segments separated by dots, each ≥10 chars
+    const jwt =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+    const result = redactString(`token=${jwt}`);
+    expect(result).toContain("<REDACTED:jwt>");
+    expect(result).not.toContain("eyJhbGci");
+  });
+
+  it("url-userinfo: redacts credentials in https://user:pass@host URLs", () => {
+    const result = redactString("connect to https://user:pass@example.com/path");
+    expect(result).toContain("<REDACTED:url-userinfo>");
+    expect(result).not.toContain("user:pass@");
+  });
+
+  it("url-param: redacts query parameter values", () => {
+    const result = redactString("GET /api?api_key=s3cr3t&foo=bar");
+    expect(result).toContain("<REDACTED:url-param>");
+    expect(result).not.toContain("s3cr3t");
+  });
+
+  it("email: redacts a standard email address", () => {
+    const result = redactString("contact alice@example.com for help");
+    expect(result).toBe("contact <REDACTED:email> for help");
+  });
+
+  it("long-decimal-id: redacts a 9+ digit string of digits (chat ID)", () => {
+    const result = redactString("chat id 123456789 connected");
+    expect(result).toBe("chat id <REDACTED:long-decimal-id> connected");
+  });
+
+  it("basic-auth: redacts a Base64-encoded Basic auth credential", () => {
+    const result = redactString("Authorization: Basic dXNlcjpwYXNz");
+    expect(result).toContain("<REDACTED:basic-auth>");
+    expect(result).not.toContain("dXNlcjpwYXNz");
+  });
+
+  it("cookie-header: redacts a Cookie header line", () => {
+    const result = redactString("Cookie: session=abc123; auth=xyz");
+    expect(result).toBe("<REDACTED:cookie-header>");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// redactString — per-pattern negative cases (must NOT redact)
+// ---------------------------------------------------------------------------
+
+describe("redactString — per-pattern negative cases", () => {
+  it("secret-field: a sentence with no matching field-name substring is unchanged", () => {
+    const input = "the file was loaded successfully";
+    expect(redactString(input)).toBe(input);
+  });
+
+  it("payload-field: a sentence with no payload field substrings is unchanged", () => {
+    const input = "the operation completed in 12ms";
+    expect(redactString(input)).toBe(input);
+  });
+
+  it("identifier-field: a sentence with no identifier field substrings is unchanged", () => {
+    // 'the', 'file', 'loaded' contain no chatId/userId/email/username substring
+    const input = "the file was loaded";
+    expect(redactString(input)).toBe(input);
+  });
+
+  it("aws-access-key-id: AKIA123 (too short body — only 3 chars) is NOT redacted", () => {
+    const p = patternById("aws-access-key-id");
+    expect(patternMatches(p, "AKIA123")).toBe(false);
+  });
+
+  it("jwt: eyJ123 (too short — body < 10 chars) is NOT redacted", () => {
+    const p = patternById("jwt");
+    expect(patternMatches(p, "eyJ123.short.abc")).toBe(false);
+  });
+
+  it("url-userinfo: plain https://example.com/path (no credentials) is NOT redacted", () => {
+    const input = "connect to https://example.com/path";
+    // url-userinfo pattern requires @; plain URL has none
+    expect(redactString(input)).toBe(input);
+  });
+
+  it("url-param: plain body text with no query params is NOT redacted", () => {
+    const input = "regular text without parameters";
+    expect(redactString(input)).toBe(input);
+  });
+
+  it("email: 'tool@v1' (no TLD dot after single char) is NOT redacted by email pattern", () => {
+    // email regex requires \.[A-Z]{2,}\b — 'v1' has no dot at all
+    const p = patternById("email");
+    expect(patternMatches(p, "tool@v1")).toBe(false);
+  });
+
+  it("long-decimal-id: '12345678' (8 digits, below threshold) is NOT redacted", () => {
+    const input = "count 12345678";
+    expect(redactString(input)).toBe(input);
+  });
+
+  it("basic-auth: 'BasicAuthDocs' (no whitespace between Basic and rest) is NOT redacted", () => {
+    // Regex requires \bBasic\s+ — no space between 'Basic' and 'Auth' in 'BasicAuthDocs'
+    const p = patternById("basic-auth");
+    expect(patternMatches(p, "BasicAuthDocs")).toBe(false);
+  });
+
+  it("cookie-header: 'Cookies are tasty' (no colon after Cookie) is NOT redacted", () => {
+    // Regex requires Cookie\s*: with colon — 'Cookies are' has no colon
+    const p = patternById("cookie-header");
+    expect(patternMatches(p, "Cookies are tasty")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// walkAndRedactStrings
+// ---------------------------------------------------------------------------
+
+describe("walkAndRedactStrings", () => {
+  it("redacts a JWT in a top-level string", () => {
+    const jwt =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+    const result = walkAndRedactStrings(jwt);
+    expect(result).toContain("<REDACTED:jwt>");
+  });
+
+  it("leaves a number unchanged (no string coercion — Unix ms timestamp landmine)", () => {
+    const result = walkAndRedactStrings(1735689600000);
+    expect(result).toBe(1735689600000);
+    expect(typeof result).toBe("number");
+  });
+
+  it("redacts 9+ digit chatId string value, leaves ISO ts string alone", () => {
+    const input = {
+      ts: "2026-05-25T00:00:00.000Z",
+      chatId: "1234567890",
+    };
+    const result = walkAndRedactStrings(input) as Record<string, unknown>;
+    // ISO timestamp: \b breaks on - and :, no 9+ consecutive digits
+    expect(result["ts"]).toBe("2026-05-25T00:00:00.000Z");
+    // 10-digit string is redacted
+    expect(result["chatId"]).toBe("<REDACTED:long-decimal-id>");
+  });
+
+  it("recurses deeply into nested objects and redacts email at depth N", () => {
+    const input = { nested: { deep: { email: "alice@example.com" } } };
+    const result = walkAndRedactStrings(input) as Record<
+      string,
+      Record<string, Record<string, unknown>>
+    >;
+    expect(result["nested"]["deep"]["email"]).toContain("<REDACTED:email>");
+  });
+
+  it("redacts email in arrays but passes numbers through", () => {
+    const input = { list: ["regular", "alice@example.com", 123] };
+    const result = walkAndRedactStrings(input) as Record<string, unknown[]>;
+    expect(result["list"][0]).toBe("regular");
+    expect((result["list"][1] as string)).toContain("<REDACTED:email>");
+    expect(result["list"][2]).toBe(123);
+  });
+
+  it("handles circular references without throwing (returns { __cycle: true })", () => {
+    const obj: Record<string, unknown> = { a: "hello" };
+    obj["self"] = obj; // circular reference
+    expect(() => walkAndRedactStrings(obj)).not.toThrow();
+    const result = walkAndRedactStrings(obj) as Record<string, unknown>;
+    expect(result["self"]).toEqual({ __cycle: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// redactEventForExport
+// ---------------------------------------------------------------------------
+
+describe("redactEventForExport", () => {
+  it("returns the same event reference when data is undefined", () => {
+    const event = makeEvent(undefined);
+    const result = redactEventForExport(event);
+    expect(result).toBe(event);
+  });
+
+  it("returns a NEW event object (not the same reference) when data is defined", () => {
+    const event = makeEvent({ note: "hello" });
+    const result = redactEventForExport(event);
+    expect(result).not.toBe(event);
+  });
+
+  it("does NOT mutate the original event's data", () => {
+    const data = { email: "alice@example.com" };
+    const event = makeEvent(data);
+    redactEventForExport(event);
+    // Original data must remain untouched
+    expect(data["email"]).toBe("alice@example.com");
+  });
+
+  it("preserves all envelope fields verbatim", () => {
+    const event = makeEvent({ chatId: "987654321" });
+    const result = redactEventForExport(event);
+    expect(result.traceSchema).toBe(event.traceSchema);
+    expect(result.schemaVersion).toBe(event.schemaVersion);
+    expect(result.source).toBe(event.source);
+    expect(result.type).toBe(event.type);
+    expect(result.ts).toBe(event.ts);
+    expect(result.seq).toBe(event.seq);
+    expect(result.agentId).toBe(event.agentId);
+    expect(result.sessionId).toBe(event.sessionId);
+    expect(result.traceId).toBe(event.traceId);
+    expect(result.entryId).toBe(event.entryId);
+  });
+
+  it("leaves number-typed data values untouched (no false positives on seq/counts)", () => {
+    const event = makeEvent({ seq: 1234, durationMs: 567, count: 99 });
+    const result = redactEventForExport(event);
+    expect(result.data?.["seq"]).toBe(1234);
+    expect(result.data?.["durationMs"]).toBe(567);
+    expect(result.data?.["count"]).toBe(99);
+  });
+
+  it("redacts string-typed data values with matching patterns", () => {
+    const event = makeEvent({
+      chatId: "1234567890",
+      email: "alice@example.com",
+      note: "plain text",
+    });
+    const result = redactEventForExport(event);
+    expect((result.data?.["chatId"] as string)).toBe("<REDACTED:long-decimal-id>");
+    expect((result.data?.["email"] as string)).toContain("<REDACTED:email>");
+    expect(result.data?.["note"]).toBe("plain text");
+  });
+});
