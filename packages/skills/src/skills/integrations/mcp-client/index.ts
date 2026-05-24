@@ -60,6 +60,16 @@ export { qualifyToolName, parseQualifiedName } from "./mcp-client-types.js";
 // via @comis/skills.
 export { MCP_STDIO_BUILTIN_ENV_ALLOWLIST, scrubStdioEnv } from "./mcp-client-discover.js";
 
+// Phase 63 SAFETY-05/06: pre-spawn OSV malware check + package-name
+// extraction for stdio MCP commands. Re-exported so the daemon RPC handler
+// + architecture / integration tests can consume them via @comis/skills.
+export {
+  osvMalwareCheck,
+  extractMcpPackageName,
+  DEFAULT_OSV_CACHE_DIR,
+} from "./mcp-client-osv-check.js";
+export type { OsvCheckResult, OsvCheckOptions } from "./mcp-client-osv-check.js";
+
 // ---------------------------------------------------------------------------
 // Factory (state-first composition)
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@
  * `mcp-client-osv-check.ts`.
  *
  * Why TDD: per AGENTS.md §2.10 + CLAUDE.md "TDD-First", every behavior
- * change in `packages/*/src/**` starts with a failing test. This file
+ * change in production source starts with a failing test. This file
  * pins:
  *
  *   - extractMcpPackageName: 8 cases over npx / uvx / pnpm dlx /
