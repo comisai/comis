@@ -1448,6 +1448,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // writer (see persist-to-config.ts:12-43 module-level state docs).
       "_resetSigusr1Timer",
       "_resetMutationFence",
+      // Phase 63 SAFETY-09: plaintext-secret heuristic helper re-exported
+      // so the architecture-tier negative + positive control table at
+      // test/architecture/mcp-plaintext-secret-false-positives.test.ts can
+      // assert the heuristic shape against real-world token samples
+      // without duplicating the prefix list. The
+      // public-export-consumers AST walker only scans packages/*/src/**
+      // (NOT test/), mirroring the precedent set by
+      // MCP_STDIO_BUILTIN_ENV_ALLOWLIST / scrubStdioEnv from Plan 02.
+      "looksLikePlaintextSecret",
       // Residency-test harness consumers (dynamic require).
       "createTracingLogger",
       "TracingLoggerOptions",

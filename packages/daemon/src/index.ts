@@ -53,6 +53,16 @@ export type { AgentHandlerDeps } from "./api/agent-handlers.js";
 // docs at packages/daemon/src/api/shared/persist-to-config.ts:12-43).
 export { createMcpHandlers } from "./api/mcp-handlers.js";
 export type { McpHandlerDeps } from "./api/mcp-handlers.js";
+// Phase 63 SAFETY-09: re-exported so the architecture-tier negative +
+// positive control table at
+// test/architecture/mcp-plaintext-secret-false-positives.test.ts can pin
+// the heuristic shape against real-world token samples WITHOUT
+// duplicating the prefix list / length-floor / entropy-floor constants.
+// Consumer:
+// test/architecture/mcp-plaintext-secret-false-positives.test.ts (static
+// import via @comis/daemon, alongside the daemon-side mcp.connect
+// integration tests in packages/daemon/src/api/mcp-handlers.test.ts).
+export { looksLikePlaintextSecret } from "./api/mcp-handlers.js";
 export {
   _resetSigusr1Timer,
   _resetMutationFence,
