@@ -1492,3 +1492,332 @@ describe("BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)", () => {
     expect(jsonWarning!.rows.length).toBe(20);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bundle redaction integration (REDACT-03) — Phase 5 Plan 03
+// ---------------------------------------------------------------------------
+
+describe("bundle redaction integration (REDACT-03)", () => {
+  let tmpDir: string;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  function makeTmpDir(): string {
+    tmpDir = mkdtempSync(join(tmpdir(), "comis-redact-test-"));
+    return tmpDir;
+  }
+
+  // Helper: build a minimal session file and pointer + runtime JSONL.
+  // Returns workspaceDir, sessionFile, runtimeFile, and params for exportTrajectoryBundle.
+  function makeRedactFixture(
+    events: Record<string, unknown>[],
+    overrideWorkspaceDir?: string,
+  ): {
+    workspaceDir: string;
+    sessionFile: string;
+    runtimeFile: string;
+    sessionId: string;
+    traceId: string;
+    agentId: string;
+    clock: () => number;
+  } {
+    const baseDir = overrideWorkspaceDir ?? makeTmpDir();
+    const sessionDir = join(baseDir, "sessions");
+    mkdirSync(sessionDir, { recursive: true });
+
+    const sessionId = "redact-test-sess-01";
+    const traceId = "trace-redact-01";
+    const agentId = "agent-redact-01";
+
+    // Minimal SDK session with 1 entry.
+    const sm = SdkSessionManager.create(baseDir, sessionDir);
+    sm.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "redact test" }],
+      api: "anthropic",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      usage: {
+        inputTokens: 1,
+        outputTokens: 1,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+      },
+      stopReason: "end_turn",
+      timestamp: Date.now(),
+    });
+
+    const sessionFile = sm.getSessionFile()!;
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    writeFileSync(
+      runtimeFile,
+      events.map((e) => JSON.stringify(e)).join("\n") + "\n",
+      "utf-8",
+    );
+
+    return {
+      workspaceDir: baseDir,
+      sessionFile,
+      runtimeFile,
+      sessionId,
+      traceId,
+      agentId,
+      clock: () => 1735689600000,
+    };
+  }
+
+  function makeMinimalRuntimeEvent(
+    data: Record<string, unknown>,
+    seq = 1,
+    sessionId = "redact-test-sess-01",
+    traceId = "trace-redact-01",
+    agentId = "agent-redact-01",
+  ): Record<string, unknown> {
+    return {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      source: "runtime",
+      type: "session.started",
+      ts: `2026-01-01T00:00:0${seq}.000Z`,
+      seq,
+      sessionId,
+      traceId,
+      agentId,
+      entryId: `redact-entry-${seq}`,
+      sourceSeq: seq,
+      data,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test 1: HEADLINE — zero unredacted long-decimal IDs in output files.
+  // ---------------------------------------------------------------------------
+
+  it("bundle_has_zero_unredacted_long_decimal_ids: events.jsonl has no \\b\\d{9,}\\b matches outside ISO timestamps", async () => {
+    const base = makeTmpDir();
+    const f = makeRedactFixture(
+      [
+        makeMinimalRuntimeEvent({ chatId: "1234567890", note: "no sensitive data here" }, 1),
+        makeMinimalRuntimeEvent({ userId: "987654321", info: "another event" }, 2),
+      ],
+      base,
+    );
+
+    const result = await exportTrajectoryBundle({
+      sessionId: f.sessionId,
+      sessionFile: f.sessionFile,
+      workspaceDir: f.workspaceDir,
+      traceId: f.traceId,
+      agentId: f.agentId,
+      clock: f.clock,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const bundleDir = result.value.bundleDir;
+
+    // Read all output files that carry user content.
+    const filesToCheck = [
+      "events.jsonl",
+      "session-branch.json",
+      "prompts.json",
+      "metadata.json",
+      "artifacts.json",
+    ];
+
+    const longDecimalRe = /\b\d{9,}\b/g;
+
+    for (const fname of filesToCheck) {
+      const text = readFileSync(join(bundleDir, fname), "utf-8");
+      // Filter out ISO-8601 timestamps — split on common ISO boundary chars,
+      // then apply the regex to text without 8-digit sequences in date formats.
+      // The simplest approach: remove ISO-8601 date strings first.
+      const withoutIso = text.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, "__ISO__");
+      const matches = withoutIso.match(longDecimalRe);
+      expect(
+        matches,
+        `File ${fname} still contains unredacted long-decimal IDs: ${JSON.stringify(matches)}`,
+      ).toBeNull();
+    }
+
+    // Positive proof: events.jsonl must contain the REDACTED sentinel.
+    const eventsText = readFileSync(join(bundleDir, "events.jsonl"), "utf-8");
+    expect(eventsText).toContain("<REDACTED:long-decimal-id>");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 2: Path substitution in events.jsonl.
+  // ---------------------------------------------------------------------------
+
+  it("bundle_paths_substituted_with_placeholders: literal paths in data are replaced with $WORKSPACE_DIR/$HOME", async () => {
+    const base = makeTmpDir();
+    const f = makeRedactFixture(
+      [
+        makeMinimalRuntimeEvent({
+          workspacePath: `${base}/sessions/x`,
+          homePath: `${base}/foo`,
+        }),
+      ],
+      base,
+    );
+
+    // Temporarily set HOME to base for this test.
+    const origHome = process.env["HOME"];
+    process.env["HOME"] = base;
+
+    try {
+      const result = await exportTrajectoryBundle({
+        sessionId: f.sessionId,
+        sessionFile: f.sessionFile,
+        workspaceDir: f.workspaceDir,
+        traceId: f.traceId,
+        agentId: f.agentId,
+        clock: f.clock,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const eventsText = readFileSync(join(result.value.bundleDir, "events.jsonl"), "utf-8");
+
+      // Placeholders should be present.
+      expect(eventsText).toContain("$HOME");
+
+      // Literal tmpDir should NOT appear in events.jsonl.
+      expect(eventsText).not.toContain(base);
+    } finally {
+      // Restore HOME.
+      if (origHome !== undefined) {
+        process.env["HOME"] = origHome;
+      } else {
+        delete process.env["HOME"];
+      }
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 3: Manifest has redaction policy fingerprint.
+  // ---------------------------------------------------------------------------
+
+  it("manifest_has_redaction_policy_fingerprint: manifest.redaction.policy === 'platform-aware-v1'", async () => {
+    const base = makeTmpDir();
+    const f = makeRedactFixture(
+      [makeMinimalRuntimeEvent({ note: "benign" })],
+      base,
+    );
+
+    const result = await exportTrajectoryBundle({
+      sessionId: f.sessionId,
+      sessionFile: f.sessionFile,
+      workspaceDir: f.workspaceDir,
+      traceId: f.traceId,
+      agentId: f.agentId,
+      clock: f.clock,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const manifest = JSON.parse(
+      readFileSync(join(result.value.bundleDir, "manifest.json"), "utf-8"),
+    ) as TrajectoryBundleManifest;
+
+    expect((manifest as unknown as Record<string, unknown>)["redaction"]).toBeDefined();
+    expect(
+      ((manifest as unknown as Record<string, unknown>)["redaction"] as Record<string, unknown>)["policy"],
+    ).toBe("platform-aware-v1");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 4: Number-typed fields survive redaction (landmine §7.1 verification).
+  // ---------------------------------------------------------------------------
+
+  it("number_typed_fields_survive: number data fields are not coerced to strings and not redacted", async () => {
+    const base = makeTmpDir();
+    const f = makeRedactFixture(
+      [
+        makeMinimalRuntimeEvent({
+          startedAt: 1735689600000,
+          seq: 1234567890,
+        }),
+      ],
+      base,
+    );
+
+    const result = await exportTrajectoryBundle({
+      sessionId: f.sessionId,
+      sessionFile: f.sessionFile,
+      workspaceDir: f.workspaceDir,
+      traceId: f.traceId,
+      agentId: f.agentId,
+      clock: f.clock,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const lines = readFileSync(join(result.value.bundleDir, "events.jsonl"), "utf-8")
+      .split("\n")
+      .filter((l) => l.trim().length > 0);
+
+    const runtimeEvents = lines
+      .map((l) => JSON.parse(l) as { source: string; data?: Record<string, unknown> })
+      .filter((e) => e.source === "runtime");
+
+    expect(runtimeEvents.length).toBeGreaterThan(0);
+    const runtimeEvent = runtimeEvents[0]!;
+
+    // Number fields must pass through unchanged (not stringified, not redacted).
+    expect(runtimeEvent.data?.["startedAt"]).toBe(1735689600000);
+    expect(typeof runtimeEvent.data?.["startedAt"]).toBe("number");
+    // seq=1234567890 is a number — NOT redacted to "<REDACTED:long-decimal-id>"
+    expect(runtimeEvent.data?.["seq"]).toBe(1234567890);
+    expect(typeof runtimeEvent.data?.["seq"]).toBe("number");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 5: Existing fixture compatibility — existing tests still pass.
+  // ---------------------------------------------------------------------------
+
+  it("existing_clock_fixture_compatibility: standard bundle still exports successfully with all 8 files", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "comis-redact-compat-test-"));
+    const fixture = setupBundleFixture(tmpDir);
+
+    const result = await exportTrajectoryBundle({
+      sessionId: fixture.sessionId,
+      sessionFile: fixture.sessionFile,
+      workspaceDir: fixture.workspaceDir,
+      traceId: fixture.traceId,
+      agentId: fixture.agentId,
+      clock: fixture.clock,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const files = readdirSync(result.value.bundleDir).sort();
+    expect(files).toEqual([
+      "artifacts.json",
+      "events.jsonl",
+      "manifest.json",
+      "metadata.json",
+      "prompts.json",
+      "session-branch.json",
+      "system-prompt.txt",
+      "tools.json",
+    ]);
+
+    // Manifest has the new redaction policy field.
+    const manifest = JSON.parse(
+      readFileSync(join(result.value.bundleDir, "manifest.json"), "utf-8"),
+    ) as TrajectoryBundleManifest;
+    expect(
+      ((manifest as unknown as Record<string, unknown>)["redaction"] as Record<string, unknown>)?.["policy"],
+    ).toBe("platform-aware-v1");
+  });
+});
