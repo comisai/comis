@@ -270,4 +270,141 @@ export function registerMcpCommand(program: Command): void {
         }
       },
     );
+
+  // mcp connect <name>
+  mcp
+    .command("connect <name>")
+    .description("Connect a new MCP server via the daemon (persists to config)")
+    .requiredOption("--transport <transport>", "Transport protocol (stdio|sse|http)")
+    .option("--command <command>", "Executable path (stdio only)")
+    .option("--args <args...>", "Command-line arguments (stdio only; variadic)")
+    .option("--url <url>", "Server URL (sse/http only)")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var)")
+    .action(
+      async (
+        name: string,
+        options: {
+          transport: string;
+          command?: string;
+          args?: string[];
+          url?: string;
+          format: string;
+          token?: string;
+        },
+      ) => {
+        // Pre-RPC transport-required-field validation (BEFORE the socket opens).
+        if (options.transport === "stdio" && !options.command) {
+          error("stdio transport requires --command");
+          process.exit(2);
+        }
+        if (
+          (options.transport === "sse" || options.transport === "http") &&
+          !options.url
+        ) {
+          error(`${options.transport} transport requires --url`);
+          process.exit(2);
+        }
+
+        try {
+          ensureGatewayToken(options.token);
+          const result = await withSpinner(`Connecting MCP server "${name}"...`, () =>
+            withClient(async (client) => {
+              return await callTyped(client, McpConnectContract, {
+                server_name: name,
+                transport: options.transport as "stdio" | "sse" | "http",
+                ...(options.command !== undefined && { command: options.command }),
+                ...(options.args !== undefined && { args: options.args }),
+                ...(options.url !== undefined && { url: options.url }),
+              });
+            }),
+          );
+
+          if (options.format === "json") {
+            json(result);
+            return;
+          }
+
+          success(`MCP server "${name}" connected (${result.toolCount} tools)`);
+          info(`Status: ${colorStatus(result.status)}`);
+          info(`Persistence: ${result.persistence ?? "—"}`);
+          if (result.warning) {
+            warn(`Warning: ${result.warning}`);
+          }
+          for (const tool of result.tools) {
+            info(`  - ${tool}`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          error(`Failed to connect MCP server: ${msg}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // mcp disconnect <name>
+  mcp
+    .command("disconnect <name>")
+    .description("Disconnect a named MCP server")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var)")
+    .action(async (name: string, options: { format: string; token?: string }) => {
+      try {
+        ensureGatewayToken(options.token);
+        const result = await withSpinner(`Disconnecting MCP server "${name}"...`, () =>
+          withClient(async (client) => {
+            return await callTyped(client, McpDisconnectContract, { server_name: name });
+          }),
+        );
+
+        if (options.format === "json") {
+          json(result);
+          return;
+        }
+
+        success(`MCP server "${name}" disconnected`);
+        info(`Persistence: ${result.persistence ?? "—"}`);
+        if (result.warning) {
+          warn(`Warning: ${result.warning}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to disconnect MCP server: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // mcp reconnect <name>
+  mcp
+    .command("reconnect <name>")
+    .description("Reconnect a named MCP server using its stored config")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var)")
+    .action(async (name: string, options: { format: string; token?: string }) => {
+      try {
+        ensureGatewayToken(options.token);
+        // Send ONLY server_name — the D-02 guard rejects override params when
+        // a stored config exists (OPUX-05: the CLI never re-specifies transport).
+        const result = await withSpinner(`Reconnecting MCP server "${name}"...`, () =>
+          withClient(async (client) => {
+            return await callTyped(client, McpReconnectContract, { server_name: name });
+          }),
+        );
+
+        if (options.format === "json") {
+          json(result);
+          return;
+        }
+
+        success(`MCP server "${name}" reconnected (${result.toolCount} tools)`);
+        info(`Status: ${colorStatus(result.status)}`);
+        for (const tool of result.tools) {
+          info(`  - ${tool}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to reconnect MCP server: ${msg}`);
+        process.exit(1);
+      }
+    });
 }

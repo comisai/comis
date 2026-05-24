@@ -82,8 +82,29 @@ describe("registerMcpCommand — subcommand registration", () => {
     expect(mcpCmd!.description()).toBe("MCP server management");
 
     const subcommandNames = mcpCmd!.commands.map((c) => c.name());
-    for (const name of ["list", "status", "test"]) {
+    for (const name of ["list", "status", "connect", "disconnect", "reconnect", "test"]) {
       expect(subcommandNames).toContain(name);
     }
+  });
+
+  it("connect requires --transport and exposes the four transport flags", async () => {
+    const { Command } = await import("commander");
+    const { registerMcpCommand } = await import("./mcp.js");
+    const program = new Command();
+    registerMcpCommand(program);
+
+    const mcpCmd = program.commands.find((c) => c.name() === "mcp");
+    const connectCmd = mcpCmd!.commands.find((c) => c.name() === "connect");
+    expect(connectCmd).toBeDefined();
+    const optionNames = connectCmd!.options.map((o) => o.long);
+    expect(optionNames).toContain("--transport");
+    expect(optionNames).toContain("--command");
+    expect(optionNames).toContain("--args");
+    expect(optionNames).toContain("--url");
+    expect(optionNames).toContain("--token");
+    // Pitfall 5: connect must NOT carry the YAML-only filtering/idle flags.
+    expect(optionNames).not.toContain("--allowlist");
+    expect(optionNames).not.toContain("--blocklist");
+    expect(optionNames).not.toContain("--idle-ttl");
   });
 });
