@@ -117,6 +117,27 @@ export const McpServerEntrySchema = z.preprocess(
     circuitBreakerThreshold: z.number().int().positive().optional(),
     /** Phase 64 RELY-05: per-server override of mcp.circuitBreakerCooldownMs. */
     circuitBreakerCooldownMs: z.number().int().positive().optional(),
+    /** Phase 65 OPUX-08: per-server tool allowlist (whitelist). When non-empty,
+     *  ONLY listed tool names from this server are surfaced to the agent.
+     *  Filter applied EXCLUSIVELY at mcp-tool-bridge.ts (65-P2). */
+    toolAllowlist: z.array(z.string().min(1)).optional(),
+    /** Phase 65 OPUX-08: per-server tool blocklist. Listed tool names are
+     *  filtered out of the agent's registry. Allowlist (if present) wins:
+     *  a tool name on the blocklist is filtered out regardless of allowlist. */
+    toolBlocklist: z.array(z.string().min(1)).optional(),
+    /** Phase 65 OPUX-09: per-server idle eviction TTL (ms). Default 0 disables
+     *  (opt-in only). When non-zero AND no successful tool call has hit this
+     *  server for idleTtlMs, the transport is closed WITHOUT setting
+     *  userDisconnectedFlags so the next callTool reconnects transparently. */
+    idleTtlMs: z.number().int().nonnegative().default(0),
+    /** Phase 65 OPUX-10: opt-out for resources utility tools (list_resources/
+     *  read_resource). Default undefined ⇒ auto-register IF server advertises
+     *  capabilities.resources. Set false to suppress (mitigates Cursor's 40-tool
+     *  ceiling on resources-noisy servers). */
+    enableResources: z.boolean().optional(),
+    /** Phase 65 OPUX-10: opt-out for prompts utility tools (list_prompts/
+     *  get_prompt). Same semantics as enableResources but for capabilities.prompts. */
+    enablePrompts: z.boolean().optional(),
   }),
 );
 
