@@ -61,14 +61,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "audit:event",
 
   // -------------------------------------------------------------------
-  // Compaction signals — internal context-engine state, not user-
-  // visible turn-level observability.
-  // -------------------------------------------------------------------
-  "compaction:flush",
-  "compaction:started",
-  "compaction:recommended",
-
-  // -------------------------------------------------------------------
   // Skill registry events — internal, not turn-scoped.
   // -------------------------------------------------------------------
   "skill:loaded",
@@ -78,12 +70,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "skill:failed",
 
   // -------------------------------------------------------------------
-  // Security / safety — fed by separate alerting paths; trajectory
-  // records security.injection_detected (source+riskLevel only, no
-  // patterns). The below events are intentionally out of scope.
+  // Security / safety — fed by separate alerting paths. The below
+  // events are intentionally out of scope. Note:
+  //   security:injection_detected → trajectory via TRAJECTORY_BRIDGE_MAPPING
+  //   security:memory_tainted    → trajectory via TRAJECTORY_BRIDGE_MAPPING
+  //   security:warn              → trajectory via TRAJECTORY_BRIDGE_MAPPING
   // -------------------------------------------------------------------
   "security:injection_rate_exceeded",
-  "security:memory_tainted",
   "sender:trust_resolved",
   "tool:install_detour_detected",
 
@@ -192,21 +185,23 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "debounce:flushed",
 
   // -------------------------------------------------------------------
-  // Context-engine internals — granular pipeline signals; the
-  // turn-level summary lands in prompt.submitted instead. NOTE:
-  // `context:pipeline` itself was lifted into TRAJECTORY_BRIDGE_MAPPING
-  // (→ `context.compiled`). The post-LLM patch
-  // event `context:pipeline:cache` stays internal — its cache fields
-  // are folded into the pre-LLM `context:pipeline` snapshot the
-  // trajectory captures.
+  // Context-engine internals — only context:compacted and
+  // context:pipeline:cache remain allowlisted here.
+  //
+  // Removed (now bridge-mapped → TRAJECTORY_BRIDGE_MAPPING):
+  //   context:evicted, context:masked, context:overflow,
+  //   context:rehydrated, context:reread
+  //
+  // context:integrity is NOT here — it was never in this set (emitted
+  // via optional chaining `?.emit`, which the arch-test regex misses).
+  //
+  // context:compacted: LLM compaction summary (distinct from the
+  //   per-event granular eviction/mask/reread signals — kept internal).
+  // context:pipeline:cache: post-LLM cache-patch event whose fields
+  //   are folded into the pre-LLM context:pipeline trajectory snapshot.
   // -------------------------------------------------------------------
   "context:compacted",
-  "context:evicted",
-  "context:masked",
-  "context:overflow",
   "context:pipeline:cache",
-  "context:rehydrated",
-  "context:reread",
 
   // -------------------------------------------------------------------
   // Diagnostic counters — internal aggregation, not user-visible.
