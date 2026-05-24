@@ -20,6 +20,7 @@
 import type { Result } from "@comis/shared";
 import { ok, err, withTimeout } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import PQueue from "p-queue";
 import { systemNowMs, systemScheduleTimeout } from "@comis/core";
 import type {
@@ -28,6 +29,7 @@ import type {
   McpConnection,
   McpServerConfig,
   McpToolDefinition,
+  McpOAuthDeps,
 } from "./mcp-client-types.js";
 import {
   createClient,
@@ -44,6 +46,111 @@ import {
   extractMcpPackageName,
   DEFAULT_OSV_CACHE_DIR,
 } from "./mcp-client-osv-check.js";
+import { createOAuthClientProvider } from "./oauth/provider.js";
+import { createRefreshDeduper } from "./oauth/refresh-deduper.js";
+
+// ---------------------------------------------------------------------------
+// OAuth connect seam (Phase 66 OAUTH-11 / 66d)
+// ---------------------------------------------------------------------------
+
+/**
+ * The `needs_oauth_login` tag. An `auth:"oauth"` server that connects WITHOUT a
+ * valid token throws the SDK `UnauthorizedError` from `client.connect`; rather
+ * than auto-launching a browser daemon-side (resolved_scope #3 / T-66-22), the
+ * connect path returns a tagged `Result.err`. The daemon RPC layer reads the tag
+ * to tell the operator to run `comis mcp login <server>` (the explicit,
+ * operator-initiated `oauth_login` RPC owns the loopback server + browser dance).
+ *
+ * The tag is a non-enumerable marker on the Error (matches the codebase's
+ * `Object.assign(new Error, { errorKind })` pattern) so the existing
+ * `Result<McpConnection, Error>` signature is unchanged.
+ */
+const NEEDS_OAUTH_LOGIN = "needs_oauth_login" as const;
+type NeedsOAuthLoginError = Error & { readonly code: typeof NEEDS_OAUTH_LOGIN };
+
+/** Tag an Error as `needs_oauth_login` (preserves the original message + stack). */
+function tagNeedsOAuthLogin(serverName: string): NeedsOAuthLoginError {
+  const e = new Error(
+    `MCP server "${serverName}" requires OAuth login. ` +
+      `Run \`comis mcp login ${serverName}\` to authenticate (no browser was launched).`,
+  );
+  return Object.assign(e, { code: NEEDS_OAUTH_LOGIN });
+}
+
+/** Type guard: did connect surface a `needs_oauth_login` signal (vs a generic failure)? */
+export function isNeedsOAuthLoginError(error: unknown): error is NeedsOAuthLoginError {
+  return (
+    error instanceof Error &&
+    (error as { code?: unknown }).code === NEEDS_OAUTH_LOGIN
+  );
+}
+
+/**
+ * Build the OAuthClientProvider adapter for an `auth:"oauth"` server and run the
+ * 66b discovery pre-flight (cold-load only). Mutates `config` to carry the
+ * provider on the runtime-only `oauthProvider` field so the pure `createTransport`
+ * attaches it. Returns the config to connect with (the same object, narrowed).
+ *
+ * NO browser is launched here. Discovery failure throws an actionable
+ * `errorKind:"config"` error (66-P9), surfaced as a normal connect failure.
+ */
+async function prepareOAuthProvider(
+  state: McpClientManagerState,
+  oauthDeps: McpOAuthDeps,
+  config: McpServerConfig,
+  logger: McpClientManagerDeps["logger"],
+): Promise<McpServerConfig> {
+  const tokenStore = oauthDeps.createTokenStore();
+  // The deduper shares the manager's inflightRefreshes map + the per-server call
+  // queue as the concurrency-1 critical section (66-04 left this wiring to 66d):
+  // a 401 storm for one server coalesces into a single refresh POST (66-P4). The
+  // call queue is created at connect (below) but the deduper only touches it on a
+  // refresh, by which point the connection — and its queue — exist. The critical
+  // section binds a LATE lookup of the live per-server callQueue
+  // (state.callQueues) rather than a snapshot; a fresh cc-1 queue is the fallback
+  // for the transient pre-connect window. The wrapper also normalises PQueue's
+  // `Promise<T | Promise<T>>` return to the deduper's `Promise<T>` contract.
+  const fallbackQueue = new PQueue({ concurrency: 1 });
+  const criticalSection = {
+    add<T>(fn: () => Promise<T> | T): Promise<T> {
+      const live = state.callQueues.get(config.name) ?? fallbackQueue;
+      return live.add(fn) as Promise<T>;
+    },
+  };
+  const deduper = createRefreshDeduper({
+    inflightRefreshes: state.inflightRefreshes,
+    queue: criticalSection,
+    tokenStore,
+    logger,
+  });
+
+  const provider = createOAuthClientProvider({
+    serverName: config.name,
+    oauthConfig: config.oauth ?? {},
+    tokenStore,
+    deduper,
+    logger,
+  });
+
+  // Pre-flight discovery (OAUTH-03): only when nothing is persisted. resolveDiscovery
+  // is itself a warm-load short-circuit, but checking here avoids constructing the
+  // redirect-fetch + a network attempt on the warm path and keeps the "discovery
+  // runs once on cold load" contract observable.
+  const existingDiscovery = await tokenStore.discoveryState(config.name);
+  if (!existingDiscovery && config.url !== undefined) {
+    await oauthDeps.resolveDiscovery({
+      serverName: config.name,
+      serverUrl: config.url,
+      ...(config.oauth?.authorizationEndpoint !== undefined
+        ? { userAuthorizationEndpoint: config.oauth.authorizationEndpoint }
+        : {}),
+      tokenStore,
+      logger,
+    });
+  }
+
+  return { ...config, oauthProvider: provider };
+}
 
 // ---------------------------------------------------------------------------
 // connect (state-first)
@@ -131,12 +238,46 @@ export async function connectServer(
     }
   }
 
+  // Phase 66 OAUTH-11 (66d): for an auth:"oauth" server with the OAuth seam
+  // wired, construct the OAuthClientProvider adapter + run the discovery
+  // pre-flight BEFORE the transport is built, then thread the provider onto the
+  // runtime config so createTransport attaches it. A discovery cascade failure
+  // (66-P9) throws here and is surfaced as a normal connect failure below. The
+  // provider is NOT constructed for non-oauth servers or when no oauthDeps seam
+  // is injected (the SDK then runs without a provider; a 401 still surfaces
+  // needs_oauth_login via the catch below).
+  let effectiveConfig = config;
   try {
-    // Create transport (logger threaded for Phase 63 SAFETY-08 prlimit-skip WARN)
-    const transport = createTransport(config, logger);
+    if (config.auth === "oauth" && deps.oauthDeps) {
+      effectiveConfig = await prepareOAuthProvider(state, deps.oauthDeps, config, logger);
+    }
+  } catch (discoveryError: unknown) {
+    const message = discoveryError instanceof Error ? discoveryError.message : String(discoveryError);
+    state.connections.set(config.name, {
+      name: config.name,
+      client: null as unknown as Client,
+      status: "error",
+      tools: [],
+      lastHealthCheck: systemNowMs(),
+      reconnectAttempt: 0,
+      maxReconnectAttempts: state.options.reconnectOpts.maxAttempts,
+      error: message,
+      generation: state.generations.get(config.name) ?? 0,
+    });
+    logger.error(
+      { serverName: config.name, err: message, hint: "OAuth discovery pre-flight failed; verify the server publishes OAuth metadata or set oauth.authorizationEndpoint", errorKind: "config" as const },
+      "MCP OAuth discovery pre-flight failed",
+    );
+    return err(discoveryError instanceof Error ? discoveryError : new Error(message));
+  }
+
+  try {
+    // Create transport (logger threaded for Phase 63 SAFETY-08 prlimit-skip WARN).
+    // For an auth:"oauth" server, effectiveConfig now carries the oauthProvider.
+    const transport = createTransport(effectiveConfig, logger);
 
     // Wire stderr capture for stdio transports
-    wireStderrCapture(deps, config, transport);
+    wireStderrCapture(deps, effectiveConfig, transport);
 
     // Log transport type at INFO
     if (config.transport === "stdio") {
@@ -173,8 +314,9 @@ export async function connectServer(
     // Wire lifecycle callbacks for reconnection
     wireClientLifecycleCallbacks(state, deps, client, config.name);
 
-    // Store config for reconnection
-    state.serverConfigs.set(config.name, config);
+    // Store config for reconnection — effectiveConfig so the OAuthClientProvider
+    // (runtime-only oauthProvider field) is retained across reconnects.
+    state.serverConfigs.set(config.name, effectiveConfig);
     // Initialize generation
     state.generations.set(config.name, state.generations.get(config.name) ?? 0);
 
@@ -249,6 +391,14 @@ export async function connectServer(
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
 
+    // Phase 66 OAUTH-11 (66d / T-66-22): the SDK throws UnauthorizedError from
+    // client.connect when an auth:"oauth" server has no valid token (or refresh
+    // failed). Do NOT auto-launch a browser daemon-side (resolved_scope #3) —
+    // return a `needs_oauth_login`-tagged Result so the daemon RPC layer tells
+    // the operator to run `comis mcp login <server>`. The error-state connection
+    // entry is still recorded so mcp.list surfaces the server's auth-needed state.
+    const isUnauthorized = error instanceof UnauthorizedError;
+
     // Store error state
     state.connections.set(config.name, {
       name: config.name,
@@ -258,9 +408,17 @@ export async function connectServer(
       lastHealthCheck: systemNowMs(),
       reconnectAttempt: 0,
       maxReconnectAttempts: state.options.reconnectOpts.maxAttempts,
-      error: message,
+      error: isUnauthorized ? `${NEEDS_OAUTH_LOGIN}: ${message}` : message,
       generation: state.generations.get(config.name) ?? 0,
     });
+
+    if (isUnauthorized) {
+      logger.warn(
+        { serverName: config.name, hint: `OAuth login required — run \`comis mcp login ${config.name}\`; no browser launched (operator-initiated)`, errorKind: "config" as const },
+        "MCP server connect requires OAuth login",
+      );
+      return err(tagNeedsOAuthLogin(config.name));
+    }
 
     logger.error({ serverName: config.name, err: message, hint: "Check MCP server configuration and ensure the server process is running", errorKind: "dependency" as const }, "MCP server connection failed");
 

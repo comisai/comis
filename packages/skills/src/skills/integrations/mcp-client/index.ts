@@ -25,10 +25,13 @@ import type {
   McpClientManagerOptions,
   McpClientManagerState,
   McpConnection,
+  McpOAuthDeps,
   McpServerConfig,
   McpToolDefinition,
 } from "./mcp-client-types.js";
 import type { RefreshResult } from "./oauth/refresh-deduper.js";
+import { createTokenStore, type TokenStore } from "./oauth/token-store.js";
+import { resolveDiscovery } from "./oauth/discovery.js";
 import {
   connectServer,
   disconnectServer,
@@ -53,8 +56,14 @@ export type {
   McpToolCallResult,
   McpToolCallContent,
   McpClientManagerDeps,
+  McpOAuthDeps,
   McpClientManager,
 } from "./mcp-client-types.js";
+
+// Phase 66 OAUTH-11 (66d): the connect-time needs_oauth_login signal guard.
+// Re-exported so the daemon RPC layer can distinguish an auth-needed connect
+// failure (→ tell the operator to run `comis mcp login`) from a generic failure.
+export { isNeedsOAuthLoginError } from "./mcp-client-connect.js";
 
 export { qualifyToolName, parseQualifiedName } from "./mcp-client-types.js";
 
@@ -139,14 +148,36 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
     options,
   };
 
+  // Phase 66 OAUTH-11 (66d): resolve the OAuth seam. When the caller injects
+  // `oauthDeps` (the daemon composition root supplying `openUrl`, or a test) use
+  // it verbatim. Otherwise default to a process-wide singleton disk token store
+  // at `~/.comis/mcp-tokens/` + the real discovery cascade — so an `auth:"oauth"`
+  // server works out of the box without the daemon having to wire it. The store
+  // is constructed LAZILY (first auth:"oauth" connect) so a manager that never
+  // touches OAuth pays no chokidar-watch cost.
+  let sharedTokenStore: TokenStore | undefined;
+  const resolvedOAuthDeps: McpOAuthDeps = deps.oauthDeps ?? {
+    createTokenStore: (): TokenStore => {
+      if (sharedTokenStore === undefined) {
+        sharedTokenStore = createTokenStore({ logger: deps.logger });
+        // Best-effort start the disk-watch (OAUTH-04) so an external cron/sibling
+        // rotation is picked up no-restart; failures are logged inside the store.
+        void sharedTokenStore.startWatch();
+      }
+      return sharedTokenStore;
+    },
+    resolveDiscovery,
+  };
+  const effectiveDeps: McpClientManagerDeps = { ...deps, oauthDeps: resolvedOAuthDeps };
+
   return {
-    connect: (config) => connectServer(state, deps, config),
-    disconnect: (name) => disconnectServer(state, deps, name),
-    disconnectAll: () => disconnectAllServers(state, deps),
+    connect: (config) => connectServer(state, effectiveDeps, config),
+    disconnect: (name) => disconnectServer(state, effectiveDeps, name),
+    disconnectAll: () => disconnectAllServers(state, effectiveDeps),
     getConnection: (name) => getConnection(state, name),
     getAllConnections: () => getAllConnections(state),
     getTools: (): McpToolDefinition[] => listAllTools(state),
-    callTool: (qualifiedName, args) => callTool(state, deps, qualifiedName, args),
-    reconnect: (name) => reconnectServer(state, deps, name),
+    callTool: (qualifiedName, args) => callTool(state, effectiveDeps, qualifiedName, args),
+    reconnect: (name) => reconnectServer(state, effectiveDeps, name),
   };
 }

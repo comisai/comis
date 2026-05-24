@@ -13,11 +13,13 @@
 
 import type { Result } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { SystemIntervalHandle, SystemTimeoutHandle, TypedEventBus } from "@comis/core";
 import type PQueue from "p-queue";
 
 import type { RefreshResult } from "./oauth/refresh-deduper.js";
+import type { TokenStore } from "./oauth/token-store.js";
+import type { ResolveDiscoveryArgs } from "./oauth/discovery.js";
 
 // ---------------------------------------------------------------------------
 // Qualified name helpers (pure; co-located with types to break no-cycles)
@@ -321,6 +323,45 @@ export interface McpClientManagerDeps {
   readonly circuitBreakerThreshold?: number;
   /** Phase 64 RELY-05: default circuit breaker cooldown (ms). Resolved at factory construction. */
   readonly circuitBreakerCooldownMs?: number;
+  /**
+   * Phase 66 OAUTH-11 (66d): OAuth integration seam. When present, connectServer
+   * constructs an OAuthClientProvider adapter for `auth:"oauth"` servers (66a
+   * token store + 66c deduper), runs the 66b discovery pre-flight, and threads
+   * the provider onto the runtime config so createTransport attaches it. When
+   * ABSENT, an `auth:"oauth"` server still connects (the SDK runs without a
+   * provider) and a 401 still surfaces needs_oauth_login — the adapter is simply
+   * not wired. Injected by the daemon composition root (production) or a test.
+   */
+  readonly oauthDeps?: McpOAuthDeps;
+}
+
+/**
+ * OAuth integration dependencies (Phase 66 / 66d). A thin seam so the skills
+ * package owns no `~/.comis` path policy or redirect-fetch construction at
+ * import time — the daemon composition root supplies these, tests inject mocks.
+ */
+export interface McpOAuthDeps {
+  /**
+   * Lazily build the shared disk-backed token store (66a). Called once per
+   * connect for an `auth:"oauth"` server. Implementations SHOULD return a
+   * process-wide singleton (the chokidar watch + cache are per-store) rather
+   * than a fresh store each call.
+   */
+  readonly createTokenStore: () => TokenStore;
+  /**
+   * OAuth metadata discovery cascade (66b). Resolves + persists
+   * `<server>.meta.json`; throws an actionable `errorKind:"config"` error on
+   * total cascade failure (66-P9). Signature matches `resolveDiscovery`.
+   */
+  readonly resolveDiscovery: (args: ResolveDiscoveryArgs) => Promise<OAuthDiscoveryState>;
+  /**
+   * Browser-launch side-effect (`open`). NOT imported in skills/daemon (it is a
+   * cli/agent/comis dep) — injected here. connectServer NEVER calls it (the
+   * connect path surfaces needs_oauth_login; the operator-initiated oauth_login
+   * RPC owns the launch). Held so the adapter + future login wiring share one
+   * injection point. Optional: a headless deployment may omit it.
+   */
+  readonly openUrl?: (url: string) => void | Promise<void>;
 }
 
 /** MCP Client Manager: manages connections to MCP servers and their tools. */
