@@ -84,4 +84,37 @@ describe("ObservabilityConfigSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // POINTER-02 RED tests — these MUST fail on pre-patch code because
+  // ObservabilityConfigSchema currently has no `trajectory` key; strictObject
+  // rejects unknown keys.
+
+  it("accepts trajectory.dirOverride string (POINTER-02)", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      trajectory: { dirOverride: "/var/comis/trj" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.trajectory?.dirOverride).toBe("/var/comis/trj");
+    }
+  });
+
+  it("strictly rejects trajectory.unknownKey (strictObject enforcement) (POINTER-02)", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      trajectory: { unknownKey: "x" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("back-compat: omitting trajectory produces trajectory:{} (POINTER-02)", () => {
+    const result = ObservabilityConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // trajectory must exist (with default {}) and dirOverride must be
+      // undefined (not set) — proves existing YAML without observability.trajectory
+      // still parses and the schema is back-compat.
+      expect(result.data).toHaveProperty("trajectory");
+      expect(result.data.trajectory?.dirOverride).toBeUndefined();
+    }
+  });
 });
