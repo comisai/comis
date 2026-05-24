@@ -37,6 +37,7 @@ import {
 } from "./mcp-client-discover.js";
 import { qualifyToolName } from "./mcp-client-types.js";
 import { wireClientLifecycleCallbacks } from "./mcp-client-reconnect.js";
+import { startKeepaliveTicker, stopKeepaliveTicker } from "./mcp-client-keepalive.js";
 import {
   osvMalwareCheck,
   extractMcpPackageName,
@@ -218,6 +219,12 @@ export async function connectServer(
       ?? (config.transport === "stdio" ? state.options.stdioDefaultConcurrency : state.options.httpDefaultConcurrency);
     state.callQueues.set(config.name, new PQueue({ concurrency: maxConcurrency }));
 
+    // Phase 64 RELY-01/02/03: per-server keepalive ticker. NO-OP when
+    // keepaliveIntervalMs === 0 (disabled). Routes ping through the same
+    // PQueue as tool calls (RELY-03) so stdio single-pipe serialization
+    // is preserved.
+    startKeepaliveTicker(state, deps, config);
+
     logger.info(`MCP server "${config.name}" connected: ${tools.length} tool(s) discovered`);
 
     return ok(connection);
@@ -273,6 +280,11 @@ export async function disconnectServer(
   } catch (error: unknown) {
     logger.warn({ serverName: name, err: error instanceof Error ? error.message : String(error), hint: "MCP server disconnect failed; connection may be stale", errorKind: "dependency" as const }, "MCP server disconnect failed");
   }
+
+  // Phase 64 RELY-01: stop the keepalive ticker BEFORE tearing down the
+  // queue (so the ticker cannot fire one last queue.add against a queue
+  // we are about to delete).
+  stopKeepaliveTicker(state, name);
 
   // Clear and remove call queue -- pending .add() callers get no resolution
   // but that's acceptable since the connection is gone anyway
