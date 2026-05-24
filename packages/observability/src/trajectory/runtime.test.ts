@@ -104,7 +104,7 @@ describe("createTrajectoryRecorder -- well-formed event records", () => {
 });
 
 describe("createTrajectoryRecorder -- bounded payload sentinels", () => {
-  it("budgets_long_string_field replaces 64 KB string with field-size sentinel", async () => {
+  it("budgets_long_string_field replaces 64 KB string with trajectory field-size sentinel", async () => {
     const recorder = createTrajectoryRecorder({
       agentId: "agent-1",
       sessionId: "sid-str",
@@ -117,12 +117,14 @@ describe("createTrajectoryRecorder -- bounded payload sentinels", () => {
 
     const lines = readLines(recorder!.filePath) as Array<{ data: { body: Record<string, unknown> } }>;
     expect(lines).toHaveLength(1);
-    expect((lines[0].data.body as { __bounded__: string }).__bounded__).toBe(
-      "bounded-payload-field-size-limit",
-    );
+    // limitTrajectoryPayloadValue converts __bounded__ → trajectory sentinel shape.
+    const sentinel = lines[0].data.body;
+    expect(sentinel.truncated).toBe(true);
+    expect(sentinel.reason).toBe("trajectory-field-size-limit");
+    expect(sentinel.limitChars).toBe(32768);
   });
 
-  it("budgets_large_array clamps a 100-item array to 64 items + sentinel", async () => {
+  it("budgets_large_array clamps a 100-item array to trajectory array-length sentinel", async () => {
     const recorder = createTrajectoryRecorder({
       agentId: "agent-1",
       sessionId: "sid-arr",
@@ -135,13 +137,14 @@ describe("createTrajectoryRecorder -- bounded payload sentinels", () => {
 
     const lines = readLines(recorder!.filePath) as Array<{ data: { items: Record<string, unknown> } }>;
     expect(lines).toHaveLength(1);
-    // limitPayloadValue collapses arrays exceeding maxArrayLength to a sentinel record
-    expect((lines[0].data.items as { __bounded__: string }).__bounded__).toBe(
-      "bounded-payload-array-length-limit",
-    );
+    // limitTrajectoryPayloadValue converts __bounded__ → trajectory sentinel shape.
+    const sentinel = lines[0].data.items;
+    expect(sentinel.truncated).toBe(true);
+    expect(sentinel.reason).toBe("trajectory-array-length-limit");
+    expect(sentinel.limitItems).toBe(64);
   });
 
-  it("budgets_deep_object truncates at depth 6 with depth-limit sentinel", async () => {
+  it("budgets_deep_object truncates at depth 6 with trajectory depth-limit sentinel", async () => {
     const recorder = createTrajectoryRecorder({
       agentId: "agent-1",
       sessionId: "sid-deep",
@@ -159,12 +162,13 @@ describe("createTrajectoryRecorder -- bounded payload sentinels", () => {
 
     const lines = readLines(recorder!.filePath) as Array<{ data: Record<string, unknown> }>;
     expect(lines).toHaveLength(1);
-    // Walk into the data — at depth 6 we should hit the sentinel.
+    // limitTrajectoryPayloadValue converts bounded-payload-depth-limit → trajectory-depth-limit.
     const json = JSON.stringify(lines[0].data);
-    expect(json).toContain("bounded-payload-depth-limit");
+    expect(json).toContain("trajectory-depth-limit");
+    expect(json).not.toContain("bounded-payload-depth-limit");
   });
 
-  it("circular_payload_does_not_loop and produces a [Circular] marker", async () => {
+  it("circular_payload_does_not_loop and produces a trajectory-circular-reference sentinel", async () => {
     const recorder = createTrajectoryRecorder({
       agentId: "agent-1",
       sessionId: "sid-circ",
@@ -178,14 +182,11 @@ describe("createTrajectoryRecorder -- bounded payload sentinels", () => {
 
     const lines = readLines(recorder!.filePath) as Array<{ data: Record<string, unknown> }>;
     expect(lines).toHaveLength(1);
-    // bounded-payload-cycle-detected OR [Circular] marker (both are
-    // valid; the sanitize pipeline emits one or the other depending
-    // on which guard hits first).
+    // limitTrajectoryPayloadValue converts bounded-payload-cycle-detected →
+    // trajectory-circular-reference.
     const json = JSON.stringify(lines[0].data);
-    expect(
-      json.includes("bounded-payload-cycle-detected") ||
-        json.includes("[Circular]"),
-    ).toBe(true);
+    expect(json).toContain("trajectory-circular-reference");
+    expect(json).not.toContain("bounded-payload-cycle-detected");
   });
 
   it("event_over_256kb_replaced_with_sentinel when sanitized data exceeds maxRuntimeEventBytes", async () => {

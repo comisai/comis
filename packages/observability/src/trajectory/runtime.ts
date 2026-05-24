@@ -53,6 +53,10 @@ import { systemDateFrom, systemGetEnv, systemNowMs, tryGetContext } from "@comis
 import { getQueuedFileWriter, type QueuedFileWriter } from "../shared/queued-file-writer.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
+import {
+  BOUNDED_PAYLOAD_REASONS,
+  type BoundedPayloadReason,
+} from "../shared/bounded-payload.js";
 
 import { resolveTrajectoryFilePath } from "./paths.js";
 import { writeTrajectoryPointerFileBestEffort } from "./pointer-file.js";
@@ -74,10 +78,138 @@ const DEFAULT_MAX_QUEUED_BYTES = 4 * 1024 * 1024;
 const DEFAULT_SENTINEL_RESERVE_BYTES = 2 * 1024;
 const EVENT_SIZE_SENTINEL_REASON = "trajectory-event-size-limit";
 
+// Trajectory-specific bounding constants.  The numeric values are
+// identical to PAYLOAD_BOUNDS in bounded-payload.ts (which enforces the
+// limits numerically via sanitizeForPersistence). These constants are
+// used only for the sentinel SHAPE emitted by limitTrajectoryPayloadValue,
+// not for re-enforcement of the numeric caps.
+const TRAJECTORY_DATA_STRING_LIMIT_CHARS = 32_768;
+const TRAJECTORY_DATA_ARRAY_LIMIT_ITEMS = 64;
+const TRAJECTORY_DATA_OBJECT_LIMIT_KEYS = 64;
+const TRAJECTORY_DATA_MAX_DEPTH = 6;
+
 // Module-level writer registry — keyed by file path. Multiple recorders
 // for the same file share one writer (rare, but matches the
 // queued-writer chassis contract).
 const writerRegistry = new Map<string, QueuedFileWriter>();
+
+// ---------------------------------------------------------------------------
+// limitTrajectoryPayloadValue — conversion wrapper (BOUND-01)
+//
+// Walks the value graph produced by sanitizeForPersistence and re-maps
+// any { __bounded__: "bounded-payload-*" } sentinel records into the
+// trajectory-specific { truncated: true, reason: "trajectory-*", ... }
+// shape required by BOUND-01 acceptance criteria.
+//
+// DOES NOT touch bounded-payload.ts or combined-walker.ts — those are
+// shared by cache-trace, config-audit, and system-prompt-report consumers
+// which key on __bounded__ and must keep seeing it (Option A from
+// 02-RESEARCH.md §BOUND-01).
+//
+// The function is pure (no I/O, no clock). No cycle guard is needed here
+// because sanitizeForPersistence already collapsed all cycles into
+// bounded-payload-cycle-detected sentinels, so the graph this function
+// receives is acyclic and finite.
+// ---------------------------------------------------------------------------
+
+/** Predicate: is `v` a bounded-payload sentinel emitted by sanitizeForPersistence? */
+function isBoundedSentinel(v: unknown): v is { __bounded__: BoundedPayloadReason } {
+  if (v === null || typeof v !== "object") return false;
+  const obj = v as Record<string, unknown>;
+  const reason = obj["__bounded__"];
+  if (typeof reason !== "string") return false;
+  // Check against the closed union of known reasons.
+  return (Object.values(BOUNDED_PAYLOAD_REASONS) as string[]).includes(reason);
+}
+
+/**
+ * Converts shared `{ __bounded__ }` sentinels in a sanitized payload graph
+ * into trajectory-specific `{ truncated: true, reason: "trajectory-*", ... }`
+ * sentinels required by BOUND-01.
+ *
+ * Recurses into plain objects and arrays for non-sentinel nodes.
+ * Exported so it can be unit-tested independently.
+ */
+export function limitTrajectoryPayloadValue(value: unknown): unknown {
+  // Primitives and null pass through unchanged.
+  if (value === null || typeof value !== "object") return value;
+
+  // Check for a bounded sentinel first (before recursing into child keys).
+  if (isBoundedSentinel(value)) {
+    const node = value as {
+      __bounded__: BoundedPayloadReason;
+      originalBytes?: number;
+      originalLength?: number;
+      originalKeyCount?: number;
+    };
+    const reason = node.__bounded__;
+
+    // Exhaustive switch — closed union discriminator per AGENTS.md §2.8.
+    switch (reason) {
+      case BOUNDED_PAYLOAD_REASONS.fieldSizeLimit:
+        return {
+          truncated: true,
+          reason: "trajectory-field-size-limit",
+          ...(node.originalBytes !== undefined
+            ? { originalChars: node.originalBytes }
+            : {}),
+          limitChars: TRAJECTORY_DATA_STRING_LIMIT_CHARS,
+        };
+
+      case BOUNDED_PAYLOAD_REASONS.arrayLengthLimit:
+        return {
+          truncated: true,
+          reason: "trajectory-array-length-limit",
+          ...(node.originalLength !== undefined
+            ? { originalItems: node.originalLength }
+            : {}),
+          limitItems: TRAJECTORY_DATA_ARRAY_LIMIT_ITEMS,
+        };
+
+      case BOUNDED_PAYLOAD_REASONS.objectKeyLimit:
+        return {
+          truncated: true,
+          reason: "trajectory-object-key-limit",
+          ...(node.originalKeyCount !== undefined
+            ? { originalKeys: node.originalKeyCount }
+            : {}),
+          limitKeys: TRAJECTORY_DATA_OBJECT_LIMIT_KEYS,
+        };
+
+      case BOUNDED_PAYLOAD_REASONS.depthLimit:
+        return {
+          truncated: true,
+          reason: "trajectory-depth-limit",
+          limitDepth: TRAJECTORY_DATA_MAX_DEPTH,
+        };
+
+      case BOUNDED_PAYLOAD_REASONS.cycleDetected:
+        return { truncated: true, reason: "trajectory-circular-reference" };
+
+      default: {
+        // Exhaustiveness check — if TypeScript narrows `reason` to `never`
+        // here, all cases are handled; a compile error means a new reason
+        // was added to BOUNDED_PAYLOAD_REASONS without a matching case.
+        const _exhaustive: never = reason;
+        // At runtime, return the node unchanged (forward-compatibility).
+        return _exhaustive;
+      }
+    }
+  }
+
+  // Recurse into arrays.
+  if (Array.isArray(value)) {
+    return value.map(limitTrajectoryPayloadValue);
+  }
+
+  // Recurse into plain objects.
+  const obj = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    result[key] = limitTrajectoryPayloadValue(obj[key]);
+  }
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -206,10 +338,18 @@ export function createTrajectoryRecorder(
         | Record<string, unknown>
         | undefined;
 
+      // 1a. Convert shared __bounded__ sentinels to trajectory-specific
+      //     { truncated: true, reason: "trajectory-*" } shape (BOUND-01).
+      //     limitTrajectoryPayloadValue is a pure walk that only touches
+      //     sentinel nodes; plain values pass through unchanged.
+      const bounded = limitTrajectoryPayloadValue(sanitized) as
+        | Record<string, unknown>
+        | undefined;
+
       // 2. Build the envelope.
       const evt = buildEvent({
         type,
-        ...(sanitized !== undefined ? { sanitized } : {}),
+        ...(bounded !== undefined ? { sanitized: bounded } : {}),
         init,
         seq: state.seq + 1,
         ...(parentEntryId !== undefined ? { parentEntryId } : {}),
