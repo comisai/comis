@@ -56,6 +56,7 @@ import { renderTable } from "../output/table.js";
  */
 export function ensureGatewayToken(flagToken: string | undefined): void {
   if (flagToken !== undefined && flagToken.length > 0) {
+    // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager: thread --token into the env so rpc-client's ${COMIS_GATEWAY_TOKEN} config resolver consumes it
     process.env["COMIS_GATEWAY_TOKEN"] = flagToken;
     return;
   }
