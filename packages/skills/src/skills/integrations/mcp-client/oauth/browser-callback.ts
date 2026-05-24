@@ -285,7 +285,15 @@ export function runBrowserCallback(
   // the headless decision is per-login and should not observe later env
   // mutations within the same process lifetime.
   const env = options.env ?? systemEnvSnapshot();
-  const isTTY = options.isTTY ?? Boolean(process.stdout.isTTY);
+  // WR-04: defensive `process.stdout?.isTTY` access. Some platforms (worker
+  // threads, stubbed-process shims, certain test environments) expose
+  // `process` without a `stdout` property; a non-optional read would throw a
+  // TypeError before the headless decision could even reach the four extended
+  // signals. With optional chaining a missing `process.stdout` falls back to
+  // `undefined` → coerced to `false` → "no TTY" → `isHeadless` returns true,
+  // which is the safe default (suppresses the browser open, surfaces the
+  // port-forward hint). Tests still inject `options.isTTY` for determinism.
+  const isTTY = options.isTTY ?? Boolean(process.stdout?.isTTY);
   const existsSync = options.existsSync ?? nodeExistsSync;
 
   return new Promise<BrowserCallbackHandle>((resolveHandle, rejectHandle) => {

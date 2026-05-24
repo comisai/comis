@@ -312,6 +312,49 @@ describe("runBrowserCallback — loopback callback server", () => {
     // Idempotent / safe on an already-zeroed buffer.
     expect(() => zeroVerifier(buf)).not.toThrow();
   });
+
+  it("8. WR-04: defensive isTTY default — does NOT throw when process.stdout is undefined", async () => {
+    // Some platforms (worker threads, some test environments, stubbed-process
+    // shims) expose `process` without a `stdout` property. Pre-fix the code
+    // read `Boolean(process.stdout.isTTY)` which throws a TypeError when
+    // `process.stdout` is undefined. The fix uses optional chaining
+    // (`process.stdout?.isTTY`) so the headless decision falls back to its
+    // default-headless behavior (no TTY → headless) instead of crashing.
+    const original = Object.getOwnPropertyDescriptor(process, "stdout");
+    try {
+      // Stub process.stdout to undefined for the duration of this test.
+      Object.defineProperty(process, "stdout", {
+        configurable: true,
+        value: undefined,
+      });
+
+      const openUrl = vi.fn();
+      // No options.isTTY override → forces the production default path.
+      // Provide options.env so headless detection is otherwise deterministic
+      // (without DISPLAY the base isRemoteEnvironment helper would return true
+      // anyway — but we want to prove the default-isTTY branch reaches that
+      // helper at all, not throw before it).
+      const handle = await runBrowserCallback({
+        serverName: "wr-04",
+        authorizationUrl: "https://auth.example.com/authorize",
+        state: "x".repeat(64),
+        codeVerifier: "verifier-secret",
+        openUrl,
+        logger: makeLogger(),
+        env: {}, // No DISPLAY → headless via isRemoteEnvironment.
+        existsSync: () => false,
+      });
+      open.push(handle);
+      // The call completed without a TypeError, and headless was detected
+      // (because env has no DISPLAY and our undefined-stdout fallback is
+      // treated as "no TTY" → headless).
+      expect(handle.headless).toBe(true);
+    } finally {
+      if (original) {
+        Object.defineProperty(process, "stdout", original);
+      }
+    }
+  });
 });
 
 describe("isHeadless predicate", () => {
