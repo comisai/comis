@@ -233,9 +233,21 @@ export async function getPromptFromServer(
     return err(new Error(`MCP server "${server}" does not advertise prompts capability`));
   }
   try {
+    // WR-03: the MCP SDK's getPrompt expects `arguments: Record<string,string>`,
+    // but `args` arrives as Record<string, unknown> (the get_prompt platform
+    // tool types its arguments as Type.Record(Type.String(), Type.Unknown())).
+    // A blind `as Record<string, string>` cast would ship non-string values
+    // (e.g. { count: 5 }) straight into the SDK, corrupting the call. Coerce
+    // every value to string at the adapter boundary instead.
+    const stringArgs =
+      args !== undefined
+        ? Object.fromEntries(
+            Object.entries(args).map(([k, v]) => [k, typeof v === "string" ? v : String(v)]),
+          )
+        : undefined;
     const result = await conn.client.getPrompt({
       name,
-      ...(args !== undefined && { arguments: args as Record<string, string> }),
+      ...(stringArgs !== undefined && { arguments: stringArgs }),
     });
     return ok({
       ...(result.description !== undefined && { description: result.description }),

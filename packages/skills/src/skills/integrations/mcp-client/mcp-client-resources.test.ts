@@ -162,6 +162,23 @@ describe("resources/prompts RPC adapters delegate to the per-server SDK client",
     }
   });
 
+  it("WR-03 coerces non-string getPrompt argument values to strings before the SDK call", async () => {
+    let received: Record<string, unknown> | undefined;
+    const conn = makeConnection({
+      getPrompt: async (req: { name: string; arguments?: Record<string, unknown> }) => {
+        received = req.arguments;
+        return { messages: [] };
+      },
+    });
+    const result = await getPromptFromServer(makeManager(conn), "fs", "greet", {
+      count: 5,
+      flag: true,
+      label: "hi",
+    });
+    expect(result.ok).toBe(true);
+    // Every value must be a string — a raw cast would have leaked 5/true.
+    expect(received).toEqual({ count: "5", flag: "true", label: "hi" });
+  });
 });
 
 // ---------------------------------------------------------------------------
