@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: "Plan 01 complete (3 commits: 97bce0a, ccefa97, b374e1f)."
-last_updated: "2026-05-24T20:18:03.171Z"
+last_updated: "2026-05-24T20:51:33.273Z"
 progress:
   total_phases: 8
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 15
-  completed_plans: 15
+  completed_plans: 16
   percent: 100
 ---
 
@@ -71,6 +71,7 @@ progress:
 | 8 | — | — | — | — | — | — |
 | Phase 01-trace-propagation-lifecycle-envelopes P02 | 12 | 3 tasks | 6 files |
 | Phase 01-trace-propagation-lifecycle-envelopes P04 | 12m | 3 tasks | 4 files |
+| Phase 03-boot-invariants-info-dedup P04 | 20m | 2 tasks | 5 files |
 
 ## Accumulated Context
 
