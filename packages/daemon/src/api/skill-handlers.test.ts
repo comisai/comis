@@ -12,6 +12,20 @@
  * error branches are covered without touching real GitHub.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// Phase 68 BUNDLE-06 (Plan 04): mock the install-path bundle hook so the
+// existing 6 install-handler tests stay independent of the bundle resolver
+// chain (no mcpServers block = the real hook would no-op anyway, but mocking
+// is robust if the helper's signature changes). The new "Phase 68 install hook
+// wiring" describe block below asserts on this spy's call args + propagated
+// throw to verify the per-handler wiring.
+const mockRunBundleInstallHook = vi.hoisted(() =>
+  vi.fn(async () => ({ persistence: "skipped" as const })),
+);
+vi.mock("../skills/bundle-install-helper.js", () => ({
+  runBundleInstallHook: mockRunBundleInstallHook,
+}));
+
 import { createSkillHandlers, type SkillHandlerDeps } from "./skill-handlers.js";
 import type { AppContainer } from "@comis/core";
 import * as fs from "node:fs";
@@ -72,6 +86,9 @@ let tmpRoot: string;
 
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(join(tmpdir(), `skill-handlers-test-${randomUUID().slice(0, 8)}-`));
+  // Reset (NOT restore) — restore would unbind the vi.mock hoisted factory.
+  mockRunBundleInstallHook.mockReset();
+  mockRunBundleInstallHook.mockResolvedValue({ persistence: "skipped" as const });
 });
 
 afterEach(() => {
@@ -999,5 +1016,188 @@ describe("skills.update handler", () => {
     const skillFile = join(skillDir, "SKILL.md");
     // The legacy 0o644 file is replaced; the new file is 0o600.
     expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 68 BUNDLE-06: install-hook wiring (skills.upload / .import / .create)
+// ---------------------------------------------------------------------------
+
+describe("Phase 68 install-hook wiring (BUNDLE-05/06)", () => {
+  // -------------------------------------------------------------------------
+  // 1. skills.upload fires the bundle hook with skillId=params.name +
+  //    resolved skillDir + rawParams (so the hook sees the optional force flag).
+  // -------------------------------------------------------------------------
+  it("skills.upload invokes runBundleInstallHook with params.name + resolved skillDir + rawParams", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.upload"]!({
+      name: "bundle-skill",
+      scope: "local",
+      files: [{ path: "SKILL.md", content: "---\nname: bundle-skill\n---\nBody" }],
+      _agentId: "agent-a",
+    });
+    expect(mockRunBundleInstallHook.mock.calls.length).toBe(1);
+    const [, skillId, skillDir, rawParams] = mockRunBundleInstallHook.mock.calls[0]!;
+    expect(skillId).toBe("bundle-skill");
+    expect(skillDir).toBe(join(wsDir, "skills", "bundle-skill"));
+    expect((rawParams as { name: string }).name).toBe("bundle-skill");
+  });
+
+  // -------------------------------------------------------------------------
+  // 2. skills.import fires the bundle hook with the URL-derived skill name.
+  // -------------------------------------------------------------------------
+  it("skills.import invokes runBundleInstallHook with the URL-derived name + resolved skillDir", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.startsWith("https://api.github.com/")) {
+        return new Response(
+          JSON.stringify([
+            { name: "SKILL.md", type: "file", download_url: "https://dl/SKILL.md", path: "skills/import-bundle/SKILL.md" },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("---\nname: import-bundle\n---\nBody", { status: 200 });
+    });
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.import"]!({
+      url: "https://github.com/owner/repo/tree/main/skills/import-bundle",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+    expect(mockRunBundleInstallHook.mock.calls.length).toBe(1);
+    const [, skillId, skillDir] = mockRunBundleInstallHook.mock.calls[0]!;
+    expect(skillId).toBe("import-bundle");
+    expect(skillDir).toBe(join(wsDir, "skills", "import-bundle"));
+  });
+
+  // -------------------------------------------------------------------------
+  // 3. skills.create fires the bundle hook with params.name + resolved skillDir.
+  // -------------------------------------------------------------------------
+  it("skills.create invokes runBundleInstallHook with params.name + resolved skillDir", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.create"]!({
+      name: "create-bundle",
+      scope: "local",
+      content: "---\nname: create-bundle\ndescription: x\n---\nBody",
+      _agentId: "agent-a",
+    });
+    expect(mockRunBundleInstallHook.mock.calls.length).toBe(1);
+    const [, skillId, skillDir] = mockRunBundleInstallHook.mock.calls[0]!;
+    expect(skillId).toBe("create-bundle");
+    expect(skillDir).toBe(join(wsDir, "skills", "create-bundle"));
+  });
+
+  // -------------------------------------------------------------------------
+  // 4. force: true on rawParams flows through to the hook (BUNDLE-05).
+  //    The hook unpacks (force?: boolean) from rawParams.
+  // -------------------------------------------------------------------------
+  it("force=true in rawParams flows through to the bundle install hook (BUNDLE-05)", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.create"]!({
+      name: "force-skill",
+      scope: "local",
+      content: "---\nname: force-skill\ndescription: x\n---\nBody",
+      force: true,
+      _agentId: "agent-a",
+    });
+    expect(mockRunBundleInstallHook.mock.calls.length).toBe(1);
+    const [, , , rawParams] = mockRunBundleInstallHook.mock.calls[0]!;
+    expect((rawParams as { force?: boolean }).force).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // 5. Phase A reject (the hook throws [bundle_install_rejected:plaintext_secret])
+  //    surfaces as RPC error — i.e. the handler does NOT swallow it.
+  //    BUNDLE-06 atomic invariant: caller sees the bracketed code; the rpc-dispatch
+  //    layer surfaces it to the RPC client.
+  // -------------------------------------------------------------------------
+  it("Phase A reject from the bundle hook surfaces as the RPC handler's thrown error (BUNDLE-06)", async () => {
+    mockRunBundleInstallHook.mockRejectedValueOnce(
+      new Error("[bundle_install_rejected:plaintext_secret] bundle entry 'leaky' has a plaintext-secret-shaped value at env.OPENAI_API_KEY"),
+    );
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await expect(
+      handlers["skills.create"]!({
+        name: "reject-skill",
+        scope: "local",
+        content: "---\nname: reject-skill\ndescription: x\n---\nBody",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/\[bundle_install_rejected:plaintext_secret\]/);
+  });
+
+  // -------------------------------------------------------------------------
+  // 6. Pre-existing manifest-without-mcpServers behavior is preserved across
+  //    all 3 install handlers (the bundle hook short-circuits to "skipped"
+  //    persistence; the response shape is unchanged).
+  // -------------------------------------------------------------------------
+  it("manifest-without-mcpServers preserves pre-Phase-68 install behavior across all 3 handlers (hook short-circuits silently)", async () => {
+    // The default mockRunBundleInstallHook returns { persistence: "skipped" }.
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    const uploadResult = await handlers["skills.upload"]!({
+      name: "no-bundle-upload",
+      scope: "local",
+      files: [{ path: "SKILL.md", content: "---\nname: no-bundle-upload\n---\nBody" }],
+      _agentId: "agent-a",
+    });
+    const createResult = await handlers["skills.create"]!({
+      name: "no-bundle-create",
+      scope: "local",
+      content: "---\nname: no-bundle-create\ndescription: x\n---\nBody",
+      _agentId: "agent-a",
+    });
+    expect(uploadResult).toMatchObject({ ok: true });
+    expect(createResult).toMatchObject({ ok: true });
+    // The hook fired twice (once per install handler).
+    expect(mockRunBundleInstallHook.mock.calls.length).toBe(2);
   });
 });

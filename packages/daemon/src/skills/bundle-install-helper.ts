@@ -352,3 +352,28 @@ export async function applyBundleInstall(
     ...(persistOutcome.warning !== undefined && { warning: persistOutcome.warning }),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Per-handler hook wrapper
+// ---------------------------------------------------------------------------
+
+/**
+ * Thin wrapper invoked from each of the three install RPC handlers
+ * (skills.import, skills.create, skills.upload) to keep their per-handler
+ * wiring to a single line. Unpacks `force` + `_context` from the dispatcher-
+ * raw params and delegates to applyBundleInstall.
+ *
+ * Kept here (rather than at the call site) to preserve the 800-line cap
+ * on packages/daemon/src/api/skill-handlers.ts — moving the unpacking
+ * here trades 5L per handler call (15L total) for 0L at the call site.
+ */
+export async function runBundleInstallHook(
+  deps: WorkspaceApiDeps,
+  skillId: string,
+  skillDir: string,
+  rawParams: Record<string, unknown>,
+): Promise<ApplyBundleInstallResult> {
+  const force = (rawParams as { force?: boolean }).force === true;
+  const ctx = (rawParams as { _context?: { userId?: string; traceId?: string } })._context;
+  return applyBundleInstall({ skillId, skillDir, force, ctx, deps });
+}

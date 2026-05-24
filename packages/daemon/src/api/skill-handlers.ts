@@ -59,6 +59,7 @@ import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { createLogger } from "@comis/infra";
 import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
+import { runBundleInstallHook } from "../skills/bundle-install-helper.js";
 
 const logger = createLogger({ name: "skill-handlers" });
 
@@ -343,6 +344,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
+      await runBundleInstallHook(deps, params.name, skillDir, rawParams);
 
       const result = { ok: true as const, path: skillDir };
       if (IS_DEV) SkillsUploadContract.response.parse(result);
@@ -494,6 +496,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
+      await runBundleInstallHook(deps, name, skillDir, rawParams);
 
       const result = { ok: true as const, path: skillDir, name, fileCount: fetchedFiles.length };
       if (IS_DEV) SkillsImportContract.response.parse(result);
@@ -692,6 +695,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
+      await runBundleInstallHook(deps, params.name, skillDir, rawParams);
 
       const result = { ok: true as const, path: skillDir, name: params.name };
       if (IS_DEV) SkillsCreateContract.response.parse(result);
