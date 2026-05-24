@@ -408,9 +408,12 @@ describe("McpClientManager", () => {
       const headers = { "Authorization": "Bearer test-token", "X-API-Key": "key123" };
       await mgr.connect(makeHttpConfig({ headers }));
 
+      // Phase 63 SAFETY-07: opts also carries `fetch: createRedirectPolicyFetch(...)`
+      // alongside `requestInit`. Use objectContaining so the assertion stays
+      // robust when additional opts keys are wired in future phases.
       expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
         expect.any(URL),
-        { requestInit: { headers } },
+        expect.objectContaining({ requestInit: { headers } }),
       );
     });
 
@@ -419,9 +422,10 @@ describe("McpClientManager", () => {
       const headers = { "Authorization": "Bearer sse-token" };
       await mgr.connect(makeSseConfig({ headers }));
 
+      // Phase 63 SAFETY-07: opts also carries `fetch: createRedirectPolicyFetch(...)`.
       expect(SSEClientTransport).toHaveBeenCalledWith(
         expect.any(URL),
-        { requestInit: { headers } },
+        expect.objectContaining({ requestInit: { headers } }),
       );
     });
 
@@ -429,9 +433,10 @@ describe("McpClientManager", () => {
       const mgr = createMcpClientManager(makeDeps());
       await mgr.connect(makeHttpConfig());
 
+      // Phase 63 SAFETY-07: opts also carries `fetch: createRedirectPolicyFetch(...)`.
       expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
         expect.any(URL),
-        { requestInit: undefined },
+        expect.objectContaining({ requestInit: undefined }),
       );
     });
 
