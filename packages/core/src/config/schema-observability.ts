@@ -104,6 +104,22 @@ const ObservabilityPersistenceSchema = z.strictObject({
 });
 
 /**
+ * Trajectory observability configuration schema (POINTER-02).
+ *
+ * Defines the optional `dirOverride` that relocates the runtime trajectory
+ * file to an operator-specified directory. When set, the pointer sidecar
+ * at `<sessionFile>.trajectory-path.json` still lives next to the session
+ * JSONL and its `runtimeFile` field points at the relocated file.
+ *
+ * See also: `COMIS_TRAJECTORY_DIR` env var (projected via env-layer.ts).
+ * Precedence: diagnostics.trajectory.dir → observability.trajectory.dirOverride → env → default.
+ */
+const TrajectoryObservabilityConfigSchema = z.strictObject({
+  /** Override directory for runtime trajectory JSONL files. */
+  dirOverride: z.string().optional(),
+});
+
+/**
  * Root observability configuration schema.
  *
  * Has sensible defaults so an empty object produces a valid ObservabilityConfig.
@@ -111,7 +127,10 @@ const ObservabilityPersistenceSchema = z.strictObject({
 export const ObservabilityConfigSchema = z.strictObject({
   /** Persistence layer settings. */
   persistence: ObservabilityPersistenceSchema.default(() => ObservabilityPersistenceSchema.parse({})),
+  /** Trajectory storage override (POINTER-02). */
+  trajectory: TrajectoryObservabilityConfigSchema.default(() => TrajectoryObservabilityConfigSchema.parse({})),
 });
 
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
 export type ObservabilityPersistenceConfig = z.infer<typeof ObservabilityPersistenceSchema>;
+export type TrajectoryObservabilityConfig = z.infer<typeof TrajectoryObservabilityConfigSchema>;

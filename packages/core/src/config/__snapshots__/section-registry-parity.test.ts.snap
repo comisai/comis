@@ -11101,7 +11101,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "enabled": true,
         "retentionDays": 30,
         "snapshotIntervalMs": 300000
-      }
+      },
+      "trajectory": {}
     },
     "immutable": false,
     "path": "observability",
@@ -11134,6 +11135,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "observability.persistence.snapshotIntervalMs",
     "type": "integer"
+  },
+  {
+    "default": {},
+    "immutable": false,
+    "path": "observability.trajectory",
+    "type": "object"
+  },
+  {
+    "immutable": false,
+    "path": "observability.trajectory.dirOverride",
+    "type": "string"
   },
   {
     "default": {
@@ -29358,7 +29370,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "enabled": true,
           "retentionDays": 30,
           "snapshotIntervalMs": 300000
-        }
+        },
+        "trajectory": {}
       },
       "properties": {
         "persistence": {
@@ -29392,10 +29405,21 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "snapshotIntervalMs"
           ],
           "type": "object"
+        },
+        "trajectory": {
+          "additionalProperties": false,
+          "default": {},
+          "properties": {
+            "dirOverride": {
+              "type": "string"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
-        "persistence"
+        "persistence",
+        "trajectory"
       ],
       "type": "object"
     },
