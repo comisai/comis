@@ -28,6 +28,7 @@ import {
   startIdleTicker,
   stopIdleTicker,
 } from "./mcp-client-idle-eviction.js";
+import { disconnectServer } from "./mcp-client-connect.js";
 import { qualifyToolName } from "./mcp-client-types.js";
 import type {
   McpClientManagerDeps,
@@ -80,6 +81,7 @@ function makeState(deps?: { logger: McpClientManagerDeps["logger"] }): McpClient
     serverConfigs: new Map<string, McpServerConfig>(),
     generations: new Map<string, number>(),
     callQueues: new Map<string, PQueue>(),
+    keepaliveQueues: new Map<string, PQueue>(),
     consecutiveErrors: new Map<string, number>(),
     keepaliveTickers: new Map(),
     circuitBreakers: new Map(),
@@ -419,6 +421,66 @@ describe("idle eviction — lazy reconnect on missing connection (OPUX-09)", () 
       const refreshed = state.lastActivityMs.get("epsilon");
       expect(refreshed).toBeDefined();
       expect(refreshed!).toBeGreaterThan(seeded!);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 67 CAP-02 — dedicated keepalive queue teardown (no leak)
+// ---------------------------------------------------------------------------
+//
+// When the primary call queue concurrency > 1, maybeEnqueueKeepalivePing
+// lazily creates a dedicated cc-1 PQueue in state.keepaliveQueues. That entry
+// MUST be cleared + deleted on BOTH disconnect and idle-eviction (mirroring
+// callQueues) so it cannot leak across reconnect generations. These tests seed
+// the map entry directly (the shape after a concurrency>1 keepalive tick) and
+// assert teardown removes it. Pre-patch: nothing deletes it → the entry leaks.
+
+/** Seed a dedicated keepalive queue entry, as a concurrency>1 tick would. */
+function wireKeepaliveQueue(state: McpClientManagerState, name: string): PQueue {
+  const ka = new PQueue({ concurrency: 1 });
+  state.keepaliveQueues.set(name, ka);
+  return ka;
+}
+
+describe("keepalive queue teardown (CAP-02)", () => {
+  it("disconnect clears + deletes the dedicated keepalive queue", async () => {
+    const state = makeState();
+    wireConnected(state, "alpha", { supportsParallelToolCalls: true });
+    wireKeepaliveQueue(state, "alpha");
+    const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+
+    expect(state.keepaliveQueues.has("alpha")).toBe(true);
+
+    await disconnectServer(state, deps, "alpha");
+
+    // Pre-patch FAILS: disconnectServer tears down callQueues but leaves the
+    // keepaliveQueues entry dangling.
+    expect(state.keepaliveQueues.has("alpha")).toBe(false);
+    // Sanity: the primary call queue is torn down too (existing behavior).
+    expect(state.callQueues.has("alpha")).toBe(false);
+  });
+
+  it("idle-eviction clears + deletes the dedicated keepalive queue", async () => {
+    vi.useFakeTimers();
+    try {
+      const state = makeState();
+      wireConnected(state, "beta", { idleTtlMs: 60_000, supportsParallelToolCalls: true });
+      wireKeepaliveQueue(state, "beta");
+      const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+
+      startIdleTicker(state, deps, state.serverConfigs.get("beta")!);
+      expect(state.keepaliveQueues.has("beta")).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      // Pre-patch FAILS: evictIdleServer mirrors disconnectServer's callQueues
+      // teardown but not the keepaliveQueues teardown → the entry leaks.
+      expect(state.connections.get("beta")).toBeUndefined();
+      expect(state.keepaliveQueues.has("beta")).toBe(false);
+      expect(state.callQueues.has("beta")).toBe(false);
     } finally {
       vi.useRealTimers();
     }
