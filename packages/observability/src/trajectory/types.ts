@@ -28,11 +28,11 @@
  */
 
 /**
- * Closed enum of trajectory event types (18 total).
+ * Closed enum of trajectory event types (20 total).
  *
  * Order is deliberate (life-cycle: session.* → prompt → model → tool →
- * skill → memory → delivery → control-plane sentinel). Append-only —
- * insertion order is part of the SemVer contract for v1.
+ * skill → memory → delivery → lifecycle envelopes → control-plane sentinel).
+ * Append-only — insertion order is part of the SemVer contract for v1.
  */
 export const TRAJECTORY_EVENT_TYPES = [
   // Session lifecycle (one start + one end per agent run).
@@ -68,6 +68,12 @@ export const TRAJECTORY_EVENT_TYPES = [
   "delivery.queued",
   "delivery.dispatched",
 
+  // Lifecycle envelopes (D4 / LIFE-01 + LIFE-02). Direct-emit by the
+  // agent executor — NOT via the EventBus bridge. See design §6.2
+  // Appendix B "(NEW D4) direct". Added Plan 01-01 (TRACE-02).
+  "trace.metadata",
+  "trace.artifacts",
+
   // Control-plane sentinel: writer ran out of room mid-stream.
   "trace.truncated",
   // Control-plane sentinel: queued writer rejected one or more lines
@@ -82,11 +88,18 @@ export type TrajectoryEventType = (typeof TRAJECTORY_EVENT_TYPES)[number];
 /**
  * Trajectory event source (design §6.2).
  *
- * - `"runtime"` — emitted live by `createTrajectoryRecorder` during agent execution.
+ * - `"runtime"`    — emitted live by `createTrajectoryRecorder` during agent execution
+ *                   (the only producer this phase ships; runtime recorder pins this value).
+ * - `"transcript"` — emitted by the bundle exporter when merging session JSONL transcript
+ *                   entries with runtime events (Phase 4 D5).
+ * - `"export"`     — emitted by the bundle exporter for synthesized records (Phase 4 D5).
  *
- * Single-member union preserved for forward-compatibility of on-disk JSONL artifacts.
+ * Declaration widened in Plan 01-01 (TRACE-02); producers for transcript/export
+ * land in Phase 4. On-disk JSONL files written before this widening lack ambient
+ * "transcript"/"export" values — readers tolerate the narrower set per §6.4 additive
+ * schema policy.
  */
-export type TrajectoryEventSource = "runtime";
+export type TrajectoryEventSource = "runtime" | "transcript" | "export";
 
 /**
  * Trajectory event — one record per JSONL line.
@@ -131,7 +144,16 @@ export interface TrajectoryEvent {
   readonly modelApi?: string | null;
 
   readonly entryId: string;
-  readonly parentEntryId?: string;
+  /** Parent event ID for DAG reconstruction (design §6.1 / O2).
+   *  Forward-declared in Phase 1; populated by Phase 4 session-DAG writer.
+   *  `null` distinguishes "explicit root" from "missing". */
+  readonly parentEntryId?: string | null;
+
+  /** Source-relative monotonic position (design §6.1). Used by the bundle
+   *  exporter as a tiebreak when merging runtime + transcript events with
+   *  identical `ts`. Forward-declared in Phase 1; populated by Phase 4
+   *  (bundle export) and downstream readers. */
+  readonly sourceSeq?: number;
 
   // Payload — passed through `sanitizeForPersistence` before write.
   // Shape is intentionally `Record<string, unknown>` (matches design §6.2);
