@@ -33,7 +33,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { TRAJECTORY_BRIDGE_MAPPING } from "@comis/observability";
+import { TRAJECTORY_BRIDGE_MAPPING, TRAJECTORY_EVENT_TYPES, type TrajectoryEventType } from "@comis/observability";
 import { formatViolations } from "../support/architecture-helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -297,6 +297,25 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "typing:stopped",
 ]);
 
+/**
+ * Closed set of trajectory event types emitted DIRECTLY by the
+ * runtime recorder (not via the EventBus → bridge → recordEvent
+ * path). These are lifecycle envelopes (design §6.2 Appendix B
+ * "(NEW D4) direct") and the control-plane sentinels emitted
+ * inside flushAndClose. Adding to this set is a closed-set
+ * design decision, NOT an allowlist for missing bridge mappings.
+ *
+ * Shrink-only: the set may only shrink (types can move to the bus
+ * bridge path, reducing the direct-emit surface), never grow beyond
+ * the explicitly listed lifecycle envelopes + control-plane sentinels.
+ */
+const DIRECT_EMIT_TRAJECTORY_TYPES: ReadonlySet<TrajectoryEventType> = new Set<TrajectoryEventType>([
+  "trace.metadata",
+  "trace.artifacts",
+  "trace.truncated",
+  "trace.write_failures",
+]);
+
 const SCANNED_PACKAGES = ["agent", "orchestrator"] as const;
 const EMIT_REGEX = /eventBus\.emit\(\s*"([^"]+)"/g;
 
@@ -427,5 +446,30 @@ describe("trajectory-event-types-known -- bridge mapping coverage from emit site
   it("EVENTS_NOT_TRAJECTORY_MAPPED is disjoint from TRAJECTORY_BRIDGE_MAPPING (no double-coverage)", () => {
     const intersection = [...EVENTS_NOT_TRAJECTORY_MAPPED].filter((e) => mapped.has(e));
     expect(intersection, "events in BOTH sets — pick one").toEqual([]);
+  });
+
+  it("DIRECT_EMIT_TRAJECTORY_TYPES is disjoint from TRAJECTORY_BRIDGE_MAPPING values + EVENTS_NOT_TRAJECTORY_MAPPED", () => {
+    const bridgedValues = new Set<string>(Object.values(TRAJECTORY_BRIDGE_MAPPING));
+    const overlapsBridge = [...DIRECT_EMIT_TRAJECTORY_TYPES].filter((t) => bridgedValues.has(t));
+    expect(
+      overlapsBridge,
+      "direct-emit types must NOT be in TRAJECTORY_BRIDGE_MAPPING values (design §6.2 Appendix B: direct-emit lifecycle envelopes are not bus-bridged)",
+    ).toEqual([]);
+    const overlapsAllowlist = [...DIRECT_EMIT_TRAJECTORY_TYPES].filter((t) =>
+      EVENTS_NOT_TRAJECTORY_MAPPED.has(t),
+    );
+    expect(
+      overlapsAllowlist,
+      "direct-emit types must NOT be in EVENTS_NOT_TRAJECTORY_MAPPED (different semantic — direct-emit != not-mapped)",
+    ).toEqual([]);
+  });
+
+  it("every DIRECT_EMIT_TRAJECTORY_TYPES member is a valid TrajectoryEventType", () => {
+    const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    const invalid = [...DIRECT_EMIT_TRAJECTORY_TYPES].filter((t) => !allTypes.has(t));
+    expect(
+      invalid,
+      "DIRECT_EMIT_TRAJECTORY_TYPES references unknown TrajectoryEventType — add the type to TRAJECTORY_EVENT_TYPES first",
+    ).toEqual([]);
   });
 });
