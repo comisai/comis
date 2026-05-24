@@ -46,9 +46,14 @@ import {
   type TrajectoryBundleWarning,
   readSessionBranch,
   type ReadSessionBranchResult,
+} from "./export.js";
+// Plan 04-03 symbols live in bundle-exporter.ts to avoid a circular import
+// (bundle-exporter.ts imports from export.ts; export.ts must not re-export
+// from bundle-exporter.ts or madge detects a circular .d.ts dependency).
+import {
   exportTrajectoryBundle,
   type ExportTrajectoryBundleParams,
-} from "./export.js";
+} from "./bundle-exporter.js";
 import type { TrajectoryEvent } from "./types.js";
 
 // ---------------------------------------------------------------------------

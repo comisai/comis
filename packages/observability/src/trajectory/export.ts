@@ -12,9 +12,12 @@
  * **Plan sequence:**
  *   - Plan 04-01: types, 4 hard-limit constants,
  *     `buildTranscriptEvents`, `sortTrajectoryEvents`.
- *   - Plan 04-02 (this plan): adds `readSessionBranch(filePath)` and
+ *   - Plan 04-02: adds `readSessionBranch(filePath)` and
  *     `ReadSessionBranchResult` — SESSION-02 DAG-aware reader.
- *   - Plan 04-03: adds `exportTrajectoryBundle(opts)` to this file.
+ *   - Plan 04-03: adds `exportTrajectoryBundle(params)` via
+ *     `bundle-exporter.ts` (co-located in this directory). The file
+ *     split is required by the 800-line architecture invariant; the
+ *     logical module boundary is unchanged. See bundle-exporter.ts.
  *
  * **TYPE MAPPING (session.transcript.entry):**
  * SDK SessionEntry.type values ("message", "compaction", etc.) are NOT in
@@ -26,8 +29,8 @@
  *
  * **PURE FUNCTIONS — no I/O, no logging, no throws:**
  * `buildTranscriptEvents` and `sortTrajectoryEvents` are total pure
- * functions over typed inputs. Callers in Plan 04-03 enforce the
- * hard-limit caps before invoking them.
+ * functions over typed inputs. Callers in `exportTrajectoryBundle`
+ * enforce the hard-limit caps before invoking them.
  *
  * **readSessionBranch is a soft-fail reader** — corrupt input returns
  * structured warnings, never throws. No raw JSONL parser is introduced;
@@ -168,7 +171,7 @@ export interface TrajectoryBundleManifest {
 /**
  * Envelope base fields passed to `buildTranscriptEvents`.
  * Matches the required session-correlation fields on TrajectoryEvent.
- * Exported so Plan 04-03 can use it at the call site.
+ * Exported so bundle-exporter.ts can use it at the call site.
  */
 export interface TranscriptEventBase {
   readonly sessionId: string;
@@ -511,3 +514,16 @@ export function readSessionBranch(filePath: string): ReadSessionBranchResult {
     warnings,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Plan 04-03: exportTrajectoryBundle pipeline
+//
+// Defined in bundle-exporter.ts (co-located in this directory). The file
+// split is required by the 800-line architecture invariant — export.ts
+// would exceed the cap if the full pipeline were inlined here.
+//
+// bundle-exporter.ts imports types/helpers from this file. To avoid the
+// circular dependency that would result from re-exporting here, the barrel
+// (index.ts) exports from bundle-exporter.ts directly. Tests import Plan 03
+// symbols from bundle-exporter.ts.
+// ---------------------------------------------------------------------------

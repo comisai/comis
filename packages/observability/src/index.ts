@@ -187,6 +187,16 @@ export type {
   ReadSessionBranchResult,
 } from "./trajectory/export.js";
 
+// Plan 04-03: exportTrajectoryBundle lives in bundle-exporter.ts to avoid
+// a circular import (bundle-exporter.ts → export.ts; export.ts must not
+// re-export bundle-exporter.ts or madge flags a circular .d.ts dependency).
+export { exportTrajectoryBundle } from "./trajectory/bundle-exporter.js";
+export type {
+  ExportTrajectoryBundleParams,
+  ExportTrajectoryBundleError,
+  ExportTrajectoryBundleSuccess,
+} from "./trajectory/bundle-exporter.js";
+
 // ---------------------------------------------------------------------------
 // SystemPromptReport surface.
 // ---------------------------------------------------------------------------
