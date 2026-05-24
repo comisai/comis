@@ -35,15 +35,15 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 - [x] **BRIDGE-01**: Bridge maps `queue:enqueued/dequeued/overflow/coalesced` to `queue.{enqueued,dequeued,overflow,coalesced}` — closes G2 for the queue layer (would have caught today's bug in one query)
   - Design: D6 *(file: `packages/observability/src/trajectory/event-bus-bridge.ts:47`)*
-- [ ] **BRIDGE-02**: Bridge maps `retry:attempted/exhausted/markdown_fallback` to `delivery.{retry,retry_exhausted,markdown_fallback}`
+- [x] **BRIDGE-02**: Bridge maps `retry:attempted/exhausted/markdown_fallback` to `delivery.{retry,retry_exhausted,markdown_fallback}`
   - Design: D6
 - [x] **BRIDGE-03**: Bridge maps `execution:{aborted,budget_warning,prompt_timeout,output_escalated,signed_replay_recovered}` to corresponding `execution.*` types
   - Design: D6
 - [x] **BRIDGE-04**: Bridge maps `security:{injection_detected,memory_tainted,warn}` and `sender:blocked` to `security.*` and `sender.blocked`
   - Design: D6
-- [ ] **BRIDGE-05**: Bridge maps `mcp:server:{disconnected,reconnecting,reconnect_failed,reconnected,tools_changed}` to `mcp.*` types
+- [x] **BRIDGE-05**: Bridge maps `mcp:server:{disconnected,reconnecting,reconnect_failed,reconnected,tools_changed}` to `mcp.*` types
   - Design: D6
-- [ ] **BRIDGE-06**: Bridge maps `channel:health_changed`, `channel:registered`, `channel:deregistered` to `channel.{health_changed,lifecycle}`
+- [x] **BRIDGE-06**: Bridge maps `channel:health_changed`, `channel:registered`, `channel:deregistered` to `channel.{health_changed,lifecycle}`
   - Design: D6
 - [ ] **BRIDGE-07**: Bridge maps `compaction:{started,flush,recommended}` and `context:{evicted,masked,reread,overflow,integrity,rehydrated}` to `compaction.*` and `context.*` types
   - Design: D6
@@ -236,11 +236,11 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | LIFE-02 | Phase 1 | Complete |
 | LIFE-03 | Phase 1 | Complete |
 | BRIDGE-01 | Phase 2 | Complete |
-| BRIDGE-02 | Phase 2 | Pending |
+| BRIDGE-02 | Phase 2 | Complete |
 | BRIDGE-03 | Phase 2 | Complete |
 | BRIDGE-04 | Phase 2 | Complete |
-| BRIDGE-05 | Phase 2 | Pending |
-| BRIDGE-06 | Phase 2 | Pending |
+| BRIDGE-05 | Phase 2 | Complete |
+| BRIDGE-06 | Phase 2 | Complete |
 | BRIDGE-07 | Phase 2 | Pending |
 | BRIDGE-08 | Phase 2 | Pending |
 | BRIDGE-09 | Phase 2 | Pending |
