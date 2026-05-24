@@ -18852,6 +18852,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
                 },
                 "type": "object"
               },
+              "supportsParallelToolCalls": {
+                "type": "boolean"
+              },
               "toolAllowlist": {
                 "items": {
                   "minLength": 1,
@@ -28156,6 +28159,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                       }
                     },
                     "type": "object"
+                  },
+                  "supportsParallelToolCalls": {
+                    "type": "boolean"
                   },
                   "toolAllowlist": {
                     "items": {

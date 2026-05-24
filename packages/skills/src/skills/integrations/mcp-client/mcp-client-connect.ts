@@ -221,10 +221,15 @@ export async function connectServer(
 
     state.connections.set(config.name, connection);
 
-    // Create per-server call concurrency queue
-    const maxConcurrency = config.maxConcurrency
-      ?? (config.transport === "stdio" ? state.options.stdioDefaultConcurrency : state.options.httpDefaultConcurrency);
-    state.callQueues.set(config.name, new PQueue({ concurrency: maxConcurrency }));
+    // Create per-server call concurrency queue. CAP-02: explicit maxConcurrency
+    // always wins; else stdio gets 4 only when supportsParallelToolCalls opts in
+    // (default stdio stays 1); sse/http keep their transport default (already 4).
+    const resolvedConcurrency =
+      config.maxConcurrency
+      ?? (config.transport === "stdio"
+            ? (config.supportsParallelToolCalls === true ? 4 : state.options.stdioDefaultConcurrency)
+            : state.options.httpDefaultConcurrency);
+    state.callQueues.set(config.name, new PQueue({ concurrency: resolvedConcurrency }));
 
     // Phase 64 RELY-01/02/03: per-server keepalive ticker. NO-OP when
     // keepaliveIntervalMs === 0 (disabled). Routes ping through the same

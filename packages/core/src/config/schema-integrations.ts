@@ -141,6 +141,11 @@ export const McpServerEntrySchema = z.preprocess(
     /** Phase 65 OPUX-10: opt-out for prompts utility tools (list_prompts/
      *  get_prompt). Same semantics as enableResources but for capabilities.prompts. */
     enablePrompts: z.boolean().optional(),
+    /** Phase 67 CAP-02: opt-in parallel tool calls. When true AND transport "stdio",
+     *  the per-server PQueue concurrency bumps from 1 to maxConcurrency ?? 4. Default
+     *  undefined => stdio stays serialized (concurrency 1). Ignored for sse/http
+     *  (already default concurrency 4). Read at PQueue construction (mcp-client-connect.ts). */
+    supportsParallelToolCalls: z.boolean().optional(),
   }),
 );
 

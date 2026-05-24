@@ -55,7 +55,7 @@ export function parseQualifiedName(
 // ---------------------------------------------------------------------------
 
 /** Configuration for a single MCP server connection. */
-// @optional-field-count: User-facing MCP server config. Each optional captures a real operator override across three sub-systems — base transport (command, args, url, env, cwd, headers, maxConcurrency), Phase 63 safety/OSV/rlimits (safetyAllowedEnvKeys, osvCheckEnabled, osvCacheTtlMs, rlimits), and Phase 64 reliability (keepaliveIntervalMs, circuitBreakerThreshold, circuitBreakerCooldownMs). Splitting into per-subsystem sub-objects would force every connect path + persistence/audit hook to walk three nested groups while gaining no type safety (all three sub-systems use the same `??` global-default fallback). The interface fits the single-sub-object pattern used by all other MCP transports; only the optional count grew across phases.
+// @optional-field-count: User-facing MCP server config. Each optional captures a real operator override across sub-systems — base transport (command, args, url, env, cwd, headers, maxConcurrency), Phase 63 safety/OSV/rlimits (safetyAllowedEnvKeys, osvCheckEnabled, osvCacheTtlMs, rlimits), Phase 64 reliability (keepaliveIntervalMs, circuitBreakerThreshold, circuitBreakerCooldownMs), Phase 65 tool-filtering/idle/utility (toolAllowlist, toolBlocklist, idleTtlMs, enableResources, enablePrompts), and Phase 67 concurrency (supportsParallelToolCalls). Splitting into per-subsystem sub-objects would force every connect path + persistence/audit hook to walk nested groups while gaining no type safety (all use the same `??`/`=== true` global-default fallback). The interface fits the single-sub-object pattern used by all other MCP transports; only the optional count grew across phases.
 export interface McpServerConfig {
   /** Unique name identifying this server. */
   readonly name: string;
@@ -150,6 +150,11 @@ export interface McpServerConfig {
   /** Phase 65 OPUX-10: opt-out for prompts utility tools. undefined ⇒
    *  auto-register if capabilities.prompts present. Read by Plan 05. */
   readonly enablePrompts?: boolean;
+  /** Phase 67 CAP-02: opt-in parallel tool calls. true + transport "stdio" ⇒
+   *  per-server PQueue concurrency = maxConcurrency ?? 4; undefined/false ⇒
+   *  stdio stays serialized (1). No-op for sse/http (already 4). Read at
+   *  PQueue construction (mcp-client-connect.ts). */
+  readonly supportsParallelToolCalls?: boolean;
 }
 
 /** Connection status for an MCP server. */
