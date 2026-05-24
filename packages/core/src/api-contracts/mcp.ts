@@ -278,6 +278,23 @@ export const McpConnectContract = defineContract({
     url: z.string().optional(),
     env: z.record(z.string(), z.string()).optional(),
     headers: z.record(z.string(), z.string()).optional(),
+    // Phase 63 CR-03: per-server stdio rlimits override accepted on
+    // `mcp.connect` so callers can supply rlimits at first-connect time.
+    // Mirrors McpServerEntrySchema.rlimits. Partial overrides allowed.
+    // The handler forwards to both the spawn-time McpServerConfig
+    // (wrapStdioCommand) and the persisted McpServerEntry.
+    rlimits: z
+      .object({
+        as: z.number().int().positive().optional(),
+        nofile: z.number().int().positive().optional(),
+        cpu: z.number().int().positive().optional(),
+      })
+      .optional(),
+    // Phase 63 CR-04: per-server opt-out for the plaintext-secret
+    // heuristic. Accepted on `mcp.connect` and PERSISTED to the
+    // McpServerEntry so the opt-out survives a daemon restart. Default:
+    // false (heuristic enforced). Mirrors McpServerEntrySchema.
+    disablePlaintextSecretCheck: z.boolean().optional(),
   }),
   response: z.object({
     name: z.string(),

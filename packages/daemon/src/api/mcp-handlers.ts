@@ -483,18 +483,20 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           }
         | undefined;
 
-      // Phase 63 SAFETY-08: per-server rlimits are persisted on the
-      // McpServerEntrySchema (NOT on McpConnectContract.request — which
-      // models only the user-facing RPC params). Look up the existing
-      // persisted entry by name and forward `rlimits` to the spawn-time
-      // wrapStdioCommand call. For a fresh `mcp.connect` (no persisted
-      // entry yet) `rlimits` is undefined — the wrap falls back to the
-      // existing env-only behaviour, which matches the documented default
-      // ("rlimits unset on a server → NO prlimit wrap" per Plan 06).
+      // Phase 63 SAFETY-08 + CR-03: per-server rlimits resolution.
+      // McpConnectContract.request now accepts an explicit `rlimits` field
+      // (CR-03 — pre-fix the only path was the persisted entry, which
+      // didn't exist on first connect and was never written by the
+      // handler, deadlocking SAFETY-08 for new servers). Resolution
+      // order:
+      //   1. caller-supplied `params.rlimits` (current connect's intent)
+      //   2. otherwise the previously-persisted entry's `rlimits`
+      //   3. otherwise undefined (existing env-only wrap — no prlimit)
       const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as Array<
         { name: string; rlimits?: { as?: number; nofile?: number; cpu?: number } }
       >;
       const persistedEntry = persistedServers.find((s) => s.name === params.server_name);
+      const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
       const config: McpServerConfig = {
         name: params.server_name,
@@ -508,7 +510,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,
         osvCheckEnabled: mcpConfigRoot?.osvCheckEnabled,
         osvCacheTtlMs: mcpConfigRoot?.osvCacheTtlMs,
-        rlimits: persistedEntry?.rlimits,
+        rlimits: resolvedRlimits,
       };
 
       // Reject connects that reference env vars not in the secrets store.
@@ -550,6 +552,20 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         // transform string values.
         ...(params.env !== undefined && { env: params.env }),
         ...(params.headers !== undefined && { headers: params.headers }),
+        // Phase 63 CR-03: persist rlimits onto the McpServerEntry so the
+        // SAFETY-08 protection survives a daemon restart AND so subsequent
+        // reconnects/connects can read it back. `resolvedRlimits` carries
+        // either the caller-supplied value or (when the caller omitted it)
+        // the prior persisted value — preserving the field across noop
+        // reconnects rather than dropping it.
+        ...(resolvedRlimits !== undefined && { rlimits: resolvedRlimits }),
+        // Phase 63 CR-04: persist disablePlaintextSecretCheck so the
+        // per-server opt-out survives a daemon restart. Pre-fix the
+        // handler honored the flag at runtime but dropped it from the
+        // YAML, so reload + symmetric reconnect could re-fire the guard.
+        ...(userParams.disablePlaintextSecretCheck === true && {
+          disablePlaintextSecretCheck: true as const,
+        }),
         enabled: true,
       };
       const newServers: McpServerEntry[] = [

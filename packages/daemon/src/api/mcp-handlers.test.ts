@@ -1012,6 +1012,213 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // Phase 63 CR-03 — rlimits accepted on mcp.connect AND persisted to the
+  // McpServerEntry, then applied to the spawn-time wrap on this and
+  // subsequent connects.
+  //
+  // Pre-fix the handler computed `rlimits: persistedEntry?.rlimits` from an
+  // already-persisted entry, so a fresh `mcp.connect` of a new server
+  // received `rlimits: undefined` (no prlimit wrap). The newEntry built at
+  // mcp-handlers.ts:511-523 did NOT carry rlimits either, so even a
+  // subsequent reconnect saw the same `undefined`. Combined with R9
+  // (config.patch on integrations.mcp.servers is blocked), operators had
+  // NO supported path to apply rlimits to a new server via mcp_manage.
+  //
+  // Fix: add `rlimits` to McpConnectContract.request, forward to both the
+  // spawn-time McpServerConfig and the persisted McpServerEntry.
+  // -------------------------------------------------------------------------
+  describe("mcp.connect rlimits accepted, forwarded, and persisted (Phase 63 CR-03)", () => {
+    it("forwards rlimits to manager.connect (spawn-time) on a fresh connect with no prior persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "limited",
+        transport: "stdio",
+        command: "npx",
+        args: ["yfinance-mcp"],
+        rlimits: { cpu: 600 },
+      } as any);
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "limited",
+          rlimits: { cpu: 600 },
+        }),
+      );
+    });
+
+    it("persists rlimits onto the McpServerEntry written to config.yaml", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "limited",
+        transport: "stdio",
+        command: "npx",
+        args: ["yfinance-mcp"],
+        rlimits: { as: 1_073_741_824, nofile: 512, cpu: 600 },
+      } as any);
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({
+          name: "limited",
+          rlimits: { as: 1_073_741_824, nofile: 512, cpu: 600 },
+        }),
+      );
+    });
+
+    it("subsequent connect of the same server reads persisted rlimits when caller omits them", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
+      // Pre-seed the persisted store with an entry already carrying rlimits.
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "limited",
+          transport: "stdio",
+          command: "npx",
+          enabled: true,
+          // Use `any` cast — makePersistDeps's signature doesn't model
+          // rlimits, but the production schema (McpServerEntrySchema)
+          // does, and the handler reads `persistedEntry.rlimits` directly.
+          rlimits: { cpu: 600 },
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      // Caller omits rlimits — handler should fall back to persistedEntry.rlimits.
+      await handlers["mcp.connect"]({
+        server_name: "limited",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "limited",
+          rlimits: { cpu: 600 },
+        }),
+      );
+    });
+
+    it("caller-supplied rlimits override the persisted entry's rlimits", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "limited",
+          transport: "stdio",
+          command: "npx",
+          enabled: true,
+          rlimits: { cpu: 300 },
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "limited",
+        transport: "stdio",
+        command: "npx",
+        rlimits: { cpu: 900 },
+      } as any);
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({ rlimits: { cpu: 900 } }),
+      );
+      // And the persisted entry reflects the caller's value, not the prior one.
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({ rlimits: { cpu: 900 } }),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 63 CR-04 — disablePlaintextSecretCheck:true must be persisted to
+  // the McpServerEntry so the opt-out survives a daemon restart.
+  //
+  // Pre-fix the handler read `userParams.disablePlaintextSecretCheck === true`
+  // at runtime (working correctly at connect-time) but the newEntry built
+  // at mcp-handlers.ts:511-523 did NOT carry the flag to YAML. After a
+  // restart the config was reloaded and the previously-OK env block would
+  // be re-evaluated; any downstream load-time guard or symmetric
+  // mcp.reconnect check would silently re-fire. The schema and the
+  // MutableIntegrations swap both supported the field — only the entry
+  // builder dropped it.
+  //
+  // Fix: persist disablePlaintextSecretCheck:true onto the McpServerEntry.
+  // -------------------------------------------------------------------------
+  describe("mcp.connect disablePlaintextSecretCheck persisted (Phase 63 CR-04)", () => {
+    it("persists disablePlaintextSecretCheck:true onto the McpServerEntry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("optout", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "optout",
+        transport: "stdio",
+        command: "npx",
+        env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
+        disablePlaintextSecretCheck: true,
+      } as any);
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers[0]).toEqual(
+        expect.objectContaining({
+          name: "optout",
+          disablePlaintextSecretCheck: true,
+        }),
+      );
+    });
+
+    it("does NOT persist disablePlaintextSecretCheck key when the caller did not set it", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("normal", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "normal",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers[0]).not.toHaveProperty("disablePlaintextSecretCheck");
+    });
+  });
+
   describe("mcp.disconnect persistence (Phase 47-02)", () => {
     it("calls persistToConfig with the filtered array on a successful disconnect (R2 + R7)", async () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
