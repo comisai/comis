@@ -110,6 +110,7 @@ const PATTERNS: ReadonlyArray<ValueShapePattern> = Object.freeze([
   },
   {
     id: "url-userinfo",
+    // eslint-disable-next-line no-useless-escape -- verbatim from OBSERVABILITY_DESIGN.md §5 D9
     regex: /\b([a-z][a-z0-9+.-]*:\/\/)([^\/@\s:?#]+)(?::([^\/@\s?#]+))?@/gi,
     sentinel: "<REDACTED:url-userinfo>",
   },

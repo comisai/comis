@@ -116,6 +116,18 @@ export {
   sanitizeForPersistence,
 } from "./redact/redact-secrets.js";
 
+// Bundle-time value-shape redactors (Phase 5 D9, REDACT-01).
+// Distinct from Pino-level patterns above — different sentinel shape
+// (`<REDACTED:type>` vs edge-keeping masks) and different consumer
+// (bundle export pipeline vs live log scrubbing).
+export {
+  redactEventForExport,
+  redactString,
+  walkAndRedactStrings,
+  getValueShapePatterns,
+} from "./redact/value-shapes.js";
+export type { ValueShapePattern, RedactionOpts } from "./redact/value-shapes.js";
+
 // Pino transport factory: named re-export (NOT default). The default
 // export is reserved for the file used as a Pino `target` resolution
 // path. Barrel consumers should import via the named symbol.
