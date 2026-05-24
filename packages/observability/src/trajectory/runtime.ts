@@ -102,6 +102,19 @@ const TRAJECTORY_DATA_ARRAY_LIMIT_ITEMS = 64;
 const TRAJECTORY_DATA_OBJECT_LIMIT_KEYS = 64;
 const TRAJECTORY_DATA_MAX_DEPTH = 6;
 
+/**
+ * Maximum number of concurrent trajectory writers kept in the module-level
+ * registry (BOUND-03 / design §5 D7). When a new distinct file path would
+ * push the registry past this limit, the least-recently-used writer is
+ * evicted: `flushAndClose()` is called fire-and-forget, then deleted from
+ * the map. JavaScript `Map` preserves insertion order, making it a natural
+ * LRU structure: move-to-end on access, evict the first (oldest) key.
+ *
+ * Set to 100 — large enough for typical long-running daemon sessions with
+ * many concurrent agent sub-runs, small enough to prevent unbounded growth.
+ */
+export const MAX_TRAJECTORY_WRITERS = 100;
+
 // Module-level writer registry — keyed by file path. Multiple recorders
 // for the same file share one writer (rare, but matches the
 // queued-writer chassis contract).
@@ -226,6 +239,53 @@ export function limitTrajectoryPayloadValue(value: unknown): unknown {
 }
 
 // ---------------------------------------------------------------------------
+// LRU writer acquisition (BOUND-03)
+//
+// Wraps `getQueuedFileWriter` with JS Map insertion-order LRU semantics:
+//   - On re-access: delete + re-set (moves key to the end = most-recently-used)
+//   - On new acquisition: after registering, evict the oldest keys until
+//     writerRegistry.size <= MAX_TRAJECTORY_WRITERS.
+//
+// Eviction calls flushAndClose() fire-and-forget (the QueuedFileWriter chassis
+// serialises writes on a promise chain; any in-flight writes will complete
+// before the file is closed). We guard against evicting the path just acquired.
+// ---------------------------------------------------------------------------
+
+interface AcquireOpts {
+  maxQueuedBytes: number;
+  maxFileBytes: number;
+  confinedBaseDir?: string;
+}
+
+function acquireWriter(filePath: string, opts: AcquireOpts): QueuedFileWriter {
+  // Move-to-end on re-access (LRU refresh).
+  if (writerRegistry.has(filePath)) {
+    const existing = writerRegistry.get(filePath)!;
+    writerRegistry.delete(filePath);
+    writerRegistry.set(filePath, existing);
+  }
+
+  // Register (or re-register refreshed) via the chassis helper.
+  const writer = getQueuedFileWriter(writerRegistry, filePath, opts);
+
+  // Evict oldest entries until we are within the cap.
+  // Guard: never evict the path we just acquired (it's always at the end
+  // after move-to-end + re-set, but check explicitly for the size=1 edge).
+  while (writerRegistry.size > MAX_TRAJECTORY_WRITERS) {
+    const oldestKey = writerRegistry.keys().next().value;
+    if (oldestKey === undefined || oldestKey === filePath) break;
+    const evicted = writerRegistry.get(oldestKey);
+    writerRegistry.delete(oldestKey);
+    if (evicted !== undefined) {
+      // Fire-and-forget: in-flight writes are drained by the chassis before close.
+      void evicted.flushAndClose();
+    }
+  }
+
+  return writer;
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -272,7 +332,10 @@ export function createTrajectoryRecorder(
   const captureMaxBytes =
     init.budgets?.captureMaxBytes ?? TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES;
 
-  const writer = getQueuedFileWriter(writerRegistry, filePath, {
+  // Acquire writer via LRU-bookkeeping helper (BOUND-03). Handles
+  // move-to-end on re-access and eviction of oldest writers when the
+  // registry would exceed MAX_TRAJECTORY_WRITERS.
+  const writer = acquireWriter(filePath, {
     maxQueuedBytes,
     maxFileBytes: maxRuntimeFileBytes,
     // Forward the caller's confinement base (typically
