@@ -83,3 +83,10 @@ export {
 // Consumer: test/support/daemon-harness.ts:434-442 (DYNAMIC require)
 export { createTracingLogger } from "./observability/trace-logger.js";
 export type { TracingLoggerOptions } from "./observability/trace-logger.js";
+
+// Startup invariant collector (BOOT-01/02) — re-exported so the M1
+// acceptance gate integration test can call emitStartupInvariants against
+// a mock logger without spinning up the full daemon.
+// Consumer: test/integration/incident-replay-2026-05-24.test.ts
+export { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
+export type { StartupInvariantsDeps, StartupInvariants } from "./wiring/setup-startup-invariants.js";
