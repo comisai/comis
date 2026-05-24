@@ -524,6 +524,71 @@ describe("setupMcp", () => {
     expect(callArg).not.toHaveProperty("cwd");
   });
 
+  // CR-02 regression: the five Phase 65 fields (idleTtlMs, toolAllowlist,
+  // toolBlocklist, enableResources, enablePrompts) parsed by
+  // McpServerEntrySchema MUST reach the runtime McpServerConfig that
+  // setupMcp hands to manager.connect(). Pre-fix they were dropped, so
+  // config-defined idle eviction / tool filtering / resources-prompts
+  // opt-outs were silently ignored for servers loaded from config.yaml.
+  // These tests would have failed RED on the pre-patch construction site.
+  it("forwards Phase 65 idleTtlMs/toolAllowlist/toolBlocklist/enable* fields to McpServerConfig", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "filtered",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        {
+          name: "filtered",
+          transport: "stdio",
+          command: "mcp-server",
+          enabled: true,
+          idleTtlMs: 300_000,
+          toolAllowlist: ["safe-tool"],
+          toolBlocklist: ["dangerous-tool"],
+          enableResources: false,
+          enablePrompts: true,
+        },
+      ],
+      logger,
+    });
+
+    expect(mockConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "filtered",
+        idleTtlMs: 300_000,
+        toolAllowlist: ["safe-tool"],
+        toolBlocklist: ["dangerous-tool"],
+        enableResources: false,
+        enablePrompts: true,
+      }),
+    );
+  });
+
+  it("omits idleTtlMs from McpServerConfig when the config value is 0 (disabled)", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "no-idle",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        { name: "no-idle", transport: "stdio", command: "mcp-server", enabled: true, idleTtlMs: 0 },
+      ],
+      logger,
+    });
+
+    const callArg = mockConnect.mock.calls[0][0];
+    // 0 is the schema default (disabled); forwarding it would carry an inert
+    // field, so the construction site drops it (mirrors startIdleTicker opt-in).
+    expect(callArg).not.toHaveProperty("idleTtlMs");
+  });
+
   it("logs tool names from connected servers", async () => {
     mockConnect.mockResolvedValueOnce(ok({
       name: "context7",

@@ -188,8 +188,25 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
           env: server.env,
           headers: server.headers,
           ...(cwd ? { cwd } : {}),
-          ...(server.maxConcurrency ? { maxConcurrency: server.maxConcurrency } : {}),
+          // IN-02: nullish (not falsy) check — schema rejects 0, but `??`-style
+          // keeps the construction consistent with the Phase 65 fields below
+          // and is robust if the positive() constraint is ever relaxed.
+          ...(server.maxConcurrency !== undefined && { maxConcurrency: server.maxConcurrency }),
           enabled: true,
+          // CR-02: forward the five Phase 65 fields from the persisted
+          // McpServerEntry. Without these the runtime McpServerConfig drops
+          // them and idle eviction never arms (idleTtlMs), tool filtering is
+          // lost (toolAllowlist/toolBlocklist — a security regression across
+          // restarts), and resources/prompts opt-outs are ignored
+          // (enableResources/enablePrompts) for config-defined servers.
+          // idleTtlMs has a schema default(0); 0 ⇒ disabled, so only forward
+          // a positive value (matches startIdleTicker's opt-in semantics and
+          // avoids carrying an inert field).
+          ...(server.idleTtlMs !== undefined && server.idleTtlMs > 0 && { idleTtlMs: server.idleTtlMs }),
+          ...(server.toolAllowlist !== undefined && { toolAllowlist: server.toolAllowlist }),
+          ...(server.toolBlocklist !== undefined && { toolBlocklist: server.toolBlocklist }),
+          ...(server.enableResources !== undefined && { enableResources: server.enableResources }),
+          ...(server.enablePrompts !== undefined && { enablePrompts: server.enablePrompts }),
         };
         return { server, result: await manager.connect(config) };
       }),

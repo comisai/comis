@@ -1365,6 +1365,84 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // CR-02 (Phase 65) — mcp.connect forwards the persisted Phase 65 fields
+  // (idleTtlMs, toolAllowlist, toolBlocklist, enableResources, enablePrompts)
+  // into the runtime McpServerConfig handed to manager.connect.
+  //
+  // Pre-fix the handler omitted all five from the constructed config, so a
+  // mcp.reconnect-after-disconnect (which routes through this handler) lost
+  // config-file-set idle eviction / tool filtering / resources-prompts
+  // opt-outs. mcp.connect accepts no CLI params for these, so the source is
+  // the persisted entry. These tests would have failed RED pre-patch.
+  // -------------------------------------------------------------------------
+  describe("mcp.connect forwards persisted Phase 65 fields to manager.connect (CR-02)", () => {
+    it("forwards idleTtlMs/toolAllowlist/toolBlocklist/enableResources/enablePrompts from the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "ctx7",
+          transport: "stdio",
+          command: "npx",
+          enabled: true,
+          // `any` cast — makePersistDeps's signature doesn't model the
+          // Phase 65 fields, but McpServerEntrySchema does and the handler
+          // reads them off the persisted entry directly.
+          idleTtlMs: 300_000,
+          toolAllowlist: ["safe-tool"],
+          toolBlocklist: ["dangerous-tool"],
+          enableResources: false,
+          enablePrompts: true,
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "ctx7",
+          idleTtlMs: 300_000,
+          toolAllowlist: ["safe-tool"],
+          toolBlocklist: ["dangerous-tool"],
+          enableResources: false,
+          enablePrompts: true,
+        }),
+      );
+    });
+
+    it("omits idleTtlMs from the runtime config when the persisted value is 0 (disabled)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "ctx7", transport: "stdio", command: "npx", enabled: true, idleTtlMs: 0 } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const callArg = (manager.connect as any).mock.calls[0][0];
+      expect(callArg).not.toHaveProperty("idleTtlMs");
+    });
+  });
+
   describe("mcp.connect rlimits accepted, forwarded, and persisted (Phase 63 CR-03)", () => {
     it("forwards rlimits to manager.connect (spawn-time) on a fresh connect with no prior persisted entry", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));

@@ -377,6 +377,11 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         keepaliveIntervalMs?: number;
         circuitBreakerThreshold?: number;
         circuitBreakerCooldownMs?: number;
+        idleTtlMs?: number;
+        toolAllowlist?: readonly string[];
+        toolBlocklist?: readonly string[];
+        enableResources?: boolean;
+        enablePrompts?: boolean;
       }>;
       const persistedEntry = persistedServers.find((s) => s.name === params.server_name);
       const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
@@ -386,6 +391,18 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const resolvedKeepaliveIntervalMs = params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs;
       const resolvedCircuitBreakerThreshold = params.circuitBreakerThreshold ?? persistedEntry?.circuitBreakerThreshold;
       const resolvedCircuitBreakerCooldownMs = params.circuitBreakerCooldownMs ?? persistedEntry?.circuitBreakerCooldownMs;
+
+      // CR-02: forward the five Phase 65 fields from the persisted entry.
+      // mcp.connect accepts no CLI params for these (see McpConnectContract),
+      // so the only source is the config-file-set persisted entry. Forwarding
+      // them here means a mcp.reconnect-after-disconnect (which routes through
+      // this handler) preserves idle eviction / tool filtering /
+      // resources-prompts opt-outs instead of silently dropping them.
+      const resolvedIdleTtlMs = persistedEntry?.idleTtlMs;
+      const resolvedToolAllowlist = persistedEntry?.toolAllowlist;
+      const resolvedToolBlocklist = persistedEntry?.toolBlocklist;
+      const resolvedEnableResources = persistedEntry?.enableResources;
+      const resolvedEnablePrompts = persistedEntry?.enablePrompts;
 
       const config: McpServerConfig = {
         name: params.server_name,
@@ -403,6 +420,14 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         keepaliveIntervalMs: resolvedKeepaliveIntervalMs,
         circuitBreakerThreshold: resolvedCircuitBreakerThreshold,
         circuitBreakerCooldownMs: resolvedCircuitBreakerCooldownMs,
+        // CR-02 (Phase 65): only forward idleTtlMs when positive (0 ⇒ disabled,
+        // matches startIdleTicker opt-in). The other four are plain pass-through
+        // (undefined ⇒ auto/no-filter at their respective call sites).
+        ...(resolvedIdleTtlMs !== undefined && resolvedIdleTtlMs > 0 && { idleTtlMs: resolvedIdleTtlMs }),
+        ...(resolvedToolAllowlist !== undefined && { toolAllowlist: resolvedToolAllowlist }),
+        ...(resolvedToolBlocklist !== undefined && { toolBlocklist: resolvedToolBlocklist }),
+        ...(resolvedEnableResources !== undefined && { enableResources: resolvedEnableResources }),
+        ...(resolvedEnablePrompts !== undefined && { enablePrompts: resolvedEnablePrompts }),
       };
 
       // Reject connects that reference env vars not in the secrets store.
