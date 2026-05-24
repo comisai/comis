@@ -118,7 +118,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 
 **Plans** (4):
 - [x] 04-01-PLAN.md — Foundations: TrajectoryBundleManifest + TrajectoryBundleWarning types (design §6.2), MAX_TRAJECTORY_* constants (200k/250k/50MB/20), pure helpers buildTranscriptEvents + sortTrajectoryEvents; appends `session.transcript.entry` to closed-union TRAJECTORY_EVENT_TYPES; RED tests pin sort tiebreak determinism (BUNDLE-02, BUNDLE-03 prep, BUNDLE-04 prep) [wave 1]
-- [ ] 04-02-PLAN.md — SESSION-01 verification + SESSION-02 reader: readSessionBranch via SdkSessionManager.open + getEntry leaf-to-root walk with bounded `seen` cycle detection + missing-parent warning + 20-row cap; NO new raw JSONL parser; SESSION-01 verified by reading SDK-written session and asserting parentId on every non-header entry (SDK contract) [wave 2]
+- [x] 04-02-PLAN.md — SESSION-01 verification + SESSION-02 reader: readSessionBranch via SdkSessionManager.open + getEntry leaf-to-root walk with bounded `seen` cycle detection + missing-parent warning + 20-row cap; NO new raw JSONL parser; SESSION-01 verified by reading SDK-written session and asserting parentId on every non-header entry (SDK contract) [wave 2]
 - [ ] 04-03-PLAN.md — exportTrajectoryBundle pipeline: stat → readSessionBranch → read runtime trajectory (pointer file fallback to co-located convention) → buildTranscriptEvents → sortTrajectoryEvents → buildSupplementalCaptures (metadata/artifacts/prompts/tools from latest trace.* events) → write 8-file directory mode 0o700, files 0o600, auto-populated manifest.contents; round-trip RED test + corrupt-JSONL warning paths; path `<workspaceDir>/trace-exports/` (drops redundant `.comis/`); WR-01 NOT folded (deferred to Phase 5) (BUNDLE-01, BUNDLE-02, BUNDLE-04) [wave 3]
 - [ ] 04-04-PLAN.md — BUNDLE-03 hard-limit + BUNDLE-04 sort-merge invariant tests: shrink-only architecture test `test/architecture/bundle-export-shape.test.ts` pins 4 constants + 6-code closed union + 8-file shape + privacy-warning docstring; 3 vitest cases pin 200k runtime cap, mixed-source deterministic sort, 20-row warning cap under cycle pressure (BUNDLE-03, BUNDLE-04) [wave 4]
 
@@ -199,7 +199,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 | 1. Trace Propagation & Lifecycle Envelopes | 6/6 | Complete   | 2026-05-24 |
 | 2. Bridge Expansion & Payload Bounding | 5/5 | Complete   | 2026-05-24 |
 | 3. Boot Invariants, INFO Promotion & Dedup Detector | 4/4 | Complete   | 2026-05-24 |
-| 4. Session DAG & Bundle Exporter | 0/4 | Planned    | - |
+| 4. Session DAG & Bundle Exporter | 2/4 | In Progress|  |
 | 5. Trajectory Pointer & Platform-Aware Redaction | 0/0 | Not started | - |
 | 6. Operator CLI & Slash-Command Export | 0/0 | Not started | - |
 | 7. Log Rotation & Alert Budget | 0/0 | Not started | - |

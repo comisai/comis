@@ -94,9 +94,9 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Session DAG
 
-- [ ] **SESSION-01**: Every persisted session entry (non-`session` type) carries `parentId` pointing to its predecessor — closes G7 prerequisite for bundle export
+- [x] **SESSION-01**: Every persisted session entry (non-`session` type) carries `parentId` pointing to its predecessor — closes G7 prerequisite for bundle export
   - Design: D3 *(file: `packages/agent/src/session/...`)*
-- [ ] **SESSION-02**: `readSessionBranch(filePath)` returns `{ header, leafId, branchEntries, warnings }` reading from leaf backward, with bounded-cycle and missing-parent detection
+- [x] **SESSION-02**: `readSessionBranch(filePath)` returns `{ header, leafId, branchEntries, warnings }` reading from leaf backward, with bounded-cycle and missing-parent detection
   - Acceptance: cycle → `cyclic-session-branch` warning (≤ 20 rows), export continues with reachable suffix
   - Acceptance: missing parent → `incomplete-session-branch` warning, export reachable suffix
   - Design: D3 *(file: `packages/observability/src/trajectory/export.ts` NEW)*
@@ -255,8 +255,8 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | DEDUP-01 | Phase 3 | Complete |
 | DEDUP-02 | Phase 3 | Complete |
 | DEDUP-03 | Phase 3 | Complete |
-| SESSION-01 | Phase 4 | Pending |
-| SESSION-02 | Phase 4 | Pending |
+| SESSION-01 | Phase 4 | Complete |
+| SESSION-02 | Phase 4 | Complete |
 | BUNDLE-01 | Phase 4 | Pending |
 | BUNDLE-02 | Phase 4 | Complete |
 | BUNDLE-03 | Phase 4 | Complete |
