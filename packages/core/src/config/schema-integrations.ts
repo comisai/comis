@@ -118,12 +118,15 @@ export const McpServerEntrySchema = z.preprocess(
     /** Phase 64 RELY-05: per-server override of mcp.circuitBreakerCooldownMs. */
     circuitBreakerCooldownMs: z.number().int().positive().optional(),
     /** Phase 65 OPUX-08: per-server tool allowlist (whitelist). When non-empty,
-     *  ONLY listed tool names from this server are surfaced to the agent.
-     *  Filter applied EXCLUSIVELY at mcp-tool-bridge.ts (65-P2). */
+     *  ONLY listed tool names from this server are surfaced to the agent. The
+     *  blocklist is then applied on top — a name on BOTH lists is still
+     *  filtered out (the blocklist always wins). Filter applied EXCLUSIVELY at
+     *  mcp-tool-bridge.ts (65-P2). */
     toolAllowlist: z.array(z.string().min(1)).optional(),
     /** Phase 65 OPUX-08: per-server tool blocklist. Listed tool names are
-     *  filtered out of the agent's registry. Allowlist (if present) wins:
-     *  a tool name on the blocklist is filtered out regardless of allowlist. */
+     *  filtered out of the agent's registry regardless of whether they also
+     *  appear on the allowlist — the blocklist always wins. Applied after the
+     *  allowlist filter at mcp-tool-bridge.ts. */
     toolBlocklist: z.array(z.string().min(1)).optional(),
     /** Phase 65 OPUX-09: per-server idle eviction TTL (ms). Default 0 disables
      *  (opt-in only). When non-zero AND no successful tool call has hit this
