@@ -457,4 +457,10 @@ describe("trajectory-event-types-known -- bridge mapping coverage from emit site
       "DIRECT_EMIT_TRAJECTORY_TYPES references unknown TrajectoryEventType — add the type to TRAJECTORY_EVENT_TYPES first",
     ).toEqual([]);
   });
+
+  it("bridge mapping has at least 45 entries (BRIDGE-09 final gate)", () => {
+    // After Phase 2 Plan 05, the mapping reaches 53 entries (40 + 13 new).
+    // This assertion confirms the ≥45 lower bound is satisfied with margin.
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBeGreaterThanOrEqual(45);
+  });
 });

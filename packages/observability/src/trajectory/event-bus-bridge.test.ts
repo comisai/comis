@@ -1496,3 +1496,468 @@ describe("BRIDGE-02/05/06 retry + mcp + channel", () => {
     expect(Object.keys(mapping).length).toBeGreaterThanOrEqual(40);
   });
 });
+
+// ---------------------------------------------------------------------------
+// BRIDGE-04rest/07/08 — Security (rest), Compaction, Context, Approval
+// ---------------------------------------------------------------------------
+
+describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () => {
+  // ---- BRIDGE-04 rest: security:memory_tainted + security:warn ----
+
+  it("security_memory_tainted_maps_to_security.memory_tainted with originalTrustLevel/adjustedTrustLevel/blocked; patterns[] MUST NOT be forwarded (L4 security invariant)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("security:memory_tainted", {
+      agentId: "agent-1",
+      originalTrustLevel: "trusted",
+      adjustedTrustLevel: "tainted",
+      patterns: ["malicious-pattern", "exploit-string"],
+      blocked: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("security.memory_tainted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Trust level fields must be present.
+    expect(data.originalTrustLevel).toBe("trusted");
+    expect(data.adjustedTrustLevel).toBe("tainted");
+    expect(data.blocked).toBe(true);
+
+    // patterns[] must NOT appear — verbatim injection strings (L4).
+    expect(data.patterns).toBeUndefined();
+    expect("patterns" in data).toBe(false);
+
+    // Envelope-only fields must be stripped.
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("security_warn_maps_to_security.warn with category only; message MUST NOT be forwarded (L5 PII invariant)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("security:warn", {
+      category: "secret_access",
+      agentId: "agent-1",
+      message: "Agent accessed /etc/secrets without explicit allow",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("security.warn");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Only category in data.
+    expect(data.category).toBe("secret_access");
+
+    // message must NOT appear — may reference secrets/config paths (L5).
+    expect(data.message).toBeUndefined();
+    expect("message" in data).toBe(false);
+
+    // Envelope-only fields must be stripped.
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- BRIDGE-07: Compaction events ----
+
+  it("compaction_started_maps_to_compaction.started with empty data object (all fields are envelope-only, L6)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("compaction:started", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("compaction.started");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // All source fields are envelope-only (agentId, sessionKey, timestamp) — data must be empty.
+    expect(Object.keys(data)).toHaveLength(0);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("compaction_flush_maps_to_compaction.flush with memoriesWritten/trigger/success; sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("compaction:flush", {
+      sessionKey: "t1:u1:c1",
+      memoriesWritten: 12,
+      trigger: "threshold",
+      success: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("compaction.flush");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.memoriesWritten).toBe(12);
+    expect(data.trigger).toBe("threshold");
+    expect(data.success).toBe(true);
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("compaction_recommended_maps_to_compaction.recommended with contextPercent/contextTokens/contextWindow; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("compaction:recommended", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      contextPercent: 0.85,
+      contextTokens: 170000,
+      contextWindow: 200000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("compaction.recommended");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.contextPercent).toBeCloseTo(0.85);
+    expect(data.contextTokens).toBe(170000);
+    expect(data.contextWindow).toBe(200000);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- BRIDGE-07: Context engine events ----
+
+  it("context_evicted_maps_to_context.evicted with evictedCount/evictedChars/categories; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:evicted", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      evictedCount: 5,
+      evictedChars: 2000,
+      categories: { tool_result: 5 },
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.evicted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.evictedCount).toBe(5);
+    expect(data.evictedChars).toBe(2000);
+    expect(data.categories).toEqual({ tool_result: 5 });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_masked_maps_to_context.masked with maskedCount/totalChars/persistedToDisk; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:masked", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      maskedCount: 3,
+      totalChars: 500,
+      persistedToDisk: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.masked");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.maskedCount).toBe(3);
+    expect(data.totalChars).toBe(500);
+    expect(data.persistedToDisk).toBe(true);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_reread_maps_to_context.reread with rereadCount/rereadTools; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:reread", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      rereadCount: 2,
+      rereadTools: ["bash", "read_file"],
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.reread");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.rereadCount).toBe(2);
+    expect(data.rereadTools).toEqual(["bash", "read_file"]);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_overflow_maps_to_context.overflow with contextTokens/budgetTokens/recoveryAction; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:overflow", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      contextTokens: 205000,
+      budgetTokens: 200000,
+      recoveryAction: "evict",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.overflow");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.contextTokens).toBe(205000);
+    expect(data.budgetTokens).toBe(200000);
+    expect(data.recoveryAction).toBe("evict");
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_integrity_maps_to_context.integrity with conversationId/issueCount/repairsApplied/errorsLogged/issueTypes/durationMs; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:integrity", {
+      conversationId: "conv-123",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      issueCount: 2,
+      repairsApplied: 1,
+      errorsLogged: 0,
+      issueTypes: ["missing_tool_result"],
+      durationMs: 15,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.integrity");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.conversationId).toBe("conv-123");
+    expect(data.issueCount).toBe(2);
+    expect(data.repairsApplied).toBe(1);
+    expect(data.errorsLogged).toBe(0);
+    expect(data.issueTypes).toEqual(["missing_tool_result"]);
+    expect(data.durationMs).toBe(15);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_rehydrated_maps_to_context.rehydrated with sectionsInjected/filesInjected/skillsInjected/overflowStripped; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:rehydrated", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      sectionsInjected: 4,
+      filesInjected: 2,
+      skillsInjected: 1,
+      overflowStripped: false,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.rehydrated");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.sectionsInjected).toBe(4);
+    expect(data.filesInjected).toBe(2);
+    expect(data.skillsInjected).toBe(1);
+    expect(data.overflowStripped).toBe(false);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- BRIDGE-08: Approval events ----
+
+  it("approval_requested_maps_to_approval.requested with requestId/toolName/action/trustLevel/timeoutMs/channelType; params MUST NOT be forwarded (L2 HIGHEST risk PII)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("approval:requested", {
+      requestId: "req-abc123",
+      toolName: "bash",
+      action: "execute",
+      params: { secret: "my-api-key", path: "/etc/secrets", command: "rm -rf /tmp" },
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      trustLevel: "trusted",
+      createdAt: Date.now(),
+      timeoutMs: 60000,
+      channelType: "telegram",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("approval.requested");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Safe fields must be present.
+    expect(data.requestId).toBe("req-abc123");
+    expect(data.toolName).toBe("bash");
+    expect(data.action).toBe("execute");
+    expect(data.trustLevel).toBe("trusted");
+    expect(data.timeoutMs).toBe(60000);
+    expect(data.channelType).toBe("telegram");
+
+    // params MUST NEVER appear — raw unbounded tool args, highest-risk field (L2).
+    expect(data.params).toBeUndefined();
+    expect("params" in data).toBe(false);
+
+    // Envelope-only fields must be stripped.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.createdAt).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("approval_requested_omits_channelType_when_not_present (conditional spread)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("approval:requested", {
+      requestId: "req-xyz",
+      toolName: "write_file",
+      action: "write",
+      params: { content: "data" },
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      trustLevel: "untrusted",
+      createdAt: Date.now(),
+      timeoutMs: 30000,
+      // channelType intentionally omitted
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // params MUST NEVER appear.
+    expect("params" in data).toBe(false);
+
+    // channelType should be absent when not provided (conditional spread).
+    expect("channelType" in data).toBe(false);
+
+    // Other safe fields present.
+    expect(data.requestId).toBe("req-xyz");
+    expect(data.trustLevel).toBe("untrusted");
+  });
+
+  it("approval_resolved_maps_to_approval.resolved with requestId/approved/approvedBy/reason; resolvedAt stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("approval:resolved", {
+      requestId: "req-abc123",
+      approved: true,
+      approvedBy: "owner",
+      reason: "ok",
+      resolvedAt: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("approval.resolved");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.requestId).toBe("req-abc123");
+    expect(data.approved).toBe(true);
+    expect(data.approvedBy).toBe("owner");
+    expect(data.reason).toBe("ok");
+
+    // resolvedAt is envelope noise — omitted.
+    expect(data.resolvedAt).toBeUndefined();
+    expect("resolvedAt" in data).toBe(false);
+  });
+
+  it("approval_resolved_omits_reason_when_not_present (conditional spread)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("approval:resolved", {
+      requestId: "req-denied",
+      approved: false,
+      approvedBy: "system",
+      resolvedAt: Date.now(),
+      // reason intentionally omitted
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.requestId).toBe("req-denied");
+    expect(data.approved).toBe(false);
+    expect(data.approvedBy).toBe("system");
+
+    // reason absent when not provided (conditional spread).
+    expect("reason" in data).toBe(false);
+
+    // resolvedAt must be stripped.
+    expect("resolvedAt" in data).toBe(false);
+  });
+
+  // ---- Coverage spot-check (BRIDGE-09 count): in arch test file ----
+
+  it("TRAJECTORY_BRIDGE_MAPPING contains all 13 new BRIDGE-04rest/07/08 keys and total mapping is ≥ 53", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    const expected = [
+      // BRIDGE-04 rest
+      "security:memory_tainted",
+      "security:warn",
+      // BRIDGE-07 compaction
+      "compaction:started",
+      "compaction:flush",
+      "compaction:recommended",
+      // BRIDGE-07 context
+      "context:evicted",
+      "context:masked",
+      "context:reread",
+      "context:overflow",
+      "context:integrity",
+      "context:rehydrated",
+      // BRIDGE-08 approval
+      "approval:requested",
+      "approval:resolved",
+    ];
+    for (const key of expected) {
+      expect(mapping[key], `TRAJECTORY_BRIDGE_MAPPING missing key: ${key}`).toBeDefined();
+    }
+    // Total bridge mapping should reach ≥ 53 (40 existing + 13 new).
+    expect(Object.keys(mapping).length).toBeGreaterThanOrEqual(53);
+  });
+});
