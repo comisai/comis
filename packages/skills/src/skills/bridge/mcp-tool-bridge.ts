@@ -173,6 +173,16 @@ export function sanitizeMcpToolName(qualifiedName: string): string {
  * @param callTool - McpClientManager.callTool bound function
  * @param toolSourceProfiles - Optional per-tool overrides for source profiles
  * @param logger - Optional diagnostic logger for tracing tool result content shape
+ * @param onSuspiciousContent - Optional callback fired when wrapped MCP content trips the suspicious-content heuristic
+ * @param serverFiltersFn - OPUX-08 / 65-P2: per-server filter lookup, called
+ *   once per input tool with the server name parsed from its qualified name.
+ *   Returns `undefined` or an empty filter ⇒ tool passes through. A non-empty
+ *   `allowlist` restricts the server to ONLY the listed tool names; a
+ *   `blocklist` rejects the listed names. When both are present the blocklist
+ *   wins (a name on both lists is filtered out). Filtering runs BEFORE the
+ *   `.map()` below, so excluded tools never receive an AgentTool wrapper and
+ *   never enter the agent's tool registry — the agent simply does not see
+ *   them. Filtering is confined to this file by the 65-P2 architecture-grep.
  * @returns AgentTool instances ready for the agent executor
  */
 export function mcpToolsToAgentTools(
@@ -181,6 +191,9 @@ export function mcpToolsToAgentTools(
   toolSourceProfiles?: Record<string, Partial<ToolSourceProfile>>,
   logger?: McpBridgeLogger,
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"],
+  serverFiltersFn?: (serverName: string) =>
+    | { readonly allowlist?: readonly string[]; readonly blocklist?: readonly string[] }
+    | undefined,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   /** Log the content shape of an execute() return value for content-loss diagnosis. */
@@ -206,7 +219,31 @@ export function mcpToolsToAgentTools(
     );
   }
 
-  return tools.map((tool) => {
+  // OPUX-08 / 65-P2: apply the per-server allowlist/blocklist BEFORE the
+  // .map() so filtered tools never receive an AgentTool wrapper, never
+  // register tool metadata, and never reach the agent. Uses the LOCAL
+  // extractServerName helper (matches /^mcp:([^/]+)\//), not the
+  // @comis/shared re-export above.
+  const filtered = serverFiltersFn
+    ? tools.filter((tool) => {
+        const serverName = extractServerName(tool.qualifiedName);
+        const filters = serverFiltersFn(serverName);
+        if (!filters) return true;
+        // Allowlist applies only when present AND non-empty — an empty
+        // allowlist is a no-op, not a deny-all.
+        if (filters.allowlist && filters.allowlist.length > 0) {
+          if (!filters.allowlist.includes(tool.name)) return false;
+        }
+        // Blocklist always applies (even when the allowlist also lists the
+        // name) — blocklist wins.
+        if (filters.blocklist && filters.blocklist.includes(tool.name)) {
+          return false;
+        }
+        return true;
+      })
+    : tools;
+
+  return filtered.map((tool) => {
     const typeboxSchema = jsonSchemaToTypeBox(tool.inputSchema);
     const serverName = extractServerName(tool.qualifiedName);
     const sanitizedName = sanitizeMcpToolName(tool.qualifiedName);
