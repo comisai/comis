@@ -19,7 +19,7 @@
 import { SessionManager as SdkSessionManager } from "@earendil-works/pi-coding-agent";
 import { formatSessionKey, safePath, systemNowDate, systemNowMs, type SessionKey } from "@comis/core";
 import type { ComisLogger, FileLockPort, TypedEventBus } from "@comis/core";
-import { ensureContainedDir, writeRegularFile, type SessionTrajectoryHandleRegistry } from "@comis/observability";
+import { ensureContainedDir, writeRegularFile, buildTraceArtifacts, type SessionTrajectoryHandleRegistry, type TraceArtifactsRunState } from "@comis/observability";
 import { suppressError, type Result } from "@comis/shared";
 import { unlink, rm, rmdir } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
@@ -79,6 +79,14 @@ export interface ComisSessionManagerDeps {
    * singleton registry from setup-agents-registry here.
    */
   trajectoryRegistry?: SessionTrajectoryHandleRegistry;
+  /**
+   * Optional provider of per-session run-state for the `trace.artifacts`
+   * lifecycle envelope (LIFE-02, Plan 01-05). Pi-executor registers a closure
+   * pulling the latest `BridgeMetricsState` snapshot. When `undefined`, the
+   * session manager emits a minimal `"destroyed"` artifacts payload with
+   * zero-count usage.
+   */
+  sessionStateProvider?: (sessionKey: string) => TraceArtifactsRunState | undefined;
 }
 
 /**
@@ -266,6 +274,31 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       // agent_end. Counters are zero placeholders — the session manager
       // doesn't accumulate per-session totals; the `exitReason:"destroyed"`
       // discriminator distinguishes from a normal end-of-turn close.
+
+      // LIFE-02 (Plan 01-05): emit trace.artifacts directly via the recorder
+      // BEFORE session:ended so it lands in the trajectory in the correct
+      // order (session.started → trace.metadata → … → trace.artifacts →
+      // session.ended). Direct emit — no bus bridge.
+      if (deps.trajectoryRegistry !== undefined) {
+        const recorder = deps.trajectoryRegistry.getRecorder?.(sessionKeyStr);
+        if (recorder != null) {
+          const runState = deps.sessionStateProvider?.(sessionKeyStr) ?? {
+            finalStatus: "destroyed",
+            aborted: false,
+            usage: {
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+            cumulativeCostUsd: 0,
+            turnCount: 0,
+          };
+          recorder.recordEvent("trace.artifacts", buildTraceArtifacts(runState));
+        }
+      }
+
       if (deps.eventBus !== undefined) {
         deps.eventBus.emit("session:ended", {
           agentId: "",
