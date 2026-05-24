@@ -106,6 +106,27 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // patterns[] and senderId are intentionally omitted in translatePayload (L4/L2).
   "security:injection_detected": "security.injection_detected",
   "sender:blocked": "sender.blocked",
+
+  // BRIDGE-02: Delivery retry (events-channel.ts; emitter packages/core/delivery — not arch-scanned)
+  // chatId (Telegram long-decimal ID, L3) and channelId are intentionally omitted (T-02-09).
+  "retry:attempted": "delivery.retry",
+  "retry:exhausted": "delivery.retry_exhausted",
+  "retry:markdown_fallback": "delivery.markdown_fallback",
+
+  // BRIDGE-05: MCP server reliability (events-infra.ts; emitter packages/skills — not arch-scanned)
+  "mcp:server:disconnected": "mcp.disconnected",
+  "mcp:server:reconnecting": "mcp.reconnecting",
+  "mcp:server:reconnect_failed": "mcp.reconnect_failed",
+  "mcp:server:reconnected": "mcp.reconnected",
+  "mcp:server:tools_changed": "mcp.tools_changed",
+
+  // BRIDGE-06: Channel lifecycle + health (events-channel.ts; emitter packages/channels — not arch-scanned)
+  // Both channel:registered and channel:deregistered map to the same trajectory type.
+  // Translator adds a synthetic `event` discriminator: "registered" | "deregistered".
+  // Precedent: model:fallback_attempt + model:lkw_fallback_attempt share model.fallback_attempt.
+  "channel:health_changed": "channel.health_changed",
+  "channel:registered": "channel.lifecycle",
+  "channel:deregistered": "channel.lifecycle",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**
@@ -472,6 +493,104 @@ function translatePayload(
       // Only channelType enters the trajectory.
       return {
         channelType: payload.channelType,
+      };
+
+    // ---- Delivery retry (BRIDGE-02) ----
+    // SECURITY INVARIANT (T-02-09): chatId (Telegram long-decimal ID, L3) and
+    // channelId are intentionally NOT forwarded. Only retry telemetry enters the
+    // trajectory. sanitizeForPersistence is a defense-in-depth backstop for the
+    // error strings (BOUND-01), but translator omission is the primary control.
+
+    case "retry:attempted":
+      return {
+        attempt: payload.attempt,
+        maxAttempts: payload.maxAttempts,
+        delayMs: payload.delayMs,
+        error: payload.error,
+      };
+
+    case "retry:exhausted":
+      return {
+        totalAttempts: payload.totalAttempts,
+        finalError: payload.finalError,
+      };
+
+    case "retry:markdown_fallback":
+      return {
+        originalParseMode: payload.originalParseMode,
+      };
+
+    // ---- MCP server reliability (BRIDGE-05) ----
+    // serverName + connection telemetry. lastError and reason are
+    // connection-error strings — low PII risk; bounded by BOUND-01.
+
+    case "mcp:server:disconnected":
+      return {
+        serverName: payload.serverName,
+        reason: payload.reason,
+      };
+
+    case "mcp:server:reconnecting":
+      return {
+        serverName: payload.serverName,
+        attempt: payload.attempt,
+        maxAttempts: payload.maxAttempts,
+        nextDelayMs: payload.nextDelayMs,
+      };
+
+    case "mcp:server:reconnect_failed":
+      return {
+        serverName: payload.serverName,
+        attempts: payload.attempts,
+        lastError: payload.lastError,
+      };
+
+    case "mcp:server:reconnected":
+      return {
+        serverName: payload.serverName,
+        attempt: payload.attempt,
+        toolCount: payload.toolCount,
+        durationMs: payload.durationMs,
+      };
+
+    case "mcp:server:tools_changed":
+      return {
+        serverName: payload.serverName,
+        previousToolCount: payload.previousToolCount,
+        currentToolCount: payload.currentToolCount,
+        addedTools: payload.addedTools,
+        removedTools: payload.removedTools,
+      };
+
+    // ---- Channel lifecycle + health (BRIDGE-06) ----
+    // lastMessageAt and timestamp are noise — omitted.
+    // error on channel:health_changed may be null — conditional spread only
+    // when non-null (match the tool:executed convention for nullable fields).
+
+    case "channel:health_changed":
+      return {
+        channelType: payload.channelType,
+        previousState: payload.previousState,
+        currentState: payload.currentState,
+        connectionMode: payload.connectionMode,
+        ...(payload.error !== null ? { error: payload.error } : {}),
+      };
+
+    case "channel:registered":
+      // capabilities is omitted (metadata with no diagnostic value for trajectory).
+      // Synthetic `event` field distinguishes this from channel:deregistered (both
+      // map to channel.lifecycle per the dual-mapping pattern).
+      return {
+        channelType: payload.channelType,
+        pluginId: payload.pluginId,
+        event: "registered",
+      };
+
+    case "channel:deregistered":
+      return {
+        channelType: payload.channelType,
+        pluginId: payload.pluginId,
+        event: "deregistered",
       };
 
     default: {

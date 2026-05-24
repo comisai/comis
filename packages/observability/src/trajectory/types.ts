@@ -97,6 +97,24 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Security + sender (D6 / BRIDGE-04 scanned subset)
   "security.injection_detected",
   "sender.blocked",
+
+  // Delivery retry (D6 / BRIDGE-02)
+  "delivery.retry",
+  "delivery.retry_exhausted",
+  "delivery.markdown_fallback",
+
+  // MCP server reliability (D6 / BRIDGE-05)
+  "mcp.disconnected",
+  "mcp.reconnecting",
+  "mcp.reconnect_failed",
+  "mcp.reconnected",
+  "mcp.tools_changed",
+
+  // Channel lifecycle + health (D6 / BRIDGE-06)
+  // channel.lifecycle is shared by channel:registered and channel:deregistered
+  // (dual-mapping; translator adds synthetic event discriminator).
+  "channel.health_changed",
+  "channel.lifecycle",
 ] as const;
 
 /** Closed union of trajectory event type strings. */
