@@ -1183,6 +1183,32 @@ async function runSessionLocked(
     // When undefined (non-daemon callers), the bridge falls back to the
     // legacy unconditional emit.
     ...(deps.trajectoryRegistry !== undefined ? { trajectoryRegistry: deps.trajectoryRegistry } : {}),
+    // LIFE-01 (Plan 01-05): provide a snapshot of harness/model/config at
+    // bridge-creation time so trace.metadata can be emitted once per session.
+    // Fields that are not readily available at this scope are omitted;
+    // buildTraceMetadata's compactObject strips undefined cleanly.
+    runtimeSnapshot: {
+      harness: {
+        type: "comis" as const,
+        // version is not yet threaded into PiExecutorDeps; Phase 2+ will
+        // wire deps.appVersion here. Use package.json version constant
+        // when available, otherwise "unknown" per Phase 1 deferred wiring.
+        version: "unknown",
+        os: process.platform,
+        node: process.version,
+        ...(deps.workspaceDir !== undefined ? { workspaceDir: deps.workspaceDir } : {}),
+      },
+      model: {
+        provider: resolvedModel?.provider ?? config.provider,
+        modelId: resolvedModel?.id ?? config.model,
+        ...(resolvedModel?.api !== undefined ? { modelApi: resolvedModel.api } : {}),
+      },
+      config,
+      plugins: [],
+      skills: [],
+      prompting: {},
+      redaction: { policy: "platform-aware" },
+    },
     perExecutionBudgetCap: config.budgets?.perExecution,
     budgetWarningRef,
     toolRetryBreaker,
