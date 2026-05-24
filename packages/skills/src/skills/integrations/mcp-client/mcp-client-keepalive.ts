@@ -71,15 +71,29 @@ export function stopKeepaliveTicker(state: McpClientManagerState, serverName: st
  * On ping failure, triggers handleDisconnection(..., "keepalive_failed") in
  * BOTH routes — the existing reconnect engine handles recovery from there.
  */
-function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: McpClientManagerDeps, serverName: string): void {
+export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: McpClientManagerDeps, serverName: string): void {
   const primary = state.callQueues.get(serverName);
   if (!primary) return; // disconnected race
   const conn = state.connections.get(serverName);
   if (!conn || conn.status !== "connected") return;
 
+  // WR-01: capture the generation at tick time. In the concurrency > 1 path
+  // the ping body awaits primary.onIdle() before executing, during which a
+  // disconnect→reconnect can replace `conn` with a fresh connection (new
+  // generation). Re-read state inside doPing and bail if the connection is
+  // gone, no longer connected, or its generation changed — otherwise we would
+  // ping the stale (closed) client, throw, and call handleDisconnection on the
+  // freshly-restored connection, kicking it offline with a spurious
+  // keepalive_failed reconnect.
+  const capturedGeneration = conn.generation;
+
   const doPing = async (): Promise<void> => {
+    const current = state.connections.get(serverName);
+    if (!current || current.status !== "connected" || current.generation !== capturedGeneration) {
+      return;
+    }
     try {
-      await conn.client.ping();
+      await current.client.ping();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       deps.logger.warn(
