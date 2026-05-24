@@ -109,8 +109,8 @@ export async function connectServer(
       }
     }
 
-    // Create transport
-    const transport = createTransport(config);
+    // Create transport (logger threaded for Phase 63 SAFETY-08 prlimit-skip WARN)
+    const transport = createTransport(config, logger);
 
     // Wire stderr capture for stdio transports
     wireStderrCapture(deps, config, transport);

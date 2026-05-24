@@ -16,6 +16,7 @@
  * @module
  */
 
+import { spawnSync } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -29,6 +30,11 @@ import type {
 } from "./mcp-client-types.js";
 import { qualifyToolName } from "./mcp-client-types.js";
 import { createRedirectPolicyFetch } from "./mcp-client-redirect-policy.js";
+
+// Logger shape used by the Phase 63 SAFETY-08 WARN-skip path; matches the
+// `McpClientManagerDeps["logger"]` two-arg overload threaded through from
+// the connect / reconnect call sites.
+type ComisLoggerLike = McpClientManagerDeps["logger"];
 
 // ---------------------------------------------------------------------------
 // Phase 63 SAFETY-01/02: stdio env allowlist
@@ -124,6 +130,38 @@ export function scrubStdioEnv(
 }
 
 // ---------------------------------------------------------------------------
+// Phase 63 SAFETY-08: prlimit availability probe (module-init, cached)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `prlimit(1)` is on PATH at daemon startup. Cached at module load
+ * to avoid spawnSync cost per connect. Linux util-linux ships it; macOS dev
+ * does not. When false, wrapStdioCommand skips rlimit application with a
+ * single WARN per daemon process. Per RESEARCH.md §"Pattern 3" + Pitfall 5.
+ */
+const PRLIMIT_AVAILABLE: boolean = (() => {
+  try {
+    const result = spawnSync("prlimit", ["--version"], { encoding: "utf-8", timeout: 1000 });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+})();
+
+/** Guard ensuring the prlimit-unavailable WARN fires AT MOST ONCE per daemon process. */
+let prlimitWarnEmitted = false;
+
+/** Test seam: returns the module-init `PRLIMIT_AVAILABLE` probe result. */
+export function getPrlimitAvailable(): boolean {
+  return PRLIMIT_AVAILABLE;
+}
+
+/** @internal test-only — resets the module-level WARN-once flag for deterministic tests. */
+export function __resetPrlimitWarnForTests(): void {
+  prlimitWarnEmitted = false;
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -136,37 +174,94 @@ const INSTRUCTIONS_TRUNCATED_SUFFIX = " [truncated]";
 // ---------------------------------------------------------------------------
 
 /**
- * Wrap a stdio command so the child Node process (if any) does NOT inherit
- * the daemon's --permission flags via NODE_OPTIONS.
+ * Wrap a stdio command so:
+ *   1. NODE_OPTIONS strip — child Node process does NOT inherit the daemon's
+ *      `--permission` flags. `env -u NODE_OPTIONS` clears it before Node reads
+ *      it. Non-Node servers (uvx, Python) pass through as no-op. See
+ *      COMIS-E2E-FOLLOWUP-DESIGN.md Issue 2.
+ *   2. Per-server rlimits via `prlimit(1)` (Phase 63 SAFETY-08). When `rlimits`
+ *      is set AND prlimit is available, prepends `prlimit --as=N --nofile=N
+ *      --cpu=N --`. Partial overrides accepted (`{ cpu: 600 }` → only `--cpu`).
+ *      When `rlimits` is unset → no prlimit wrap. When prlimit is absent
+ *      (macOS dev) → env-only wrap + ONE WARN per daemon process
+ *      (`errorKind: "platform"`).
  *
- * Node 22's permission model propagates by setting NODE_OPTIONS on spawned
- * children, even when the caller passes an override env. Unsetting
- * NODE_OPTIONS via `env -u NODE_OPTIONS <cmd>` is the only mechanism that
- * clears it before the child Node process reads it at startup.
- *
- * Non-Node MCP servers (uvx, Python, etc.) are unaffected by NODE_OPTIONS
- * but still go through the wrapper for uniformity — `env -u` on a missing
- * var is a no-op. Linux-only production target (per CLAUDE.md); macOS and
- * WSL both have `/usr/bin/env` with `-u` support.
- *
- * See COMIS-E2E-FOLLOWUP-DESIGN.md Issue 2 for the empirical rationale.
+ * Composition: `[prlimit --as=N --nofile=N --cpu=N --]  /usr/bin/env -u NODE_OPTIONS  <cmd> <args>`.
+ * Exported for unit-test assertion. Per RESEARCH.md §"Pattern 3" + SAFETY-08.
  */
-function wrapStdioCommand(
+export function wrapStdioCommand(
   command: string,
   args: readonly string[] | undefined,
+  rlimits: { as?: number; nofile?: number; cpu?: number } | undefined,
+  logger: ComisLoggerLike,
+  serverName: string,
 ): { command: string; args: string[] } {
+  const innerArgs = ["-u", "NODE_OPTIONS", command, ...(args ?? [])];
+
+  // No rlimits requested: return the existing env-only wrap unchanged.
+  if (
+    !rlimits ||
+    (rlimits.as === undefined &&
+      rlimits.nofile === undefined &&
+      rlimits.cpu === undefined)
+  ) {
+    return { command: "/usr/bin/env", args: innerArgs };
+  }
+
+  // Rlimits requested but prlimit unavailable (macOS dev): WARN once + degrade.
+  if (!PRLIMIT_AVAILABLE) {
+    if (!prlimitWarnEmitted) {
+      logger.warn(
+        {
+          serverName,
+          hint:
+            "prlimit(1) not on PATH; rlimits not applied (Linux util-linux required). " +
+            "Production target is Linux; macOS dev runs without rlimit defense-in-depth.",
+          errorKind: "platform" as const,
+        },
+        "MCP rlimits skipped — prlimit unavailable",
+      );
+      prlimitWarnEmitted = true;
+    }
+    return { command: "/usr/bin/env", args: innerArgs };
+  }
+
+  // Build prlimit flag set — emit ONLY the flags for fields explicitly set
+  // (partial-override semantics per Plan 06 must_haves).
+  const prlimitFlags: string[] = [];
+  if (rlimits.as !== undefined) prlimitFlags.push(`--as=${rlimits.as}`);
+  if (rlimits.nofile !== undefined) prlimitFlags.push(`--nofile=${rlimits.nofile}`);
+  if (rlimits.cpu !== undefined) prlimitFlags.push(`--cpu=${rlimits.cpu}`);
+
   return {
-    command: "/usr/bin/env",
-    args: ["-u", "NODE_OPTIONS", command, ...(args ?? [])],
+    command: "prlimit",
+    args: [...prlimitFlags, "--", "/usr/bin/env", ...innerArgs],
   };
 }
 
-export function createTransport(config: McpServerConfig) {
+/** No-op fallback logger for createTransport callers that don't thread one (test fixtures). */
+const NO_OP_LOGGER: ComisLoggerLike = {
+  info: () => { /* noop */ },
+  warn: () => { /* noop */ },
+  error: () => { /* noop */ },
+  debug: () => { /* noop */ },
+};
+
+export function createTransport(
+  config: McpServerConfig,
+  logger: ComisLoggerLike = NO_OP_LOGGER,
+) {
   if (config.transport === "stdio") {
     if (!config.command) {
       throw new Error(`MCP server "${config.name}": stdio transport requires "command"`);
     }
-    const wrapped = wrapStdioCommand(config.command, config.args);
+    const wrapped = wrapStdioCommand(
+      config.command,
+      config.args,
+      config.rlimits,
+      logger,
+      config.name,
+    );
     return new StdioClientTransport({
       command: wrapped.command,
       args: wrapped.args,

@@ -24,8 +24,14 @@
  * @module
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { scrubStdioEnv, MCP_STDIO_BUILTIN_ENV_ALLOWLIST } from "./mcp-client-discover.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  scrubStdioEnv,
+  MCP_STDIO_BUILTIN_ENV_ALLOWLIST,
+  wrapStdioCommand,
+  getPrlimitAvailable,
+  __resetPrlimitWarnForTests,
+} from "./mcp-client-discover.js";
 
 // ---------------------------------------------------------------------------
 // Env-mutation harness
@@ -160,5 +166,179 @@ describe("MCP_STDIO_BUILTIN_ENV_ALLOWLIST — required-membership invariant", ()
     const allowSet = new Set(MCP_STDIO_BUILTIN_ENV_ALLOWLIST);
     const missing = required.filter((k) => !allowSet.has(k));
     expect(missing, `Missing required allowlist members: ${missing.join(", ")}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 63 Plan 06 (SAFETY-08) — wrapStdioCommand prlimit wrap.
+// ---------------------------------------------------------------------------
+//
+// These tests pin the deterministic wrap-shape behaviour of wrapStdioCommand:
+//   - rlimits unset                       → /usr/bin/env -u NODE_OPTIONS cmd args
+//   - rlimits set, prlimit available      → prlimit --as=N --nofile=N --cpu=N -- /usr/bin/env -u NODE_OPTIONS cmd args
+//   - rlimits set, prlimit unavailable    → /usr/bin/env wrap + logger.warn ONCE per daemon process
+//   - partial rlimits                     → only the flags for fields explicitly set
+//
+// The module-init probe (`PRLIMIT_AVAILABLE`) is a real `spawnSync("prlimit",
+// ["--version"])` at module load; we don't mock it at unit-test level. Tests
+// that exercise the prlimit-available branch self-skip on hosts where
+// prlimit is absent (macOS dev); tests that exercise the prlimit-unavailable
+// branch self-skip when prlimit IS present (Linux CI). Together they cover
+// both branches across the two CI platforms.
+//
+// `__resetPrlimitWarnForTests()` is the test seam exposed by the module to
+// reset the `prlimitWarnEmitted` flag between test cases so the "exactly
+// ONE WARN per daemon process" invariant is deterministically assertable.
+
+const NOOP_LOGGER = {
+  info: () => { /* noop */ },
+  warn: () => { /* noop */ },
+  error: () => { /* noop */ },
+  debug: () => { /* noop */ },
+};
+
+describe("wrapStdioCommand — rlimits unset (no prlimit wrap)", () => {
+  it("returns env-only wrap when rlimits parameter is undefined", () => {
+    const result = wrapStdioCommand("node", ["x.js"], undefined, NOOP_LOGGER, "srv-1");
+    expect(result).toEqual({
+      command: "/usr/bin/env",
+      args: ["-u", "NODE_OPTIONS", "node", "x.js"],
+    });
+  });
+
+  it("returns env-only wrap when rlimits is an empty object (all fields undefined)", () => {
+    const result = wrapStdioCommand("npx", ["pkg"], {}, NOOP_LOGGER, "srv-2");
+    expect(result).toEqual({
+      command: "/usr/bin/env",
+      args: ["-u", "NODE_OPTIONS", "npx", "pkg"],
+    });
+  });
+
+  it("returns env-only wrap when args is undefined and rlimits is unset", () => {
+    const result = wrapStdioCommand("uvx", undefined, undefined, NOOP_LOGGER, "srv-3");
+    expect(result).toEqual({
+      command: "/usr/bin/env",
+      args: ["-u", "NODE_OPTIONS", "uvx"],
+    });
+  });
+});
+
+describe("wrapStdioCommand — rlimits set with prlimit available (Linux CI)", () => {
+  beforeEach(() => {
+    __resetPrlimitWarnForTests();
+  });
+
+  it("emits all three flags --as / --nofile / --cpu in order when fully populated", () => {
+    if (!getPrlimitAvailable()) {
+      return; // Skip on macOS dev — covered by integration test.
+    }
+    const result = wrapStdioCommand(
+      "npx",
+      ["pkg"],
+      { as: 536870912, nofile: 256, cpu: 300 },
+      NOOP_LOGGER,
+      "srv-1",
+    );
+    expect(result).toEqual({
+      command: "prlimit",
+      args: [
+        "--as=536870912",
+        "--nofile=256",
+        "--cpu=300",
+        "--",
+        "/usr/bin/env",
+        "-u",
+        "NODE_OPTIONS",
+        "npx",
+        "pkg",
+      ],
+    });
+  });
+
+  it("emits only --cpu flag when rlimits = { cpu: 300 } (partial override)", () => {
+    if (!getPrlimitAvailable()) return;
+    const result = wrapStdioCommand("npx", ["pkg"], { cpu: 300 }, NOOP_LOGGER, "srv-1");
+    expect(result).toEqual({
+      command: "prlimit",
+      args: ["--cpu=300", "--", "/usr/bin/env", "-u", "NODE_OPTIONS", "npx", "pkg"],
+    });
+  });
+
+  it("emits only --nofile flag when rlimits = { nofile: 256 } (partial override)", () => {
+    if (!getPrlimitAvailable()) return;
+    const result = wrapStdioCommand("npx", ["pkg"], { nofile: 256 }, NOOP_LOGGER, "srv-1");
+    expect(result).toEqual({
+      command: "prlimit",
+      args: ["--nofile=256", "--", "/usr/bin/env", "-u", "NODE_OPTIONS", "npx", "pkg"],
+    });
+  });
+
+  it("emits only --as flag when rlimits = { as: 1048576 } (partial override)", () => {
+    if (!getPrlimitAvailable()) return;
+    const result = wrapStdioCommand("npx", ["pkg"], { as: 1048576 }, NOOP_LOGGER, "srv-1");
+    expect(result).toEqual({
+      command: "prlimit",
+      args: ["--as=1048576", "--", "/usr/bin/env", "-u", "NODE_OPTIONS", "npx", "pkg"],
+    });
+  });
+});
+
+describe("wrapStdioCommand — rlimits set with prlimit unavailable (macOS dev)", () => {
+  beforeEach(() => {
+    __resetPrlimitWarnForTests();
+  });
+
+  it("falls back to env-only wrap and logs WARN with errorKind=platform when prlimit missing", () => {
+    if (getPrlimitAvailable()) {
+      return; // Skip on Linux CI — covered by the prlimit-available test block above.
+    }
+    const logger = { ...NOOP_LOGGER, warn: vi.fn() };
+    const result = wrapStdioCommand("node", ["x.js"], { cpu: 300 }, logger, "srv-1");
+    expect(result).toEqual({
+      command: "/usr/bin/env",
+      args: ["-u", "NODE_OPTIONS", "node", "x.js"],
+    });
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: "srv-1",
+        errorKind: "platform",
+        hint: expect.stringContaining("prlimit"),
+      }),
+      expect.stringContaining("rlimits skipped"),
+    );
+  });
+});
+
+describe("wrapStdioCommand — WARN-once invariant (SAFETY-08)", () => {
+  beforeEach(() => {
+    __resetPrlimitWarnForTests();
+  });
+
+  it("emits exactly one logger.warn across multiple calls when prlimit unavailable", () => {
+    if (getPrlimitAvailable()) {
+      return; // Linux CI: skip — covered by macOS-side dev runs + integration tests.
+    }
+    const logger = { ...NOOP_LOGGER, warn: vi.fn() };
+    wrapStdioCommand("node", ["a.js"], { cpu: 300 }, logger, "srv-1");
+    wrapStdioCommand("node", ["b.js"], { nofile: 256 }, logger, "srv-2");
+    wrapStdioCommand("node", ["c.js"], { as: 536870912 }, logger, "srv-3");
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-emits WARN after __resetPrlimitWarnForTests() — confirms the reset hook is wired", () => {
+    if (getPrlimitAvailable()) return;
+    const logger = { ...NOOP_LOGGER, warn: vi.fn() };
+    wrapStdioCommand("node", ["a.js"], { cpu: 300 }, logger, "srv-1");
+    __resetPrlimitWarnForTests();
+    wrapStdioCommand("node", ["b.js"], { cpu: 300 }, logger, "srv-2");
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("getPrlimitAvailable — module-init probe (SAFETY-08)", () => {
+  it("returns a boolean indicating whether prlimit(1) is on PATH at module load", () => {
+    const available = getPrlimitAvailable();
+    expect(typeof available).toBe("boolean");
   });
 });
