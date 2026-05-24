@@ -519,6 +519,124 @@ describe("createTrajectoryRecorder -- envelope shape (design §6.2)", () => {
   });
 });
 
+describe("createTrajectoryRecorder -- emitTraceTruncated public hook (LIFE-03)", () => {
+  it("public hook writes one trace.truncated event with the supplied payload", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-emit-trunc-1",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.emitTraceTruncated({
+      reason: "trajectory-runtime-file-size-limit",
+      droppedEvents: 5,
+      droppedEventBytes: 12345,
+      limitBytes: 10_000_000,
+    });
+    await recorder!.flush();
+
+    const lines = readLines(recorder!.filePath) as Array<{
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+    expect(lines).toHaveLength(1);
+    expect(lines[0].type).toBe("trace.truncated");
+    expect(lines[0].data.reason).toBe("trajectory-runtime-file-size-limit");
+    expect(lines[0].data.droppedEvents).toBe(5);
+    expect(lines[0].data.droppedEventBytes).toBe(12345);
+    expect(lines[0].data.limitBytes).toBe(10_000_000);
+  });
+
+  it("optional fields droppedEventBytes and limitBytes are omitted when absent", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-emit-trunc-2",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.emitTraceTruncated({ reason: "x", droppedEvents: 1 });
+    await recorder!.flush();
+
+    const lines = readLines(recorder!.filePath) as Array<{
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+    expect(lines).toHaveLength(1);
+    expect(lines[0].type).toBe("trace.truncated");
+    expect(Object.prototype.hasOwnProperty.call(lines[0].data, "droppedEventBytes")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(lines[0].data, "limitBytes")).toBe(false);
+  });
+
+  it("close-time emit uses reason file-or-queue-cap-exceeded and droppedEvents count", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-emit-trunc-3",
+      trajectoryDir: tmpDir,
+      maxRuntimeFileBytes: 1500,
+      budgets: { sentinelReserveBytes: 600 },
+    });
+    expect(recorder).not.toBeNull();
+    for (let i = 0; i < 50; i++) {
+      recorder!.recordEvent("tool.result", { i });
+    }
+    await recorder!.flushAndClose();
+
+    const lines = readLines(recorder!.filePath) as Array<{
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+    const truncated = lines.find((l) => l.type === "trace.truncated");
+    expect(truncated).toBeDefined();
+    expect(truncated!.data.reason).toBe("file-or-queue-cap-exceeded");
+    expect((truncated!.data.droppedEvents as number)).toBeGreaterThan(0);
+  });
+
+  it("explicit emitTraceTruncated + no dropped events = no extra close-time sentinel", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-emit-trunc-4",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.emitTraceTruncated({ reason: "manual-stop", droppedEvents: 0 });
+    await recorder!.flushAndClose();
+
+    const lines = readLines(recorder!.filePath) as Array<{
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+    const truncatedEvents = lines.filter((l) => l.type === "trace.truncated");
+    // Only the manually-emitted one; close-time guard (droppedEvents > 0) did NOT fire
+    expect(truncatedEvents).toHaveLength(1);
+    expect(truncatedEvents[0].data.reason).toBe("manual-stop");
+  });
+
+  it("seq monotonicity: multiple emitTraceTruncated calls produce strictly increasing seq values", async () => {
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-emit-trunc-5",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.emitTraceTruncated({ reason: "first", droppedEvents: 1 });
+    recorder!.emitTraceTruncated({ reason: "second", droppedEvents: 2 });
+    recorder!.emitTraceTruncated({ reason: "third", droppedEvents: 3 });
+    await recorder!.flush();
+
+    const lines = readLines(recorder!.filePath) as Array<{
+      type: string;
+      seq: number;
+      data: Record<string, unknown>;
+    }>;
+    expect(lines).toHaveLength(3);
+    expect(lines[0].seq).toBe(1);
+    expect(lines[1].seq).toBe(2);
+    expect(lines[2].seq).toBe(3);
+    expect(lines[1].seq).toBeGreaterThan(lines[0].seq);
+    expect(lines[2].seq).toBeGreaterThan(lines[1].seq);
+  });
+});
+
 describe("createTrajectoryRecorder -- traceId resolution", () => {
   it("traceId_falls_back_to_sessionId when no AsyncLocalStorage context is in flight", async () => {
     const recorder = createTrajectoryRecorder({
