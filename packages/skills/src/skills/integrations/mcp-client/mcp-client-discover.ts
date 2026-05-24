@@ -277,6 +277,14 @@ export function createTransport(
       // (including http to https upgrade); throws [max_redirects_exceeded]
       // after 20 hops. See mcp-client-redirect-policy.ts for the full policy.
       fetch: createRedirectPolicyFetch({ maxRedirections: 20 }),
+      // Phase 66 OAUTH-11: attach the OAuthClientProvider adapter ONLY for
+      // auth:"oauth" servers with a constructed provider (threaded onto the
+      // runtime config by connectServer). The SDK then drives tokens()/
+      // saveTokens() and, on a 401, the auth() refresh path. requestInit + fetch
+      // above are untouched.
+      ...(config.auth === "oauth" && config.oauthProvider
+        ? { authProvider: config.oauthProvider }
+        : {}),
     });
   } else if (config.transport === "http") {
     if (!config.url) {
@@ -289,6 +297,12 @@ export function createTransport(
       // Phase 63 SAFETY-07: cross-host redirect header scrub. Same policy as
       // the SSE branch above; see mcp-client-redirect-policy.ts.
       fetch: createRedirectPolicyFetch({ maxRedirections: 20 }),
+      // Phase 66 OAUTH-11: attach the OAuthClientProvider adapter ONLY for
+      // auth:"oauth" servers with a constructed provider (symmetric with the SSE
+      // branch). requestInit + fetch above are untouched.
+      ...(config.auth === "oauth" && config.oauthProvider
+        ? { authProvider: config.oauthProvider }
+        : {}),
     });
   }
   throw new Error(`MCP server "${config.name}": unsupported transport "${config.transport as string}"`);
