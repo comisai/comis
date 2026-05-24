@@ -16,7 +16,6 @@
  * @module
  */
 
-import { spawnSync } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -30,6 +29,21 @@ import type {
 } from "./mcp-client-types.js";
 import { qualifyToolName } from "./mcp-client-types.js";
 import { createRedirectPolicyFetch } from "./mcp-client-redirect-policy.js";
+import {
+  getPrlimitAvailableCached,
+  getPrlimitWarnEmitted,
+  setPrlimitWarnEmitted,
+} from "./mcp-client-prlimit-probe.js";
+// Re-export the prlimit probe public + test surface so existing callers
+// (and the co-located mcp-client-discover.test.ts) continue to import
+// from this leaf — the helpers were moved to a sibling leaf to keep this
+// file under the 500-line per-subdirectory cap, not to change the API.
+export {
+  getPrlimitAvailable,
+  refreshPrlimitAvailable,
+  __resetPrlimitWarnForTests,
+  __resetPrlimitProbeForTests,
+} from "./mcp-client-prlimit-probe.js";
 
 // Logger shape used by the Phase 63 SAFETY-08 WARN-skip path; matches the
 // `McpClientManagerDeps["logger"]` two-arg overload threaded through from
@@ -130,85 +144,6 @@ export function scrubStdioEnv(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 63 SAFETY-08: prlimit availability probe (lazy + cached, WR-02)
-// ---------------------------------------------------------------------------
-
-/**
- * Whether `prlimit(1)` is on PATH. WR-02: probed LAZILY on first
- * `wrapStdioCommand` invocation rather than at module-load time. The
- * previous module-init probe (a) blocked module-load by up to the 1s
- * spawnSync timeout on slow disks, and (b) was permanently false if
- * the daemon started before `/usr/bin` was mounted (rare but happens
- * on early-boot systemd units). The lazy approach defers the cost to
- * the first MCP connect (negligible — connect is multi-second already)
- * and lets a `prlimit` install that completes between daemon start and
- * the first connect take effect.
- *
- * The probe is still cached on first call — subsequent connects see no
- * spawnSync overhead. To force a re-probe (e.g., after an operator
- * installs util-linux post-hoc), expose `refreshPrlimitAvailable()`
- * below. Per RESEARCH.md §"Pattern 3" + Pitfall 5.
- */
-let prlimitAvailableCache: boolean | null = null;
-
-function probePrlimitAvailable(): boolean {
-  try {
-    const result = spawnSync("prlimit", ["--version"], { encoding: "utf-8", timeout: 1000 });
-    return result.status === 0;
-  } catch {
-    return false;
-  }
-}
-
-function getPrlimitAvailableCached(): boolean {
-  if (prlimitAvailableCache === null) {
-    prlimitAvailableCache = probePrlimitAvailable();
-  }
-  return prlimitAvailableCache;
-}
-
-/** Guard ensuring the prlimit-unavailable WARN fires AT MOST ONCE per daemon process. */
-let prlimitWarnEmitted = false;
-
-/**
- * Test seam: returns the lazily-cached prlimit availability result.
- * Triggers the probe on first call if not yet cached. Exported so the
- * co-located test file (mcp-client-discover.test.ts) can gate branches
- * on the runtime probe outcome.
- *
- * @internal — test-only test seam; not re-exported from the package
- * barrel, but documented as `@internal` per WR-07 so a future
- * contributor does not promote it to public-API status.
- */
-export function getPrlimitAvailable(): boolean {
-  return getPrlimitAvailableCached();
-}
-
-/**
- * Force a re-probe of `prlimit(1)` availability. Use after the
- * operator installs util-linux post-hoc; the next `wrapStdioCommand`
- * call will pick up the new state. Per WR-02.
- */
-export function refreshPrlimitAvailable(): boolean {
-  prlimitAvailableCache = probePrlimitAvailable();
-  // Reset the WARN-once flag so a subsequent connect on a host where
-  // prlimit JUST disappeared can re-emit the WARN.
-  prlimitWarnEmitted = false;
-  return prlimitAvailableCache;
-}
-
-/** @internal test-only — resets the module-level WARN-once flag for deterministic tests. */
-export function __resetPrlimitWarnForTests(): void {
-  prlimitWarnEmitted = false;
-}
-
-/** @internal test-only — resets the lazy probe cache for deterministic tests. */
-export function __resetPrlimitProbeForTests(): void {
-  prlimitAvailableCache = null;
-  prlimitWarnEmitted = false;
-}
-
-// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -261,7 +196,7 @@ export function wrapStdioCommand(
   // Operators who install util-linux post-hoc can force a re-probe via
   // refreshPrlimitAvailable().
   if (!getPrlimitAvailableCached()) {
-    if (!prlimitWarnEmitted) {
+    if (!getPrlimitWarnEmitted()) {
       logger.warn(
         {
           serverName,
@@ -273,7 +208,7 @@ export function wrapStdioCommand(
         },
         "MCP rlimits skipped — prlimit unavailable",
       );
-      prlimitWarnEmitted = true;
+      setPrlimitWarnEmitted();
     }
     return { command: "/usr/bin/env", args: innerArgs };
   }
