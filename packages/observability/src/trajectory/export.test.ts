@@ -1241,3 +1241,254 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
     expect(runtimeEvents[0]!.type).toBe("model.completed");
   });
 });
+
+// ---------------------------------------------------------------------------
+// BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)
+// ---------------------------------------------------------------------------
+
+describe("BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)", () => {
+  let tmpDir: string;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Case 1: BUNDLE-03 runtime event cap — 200_500 events → runtimeEventCount
+  //         capped at 200_000 + invalid-runtime-event warning fires.
+  //
+  // Note: writing 200_500 events produces ~40 MB of JSONL. The test is bounded
+  // (~5-10s) but intentionally exercises the cap at real scale. This is the
+  // price of the BUNDLE-03 invariant (see threat model T-04-04-03).
+  // -------------------------------------------------------------------------
+
+  it("BUNDLE-03: runtime event cap enforced at MAX_TRAJECTORY_RUNTIME_EVENTS=200_000 and warning fires", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "comis-bundle-cap-test-"));
+    const fixture = setupBundleFixture(tmpDir);
+
+    // Generate 200_500 minimal runtime events — just past the 200_000 cap.
+    // Each event ~200 bytes. Total ~40 MB — below the session-file cap.
+    const SID = fixture.sessionId;
+    const TID = fixture.traceId;
+    const AID = fixture.agentId;
+
+    const lines: string[] = [];
+    for (let i = 0; i < 200_500; i++) {
+      const ts = `2026-01-01T00:00:0${(i % 10)}.${String(i % 1000).padStart(3, "0")}Z`;
+      lines.push(
+        JSON.stringify({
+          traceSchema: "comis-trajectory",
+          schemaVersion: 1,
+          source: "runtime",
+          type: "model.completed",
+          ts,
+          seq: i,
+          sessionId: SID,
+          traceId: TID,
+          agentId: AID,
+          entryId: `e${i}`,
+          sourceSeq: i,
+          data: {},
+        }),
+      );
+    }
+    writeFileSync(fixture.runtimeFile, lines.join("\n") + "\n", "utf-8");
+
+    const result = await exportTrajectoryBundle({
+      sessionId: fixture.sessionId,
+      sessionFile: fixture.sessionFile,
+      workspaceDir: fixture.workspaceDir,
+      traceId: fixture.traceId,
+      agentId: fixture.agentId,
+      clock: fixture.clock,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // runtimeEventCount is capped at MAX_TRAJECTORY_RUNTIME_EVENTS (200_000).
+    expect(result.value.manifest.runtimeEventCount).toBe(MAX_TRAJECTORY_RUNTIME_EVENTS);
+
+    // At least one invalid-runtime-event warning fires for the cap overage.
+    const capWarning = (result.value.manifest.warnings ?? []).find(
+      (w) => w.code === "invalid-runtime-event",
+    );
+    expect(capWarning, "Expected an invalid-runtime-event warning for the cap").toBeDefined();
+    expect(capWarning!.message).toMatch(/[Rr]untime.*[Cc]ap.*[Ee]xceed|MAX_TRAJECTORY_RUNTIME/);
+  }, 30_000); // generous timeout for 200k-event fixture write
+
+  // -------------------------------------------------------------------------
+  // Case 2: BUNDLE-04 deterministic mixed-source sort — exact order including
+  //         tiebreak at identical ts (runtime before transcript).
+  // -------------------------------------------------------------------------
+
+  it("BUNDLE-04: mixed-source sort has exact ts order with runtime-before-transcript tiebreak at same ts", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "comis-bundle-sort-test-"));
+    const workspaceDir = mkdtempSync(join(tmpDir, "workspace-"));
+    const sessionDir = join(workspaceDir, "sessions");
+    mkdirSync(sessionDir, { recursive: true });
+
+    const sessionId = "sort-test-session-01";
+    const traceId = "trace-sort-01";
+    const agentId = "agent-sort-01";
+
+    // Write a synthetic 3-entry session JSONL with controlled timestamps so
+    // the transcript events land at ts=02s, 03s, 04s.
+    const sessionFilePath = join(sessionDir, "sort-test-session.jsonl");
+    const sessionHeader = {
+      type: "session",
+      version: 3,
+      id: sessionId,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      cwd: workspaceDir,
+    };
+    const transcriptEntries = [
+      { type: "model_change", id: "t1", parentId: null,  timestamp: "2026-01-01T00:00:02.000Z", provider: "anthropic", modelId: "claude-3" },
+      { type: "model_change", id: "t2", parentId: "t1",  timestamp: "2026-01-01T00:00:03.000Z", provider: "anthropic", modelId: "claude-3" },
+      { type: "model_change", id: "t3", parentId: "t2",  timestamp: "2026-01-01T00:00:04.000Z", provider: "anthropic", modelId: "claude-3" },
+    ];
+    const sessionLines =
+      [sessionHeader, ...transcriptEntries].map((e) => JSON.stringify(e)).join("\n") + "\n";
+    writeFileSync(sessionFilePath, sessionLines, "utf-8");
+
+    // 3 runtime events: ts=01s, 03s, 05s (interleaved with transcript).
+    // At ts=03s there is a tie: runtime event r3 vs transcript event t2 —
+    // runtime must sort first.
+    const runtimeFile = `${sessionFilePath}.trajectory.jsonl`;
+    const runtimeEvents = [
+      { traceSchema: "comis-trajectory", schemaVersion: 1, source: "runtime", type: "model.completed", ts: "2026-01-01T00:00:01.000Z", seq: 1, sessionId, traceId, agentId, entryId: "r1", sourceSeq: 1, data: {} },
+      { traceSchema: "comis-trajectory", schemaVersion: 1, source: "runtime", type: "model.completed", ts: "2026-01-01T00:00:03.000Z", seq: 3, sessionId, traceId, agentId, entryId: "r3", sourceSeq: 3, data: {} },
+      { traceSchema: "comis-trajectory", schemaVersion: 1, source: "runtime", type: "model.completed", ts: "2026-01-01T00:00:05.000Z", seq: 5, sessionId, traceId, agentId, entryId: "r5", sourceSeq: 5, data: {} },
+    ];
+    writeFileSync(
+      runtimeFile,
+      runtimeEvents.map((e) => JSON.stringify(e)).join("\n") + "\n",
+      "utf-8",
+    );
+
+    const clock = (): number => 1735689600000;
+    const result = await exportTrajectoryBundle({
+      sessionId,
+      sessionFile: sessionFilePath,
+      workspaceDir,
+      traceId,
+      agentId,
+      clock,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const eventsRaw = readFileSync(join(result.value.bundleDir, "events.jsonl"), "utf-8")
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as { ts: string; source: string });
+
+    // Should have 6 events total: 3 runtime + 3 transcript.
+    expect(eventsRaw.length).toBe(6);
+
+    // Exact order per design §5 D5 sort contract.
+    expect(eventsRaw[0]!.ts).toBe("2026-01-01T00:00:01.000Z");
+    expect(eventsRaw[0]!.source).toBe("runtime");
+
+    expect(eventsRaw[1]!.ts).toBe("2026-01-01T00:00:02.000Z");
+    expect(eventsRaw[1]!.source).toBe("transcript");
+
+    // Tiebreak: runtime before transcript at identical ts=03s.
+    expect(eventsRaw[2]!.ts).toBe("2026-01-01T00:00:03.000Z");
+    expect(eventsRaw[2]!.source).toBe("runtime");
+
+    expect(eventsRaw[3]!.ts).toBe("2026-01-01T00:00:03.000Z");
+    expect(eventsRaw[3]!.source).toBe("transcript");
+
+    expect(eventsRaw[4]!.ts).toBe("2026-01-01T00:00:04.000Z");
+    expect(eventsRaw[4]!.source).toBe("transcript");
+
+    expect(eventsRaw[5]!.ts).toBe("2026-01-01T00:00:05.000Z");
+    expect(eventsRaw[5]!.source).toBe("runtime");
+  });
+
+  // -------------------------------------------------------------------------
+  // Case 3: BUNDLE-03 warning-row 20-cap — 25 invalid JSON lines in runtime
+  //         JSONL → invalid-runtime-json warning has rows.length === 20 (cap
+  //         enforced) and count === 25 (true count preserved).
+  //
+  // NOTE: The readSessionBranch walk stops on the first cycle detection, so
+  // cyclic-session-branch warnings have count=1 per walk. To exercise the
+  // rows[] 20-cap, we use the runtime JSONL path which CAN accumulate many
+  // warning rows: 25 invalid JSON lines → count=25, rows.length=20.
+  // -------------------------------------------------------------------------
+
+  it("BUNDLE-03: warning-row 20-cap enforced — 25 invalid runtime lines produces rows.length=20 and count=25", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "comis-bundle-warn-test-"));
+    const fixture = setupBundleFixture(tmpDir);
+
+    const SID = fixture.sessionId;
+    const TID = fixture.traceId;
+    const AID = fixture.agentId;
+
+    // Write 1 valid + 25 invalid + 1 valid runtime JSONL lines.
+    const valid1 = JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      source: "runtime",
+      type: "model.completed",
+      ts: "2026-01-01T00:00:01.000Z",
+      seq: 1,
+      sessionId: SID,
+      traceId: TID,
+      agentId: AID,
+      entryId: "valid-1",
+      sourceSeq: 1,
+      data: {},
+    });
+    const valid2 = JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      source: "runtime",
+      type: "model.completed",
+      ts: "2026-01-01T00:00:02.000Z",
+      seq: 2,
+      sessionId: SID,
+      traceId: TID,
+      agentId: AID,
+      entryId: "valid-2",
+      sourceSeq: 2,
+      data: {},
+    });
+
+    const invalidLines = Array.from({ length: 25 }, (_, i) => `{not-json-line-${i}`);
+    const allLines = [valid1, ...invalidLines, valid2];
+    writeFileSync(fixture.runtimeFile, allLines.join("\n") + "\n", "utf-8");
+
+    const result = await exportTrajectoryBundle({
+      sessionId: fixture.sessionId,
+      sessionFile: fixture.sessionFile,
+      workspaceDir: fixture.workspaceDir,
+      traceId: fixture.traceId,
+      agentId: fixture.agentId,
+      clock: fixture.clock,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // The 2 valid events should be included; 25 invalid lines skipped.
+    expect(result.value.manifest.runtimeEventCount).toBe(2);
+
+    // An invalid-runtime-json warning fires.
+    const jsonWarning = (result.value.manifest.warnings ?? []).find(
+      (w) => w.code === "invalid-runtime-json",
+    );
+    expect(jsonWarning, "Expected an invalid-runtime-json warning").toBeDefined();
+
+    // True count is preserved (all 25 invalid lines counted).
+    expect(jsonWarning!.count).toBe(25);
+
+    // rows is capped at MAX_TRAJECTORY_WARNING_ROWS (20).
+    expect(jsonWarning!.rows.length).toBe(MAX_TRAJECTORY_WARNING_ROWS);
+    expect(jsonWarning!.rows.length).toBe(20);
+  });
+});
