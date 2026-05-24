@@ -113,7 +113,7 @@ export function registerMcpCommand(program: Command): void {
     .command("list")
     .description("List all MCP server connections (name, transport, status, tool count)")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var)")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
     .action(async (options: { format: string; token?: string }) => {
       try {
         ensureGatewayToken(options.token);
@@ -163,7 +163,7 @@ export function registerMcpCommand(program: Command): void {
     .command("status <name>")
     .description("Show detailed status for one MCP server (tools, capabilities, serverInfo)")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var)")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
     .action(async (name: string, options: { format: string; token?: string }) => {
       try {
         ensureGatewayToken(options.token);
@@ -215,7 +215,7 @@ export function registerMcpCommand(program: Command): void {
     .option("--args <args...>", "Command-line arguments (stdio only; variadic)")
     .option("--url <url>", "Server URL (sse/http only)")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var)")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
     .action(
       async (
         name: string,
@@ -287,7 +287,7 @@ export function registerMcpCommand(program: Command): void {
     .option("--args <args...>", "Command-line arguments (stdio only; variadic)")
     .option("--url <url>", "Server URL (sse/http only)")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var)")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
     .action(
       async (
         name: string,
@@ -354,7 +354,7 @@ export function registerMcpCommand(program: Command): void {
     .command("disconnect <name>")
     .description("Disconnect a named MCP server")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var)")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
     .action(async (name: string, options: { format: string; token?: string }) => {
       try {
         ensureGatewayToken(options.token);
@@ -386,7 +386,7 @@ export function registerMcpCommand(program: Command): void {
     .command("reconnect <name>")
     .description("Reconnect a named MCP server using its stored config")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var)")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
     .action(async (name: string, options: { format: string; token?: string }) => {
       try {
         ensureGatewayToken(options.token);
