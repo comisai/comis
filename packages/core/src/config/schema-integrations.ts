@@ -146,6 +146,26 @@ export const McpServerEntrySchema = z.preprocess(
      *  undefined => stdio stays serialized (concurrency 1). Ignored for sse/http
      *  (already default concurrency 4). Read at PQueue construction (mcp-client-connect.ts). */
     supportsParallelToolCalls: z.boolean().optional(),
+    /** Phase 66 OAUTH-10: per-server authentication scheme. "oauth" opts the
+     *  server into the OAuth 2.1 + PKCE flow (mcp.oauth_login / token store).
+     *  "bearer" / "none" are explicit no-OAuth markers. Undefined ⇒ no OAuth
+     *  (treated as "none"). Threaded schema→runtime→persist (locked decision #7)
+     *  so a reconnect cannot silently strip a server's OAuth requirement (CR-01). */
+    auth: z.enum(["none", "bearer", "oauth"]).optional(),
+    /** Phase 66 OAUTH-10/11: OAuth provider hints for an `auth:"oauth"` server.
+     *  strictObject so unknown keys are rejected (T-66-01 tampering defence). */
+    oauth: z
+      .strictObject({
+        /** OAUTH-03 cascade fallback: user-provided authorization endpoint used
+         *  when RFC 8414/9728 discovery does not surface one. */
+        authorizationEndpoint: z.url().optional(),
+        /** OAuth scope string requested at authorization time. */
+        scope: z.string().optional(),
+        /** OAUTH-11 / 66-P12: Stripe Connect `Stripe-Account` header value
+         *  threaded into token + refresh requests for connected-account servers. */
+        stripeAccount: z.string().optional(),
+      })
+      .optional(),
   }),
 );
 

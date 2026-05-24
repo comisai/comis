@@ -398,3 +398,99 @@ describe("McpServerEntrySchema — Phase 64 per-server reliability overrides", (
     expect(result.circuitBreakerCooldownMs).toBe(30_000);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 66-01 — per-server OAuth opt-in fields (OAUTH-10/11). Two additive
+// optional fields land on McpServerEntrySchema: `auth` (enum none/bearer/oauth)
+// and an `oauth` strictObject (authorizationEndpoint URL fallback for OAUTH-03,
+// scope, Stripe-Account for OAUTH-11 / 66-P12). Combined RED+GREEN per the
+// AGENTS.md §2.10 exception used by the Phase 63/64 blocks above: the accept
+// tests reference `result.auth` / `result.oauth`, which would be TS errors on
+// the pre-patch inferred type, so schema additions and tests land in the same
+// commit. The reject tests (T-66-01) pin strictObject + enum tampering defence.
+// ---------------------------------------------------------------------------
+
+describe("McpServerEntrySchema — Phase 66 OAuth opt-in fields", () => {
+  it("accepts auth='oauth' with an oauth block (scope only)", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "notion",
+      url: "https://mcp.notion.com/mcp",
+      auth: "oauth",
+      oauth: { scope: "read" },
+    });
+    expect(result.auth).toBe("oauth");
+    expect(result.oauth).toEqual({ scope: "read" });
+  });
+
+  it("accepts the full oauth block (authorizationEndpoint + scope + stripeAccount)", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "stripe",
+      url: "https://mcp.stripe.com/mcp",
+      auth: "oauth",
+      oauth: {
+        authorizationEndpoint: "https://connect.stripe.com/oauth/authorize",
+        scope: "read_write",
+        stripeAccount: "acct_1",
+      },
+    });
+    expect(result.oauth).toEqual({
+      authorizationEndpoint: "https://connect.stripe.com/oauth/authorize",
+      scope: "read_write",
+      stripeAccount: "acct_1",
+    });
+  });
+
+  it("accepts auth='none' and auth='bearer'", () => {
+    for (const auth of ["none", "bearer"] as const) {
+      const result = McpServerEntrySchema.parse({
+        name: "srv",
+        url: "https://example.com/mcp",
+        auth,
+      });
+      expect(result.auth).toBe(auth);
+    }
+  });
+
+  it("leaves auth/oauth undefined when both omitted", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "srv",
+      url: "https://example.com/mcp",
+    });
+    expect(result.auth).toBeUndefined();
+    expect(result.oauth).toBeUndefined();
+  });
+
+  // T-66-01 (Tampering): enum rejects a bogus auth value.
+  it("rejects auth values outside {none,bearer,oauth}", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "srv",
+        url: "https://example.com/mcp",
+        auth: "bogus",
+      }),
+    ).toThrow();
+  });
+
+  // T-66-01 (Tampering): strictObject rejects unknown keys inside oauth.
+  it("rejects unknown keys inside the oauth block (strictObject)", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "srv",
+        url: "https://example.com/mcp",
+        auth: "oauth",
+        oauth: { foo: 1 },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a non-URL authorizationEndpoint", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "srv",
+        url: "https://example.com/mcp",
+        auth: "oauth",
+        oauth: { authorizationEndpoint: "not-a-url" },
+      }),
+    ).toThrow();
+  });
+});

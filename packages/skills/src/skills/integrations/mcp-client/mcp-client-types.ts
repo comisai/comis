@@ -155,6 +155,20 @@ export interface McpServerConfig {
    *  stdio stays serialized (1). No-op for sse/http (already 4). Read at
    *  PQueue construction (mcp-client-connect.ts). */
   readonly supportsParallelToolCalls?: boolean;
+  /** Phase 66 OAUTH-10: per-server authentication scheme. "oauth" wires the
+   *  OAuthClientProvider adapter onto the transport (mcp-client-discover.ts);
+   *  "bearer"/"none"/undefined leave the existing header/no-auth behaviour.
+   *  Sourced from the persisted McpServerEntry (mcp.connect has no RPC param)
+   *  and threaded through both daemon runtime-config sites + buildPersistedMcpEntry. */
+  readonly auth?: "none" | "bearer" | "oauth";
+  /** Phase 66 OAUTH-10/11: OAuth provider hints for an `auth:"oauth"` server.
+   *  authorizationEndpoint = OAUTH-03 discovery fallback; scope = requested
+   *  OAuth scope; stripeAccount = OAUTH-11/66-P12 Stripe-Account header value. */
+  readonly oauth?: {
+    readonly authorizationEndpoint?: string;
+    readonly scope?: string;
+    readonly stripeAccount?: string;
+  };
 }
 
 /** Connection status for an MCP server. */
