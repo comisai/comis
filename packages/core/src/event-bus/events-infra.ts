@@ -381,6 +381,20 @@ export interface InfraEvents {
     timestamp: number;
   };
 
+  /** Phase 67 CAP-03: an MCP tool result exceeded its source-profile maxChars and
+   *  was truncated by the bridge. Lets operators see which servers/tools return
+   *  verbose blobs. originalSize/truncatedSize are character counts (post-sanitize,
+   *  pre-wrap). The payload carries only sizes + identifiers — never the (untrusted)
+   *  truncated content (matches Pino redaction posture: never log bodies). */
+  "mcp:server:result_truncated": {
+    server: string;
+    tool: string;
+    originalSize: number;
+    truncatedSize: number;
+    traceId: string;
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // MCP server connection lifecycle events
   // -------------------------------------------------------------------------

@@ -15,7 +15,7 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema } from "typebox";
-import { registerToolMetadata, wrapExternalContent, type WrapExternalContentOptions } from "@comis/core";
+import { registerToolMetadata, wrapExternalContent, tryGetContext, type WrapExternalContentOptions } from "@comis/core";
 import { extractMcpServerName } from "@comis/shared";
 export { extractMcpServerName };
 import { resolveSourceProfile, type ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
@@ -174,6 +174,12 @@ export function sanitizeMcpToolName(qualifiedName: string): string {
  * @param toolSourceProfiles - Optional per-tool overrides for source profiles
  * @param logger - Optional diagnostic logger for tracing tool result content shape
  * @param onSuspiciousContent - Optional callback fired when wrapped MCP content trips the suspicious-content heuristic
+ * @param onResultTruncated - Phase 67 CAP-03: optional callback fired ONCE per
+ *   tool call whose result exceeded its source-profile `maxChars` and was
+ *   truncated. Decoupled from the event bus (mirrors `onSuspiciousContent`): the
+ *   daemon closure does the `eventBus.emit("mcp:server:result_truncated", …)`.
+ *   Carries only sizes + identifiers (server, tool, originalSize, truncatedSize,
+ *   traceId) — never the truncated content.
  * @param serverFiltersFn - OPUX-08 / 65-P2: per-server filter lookup, called
  *   once per input tool with the server name parsed from its qualified name.
  *   Returns `undefined` or an empty filter ⇒ tool passes through. A non-empty
@@ -194,6 +200,14 @@ export function mcpToolsToAgentTools(
   serverFiltersFn?: (serverName: string) =>
     | { readonly allowlist?: readonly string[]; readonly blocklist?: readonly string[] }
     | undefined,
+  // Phase 67 CAP-03: fired once per truncating tool call (decoupled emit callback).
+  onResultTruncated?: (e: {
+    server: string;
+    tool: string;
+    originalSize: number;
+    truncatedSize: number;
+    traceId: string;
+  }) => void,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   /** Log the content shape of an execute() return value for content-loss diagnosis. */
@@ -306,8 +320,22 @@ export function mcpToolsToAgentTools(
           // Source-gate: cap text to resolved profile's maxChars limit
           const profile = resolveSourceProfile(sanitizedName, toolSourceProfiles?.[sanitizedName]);
           if (textParts.length > profile.maxChars) {
-            const { truncated } = truncateJsonAware(textParts, profile.maxChars);
+            const originalSize = textParts.length;
+            const { truncated, wasTruncated } = truncateJsonAware(textParts, profile.maxChars);
             textParts = truncated;
+            // CAP-03: emit ONCE here (guarded by wasTruncated), NOT from
+            // truncateJsonAware (pure utility, no bus) nor the wrapExternalContent
+            // step (would fire on non-truncated paths). traceId via the non-throwing
+            // tryGetContext — "" outside a request scope (keepalive/background/test).
+            if (wasTruncated) {
+              onResultTruncated?.({
+                server: serverName,
+                tool: tool.name,
+                originalSize,
+                truncatedSize: truncated.length,
+                traceId: tryGetContext()?.traceId ?? "",
+              });
+            }
           }
 
           // Wrap AFTER cap so SECURITY NOTICE boilerplate is preserved
