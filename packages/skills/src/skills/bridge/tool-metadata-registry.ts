@@ -555,4 +555,123 @@ export function registerAllToolMetadata(): void {
   // Model switching requires both models_manage (catalog) and agents_manage (apply model to agent)
   registerToolMetadata("models_manage", { coDiscoverWith: ["agents_manage"] });
   registerToolMetadata("agents_manage", { coDiscoverWith: ["models_manage"] });
+
+  // =========================================================================
+  // MCP Export Policy (Phase 69 SERVE-03/04 — CI-05 enforced)
+  //
+  // Per-tool policy controlling exposure via the Comis-as-MCP-Server
+  // endpoint at /mcp/v1. The CI gate at
+  // test/architecture/mcp-export-policy.test.ts AST-walks this file and
+  // asserts every UNIQUE tool name registered above has at least ONE call
+  // here (or anywhere in this file) setting `mcpExportPolicy`.
+  //
+  // 51 unique tool names → 51 annotation lines below. Spread-merge in
+  // @comis/core's registerToolMetadata preserves all sibling fields
+  // (size cap, isReadOnly, validateInput, outputSchema, searchHint,
+  // coDiscoverWith) — annotating in a dedicated section is auditable
+  // for code-review and grep-able for the security reviewer.
+  //
+  // SECURITY GATE — these values are CONSERVATIVE DEFAULTS subject to a
+  // HUMAN security-reviewer gate before the v2.4/v2.5 gateway endpoint
+  // flips live (see HUMAN-UAT.md). The CI gate enforces ANNOTATION
+  // PRESENCE only; the literal value here IS the security policy.
+  //
+  // Categories:
+  //   "safe"             — exposed to any mcp-client token (no allowlist required).
+  //                        Demonstrably non-PII, read-only, no Comis state read,
+  //                        caller-supplied input only.
+  //   "permission-gated" — exposed ONLY if the token's mcpClient.allowlist
+  //                        includes the tool name. Read-only views over Comis
+  //                        state, or caller-data-dependent tools (file access,
+  //                        memory/session reads, context engine, observability,
+  //                        media analysis where the caller supplies the asset
+  //                        but the tool MAY read Comis-stored media IDs).
+  //   "never-export"     — NEVER exposed under any operator config. Admin tools,
+  //                        filesystem/process mutation, outbound channel sends,
+  //                        memory/session writes, agent spawning, scheduled
+  //                        tasks, token/skill/MCP/provider/model/channel admin,
+  //                        cross-account effects, cost-bearing synthesis.
+  //
+  // Step 5 (plan): media tools (image_analyze, describe_video,
+  // extract_document, transcribe_audio) default to `permission-gated` per
+  // the plan's safer-default directive — the registry comments do NOT
+  // assert caller-supplied-only semantics. The security reviewer should
+  // re-confirm in HUMAN-UAT whether to upgrade any of these to `safe`.
+  // =========================================================================
+
+  // --- safe (3) — public/caller-supplied input, no Comis state read ---
+  registerToolMetadata("web_search", { mcpExportPolicy: "safe" });
+  registerToolMetadata("web_fetch",  { mcpExportPolicy: "safe" });
+  registerToolMetadata("browser",    { mcpExportPolicy: "safe" });
+
+  // --- permission-gated (20) — caller-data-dependent; allowlist required ---
+  // Workspace file access (4) — operator allowlists by path scope at the daemon.
+  registerToolMetadata("read", { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("ls",   { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("find", { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("grep", { mcpExportPolicy: "permission-gated" });
+  // Comis memory read (2) — allowlist by tenant.
+  registerToolMetadata("memory_search", { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("memory_get",    { mcpExportPolicy: "permission-gated" });
+  // Read-only session views (4) — CONFIRMED-only filter enforced by Plan 05's resources adapter.
+  registerToolMetadata("session_search",   { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("session_status",   { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("sessions_list",    { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("sessions_history", { mcpExportPolicy: "permission-gated" });
+  // Context-engine reads (4) — read-only RAG / embedding views.
+  registerToolMetadata("ctx_search",  { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("ctx_inspect", { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("ctx_expand",  { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("ctx_recall",  { mcpExportPolicy: "permission-gated" });
+  // Observability read (1) — operator allowlists by query scope.
+  registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
+  // Meta-tool (1) — reveals registered-tools attack surface; per-client allowlist required.
+  registerToolMetadata("discover_tools", { mcpExportPolicy: "permission-gated" });
+  // Media analysis (4) — see Step-5 note above. Default permission-gated
+  // because the registry does NOT assert caller-supplied-only semantics;
+  // these tools MAY read Comis-stored media IDs in some code paths.
+  // TODO: security review — re-confirm in HUMAN-UAT whether any of these
+  // can safely be upgraded to "safe" (caller-supplied-only).
+  registerToolMetadata("image_analyze",    { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("describe_video",   { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("extract_document", { mcpExportPolicy: "permission-gated" });
+  registerToolMetadata("transcribe_audio", { mcpExportPolicy: "permission-gated" });
+
+  // --- never-export (28) — admin / mutation / outbound / secrets / cost ---
+  // Filesystem mutation (3).
+  registerToolMetadata("write",       { mcpExportPolicy: "never-export" });
+  registerToolMetadata("edit",        { mcpExportPolicy: "never-export" });
+  registerToolMetadata("apply_patch", { mcpExportPolicy: "never-export" });
+  // Arbitrary command/process execution (2).
+  registerToolMetadata("exec",    { mcpExportPolicy: "never-export" });
+  registerToolMetadata("process", { mcpExportPolicy: "never-export" });
+  // Memory write/delete (2).
+  registerToolMetadata("memory_store",  { mcpExportPolicy: "never-export" });
+  registerToolMetadata("memory_manage", { mcpExportPolicy: "never-export" });
+  // Session mutation / message sending / agent spawn (4).
+  registerToolMetadata("sessions_manage", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("sessions_send",   { mcpExportPolicy: "never-export" });
+  registerToolMetadata("sessions_spawn",  { mcpExportPolicy: "never-export" });
+  registerToolMetadata("subagents",       { mcpExportPolicy: "never-export" });
+  // Scheduled tasks / workflows (2).
+  registerToolMetadata("pipeline", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("cron",     { mcpExportPolicy: "never-export" });
+  // Admin tools — gateway config, agents, tokens, MCP, skills, channels, providers, models, heartbeat (9).
+  registerToolMetadata("gateway",          { mcpExportPolicy: "never-export" });
+  registerToolMetadata("heartbeat_manage", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("channels_manage",  { mcpExportPolicy: "never-export" });
+  registerToolMetadata("tokens_manage",    { mcpExportPolicy: "never-export" });
+  registerToolMetadata("skills_manage",    { mcpExportPolicy: "never-export" });
+  registerToolMetadata("mcp_manage",       { mcpExportPolicy: "never-export" });
+  registerToolMetadata("agents_manage",    { mcpExportPolicy: "never-export" });
+  registerToolMetadata("providers_manage", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("models_manage",    { mcpExportPolicy: "never-export" });
+  // Outbound channel send (5) — generic + per-platform actions.
+  registerToolMetadata("message",         { mcpExportPolicy: "never-export" });
+  registerToolMetadata("whatsapp_action", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("discord_action",  { mcpExportPolicy: "never-export" });
+  registerToolMetadata("telegram_action", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("slack_action",    { mcpExportPolicy: "never-export" });
+  // Cost-bearing synthesis (1).
+  registerToolMetadata("tts_synthesize", { mcpExportPolicy: "never-export" });
 }
