@@ -103,13 +103,13 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Session Index
 
-- [ ] **INDEX-01**: Append-only `~/.comis/logs/session-index.jsonl` co-located with daemon logs, written via `QueuedFileWriter`. Three event kinds: `session_started`, `turn_completed`, `session_ended`. Bounded by date-roll.
+- [x] **INDEX-01**: Append-only `~/.comis/logs/session-index.jsonl` co-located with daemon logs, written via `QueuedFileWriter`. Three event kinds: `session_started`, `turn_completed`, `session_ended`. Bounded by date-roll.
   - Acceptance: `jq 'select(.channelType=="telegram" and .lastError != null)' session-index.*.jsonl` returns failures
   - Acceptance: `comis trace --since 1h --where error` (CLI-* set) uses the index as primary scan
   - Design: D14 *(files: `packages/observability/src/session-index/` NEW)*
-- [ ] **INDEX-02**: Agent emits `turn_completed` to the index after each turn (durationMs, input/output tokens, lastError)
+- [x] **INDEX-02**: Agent emits `turn_completed` to the index after each turn (durationMs, input/output tokens, lastError)
   - Design: D14 *(file: `packages/agent/src/executor/...`)*
-- [ ] **INDEX-03**: Session lifecycle emits `session_started` and `session_ended` to the index
+- [x] **INDEX-03**: Session lifecycle emits `session_started` and `session_ended` to the index
   - Design: D14 *(file: `packages/agent/src/session/...`)*
 
 ### Bundle Export
@@ -266,9 +266,9 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | REDACT-01 | Phase 5 | Complete |
 | REDACT-02 | Phase 5 | Complete |
 | REDACT-03 | Phase 5 | Complete |
-| INDEX-01 | Phase 6 | Pending |
-| INDEX-02 | Phase 6 | Pending |
-| INDEX-03 | Phase 6 | Pending |
+| INDEX-01 | Phase 6 | Complete |
+| INDEX-02 | Phase 6 | Complete |
+| INDEX-03 | Phase 6 | Complete |
 | CLI-01 | Phase 6 | Pending |
 | CLI-02 | Phase 6 | Pending |
 | CLI-03 | Phase 6 | Pending |
