@@ -225,7 +225,7 @@ No. Comis is Apache-2.0 and fully self-hosted by design. See [docs.comis.ai/inst
 
 <br>
 
-Apache-2.0 across all 14 packages. Commercial use, modification, redistribution, and private deployment are all permitted under the standard Apache-2.0 terms.
+Apache-2.0 across all 15 packages. Commercial use, modification, redistribution, and private deployment are all permitted under the standard Apache-2.0 terms.
 
 </details>
 
