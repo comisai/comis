@@ -1192,6 +1192,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // (composed into `API_CONTRACTS_ORDERED` intra-package — the walker
       // skips self-imports).
       "OBSERVABILITY_CONTRACTS",
+      // CLI-06 trace correlation contracts (Phase 6, Plan 06-02).
+      // ObsTraceExportContract, ObsTraceSearchContract, ObsTraceTailContract —
+      // planned-orphan entries: daemon handler (obs-trace.ts) is added in
+      // Plan 06-03; CLI consumer (commands/trace.ts) is added in Plan 06-04.
+      // Remove these three entries once Plan 06-03 lands and the handler
+      // imports them via computed property keys.
+      "ObsTraceExportContract",
+      "ObsTraceSearchContract",
+      "ObsTraceTailContract",
       // Workspace-umbrella contracts (36 methods spanning 5 handler-factory
       // files that share the WorkspaceApiDeps cluster slice):
       //   - workspace-handlers.ts  (12 methods)
