@@ -377,13 +377,25 @@ describe("setupSkillBundles — Phase 68 BUNDLE-03 boot orchestrator", () => {
     expect(final.find((s) => s.name === "shared-name")?._bundleSource).toBeUndefined();
     expect(final.find((s) => s.name === "unique-b")?._bundleSource).toBe("skill-b");
 
-    // WARN was logged with errorKind:"config" mentioning skill A.
+    // WARN was logged with errorKind:"config" mentioning skill A. There are
+    // TWO WARNs for this scenario: the resolver's own "name-collision reject"
+    // log and the orchestrator's "resolver rejected" log. We test the
+    // orchestrator's WR-05 fields by filtering on the orchestrator's
+    // distinguishing field (bundleErrorKind exists on the orchestrator WARN
+    // only; the resolver's WARN exposes collisionCount instead).
     const warnSpy = deps.logger.warn as ReturnType<typeof vi.fn>;
-    const skillAWarn = warnSpy.mock.calls.find((call) => {
-      const obj = call[0] as { skillId?: string; errorKind?: string };
-      return obj.skillId === "skill-a" && obj.errorKind === "config";
+    const orchestratorWarn = warnSpy.mock.calls.find((call) => {
+      const obj = call[0] as { skillId?: string; bundleErrorKind?: string };
+      return obj.skillId === "skill-a" && obj.bundleErrorKind !== undefined;
     });
-    expect(skillAWarn).toBeDefined();
+    expect(orchestratorWarn).toBeDefined();
+    // WR-05: err MUST be a STRING (passed to Pino's err field — the serializer
+    // only fires for Error instances; a plain BundleError object would be
+    // recorded raw and log-aggregation tools that look for err.message would
+    // miss it). bundleErrorKind carries the structured discriminator instead.
+    const warnObj = orchestratorWarn![0] as { err?: unknown; bundleErrorKind?: string };
+    expect(typeof warnObj.err).toBe("string");
+    expect(warnObj.bundleErrorKind).toBe("name_collision");
   });
 
   it("partial manifest parse failure: skill A unparseable, B + C clean → log WARN for A, persist B+C only", async () => {

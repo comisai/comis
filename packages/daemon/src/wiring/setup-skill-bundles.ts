@@ -36,6 +36,7 @@ import type { SkillRegistry } from "@comis/skills";
 import { resolveWorkspaceDir } from "@comis/core";
 import { persistMcpServers } from "../api/shared/persist-mcp-servers.js";
 import { resolveBundle } from "../skills/bundle-mcp-resolver.js";
+import { formatBundleError } from "../skills/bundle-install-helper.js";
 import type { WorkspaceApiDeps } from "../api/types.js";
 
 // ---------------------------------------------------------------------------
@@ -199,10 +200,18 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
     });
 
     if (!resolveResult.ok) {
+      // WR-05: pass a STRING to the Pino `err` field. The Pino error
+      // serializer only fires for true `Error` instances; passing a
+      // plain `BundleError` object (a discriminated union) bypasses
+      // serialization and the log record loses `err.message` / `err.stack`.
+      // The structured fields (bundleErrorKind, skillId, hint) carry the
+      // searchable signal; `err` carries the formatted operator-readable
+      // string.
       deps.logger.warn(
         {
           skillId,
-          err: resolveResult.error,
+          bundleErrorKind: resolveResult.error.kind,
+          err: formatBundleError(resolveResult.error),
           hint: "Boot-path bundle resolver rejected this skill; skill remains installed but MCPs not wired (operator may run 'comis skill install --force' if appropriate).",
           errorKind: "config" as const,
         },
