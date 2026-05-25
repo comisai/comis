@@ -158,7 +158,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
   - Design: D13
 - [ ] **CLI-05**: `comis trace export <sessionId>` writes a bundle and prints the path
   - Design: D13
-- [ ] **CLI-06**: Three new RPC contracts added: `ObsTraceSearchContract`, `ObsTraceTailContract`, `ObsTraceExportContract`
+- [x] **CLI-06**: Three new RPC contracts added: `ObsTraceSearchContract`, `ObsTraceTailContract`, `ObsTraceExportContract`
   - Design: D13 *(file: `packages/core/src/api-contracts/observability.ts`)*
 - [ ] **CLI-07**: All `comis trace` subcommands support `--json` for machine consumption (human-readable columns by default)
   - Design: D13
@@ -274,7 +274,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | CLI-03 | Phase 6 | Pending |
 | CLI-04 | Phase 6 | Pending |
 | CLI-05 | Phase 6 | Pending |
-| CLI-06 | Phase 6 | Pending |
+| CLI-06 | Phase 6 | Complete |
 | CLI-07 | Phase 6 | Pending |
 | EXPORT-01 | Phase 6 | Pending |
 | ROTATE-01 | Phase 7 | Pending |
