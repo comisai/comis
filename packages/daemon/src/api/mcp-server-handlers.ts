@@ -97,9 +97,16 @@ function ensurePrunerStarted(): void {
  * Test-only: reset the singleton rate-limit state. Underscore prefix signals
  * internal use; import directly from this module in unit tests, NOT from a
  * public index.
+ *
+ * Phase 69 IN-01: also resets the `prunerStarted` flag so the next
+ * `buildMcpServerForClient` invocation re-registers a fresh interval. Without
+ * this, the module-level `prunerStarted` boolean stays `true` for the
+ * lifetime of the forked vitest worker, masking pruner-cold-start behaviour
+ * in any later test that needs to reproduce it.
  */
 export function _resetRateLimitStateForTest(): void {
   rateLimitState.buckets.clear();
+  prunerStarted = false;
 }
 
 // ---------------------------------------------------------------------------

@@ -56,12 +56,29 @@ const stubRegistry = new Map<string, StubMeta>([
   ["future_tool_no_policy", {} /* no policy — default-deny safety net */],
 ]);
 
+// Track systemSetInterval invocations so the IN-01 test can verify
+// _resetRateLimitStateForTest re-enables pruner registration. Hoisted to
+// the same scope as `vi.mock("@comis/core", ...)` so the spy is initialized
+// BEFORE the hoisted mock factory references it (Vitest hoists vi.mock to
+// the top of the file; bare `const` declarations are evaluated AFTER and
+// therefore not visible inside the factory). `vi.hoisted` is the supported
+// pattern.
+const { systemSetIntervalSpy } = vi.hoisted(() => ({
+  systemSetIntervalSpy: vi.fn((_cb: () => void, _ms: number) => {
+    // ensurePrunerStarted calls .unref() on the returned handle.
+    return { unref: () => {} } as unknown as ReturnType<typeof setInterval>;
+  }),
+}));
+
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
     getAllToolMetadata: () => stubRegistry,
     getToolMetadata: (name: string) => stubRegistry.get(name),
+    // IN-01: track pruner registration so a test can verify re-registration
+    // after `_resetRateLimitStateForTest()`.
+    systemSetInterval: systemSetIntervalSpy,
   };
 });
 
@@ -910,6 +927,88 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
     } finally {
       restore();
     }
+  });
+});
+
+// ===========================================================================
+// Phase 69 IN-01 -- _resetRateLimitStateForTest must reset prunerStarted
+//
+// `prunerStarted` is a module-level boolean that gates `systemSetInterval`
+// registration. After the first `buildMcpServerForClient` call in any test
+// suite, it is `true` for the module's lifetime. Without resetting it, a
+// later test cannot reproduce the "pruner has not yet started" state -- the
+// interval is already running, and the registration call (`systemSetInterval`)
+// has been made exactly once for the module's lifetime.
+//
+// RED criterion: after one `buildMcpServerForClient` call, then
+// `_resetRateLimitStateForTest()`, then a second build, the
+// `systemSetInterval` mock must have been called TWICE. On the pre-fix code
+// it is called only once (the second build hits the `if (prunerStarted)
+// return;` short-circuit).
+//
+// The @comis/core mock at top-of-file is augmented here for this single
+// test by spreading `systemSetInterval: vi.fn(...)` into the returned
+// namespace. Doing it INSIDE a `vi.doMock` is awkward because the import
+// is hoisted; we instead bind a module-level spy via vi.mock at module
+// level then reach into it from this suite.
+// ===========================================================================
+
+describe("buildMcpServerForClient -- Phase 69 IN-01 _resetRateLimitStateForTest also resets prunerStarted", () => {
+  it("_resetRateLimitStateForTest re-enables re-registration of the pruner interval IN-01", async () => {
+    const { _resetRateLimitStateForTest } = await import(
+      "./mcp-server-handlers.js"
+    );
+    // Start from a known state: clear the spy + reset module state.
+    systemSetIntervalSpy.mockClear();
+    _resetRateLimitStateForTest();
+
+    const { logger } = makeCapturingLogger();
+    const client = makeMcpClient(["mcp-client"], []);
+    const rpc = makeRpcRecorder();
+
+    // First build -- with prunerStarted reset to false, ensurePrunerStarted
+    // calls systemSetInterval once.
+    const { restore: restore1 } = spyOnRegisterTool();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: identityToolNameToRpcMethod,
+        },
+        client,
+      );
+    } finally {
+      restore1();
+    }
+    expect(systemSetIntervalSpy).toHaveBeenCalledTimes(1);
+
+    // Reset state again. On the pre-fix code this clears buckets but
+    // leaves prunerStarted=true; on the post-fix code prunerStarted is
+    // reset to false.
+    _resetRateLimitStateForTest();
+
+    // Second build after reset. On the pre-fix code, ensurePrunerStarted
+    // short-circuits because prunerStarted is still true -> spy stays at
+    // 1 call. On the post-fix code, the spy fires again -> 2 calls.
+    const { restore: restore2 } = spyOnRegisterTool();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: identityToolNameToRpcMethod,
+        },
+        client,
+      );
+    } finally {
+      restore2();
+    }
+    expect(systemSetIntervalSpy).toHaveBeenCalledTimes(2);
   });
 });
 
