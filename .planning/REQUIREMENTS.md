@@ -183,7 +183,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Alert Budget
 
-- [ ] **ALERT-01**: Rate-aggregator subscribed to health/safety events emits `health:budget_exceeded { kind, count, windowMs }` when per-`errorKind` threshold crossed in a sliding window — closes G10
+- [x] **ALERT-01**: Rate-aggregator subscribed to health/safety events emits `health:budget_exceeded { kind, count, windowMs }` when per-`errorKind` threshold crossed in a sliding window — closes G10
   - Design: D16 *(spec'd in design §5; marked DEFER but landing in M3)*
 
 ### Pipeline-Tag Discipline
@@ -282,7 +282,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | ROTATE-01 | Phase 7 Plan 01 | Complete (07-01: 48cddac, f1d70e9) |
 | ROTATE-02 | Phase 7 Plan 01 | Complete (07-01: d7c72d1) |
 | ROTATE-03 | Phase 7 | Complete |
-| ALERT-01 | Phase 7 | Pending |
+| ALERT-01 | Phase 7 Plan 03 | Complete (07-03: 69afc8e, 6482691, e372431) |
 | HYGIENE-01 | Phase 8 | Pending |
 | DOCS-01 | Phase 8 | Pending |
 | DOCS-02 | Phase 8 | Pending |

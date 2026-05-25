@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Phase 07 Plan 01 complete (3 commits: 48cddac, f1d70e9, d7c72d1)."
-last_updated: "2026-05-25T05:02:12.405Z"
+stopped_at: "Phase 07 Plan 03 complete (3 commits: 69afc8e, 6482691, e372431)."
+last_updated: "2026-05-25T06:45:00.000Z"
 progress:
   total_phases: 8
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 31
-  completed_plans: 31
+  completed_plans: 32
   percent: 100
 ---
 
@@ -26,17 +26,21 @@ progress:
 
 **Core Value:** A fleet-wide bug (today's worked example: the 2026-05-24 duplicate Telegram adapter that double-fired every inbound) must be diagnosable from **one structured artifact with one command in under five minutes** — not 30 minutes of `grep | jq | python` across three log streams.
 
-**Current Focus:** Phase 7 in progress (Log Rotation & Alert Budget). Plan 01 complete (ROTATE-01 + ROTATE-02).
+**Current Focus:** Phase 7 complete (Log Rotation & Alert Budget). All 3 plans done (ROTATE-01 + ROTATE-02 + ROTATE-03 + ALERT-01).
 
 ## Current Position
 
-**Phase:** 7 of 8 (Log Rotation & Alert Budget) — Plan 01 complete
-**Last Completed:** Phase 7 Plan 01 — observability.logRotation schema + rotation policy + 5-stream sweep (2026-05-25)
-**Plan:** Plan 01 of 3 done; continue with 07-02 (alert budget)
-**Status:** Phase 7 in progress (1/3 plans complete)
+**Phase:** 7 of 8 (Log Rotation & Alert Budget) — All 3 plans complete
+**Last Completed:** Phase 7 Plan 03 — health-aggregator sliding window + alert budget schema + bridge entry 55 + daemon wiring (2026-05-25)
+**Plan:** Plan 03 of 3 done (phase complete)
+**Status:** Phase 7 complete (3/3 plans done)
 **Progress:** [██████████] 100%
 
 **Phase 7 Plan 01 outcome:** 3 commits (48cddac, f1d70e9, d7c72d1). LogRotationConfigSchema in ObservabilityConfigSchema. applyRotationPolicy (gzip+age+count-prune, lstat symlink gate). sweepRotatedFiles (5 stream patterns, safePath, PathTraversalError guard). pino-roll bytes→MB conversion wired. Startup sweep hook. config-audit gzip extension. pnpm validate green.
+
+**Phase 7 Plan 02 outcome:** Log rotation documentation rewrite — ROTATE-03. SUMMARY at .planning/phases/07-log-rotation-alert-budget/07-02-SUMMARY.md.
+
+**Phase 7 Plan 03 outcome:** 3 commits (69afc8e, 6482691, e372431). AlertBudgetConfigSchema (z.record thresholds, 10 errorKind defaults). createHealthAggregator (sliding-window, once-per-window latch, O(1) state per kind). health:budget_exceeded bus event. Bridge entry 55 (health:budget_exceeded → health.budget_exceeded, strips timestamp). Daemon wiring via thunk-ref pattern. pnpm validate green.
 
 **Phase 3 Goal:** Boot invariants + forensic INFO promotion + dedup detector. Closes G3 (no startup invariants) + G5 (forensic events at DEBUG) + G6 (no dedup detection). M1 capstone.
 
@@ -80,6 +84,7 @@ progress:
 | Phase 06-operator-cli-slash-export P04 | 23 | 2 tasks | 5 files |
 | Phase 06-operator-cli-slash-export P05 | 12 | 2 tasks | 7 files |
 | Phase 07-log-rotation-alert-budget P01 | 90min | 3 tasks | 12 files |
+| Phase 07-log-rotation-alert-budget P03 | 18min | 3 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -138,6 +143,13 @@ Per AGENTS.md §2.8. New allowlist entries are forbidden. Existing entries can b
 - **session-index active base = today's file only** via isTodayDate() guard using systemDateFrom(systemNowMs()) — not first matched dated file.
 - **suppressError(applyRotationPolicy(...), reason)** used in config-audit/append.ts per AGENTS.md empty-.catch() prohibition.
 
+### Key Decisions (Phase 7 Plan 03)
+
+- **AlertBudgetConfigSchema uses z.record instead of z.strictObject for thresholds** — allows operator-defined custom keys while still validating each threshold shape (positive-int count + windowMs).
+- **Daemon wiring uses thunk-ref pattern** — `const _healthAggRef = { fn: undefined }` captures unsubscribe via thunk `() => _healthAggRef.fn?.()` to avoid use-before-declaration when setupShutdown is called before emitStartupInvariants.
+- **setup-shutdown.ts aggregator teardown uses single inline expression** (not withStepTimeout) to stay under the 800-line architecture cap; cleanup is O(1) in-memory and never blocks.
+- **TRAJECTORY_BRIDGE_MAPPING entry 55 strips timestamp** — envelope-only per design §6.2; only kind/count/windowMs land in trajectory data.
+
 ### Key Decisions (Phase 3 Plan 01)
 
 - **depSlotConsistency passed explicitly by daemon composition root** — not readable from ChannelManager post-boot; the daemon is the only site that knows which adapter slots were used.
@@ -166,9 +178,9 @@ Per AGENTS.md §2.8. New allowlist entries are forbidden. Existing entries can b
 
 ## Session Continuity
 
-**Last session worked on:** Phase 7 Plan 01 — observability.logRotation schema + rotation policy + 5-stream sweep (ROTATE-01 + ROTATE-02).
-**Stopped at:** Phase 07 Plan 01 complete (3 commits: 48cddac, f1d70e9, d7c72d1).
-**Next action:** Phase 7 Plan 01 complete — proceed to 07-02 (alert budget).
+**Last session worked on:** Phase 7 Plan 03 — health-aggregator sliding window + alert budget schema + bridge entry 55 + daemon wiring (ALERT-01).
+**Stopped at:** Phase 07 Plan 03 complete (3 commits: 69afc8e, 6482691, e372431).
+**Next action:** Phase 7 complete — proceed to Phase 8 (Pipeline-Tag Discipline & Operator Docs).
 
 **Reproducible state:** Files written to `.planning/`:
 
