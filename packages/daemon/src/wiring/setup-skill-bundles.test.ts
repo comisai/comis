@@ -398,6 +398,73 @@ describe("setupSkillBundles — Phase 68 BUNDLE-03 boot orchestrator", () => {
     expect(warnObj.bundleErrorKind).toBe("name_collision");
   });
 
+  it("WR-01: initialServers in unsorted order but otherwise equal to merged result ⇒ NO spurious persist (idempotence holds on first boot post-Phase 68)", async () => {
+    // Set the disk-state to a TWO-entry bundle pre-sorted INCORRECTLY (z before a).
+    // The resolver produces sorted output (a, then z); without the WR-01 pre-sort,
+    // deepEqualServers compares "[z, a]" vs "[a, z]" and triggers a spurious
+    // persist for the noop merge.
+    const aEntry: McpServerEntry = {
+      name: "alpha-mcp",
+      transport: "stdio",
+      command: "npx",
+      args: ["alpha-pkg"],
+      enabled: true,
+      idleTtlMs: 0,
+      _bundleSource: "wr01-skill",
+    } as McpServerEntry;
+    const zEntry: McpServerEntry = {
+      name: "zulu-mcp",
+      transport: "stdio",
+      command: "npx",
+      args: ["zulu-pkg"],
+      enabled: true,
+      idleTtlMs: 0,
+      _bundleSource: "wr01-skill",
+    } as McpServerEntry;
+
+    const md = writeSkill(
+      tmpRoot,
+      "wr01-skill",
+      manifestWithBundle("wr01-skill", [
+        { name: "alpha-mcp", transport: "stdio", command: "npx", args: ["alpha-pkg"] },
+        { name: "zulu-mcp", transport: "stdio", command: "npx", args: ["zulu-pkg"] },
+      ]),
+    );
+    const registry = makeRegistry([md]);
+    // Pre-Phase-68 deployment: servers persisted in declaration order, NOT sorted.
+    // `zulu-mcp` comes before `alpha-mcp`. After Phase 68, resolver produces
+    // sorted output [a, z]. WR-01 pre-sort makes initialServers also [a, z].
+    const deps = makeDeps({
+      currentServers: [zEntry, aEntry],
+      registries: new Map([["test-agent", registry]]),
+    });
+    // The resolver only treats entries as "ours to replace" when the state
+    // file records them. The test fixture path has dataDir="" so state is
+    // empty — so both entries collide. To exercise the WR-01 idempotence
+    // path AT ALL we provide the state explicitly: in production, the
+    // install-helper writes this on first install and the orchestrator
+    // reads it on every boot.
+    //
+    // We pre-seed the daemon-private state for this skill by writing to a
+    // fixture dataDir, then point container.config.dataDir at that fixture.
+    (deps.container.config as Record<string, unknown>).dataDir = tmpRoot;
+    // Manually write the state file so the resolver sees the recorded entries.
+    writeFileSync(
+      join(tmpRoot, "installed-bundles.json"),
+      JSON.stringify({
+        "wr01-skill": { "alpha-mcp": "fp", "zulu-mcp": "fp" },
+      }),
+      "utf-8",
+    );
+
+    await setupSkillBundles(deps);
+
+    // The resolver produces [alpha-mcp, zulu-mcp]; initialServers (after
+    // WR-01 pre-sort) is also [alpha-mcp, zulu-mcp]. deepEqualServers
+    // returns true. persistMcpServers MUST NOT be called.
+    expect(mockPersistMcpServers).toHaveBeenCalledTimes(0);
+  });
+
   it("partial manifest parse failure: skill A unparseable, B + C clean → log WARN for A, persist B+C only", async () => {
     // Skill A: write a broken SKILL.md (no frontmatter at all).
     const skillADir = join(tmpRoot, "skill-a");

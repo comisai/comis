@@ -37,6 +37,10 @@ import { resolveWorkspaceDir } from "@comis/core";
 import { persistMcpServers } from "../api/shared/persist-mcp-servers.js";
 import { resolveBundle } from "../skills/bundle-mcp-resolver.js";
 import { formatBundleError } from "../skills/bundle-install-helper.js";
+import {
+  readBundleInstallState,
+  recordBundleEntries,
+} from "../skills/bundle-install-state.js";
 import type { WorkspaceApiDeps } from "../api/types.js";
 
 // ---------------------------------------------------------------------------
@@ -126,8 +130,41 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
         };
       }
     | undefined;
-  const initialServers = (integrations?.mcp?.servers ?? []) as McpServerEntry[];
+  // WR-01: pre-sort `initialServers` so the skip-when-equal compare in Step 4
+  // matches the resolver's STEP 4 sort-by-name output. Without this pre-sort,
+  // an on-disk config.yaml whose servers were not written in alphabetical
+  // order (every pre-Phase-68 deployment, or any user-added entry pre-
+  // normalize) makes deepEqualServers return false on the FIRST boot post-
+  // Phase-68, triggering a spurious YAML rewrite + audit JSONL append +
+  // config:mutated event for a noop merge. With the pre-sort, the compare
+  // is apples-to-apples and the idempotence invariant (noop boot ⇒ noop YAML
+  // write) holds from boot 1.
+  const rawInitialServers = (integrations?.mcp?.servers ?? []) as McpServerEntry[];
+  const initialServers: readonly McpServerEntry[] = [...rawInitialServers].sort(
+    (a, b) => a.name.localeCompare(b.name),
+  );
   let currentServers: readonly McpServerEntry[] = initialServers;
+
+  // CR-01: read the daemon-private installed-bundles state file once,
+  // up-front. The resolver consults this state for the "did WE install
+  // this entry?" check on every per-skill pass. dataDir falls back to "."
+  // so the test fixture path (container.config.dataDir undefined) does
+  // not crash — readBundleInstallState gracefully returns `{}` when the
+  // file is missing.
+  const dataDir =
+    (deps.container?.config?.dataDir as string | undefined) ?? "";
+  const installedBundleState = dataDir.length > 0
+    ? readBundleInstallState(dataDir)
+    : {};
+
+  // Track which skills' bundles successfully resolved on this boot — at the
+  // tail we re-record them into the state file so a SKILL.md change between
+  // boots (entries added/removed/modified) is reflected without requiring
+  // a manual --force re-install.
+  const resolvedBundlesForRecord: Array<{
+    skillId: string;
+    bundleServers: readonly McpServerEntry[];
+  }> = [];
 
   // Step 2 — deduplicate manifest paths across registries (Map<filePath,
   // skillId>). Same shared skill discoverable from multiple per-agent
@@ -197,6 +234,7 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
         osvCacheTtlMs: integrations.mcp.osvCacheTtlMs,
       }),
       logger: deps.logger,
+      installedBundleState,
     });
 
     if (!resolveResult.ok) {
@@ -221,6 +259,7 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
     }
 
     currentServers = resolveResult.value.nextServers;
+    resolvedBundlesForRecord.push({ skillId, bundleServers });
   }
 
   // Step 4 — skip-when-equal short-circuit. True idempotence: a noop boot
@@ -255,6 +294,30 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
     "boot",
     undefined,
   );
+
+  // CR-01: refresh the daemon-private installed-bundles state file with
+  // EVERY successfully-resolved bundle from this boot. The install-helper
+  // wrote the original record on install, but a SKILL.md edit between
+  // boots (operator added/removed an entry; bundle author shipped a new
+  // version) needs the state file to track the CURRENT bundle shape, not
+  // the historical shape from first install. Best-effort: failures are
+  // logged but do NOT abort boot.
+  if (dataDir.length > 0) {
+    for (const { skillId, bundleServers } of resolvedBundlesForRecord) {
+      const recordResult = recordBundleEntries(dataDir, skillId, bundleServers);
+      if (!recordResult.ok) {
+        deps.logger.warn(
+          {
+            skillId,
+            err: recordResult.error.message,
+            hint: "Boot bundle state-file refresh failed; next install of this skill may require --force because the daemon cannot prove provenance.",
+            errorKind: "config" as const,
+          },
+          "setupSkillBundles: state file write failed",
+        );
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -262,16 +325,21 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
 // ---------------------------------------------------------------------------
 
 /**
- * Stable structural equality on the readonly server array. Both arrays
- * arrive sorted by name (the resolver's STEP 4 determinism gate), so a
- * JSON.stringify compare is a safe and cheap byte-equality check.
+ * Stable structural equality on the readonly server array.
+ *
+ * `nextServers` (the resolver output) is sorted by name via the
+ * resolver's STEP 4 determinism gate. `initialServers` is pre-sorted
+ * by the orchestrator's Step 1 (WR-01) so the on-disk YAML order does
+ * not introduce a spurious-rewrite path when the config was written
+ * before Phase 68 (or by a `mcp.connect` call pre-normalize). Both
+ * inputs are sorted by the time they reach this compare.
  *
  * Implementing this as `JSON.stringify(a) === JSON.stringify(b)` rather
  * than a deep recursive walk is intentional — McpServerEntry is plain
- * data (no functions, no symbols, no Map/Set), the resolver's sort step
- * guarantees order stability, and the JSON encoding is canonical for
- * objects-with-no-cycles. The cost is O(N · M) for N entries of size M;
- * acceptable for the typical N ≤ 50.
+ * data (no functions, no symbols, no Map/Set), the sort steps guarantee
+ * order stability, and the JSON encoding is canonical for objects-with-
+ * no-cycles. The cost is O(N · M) for N entries of size M; acceptable
+ * for the typical N ≤ 50.
  */
 function deepEqualServers(
   a: readonly McpServerEntry[],
