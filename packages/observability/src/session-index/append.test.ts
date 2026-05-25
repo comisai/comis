@@ -79,8 +79,6 @@ const tmpDirs: string[] = [];
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "sidx-"));
   tmpDirs.push(tmpDir);
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date("2026-05-25T12:00:00Z"));
 });
 
 afterEach(() => {
@@ -115,6 +113,10 @@ describe("appendSessionIndexEntry — JSONL write", () => {
   });
 
   it("creates a new file session-index.<nextDay>.jsonl when writing past midnight UTC", async () => {
+    // Use fake timers for this test to control the UTC date
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T23:59:00Z"));
+
     const event1 = makeSessionStarted();
     appendSessionIndexEntry(tmpDir, event1);
 
@@ -124,7 +126,11 @@ describe("appendSessionIndexEntry — JSONL write", () => {
     const event2 = makeTurnCompleted();
     appendSessionIndexEntry(tmpDir, event2);
 
-    await new Promise((r) => setImmediate(r));
+    // Drain the queued promise chain — runAllTimersAsync advances fake timers
+    // and flushes microtasks so the QueuedFileWriter's async append completes.
+    await vi.runAllTimersAsync();
+
+    vi.useRealTimers();
 
     const day1File = path.join(tmpDir, "logs", "session-index.2026-05-25.jsonl");
     const day2File = path.join(tmpDir, "logs", "session-index.2026-05-26.jsonl");

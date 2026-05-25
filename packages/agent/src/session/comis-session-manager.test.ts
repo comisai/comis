@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { mkdirSync, writeFileSync, existsSync, mkdtempSync, statSync } from "node:fs";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -10,6 +10,17 @@ import type { SessionKey } from "@comis/core";
 // harness instead.
 import { createFileLock } from "@comis/core";
 import { createComisSessionManager } from "./comis-session-manager.js";
+
+// Mock @comis/observability so session-index writes don't hit real fs.
+vi.mock("@comis/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/observability")>();
+  return {
+    ...actual,
+    appendSessionIndexEntry: vi.fn().mockReturnValue("queued"),
+  };
+});
+
+import { appendSessionIndexEntry as mockAppendSessionIndexEntry } from "@comis/observability";
 
 const fileLock = createFileLock();
 
@@ -481,5 +492,56 @@ describe("LIFE-02 — trace.artifacts direct emit before session:ended in destro
     expect(capturedPayloads[0].finalStatus).toBe("destroyed");
     expect(capturedPayloads[0].aborted).toBe(false);
     expect(capturedPayloads[0].turnCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// INDEX-03: session-index session_ended emit site (Plan 06-01)
+// ---------------------------------------------------------------------------
+
+describe("session-index session_ended emit (Plan 06-01)", () => {
+  const indexDirs: string[] = [];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    for (const d of indexDirs) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* cleanup */ }
+    }
+    indexDirs.length = 0;
+  });
+
+  it("appendSessionIndexEntry called once with session_ended payload on destroySession", async () => {
+    const baseDir = mkdtempSync(join(tmpdir(), "comis-sidx-mgr-test-"));
+    const lockDir = mkdtempSync(join(tmpdir(), "comis-sidx-lock-test-"));
+    indexDirs.push(baseDir, lockDir);
+
+    const fakeEventBus = { emit: vi.fn(), on: vi.fn(), off: vi.fn(), once: vi.fn(), listenerCount: vi.fn().mockReturnValue(0) } as any;
+    const key: SessionKey = { tenantId: "default", userId: "bot", channelId: "cron:test-job" };
+
+    const mgr = createComisSessionManager({
+      sessionBaseDir: baseDir,
+      lockDir,
+      cwd: baseDir,
+      fileLock,
+      eventBus: fakeEventBus,
+    });
+
+    await mgr.destroySession(key);
+
+    const appendMock = vi.mocked(mockAppendSessionIndexEntry);
+    const sessionEndedCalls = appendMock.mock.calls.filter(
+      (c) => c[1].event === "session_ended",
+    );
+    expect(sessionEndedCalls).toHaveLength(1);
+
+    const payload = sessionEndedCalls[0][1] as { event: string; exitReason: string; traceSchema: string; schemaVersion: number; sessionId: string };
+    expect(payload.event).toBe("session_ended");
+    expect(payload.traceSchema).toBe("comis-session-index");
+    expect(payload.schemaVersion).toBe(1);
+    expect(payload.exitReason).toBe("destroyed");
+    expect(typeof payload.sessionId).toBe("string");
   });
 });

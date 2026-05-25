@@ -16,10 +16,12 @@
  * @module
  */
 
+import * as os from "node:os";
+import * as pathModule from "node:path";
 import { SessionManager as SdkSessionManager } from "@earendil-works/pi-coding-agent";
-import { formatSessionKey, safePath, systemNowDate, systemNowMs, type SessionKey } from "@comis/core";
+import { formatSessionKey, safePath, systemDateFrom, systemNowDate, systemNowMs, type SessionKey } from "@comis/core";
 import type { ComisLogger, FileLockPort, TypedEventBus } from "@comis/core";
-import { ensureContainedDir, writeRegularFile, buildTraceArtifacts, type SessionTrajectoryHandleRegistry, type TraceArtifactsRunState } from "@comis/observability";
+import { ensureContainedDir, writeRegularFile, buildTraceArtifacts, appendSessionIndexEntry, type SessionTrajectoryHandleRegistry, type TraceArtifactsRunState } from "@comis/observability";
 import { suppressError, type Result } from "@comis/shared";
 import { unlink, rm, rmdir } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
@@ -87,6 +89,15 @@ export interface ComisSessionManagerDeps {
    * zero-count usage.
    */
   sessionStateProvider?: (sessionKey: string) => TraceArtifactsRunState | undefined;
+  /**
+   * Comis data root directory (e.g. `~/.comis`). Used by the session-index
+   * writer to derive the date-rolled JSONL path
+   * `<dataDir>/logs/session-index.YYYY-MM-DD.jsonl`.
+   *
+   * When omitted, defaults to `~/.comis` via `os.homedir()` so existing
+   * callers (tests, legacy harnesses) work without changes.
+   */
+  dataDir?: string;
 }
 
 /**
@@ -312,6 +323,21 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           timestamp: systemNowMs(),
         });
       }
+      // INDEX-03 (Plan 06-01): append session_ended to the date-rolled session
+      // index JSONL immediately after the session:ended bus emit.
+      appendSessionIndexEntry(
+        deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
+        {
+          traceSchema: "comis-session-index",
+          schemaVersion: 1,
+          event: "session_ended",
+          ts: systemDateFrom(systemNowMs()).toISOString(),
+          sessionId: sessionKeyStr,
+          exitReason: "destroyed",
+          turnCount: 0,
+          totalTokens: 0,
+        },
+      );
       if (deps.trajectoryRegistry !== undefined) {
         // Best-effort: close() swallows per-entry errors. Awaiting it
         // ensures the flush-tail completes before the JSONL unlink races

@@ -355,3 +355,19 @@ export type {
   CacheStatsRpcContract,
 } from "./cache-stats/rpc-handler-shape.js";
 export { parseSince } from "./cache-stats/parse-since.js";
+
+// ---------------------------------------------------------------------------
+// Session-index surface (Phase 6 INDEX-01).
+// ---------------------------------------------------------------------------
+//
+// Append-only `session-index.YYYY-MM-DD.jsonl` writer via QueuedFileWriter.
+// Three discriminated-union event types: session_started, turn_completed,
+// session_ended. Emit sites in @comis/agent (pi-event-bridge, comis-session-manager).
+
+export { appendSessionIndexEntry } from "./session-index/index.js";
+export type {
+  SessionIndexEvent,
+  SessionStartedEvent,
+  TurnCompletedEvent,
+  SessionEndedEvent,
+} from "./session-index/index.js";

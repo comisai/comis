@@ -20,7 +20,7 @@
 interface SessionIndexEventBase {
   /** Trace schema discriminator — used by downstream readers to validate records. */
   readonly traceSchema: "comis-session-index";
-  /** Schema version for forward/backward compatibility. */
+  /** Schema version — increment when the shape changes. */
   readonly schemaVersion: 1;
   /** ISO 8601 timestamp of when the event was written. */
   readonly ts: string;

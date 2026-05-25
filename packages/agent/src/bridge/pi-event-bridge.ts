@@ -17,6 +17,7 @@ import {
   formatSessionKey,
   sanitizeLogString,
   systemNowMs,
+  systemDateFrom,
   tryGetContext,
   type SessionKey,
   type TypedEventBus,
@@ -60,6 +61,9 @@ function classifyToolError(_toolName: string, errorText: string | undefined): Er
   if (errorText && /^\[(invalid_value|validation)\]/.test(errorText)) return "validation";
   return "dependency";
 }
+import * as os from "node:os";
+import * as pathModule from "node:path";
+import { appendSessionIndexEntry } from "@comis/observability";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
 import { checkStepLimit, emitStepLimitAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
@@ -237,6 +241,18 @@ export interface PiEventBridgeDeps {
    * `buildTraceMetadata` — raw config may contain secrets.
    */
   runtimeSnapshot?: import("@comis/observability").TraceMetadataParams;
+  /**
+   * Comis data root directory (e.g. `~/.comis`). Used by the session-index
+   * writer to derive the date-rolled JSONL path
+   * `<dataDir>/logs/session-index.YYYY-MM-DD.jsonl`.
+   *
+   * When omitted, defaults to `~/.comis` via `os.homedir()` so existing
+   * callers (tests, legacy harnesses) work without changes — their
+   * session-index writes land in the production data directory.
+   * Production wiring: pi-executor threads `deps.sessionBaseDir`'s
+   * ancestor (`~/.comis`) here.
+   */
+  dataDir?: string;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -378,6 +394,25 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             timestamp: systemNowMs(),
           });
           deps.trajectoryRegistry?.markSessionStarted(formattedKey);
+          // INDEX-03 (Plan 06-01): append session_started to the date-rolled
+          // session index JSONL. Co-located with the session:started bus emit +
+          // trajectoryRegistry latch so session_started fires exactly once per
+          // session (same guard).
+          appendSessionIndexEntry(
+            deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
+            {
+              traceSchema: "comis-session-index",
+              schemaVersion: 1,
+              event: "session_started",
+              ts: systemDateFrom(systemNowMs()).toISOString(),
+              sessionId: formattedKey,
+              sessionKey: formattedKey,
+              channelType,
+              channelId: deps.channelId ?? "",
+              agentId: deps.agentId,
+              traceIds: [deps.executionId],
+            },
+          );
           // LIFE-01 (Plan 01-05): emit the trace.metadata lifecycle envelope
           // directly via the recorder — no bus event source per design §6.2
           // Appendix B "(NEW D4) direct".
@@ -1177,6 +1212,26 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               pendingCacheInvestmentUsd,
               ...costCorrectionField,
             });
+
+            // INDEX-02 (Plan 06-01): append turn_completed to the session index.
+            // Co-located with observability:token_usage emit (the only site that
+            // carries BOTH input AND output tokens per turn — onTurnUsage only
+            // has input tokens, see research §4 pitfall 4).
+            appendSessionIndexEntry(
+              deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
+              {
+                traceSchema: "comis-session-index",
+                schemaVersion: 1,
+                event: "turn_completed",
+                ts: systemDateFrom(systemNowMs()).toISOString(),
+                sessionId: formatSessionKey(deps.sessionKey),
+                traceId: deps.executionId,
+                durationMs: llmLatencyMs ?? 0,
+                inputTokens: usage.input,
+                outputTokens: usage.output,
+                lastError: null, // populated by error paths in a follow-up plan; null here
+              },
+            );
 
             // Safety: check budget after recording (delegated to bridge-safety-controls)
             {

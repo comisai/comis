@@ -11,6 +11,19 @@ import type { ExecutionResult } from "../executor/types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 
 // ---------------------------------------------------------------------------
+// Mock @comis/observability so session-index writes don't hit real fs
+// ---------------------------------------------------------------------------
+vi.mock("@comis/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/observability")>();
+  return {
+    ...actual,
+    appendSessionIndexEntry: vi.fn().mockReturnValue("queued"),
+  };
+});
+
+import { appendSessionIndexEntry as mockAppendSessionIndexEntry } from "@comis/observability";
+
+// ---------------------------------------------------------------------------
 // Mock deps factory
 // ---------------------------------------------------------------------------
 
@@ -4826,5 +4839,82 @@ describe("LIFE-01 — trace.metadata direct emit after session:started", () => {
 
     const metadataEmits = recordEvents.filter((t) => t === "trace.metadata");
     expect(metadataEmits).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// INDEX-03 / INDEX-02: session-index emit sites (Plan 06-01)
+// ---------------------------------------------------------------------------
+
+describe("session-index emit sites (Plan 06-01)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("appendSessionIndexEntry called once with session_started when agent_start fires (gated by !alreadyEmitted)", () => {
+    // Simulate the trajectoryRegistry latch: first call fires, subsequent calls are suppressed.
+    let marked = false;
+    const fakeRegistry = {
+      hasSessionStartedBeenEmitted: (_: string): boolean => marked,
+      markSessionStarted: (_: string): void => { marked = true; },
+      getOrCreate: vi.fn(),
+      getRecorder: vi.fn().mockReturnValue(undefined),
+      close: vi.fn(),
+      closeAll: vi.fn(),
+    } as any;
+    const deps = createMockDeps({ trajectoryRegistry: fakeRegistry });
+    const { listener } = createPiEventBridge(deps);
+
+    listener({ type: "agent_start" } as any);
+    listener({ type: "agent_start" } as any); // suppressed by latch
+    listener({ type: "agent_start" } as any); // suppressed by latch
+
+    const appendMock = vi.mocked(mockAppendSessionIndexEntry);
+    const sessionStartedCalls = appendMock.mock.calls.filter(
+      (c) => c[1].event === "session_started",
+    );
+    expect(sessionStartedCalls).toHaveLength(1);
+
+    const payload = sessionStartedCalls[0][1] as { event: string; traceSchema: string; schemaVersion: number; traceIds: string[]; agentId: string };
+    expect(payload.event).toBe("session_started");
+    expect(payload.traceSchema).toBe("comis-session-index");
+    expect(payload.schemaVersion).toBe(1);
+    expect(Array.isArray(payload.traceIds)).toBe(true);
+    expect(payload.agentId).toBe("test-agent");
+  });
+
+  it("appendSessionIndexEntry called once with turn_completed carrying BOTH inputTokens and outputTokens on turn_end", () => {
+    const deps = createMockDeps();
+    const { listener } = createPiEventBridge(deps);
+
+    listener({
+      type: "turn_end",
+      message: {
+        usage: {
+          input: 123,
+          output: 456,
+          totalTokens: 579,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+        },
+        stopReason: "end_turn",
+      },
+    } as any);
+
+    const appendMock = vi.mocked(mockAppendSessionIndexEntry);
+    const turnCompletedCalls = appendMock.mock.calls.filter(
+      (c) => c[1].event === "turn_completed",
+    );
+    expect(turnCompletedCalls).toHaveLength(1);
+
+    const payload = turnCompletedCalls[0][1] as { event: string; inputTokens: number; outputTokens: number; traceSchema: string; schemaVersion: number };
+    expect(payload.event).toBe("turn_completed");
+    expect(payload.traceSchema).toBe("comis-session-index");
+    expect(payload.schemaVersion).toBe(1);
+    expect(typeof payload.inputTokens).toBe("number");
+    expect(typeof payload.outputTokens).toBe("number");
+    expect(payload.inputTokens).toBe(123);
+    expect(payload.outputTokens).toBe(456);
   });
 });
