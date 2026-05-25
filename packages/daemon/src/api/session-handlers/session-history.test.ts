@@ -99,7 +99,13 @@ function makeQueuePort(entries: DeliveryQueueEntry[]): DeliveryQueuePort {
     ack: vi.fn(),
     nack: vi.fn(),
     fail: vi.fn(),
-    pendingEntries: vi.fn(async () => ok(entries)),
+    // Faithful to the real adapter: pendingEntries() is drainer-scoped and
+    // returns ONLY status='pending'. The confirmed-only filter must NOT use it
+    // (in_flight / failed would fall through as confirmed); it uses
+    // unconfirmedEntries(), which returns every not-yet-delivered row. Keeping
+    // pendingEntries narrow here makes these tests fail if the wiring regresses.
+    pendingEntries: vi.fn(async () => ok(entries.filter((e) => e.status === "pending"))),
+    unconfirmedEntries: vi.fn(async () => ok(entries.filter((e) => e.status !== "delivered"))),
     pruneExpired: vi.fn(),
     statusCounts: vi.fn(),
     recoverInFlight: vi.fn(),

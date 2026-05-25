@@ -21,6 +21,7 @@ function createMockDeliveryQueue(): DeliveryQueuePort {
     nack: vi.fn(async () => ok(undefined)),
     fail: vi.fn(async () => ok(undefined)),
     pendingEntries: vi.fn(async () => ok([])),
+    unconfirmedEntries: vi.fn(async () => ok([])),
     pruneExpired: vi.fn(async () => ok(0)),
     statusCounts: vi.fn(async () =>
       ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),

@@ -130,12 +130,15 @@ describe("SDK Client end-to-end roundtrip against /mcp/v1", () => {
       {},
     );
 
-    // Enqueue a pending delivery-queue row for the "roundtrip-pending" text.
-    // `DeliveryQueuePort.pendingEntries()` SQL is
-    //   WHERE status = 'pending' AND scheduled_at <= ?
-    // so a `scheduledAt` in the past is required for the join to see it.
+    // Enqueue an IN-FLIGHT delivery-queue row for the "roundtrip-pending" text.
+    // Using enqueueInFlight (status='in_flight') rather than enqueue (pending)
+    // deterministically reproduces the state the recurring drainer produces the
+    // moment it claims a pending row mid-send. The CONFIRMED-only filter must
+    // still exclude it via `unconfirmedEntries()` (status != 'delivered'); the
+    // older `pendingEntries()` path (status='pending' AND scheduled_at<=now)
+    // hides in_flight rows and leaked this message — the exact CI race this pins.
     const seedSchedAt = Date.now() - 60_000;
-    const r = await handle.daemon.deliveryQueue.enqueue({
+    const r = await handle.daemon.deliveryQueue.enqueueInFlight({
       text: "roundtrip-pending",
       channelType: "test",
       channelId: "chan-RT",

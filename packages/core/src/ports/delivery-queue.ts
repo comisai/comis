@@ -118,6 +118,20 @@ export interface DeliveryQueuePort {
   pendingEntries(): Promise<Result<DeliveryQueueEntry[], Error>>;
 
   /**
+   * Retrieve every NOT-yet-delivered entry -- any row whose status is not
+   * 'delivered' (pending / in_flight / failed / expired), regardless of
+   * scheduled_at.
+   *
+   * Distinct from pendingEntries(): that query is drainer-scoped ("what is due
+   * to send right now"), so it intentionally hides in_flight rows for race
+   * safety. This query is the inverse -- "what has NOT been confirmed delivered
+   * yet" -- consumed by the MCP resources/read CONFIRMED-only filter so an
+   * in-flight / failed / future-scheduled outbound message is never reported as
+   * confirmed and leaked to an MCP client.
+   */
+  unconfirmedEntries(): Promise<Result<DeliveryQueueEntry[], Error>>;
+
+  /**
    * Remove expired entries that were never delivered.
    * @returns The number of entries pruned.
    */

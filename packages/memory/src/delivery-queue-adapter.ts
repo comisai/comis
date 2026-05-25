@@ -115,6 +115,15 @@ export function createSqliteDeliveryQueue(
     ORDER BY created_at ASC
   `);
 
+  // Every NOT-yet-delivered row (pending / in_flight / failed / expired),
+  // regardless of scheduled_at. Inverse of pendingStmt's drainer scope; used by
+  // the MCP resources/read CONFIRMED-only leak guard.
+  const unconfirmedStmt = db.prepare(`
+    SELECT * FROM delivery_queue
+    WHERE status != 'delivered'
+    ORDER BY created_at ASC
+  `);
+
   const pruneStmt = db.prepare(`
     DELETE FROM delivery_queue
     WHERE expire_at < ? AND status NOT IN ('delivered')
@@ -244,6 +253,20 @@ export function createSqliteDeliveryQueue(
     pendingEntries(): Promise<Result<DeliveryQueueEntry[], Error>> {
       try {
         const parsed = deliveryQueueMapper.parseRows(pendingStmt.all(systemNowMs()));
+        if (!parsed.ok) {
+          return Promise.resolve(
+            err(new Error(`Row validation failed: ${parsed.error.message}`)),
+          );
+        }
+        return Promise.resolve(ok(parsed.value.map(rowToEntry)));
+      } catch (e) {
+        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
+      }
+    },
+
+    unconfirmedEntries(): Promise<Result<DeliveryQueueEntry[], Error>> {
+      try {
+        const parsed = deliveryQueueMapper.parseRows(unconfirmedStmt.all());
         if (!parsed.ok) {
           return Promise.resolve(
             err(new Error(`Row validation failed: ${parsed.error.message}`)),
