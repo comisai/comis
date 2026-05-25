@@ -1,0 +1,106 @@
+# Phase 69 Plan 05 -- MCP server resources CONFIRMED filter test config (port 8572).
+#
+# Two mcp-client tokens:
+#   - mcp-resources-empty:  scope ["mcp-client"], sessionAllowlist=[]
+#                            => resources/list returns []
+#   - mcp-resources-s1:     scope ["mcp-client"], sessionAllowlist=[<SESSION_KEY_S1>]
+#                            => resources/list returns one entry for S1
+#                            => resources/read on S1 succeeds (CONFIRMED-only filter)
+#                            => resources/read on S2 (not allowlisted) fails
+#
+# Plus a primary admin token (rpc/ws/admin) so the daemon-harness health
+# check works.
+
+tenantId: "test"
+logLevel: "info"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  test-agent:
+    model: default
+    thinkingLevel: "off"
+    name: MCP Server Resources Test Agent
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+memory:
+  dbPath: "test-memory-mcp-server-resources.db"
+  walMode: true
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8572
+  tokens:
+    # Primary daemon auth token (rpc/ws/admin) for the harness health check.
+    - id: test-token
+      secret: mcp-svr-resources-primary-token-12345
+      scopes: ["rpc", "ws", "admin"]
+    # mcp-client with empty sessionAllowlist.
+    - id: mcp-resources-empty
+      secret: mcp-svr-resources-empty-tok-1-fixx
+      scopes: ["mcp-client"]
+      mcpClient:
+        allowlist: []
+        sessionAllowlist: []
+        toolRateLimit: {}
+    # mcp-client with sessionAllowlist for one specific session key.
+    - id: mcp-resources-s1
+      secret: mcp-svr-resources-s1-tok-2-fixxxxx
+      scopes: ["mcp-client"]
+      mcpClient:
+        allowlist: []
+        sessionAllowlist: ["test:resources-user:chan-A"]
+        toolRateLimit: {}
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic
