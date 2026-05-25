@@ -108,9 +108,15 @@ describe("Phase 69 Plan 05 -- MCP resources CONFIRMED-only filter (SERVE-06)", (
     ], {});
 
     // Enqueue an outbound delivery-queue entry for the "in-flight-outbound"
-    // text on chan-A. The session.history handler's join will mark the
-    // corresponding outbound message as deliveryStatus=pending.
-    const r = await handle.daemon.deliveryQueue.enqueueInFlight({
+    // text on chan-A. The session.history handler's join calls
+    // `pendingEntries()` which returns rows with status='pending' (the
+    // queue's canonical NOT-yet-delivered state visible to the join). We
+    // seed via `enqueue()` (status='pending') with scheduledAt in the past
+    // so `pendingEntries()` includes it. The label "in-flight-outbound"
+    // remains semantically apt: from the MCP client's view, this is an
+    // outbound message whose channel-side delivery has NOT been ack'd.
+    const seedSchedAt = Date.now() - 60_000; // 1 minute ago so scheduled_at <= now
+    const r = await handle.daemon.deliveryQueue.enqueue({
       text: "in-flight-outbound",
       channelType: "test",
       channelId: "chan-A",
@@ -118,13 +124,13 @@ describe("Phase 69 Plan 05 -- MCP resources CONFIRMED-only filter (SERVE-06)", (
       optionsJson: "{}",
       origin: "agent",
       maxAttempts: 3,
-      createdAt: 1_700_000_002_000,
-      scheduledAt: 1_700_000_002_000,
-      expireAt: 2_000_000_000_000,
+      createdAt: seedSchedAt,
+      scheduledAt: seedSchedAt,
+      expireAt: Date.now() + 3_600_000,
       traceId: null,
     });
     if (!r.ok) {
-      throw new Error(`Failed to seed in-flight queue entry: ${r.error.message}`);
+      throw new Error(`Failed to seed pending queue entry: ${r.error.message}`);
     }
   }, DAEMON_STARTUP_MS + 30_000);
 

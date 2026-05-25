@@ -8024,6 +8024,13 @@
               },
               "timestamp": {
                 "type": "number"
+              },
+              "deliveryStatus": {
+                "type": "string",
+                "enum": [
+                  "confirmed",
+                  "pending"
+                ]
               }
             },
             "required": [

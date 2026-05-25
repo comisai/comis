@@ -51,6 +51,15 @@ import { buildMcpServerForClient } from "../../api/mcp-server-handlers.js";
 const MCP_DEFAULT_TOOL_RATE_LIMIT = 30;
 
 /**
+ * Default page size for `resources/read` session.history snapshots (Plan 05
+ * SERVE-06). A single bounded page is returned; sessions exceeding this cap
+ * surface the last N CONFIRMED messages. The MCP spec allows resources to
+ * change between reads (re-reading may return additional messages as
+ * outbound delivery completes) -- the bounded page keeps payloads small.
+ */
+const MCP_RESOURCE_READ_LIMIT = 1000;
+
+/**
  * Mapping from MCP tool name -> daemon RPC method name. Most tools are
  * 1:1 (the MCP tool name IS the RPC method); a small set of tools that
  * compose multiple RPC methods or use dotted method names need explicit
@@ -330,6 +339,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
         daemonRpcForMcpClient,
         defaultToolRateLimit: MCP_DEFAULT_TOOL_RATE_LIMIT,
         toolNameToRpcMethod: mcpToolNameToRpcMethod,
+        resourceReadLimit: MCP_RESOURCE_READ_LIMIT,
       },
       client,
     );

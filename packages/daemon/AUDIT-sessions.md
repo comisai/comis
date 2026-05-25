@@ -27,15 +27,16 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | logger | required | — | packages/daemon/src/api/types.ts:95 |
 | approvalGate | optional | session.delete / session.reset skip approval-cache clearing (`session-handlers.ts:899` `deps.approvalGate?.clearApprovalCache`); no-op when absent | packages/daemon/src/api/types.ts:98 |
 | summarizeSession | optional | session.search returns raw matches without an LLM-summary (`session-handlers.ts:498` gate); only fires when both `shouldSummarize` and the dep are truthy | packages/daemon/src/api/types.ts:100 |
+| deliveryQueue | optional | session.history skips the deliveryStatus join (`session-read.ts` `loadPendingKeySet`); every message reported as `confirmed` when absent (no channel queue == nothing pending to mark) | packages/daemon/src/api/types.ts:102 |
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field has a verified production absent-mode code path: `agentDataDir` gates the JSONL session scan, `approvalGate` gates approval-cache clearing on session.delete/reset, `summarizeSession` gates the LLM summarization branch of session.search. Daemon wires all three unconditionally in `buildRpcDispatchDeps` when their upstream prerequisites exist; tests omit them to exercise the absent-branch paths.
+**None.** Every optional field has a verified production absent-mode code path: `agentDataDir` gates the JSONL session scan, `approvalGate` gates approval-cache clearing on session.delete/reset, `summarizeSession` gates the LLM summarization branch of session.search, `deliveryQueue` gates the Phase 69 SERVE-06 deliveryStatus join. Daemon wires all four unconditionally in `buildRpcDispatchDeps` when their upstream prerequisites exist; tests omit them to exercise the absent-branch paths.
 
 ## Summary
 
-- **Pre-audit count:** 14
-- **Final count:** 14 (11 required + 3 optional)
+- **Pre-audit count:** 15
+- **Final count:** 15 (11 required + 4 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

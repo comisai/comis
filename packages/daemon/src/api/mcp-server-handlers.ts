@@ -58,6 +58,7 @@ import {
   pruneOldBuckets,
   type RateLimitState,
 } from "./mcp-server-rate-limit.js";
+import { registerMcpResourcesForClient } from "./mcp-server-resources.js";
 
 // ---------------------------------------------------------------------------
 // Singleton rate-limit state (Plan 04)
@@ -172,6 +173,11 @@ export interface BuildMcpServerForClientDeps {
    *  explicit mapping. The mapping table is owned by the composition root
    *  (`packages/daemon/src/wiring/setup-gateway/setup-gateway-routes.ts`). */
   readonly toolNameToRpcMethod: (toolName: string) => string;
+  /** Plan 05 (SERVE-06): page size for the resources/read session.history
+   *  fetch. A single-page snapshot suffices for the resource view; if a
+   *  session exceeds this cap, the last N CONFIRMED messages are returned.
+   *  Wired from the composition root with MCP_RESOURCE_READ_LIMIT. */
+  readonly resourceReadLimit: number;
 }
 
 /**
@@ -253,6 +259,21 @@ export function buildMcpServerForClient(
       allowlistSize: allowlist.size,
     },
     "MCP server tool registration complete (Phase 69 Plan 04 -- live tools/call dispatcher)",
+  );
+
+  // Phase 69 Plan 05 (SERVE-06): register resources/list + resources/read
+  // surface. The advertised `resources` capability was set above; this
+  // registers the handlers + the per-client sessionAllowlist + CONFIRMED
+  // filter. The McpServer is already wired -- registerResource is
+  // additive to the request-handler index inside the SDK.
+  registerMcpResourcesForClient(
+    mcp,
+    {
+      logger,
+      daemonRpcForMcpClient: deps.daemonRpcForMcpClient,
+      resourceReadLimit: deps.resourceReadLimit,
+    },
+    client,
   );
 
   return mcp;

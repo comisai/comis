@@ -8146,6 +8146,13 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               },
               "timestamp": {
                 "type": "number"
+              },
+              "deliveryStatus": {
+                "type": "string",
+                "enum": [
+                  "confirmed",
+                  "pending"
+                ]
               }
             },
             "required": [

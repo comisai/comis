@@ -21,6 +21,7 @@ import {
   stripInternalFields,
   systemNowMs,
 } from "@comis/core";
+import type { DeliveryQueueEntry, DeliveryQueuePort } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import {
   IS_DEV,
@@ -81,6 +82,16 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
 
+      // Phase 69 SERVE-06: snapshot the DeliveryQueuePort once per request
+      // and build the join keyset BEFORE the message loop. The key is
+      // (channelId, text) -- the queue exposes channelType + channelId +
+      // tenantId + text; we only need channelId + text because two queue
+      // entries from different channel adapters with the same channelId
+      // would be a deployment conflict the operator must avoid. The
+      // sessionKey itself carries channelId at parts[2] (after tenant +
+      // userId); we extract it once below.
+      const pendingKeySet = await loadPendingKeySet(deps.deliveryQueue);
+
       let data = deps.sessionStore.loadByFormattedKey(sessionKey);
 
       // Fallback: check if this is a workspace JSONL session (metadata stores the path)
@@ -109,6 +120,12 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         : parsed?.guildId
           ? "group"
           : "dm";
+      // Phase 69 SERVE-06: channelId for the deliveryStatus join. The
+      // DeliveryQueueEntry carries channelType + channelId + text; we match
+      // on (channelId, text) below because two queue entries for distinct
+      // channel adapters with the same channelId is a deployment conflict
+      // operators avoid by construction.
+      const sessionChannelId = parsed?.channelId ?? "";
 
       // Pre-scan: resolve gateway attachment tool calls so we can inject
       // <!-- attachment:... --> markers into displayable assistant messages.
@@ -157,7 +174,12 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       // Token usage may live in the `usage` field on API response messages,
       // or is estimated from content length (chars / 4) when not available.
       // Tool calls appear as `tool_use` content blocks or as separate tool-role messages.
-      const messages: Array<{ role: string; content: string; timestamp: number }> = [];
+      const messages: Array<{
+        role: string;
+        content: string;
+        timestamp: number;
+        deliveryStatus: "confirmed" | "pending";
+      }> = [];
       let toolCalls = 0;
       let inputTokens = 0;
       let outputTokens = 0;
@@ -213,10 +235,23 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
           }
         }
         if (text) {
+          // Phase 69 SERVE-06: deliveryStatus computation. Inbound user
+          // messages were received from the channel -- always confirmed.
+          // Outbound assistant messages are confirmed unless the delivery
+          // queue still has a pending/in_flight/failed entry for this
+          // text on the session's channelId (queue's `pendingEntries()`
+          // returns only NON-delivered, NON-expired rows scheduled <= now).
+          const deliveryStatus: "confirmed" | "pending" =
+            role === "user"
+              ? "confirmed"
+              : pendingKeySet.has(makePendingKey(sessionChannelId, text))
+                ? "pending"
+                : "confirmed";
           messages.push({
             role,
             content: text,
             timestamp: (m.timestamp as number) ?? data.updatedAt,
+            deliveryStatus,
           });
         }
       }
@@ -295,4 +330,46 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       return result;
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 69 SERVE-06 -- deliveryStatus join helpers
+// ---------------------------------------------------------------------------
+
+/** Stable join key: `${channelId}::${text}`. The double-colon separator is
+ *  safe because channelId is provider-supplied (no colons in practice for
+ *  Telegram/Discord/Slack chat IDs); even if it ever included one, the
+ *  worst-case is a missed match (some outbound message reported as
+ *  confirmed when it is actually pending) -- safer fail-mode than the
+ *  reverse. */
+function makePendingKey(channelId: string, text: string): string {
+  return `${channelId}::${text}`;
+}
+
+/**
+ * Snapshot the DeliveryQueuePort's pending entries (pending / in_flight /
+ * failed) once per request and return a Set keyed by `(channelId, text)`.
+ *
+ * Returns an empty Set when:
+ *   - The dep is absent (deployments with no channel adapters / no queue).
+ *   - The port's `pendingEntries()` returns an `err()` Result (we degrade
+ *     to "every outbound confirmed" rather than failing the whole
+ *     session.history call -- the join is a defense-in-depth signal, not
+ *     a correctness requirement of session.history itself).
+ *
+ * Per PLAN.md Step 2: if no message-id link exists, an indirect match
+ * (channelId + text) is acceptable for this plan; the limitation is
+ * documented in code so v2.5 can revisit if a stable message id is added.
+ */
+async function loadPendingKeySet(
+  queue: DeliveryQueuePort | undefined,
+): Promise<ReadonlySet<string>> {
+  if (!queue) return new Set();
+  const r = await queue.pendingEntries();
+  if (!r.ok) return new Set();
+  const set = new Set<string>();
+  for (const entry of r.value as readonly DeliveryQueueEntry[]) {
+    set.add(makePendingKey(entry.channelId, entry.text));
+  }
+  return set;
 }
