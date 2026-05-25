@@ -27,11 +27,14 @@ export const GatewayTlsConfigSchema = z.strictObject({
  * is optional — when omitted, the secret is resolved at runtime via
  * environment variable or auto-generation.
  *
- * Phase 69 SERVE-02: the `mcpClient` block is only meaningful when `scopes`
- * includes `"mcp-client"`. The `.refine` below enforces ADMIN-DISJOINTNESS —
- * a single token MUST NOT co-issue both `"admin"` and `"mcp-client"` (privilege
- * escalation per threat T-69-02). The refine surfaces at config-load with the
- * literal token `[scope_disjointness]` and `errorKind: "config"`.
+ * Phase 69 SERVE-02 / WR-01: the `mcpClient` block is only meaningful when
+ * `scopes` includes `"mcp-client"`. The `.refine` below enforces
+ * ADMIN-EQUIVALENT-DISJOINTNESS — a single token MUST NOT co-issue
+ * `"mcp-client"` with either `"admin"` OR `"*"` (the wildcard scope grants
+ * all scopes via `checkScope`, including admin). Either co-issuance is the
+ * privilege-escalation pathway threat T-69-02 prevents. The refine surfaces
+ * at config-load with the literal token `[scope_disjointness]` and
+ * `errorKind: "config"`.
  */
 export const GatewayTokenSchema = z.strictObject({
     /** Unique identifier for this token */
@@ -56,10 +59,17 @@ export const GatewayTokenSchema = z.strictObject({
     }).optional(),
   })
   .refine(
-    (t) => !(t.scopes.includes("admin") && t.scopes.includes("mcp-client")),
+    (t) => {
+      // Phase 69 WR-01: reject mcp-client co-issued with either `"admin"`
+      // OR `"*"` (the wildcard satisfies checkScope on every required
+      // scope, so it is admin-equivalent). The refine surfaces at
+      // config-load before the gateway boots.
+      if (!t.scopes.includes("mcp-client")) return true;
+      return !t.scopes.includes("admin") && !t.scopes.includes("*");
+    },
     {
       message:
-        "[scope_disjointness] admin and mcp-client scopes MUST NOT be co-issued on a token",
+        "[scope_disjointness] mcp-client MUST NOT be co-issued with admin or wildcard '*' scopes on a token",
       path: ["scopes"],
     },
   );

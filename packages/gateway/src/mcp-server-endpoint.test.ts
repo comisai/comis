@@ -46,18 +46,22 @@ function makeNoopBuildMcpServer(): (client: TokenClient) => McpServer {
 
 /**
  * Mount the endpoint on a fresh Hono app with the supplied bodyLimitBytes.
- * Uses an in-memory token store with a single `mcp-client`-scoped token.
+ * Uses an in-memory token store with a single `mcp-client`-scoped token by
+ * default; supply `tokenScopes` to override (e.g., `["*", "mcp-client"]` for
+ * WR-01 runtime-gate tests).
  */
 function mountForTest(opts: {
   bodyLimitBytes: number;
   buildMcpServerForClient?: McpServerEndpointDeps["buildMcpServerForClient"];
+  tokenScopes?: string[];
 }): { app: Hono; token: string } {
   const token = "x".repeat(64);
+  const scopes = opts.tokenScopes ?? ["mcp-client"];
   const tokenStore = createTokenStore([
     {
       id: "mcp-test",
       secret: token,
-      scopes: ["mcp-client"],
+      scopes,
       mcpClient: { allowlist: [], sessionAllowlist: [], toolRateLimit: {} },
     },
   ]);
@@ -144,5 +148,65 @@ describe("mountMcpServerEndpoint -- CR-02 body-size limit", () => {
     // we assert on the GATE not the SDK happy-path: status is NOT 413.
     expect(res.status).not.toBe(413);
     expect(factorySpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 69 WR-01 -- runtime Gate 4 must reject wildcard "*" alongside admin
+//
+// `client.scopes.includes("admin")` was the original Gate 4 check.
+// `checkScope` treats `"*"` as a wildcard that grants ALL scopes including
+// "admin", so a token with `["*", "mcp-client"]` has admin-equivalent
+// access AND mcp-client access -- the exact privilege-escalation pathway
+// the disjointness invariant prevents.
+//
+// The runtime gate must reject admin-EQUIVALENT scopes (`"admin"` OR `"*"`)
+// in addition to literal `"admin"`. Defense-in-depth complements WR-01's
+// schema-level refine -- a config-load bypass should not silently let a
+// wildcard-scoped token reach the McpServer factory.
+// ---------------------------------------------------------------------------
+
+describe("mountMcpServerEndpoint -- WR-01 wildcard admin-equivalent runtime gate", () => {
+  it("mountMcpServerEndpoint Gate 4 rejects a token with wildcard star and mcp-client co-issued WR-01", async () => {
+    const factorySpy = vi.fn(() =>
+      new McpServer(
+        { name: "test", version: "0.0.0" },
+        { capabilities: { tools: {}, resources: { subscribe: false } } },
+      ),
+    );
+    // The wildcard "*" satisfies checkScope(scopes, "admin") yet was not
+    // rejected by the literal `includes("admin")` check. The runtime gate
+    // must close this hole.
+    const { app, token } = mountForTest({
+      bodyLimitBytes: 1_048_576,
+      tokenScopes: ["*", "mcp-client"],
+      buildMcpServerForClient: factorySpy,
+    });
+
+    const jsonBody = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "initialize",
+      id: 1,
+    });
+
+    const res = await app.request("/mcp/v1", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(jsonBody)),
+      },
+      body: jsonBody,
+    });
+
+    // Gate 4 fires BEFORE the McpServer factory. The factory must NOT be
+    // called; the response is HTTP 403 with the disjoint-scope JSON-RPC
+    // error envelope.
+    expect(factorySpy).not.toHaveBeenCalled();
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as {
+      error?: { code?: number; message?: string };
+    };
+    expect(body.error?.message).toMatch(/disjoint-scope/i);
   });
 });

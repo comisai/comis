@@ -241,6 +241,39 @@ describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
       expect(result.data.scopes).toEqual(["admin"]);
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 69 WR-01 -- wildcard scope co-issuance defense
+  //
+  // The wildcard scope "*" grants ALL scopes via checkScope(), including
+  // "admin". A token with `scopes: ["*", "mcp-client"]` has admin-equivalent
+  // access AND mcp-client access -- the same privilege-escalation pathway
+  // T-69-02 was designed to prevent for literal "admin + mcp-client".
+  //
+  // The refine must reject `*` alongside `mcp-client` for the same reason
+  // it rejects `admin` alongside `mcp-client`.
+  // -------------------------------------------------------------------------
+
+  it("GatewayTokenSchema rejects a token co-issuing the wildcard star and mcp-client WR-01", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t5",
+      scopes: ["*", "mcp-client"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues[0];
+      expect(issue.message).toContain("[scope_disjointness]");
+      expect(issue.path).toEqual(["scopes"]);
+    }
+  });
+
+  it("GatewayTokenSchema rejects a token co-issuing mcp-client and wildcard star in either order WR-01", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t6",
+      scopes: ["mcp-client", "*"],
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

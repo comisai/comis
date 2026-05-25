@@ -197,19 +197,26 @@ export function mountMcpServerEndpoint(
       );
     }
 
-    // Gate 4 — defense-in-depth: reject admin+mcp-client co-issuance. Plan
-    // 01's GatewayTokenSchema.refine already blocks at config-load; if this
-    // branch fires, a config-validation bug let an invalid token through.
-    if (client.scopes.includes("admin")) {
+    // Gate 4 — defense-in-depth: reject admin-EQUIVALENT + mcp-client
+    // co-issuance. Plan 01's GatewayTokenSchema.refine already blocks at
+    // config-load; if this branch fires, a config-validation bug let an
+    // invalid token through.
+    //
+    // Phase 69 WR-01: the wildcard scope `"*"` grants ALL scopes (including
+    // `"admin"`) via `checkScope`, so the literal `includes("admin")` check
+    // was an information-hole -- a token with `["*", "mcp-client"]` had
+    // admin-equivalent access yet passed Gate 4. Reject `"*"` for the same
+    // reason `"admin"` is rejected.
+    if (client.scopes.includes("admin") || client.scopes.includes("*")) {
       logger.error(
         {
           clientId: client.id,
           submodule: "endpoint",
           errorKind: "internal" as const,
           hint:
-            "admin scope co-issued with mcp-client violates the GatewayTokenSchema disjointness refine (Phase 69 SERVE-02) -- this should be impossible; investigate config-load validation",
+            "admin-equivalent scope (admin or wildcard '*') co-issued with mcp-client violates the GatewayTokenSchema disjointness refine (Phase 69 SERVE-02 / WR-01) -- this should be impossible; investigate config-load validation",
         },
-        "Refusing MCP connection from admin-scoped token (defense-in-depth)",
+        "Refusing MCP connection from admin-equivalent-scoped token (defense-in-depth)",
       );
       return c.json(
         {
