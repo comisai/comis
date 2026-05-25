@@ -1139,6 +1139,44 @@ describe("Phase 68 install-hook wiring (BUNDLE-05/06)", () => {
   });
 
   // -------------------------------------------------------------------------
+  // 4b. WR-04 — skills.update ALSO invokes runBundleInstallHook.
+  //
+  //     Pre-fix, only skills.upload / skills.import / skills.create called the
+  //     hook. An operator who used skills.update to change a skill's mcpServers
+  //     block (add/remove/modify entries) saw NO change in the persisted MCP
+  //     config until the next daemon restart — particularly confusing because
+  //     the other three install handlers DID re-process the bundle. Fix:
+  //     skills.update hooks the bundle install path, matching the other three
+  //     handlers. The hook's idempotent replace-in-place semantics (CR-01-aware
+  //     trust root) handle the "edit existing bundle entries" path correctly.
+  // -------------------------------------------------------------------------
+  it("WR-04: skills.update invokes runBundleInstallHook with params.name + skill.location + rawParams", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    const skillDir = join(wsDir, "skills", "updated-skill");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(join(skillDir, "SKILL.md"), "OLD CONTENT", "utf-8");
+    const reg = makeRegistry([{ name: "updated-skill", location: skillDir }]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    await handlers["skills.update"]!({
+      name: "updated-skill",
+      content: "---\nname: updated-skill\n---\nNEW BODY",
+      _agentId: "agent-a",
+    });
+    expect(mockRunBundleInstallHook.mock.calls.length).toBe(1);
+    const [, skillId, hookSkillDir, rawParams] = mockRunBundleInstallHook.mock.calls[0]!;
+    expect(skillId).toBe("updated-skill");
+    // skill.location is the skill's actual on-disk dir — the test fixture
+    // registered the same skillDir for the skill name above.
+    expect(hookSkillDir).toBe(skillDir);
+    expect((rawParams as { name: string }).name).toBe("updated-skill");
+  });
+
+  // -------------------------------------------------------------------------
   // 5. Phase A reject (the hook throws [bundle_install_rejected:plaintext_secret])
   //    surfaces as RPC error — i.e. the handler does NOT swallow it.
   //    BUNDLE-06 atomic invariant: caller sees the bracketed code; the rpc-dispatch

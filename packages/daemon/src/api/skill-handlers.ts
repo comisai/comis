@@ -789,6 +789,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
+      await runBundleInstallHook(deps, params.name, skill.location, rawParams); // WR-04
 
       const result = { ok: true as const, name: params.name };
       if (IS_DEV) SkillsUpdateContract.response.parse(result);
