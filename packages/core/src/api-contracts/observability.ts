@@ -762,6 +762,81 @@ export const ObsSystemPromptReportListContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
+// CLI-06 (Phase 6): trace correlation contracts
+// Consumed by: packages/cli/src/commands/trace.ts (Plan 06-04)
+// Handled by: packages/daemon/src/api/obs-handlers/obs-trace.ts (Plan 06-03)
+// ---------------------------------------------------------------------------
+
+/**
+ * `obs.trace.export` — Export a full session trace bundle to a local
+ * archive. Admin-only.
+ *
+ * Request: `{ sessionId }` — required, non-empty string.
+ * Response: `{ bundlePath }` — absolute path to the written bundle file.
+ */
+export const ObsTraceExportContract = defineContract({
+  method: "obs.trace.export",
+  request: z.object({
+    sessionId: z.string().min(1),
+  }),
+  response: z.object({
+    bundlePath: z.string(),
+  }),
+  scopes: ["admin"] as const,
+});
+
+/**
+ * `obs.trace.search` — Search trace rows across daemon.log, trajectory,
+ * and session-index by messageId, traceId, chatId, time range, or
+ * filter expression. Admin-only.
+ *
+ * Request: all fields optional (`messageId`, `traceId`, `chatId`,
+ * `since`, `where`). `limit` defaults to 200 at the handler; max 1000
+ * enforced here.
+ *
+ * Response: `{ rows }` — array of loose-record trace rows.
+ */
+export const ObsTraceSearchContract = defineContract({
+  method: "obs.trace.search",
+  request: z.object({
+    messageId: z.string().optional(),
+    traceId: z.string().optional(),
+    chatId: z.string().optional(),
+    since: z.string().optional(),
+    where: z.string().optional(),
+    limit: z.number().int().positive().max(1000).optional(),
+  }),
+  response: z.object({
+    rows: ObsRecordArray,
+  }),
+  scopes: ["admin"] as const,
+});
+
+/**
+ * `obs.trace.tail` — Poll for live trace events on a specific chat.
+ * Admin-only. (True WebSocket streaming is deferred to v2.)
+ *
+ * Request: `{ chatId }` — required, non-empty. `sinceMs` — optional
+ * cursor for polling continuation. `limit` — optional, max 100.
+ *
+ * Response: `{ events, nextSinceMs }` — new rows since cursor and
+ * updated cursor for next poll.
+ */
+export const ObsTraceTailContract = defineContract({
+  method: "obs.trace.tail",
+  request: z.object({
+    chatId: z.string().min(1),
+    sinceMs: z.number().optional(),
+    limit: z.number().int().positive().max(100).optional(),
+  }),
+  response: z.object({
+    events: ObsRecordArray,
+    nextSinceMs: z.number(),
+  }),
+  scopes: ["admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
 // Domain array — registered into API_CONTRACTS_ORDERED in index.ts.
 // ---------------------------------------------------------------------------
 
@@ -796,4 +871,7 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsResetTableContract,
   ObsSystemPromptReportLatestContract,
   ObsSystemPromptReportListContract,
+  ObsTraceExportContract, // NEW (CLI-06)
+  ObsTraceSearchContract, // NEW (CLI-06)
+  ObsTraceTailContract, // NEW (CLI-06)
 ] as const;

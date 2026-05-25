@@ -45,11 +45,11 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 21 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(21);
+  it("OBSERVABILITY_CONTRACTS has exactly 24 entries (21 original + 3 CLI-06 trace contracts)", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(24);
   });
 
-  it("all 21 contracts are admin-scoped", () => {
+  it("all 24 contracts are admin-scoped", () => {
     for (const c of OBSERVABILITY_CONTRACTS) {
       expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
     }
@@ -81,6 +81,11 @@ describe("observability-domain contracts", () => {
       // SystemPromptReport surface.
       "obs.systemPromptReport.latest",
       "obs.systemPromptReport.list",
+      // CLI-06 trace correlation contracts (Plan 06-02).
+      // Handlers added in Plan 06-03 (bidirectional arch test RED until then).
+      "obs.trace.export",
+      "obs.trace.search",
+      "obs.trace.tail",
     ]);
   });
 
