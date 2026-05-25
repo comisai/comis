@@ -220,32 +220,69 @@ describe("registerMcpResourcesForClient -- Phase 69 Plan 05 (SERVE-06)", () => {
     }
   });
 
-  it("registerMcpResourcesForClient resources read defaults messages without deliveryStatus to confirmed pre-Phase-69 backward-compat", async () => {
-    // session.history responses from pre-Phase-69 callers (or sessions
-    // routed through code that pre-dates the join wiring) lack the field.
-    // The resources/read filter must DEFAULT TO CONFIRMED so legacy
-    // transcripts render in full -- the security gate is the
-    // sessionAllowlist, not absence-of-field.
+  // -------------------------------------------------------------------------
+  // Phase 69 WR-04 -- conservative default: unknown deliveryStatus excluded
+  //
+  // The pre-fix CONFIRMED filter was `(m.deliveryStatus ?? "confirmed") ===
+  // "confirmed"`, treating ABSENT-FIELD as CONFIRMED. That was correct for
+  // the internal session.history RPC consumer (the web dashboard) -- a
+  // pre-Phase-69 transcript without delivery-status tracking should render
+  // for an internal operator.
+  //
+  // For the MCP resources/read external trust boundary, the inverse
+  // posture is required: ABSENT-FIELD = UNKNOWN, EXCLUDE. Otherwise
+  // legacy sessions whose outbound state was never persisted leak as if
+  // confirmed to an external MCP client. The security gate is no longer
+  // sessionAllowlist alone; it is sessionAllowlist + strict deliveryStatus
+  // equality.
+  //
+  // Switching to `m.deliveryStatus === "confirmed"` (no nullish coalesce)
+  // achieves the conservative default for the external surface; the
+  // internal session.history consumer is unaffected because it runs its
+  // own filter pipeline elsewhere.
+  // -------------------------------------------------------------------------
+
+  it("registerMcpResourcesForClient resources read excludes messages without a deliveryStatus field WR-04", async () => {
+    // Pre-Phase-69 callers / legacy sessions store messages without a
+    // deliveryStatus field. The conservative external-trust-boundary
+    // default is to EXCLUDE them -- absence is not equivalent to
+    // confirmed.
     const client = makeClient(["sk-allowed"]);
     const rpc = vi.fn(async () => ({
       messages: [
-        { role: "user", content: "no-status-1", timestamp: 1 },
-        { role: "assistant", content: "no-status-2", timestamp: 2 },
+        // Legacy entries without deliveryStatus -- MUST NOT be rendered.
+        { role: "user", content: "legacy-no-status-1", timestamp: 1 },
+        { role: "assistant", content: "legacy-no-status-2", timestamp: 2 },
+        // A confirmed entry alongside -- MUST be rendered.
+        {
+          role: "assistant",
+          content: "confirmed-rendered",
+          timestamp: 3,
+          deliveryStatus: "confirmed",
+        },
       ],
     }));
     const { captured, restore } = spyOnRegisterResource();
     try {
       registerMcpResourcesForClient(
         makeMcp(),
-        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000 },
+        {
+          logger: makeLogger(),
+          daemonRpcForMcpClient: rpc,
+          resourceReadLimit: 1000,
+        },
         client,
       );
       const cb = captured[0]!.readCallback;
       const uri = new URL("comis://session/sk-allowed");
       const result = await cb(uri, { sessionKey: "sk-allowed" });
       const text = result.contents[0]!.text ?? "";
-      expect(text).toContain("no-status-1");
-      expect(text).toContain("no-status-2");
+
+      // The strict-equality filter excludes both legacy entries.
+      expect(text).not.toContain("legacy-no-status-1");
+      expect(text).not.toContain("legacy-no-status-2");
+      // The confirmed entry is rendered.
+      expect(text).toContain("confirmed-rendered");
     } finally {
       restore();
     }

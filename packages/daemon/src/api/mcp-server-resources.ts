@@ -148,10 +148,17 @@ export function registerMcpResourcesForClient(
       // -------- CONFIRMED filter (T-69-04 unconfirmed-message leak) ------
       // Outbound messages whose deliveryStatus is "pending" are excluded.
       // Inbound messages are always confirmed by the handler so they pass.
-      // A defensive `?? "confirmed"` covers the legacy path (no field) so
-      // pre-Phase-69 callers continue to render normally.
+      //
+      // Phase 69 WR-04: strict equality, NO nullish coalesce. The MCP
+      // resources/read surface is an EXTERNAL trust boundary -- absence
+      // of the field is "unknown status" and the conservative default is
+      // EXCLUDE. The prior `?? "confirmed"` fallback rendered legacy
+      // pre-Phase-69 messages as if confirmed, leaking transcripts whose
+      // outbound delivery state was never tracked. The web-dashboard
+      // session.history RPC consumer is unaffected (it does not run this
+      // filter).
       const confirmedOnly = history.messages.filter(
-        (m) => (m.deliveryStatus ?? "confirmed") === "confirmed",
+        (m) => m.deliveryStatus === "confirmed",
       );
 
       const rendered = confirmedOnly
