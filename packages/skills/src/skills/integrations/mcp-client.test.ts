@@ -358,7 +358,6 @@ describe("McpClientManager", () => {
       // The wrapper prefixes /usr/bin/env -u NODE_OPTIONS before the original
       // command + args, so Node children do not inherit the daemon's
       // NODE_OPTIONS (which would propagate --permission flags).
-      // See COMIS-E2E-FOLLOWUP-DESIGN.md Issue 2.
       expect(StdioClientTransport).toHaveBeenCalledWith(
         expect.objectContaining({
           command: "/usr/bin/env",
@@ -515,7 +514,7 @@ describe("McpClientManager", () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ vulns: [{ id: "MAL-2026-WR-03" }] }),
+        json: async () => ({ vulns: [{ id: "MAL-2026-EVIL-PKG" }] }),
       } as unknown as Response);
       globalThis.fetch = mockFetch as unknown as typeof fetch;
 
@@ -524,7 +523,7 @@ describe("McpClientManager", () => {
       // DEFAULT_OSV_CACHE_DIR (~/.comis/cache/osv) by default, which we
       // cannot stub via opts since this path is the manager-level
       // connect flow. Mitigate by using a package name unique to this
-      // test (`evil-wr-03-pkg`) so no prior cache hit exists in a
+      // test (`evil-pkg`) so no prior cache hit exists in a
       // freshly-mkdtempSync'd home; failing that, the fetch mock fires
       // first and writes the new cache anyway, so the verdict is
       // deterministic.
@@ -533,9 +532,9 @@ describe("McpClientManager", () => {
 
       const result = await mgr.connect(
         makeStdioConfig({
-          name: "wr-03-evil",
+          name: "evil-server",
           command: "npx",
-          args: ["-y", "evil-wr-03-pkg-7c4f1d2a"],
+          args: ["-y", "evil-pkg-7c4f1d2a"],
         }),
       );
 
@@ -549,7 +548,7 @@ describe("McpClientManager", () => {
       // "error"-status server, but there is no spawned process to
       // reconnect). The fix runs OSV outside the try block so the throw
       // bubbles cleanly.
-      expect(mgr.getConnection("wr-03-evil")).toBeUndefined();
+      expect(mgr.getConnection("evil-server")).toBeUndefined();
     });
   });
 

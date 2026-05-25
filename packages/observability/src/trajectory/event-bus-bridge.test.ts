@@ -27,6 +27,7 @@ import type { EventMap } from "@comis/core";
 
 import { attachTrajectoryToEventBus, TRAJECTORY_BRIDGE_MAPPING } from "./event-bus-bridge.js";
 import type { TrajectoryEventType, TrajectoryRecorder } from "./types.js";
+import { TRAJECTORY_EVENT_TYPES } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Test-double recorder — records the calls into a captured array
@@ -82,7 +83,7 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     const data = recorder.calls[0].data as Record<string, unknown>;
     expect(data.toolName).toBe("bash");
     expect(data.toolCallId).toBe("tc-1");
-    // Envelope-only correlation keys (deviation C) — must NOT appear in data.
+    // Envelope-only correlation keys — must NOT appear in data.
     expect(data.traceId).toBeUndefined();
     expect(data.agentId).toBeUndefined();
     expect(data.sessionKey).toBeUndefined();
@@ -465,6 +466,285 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       ],
       timestamp: 0,
     },
+    // queue events
+    "queue:enqueued": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      queueDepth: 1,
+      mode: "collect",
+      timestamp: 0,
+    },
+    "queue:dequeued": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      waitTimeMs: 100,
+      timestamp: 0,
+    },
+    "queue:overflow": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      policy: "drop_oldest",
+      droppedCount: 1,
+      timestamp: 0,
+    },
+    "queue:coalesced": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      messageCount: 3,
+      timestamp: 0,
+    },
+    // execution events
+    "execution:aborted": {
+      sessionKey: "t1:u1:c1",
+      reason: "user_stop",
+      agentId: "agent-1",
+      timestamp: 0,
+    },
+    "execution:budget_warning": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      totalTokens: 50000,
+      llmCallCount: 8,
+      projectedCallsLeft: 2,
+      timestamp: 0,
+    },
+    "execution:prompt_timeout": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timeoutMs: 30000,
+      timestamp: 0,
+    },
+    "execution:output_escalated": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      originalMaxTokens: 4096,
+      escalatedMaxTokens: 8192,
+      timestamp: 0,
+    },
+    "execution:signed_replay_recovered": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      blocksRemoved: 1,
+      thoughtSignaturesStripped: 1,
+      succeeded: true,
+      timestamp: 0,
+    },
+    // scanned subset
+    "security:injection_detected": {
+      source: "user_input",
+      patterns: ["test"],
+      riskLevel: "low",
+      timestamp: 0,
+    },
+    "sender:blocked": {
+      channelType: "telegram",
+      senderId: "123",
+      channelId: "chan-1",
+      timestamp: 0,
+    },
+    // retry events
+    "retry:attempted": {
+      channelId: "chan-1",
+      chatId: "12345678901",
+      attempt: 1,
+      maxAttempts: 5,
+      delayMs: 500,
+      error: "ETIMEDOUT",
+      timestamp: 0,
+    },
+    "retry:exhausted": {
+      channelId: "chan-1",
+      chatId: "12345678901",
+      totalAttempts: 5,
+      finalError: "ECONNREFUSED",
+      timestamp: 0,
+    },
+    "retry:markdown_fallback": {
+      channelId: "chan-1",
+      chatId: "12345678901",
+      originalParseMode: "MarkdownV2",
+      timestamp: 0,
+    },
+    // mcp events
+    "mcp:server:disconnected": {
+      serverName: "fs-server",
+      reason: "transport_closed",
+      timestamp: 0,
+    },
+    "mcp:server:reconnecting": {
+      serverName: "fs-server",
+      attempt: 1,
+      maxAttempts: 5,
+      nextDelayMs: 1000,
+      timestamp: 0,
+    },
+    "mcp:server:reconnect_failed": {
+      serverName: "fs-server",
+      attempts: 5,
+      lastError: "ECONNREFUSED",
+      timestamp: 0,
+    },
+    "mcp:server:reconnected": {
+      serverName: "fs-server",
+      attempt: 2,
+      toolCount: 10,
+      durationMs: 200,
+      timestamp: 0,
+    },
+    "mcp:server:tools_changed": {
+      serverName: "fs-server",
+      previousToolCount: 10,
+      currentToolCount: 11,
+      addedTools: ["new_tool"],
+      removedTools: [],
+      timestamp: 0,
+    },
+    // channel events
+    "channel:health_changed": {
+      channelType: "telegram",
+      previousState: "healthy",
+      currentState: "degraded",
+      connectionMode: "polling",
+      error: null,
+      lastMessageAt: null,
+      timestamp: 0,
+    },
+    "channel:registered": {
+      channelType: "telegram",
+      pluginId: "tg",
+      capabilities: {} as any,
+      timestamp: 0,
+    },
+    "channel:deregistered": {
+      channelType: "telegram",
+      pluginId: "tg",
+      timestamp: 0,
+    },
+    // security events
+    "security:memory_tainted": {
+      agentId: "agent-1",
+      originalTrustLevel: "trusted",
+      adjustedTrustLevel: "tainted",
+      patterns: ["x"],
+      blocked: true,
+      timestamp: 0,
+    },
+    "security:warn": {
+      category: "secret_access",
+      agentId: "agent-1",
+      message: "warn",
+      timestamp: 0,
+    },
+    // compaction events
+    "compaction:started": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: 0,
+    },
+    "compaction:flush": {
+      sessionKey: "t1:u1:c1",
+      memoriesWritten: 1,
+      trigger: "threshold",
+      success: true,
+      timestamp: 0,
+    },
+    "compaction:recommended": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      contextPercent: 0.85,
+      contextTokens: 170000,
+      contextWindow: 200000,
+      timestamp: 0,
+    },
+    // context events
+    "context:evicted": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      evictedCount: 1,
+      evictedChars: 100,
+      categories: {},
+      timestamp: 0,
+    },
+    "context:masked": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      maskedCount: 1,
+      totalChars: 100,
+      persistedToDisk: false,
+      timestamp: 0,
+    },
+    "context:reread": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      rereadCount: 1,
+      rereadTools: ["bash"],
+      timestamp: 0,
+    },
+    "context:overflow": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      contextTokens: 200000,
+      budgetTokens: 195000,
+      recoveryAction: "evict",
+      timestamp: 0,
+    },
+    "context:integrity": {
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      issueCount: 0,
+      repairsApplied: 0,
+      errorsLogged: 0,
+      issueTypes: [],
+      durationMs: 5,
+      timestamp: 0,
+    },
+    "context:rehydrated": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      sectionsInjected: 1,
+      filesInjected: 0,
+      skillsInjected: 0,
+      overflowStripped: false,
+      timestamp: 0,
+    },
+    // approval events
+    "approval:requested": {
+      requestId: "req-1",
+      toolName: "bash",
+      action: "execute",
+      params: { cmd: "ls" },
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      trustLevel: "trusted",
+      createdAt: 0,
+      timeoutMs: 60000,
+      timestamp: 0,
+    },
+    "approval:resolved": {
+      requestId: "req-1",
+      approved: true,
+      approvedBy: "owner",
+      resolvedAt: 0,
+    },
+    // duplicate inbound dedup event
+    "dedup:duplicate_inbound": {
+      messageId: "m1",
+      channelType: "telegram",
+      chatId: "123",
+      firstSeenAt: 1000,
+      duplicateAt: 1001,
+      deltaMs: 1,
+      source: "pipeline",
+      timestamp: 0,
+    },
+    // health budget exceeded event
+    "health:budget_exceeded": {
+      kind: "network",
+      count: 100,
+      windowMs: 60000,
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
@@ -605,5 +885,1308 @@ describe("attachTrajectoryToEventBus -- context engine", () => {
     const data = recorder.calls[0].data as Record<string, unknown>;
     // No cacheFenceIndex in the source payload → not present in data.
     expect("cacheFenceIndex" in data).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue, Execution, Security, Sender bridge tests
+// ---------------------------------------------------------------------------
+
+describe("queue + execution + sender bridge", () => {
+  // ---- Queue lifecycle events ----
+
+  it("queue_enqueued_maps_to_queue.enqueued with channelType/queueDepth/mode; sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("queue:enqueued", {
+      sessionKey: "t1:u1:c1" as any,
+      channelType: "telegram",
+      queueDepth: 1,
+      mode: "collect",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("queue.enqueued");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.channelType).toBe("telegram");
+    expect(data.queueDepth).toBe(1);
+    expect(data.mode).toBe("collect");
+    // Envelope-only — must NOT appear in data.
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+    expect(data.agentId).toBeUndefined();
+  });
+
+  it("incident_replay_2026_05_24_double_enqueue_produces_two_queue.enqueued_events_with_queueDepth_1_then_2", () => {
+    // Incident replay: the 2026-05-24 duplicate-adapter bug caused the same
+    // sessionKey to be enqueued twice. Two queue.enqueued events with
+    // queueDepth 1 then 2 on the same sessionKey would have diagnosed this
+    // in a single trajectory query.
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    const sessionKey = "incident-session:user1:telegram" as any;
+
+    // First enqueue.
+    bus.emit("queue:enqueued", {
+      sessionKey,
+      channelType: "telegram",
+      queueDepth: 1,
+      mode: "collect",
+      timestamp: Date.now(),
+    });
+
+    // Second enqueue (duplicate adapter fires again).
+    bus.emit("queue:enqueued", {
+      sessionKey,
+      channelType: "telegram",
+      queueDepth: 2,
+      mode: "collect",
+      timestamp: Date.now(),
+    });
+
+    // Exactly two queue.enqueued trajectory events.
+    expect(recorder.calls).toHaveLength(2);
+    expect(recorder.calls[0].type).toBe("queue.enqueued");
+    expect(recorder.calls[1].type).toBe("queue.enqueued");
+
+    const data0 = recorder.calls[0].data as Record<string, unknown>;
+    const data1 = recorder.calls[1].data as Record<string, unknown>;
+
+    // Depths 1 then 2 — the headline diagnostic signal.
+    expect(data0.queueDepth).toBe(1);
+    expect(data1.queueDepth).toBe(2);
+  });
+
+  it("queue_dequeued_maps_to_queue.dequeued with channelType/waitTimeMs; sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("queue:dequeued", {
+      sessionKey: "t1:u1:c1" as any,
+      channelType: "discord",
+      waitTimeMs: 250,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("queue.dequeued");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.channelType).toBe("discord");
+    expect(data.waitTimeMs).toBe(250);
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("queue_overflow_maps_to_queue.overflow with channelType/policy/droppedCount; sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("queue:overflow", {
+      sessionKey: "t1:u1:c1" as any,
+      channelType: "slack",
+      policy: "drop_oldest",
+      droppedCount: 3,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("queue.overflow");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.channelType).toBe("slack");
+    expect(data.policy).toBe("drop_oldest");
+    expect(data.droppedCount).toBe(3);
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("queue_coalesced_maps_to_queue.coalesced with channelType/messageCount; sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("queue:coalesced", {
+      sessionKey: "t1:u1:c1" as any,
+      channelType: "telegram",
+      messageCount: 5,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("queue.coalesced");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.channelType).toBe("telegram");
+    expect(data.messageCount).toBe(5);
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- Execution lifecycle events ----
+
+  it("execution_aborted_maps_to_execution.aborted with reason; sessionKey/agentId stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:aborted", {
+      sessionKey: "t1:u1:c1" as any,
+      reason: "user_stop",
+      agentId: "agent-1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.aborted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.reason).toBe("user_stop");
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("execution_budget_warning_maps_to_execution.budget_warning with totalTokens/llmCallCount/projectedCallsLeft; sessionKey/agentId stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:budget_warning", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      totalTokens: 85000,
+      llmCallCount: 12,
+      projectedCallsLeft: 3,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.budget_warning");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.totalTokens).toBe(85000);
+    expect(data.llmCallCount).toBe(12);
+    expect(data.projectedCallsLeft).toBe(3);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("execution_prompt_timeout_maps_to_execution.prompt_timeout with timeoutMs; sessionKey/agentId stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:prompt_timeout", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timeoutMs: 30000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.prompt_timeout");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.timeoutMs).toBe(30000);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("execution_output_escalated_maps_to_execution.output_escalated with originalMaxTokens/escalatedMaxTokens; sessionKey/agentId stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:output_escalated", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      originalMaxTokens: 4096,
+      escalatedMaxTokens: 8192,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.output_escalated");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.originalMaxTokens).toBe(4096);
+    expect(data.escalatedMaxTokens).toBe(8192);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("execution_signed_replay_recovered_maps_to_execution.replay_recovered (NOT execution.signed_replay_recovered) with blocksRemoved/thoughtSignaturesStripped/succeeded; agentId/sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:signed_replay_recovered", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      blocksRemoved: 2,
+      thoughtSignaturesStripped: 1,
+      succeeded: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    // Must map to "execution.replay_recovered" — NOT "execution.signed_replay_recovered".
+    expect(recorder.calls[0].type).toBe("execution.replay_recovered");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.blocksRemoved).toBe(2);
+    expect(data.thoughtSignaturesStripped).toBe(1);
+    expect(data.succeeded).toBe(true);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- Security + Sender (scanned subset) ----
+
+  it("security_injection_detected_maps_to_security.injection_detected with source/riskLevel only; patterns[] MUST NOT be forwarded (L4 security invariant)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("security:injection_detected", {
+      source: "user_input",
+      patterns: ["IGNORE ALL PRIOR INSTRUCTIONS", "jailbreak_attempt"],
+      riskLevel: "high",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("security.injection_detected");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Only source + riskLevel in data.
+    expect(data.source).toBe("user_input");
+    expect(data.riskLevel).toBe("high");
+
+    // patterns[] must NOT appear — forwarding injection strings is a security anti-pattern (L4).
+    expect(data.patterns).toBeUndefined();
+    expect("patterns" in data).toBe(false);
+
+    // Envelope-only fields must be stripped.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("sender_blocked_maps_to_sender.blocked with channelType only; senderId/channelId MUST NOT be forwarded (L4/L2 PII invariant)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("sender:blocked", {
+      channelType: "telegram",
+      senderId: "12345678901",
+      channelId: "chan-private-1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("sender.blocked");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Only channelType in data.
+    expect(data.channelType).toBe("telegram");
+
+    // senderId (user identifier) must NOT appear in trajectory data (L4/L2).
+    expect(data.senderId).toBeUndefined();
+    expect("senderId" in data).toBe(false);
+
+    // channelId must NOT appear.
+    expect(data.channelId).toBeUndefined();
+    expect("channelId" in data).toBe(false);
+
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- Coverage spot-check ----
+
+  it("TRAJECTORY_BRIDGE_MAPPING contains all 11 new queue/execution/security/sender keys", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    const expected = [
+      "queue:enqueued",
+      "queue:dequeued",
+      "queue:overflow",
+      "queue:coalesced",
+      "execution:aborted",
+      "execution:budget_warning",
+      "execution:prompt_timeout",
+      "execution:output_escalated",
+      "execution:signed_replay_recovered",
+      "security:injection_detected",
+      "sender:blocked",
+    ];
+    for (const key of expected) {
+      expect(mapping[key], `TRAJECTORY_BRIDGE_MAPPING missing key: ${key}`).toBeDefined();
+    }
+    // Total bridge size should be ≥ 29 (18 existing + 11 new).
+    expect(Object.keys(mapping).length).toBeGreaterThanOrEqual(29);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Retry (delivery), MCP server, Channel lifecycle + health
+// ---------------------------------------------------------------------------
+
+describe("retry + mcp + channel bridge", () => {
+  // ---- Retry (delivery reliability) events ----
+
+  it("retry_attempted_maps_to_delivery.retry with attempt/maxAttempts/delayMs/error; chatId+channelId MUST NOT be forwarded (PII invariant)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("retry:attempted", {
+      channelId: "chan-tg-1",
+      chatId: "12345678901",
+      attempt: 2,
+      maxAttempts: 5,
+      delayMs: 1000,
+      error: "ETIMEDOUT",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("delivery.retry");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Retry telemetry fields must be present.
+    expect(data.attempt).toBe(2);
+    expect(data.maxAttempts).toBe(5);
+    expect(data.delayMs).toBe(1000);
+    expect(data.error).toBe("ETIMEDOUT");
+
+    // chatId (Telegram long-decimal ID) must NEVER appear.
+    expect(data.chatId).toBeUndefined();
+    expect("chatId" in data).toBe(false);
+
+    // channelId (channel correlator) must NEVER appear.
+    expect(data.channelId).toBeUndefined();
+    expect("channelId" in data).toBe(false);
+
+    // timestamp is envelope noise — omit.
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("retry_exhausted_maps_to_delivery.retry_exhausted with totalAttempts/finalError; chatId+channelId omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("retry:exhausted", {
+      channelId: "chan-tg-1",
+      chatId: "98765432100",
+      totalAttempts: 5,
+      finalError: "Connection refused",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("delivery.retry_exhausted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.totalAttempts).toBe(5);
+    expect(data.finalError).toBe("Connection refused");
+
+    // chatId and channelId must NEVER appear.
+    expect(data.chatId).toBeUndefined();
+    expect("chatId" in data).toBe(false);
+    expect(data.channelId).toBeUndefined();
+    expect("channelId" in data).toBe(false);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("retry_markdown_fallback_maps_to_delivery.markdown_fallback with originalParseMode; chatId+channelId omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("retry:markdown_fallback", {
+      channelId: "chan-tg-1",
+      chatId: "11122233344",
+      originalParseMode: "MarkdownV2",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("delivery.markdown_fallback");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.originalParseMode).toBe("MarkdownV2");
+
+    // chatId and channelId must NEVER appear.
+    expect(data.chatId).toBeUndefined();
+    expect("chatId" in data).toBe(false);
+    expect(data.channelId).toBeUndefined();
+    expect("channelId" in data).toBe(false);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- MCP server reliability events ----
+
+  it("mcp_server_disconnected_maps_to_mcp.disconnected with serverName+reason; timestamp omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("mcp:server:disconnected", {
+      serverName: "filesystem-server",
+      reason: "transport_closed",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("mcp.disconnected");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.serverName).toBe("filesystem-server");
+    expect(data.reason).toBe("transport_closed");
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("mcp_server_reconnecting_maps_to_mcp.reconnecting with serverName/attempt/maxAttempts/nextDelayMs; timestamp omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("mcp:server:reconnecting", {
+      serverName: "filesystem-server",
+      attempt: 2,
+      maxAttempts: 5,
+      nextDelayMs: 2000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("mcp.reconnecting");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.serverName).toBe("filesystem-server");
+    expect(data.attempt).toBe(2);
+    expect(data.maxAttempts).toBe(5);
+    expect(data.nextDelayMs).toBe(2000);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("mcp_server_reconnect_failed_maps_to_mcp.reconnect_failed with serverName/attempts/lastError; timestamp omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("mcp:server:reconnect_failed", {
+      serverName: "filesystem-server",
+      attempts: 5,
+      lastError: "ECONNREFUSED",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("mcp.reconnect_failed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.serverName).toBe("filesystem-server");
+    expect(data.attempts).toBe(5);
+    expect(data.lastError).toBe("ECONNREFUSED");
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("mcp_server_reconnected_maps_to_mcp.reconnected with serverName/attempt/toolCount/durationMs; timestamp omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("mcp:server:reconnected", {
+      serverName: "filesystem-server",
+      attempt: 2,
+      toolCount: 12,
+      durationMs: 350,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("mcp.reconnected");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.serverName).toBe("filesystem-server");
+    expect(data.attempt).toBe(2);
+    expect(data.toolCount).toBe(12);
+    expect(data.durationMs).toBe(350);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("mcp_server_tools_changed_maps_to_mcp.tools_changed with serverName/previousToolCount/currentToolCount/addedTools/removedTools; timestamp omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("mcp:server:tools_changed", {
+      serverName: "filesystem-server",
+      previousToolCount: 10,
+      currentToolCount: 12,
+      addedTools: ["read_file", "write_file"],
+      removedTools: [],
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("mcp.tools_changed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.serverName).toBe("filesystem-server");
+    expect(data.previousToolCount).toBe(10);
+    expect(data.currentToolCount).toBe(12);
+    expect(data.addedTools).toEqual(["read_file", "write_file"]);
+    expect(data.removedTools).toEqual([]);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- Channel lifecycle + health events ----
+
+  it("channel_health_changed_maps_to_channel.health_changed with channelType/previousState/currentState/connectionMode; lastMessageAt+timestamp omitted; error forwarded conditionally", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:health_changed", {
+      channelType: "telegram",
+      previousState: "healthy",
+      currentState: "degraded",
+      connectionMode: "polling",
+      error: "Connection timeout",
+      lastMessageAt: Date.now() - 60000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("channel.health_changed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.channelType).toBe("telegram");
+    expect(data.previousState).toBe("healthy");
+    expect(data.currentState).toBe("degraded");
+    expect(data.connectionMode).toBe("polling");
+    expect(data.error).toBe("Connection timeout");
+
+    // lastMessageAt and timestamp are noise — omit.
+    expect(data.lastMessageAt).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("channel_health_changed_omits_error_from_data_when_error_is_null (conditional spread)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:health_changed", {
+      channelType: "discord",
+      previousState: "degraded",
+      currentState: "healthy",
+      connectionMode: "socket",
+      error: null,
+      lastMessageAt: null,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.channelType).toBe("discord");
+    expect(data.currentState).toBe("healthy");
+    // error: null → should NOT appear in data (conditional spread).
+    expect(data.error).toBeUndefined();
+    expect("error" in data).toBe(false);
+  });
+
+  it("channel_registered_maps_to_channel.lifecycle with channelType/pluginId/event:registered; capabilities omitted", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:registered", {
+      channelType: "telegram",
+      pluginId: "tg-plugin",
+      capabilities: { supportsEditing: true, supportsReactions: false } as any,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("channel.lifecycle");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.channelType).toBe("telegram");
+    expect(data.pluginId).toBe("tg-plugin");
+    // Synthetic discriminator — distinguishes registered from deregistered.
+    expect(data.event).toBe("registered");
+
+    // capabilities is omitted (noisy, not diagnostically useful for trajectory).
+    expect(data.capabilities).toBeUndefined();
+    expect("capabilities" in data).toBe(false);
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("channel_deregistered_maps_to_channel.lifecycle with channelType/pluginId/event:deregistered (same type, different discriminator)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:deregistered", {
+      channelType: "discord",
+      pluginId: "discord-plugin",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    // SAME type as channel:registered — channel.lifecycle.
+    expect(recorder.calls[0].type).toBe("channel.lifecycle");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.channelType).toBe("discord");
+    expect(data.pluginId).toBe("discord-plugin");
+    // Synthetic discriminator must be "deregistered" (not "registered").
+    expect(data.event).toBe("deregistered");
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("channel_lifecycle_dual_mapping: registered and deregistered produce same type but different event discriminators", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:registered", {
+      channelType: "telegram",
+      pluginId: "tg-plugin",
+      capabilities: {} as any,
+      timestamp: Date.now(),
+    });
+
+    bus.emit("channel:deregistered", {
+      channelType: "telegram",
+      pluginId: "tg-plugin",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(2);
+
+    // Both produce channel.lifecycle.
+    expect(recorder.calls[0].type).toBe("channel.lifecycle");
+    expect(recorder.calls[1].type).toBe("channel.lifecycle");
+
+    const data0 = recorder.calls[0].data as Record<string, unknown>;
+    const data1 = recorder.calls[1].data as Record<string, unknown>;
+
+    // But discriminators are distinct.
+    expect(data0.event).toBe("registered");
+    expect(data1.event).toBe("deregistered");
+  });
+
+  // ---- Coverage spot-check ----
+
+  it("TRAJECTORY_BRIDGE_MAPPING contains all 11 new retry/mcp/channel keys and total mapping is ≥ 40", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    const expected = [
+      // retry
+      "retry:attempted",
+      "retry:exhausted",
+      "retry:markdown_fallback",
+      // mcp
+      "mcp:server:disconnected",
+      "mcp:server:reconnecting",
+      "mcp:server:reconnect_failed",
+      "mcp:server:reconnected",
+      "mcp:server:tools_changed",
+      // channel
+      "channel:health_changed",
+      "channel:registered",
+      "channel:deregistered",
+    ];
+    for (const key of expected) {
+      expect(mapping[key], `TRAJECTORY_BRIDGE_MAPPING missing key: ${key}`).toBeDefined();
+    }
+    // Both channel registration events map to channel.lifecycle.
+    expect(mapping["channel:registered"]).toBe("channel.lifecycle");
+    expect(mapping["channel:deregistered"]).toBe("channel.lifecycle");
+    // Total bridge size should be ≥ 40 (29 existing + 11 new).
+    expect(Object.keys(mapping).length).toBeGreaterThanOrEqual(40);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Security (rest), Compaction, Context, Approval
+// ---------------------------------------------------------------------------
+
+describe("security + compaction + context + approval bridge", () => {
+  // ---- security:memory_tainted + security:warn ----
+
+  it("security_memory_tainted_maps_to_security.memory_tainted with originalTrustLevel/adjustedTrustLevel/blocked; patterns[] MUST NOT be forwarded (security invariant)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("security:memory_tainted", {
+      agentId: "agent-1",
+      originalTrustLevel: "trusted",
+      adjustedTrustLevel: "tainted",
+      patterns: ["malicious-pattern", "exploit-string"],
+      blocked: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("security.memory_tainted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Trust level fields must be present.
+    expect(data.originalTrustLevel).toBe("trusted");
+    expect(data.adjustedTrustLevel).toBe("tainted");
+    expect(data.blocked).toBe(true);
+
+    // patterns[] must NOT appear — verbatim injection strings.
+    expect(data.patterns).toBeUndefined();
+    expect("patterns" in data).toBe(false);
+
+    // Envelope-only fields must be stripped.
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("security_warn_maps_to_security.warn with category only; message MUST NOT be forwarded (PII invariant)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("security:warn", {
+      category: "secret_access",
+      agentId: "agent-1",
+      message: "Agent accessed /etc/secrets without explicit allow",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("security.warn");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Only category in data.
+    expect(data.category).toBe("secret_access");
+
+    // message must NOT appear — may reference secrets/config paths.
+    expect(data.message).toBeUndefined();
+    expect("message" in data).toBe(false);
+
+    // Envelope-only fields must be stripped.
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- Compaction events ----
+
+  it("compaction_started_maps_to_compaction.started with empty data object (all fields are envelope-only)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("compaction:started", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("compaction.started");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // All source fields are envelope-only (agentId, sessionKey, timestamp) — data must be empty.
+    expect(Object.keys(data)).toHaveLength(0);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("compaction_flush_maps_to_compaction.flush with memoriesWritten/trigger/success; sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("compaction:flush", {
+      sessionKey: "t1:u1:c1",
+      memoriesWritten: 12,
+      trigger: "threshold",
+      success: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("compaction.flush");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.memoriesWritten).toBe(12);
+    expect(data.trigger).toBe("threshold");
+    expect(data.success).toBe(true);
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("compaction_recommended_maps_to_compaction.recommended with contextPercent/contextTokens/contextWindow; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("compaction:recommended", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      contextPercent: 0.85,
+      contextTokens: 170000,
+      contextWindow: 200000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("compaction.recommended");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.contextPercent).toBeCloseTo(0.85);
+    expect(data.contextTokens).toBe(170000);
+    expect(data.contextWindow).toBe(200000);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- Context engine events ----
+
+  it("context_evicted_maps_to_context.evicted with evictedCount/evictedChars/categories; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:evicted", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      evictedCount: 5,
+      evictedChars: 2000,
+      categories: { tool_result: 5 },
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.evicted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.evictedCount).toBe(5);
+    expect(data.evictedChars).toBe(2000);
+    expect(data.categories).toEqual({ tool_result: 5 });
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_masked_maps_to_context.masked with maskedCount/totalChars/persistedToDisk; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:masked", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      maskedCount: 3,
+      totalChars: 500,
+      persistedToDisk: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.masked");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.maskedCount).toBe(3);
+    expect(data.totalChars).toBe(500);
+    expect(data.persistedToDisk).toBe(true);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_reread_maps_to_context.reread with rereadCount/rereadTools; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:reread", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      rereadCount: 2,
+      rereadTools: ["bash", "read_file"],
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.reread");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.rereadCount).toBe(2);
+    expect(data.rereadTools).toEqual(["bash", "read_file"]);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_overflow_maps_to_context.overflow with contextTokens/budgetTokens/recoveryAction; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:overflow", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      contextTokens: 205000,
+      budgetTokens: 200000,
+      recoveryAction: "evict",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.overflow");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.contextTokens).toBe(205000);
+    expect(data.budgetTokens).toBe(200000);
+    expect(data.recoveryAction).toBe("evict");
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_integrity_maps_to_context.integrity with conversationId/issueCount/repairsApplied/errorsLogged/issueTypes/durationMs; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:integrity", {
+      conversationId: "conv-123",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      issueCount: 2,
+      repairsApplied: 1,
+      errorsLogged: 0,
+      issueTypes: ["missing_tool_result"],
+      durationMs: 15,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.integrity");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.conversationId).toBe("conv-123");
+    expect(data.issueCount).toBe(2);
+    expect(data.repairsApplied).toBe(1);
+    expect(data.errorsLogged).toBe(0);
+    expect(data.issueTypes).toEqual(["missing_tool_result"]);
+    expect(data.durationMs).toBe(15);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("context_rehydrated_maps_to_context.rehydrated with sectionsInjected/filesInjected/skillsInjected/overflowStripped; envelope stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:rehydrated", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      sectionsInjected: 4,
+      filesInjected: 2,
+      skillsInjected: 1,
+      overflowStripped: false,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.rehydrated");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.sectionsInjected).toBe(4);
+    expect(data.filesInjected).toBe(2);
+    expect(data.skillsInjected).toBe(1);
+    expect(data.overflowStripped).toBe(false);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // ---- Approval events ----
+
+  it("approval_requested_maps_to_approval.requested with requestId/toolName/action/trustLevel/timeoutMs/channelType; params MUST NOT be forwarded (HIGHEST risk PII)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("approval:requested", {
+      requestId: "req-abc123",
+      toolName: "bash",
+      action: "execute",
+      params: { secret: "my-api-key", path: "/etc/secrets", command: "rm -rf /tmp" },
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      trustLevel: "trusted",
+      createdAt: Date.now(),
+      timeoutMs: 60000,
+      channelType: "telegram",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("approval.requested");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // Safe fields must be present.
+    expect(data.requestId).toBe("req-abc123");
+    expect(data.toolName).toBe("bash");
+    expect(data.action).toBe("execute");
+    expect(data.trustLevel).toBe("trusted");
+    expect(data.timeoutMs).toBe(60000);
+    expect(data.channelType).toBe("telegram");
+
+    // params MUST NEVER appear — raw unbounded tool args, highest-risk field.
+    expect(data.params).toBeUndefined();
+    expect("params" in data).toBe(false);
+
+    // Envelope-only fields must be stripped.
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.createdAt).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("approval_requested_omits_channelType_when_not_present (conditional spread)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("approval:requested", {
+      requestId: "req-xyz",
+      toolName: "write_file",
+      action: "write",
+      params: { content: "data" },
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      trustLevel: "untrusted",
+      createdAt: Date.now(),
+      timeoutMs: 30000,
+      // channelType intentionally omitted
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    // params MUST NEVER appear.
+    expect("params" in data).toBe(false);
+
+    // channelType should be absent when not provided (conditional spread).
+    expect("channelType" in data).toBe(false);
+
+    // Other safe fields present.
+    expect(data.requestId).toBe("req-xyz");
+    expect(data.trustLevel).toBe("untrusted");
+  });
+
+  it("approval_resolved_maps_to_approval.resolved with requestId/approved/approvedBy/reason; resolvedAt stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("approval:resolved", {
+      requestId: "req-abc123",
+      approved: true,
+      approvedBy: "owner",
+      reason: "ok",
+      resolvedAt: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("approval.resolved");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.requestId).toBe("req-abc123");
+    expect(data.approved).toBe(true);
+    expect(data.approvedBy).toBe("owner");
+    expect(data.reason).toBe("ok");
+
+    // resolvedAt is envelope noise — omitted.
+    expect(data.resolvedAt).toBeUndefined();
+    expect("resolvedAt" in data).toBe(false);
+  });
+
+  it("approval_resolved_omits_reason_when_not_present (conditional spread)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("approval:resolved", {
+      requestId: "req-denied",
+      approved: false,
+      approvedBy: "system",
+      resolvedAt: Date.now(),
+      // reason intentionally omitted
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.requestId).toBe("req-denied");
+    expect(data.approved).toBe(false);
+    expect(data.approvedBy).toBe("system");
+
+    // reason absent when not provided (conditional spread).
+    expect("reason" in data).toBe(false);
+
+    // resolvedAt must be stripped.
+    expect("resolvedAt" in data).toBe(false);
+  });
+
+  // ---- Coverage spot-check (count): in arch test file ----
+
+  it("TRAJECTORY_BRIDGE_MAPPING contains all 13 new security/compaction/context/approval keys and total mapping is ≥ 53", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    const expected = [
+      // security rest
+      "security:memory_tainted",
+      "security:warn",
+      // compaction
+      "compaction:started",
+      "compaction:flush",
+      "compaction:recommended",
+      // context
+      "context:evicted",
+      "context:masked",
+      "context:reread",
+      "context:overflow",
+      "context:integrity",
+      "context:rehydrated",
+      // approval
+      "approval:requested",
+      "approval:resolved",
+    ];
+    for (const key of expected) {
+      expect(mapping[key], `TRAJECTORY_BRIDGE_MAPPING missing key: ${key}`).toBeDefined();
+    }
+    // Total bridge mapping should reach ≥ 53 (40 existing + 13 new).
+    expect(Object.keys(mapping).length).toBeGreaterThanOrEqual(53);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dedup:duplicate_inbound → dedup.duplicate_inbound
+// ---------------------------------------------------------------------------
+
+describe("attachTrajectoryToEventBus -- dedup events", () => {
+  it("dedup_duplicate_inbound_maps_to_dedup.duplicate_inbound_trajectory_type", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("dedup:duplicate_inbound", {
+      messageId: "m1",
+      channelType: "telegram",
+      chatId: "123",
+      firstSeenAt: 1000,
+      duplicateAt: 1001,
+      deltaMs: 1,
+      source: "pipeline",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("dedup.duplicate_inbound");
+  });
+
+  it("dedup_duplicate_inbound_translator_returns_5_field_subset_omitting_firstSeenAt_and_duplicateAt", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("dedup:duplicate_inbound", {
+      messageId: "m1",
+      channelType: "telegram",
+      chatId: "123",
+      firstSeenAt: 1000,
+      duplicateAt: 1001,
+      deltaMs: 1,
+      source: "pipeline",
+    });
+
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // 5-field subset forwarded
+    expect(data.messageId).toBe("m1");
+    expect(data.channelType).toBe("telegram");
+    expect(data.chatId).toBe("123");
+    expect(data.deltaMs).toBe(1);
+    expect(data.source).toBe("pipeline");
+    // firstSeenAt and duplicateAt intentionally omitted (envelope ts covers timing)
+    expect("firstSeenAt" in data).toBe(false);
+    expect("duplicateAt" in data).toBe(false);
+  });
+
+  it("TRAJECTORY_BRIDGE_MAPPING_dedup:duplicate_inbound_key_maps_to_dedup.duplicate_inbound", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["dedup:duplicate_inbound"]).toBe("dedup.duplicate_inbound");
+  });
+
+  it("TRAJECTORY_EVENT_TYPES_includes_dedup.duplicate_inbound", () => {
+    expect(Array.from(TRAJECTORY_EVENT_TYPES as readonly string[])).toContain("dedup.duplicate_inbound");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Health budget exceeded (bridge entry 55)
+// ---------------------------------------------------------------------------
+
+describe("health:budget_exceeded entry (bridge entry 55)", () => {
+  it("bridge entry count is exactly 55 (health:budget_exceeded included)", () => {
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(55);
+  });
+
+  it("health:budget_exceeded mapped to health.budget_exceeded", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["health:budget_exceeded"]).toBe("health.budget_exceeded");
+  });
+
+  it("TRAJECTORY_EVENT_TYPES includes health.budget_exceeded", () => {
+    expect(Array.from(TRAJECTORY_EVENT_TYPES as readonly string[])).toContain("health.budget_exceeded");
+  });
+
+  it("emitting health:budget_exceeded produces trajectory health.budget_exceeded with kind/count/windowMs (timestamp is envelope-only)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("health:budget_exceeded", {
+      kind: "network",
+      count: 100,
+      windowMs: 60000,
+      timestamp: 1,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("health.budget_exceeded");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.kind).toBe("network");
+    expect(data.count).toBe(100);
+    expect(data.windowMs).toBe(60000);
+    // timestamp is envelope-only — MUST NOT appear in data
+    expect(data.timestamp).toBeUndefined();
+    expect("timestamp" in data).toBe(false);
   });
 });

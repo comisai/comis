@@ -84,4 +84,140 @@ describe("ObservabilityConfigSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // trajectory key — strictObject rejects unknown keys.
+
+  it("accepts trajectory.dirOverride string", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      trajectory: { dirOverride: "/var/comis/trj" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.trajectory?.dirOverride).toBe("/var/comis/trj");
+    }
+  });
+
+  it("strictly rejects trajectory.unknownKey (strictObject enforcement)", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      trajectory: { unknownKey: "x" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("back-compat: omitting trajectory produces trajectory:{}", () => {
+    const result = ObservabilityConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // trajectory must exist (with default {}) and dirOverride must be
+      // undefined (not set) — proves existing YAML without observability.trajectory
+      // still parses and the schema is back-compat.
+      expect(result.data).toHaveProperty("trajectory");
+      expect(result.data.trajectory?.dirOverride).toBeUndefined();
+    }
+  });
+
+  // logRotation key.
+
+  it("returns logRotation defaults with maxSizeBytes=52428800", () => {
+    const result = ObservabilityConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.logRotation).toBeDefined();
+      expect(result.data.logRotation.maxSizeBytes).toBe(52428800);
+      expect(result.data.logRotation.maxFiles).toBe(5);
+      expect(result.data.logRotation.maxAgeDays).toBe(30);
+      expect(result.data.logRotation.compressAged).toBe(true);
+    }
+  });
+
+  it("accepts logRotation.maxSizeBytes override", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      logRotation: { maxSizeBytes: 100 * 1024 * 1024 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.logRotation.maxSizeBytes).toBe(100 * 1024 * 1024);
+    }
+  });
+
+  it("rejects logRotation.maxFiles=0 (positive int required)", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      logRotation: { maxFiles: 0 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects logRotation.maxSizeBytes=-1 (positive int required)", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      logRotation: { maxSizeBytes: -1 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects logRotation.extraField (strictObject enforcement)", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      logRotation: { extraField: "x" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // alertBudget key.
+
+  describe("alertBudget", () => {
+    it("alertBudget defaults: enabled === true", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.alertBudget.enabled).toBe(true);
+      }
+    });
+
+    it("alertBudget.thresholds.network defaults to { count: 100, windowMs: 60000 }", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.alertBudget.thresholds.network).toEqual({ count: 100, windowMs: 60000 });
+      }
+    });
+
+    it("alertBudget.thresholds.internal defaults to { count: 5, windowMs: 60000 }", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.alertBudget.thresholds.internal).toEqual({ count: 5, windowMs: 60000 });
+      }
+    });
+
+    it("all 10 errorKind names present as keys under thresholds", () => {
+      const errorKinds = [
+        "network", "config", "auth", "validation", "precondition",
+        "timeout", "resource", "dependency", "internal", "platform",
+      ];
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        for (const kind of errorKinds) {
+          expect(result.data.alertBudget.thresholds[kind], `missing errorKind: ${kind}`).toBeDefined();
+        }
+      }
+    });
+
+    it("override accepted: network threshold count can be set to 200 / windowMs to 30000", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        alertBudget: { thresholds: { network: { count: 200, windowMs: 30000 } } },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.alertBudget.thresholds.network?.count).toBe(200);
+        expect(result.data.alertBudget.thresholds.network?.windowMs).toBe(30000);
+      }
+    });
+
+    it("rejects zero count (z.number().int().positive() required)", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        alertBudget: { thresholds: { network: { count: 0, windowMs: 60000 } } },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
 });

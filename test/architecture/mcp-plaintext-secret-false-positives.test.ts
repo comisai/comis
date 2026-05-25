@@ -16,7 +16,9 @@
  *
  * The test value-imports the compiled `looksLikePlaintextSecret` from
  * `@comis/daemon` via the architecture vitest alias map
- * (test/architecture/vitest.config.ts).
+ * (test/architecture/vitest.config.ts) — same precedent as the
+ * MCP_STDIO_BUILTIN_ENV_ALLOWLIST architecture test pinning the runtime
+ * allowlist constant.
  *
  * @module
  */

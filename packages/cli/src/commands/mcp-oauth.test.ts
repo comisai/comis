@@ -289,6 +289,24 @@ describe("mcp logout", () => {
     const out = `${getSpyOutput(consoleSpy.log)}`;
     expect(out).toMatch(/notion/);
   });
+
+  it("Test 5c: callTyped rejects → error() + exit 1 (logout catch branch)", async () => {
+    // Covers the logout try/catch error path (mcp-oauth.ts:157-160): a rejected
+    // RPC must surface via error() + process.exit(1), not silently exit 0.
+    wireWithClient();
+    vi.mocked(callTyped).mockRejectedValue(new Error("logout RPC failed"));
+
+    const program = buildProgram();
+    try {
+      await program.parseAsync(["node", "test", "mcp", "logout", "notion"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(1);
+    const err = getSpyOutput(consoleSpy.error);
+    expect(err).toContain("logout RPC failed");
+  });
 });
 
 describe("mcp login/logout — ensureGatewayToken ordering", () => {

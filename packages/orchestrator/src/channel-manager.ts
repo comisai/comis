@@ -27,7 +27,8 @@ import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent"
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, runWithContext, getMessageTraceId, systemNowMs } from "@comis/core";
+import { randomUUID } from "node:crypto";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 
@@ -178,6 +179,14 @@ export interface ChannelManagerDeps {
   processInboundMessage: ProcessInboundMessageFn;
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];
+  /**
+   * Bundle export DI for the /export-trajectory slash command. When present,
+   * inbound-gate.ts special-cases /export-trajectory with owner-gate + DM
+   * routing before the generic handleSlashCommand block. When absent,
+   * /export-trajectory falls through to generic slash command handling (no-op).
+   * Injected by daemon wiring via ChannelManagerBuildDeps.
+   */
+  exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
 }
 
 export interface ChannelManager {
@@ -189,6 +198,12 @@ export interface ChannelManager {
   readonly activeCount: number;
   /** Inject a synthetic inbound message through the normal processing pipeline. Used for restart continuation replay. */
   injectMessage(channelType: string, msg: NormalizedMessage): Promise<void>;
+  /**
+   * Raw onMessage-registration count per channelType, captured pre-dedup in startAll().
+   * Used by the boot invariant collector to detect duplicate-adapter wiring.
+   * Post-dedup (normal wiring) = 1; regression wiring (same adapter in both slots) = 2.
+   */
+  getRawHandlerCounts(): ReadonlyMap<string, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +225,16 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
 
   /** Adapter lookup map: channelType -> ChannelPort. Populated in startAll(). */
   const adaptersByType = new Map<string, ChannelPort>();
+
+  /**
+   * Raw pre-dedup registration count per channelType.
+   * Incremented once for every adapter seen in the merged list (deps.adapters +
+   * channelRegistry) BEFORE deduplication logic runs. This goes to 2 in the
+   * regression where the same adapter appears in both slots, while adaptersByType
+   * still holds only one entry (silent same-instance dedup). Used by the boot
+   * invariant collector to detect duplicate-adapter wiring.
+   */
+  const rawHandlerCounts = new Map<string, number>();
 
   /**
    * Pipeline deps for processInboundMessage at all three call sites
@@ -241,6 +266,9 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
         ? deps.channelRegistry.getChannelPlugins().map((p) => p.adapter)
         : [];
       for (const adapter of [...(deps.adapters ?? []), ...registryAdapters]) {
+        // Count raw registrations before dedup (seam — goes to 2 in regression).
+        rawHandlerCounts.set(adapter.channelType, (rawHandlerCounts.get(adapter.channelType) ?? 0) + 1);
+
         const existing = adaptersByType.get(adapter.channelType);
         if (existing === undefined) {
           adaptersByType.set(adapter.channelType, adapter);
@@ -267,44 +295,64 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       for (const adapter of adaptersByType.values()) {
         // Register message handler before starting
         adapter.onMessage(async (msg: NormalizedMessage) => {
-          try {
-            // Pre-agent intercept: graph report button callbacks
-            if (
-              deps.onGraphReportRequest
-              && msg.metadata?.isButtonCallback === true
-              && typeof msg.text === "string"
-              && msg.text.startsWith("graph:report:")
-            ) {
-              const graphId = msg.text.slice("graph:report:".length);
-              if (graphId.length > 0) {
-                await deps.onGraphReportRequest(
-                  graphId,
-                  adapter.channelType,
-                  msg.channelId,
-                  adapter,
-                  msg.metadata?.threadId as string | undefined,
-                );
-                return; // Handled -- do not forward to agent
-              }
-            }
-            // Fire onMessageReceived BEFORE await processInboundMessage so any
-            // mid-processing SIGUSR2 still sees the session in continuation
-            // tracker state. The graph-report intercept above must remain BEFORE
-            // this call so control-plane callbacks bypass both hooks.
-            deps.onMessageReceived?.(msg, adapter.channelType);
-            await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
-            deps.onMessageProcessed?.(msg, adapter.channelType);
-          } catch (error) {
-            deps.logger.error(
-              {
-                err: error instanceof Error ? error : new Error(String(error)),
-                channelId: adapter.channelId,
-                hint: "Check inbound pipeline for unhandled errors in message processing",
-                errorKind: "internal" as const,
-              },
-              "Unhandled error in message handler",
-            );
+          // Defense-in-depth wrap. Reuse the traceId minted at adapter
+          // ingress via getMessageTraceId; fall back to randomUUID() if a
+          // future adapter bypasses ingress wrap (catches regressions —
+          // channel→queue→agent correlation is preserved even without the
+          // adapter-level wrap).
+          const traceId = getMessageTraceId(msg) ?? randomUUID();
+          if (typeof msg.metadata.traceId !== "string") {
+            msg.metadata.traceId = traceId;
           }
+          await runWithContext(
+            {
+              traceId,
+              startedAt: systemNowMs(),
+              channelType: adapter.channelType,
+              tenantId: "default",
+              trustLevel: "admin",
+            },
+            async () => {
+              try {
+                // Pre-agent intercept: graph report button callbacks
+                if (
+                  deps.onGraphReportRequest
+                  && msg.metadata?.isButtonCallback === true
+                  && typeof msg.text === "string"
+                  && msg.text.startsWith("graph:report:")
+                ) {
+                  const graphId = msg.text.slice("graph:report:".length);
+                  if (graphId.length > 0) {
+                    await deps.onGraphReportRequest(
+                      graphId,
+                      adapter.channelType,
+                      msg.channelId,
+                      adapter,
+                      msg.metadata?.threadId as string | undefined,
+                    );
+                    return; // Handled -- do not forward to agent
+                  }
+                }
+                // Fire onMessageReceived BEFORE await processInboundMessage so any
+                // mid-processing SIGUSR2 still sees the session in continuation
+                // tracker state. The graph-report intercept above must remain BEFORE
+                // this call so control-plane callbacks bypass both hooks.
+                deps.onMessageReceived?.(msg, adapter.channelType);
+                await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
+                deps.onMessageProcessed?.(msg, adapter.channelType);
+              } catch (error) {
+                deps.logger.error(
+                  {
+                    err: error instanceof Error ? error : new Error(String(error)),
+                    channelId: adapter.channelId,
+                    hint: "Check inbound pipeline for unhandled errors in message processing",
+                    errorKind: "internal" as const,
+                  },
+                  "Unhandled error in message handler",
+                );
+              }
+            },
+          );
         });
 
         // Start the adapter
@@ -324,7 +372,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
 
         _activeCount++;
         deps.logger.info(
-          { adapterId: adapter.channelId, channelType: adapter.channelType },
+          { step: "channel-registry", adapterId: adapter.channelId, channelType: adapter.channelType },
           "Adapter registered",
         );
       }
@@ -419,6 +467,10 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       deps.onMessageReceived?.(msg, channelType);
       await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
       deps.onMessageProcessed?.(msg, channelType);
+    },
+
+    getRawHandlerCounts(): ReadonlyMap<string, number> {
+      return rawHandlerCounts;
     },
   };
 }

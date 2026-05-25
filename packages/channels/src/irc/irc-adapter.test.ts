@@ -362,7 +362,7 @@ describe("createIrcAdapter", () => {
       const adapter = createIrcAdapter(deps);
       await adapter.sendMessage("#comis", "Hello");
 
-      expect(deps.logger.debug).toHaveBeenCalledWith(
+      expect(deps.logger.info).toHaveBeenCalledWith(
         expect.objectContaining({
           channelType: "irc",
           messageId: "sent",

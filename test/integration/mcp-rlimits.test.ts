@@ -78,7 +78,7 @@ describeLinux("MCP stdio rlimits — integration (Linux only)", () => {
 // macOS test path — confirms the assumption (prlimit absent) that motivates
 // the WARN-skip fallback in mcp-client-discover.ts:wrapStdioCommand. If a
 // future macOS release ships prlimit (very unlikely; util-linux is Linux-
-// specific), this test will fire as a signal to revisit the Pitfall-5 logic.
+// specific), this test will fire as a signal to revisit the fallback logic.
 if (!isLinux) {
   describe("MCP stdio rlimits — macOS dev graceful skip", () => {
     it("on macOS, prlimit is not in PATH (sanity for the WARN-skip fallback path)", () => {

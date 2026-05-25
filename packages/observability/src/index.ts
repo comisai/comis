@@ -57,7 +57,7 @@ export { safeJsonStringify } from "./shared/safe-json-stringify.js";
 
 // File-snapshot helper — sha256 + POSIX stat in one pass. Used by the
 // daemon's read-side audit producer (`readConfigFileObservation`) and
-// any other consumer that needs the design-§9.2 file-state block.
+// any other consumer that needs the file-state block.
 export { readFileSnapshot } from "./shared/file-snapshot.js";
 export type { FileSnapshot } from "./shared/file-snapshot.js";
 
@@ -116,6 +116,19 @@ export {
   sanitizeForPersistence,
 } from "./redact/redact-secrets.js";
 
+// Bundle-time value-shape redactors.
+// Distinct from Pino-level patterns above — different sentinel shape
+// (`<REDACTED:type>` vs edge-keeping masks) and different consumer
+// (bundle export pipeline vs live log scrubbing).
+export {
+  redactEventForExport,
+  redactString,
+  walkAndRedactStrings,
+  getValueShapePatterns,
+  substitutePathsInString,
+} from "./redact/value-shapes.js";
+export type { ValueShapePattern, RedactionOpts } from "./redact/value-shapes.js";
+
 // Pino transport factory: named re-export (NOT default). The default
 // export is reserved for the file used as a Pino `target` resolution
 // path. Barrel consumers should import via the named symbol.
@@ -159,6 +172,43 @@ export type {
   SessionTrajectoryHandleRegistry,
   SessionTrajectoryFilter,
 } from "./trajectory/session-registry.js";
+
+export { buildTraceMetadata } from "./trajectory/metadata.js";
+export type { TraceMetadataParams, TraceMetadataPayload } from "./trajectory/metadata.js";
+
+export { buildTraceArtifacts } from "./trajectory/artifacts.js";
+export type { TraceArtifactsRunState, TraceArtifactsPayload } from "./trajectory/artifacts.js";
+
+// ---------------------------------------------------------------------------
+// Trajectory bundle export.
+// ---------------------------------------------------------------------------
+
+export {
+  buildTranscriptEvents,
+  sortTrajectoryEvents,
+  readSessionBranch,
+  MAX_TRAJECTORY_RUNTIME_EVENTS,
+  MAX_TRAJECTORY_TOTAL_EVENTS,
+  MAX_TRAJECTORY_SESSION_FILE_BYTES,
+  MAX_TRAJECTORY_WARNING_ROWS,
+} from "./trajectory/export.js";
+export type {
+  TrajectoryBundleManifest,
+  TrajectoryBundleWarning,
+  TranscriptEventBase,
+  TranscriptSourceEntry,
+  ReadSessionBranchResult,
+} from "./trajectory/export.js";
+
+// exportTrajectoryBundle lives in bundle-exporter.ts to avoid
+// a circular import (bundle-exporter.ts → export.ts; export.ts must not
+// re-export bundle-exporter.ts or madge flags a circular .d.ts dependency).
+export { exportTrajectoryBundle } from "./trajectory/bundle-exporter.js";
+export type {
+  ExportTrajectoryBundleParams,
+  ExportTrajectoryBundleError,
+  ExportTrajectoryBundleSuccess,
+} from "./trajectory/bundle-exporter.js";
 
 // ---------------------------------------------------------------------------
 // SystemPromptReport surface.
@@ -305,3 +355,62 @@ export type {
   CacheStatsRpcContract,
 } from "./cache-stats/rpc-handler-shape.js";
 export { parseSince } from "./cache-stats/parse-since.js";
+
+// ---------------------------------------------------------------------------
+// Session-index surface.
+// ---------------------------------------------------------------------------
+//
+// Append-only `session-index.YYYY-MM-DD.jsonl` writer via QueuedFileWriter.
+// Three discriminated-union event types: session_started, turn_completed,
+// session_ended. Emit sites in @comis/agent (pi-event-bridge, comis-session-manager).
+
+export { appendSessionIndexEntry } from "./session-index/index.js";
+export type {
+  SessionIndexEvent,
+  SessionStartedEvent,
+  TurnCompletedEvent,
+  SessionEndedEvent,
+} from "./session-index/index.js";
+
+// ---------------------------------------------------------------------------
+// Rotation surface.
+// ---------------------------------------------------------------------------
+//
+// Cross-stream log rotation policy helper + startup sweep.
+// The rotation module depends only on @comis/core and Node builtins —
+// no circular deps introduced.
+
+export {
+  applyRotationPolicy,
+  type RotationPolicy,
+  type ApplyRotationDeps,
+  type ApplyRotationInput,
+  type ApplyRotationResult,
+} from "./rotation/policy.js";
+
+export {
+  sweepRotatedFiles,
+  ROTATION_STREAM_PATTERNS,
+  type SweepDeps,
+} from "./rotation/sweep.js";
+
+// ---------------------------------------------------------------------------
+// Health aggregator surface.
+// ---------------------------------------------------------------------------
+//
+// Sliding-window in-process rate aggregator. Subscribes to health/safety
+// events on the typed EventBus, classifies each by errorKind, and emits
+// `health:budget_exceeded` ONCE per window cross. No external dependencies;
+// imports only @comis/core (no @comis/infra to avoid cycles).
+
+export { createHealthAggregator } from "./health-aggregator/aggregator.js";
+export type {
+  AlertBudgetPolicy,
+  AlertBudgetThreshold,
+  BudgetExceededPayload,
+} from "./health-aggregator/types.js";
+export {
+  SYNTHETIC_ERROR_KIND_MAP,
+  TYPED_ERROR_KIND_EVENTS,
+  resolveErrorKind,
+} from "./health-aggregator/error-kind-map.js";

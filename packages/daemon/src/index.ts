@@ -102,7 +102,7 @@ export type { SetupSkillBundlesDeps } from "./wiring/setup-skill-bundles.js";
 // `LoggerOptions.disableRedaction` opt-in through to the SAME logger
 // instance the daemon uses for production code paths. Consumer is
 // test/support/daemon-harness.ts via
-// startTestDaemon({ disableRedaction: ...trueValue... }) for the residency
+// startTestDaemon({ disableRedaction: ...trueValue... }) for the
 // integration test.
 //
 // Note on phrasing: the literal token sequence `disableRedaction[:][space][true]`
@@ -113,3 +113,10 @@ export type { SetupSkillBundlesDeps } from "./wiring/setup-skill-bundles.js";
 // Consumer: test/support/daemon-harness.ts:434-442 (DYNAMIC require)
 export { createTracingLogger } from "./observability/trace-logger.js";
 export type { TracingLoggerOptions } from "./observability/trace-logger.js";
+
+// Startup invariant collector — re-exported so the
+// acceptance gate integration test can call emitStartupInvariants against
+// a mock logger without spinning up the full daemon.
+// Consumer: test/integration/incident-replay-2026-05-24.test.ts
+export { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
+export type { StartupInvariantsDeps, StartupInvariants } from "./wiring/setup-startup-invariants.js";

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { ComisLogger } from "@comis/core";
+
 /**
  * Trajectory event v1 schema — closed type union + payload shape.
  *
@@ -28,11 +30,11 @@
  */
 
 /**
- * Closed enum of trajectory event types (18 total).
+ * Closed enum of trajectory event types (20 total).
  *
  * Order is deliberate (life-cycle: session.* → prompt → model → tool →
- * skill → memory → delivery → control-plane sentinel). Append-only —
- * insertion order is part of the SemVer contract for v1.
+ * skill → memory → delivery → lifecycle envelopes → control-plane sentinel).
+ * Append-only — insertion order is part of the SemVer contract for v1.
  */
 export const TRAJECTORY_EVENT_TYPES = [
   // Session lifecycle (one start + one end per agent run).
@@ -68,12 +70,87 @@ export const TRAJECTORY_EVENT_TYPES = [
   "delivery.queued",
   "delivery.dispatched",
 
+  // Lifecycle envelopes. Direct-emit by the agent executor — NOT via the
+  // EventBus bridge.
+  "trace.metadata",
+  "trace.artifacts",
+
   // Control-plane sentinel: writer ran out of room mid-stream.
   "trace.truncated",
   // Control-plane sentinel: queued writer rejected one or more lines
   // (e.g., symlinked parent, ENOSPC). Emitted at flushAndClose when
   // QueuedFileWriter.failureCount() > 0.
   "trace.write_failures",
+
+  // Queue lifecycle
+  "queue.enqueued",
+  "queue.dequeued",
+  "queue.overflow",
+  "queue.coalesced",
+
+  // Execution control
+  "execution.aborted",
+  "execution.budget_warning",
+  "execution.prompt_timeout",
+  "execution.output_escalated",
+  "execution.replay_recovered",
+
+  // Security + sender (scanned subset)
+  "security.injection_detected",
+  "sender.blocked",
+
+  // Delivery retry
+  "delivery.retry",
+  "delivery.retry_exhausted",
+  "delivery.markdown_fallback",
+
+  // MCP server reliability
+  "mcp.disconnected",
+  "mcp.reconnecting",
+  "mcp.reconnect_failed",
+  "mcp.reconnected",
+  "mcp.tools_changed",
+
+  // Channel lifecycle + health
+  // channel.lifecycle is shared by channel:registered and channel:deregistered
+  // (dual-mapping; translator adds synthetic event discriminator).
+  "channel.health_changed",
+  "channel.lifecycle",
+
+  // Security rest
+  "security.memory_tainted",
+  "security.warn",
+
+  // Compaction
+  "compaction.started",
+  "compaction.flush",
+  "compaction.recommended",
+
+  // Context engine
+  "context.evicted",
+  "context.masked",
+  "context.reread",
+  "context.overflow",
+  "context.integrity",
+  "context.rehydrated",
+
+  // Approval / human-in-the-loop
+  "approval.requested",
+  "approval.resolved",
+
+  // Dedup
+  "dedup.duplicate_inbound",
+
+  // Health budget
+  "health.budget_exceeded",
+
+  // Session transcript.
+  // Synthesized by buildTranscriptEvents in export.ts when the bundle
+  // exporter merges session JSONL branch entries with runtime events.
+  // The SDK SessionEntry.type is not in this closed union — it is carried
+  // verbatim in data.entryType so downstream consumers can branch on it.
+  // One literal covers all SDK entry types.
+  "session.transcript.entry",
 ] as const;
 
 /** Closed union of trajectory event type strings. */
@@ -82,11 +159,16 @@ export type TrajectoryEventType = (typeof TRAJECTORY_EVENT_TYPES)[number];
 /**
  * Trajectory event source.
  *
- * - `"runtime"` — emitted live by `createTrajectoryRecorder` during agent execution.
+ * - `"runtime"`    — emitted live by `createTrajectoryRecorder` during agent execution.
+ * - `"transcript"` — emitted by the bundle exporter when merging session JSONL transcript
+ *                   entries with runtime events.
+ * - `"export"`     — emitted by the bundle exporter for synthesized records.
  *
- * Single-member union preserved for forward-compatibility of on-disk JSONL artifacts.
+ * On-disk JSONL files written before this widening lack ambient
+ * "transcript"/"export" values — readers tolerate the narrower set per the
+ * additive schema policy.
  */
-export type TrajectoryEventSource = "runtime";
+export type TrajectoryEventSource = "runtime" | "transcript" | "export";
 
 /**
  * Trajectory event — one record per JSONL line.
@@ -131,7 +213,15 @@ export interface TrajectoryEvent {
   readonly modelApi?: string | null;
 
   readonly entryId: string;
-  readonly parentEntryId?: string;
+  /** Parent event ID for DAG reconstruction.
+   *  Populated by the session-DAG writer.
+   *  `null` distinguishes "explicit root" from "missing". */
+  readonly parentEntryId?: string | null;
+
+  /** Source-relative monotonic position. Used by the bundle
+   *  exporter as a tiebreak when merging runtime + transcript events with
+   *  identical `ts`. */
+  readonly sourceSeq?: number;
 
   // Payload — passed through `sanitizeForPersistence` before write.
   // Shape is intentionally `Record<string, unknown>` (envelope-vs-data contract);
@@ -175,6 +265,12 @@ export interface TrajectoryRecorderBudgets {
   readonly maxQueuedBytes?: number;
   /** Head-room reserved inside file cap for trace.truncated emit. Default 2 KB. */
   readonly sentinelReserveBytes?: number;
+  /**
+   * Soft capture cap: recording stops inline (trace.truncated emitted) when
+   * writtenBytes would cross this threshold. Default TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES
+   * (10 MB). Overridable per-recorder for tests. Must be ≤ maxRuntimeFileBytes.
+   */
+  readonly captureMaxBytes?: number;
 }
 
 export interface TrajectoryRecorderInit {
@@ -222,6 +318,22 @@ export interface TrajectoryRecorderInit {
   readonly budgets?: TrajectoryRecorderBudgets;
 
   /**
+   * Optional logger for emitting operator-facing diagnostics from within
+   * the recorder. When provided, the hard-cap branch (step 4b in
+   * `recordEvent`) emits a single WARN with `errorKind:"resource"` and
+   * a hint pointing to `observability.logRotation`. The WARN fires at
+   * most once per recorder lifetime (guarded by an internal flag).
+   *
+   * Omit in tests that do not need log-level assertions; the recorder
+   * degrades gracefully to the existing `droppedEvents()` counter.
+   *
+   * Uses `ComisLogger` from `@comis/core` (structural contract, no
+   * coupling to `@comis/infra`) — consistent with the pattern in
+   * `packages/observability/src/system-prompt-report/persist.ts`.
+   */
+  readonly logger?: ComisLogger;
+
+  /**
    * Enable/disable. Default true. When false `createTrajectoryRecorder`
    * returns null (no-op contract). Env `COMIS_TRAJECTORY=0` also
    * short-circuits to null.
@@ -237,6 +349,27 @@ export interface TrajectoryRecorderInit {
    * `undefined`) to keep tmp-dir paths legal.
    */
   readonly confinedBaseDir?: string;
+}
+
+/**
+ * Parameters for the public `trace.truncated` emit hook.
+ *
+ * Used by:
+ *   - Internal close-time sentinel emit in `flushAndClose` (passes
+ *     `reason: "file-or-queue-cap-exceeded"`).
+ *   - Bounded-payload writer (passes reasons like
+ *     `"trajectory-runtime-file-size-limit"`).
+ */
+export interface TraceTruncatedParams {
+  /** Human-readable reason code. E.g. "file-or-queue-cap-exceeded",
+   *  "trajectory-runtime-file-size-limit", "trajectory-event-byte-limit". */
+  readonly reason: string;
+  /** Running total of dropped events at the time of the call. */
+  readonly droppedEvents: number;
+  /** Total dropped bytes (cumulative). Omitted when not yet tracked. */
+  readonly droppedEventBytes?: number;
+  /** The file or event limit that was hit, in bytes. Omitted when not applicable. */
+  readonly limitBytes?: number;
 }
 
 /**
@@ -286,4 +419,26 @@ export interface TrajectoryRecorder {
    * the writer from the registry.
    */
   flushAndClose(): Promise<void>;
+
+  /**
+   * Emit a `trace.truncated` event with operator-supplied reason and
+   * bound metadata. Used to signal bound-exhaustion at any write-time
+   * location, NOT only at close.
+   *
+   * The internal close-time sentinel emit in flushAndClose calls the
+   * SAME codepath with reason `"file-or-queue-cap-exceeded"`.
+   *
+   * Returns "queued" on accept, "dropped" when the per-writer queue
+   * cap is exceeded.
+   */
+  emitTraceTruncated(params: TraceTruncatedParams): "queued" | "dropped";
+
+  /**
+   * Returns the running count of events dropped by this recorder (both
+   * soft-cap and hard-cap drops). Observable counter — callers at
+   * lifecycle-envelope emit sites can read this to detect silent drops.
+   *
+   * Incremented on each call to `recordEvent` that returns `"dropped"`.
+   */
+  droppedEvents(): number;
 }

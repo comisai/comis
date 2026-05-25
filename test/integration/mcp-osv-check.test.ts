@@ -11,7 +11,7 @@
  * The unit-level branch coverage lives in the co-located
  * `packages/skills/src/skills/integrations/mcp-client/mcp-client-osv-check.test.ts`;
  * this file is the boundary check that the `@comis/skills` barrel
- * still exposes the entry points unchanged after Task 2's wire-up.
+ * still exposes the entry points unchanged.
  *
  * Per CLAUDE.md: integration tests import from `dist/`; this file
  * relies on `pnpm --filter=@comis/skills build` having run before

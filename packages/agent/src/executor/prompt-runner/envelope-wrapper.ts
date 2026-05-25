@@ -93,7 +93,7 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
 
   emitPreambleDebug(deps.logger, capabilityIndexResult, fullDynamicPreamble, deferredContext);
 
-  // Task 229: Inject top-1 RAG memory inline, adjacent to user message
+  // Inject top-1 RAG memory inline, adjacent to user message
   // for maximum LLM attention. Placed AFTER [End system context] and
   // BEFORE the user's actual question text.
   if (inlineMemory) {

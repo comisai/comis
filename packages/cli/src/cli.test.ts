@@ -79,6 +79,7 @@ describe("CLI entry point", () => {
       "reset",
       "secrets",
       "signal-setup",
+      "trace",
       "uninstall",
       "auth",
       // Cache stats.
@@ -87,8 +88,8 @@ describe("CLI entry point", () => {
       "mcp",
     ] as const;
 
-    it("registers exactly 22 commands", () => {
-      expect(program.commands).toHaveLength(22);
+    it("registers exactly 23 commands", () => {
+      expect(program.commands).toHaveLength(23);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

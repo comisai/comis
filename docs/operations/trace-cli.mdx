@@ -1,0 +1,355 @@
+---
+title: "Trace CLI"
+description: "comis trace subcommands — search by messageId, traceId, chat, time; export bundles"
+icon: "terminal"
+---
+
+The `comis trace` command is your one-stop tool for going from a user complaint to a diagnostic
+bundle. Five subcommands cover every correlation pattern: search by messageId, search by traceId,
+live-tail a chat, scan failures by time, and export a bundle.
+
+<Info>
+The `comis` CLI is not on PATH by default. All invocations on this page use the canonical form:
+
+```bash
+node packages/cli/dist/cli.js trace ...
+```
+
+If you've aliased `comis` to that path, the shorter form works too.
+</Info>
+
+---
+
+## Subcommands at a Glance
+
+| Subcommand | Use case | RPC |
+|------------|----------|-----|
+| `--message-id <uuid>` | A user said "my message didn't get a reply" and quoted the messageId | obs.trace.search |
+| `--trace-id <uuid>` | You have a traceId from a log line and want the full causal chain | obs.trace.search |
+| `--chat <id> --tail` | Watch a chat live while debugging an active issue | obs.trace.tail |
+| `--since <dur> --where <filter>` | "Show me failures in the last 10 minutes" | obs.trace.search |
+| `export <sessionId>` | Produce a self-contained bundle for engineer handoff | obs.trace.export |
+
+All subcommands support `--json` for machine-readable output.
+
+---
+
+## `--message-id <uuid>`
+
+Search for all trace events associated with a specific inbound message. Use this when a
+user can give you the messageId from their chat — it's the fastest path from complaint to trace.
+
+```bash
+node packages/cli/dist/cli.js trace --message-id 7f6a4b2c-9e3d-4a1b-8c7e-5d9f3e2a1b4c
+```
+
+Returns the channel → queue → agent → delivery row sequence for that message. On a 100-turn
+session the result is available in under 2 seconds (LRU O(1) lookup, falling back to a bounded
+2-day session-index scan on miss).
+
+### Default (human-readable) output
+
+```
+ts                          event              sessionId   traceId
+2026-05-24T07:46:21.899Z    channel.inbound    a1b2c3d4    74db9c8d-...
+2026-05-24T07:46:21.901Z    queue.enqueued     a1b2c3d4    74db9c8d-...
+2026-05-24T07:46:21.980Z    execution.started  a1b2c3d4    74db9c8d-...
+2026-05-24T07:46:24.112Z    execution.complete a1b2c3d4    74db9c8d-...
+2026-05-24T07:46:24.201Z    delivery.sent      a1b2c3d4    74db9c8d-...
+```
+
+### JSON mode
+
+```bash
+node packages/cli/dist/cli.js trace --message-id 7f6a4b2c-9e3d-4a1b-8c7e-5d9f3e2a1b4c --json
+```
+
+Returns:
+```json
+{
+  "rows": [
+    { "ts": "2026-05-24T07:46:21.899Z", "event": "channel.inbound", "sessionId": "a1b2c3d4", "traceId": "74db9c8d-..." },
+    { "ts": "2026-05-24T07:46:21.901Z", "event": "queue.enqueued",  "sessionId": "a1b2c3d4", "traceId": "74db9c8d-..." }
+  ]
+}
+```
+
+---
+
+## `--trace-id <uuid>`
+
+Search all log and trajectory events by traceId. Use this when you've found a traceId in
+a log line and want the full causal chain across the channel / queue / agent / delivery stages.
+
+```bash
+node packages/cli/dist/cli.js trace --trace-id 74db9c8d-4f2a-4b3c-9e1d-8a7f6e5d4c3b
+```
+
+Returns every row sharing the traceId. The `traceId` is injected via AsyncLocalStorage for the
+entire request lifecycle, so all events from inbound parse through final delivery share the same
+value — including error events and retry attempts.
+
+### JSON mode
+
+```bash
+node packages/cli/dist/cli.js trace --trace-id 74db9c8d-4f2a-4b3c-9e1d-8a7f6e5d4c3b --json
+```
+
+Same `{"rows": [...]}` structure as `--message-id --json`.
+
+---
+
+## `--chat <chatId> --tail`
+
+Stream trace events live for a specific chat. Use this when a user reports an issue
+*while it's happening* — open a terminal, start `--tail` on their chat, and watch the next message
+in real time.
+
+```bash
+node packages/cli/dist/cli.js trace --chat -1001234567890 --tail
+```
+
+Polls the `obs.trace.tail` RPC approximately every second. Press `Ctrl+C` to exit cleanly
+(handled via AbortController; the connection closes gracefully).
+
+<Info>
+`--tail` requires `--chat`. Running `--tail` without specifying a chat exits immediately with:
+`--tail requires --chat <chatId>`
+</Info>
+
+### Tail output (human-readable)
+
+Three space-separated fields per line:
+
+```
+2026-05-24T07:46:21.899Z    channel.inbound    a1b2c3d4
+2026-05-24T07:46:21.901Z    queue.enqueued     a1b2c3d4
+2026-05-24T07:46:21.980Z    execution.started  a1b2c3d4
+```
+
+### JSON tail mode (NDJSON)
+
+Emits one JSON object per line (newline-delimited JSON). Suitable for piping into `jq` or another
+consumer:
+
+```bash
+node packages/cli/dist/cli.js trace --chat -1001234567890 --tail --json | jq 'select(.event | startswith("queue."))'
+```
+
+Each line is a JSON object with the same shape as a `rows[]` entry.
+
+---
+
+## `--since <dur> --where <filter>`
+
+Scan the session index for recent failures. Use this when you need a quick overview of
+what went wrong in the last N minutes across all chats.
+
+```bash
+node packages/cli/dist/cli.js trace --since 10m --where error
+```
+
+The `--since` argument accepts duration suffixes: `10m`, `1h`, `2d`. The `--where` argument is a
+filter expression — `error` matches sessions that have a non-null `lastError` in the session index.
+
+### Common queries
+
+```bash
+# Failures in the last 10 minutes (across all chats)
+node packages/cli/dist/cli.js trace --since 10m --where error
+
+# All sessions in the last hour
+node packages/cli/dist/cli.js trace --since 1h
+
+# Machine-readable list of failed sessionIds
+node packages/cli/dist/cli.js trace --since 10m --where error --json | jq '.rows[].sessionId' | sort -u
+```
+
+### JSON mode
+
+```bash
+node packages/cli/dist/cli.js trace --since 10m --where error --json
+```
+
+Returns `{"rows": [...]}` with the same 4-field shape (`ts`, `event`, `sessionId`, `traceId`).
+
+---
+
+## `export <sessionId>`
+
+Export a self-contained diagnostic bundle for a session. Invokes the bundle
+pipeline, applies `platform-aware-v1` redaction, and prints the bundle directory path.
+
+```bash
+node packages/cli/dist/cli.js trace export 7a9b1c2d-3e4f-5a6b-7c8d-9e0f1a2b3c4d
+```
+
+Output:
+```
+Bundle written to: /workspace/.comis/trace-exports/comis-trace-7a9b1c2d-20260525T074621Z/
+```
+
+### JSON mode
+
+```bash
+node packages/cli/dist/cli.js trace export <sessionId> --json
+```
+
+Returns:
+```json
+{"bundlePath": "/workspace/.comis/trace-exports/comis-trace-7a9b1c2d-20260525T074621Z/"}
+```
+
+JSON mode is useful in scripts:
+```bash
+BUNDLE=$(node packages/cli/dist/cli.js trace export <sessionId> --json | jq -r '.bundlePath')
+tar czf bundle.tar.gz -C "$(dirname "$BUNDLE")" "$(basename "$BUNDLE")"
+```
+
+Full bundle export documentation — 8-file shape, hard limits, redaction policy, `/export-trajectory`
+slash command — is at [Incident Bundle](/operations/incident-bundle).
+
+---
+
+## Output Format Reference
+
+### Human-readable — search modes (`--message-id`, `--trace-id`, `--since/--where`)
+
+Four-column space-padded table. Column widths auto-fit content:
+
+```
+ts                          event              sessionId   traceId
+2026-05-24T07:46:21.899Z    channel.inbound    a1b2c3d4    74db9c8d-...
+```
+
+Fields: `ts` (ISO 8601), `event` (dot-notation event name), `sessionId` (first 8 chars of UUID),
+`traceId` (full UUID).
+
+### Human-readable — tail mode (`--chat --tail`)
+
+Three space-separated fields per line:
+
+```
+2026-05-24T07:46:21.899Z    channel.inbound    a1b2c3d4
+```
+
+### Human-readable — export mode
+
+Single line:
+
+```
+Bundle written to: <path>
+```
+
+### JSON — search modes
+
+```json
+{
+  "rows": [
+    {
+      "ts": "2026-05-24T07:46:21.899Z",
+      "event": "channel.inbound",
+      "sessionId": "a1b2c3d4-...",
+      "traceId": "74db9c8d-..."
+    }
+  ]
+}
+```
+
+### JSON — tail mode (NDJSON)
+
+One JSON object per line. Each object has the same shape as a `rows[]` entry:
+
+```
+{"ts":"2026-05-24T07:46:21.899Z","event":"channel.inbound","sessionId":"a1b2c3d4","traceId":"74db9c8d-..."}
+{"ts":"2026-05-24T07:46:21.901Z","event":"queue.enqueued","sessionId":"a1b2c3d4","traceId":"74db9c8d-..."}
+```
+
+The tail RPC also returns a `nextSinceMs` cursor internally (used by the polling loop); it is not
+surfaced in the per-line JSON objects.
+
+### JSON — export mode
+
+```json
+{"bundlePath": "/workspace/.comis/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/"}
+```
+
+---
+
+## Worked Example — User Complaint to Bundle in 3 Commands
+
+> A user reports: "I asked the bot a question 10 minutes ago and it never replied."
+
+The acceptance gate — under 5 minutes from complaint to bundle.
+
+**Command 1 — Find sessions with recent errors:**
+
+```bash
+node packages/cli/dist/cli.js trace --since 10m --where error --json | jq '.rows[].sessionId' | sort -u
+```
+
+Output: a list of distinct sessionIds with errors in the last 10 minutes. Pick the one that
+matches the user's chat (you can cross-reference `channelType` in the session-index JSONL if
+needed).
+
+**Command 2 — Verify the failure mode:**
+
+```bash
+node packages/cli/dist/cli.js trace --message-id <messageId-from-user>
+```
+
+Output: channel / queue / agent / delivery rows for that exact message. Look for:
+
+- **Missing delivery rows** — execution completed but delivery failed
+- **Retry events** — message was retried (check for `queue.retry` events)
+- **Dedup events** — message was seen before (`dedup.duplicate_inbound`)
+- **Execution absent** — message enqueued but no `execution.started` (queue stall or gate rejection)
+
+**Command 3 — Export the bundle:**
+
+```bash
+node packages/cli/dist/cli.js trace export <sessionId>
+```
+
+Output: `Bundle written to: <path>`. Compress, share with engineer per [Incident Bundle](/operations/incident-bundle).
+
+Three commands. Under 5 minutes from complaint to bundle. This is the acceptance gate.
+
+---
+
+## Performance Bounds
+
+| Subcommand | Bound |
+|------------|-------|
+| `--message-id` | Under 2 s on a 100-turn session (LRU O(1) + bounded 2-day index scan on miss) |
+| `--trace-id` | Under 2 s (same backend as `--message-id`) |
+| `--chat --tail` | ~1 s poll cadence; events appear within 1–2 polls of bus emission |
+| `--since --where` | Bounded by session index size (2-day scan window) |
+| `export` | Bounded by bundle pipeline; refuses sessions exceeding 50 MB |
+
+<Info>
+The backend uses an LRU bounded at 1024 entries for messageId lookups, falling back to a 2-day
+session-index scan on miss. The LRU starts cold on daemon restart — if a restart just happened,
+`--message-id` may return empty rows for messages processed before the restart. Use
+`--since <dur> --where error` as a fallback in that case.
+</Info>
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Incident Bundle" icon="folder-tree" href="/operations/incident-bundle">
+    Bundle export workflow — 8-file shape, hard limits, redaction policy, and the
+    `/export-trajectory` slash command.
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/operations/observability">
+    Bridge mapping, lifecycle envelopes, INFO promotions, and the dedup detector.
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/operations/logging">
+    Log levels, field dictionary, and log rotation policy.
+  </Card>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    The process that serves the RPCs — startup, shutdown, and configuration.
+  </Card>
+</CardGroup>

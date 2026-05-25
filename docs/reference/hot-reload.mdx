@@ -48,9 +48,9 @@ Deep-merges a partial config change into the existing configuration.
 4. **Type coercion** -- automatically converts string booleans (`"true"` / `"false"`) and numeric strings to native types (handles LLM tool call quirks)
 5. **Deep merge** -- merge patch into current in-memory config
 6. **Zod validation** -- validate merged result against `AppConfigSchema`
-7. **MCP server env restore** -- ENVREF-04: restore `env` fields from existing YAML when the UI patch omits them (because `config.read` redacts secret values)
-8. **Duplicate MCP server name check** -- MCPDUP-01: reject patches with duplicate server names
-9. **Suspicious env value check** -- ENVREF-03: reject bare `$VAR`, `[REDACTED]`, raw keys
+7. **MCP server env restore** -- restore `env` fields from existing YAML when the UI patch omits them (because `config.read` redacts secret values)
+8. **Duplicate MCP server name check** -- reject patches with duplicate server names
+9. **Suspicious env value check** -- reject bare `$VAR`, `[REDACTED]`, raw keys
 10. **Atomic write** -- write to temp file, then `rename()` to `config.local.yaml`
 11. **Best-effort git commit** -- record the change in config git history
 12. **Audit event** -- emit `audit:event` with `actionType: "config.patch"`
@@ -141,7 +141,7 @@ When discovery paths do not exist yet (e.g., the workspace `skills/` directory h
 
 ### Lifecycle
 
-The `SkillWatcherHandle` provides a `close()` method for shutdown cleanup. During graceful shutdown, all skill watchers are closed in the teardown sequence (HTRL-08).
+The `SkillWatcherHandle` provides a `close()` method for shutdown cleanup. During graceful shutdown, all skill watchers are closed in the teardown sequence.
 
 ## Gateway Restart
 

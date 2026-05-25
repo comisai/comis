@@ -33,7 +33,7 @@ import { validateSlackCredentials } from "./credential-validator.js";
 import { mapSlackToNormalized } from "./message-mapper.js";
 import { renderSlackButtons, renderSlackCards } from "./rich-renderer.js";
 import { executeSlackAction } from "./slack-actions.js";
-import { systemNowMs } from "@comis/core";
+import { runWithContext, systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -178,37 +178,53 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
 
           _lastMessageAt = systemNowMs();
           const normalized = mapSlackToNormalized(event);
+
+          // Mint traceId at ingress, stamp into metadata.
+          const traceId = randomUUID();
+          normalized.metadata.traceId = traceId;
+
           deps.logger.info(
-            { channelType: "slack", messageId: normalized.id, chatId: event.channel, previewLen: (normalized.text ?? "").length },
+            { step: "channels-inbound", channelType: "slack", messageId: normalized.id, chatId: event.channel, previewLen: (normalized.text ?? "").length, traceId },
             "Inbound message",
           );
 
           // Fire-and-forget dispatch to all registered handlers
-          for (const handler of handlers) {
-            try {
-              Promise.resolve(handler(normalized)).catch((handlerErr) => {
-                deps.logger.error(
-                  {
-                    err: handlerErr,
-                    channel: event.channel,
-                    hint: "Check Slack message handler logic",
-                    errorKind: "internal" as const,
-                  },
-                  "Slack message handler error",
-                );
-              });
-            } catch (handlerErr) {
-              deps.logger.error(
-                {
-                  err: handlerErr,
-                  channel: event.channel,
-                  hint: "Check Slack message handler logic",
-                  errorKind: "internal" as const,
-                },
-                "Slack message handler error",
-              );
-            }
-          }
+          runWithContext(
+            {
+              traceId,
+              startedAt: systemNowMs(),
+              channelType: "slack",
+              tenantId: "default",
+              trustLevel: "admin",
+            },
+            () => {
+              for (const handler of handlers) {
+                try {
+                  Promise.resolve(handler(normalized)).catch((handlerErr) => {
+                    deps.logger.error(
+                      {
+                        err: handlerErr,
+                        channel: event.channel,
+                        hint: "Check Slack message handler logic",
+                        errorKind: "internal" as const,
+                      },
+                      "Slack message handler error",
+                    );
+                  });
+                } catch (handlerErr) {
+                  deps.logger.error(
+                    {
+                      err: handlerErr,
+                      channel: event.channel,
+                      hint: "Check Slack message handler logic",
+                      errorKind: "internal" as const,
+                    },
+                    "Slack message handler error",
+                  );
+                }
+              }
+            },
+          );
         });
 
         // Button callback (block_actions) listener
@@ -240,31 +256,45 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
               },
             };
 
-            for (const handler of handlers) {
-              try {
-                Promise.resolve(handler(normalized)).catch((handlerErr) => {
-                  deps.logger.error(
-                    {
-                      err: handlerErr,
-                      channel: normalized.channelId,
-                      hint: "Check Slack callback handler for unhandled errors",
-                      errorKind: "internal" as const,
-                    },
-                    "Slack action handler error",
-                  );
-                });
-              } catch (handlerErr) {
-                deps.logger.error(
-                  {
-                    err: handlerErr,
-                    channel: normalized.channelId,
-                    hint: "Check Slack callback handler for unhandled errors",
-                    errorKind: "internal" as const,
-                  },
-                  "Slack action handler error",
-                );
-              }
-            }
+            // Mint traceId at ingress for block_actions dispatch.
+            const traceId = randomUUID();
+            normalized.metadata.traceId = traceId;
+            runWithContext(
+              {
+                traceId,
+                startedAt: systemNowMs(),
+                channelType: "slack",
+                tenantId: "default",
+                trustLevel: "admin",
+              },
+              () => {
+                for (const handler of handlers) {
+                  try {
+                    Promise.resolve(handler(normalized)).catch((handlerErr) => {
+                      deps.logger.error(
+                        {
+                          err: handlerErr,
+                          channel: normalized.channelId,
+                          hint: "Check Slack callback handler for unhandled errors",
+                          errorKind: "internal" as const,
+                        },
+                        "Slack action handler error",
+                      );
+                    });
+                  } catch (handlerErr) {
+                    deps.logger.error(
+                      {
+                        err: handlerErr,
+                        channel: normalized.channelId,
+                        hint: "Check Slack callback handler for unhandled errors",
+                        errorKind: "internal" as const,
+                      },
+                      "Slack action handler error",
+                    );
+                  }
+                }
+              },
+            );
           } catch (error) {
             deps.logger.warn(
               {
@@ -354,8 +384,8 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         const messageId = String(result.ts ?? "");
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
-        deps.logger.debug(
-          { channelType: "slack", messageId, chatId: channelId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { step: "channels-outbound", channelType: "slack", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(messageId);
@@ -389,8 +419,8 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           ts: messageId,
           text,
         });
-        deps.logger.debug(
-          { channelType: "slack", messageId, chatId: channelId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { step: "channels-outbound", channelType: "slack", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(undefined);

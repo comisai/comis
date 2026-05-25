@@ -33,7 +33,6 @@ import { TOOL_ORDER } from "../bootstrap/sections/tool-descriptions.js";
 /**
  * Build a {@link ToolDefinition} matching `pi-coding-agent`'s shape with the
  * minimum surface needed by the renderer (the renderer only reads `.name`).
- * Mirrors `tool-deferral.test.ts:30-48` makeTool.
  */
 function makeTool(name: string): ToolDefinition {
   return {

@@ -11142,15 +11142,205 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "alertBudget": {
+        "enabled": true,
+        "thresholds": {
+          "auth": {
+            "count": 20,
+            "windowMs": 60000
+          },
+          "config": {
+            "count": 10,
+            "windowMs": 60000
+          },
+          "dependency": {
+            "count": 20,
+            "windowMs": 60000
+          },
+          "internal": {
+            "count": 5,
+            "windowMs": 60000
+          },
+          "network": {
+            "count": 100,
+            "windowMs": 60000
+          },
+          "platform": {
+            "count": 50,
+            "windowMs": 60000
+          },
+          "precondition": {
+            "count": 50,
+            "windowMs": 60000
+          },
+          "resource": {
+            "count": 10,
+            "windowMs": 60000
+          },
+          "timeout": {
+            "count": 50,
+            "windowMs": 60000
+          },
+          "validation": {
+            "count": 100,
+            "windowMs": 60000
+          }
+        }
+      },
+      "logRotation": {
+        "compressAged": true,
+        "maxAgeDays": 30,
+        "maxFiles": 5,
+        "maxSizeBytes": 52428800
+      },
       "persistence": {
         "enabled": true,
         "retentionDays": 30,
         "snapshotIntervalMs": 300000
-      }
+      },
+      "trajectory": {}
     },
     "immutable": false,
     "path": "observability",
     "type": "object"
+  },
+  {
+    "default": {
+      "enabled": true,
+      "thresholds": {
+        "auth": {
+          "count": 20,
+          "windowMs": 60000
+        },
+        "config": {
+          "count": 10,
+          "windowMs": 60000
+        },
+        "dependency": {
+          "count": 20,
+          "windowMs": 60000
+        },
+        "internal": {
+          "count": 5,
+          "windowMs": 60000
+        },
+        "network": {
+          "count": 100,
+          "windowMs": 60000
+        },
+        "platform": {
+          "count": 50,
+          "windowMs": 60000
+        },
+        "precondition": {
+          "count": 50,
+          "windowMs": 60000
+        },
+        "resource": {
+          "count": 10,
+          "windowMs": 60000
+        },
+        "timeout": {
+          "count": 50,
+          "windowMs": 60000
+        },
+        "validation": {
+          "count": 100,
+          "windowMs": 60000
+        }
+      }
+    },
+    "immutable": false,
+    "path": "observability.alertBudget",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.alertBudget.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "auth": {
+        "count": 20,
+        "windowMs": 60000
+      },
+      "config": {
+        "count": 10,
+        "windowMs": 60000
+      },
+      "dependency": {
+        "count": 20,
+        "windowMs": 60000
+      },
+      "internal": {
+        "count": 5,
+        "windowMs": 60000
+      },
+      "network": {
+        "count": 100,
+        "windowMs": 60000
+      },
+      "platform": {
+        "count": 50,
+        "windowMs": 60000
+      },
+      "precondition": {
+        "count": 50,
+        "windowMs": 60000
+      },
+      "resource": {
+        "count": 10,
+        "windowMs": 60000
+      },
+      "timeout": {
+        "count": 50,
+        "windowMs": 60000
+      },
+      "validation": {
+        "count": 100,
+        "windowMs": 60000
+      }
+    },
+    "immutable": false,
+    "path": "observability.alertBudget.thresholds",
+    "type": "object"
+  },
+  {
+    "default": {
+      "compressAged": true,
+      "maxAgeDays": 30,
+      "maxFiles": 5,
+      "maxSizeBytes": 52428800
+    },
+    "immutable": false,
+    "path": "observability.logRotation",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.logRotation.compressAged",
+    "type": "boolean"
+  },
+  {
+    "default": 30,
+    "immutable": false,
+    "path": "observability.logRotation.maxAgeDays",
+    "type": "integer"
+  },
+  {
+    "default": 5,
+    "immutable": false,
+    "path": "observability.logRotation.maxFiles",
+    "type": "integer"
+  },
+  {
+    "default": 52428800,
+    "immutable": false,
+    "path": "observability.logRotation.maxSizeBytes",
+    "type": "integer"
   },
   {
     "default": {
@@ -11179,6 +11369,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "observability.persistence.snapshotIntervalMs",
     "type": "integer"
+  },
+  {
+    "default": {},
+    "immutable": false,
+    "path": "observability.trajectory",
+    "type": "object"
+  },
+  {
+    "immutable": false,
+    "path": "observability.trajectory.dirOverride",
+    "type": "string"
   },
   {
     "default": {
@@ -29686,13 +29887,232 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "observability": {
       "additionalProperties": false,
       "default": {
+        "alertBudget": {
+          "enabled": true,
+          "thresholds": {
+            "auth": {
+              "count": 20,
+              "windowMs": 60000
+            },
+            "config": {
+              "count": 10,
+              "windowMs": 60000
+            },
+            "dependency": {
+              "count": 20,
+              "windowMs": 60000
+            },
+            "internal": {
+              "count": 5,
+              "windowMs": 60000
+            },
+            "network": {
+              "count": 100,
+              "windowMs": 60000
+            },
+            "platform": {
+              "count": 50,
+              "windowMs": 60000
+            },
+            "precondition": {
+              "count": 50,
+              "windowMs": 60000
+            },
+            "resource": {
+              "count": 10,
+              "windowMs": 60000
+            },
+            "timeout": {
+              "count": 50,
+              "windowMs": 60000
+            },
+            "validation": {
+              "count": 100,
+              "windowMs": 60000
+            }
+          }
+        },
+        "logRotation": {
+          "compressAged": true,
+          "maxAgeDays": 30,
+          "maxFiles": 5,
+          "maxSizeBytes": 52428800
+        },
         "persistence": {
           "enabled": true,
           "retentionDays": 30,
           "snapshotIntervalMs": 300000
-        }
+        },
+        "trajectory": {}
       },
       "properties": {
+        "alertBudget": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": true,
+            "thresholds": {
+              "auth": {
+                "count": 20,
+                "windowMs": 60000
+              },
+              "config": {
+                "count": 10,
+                "windowMs": 60000
+              },
+              "dependency": {
+                "count": 20,
+                "windowMs": 60000
+              },
+              "internal": {
+                "count": 5,
+                "windowMs": 60000
+              },
+              "network": {
+                "count": 100,
+                "windowMs": 60000
+              },
+              "platform": {
+                "count": 50,
+                "windowMs": 60000
+              },
+              "precondition": {
+                "count": 50,
+                "windowMs": 60000
+              },
+              "resource": {
+                "count": 10,
+                "windowMs": 60000
+              },
+              "timeout": {
+                "count": 50,
+                "windowMs": 60000
+              },
+              "validation": {
+                "count": 100,
+                "windowMs": 60000
+              }
+            }
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "thresholds": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "count": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "windowMs": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "count",
+                  "windowMs"
+                ],
+                "type": "object"
+              },
+              "default": {
+                "auth": {
+                  "count": 20,
+                  "windowMs": 60000
+                },
+                "config": {
+                  "count": 10,
+                  "windowMs": 60000
+                },
+                "dependency": {
+                  "count": 20,
+                  "windowMs": 60000
+                },
+                "internal": {
+                  "count": 5,
+                  "windowMs": 60000
+                },
+                "network": {
+                  "count": 100,
+                  "windowMs": 60000
+                },
+                "platform": {
+                  "count": 50,
+                  "windowMs": 60000
+                },
+                "precondition": {
+                  "count": 50,
+                  "windowMs": 60000
+                },
+                "resource": {
+                  "count": 10,
+                  "windowMs": 60000
+                },
+                "timeout": {
+                  "count": 50,
+                  "windowMs": 60000
+                },
+                "validation": {
+                  "count": 100,
+                  "windowMs": 60000
+                }
+              },
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "enabled",
+            "thresholds"
+          ],
+          "type": "object"
+        },
+        "logRotation": {
+          "additionalProperties": false,
+          "default": {
+            "compressAged": true,
+            "maxAgeDays": 30,
+            "maxFiles": 5,
+            "maxSizeBytes": 52428800
+          },
+          "properties": {
+            "compressAged": {
+              "default": true,
+              "type": "boolean"
+            },
+            "maxAgeDays": {
+              "default": 30,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxFiles": {
+              "default": 5,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxSizeBytes": {
+              "default": 52428800,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "maxSizeBytes",
+            "maxFiles",
+            "maxAgeDays",
+            "compressAged"
+          ],
+          "type": "object"
+        },
         "persistence": {
           "additionalProperties": false,
           "default": {
@@ -29724,10 +30144,23 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "snapshotIntervalMs"
           ],
           "type": "object"
+        },
+        "trajectory": {
+          "additionalProperties": false,
+          "default": {},
+          "properties": {
+            "dirOverride": {
+              "type": "string"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
-        "persistence"
+        "persistence",
+        "trajectory",
+        "logRotation",
+        "alertBudget"
       ],
       "type": "object"
     },

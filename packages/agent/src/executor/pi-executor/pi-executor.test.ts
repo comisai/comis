@@ -8,6 +8,7 @@ import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearS
 import { clearSessionToolSchemaSnapshot } from "../executor-session-state.js";
 import { resetPairedMemoryDedupForTests } from "../executor-post-execution.js";
 import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache-detection/index.js";
+import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock setup -- vi.hoisted runs before vi.mock factories
@@ -6329,5 +6330,129 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(closeIdx).toBeGreaterThan(trajectoryInitStart);
     const initLiteral = src.slice(trajectoryInitStart, closeIdx);
     expect(initLiteral).toMatch(/sessionFile:\s*sessionAdapter\.getSessionPath\(sessionKey\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Populated runtimeSnapshot.skills
+// ---------------------------------------------------------------------------
+
+describe("populated runtimeSnapshot.skills", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Restore default mock returns after vi.clearAllMocks() wiped them.
+    mockPrompt.mockResolvedValue(undefined);
+    mockGetLastAssistantText.mockReturnValue("test response");
+    mockSetModel.mockResolvedValue(undefined);
+    mockSubscribe.mockReturnValue(vi.fn());
+    mockGetResult.mockReturnValue({
+      tokensUsed: { input: 100, output: 50, total: 150 },
+      cost: { total: 0.01 },
+      stepsExecuted: 2,
+      llmCalls: 1,
+      finishReason: "stop",
+    });
+    (createAgentSession as Mock).mockResolvedValue({
+      session: mockSession,
+      extensionsResult: {},
+    });
+    mockSession.messages = [
+      { role: "assistant", content: [{ type: "text", text: "test response" }] },
+    ];
+    mockGetSkills.mockReturnValue({ skills: [], diagnostics: [] });
+  });
+
+  it("skillRegistry_with_getSnapshot_populates_trace_metadata_skills", async () => {
+    // Arrange: skillRegistry mock that exposes getSnapshot() with two skills.
+    const mockSkillRegistry = {
+      getEligibleSkillNames: vi.fn().mockReturnValue(new Set<string>(["fileops", "search"])),
+      initFromSdkSkills: vi.fn(),
+      getSnapshot: vi.fn().mockReturnValue({
+        skills: [
+          { name: "fileops", version: "1.0" },
+          { name: "search" },
+        ],
+      }),
+    };
+
+    const deps = createMockDeps({ skillRegistry: mockSkillRegistry });
+    const executor = createPiExecutor(testConfig, deps);
+    await executor.execute(testMessage, testSessionKey);
+
+    // The runtimeSnapshot is passed to createPiEventBridge as a field.
+    // vi.clearAllMocks() in beforeEach ensures mock.calls[0] is from this test.
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
+    const snapshot = bridgeCall.runtimeSnapshot;
+
+    expect(snapshot).toBeDefined();
+    // name->id mapping + version passthrough
+    expect(snapshot.skills).toEqual([
+      { id: "fileops", version: "1.0" },
+      { id: "search" },
+    ]);
+  });
+
+  it("skillRegistry_without_getSnapshot_keeps_skills_empty", async () => {
+    // Arrange: legacy two-method mock (no getSnapshot) — back-compat preserved.
+    const legacySkillRegistry = {
+      getEligibleSkillNames: vi.fn().mockReturnValue(new Set<string>(["fileops"])),
+      initFromSdkSkills: vi.fn(),
+      // intentionally no getSnapshot
+    };
+
+    const deps = createMockDeps({ skillRegistry: legacySkillRegistry });
+    const executor = createPiExecutor(testConfig, deps);
+    await executor.execute(testMessage, testSessionKey);
+
+    // vi.clearAllMocks() in beforeEach ensures mock.calls[0] is from this test.
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
+    const snapshot = bridgeCall.runtimeSnapshot;
+
+    expect(snapshot).toBeDefined();
+    // Back-compat: legacy mock without getSnapshot keeps skills []
+    expect(snapshot.skills).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildPromptingSnapshot redaction scaffold
+// ---------------------------------------------------------------------------
+
+describe("buildPromptingSnapshot redaction scaffold", () => {
+  it("buildPromptingSnapshot_with_undefined_inputs_returns_empty", () => {
+    const result = buildPromptingSnapshot({});
+    expect(result).toEqual({});
+  });
+
+  it("buildPromptingSnapshot_redacts_userPromptPrefixText", () => {
+    // The long decimal ID (123456789012) should be redacted by the
+    // long-decimal-id pattern. The result must NOT contain the raw digits.
+    const result = buildPromptingSnapshot({
+      userPromptPrefixText: "User connected 123456789012 now",
+    });
+    expect(result.userPromptPrefixText).toBeDefined();
+    expect(result.userPromptPrefixText).toContain("<REDACTED:");
+    expect(result.userPromptPrefixText).not.toContain("123456789012");
+  });
+
+  it("buildPromptingSnapshot_substitutes_paths_in_userPromptPrefixText", () => {
+    const result = buildPromptingSnapshot({
+      userPromptPrefixText: "Read /Users/alice/foo first",
+      pathOpts: { homeDir: "/Users/alice" },
+    });
+    expect(result.userPromptPrefixText).toBeDefined();
+    expect(result.userPromptPrefixText).toContain("$HOME/foo");
+    expect(result.userPromptPrefixText).not.toContain("/Users/alice/foo");
+  });
+
+  it("buildPromptingSnapshot_preserves_byteLen_and_digest", () => {
+    const result = buildPromptingSnapshot({
+      systemPromptDigest: "sha256:abc",
+      systemPromptByteLen: 1234,
+    });
+    expect(result.systemPromptDigest).toBe("sha256:abc");
+    expect(result.systemPromptByteLen).toBe(1234);
+    // No userPromptPrefixText when not provided
+    expect(result.userPromptPrefixText).toBeUndefined();
   });
 });

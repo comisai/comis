@@ -26,6 +26,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { writeTrajectoryPointerFileBestEffort } from "./pointer-file.js";
+import { resolveTrajectoryPointerFilePath } from "./paths.js";
 
 let tmpRoot: string;
 
@@ -150,5 +151,34 @@ describe("writeTrajectoryPointerFileBestEffort", () => {
     ).not.toThrow();
 
     expect(existsSync(sessionFile + ".trajectory-path.json")).toBe(false);
+  });
+
+  it("writer_reader_symmetry: pointer path written matches resolveTrajectoryPointerFilePath result", () => {
+    // Write a pointer file, then verify the path the writer used matches
+    // what resolveTrajectoryPointerFilePath returns for the same sessionFile.
+    // This closes the writer/reader symmetry contract.
+    const sessionFile = join(tmpRoot, "session.jsonl");
+    const runtimeFile = join(tmpRoot, "elsewhere", "runtime.jsonl");
+
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile,
+      sessionId: "sid-symmetry",
+      runtimeFile,
+    });
+
+    const resolvedPointerPath = resolveTrajectoryPointerFilePath(sessionFile);
+    // The writer must have used the same path — file must exist there.
+    expect(existsSync(resolvedPointerPath)).toBe(true);
+    // The resolved path must equal <sessionFile>.trajectory-path.json.
+    expect(resolvedPointerPath).toBe(sessionFile + ".trajectory-path.json");
+  });
+});
+
+describe("resolveTrajectoryPointerFilePath", () => {
+  it("suffix_is_trajectory_path_json: returns <sessionFile>.trajectory-path.json", () => {
+    // Pins the suffix so a future renamer cannot break the reader without
+    // this test catching it first.
+    expect(resolveTrajectoryPointerFilePath("/tmp/sess.jsonl"))
+      .toBe("/tmp/sess.jsonl.trajectory-path.json");
   });
 });

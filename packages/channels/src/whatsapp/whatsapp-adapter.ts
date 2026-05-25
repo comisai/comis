@@ -34,7 +34,8 @@ import {
 import { validateWhatsAppAuth } from "./credential-validator.js";
 import { mapBaileysToNormalized, type BaileysMessage } from "./message-mapper.js";
 import { createWhatsAppVoiceSender } from "./voice-sender.js";
-import { systemNowMs, systemSetTimeout } from "@comis/core";
+import { systemNowMs, systemSetTimeout, runWithContext } from "@comis/core";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -173,19 +174,29 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
 
         _lastMessageAt = systemNowMs();
         const normalized = mapBaileysToNormalized(m as BaileysMessage);
+
+        // Mint traceId at ingress, stamp into metadata.
+        const traceId = randomUUID();
+        normalized.metadata.traceId = traceId;
+
         deps.logger.info(
-          { channelType: "whatsapp", messageId: normalized.id, chatId: m.key.remoteJid ?? "", previewLen: (normalized.text ?? "").length },
+          { step: "channels-inbound", channelType: "whatsapp", messageId: normalized.id, chatId: m.key.remoteJid ?? "", previewLen: (normalized.text ?? "").length, traceId },
           "Inbound message",
         );
-        for (const handler of handlers) {
-          try {
-            Promise.resolve(handler(normalized)).catch((e) =>
-              deps.logger.error({ err: e, hint: "Check WhatsApp message handler logic", errorKind: "internal" as const }, "Handler error"),
-            );
-          } catch (e) {
-            deps.logger.error({ err: e, hint: "Check WhatsApp message handler logic", errorKind: "internal" as const }, "Handler error");
-          }
-        }
+        void runWithContext(
+          { traceId, startedAt: systemNowMs(), channelType: "whatsapp", tenantId: "default", trustLevel: "admin" },
+          () => {
+            for (const handler of handlers) {
+              try {
+                Promise.resolve(handler(normalized)).catch((e) =>
+                  deps.logger.error({ err: e, hint: "Check WhatsApp message handler logic", errorKind: "internal" as const }, "Handler error"),
+                );
+              } catch (e) {
+                deps.logger.error({ err: e, hint: "Check WhatsApp message handler logic", errorKind: "internal" as const }, "Handler error");
+              }
+            }
+          },
+        );
       }
     });
 
@@ -280,8 +291,8 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         const messageId = sent?.key?.id ?? "";
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
-        deps.logger.debug(
-          { channelType: "whatsapp", messageId, chatId: channelId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { step: "channels-outbound", channelType: "whatsapp", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(messageId);
@@ -315,8 +326,8 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
           text,
           edit: { remoteJid: channelId, id: messageId, fromMe: true },
         } as Parameters<typeof sock.sendMessage>[1]);
-        deps.logger.debug(
-          { channelType: "whatsapp", messageId, chatId: channelId, preview: text.slice(0, 1500) },
+        deps.logger.info(
+          { step: "channels-outbound", channelType: "whatsapp", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(undefined);

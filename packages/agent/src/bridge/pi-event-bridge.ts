@@ -17,6 +17,7 @@ import {
   formatSessionKey,
   sanitizeLogString,
   systemNowMs,
+  systemDateFrom,
   tryGetContext,
   type SessionKey,
   type TypedEventBus,
@@ -26,6 +27,7 @@ import {
   type ErrorKind,
 } from "@comis/core";
 import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
+import { buildTraceMetadata } from "@comis/observability";
 import type { ComisLogger } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { randomUUID } from "node:crypto";
@@ -47,11 +49,11 @@ import { extractMcpServerName } from "@comis/shared";
 import { classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
 
 /**
- * Fix D2 (log-review): classify a tool failure's errorKind when the SDK
- * reported `isError: true` from the start (i.e., `toolSuccess === false`
- * BEFORE the exitCode branch flips it). Pre-fix this branch left
- * `toolErrorKind` undefined and the `tool:executed` event payload
- * lacked `errorKind` for the most common failure path. Heuristic:
+ * Classify a tool failure's errorKind when the SDK reported `isError: true`
+ * from the start (i.e., `toolSuccess === false` BEFORE the exitCode branch
+ * flips it). Previously this branch left `toolErrorKind` undefined and the
+ * `tool:executed` event payload lacked `errorKind` for the most common
+ * failure path. Heuristic:
  *  - errorText starting with `[invalid_value]` / `[validation]` → validation
  *  - otherwise → dependency (external tool / MCP server returned an error)
  */
@@ -59,6 +61,9 @@ function classifyToolError(_toolName: string, errorText: string | undefined): Er
   if (errorText && /^\[(invalid_value|validation)\]/.test(errorText)) return "validation";
   return "dependency";
 }
+import * as os from "node:os";
+import * as pathModule from "node:path";
+import { appendSessionIndexEntry } from "@comis/observability";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
 import { checkStepLimit, emitStepLimitAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
@@ -225,6 +230,28 @@ export interface PiEventBridgeDeps {
    * pre-tlx unconditional emit so existing harnesses keep working.
    */
   trajectoryRegistry?: SessionTrajectoryHandleRegistry;
+  /**
+   * Snapshot passed into `trace.metadata` once per session, immediately
+   * after `session.started`. Contains harness/model/config/plugins/skills/
+   * prompting/redaction. When omitted, the trace.metadata lifecycle envelope
+   * is skipped for this session.
+   *
+   * The config field is run through `sanitizeForPersistence` inside
+   * `buildTraceMetadata` — raw config may contain secrets.
+   */
+  runtimeSnapshot?: import("@comis/observability").TraceMetadataParams;
+  /**
+   * Comis data root directory (e.g. `~/.comis`). Used by the session-index
+   * writer to derive the date-rolled JSONL path
+   * `<dataDir>/logs/session-index.YYYY-MM-DD.jsonl`.
+   *
+   * When omitted, defaults to `~/.comis` via `os.homedir()` so existing
+   * callers (tests, legacy harnesses) work without changes — their
+   * session-index writes land in the production data directory.
+   * Production wiring: pi-executor threads `deps.sessionBaseDir`'s
+   * ancestor (`~/.comis`) here.
+   */
+  dataDir?: string;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -366,6 +393,33 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             timestamp: systemNowMs(),
           });
           deps.trajectoryRegistry?.markSessionStarted(formattedKey);
+          // Append session_started to the date-rolled session index JSONL.
+          // Co-located with the session:started bus emit + trajectoryRegistry
+          // latch so session_started fires exactly once per session (same
+          // guard).
+          appendSessionIndexEntry(
+            deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
+            {
+              traceSchema: "comis-session-index",
+              schemaVersion: 1,
+              event: "session_started",
+              ts: systemDateFrom(systemNowMs()).toISOString(),
+              sessionId: formattedKey,
+              sessionKey: formattedKey,
+              channelType,
+              channelId: deps.channelId ?? "",
+              agentId: deps.agentId,
+              traceIds: [deps.executionId],
+            },
+          );
+          // Emit the trace.metadata lifecycle envelope directly via the
+          // recorder — no bus event source.
+          if (deps.runtimeSnapshot !== undefined) {
+            const recorder = deps.trajectoryRegistry?.getRecorder?.(formattedKey);
+            if (recorder != null) {
+              recorder.recordEvent("trace.metadata", buildTraceMetadata(deps.runtimeSnapshot));
+            }
+          }
           break;
         }
 
@@ -478,14 +532,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const mcpServer = extractMcpServerName(endEvent.toolName);
           if (!toolSuccess) {
             errorText = extractErrorText(endEvent.result);
-            // Fix D2 (log-review): when toolSuccess was already false from
-            // the SDK's isError flag (not flipped by an exitCode check),
-            // toolErrorKind is still undefined here. Classify it so the
-            // downstream tool:executed event carries an actionable
-            // errorKind for trajectory + alerting consumers. For MCP
-            // tools, mirror the dedicated MCP classifier into the closed
-            // ErrorKind union (timeout → timeout, connection/transport →
-            // dependency, everything else → classifyToolError fallback).
+            // When toolSuccess was already false from the SDK's isError
+            // flag (not flipped by an exitCode check), toolErrorKind is
+            // still undefined here. Classify it so the downstream
+            // tool:executed event carries an actionable errorKind for
+            // trajectory + alerting consumers. For MCP tools, mirror the
+            // dedicated MCP classifier into the closed ErrorKind union
+            // (timeout → timeout, connection/transport → dependency,
+            // everything else → classifyToolError fallback).
             if (toolErrorKind === undefined) {
               if (mcpServer !== undefined) {
                 const mcpKind = classifyMcpErrorType(errorText);
@@ -1157,6 +1211,26 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               ...costCorrectionField,
             });
 
+            // Append turn_completed to the session index. Co-located with
+            // observability:token_usage emit (the only site that carries
+            // BOTH input AND output tokens per turn — onTurnUsage only
+            // has input tokens).
+            appendSessionIndexEntry(
+              deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
+              {
+                traceSchema: "comis-session-index",
+                schemaVersion: 1,
+                event: "turn_completed",
+                ts: systemDateFrom(systemNowMs()).toISOString(),
+                sessionId: formatSessionKey(deps.sessionKey),
+                traceId: deps.executionId,
+                durationMs: llmLatencyMs ?? 0,
+                inputTokens: usage.input,
+                outputTokens: usage.output,
+                lastError: null, // populated by error paths in a follow-up plan; null here
+              },
+            );
+
             // Safety: check budget after recording (delegated to bridge-safety-controls)
             {
               const budgetCheck = checkBudgetLimit(deps.budgetGuard, m.aborted);
@@ -1373,7 +1447,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         case "compaction_start": {
           m.compactionStartMs = systemNowMs();
           deps.logger.info(
-            { sessionKey: formatSessionKey(deps.sessionKey) },
+            { step: "compaction", sessionKey: formatSessionKey(deps.sessionKey) },
             "Auto-compaction started",
           );
           deps.eventBus.emit("compaction:started", {
@@ -1442,6 +1516,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // INFO for successful completion
             deps.logger.info(
               {
+                step: "compaction",
                 durationMs,
                 aborted: false,
                 hasSummary: !!compactionEvent.result?.summary,

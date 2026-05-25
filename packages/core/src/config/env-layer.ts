@@ -7,6 +7,7 @@
  *
  *   COMIS_GATEWAY_HOST → gateway.host (e.g. "0.0.0.0" inside the Docker image)
  *   COMIS_GATEWAY_PORT → gateway.port
+ *   COMIS_TRAJECTORY_DIR → observability.trajectory.dirOverride
  *
  * The returned object is a partial config layer fed to mergeLayered() at
  * lower priority than YAML files: schema defaults < env layer < config.yaml.
@@ -15,7 +16,8 @@
  * var, preserving the secure-by-default contract on `gateway.host`.
  *
  * Empty-string host and non-numeric / out-of-range ports are dropped so a
- * typo never silently relocates the daemon.
+ * typo never silently relocates the daemon. Same drop semantics apply to
+ * COMIS_TRAJECTORY_DIR so an empty-string env var doesn't override the default.
  *
  * @module
  */
@@ -24,6 +26,8 @@
 export interface GatewayEnvSource {
   COMIS_GATEWAY_HOST?: string | undefined;
   COMIS_GATEWAY_PORT?: string | undefined;
+  /** Relocates runtime trajectory JSONL files to a custom directory. */
+  COMIS_TRAJECTORY_DIR?: string | undefined;
 }
 
 /**
@@ -47,5 +51,19 @@ export function buildGatewayEnvLayer(env: GatewayEnvSource): Record<string, unkn
     }
   }
 
-  return Object.keys(gateway).length > 0 ? { gateway } : {};
+  // Project COMIS_TRAJECTORY_DIR → observability.trajectory.dirOverride.
+  // Drop empty / whitespace-only values so a typo never silently relocates trajectory files.
+  let observability: Record<string, unknown> | undefined;
+  const rawTrajectoryDir = env.COMIS_TRAJECTORY_DIR;
+  if (typeof rawTrajectoryDir === "string") {
+    const trimmed = rawTrajectoryDir.trim();
+    if (trimmed.length > 0) {
+      observability = { trajectory: { dirOverride: trimmed } };
+    }
+  }
+
+  return {
+    ...(Object.keys(gateway).length > 0 ? { gateway } : {}),
+    ...(observability !== undefined ? { observability } : {}),
+  };
 }

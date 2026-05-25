@@ -1,97 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Observability-domain RPC contracts. Mirrors
- * `packages/daemon/src/api/obs-handlers.ts`.
+ * Observability-domain RPC contracts. All 24 methods are admin-scoped.
  *
- * The obs-handlers.ts factory exposes 18 admin-scoped methods. Every
- * method is gated by `registerRpcPassthrough(..., "admin")` in
- * `packages/daemon/src/wiring/setup-gateway-api.ts`, so every contract
- * carries `scopes: ["admin"] as const`. Most methods additionally
- * perform an in-handler `_trustLevel === "admin"` check for defense in
- * depth; two methods (`obs.context.pipeline` + `obs.context.dag`) rely
- * SOLELY on the gateway-router scope gate (no in-handler check —
- * handler bodies pass through directly to the context-pipeline
- * collector).
+ * Groups and method names:
+ *   Diagnostics (1): obs.diagnostics
+ *   Billing (5):     obs.billing.{byProvider,byAgent,bySession,total,usage24h}
+ *   Channels (3):    obs.channels.{all,stale,get}
+ *   Delivery (2):    obs.delivery.{recent,stats}
+ *   Context (2):     obs.context.{pipeline,dag}  (gateway-scope gate only)
+ *   Cache (3):       agent.cacheStats, obs.getCacheStats, memory.embeddingCache
+ *   Reset (2):       obs.reset, obs.reset.table
+ *   SystemPrompt (2):obs.systemPromptReport.{latest,list}
+ *   Trace (3):       obs.trace.{export,search,tail}
  *
- * The 18 methods (alphabetical within sub-group):
+ * The original 21 methods (all except the Trace group) are dispatched from
+ * the web SPA only (packages/web/src/views/) and handled by
+ * packages/daemon/src/api/obs-handlers.ts. The Trace group (obs.trace.*)
+ * is also CLI-accessible via packages/cli/src/commands/trace.ts,
+ * handled by packages/daemon/src/api/obs-handlers/obs-trace.ts.
  *
- *   Diagnostics (1):
- *   - `obs.diagnostics` (admin) — Query diagnostic events by
- *     category / time / limit. Returns `{ events, counts }` where
- *     `events` is a merged array (in-memory + SQLite) of
- *     DiagnosticEvent objects (loose-modeled).
+ * **Loose-record use.** Response shapes carrying deeply nested or optional
+ * fields use `z.record(z.string(), z.unknown())` as the escape hatch.
+ * The handler's existing test suite remains the authoritative shape validator.
  *
- *   Billing (5):
- *   - `obs.billing.byProvider` (admin) — `{ providers: ProviderBilling[] }`.
- *   - `obs.billing.byAgent`    (admin) — BillingSnapshot + optional
- *     `budgetUsed` wrapper.
- *   - `obs.billing.bySession`  (admin) — BillingSnapshot.
- *   - `obs.billing.total`      (admin) — BillingSnapshot.
- *   - `obs.billing.usage24h`   (admin) — Array of `{ hour, tokens }`
- *     (TokenUsagePoint[]).
- *
- *   Channels (3):
- *   - `obs.channels.all`   (admin) — `{ channels: ChannelActivity[] }`.
- *   - `obs.channels.stale` (admin) — `{ stale: ChannelActivity[] }`.
- *   - `obs.channels.get`   (admin) — `{ channel: ChannelActivity | null }`.
- *
- *   Delivery (2):
- *   - `obs.delivery.recent` (admin) — `{ deliveries: DeliveryContext[] }`.
- *   - `obs.delivery.stats`  (admin) — `{ total, successes, failures, avgLatencyMs }`.
- *
- *   Context (2 — NO in-handler admin check; gateway scope gate is sole gate):
- *   - `obs.context.pipeline` (admin) — Array of PipelineSnapshot.
- *   - `obs.context.dag`      (admin) — Array of DagCompactionSnapshot.
- *
- *   Cache (3):
- *   - `agent.cacheStats`     (admin) — `{ providers, totalCacheSaved }`.
- *   - `obs.getCacheStats`    (admin) — `{ cacheHitRate, cacheEffectiveness }`.
- *   - `memory.embeddingCache` (admin) — Enabled-flag + L1 stats + circuit-breaker state.
- *
- *   Reset (2):
- *   - `obs.reset`        (admin) — `{ reset: true, rowsDeleted }`.
- *   - `obs.reset.table`  (admin) — `{ reset: true, table, rowsDeleted }`.
- *
- * **Loose-record use.** Many response shapes (DiagnosticEvent,
- * DeliveryContext, ChannelActivity, ProviderBilling, PipelineSnapshot,
- * DagCompactionSnapshot) carry deeply nested fields, optional members,
- * and `Record<string, unknown>` sub-fields (e.g.,
- * `DiagnosticEvent.data`, `DeliveryContext.metadata`,
- * `PipelineSnapshot.evictionCategories`). Modelling them tighter would
- * require pinning every sub-shape's wire format. The escape hatch is
- * `z.record(z.string(), z.unknown())` (and
- * `z.array(z.record(z.string(), z.unknown()))` for array-valued
- * payloads). All wire-observable shapes pass through this projection
- * cleanly because the handler's TypeScript types are structurally
- * record-shaped at every nested level. The handler's existing test
- * suite (61 tests in obs-handlers.test.ts) remains the authoritative
- * shape validator.
- *
- * **CLI exemption (web-SPA only — verified via empty grep).** The CLI
- * has ZERO `client.call("obs.*"|"agent.cacheStats"|"memory.embeddingCache", ...)`
- * sites — confirmed by:
- *   ```
- *   grep -rln 'client\.call("obs\.\|client\.call("agent\.cacheStats\|client\.call("memory\.embeddingCache' packages/cli/src/
- *   ```
- *   (returns empty)
- *
- * The 18 observability methods are dispatched ONLY from the web SPA
- * (`packages/web/src/views/`) where the contract registry is consumed
- * via the codegen-generated artifact (packages/web/src/api/
- * contracts.generated.ts). The CLI doctor probes consume the
- * OAuthCredentialStorePort directly (NOT via obs.*) — see
- * `packages/cli/src/doctor/checks/oauth-health.ts` which has zero
- * obs/agent/memory RPC calls.
- *
- * **Two in-handler-admin-check exceptions (`obs.context.*`).** Both
- * `obs.context.pipeline` and `obs.context.dag` lack an explicit
- * `if (_trustLevel !== "admin") throw …` check in the handler body.
- * They rely on the gateway router's `registerRpcPassthrough(..., "admin")`
- * registration as the sole trust gate. The contract `scopes: ["admin"]`
- * is consistent with the gateway-side gate; the test suite deliberately
- * calls these handlers without `_trustLevel` and expects success —
- * preserving this contract makes the contract layer
- * registration-plane-agnostic.
+ * **Two in-handler-admin-check exceptions.** `obs.context.pipeline` and
+ * `obs.context.dag` rely solely on the gateway-router scope gate (no
+ * in-handler `_trustLevel` check). All other handlers add a redundant
+ * defense-in-depth check.
  *
  * @module
  */
@@ -762,6 +697,62 @@ export const ObsSystemPromptReportListContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
+// obs.trace.export / obs.trace.search / obs.trace.tail
+// Handler: packages/daemon/src/api/obs-handlers/obs-trace.ts
+// CLI:     packages/cli/src/commands/trace.ts
+// ---------------------------------------------------------------------------
+
+/** Export a full session trace bundle. `sessionId` is required (min 1). */
+export const ObsTraceExportContract = defineContract({
+  method: "obs.trace.export",
+  request: z.object({
+    sessionId: z.string().min(1),
+  }),
+  response: z.object({
+    bundlePath: z.string(),
+  }),
+  scopes: ["admin"] as const,
+});
+
+/**
+ * Search trace rows by messageId / traceId / chatId / since / where.
+ * All request fields are optional; `limit` max 1000.
+ */
+export const ObsTraceSearchContract = defineContract({
+  method: "obs.trace.search",
+  request: z.object({
+    messageId: z.string().optional(),
+    traceId: z.string().optional(),
+    chatId: z.string().optional(),
+    since: z.string().optional(),
+    where: z.string().optional(),
+    limit: z.number().int().positive().max(1000).optional(),
+  }),
+  response: z.object({
+    rows: ObsRecordArray,
+  }),
+  scopes: ["admin"] as const,
+});
+
+/**
+ * Poll for live trace events on a chat. `chatId` required (min 1).
+ * `limit` max 100. True WebSocket streaming deferred to v2.
+ */
+export const ObsTraceTailContract = defineContract({
+  method: "obs.trace.tail",
+  request: z.object({
+    chatId: z.string().min(1),
+    sinceMs: z.number().optional(),
+    limit: z.number().int().positive().max(100).optional(),
+  }),
+  response: z.object({
+    events: ObsRecordArray,
+    nextSinceMs: z.number(),
+  }),
+  scopes: ["admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
 // Domain array — registered into API_CONTRACTS_ORDERED in index.ts.
 // ---------------------------------------------------------------------------
 
@@ -796,4 +787,7 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsResetTableContract,
   ObsSystemPromptReportLatestContract,
   ObsSystemPromptReportListContract,
+  ObsTraceExportContract,
+  ObsTraceSearchContract,
+  ObsTraceTailContract,
 ] as const;

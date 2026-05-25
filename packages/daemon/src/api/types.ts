@@ -468,6 +468,20 @@ export interface ObservabilityApiDeps {
   /** obs-handlers reads deps.tokenTracker for cache stats RPC.
    *  Only used by obs-handlers; no cross-slice collision. */
   tokenTracker?: import("../observability/token-tracker.js").TokenTracker;
+  /**
+   * Directory containing session-index.YYYY-MM-DD.jsonl files.
+   * Used by obs.trace.* handlers. Defaults to $HOME/.comis at handler-construction
+   * time when omitted. Optional preserves backward compatibility with existing
+   * handler tests that pass {} for deps.
+   */
+  dataDir?: string;
+  /**
+   * DI seam for the bundle pipeline.
+   * Tests inject a stub that returns ok({ bundleDir: "/tmp/bundle", ... }).
+   * Production wires the real exportTrajectoryBundle from @comis/observability.
+   * Optional preserves backward compatibility.
+   */
+  exportTrajectoryBundle?: typeof import("@comis/observability").exportTrajectoryBundle;
 }
 
 /**

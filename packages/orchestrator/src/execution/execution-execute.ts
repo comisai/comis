@@ -10,7 +10,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { ChannelPort, NormalizedMessage, SessionKey, PerChannelStreamingConfig } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs, systemSetInterval, systemClearInterval, systemScheduleTimeout } from "@comis/core";
+import { formatSessionKey, runWithContext, tryGetContext, createDeliveryOrigin, systemNowMs, systemSetInterval, systemClearInterval, systemScheduleTimeout } from "@comis/core";
 import { withTimeout, TimeoutError } from "@comis/shared";
 import type { AgentExecutor } from "@comis/agent";
 import type { CommandDirectives } from "../commands/index.js";
@@ -156,7 +156,11 @@ export async function executeLlm(
   try {
     result = await withTimeout(
       runWithContext({
-        traceId: randomUUID(),
+        // Reuse the ingress traceId from the channel-adapter runWithContext
+        // wrap. Fall back to a fresh mint only when called outside any
+        // ingress scope (scheduler heartbeats, background tasks, direct RPC
+        // entries that don't carry channel context).
+        traceId: tryGetContext()?.traceId ?? randomUUID(),
         tenantId: sessionKey.tenantId,
         userId: sessionKey.userId,
         sessionKey: formatSessionKey(sessionKey),

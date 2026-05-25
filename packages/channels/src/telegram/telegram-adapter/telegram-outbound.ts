@@ -117,8 +117,8 @@ export async function sendMessage(
     const sent = await sendWithThreadFallback(doSend, threadParams, deps.logger);
     state.lastMessageAt = systemNowMs();
     state.lastError = undefined;
-    deps.logger.debug(
-      { channelType: "telegram", messageId: String(sent.message_id), chatId, preview: finalText.slice(0, 1500) },
+    deps.logger.info(
+      { step: "channels-outbound", channelType: "telegram", messageId: String(sent.message_id), chatId },
       "Outbound message",
     );
     return ok(String(sent.message_id));
@@ -167,8 +167,8 @@ export async function editMessage(
         throw htmlErr;
       }
     }
-    deps.logger.debug(
-      { channelType: "telegram", messageId, chatId, preview: text.slice(0, 1500) },
+    deps.logger.info(
+      { step: "channels-outbound", channelType: "telegram", messageId, chatId },
       "Outbound message",
     );
     return ok(undefined);

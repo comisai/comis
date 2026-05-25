@@ -167,12 +167,13 @@ export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
-import { createLogLevelManager } from "./observability/log-infra.js";
+import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
 import { createTokenTracker } from "./observability/token-tracker.js";
 import { createTracingLogger } from "./observability/trace-logger.js";
 import { setupChannelHealthLogging } from "./observability/channel-health-logger.js";
 import { createProcessMonitor } from "./process/process-monitor.js";
 import { ok, err, suppressError } from "@comis/shared";
+import { exportTrajectoryBundle } from "@comis/observability";
 import { randomUUID } from "node:crypto";
 import { existsSync, chmodSync, statSync, mkdirSync, readFileSync, unlinkSync, cpSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
@@ -191,6 +192,7 @@ import { createInboundMessageIdResolver, type InboundMessageIdResolver } from ".
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
 import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-preflight.js";
+import { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
 import os from "node:os";
 import { dirname as pathDirname } from "node:path";
 import { inspect } from "node:util";
@@ -632,8 +634,26 @@ function buildChannelManagerDeps(deps: {
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
-    onSuspiciousContent,
+    onSuspiciousContent, dataDir,
   } = agents;
+  // Build exportSessionBundle DI closure for the /export-trajectory slash
+  // command. Uses exportTrajectoryBundle from @comis/observability (same
+  // pipeline as `comis trace export`).
+  const exportSessionBundle = async (sessionId: string): Promise<{ bundlePath: string }> => {
+    const sessionsDir = safePath(container.config.dataDir ?? dataDir, "sessions");
+    const sessionFile = safePath(sessionsDir, `${sessionId}.jsonl`);
+    const workspaceDir = defaultWorkspaceDir ?? safePath(container.config.dataDir ?? dataDir, "workspace");
+    const result = await exportTrajectoryBundle({
+      sessionId,
+      sessionKey: sessionId,
+      sessionFile,
+      workspaceDir,
+      traceId: sessionId,  // best-effort; bundle exporter uses for naming only
+      agentId: "unknown",  // best-effort; available in session file header
+    });
+    if (!result.ok) throw new Error(`Bundle export failed: ${result.error.kind}`);
+    return { bundlePath: result.value.bundleDir };
+  };
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger,
@@ -663,6 +683,7 @@ function buildChannelManagerDeps(deps: {
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     piSessionAdapters, costTrackers, deliveryQueue,
     cronExecutionTrackers: executionTrackers,
+    exportSessionBundle,
   };
 }
 
@@ -1066,6 +1087,11 @@ function buildRpcDispatchDeps(deps: {
     skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
     imageHandlerDeps,
     oauthCredentialStore: c.oauthCredentialStore,
+    // Wire observability DI seams.
+    // ObservabilityApiDeps.dataDir: used by obs.trace.* handlers for session-index + bundle export.
+    // ObservabilityApiDeps.exportTrajectoryBundle: DI seam for obs.trace.export RPC (comis trace export <sessionId>).
+    dataDir: c.dataDir,
+    exportTrajectoryBundle,
   };
 }
 
@@ -2417,6 +2443,11 @@ async function bootShutdown(
   // Override-derived locals -- only consumed by setupShutdown below.
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
 
+  // Declared here (before setupShutdown) so the thunk captures the ref;
+  // assigned after emitStartupInvariants. Ref-object pattern mirrors
+  // shutdownRef.value — setupShutdown reads .fn at teardown time.
+  const _healthAggRef: { fn: (() => void) | undefined } = { fn: undefined };
+
   // 8. Graceful shutdown: signal-handler registration + teardown ordering
   //    both owned by setupShutdown; the previous
   //    `_registerGracefulShutdown` factory seam is gone.
@@ -2452,6 +2483,8 @@ async function bootShutdown(
     shutdownDeliveryMirror: shutdownMirror,
     outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,
     stopChannelHealthMonitor: stopChannelHealthMonitor ?? undefined,
+    // Thunk reads _healthAggRef.fn at teardown time — populated by emitStartupInvariants.
+    unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:
@@ -2472,6 +2505,34 @@ async function bootShutdown(
     container, daemonLogger, daemonVersion, agents, adaptersByType, configPaths,
     db, secretStore, cachedPort, ttsAdapter, visionRegistry,
     startupStartMs, instanceId,
+  });
+
+  // 9.1. Boot invariant record + duplicate-wiring WARN.
+  // Emitted AFTER the startup banner so the INFO record follows the human-readable
+  // "Comis daemon started" line in log streams, and BEFORE saveLastKnownGood /
+  // DaemonInstance return so WARNs fire before the daemon accepts traffic.
+  // depSlotConsistency is passed explicitly — the daemon composition root is the
+  // only site that knows which adapter slots were used (post-fix: channelRegistry
+  // only, adaptersList removed from setup-channels-runtime.ts).
+  // Derive logsDir from daemon.logging.filePath for the startup sweep.
+  const _loggingFilePath = container.config.daemon?.logging?.filePath;
+  const _logsDir = _loggingFilePath
+    ? pathDirname(expandTilde(_loggingFilePath))
+    : undefined;
+
+  _healthAggRef.fn = emitStartupInvariants({
+    logger: daemonLogger,
+    adaptersByType,
+    rawHandlerCounts: channelManager?.getRawHandlerCounts() ?? new Map(),
+    channelPlugins: gateway.channelPlugins ?? new Map(),
+    pluginRegistry: container.pluginRegistry ?? { count: () => 0 },
+    mcpClientManager: mcpClientManager ?? { getTools: () => [] },
+    agentsConfig: agents,
+    depSlotConsistency: { adaptersList: false, channelRegistry: true },
+    logRotationPolicy: container.config.observability?.logRotation,
+    logsDir: _logsDir,
+    alertBudgetPolicy: container.config.observability?.alertBudget,
+    eventBus: container.eventBus,
   });
 
   // Snapshot current config as last-known-good after successful startup.

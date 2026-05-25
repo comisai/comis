@@ -33,7 +33,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { TRAJECTORY_BRIDGE_MAPPING } from "@comis/observability";
+import { TRAJECTORY_BRIDGE_MAPPING, TRAJECTORY_EVENT_TYPES, type TrajectoryEventType } from "@comis/observability";
 import { formatViolations } from "../support/architecture-helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -61,14 +61,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "audit:event",
 
   // -------------------------------------------------------------------
-  // Compaction signals — internal context-engine state, not user-
-  // visible turn-level observability.
-  // -------------------------------------------------------------------
-  "compaction:flush",
-  "compaction:started",
-  "compaction:recommended",
-
-  // -------------------------------------------------------------------
   // Skill registry events — internal, not turn-scoped.
   // -------------------------------------------------------------------
   "skill:loaded",
@@ -78,12 +70,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "skill:failed",
 
   // -------------------------------------------------------------------
-  // Security / safety — fed by separate alerting paths; trajectory
-  // intentionally does not record raw injection patterns.
+  // Security / safety — fed by separate alerting paths. The below
+  // events are intentionally out of scope. Note:
+  //   security:injection_detected → trajectory via TRAJECTORY_BRIDGE_MAPPING
+  //   security:memory_tainted    → trajectory via TRAJECTORY_BRIDGE_MAPPING
+  //   security:warn              → trajectory via TRAJECTORY_BRIDGE_MAPPING
   // -------------------------------------------------------------------
-  "security:injection_detected",
   "security:injection_rate_exceeded",
-  "security:memory_tainted",
   "sender:trust_resolved",
   "tool:install_detour_detected",
 
@@ -184,34 +177,31 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "background_task:reentered",
 
   // -------------------------------------------------------------------
-  // Coalescing + buffering at the orchestrator queue level — not on
-  // the trajectory (the trajectory captures the post-coalesced
-  // execution path via prompt.submitted etc.).
+  // Coalescing + buffering at the orchestrator queue level (debounce
+  // signals only — queue:* events are now in TRAJECTORY_BRIDGE_MAPPING).
   // -------------------------------------------------------------------
   "coalesce:flushed",
   "debounce:buffered",
   "debounce:flushed",
-  "queue:coalesced",
-  "queue:dequeued",
-  "queue:enqueued",
-  "queue:overflow",
 
   // -------------------------------------------------------------------
-  // Context-engine internals — granular pipeline signals; the
-  // turn-level summary lands in prompt.submitted instead. NOTE:
-  // `context:pipeline` itself was lifted into TRAJECTORY_BRIDGE_MAPPING
-  // (→ `context.compiled`). The post-LLM patch
-  // event `context:pipeline:cache` stays internal — its cache fields
-  // are folded into the pre-LLM `context:pipeline` snapshot the
-  // trajectory captures.
+  // Context-engine internals — only context:compacted and
+  // context:pipeline:cache remain allowlisted here.
+  //
+  // Removed (now bridge-mapped → TRAJECTORY_BRIDGE_MAPPING):
+  //   context:evicted, context:masked, context:overflow,
+  //   context:rehydrated, context:reread
+  //
+  // context:integrity is NOT here — it was never in this set (emitted
+  // via optional chaining `?.emit`, which the arch-test regex misses).
+  //
+  // context:compacted: LLM compaction summary (distinct from the
+  //   per-event granular eviction/mask/reread signals — kept internal).
+  // context:pipeline:cache: post-LLM cache-patch event whose fields
+  //   are folded into the pre-LLM context:pipeline trajectory snapshot.
   // -------------------------------------------------------------------
   "context:compacted",
-  "context:evicted",
-  "context:masked",
-  "context:overflow",
   "context:pipeline:cache",
-  "context:rehydrated",
-  "context:reread",
 
   // -------------------------------------------------------------------
   // Diagnostic counters — internal aggregation, not user-visible.
@@ -222,16 +212,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // Elevated-model routing - daemon decision before the turn starts.
   // -------------------------------------------------------------------
   "elevated:model_routed",
-
-  // -------------------------------------------------------------------
-  // Execution-level orchestrator signals — captured indirectly via
-  // tool.result / model.completed; the trajectory does not duplicate.
-  // -------------------------------------------------------------------
-  "execution:aborted",
-  "execution:budget_warning",
-  "execution:output_escalated",
-  "execution:prompt_timeout",
-  "execution:signed_replay_recovered",
 
   // -------------------------------------------------------------------
   // Follow-up handler events - internal scheduler.
@@ -259,8 +239,8 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
 
   // -------------------------------------------------------------------
   // Sender / send-policy events - access control, not observability.
+  // sender:blocked is now in TRAJECTORY_BRIDGE_MAPPING (channelType only).
   // -------------------------------------------------------------------
-  "sender:blocked",
   "sendpolicy:allowed",
   "sendpolicy:denied",
   "sendpolicy:override_changed",
@@ -295,6 +275,25 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "typing:proxy_stop",
   "typing:started",
   "typing:stopped",
+]);
+
+/**
+ * Closed set of trajectory event types emitted DIRECTLY by the
+ * runtime recorder (not via the EventBus → bridge → recordEvent
+ * path). These are lifecycle envelopes and the control-plane
+ * sentinels emitted inside flushAndClose. Adding to this set is a
+ * closed-set design decision, NOT an allowlist for missing bridge
+ * mappings.
+ *
+ * Shrink-only: the set may only shrink (types can move to the bus
+ * bridge path, reducing the direct-emit surface), never grow beyond
+ * the explicitly listed lifecycle envelopes + control-plane sentinels.
+ */
+const DIRECT_EMIT_TRAJECTORY_TYPES: ReadonlySet<TrajectoryEventType> = new Set<TrajectoryEventType>([
+  "trace.metadata",
+  "trace.artifacts",
+  "trace.truncated",
+  "trace.write_failures",
 ]);
 
 const SCANNED_PACKAGES = ["agent", "orchestrator"] as const;
@@ -427,5 +426,36 @@ describe("trajectory-event-types-known -- bridge mapping coverage from emit site
   it("EVENTS_NOT_TRAJECTORY_MAPPED is disjoint from TRAJECTORY_BRIDGE_MAPPING (no double-coverage)", () => {
     const intersection = [...EVENTS_NOT_TRAJECTORY_MAPPED].filter((e) => mapped.has(e));
     expect(intersection, "events in BOTH sets — pick one").toEqual([]);
+  });
+
+  it("DIRECT_EMIT_TRAJECTORY_TYPES is disjoint from TRAJECTORY_BRIDGE_MAPPING values + EVENTS_NOT_TRAJECTORY_MAPPED", () => {
+    const bridgedValues = new Set<string>(Object.values(TRAJECTORY_BRIDGE_MAPPING));
+    const overlapsBridge = [...DIRECT_EMIT_TRAJECTORY_TYPES].filter((t) => bridgedValues.has(t));
+    expect(
+      overlapsBridge,
+      "direct-emit types must NOT be in TRAJECTORY_BRIDGE_MAPPING values (direct-emit lifecycle envelopes are not bus-bridged)",
+    ).toEqual([]);
+    const overlapsAllowlist = [...DIRECT_EMIT_TRAJECTORY_TYPES].filter((t) =>
+      EVENTS_NOT_TRAJECTORY_MAPPED.has(t),
+    );
+    expect(
+      overlapsAllowlist,
+      "direct-emit types must NOT be in EVENTS_NOT_TRAJECTORY_MAPPED (different semantic — direct-emit != not-mapped)",
+    ).toEqual([]);
+  });
+
+  it("every DIRECT_EMIT_TRAJECTORY_TYPES member is a valid TrajectoryEventType", () => {
+    const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
+    const invalid = [...DIRECT_EMIT_TRAJECTORY_TYPES].filter((t) => !allTypes.has(t));
+    expect(
+      invalid,
+      "DIRECT_EMIT_TRAJECTORY_TYPES references unknown TrajectoryEventType — add the type to TRAJECTORY_EVENT_TYPES first",
+    ).toEqual([]);
+  });
+
+  it("bridge mapping has at least 45 entries (final gate)", () => {
+    // The mapping currently has 53 entries.
+    // This assertion confirms the ≥45 lower bound is satisfied with margin.
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBeGreaterThanOrEqual(45);
   });
 });

@@ -596,6 +596,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "AttachmentSchema",
       "NormalizedMessageSchema",
       "parseMessage",
+      // getMessageTraceId: typed accessor for NormalizedMessage.metadata.traceId.
+      // Consumers: orchestrator channel-manager.ts will read msg.metadata.traceId via this helper.
+      "getMessageTraceId",
       "TrustLevelSchema",
       "MemorySourceSchema",
       "MemoryEntrySchema",
@@ -1479,6 +1482,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Residency-test harness consumers (dynamic require).
       "createTracingLogger",
       "TracingLoggerOptions",
+      // Replay harness consumers.
+      // Consumer: test/integration/incident-replay-2026-05-24.test.ts
+      "emitStartupInvariants",
+      "StartupInvariantsDeps",
+      "StartupInvariants",
       // mcp.oauth_login / mcp.oauth_logout handler factory + deps type.
       // Mounted by the dispatcher composition root; the
       // public-export-consumers walker does not pick the boot-path wiring
@@ -1748,6 +1756,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "VisibleDeliveryRecord",
     ])],
     // @comis/skills: baseline orphans tracked here.
+    // @comis/orchestrator: test-only consumer exports tracked here.
+    // createDedupDetector / DedupDetector / DedupDetectorOptions / DedupCheckResult
+    // are re-exported so test/integration/incident-replay-2026-05-24.test.ts
+    // and the perf test can import the detector by its public name without
+    // going through internal source paths. The public-export-consumers AST
+    // walker only scans packages/*/src/**  (NOT test/), so the test-side
+    // consumer is invisible to the walker — tracked here instead.
+    ["@comis/orchestrator", new Set<string>([
+      "createDedupDetector",
+      "DedupDetector",
+      "DedupDetectorOptions",
+      "DedupCheckResult",
+    ])],
     ["@comis/skills", new Set<string>([
       "createWebSearchTool",
       "__clearSearchCache",

@@ -5,6 +5,7 @@
  * Pins the JSON-Schema shape of McpConfigSchema + McpServerEntrySchema
  * to a per-schema snapshot file under __snapshots__/. Detects accidental
  * field reordering, removal, or rename across parallel worktrees.
+ *
  * Mitigates schema-additions races.
  *
  * McpConfigSchema / McpServerEntrySchema cover the MCP-only shape;

@@ -34,6 +34,9 @@ import {
   ObsGetCacheStatsContract,
   ObsResetContract,
   ObsResetTableContract,
+  ObsTraceExportContract,
+  ObsTraceSearchContract,
+  ObsTraceTailContract,
   OBSERVABILITY_CONTRACTS,
 } from "./observability.js";
 
@@ -42,11 +45,11 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 21 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(21);
+  it("OBSERVABILITY_CONTRACTS has exactly 24 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(24);
   });
 
-  it("all 21 contracts are admin-scoped", () => {
+  it("all 24 contracts are admin-scoped", () => {
     for (const c of OBSERVABILITY_CONTRACTS) {
       expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
     }
@@ -78,6 +81,10 @@ describe("observability-domain contracts", () => {
       // SystemPromptReport surface.
       "obs.systemPromptReport.latest",
       "obs.systemPromptReport.list",
+      // Trace correlation contracts.
+      "obs.trace.export",
+      "obs.trace.search",
+      "obs.trace.tail",
     ]);
   });
 
@@ -740,5 +747,98 @@ describe("observability-domain contracts", () => {
         }
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ObsTrace contracts
+// ---------------------------------------------------------------------------
+
+describe("ObsTrace contracts", () => {
+  // Test 1
+  it("ObsTraceSearchContract method equals obs.trace.search", () => {
+    expect(ObsTraceSearchContract.method).toBe("obs.trace.search");
+  });
+
+  // Test 2
+  it("ObsTraceSearchContract request accepts empty object (all fields optional)", () => {
+    expect(() => ObsTraceSearchContract.request.parse({})).not.toThrow();
+  });
+
+  // Test 3
+  it("ObsTraceSearchContract request rejects limit above 1000", () => {
+    expect(() =>
+      ObsTraceSearchContract.request.parse({ limit: 1500 }),
+    ).toThrow();
+  });
+
+  // Test 4
+  it("ObsTraceSearchContract response accepts rows array of loose records", () => {
+    expect(() =>
+      ObsTraceSearchContract.response.parse({ rows: [{ a: 1 }, { b: "x" }] }),
+    ).not.toThrow();
+  });
+
+  // Test 5
+  it("ObsTraceSearchContract scopes equals [admin]", () => {
+    expect(ObsTraceSearchContract.scopes).toEqual(["admin"]);
+  });
+
+  // Test 6
+  it("ObsTraceTailContract method equals obs.trace.tail", () => {
+    expect(ObsTraceTailContract.method).toBe("obs.trace.tail");
+  });
+
+  // Test 7
+  it("ObsTraceTailContract request rejects empty chatId (min 1)", () => {
+    expect(() =>
+      ObsTraceTailContract.request.parse({ chatId: "" }),
+    ).toThrow();
+  });
+
+  // Test 8
+  it("ObsTraceTailContract request rejects limit above 100", () => {
+    expect(() =>
+      ObsTraceTailContract.request.parse({ chatId: "abc", limit: 150 }),
+    ).toThrow();
+  });
+
+  // Test 9
+  it("ObsTraceTailContract response accepts events array and nextSinceMs", () => {
+    expect(() =>
+      ObsTraceTailContract.response.parse({ events: [], nextSinceMs: 1234 }),
+    ).not.toThrow();
+  });
+
+  // Test 10
+  it("ObsTraceExportContract method equals obs.trace.export", () => {
+    expect(ObsTraceExportContract.method).toBe("obs.trace.export");
+  });
+
+  // Test 11
+  it("ObsTraceExportContract request rejects empty sessionId (min 1)", () => {
+    expect(() =>
+      ObsTraceExportContract.request.parse({ sessionId: "" }),
+    ).toThrow();
+  });
+
+  // Test 12
+  it("ObsTraceExportContract response accepts bundlePath string", () => {
+    expect(() =>
+      ObsTraceExportContract.response.parse({ bundlePath: "/tmp/bundle" }),
+    ).not.toThrow();
+  });
+
+  // Test 13
+  it("OBSERVABILITY_CONTRACTS has exactly 24 entries after adding three new contracts", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(24);
+  });
+
+  // Test 14
+  it("OBSERVABILITY_CONTRACTS includes all three new contracts by method name", () => {
+    const methods = OBSERVABILITY_CONTRACTS.map((c) => c.method);
+    expect(methods.filter((m) => m === "obs.trace.search")).toHaveLength(1);
+    expect(methods.filter((m) => m === "obs.trace.tail")).toHaveLength(1);
+    expect(methods.filter((m) => m === "obs.trace.export")).toHaveLength(1);
   });
 });

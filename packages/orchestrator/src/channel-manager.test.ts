@@ -1404,4 +1404,38 @@ describe("createChannelManager", () => {
       expect(enqueueWarn).toBeUndefined();
     });
   });
+
+  describe("getRawHandlerCounts()", () => {
+    it("reports rawHandlerCount of 1 for a single cleanly wired adapter", async () => {
+      const adapter = makeAdapter({ channelType: "echo", channelId: "echo-1" });
+      const deps = makeDeps({ adapters: [adapter], channelRegistry: undefined });
+      const manager = createChannelManager(deps);
+
+      await manager.startAll();
+
+      const rawCounts = manager.getRawHandlerCounts();
+      expect(rawCounts.get("echo")).toBe(1);
+    });
+
+    it("reports rawHandlerCount of 2 when same adapter appears in both deps.adapters and channelRegistry (regression wiring), while activeCount remains 1", async () => {
+      const adapter = makeAdapter({ channelType: "echo", channelId: "echo-reg" });
+      // Simulate regression: same adapter instance in both slots
+      const regressionRegistry = {
+        ...makeFakeChannelRegistry(),
+        getChannelPlugins: () => [{ adapter, capabilities: {} }],
+      };
+      const deps = makeDeps({
+        adapters: [adapter],
+        channelRegistry: regressionRegistry,
+      });
+      const manager = createChannelManager(deps);
+
+      await manager.startAll();
+
+      const rawCounts = manager.getRawHandlerCounts();
+      expect(rawCounts.get("echo")).toBe(2);
+      // post-dedup activeCount is still 1 (same instance, silently deduped)
+      expect(manager.activeCount).toBe(1);
+    });
+  });
 });

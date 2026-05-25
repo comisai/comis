@@ -17,7 +17,7 @@
  * vs manual-paste, fallback timing, error mapping, identity derivation via
  * resolveCodexAuthIdentity.
  *
- * Logging discipline (CLAUDE.md): submodule: "oauth-login" on every call.
+ * Logging discipline: submodule: "oauth-login" on every call.
  * NEVER log access tokens, refresh tokens, PKCE state, or callback `code`.
  * Identity in success logs uses redactEmailForLog (semi-redacted).
  *

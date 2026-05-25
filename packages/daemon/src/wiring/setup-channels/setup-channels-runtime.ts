@@ -89,6 +89,8 @@ export interface ChannelManagerBuildDeps {
     getBySession(key: string): { totalTokens: number; totalCost: number };
   }>;
   cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
+  /** DI seam for /export-trajectory. Absent → command falls through to generic slash handling. */
+  exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
 }
 
 /**
@@ -471,7 +473,6 @@ export async function buildAndStartChannelManager(
         // For /new and /reset, the static response from command handler is used.
         // Greeting generation (LLM-powered) is available in the gateway; channels
         // use the simpler "New session created." / "Session reset." responses.
-
         return {
           handled: result.handled,
           response: result.response,
@@ -508,6 +509,7 @@ export async function buildAndStartChannelManager(
           uptime: `${Math.floor(process.uptime() / 60)}m`,
         };
       },
+      exportSessionBundle: deps.exportSessionBundle,
     });
 
     await channelManager.startAll();
@@ -591,7 +593,6 @@ export async function buildAndStartChannelManager(
 
   return { channelManager, lifecycleReactors, approvalNotifier, commandQueue };
 }
-
 // Re-export the unused Attachment + ChannelPluginPort types to silence lint
 // and document the public-surface boundary: the registry consumes the same
 // node:fs/promises + core types here when assembling ChannelsResult.

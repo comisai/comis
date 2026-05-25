@@ -85,6 +85,85 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // pipeline snapshot at emit time (the producer reuses the same
   // payload-fence semantics for both events).
   "context:pipeline": "context.compiled",
+
+  // ---- Queue / Execution / Sender ----
+  // Queue lifecycle — events-channel.ts
+  "queue:enqueued": "queue.enqueued",
+  "queue:dequeued": "queue.dequeued",
+  "queue:overflow": "queue.overflow",
+  "queue:coalesced": "queue.coalesced",
+
+  // Execution control — events-messaging.ts
+  "execution:aborted": "execution.aborted",
+  "execution:budget_warning": "execution.budget_warning",
+  "execution:prompt_timeout": "execution.prompt_timeout",
+  "execution:output_escalated": "execution.output_escalated",
+  // Maps to "execution.replay_recovered" (NOT "execution.signed_replay_recovered")
+  // per canonical name.
+  "execution:signed_replay_recovered": "execution.replay_recovered",
+
+  // Security + Sender (scanned subset)
+  // patterns[] and senderId are intentionally omitted in translatePayload.
+  "security:injection_detected": "security.injection_detected",
+  "sender:blocked": "sender.blocked",
+
+  // Delivery retry (events-channel.ts; emitter packages/core/delivery — not arch-scanned)
+  // chatId (Telegram long-decimal ID) and channelId are intentionally omitted.
+  "retry:attempted": "delivery.retry",
+  "retry:exhausted": "delivery.retry_exhausted",
+  "retry:markdown_fallback": "delivery.markdown_fallback",
+
+  // MCP server reliability (events-infra.ts; emitter packages/skills — not arch-scanned)
+  "mcp:server:disconnected": "mcp.disconnected",
+  "mcp:server:reconnecting": "mcp.reconnecting",
+  "mcp:server:reconnect_failed": "mcp.reconnect_failed",
+  "mcp:server:reconnected": "mcp.reconnected",
+  "mcp:server:tools_changed": "mcp.tools_changed",
+
+  // Channel lifecycle + health (events-channel.ts; emitter packages/channels — not arch-scanned)
+  // Both channel:registered and channel:deregistered map to the same trajectory type.
+  // Translator adds a synthetic `event` discriminator: "registered" | "deregistered".
+  // Precedent: model:fallback_attempt + model:lkw_fallback_attempt share model.fallback_attempt.
+  "channel:health_changed": "channel.health_changed",
+  "channel:registered": "channel.lifecycle",
+  "channel:deregistered": "channel.lifecycle",
+
+  // Security (non-scanned emitters — packages/daemon + packages/core/security)
+  // SECURITY INVARIANT: patterns[] (verbatim taint strings) and message (may reference
+  // secret names/config paths) are intentionally NOT forwarded.
+  "security:memory_tainted": "security.memory_tainted",
+  "security:warn": "security.warn",
+
+  // Compaction signals (events-messaging.ts; emitters in packages/agent — arch-scanned)
+  // All 3 are in EVENTS_NOT_TRAJECTORY_MAPPED and must be removed when bridged.
+  "compaction:started": "compaction.started",
+  "compaction:flush": "compaction.flush",
+  "compaction:recommended": "compaction.recommended",
+
+  // Context engine internals (events-messaging.ts; emitters in packages/agent — arch-scanned)
+  // 5 of 6 are in EVENTS_NOT_TRAJECTORY_MAPPED and must be removed when bridged.
+  // context:integrity uses optional chaining (?.emit) — not in arch-test scope; no allowlist change needed.
+  "context:evicted": "context.evicted",
+  "context:masked": "context.masked",
+  "context:reread": "context.reread",
+  "context:overflow": "context.overflow",
+  "context:integrity": "context.integrity",
+  "context:rehydrated": "context.rehydrated",
+
+  // Approval / human-in-the-loop (events-infra.ts; emitter packages/core/approval — not arch-scanned)
+  // SECURITY INVARIANT: approval:requested.params is raw unconstrained tool arguments
+  // (file paths, message bodies, credentials — HIGHEST risk field in the phase).
+  // Translator MUST omit params entirely — sanitizeForPersistence is defense-in-depth only.
+  "approval:requested": "approval.requested",
+  "approval:resolved": "approval.resolved",
+
+  // Duplicate inbound detection (events-channel.ts; emitter packages/orchestrator — arch-scanned)
+  // firstSeenAt and duplicateAt omitted by translator — envelope ts covers timing.
+  "dedup:duplicate_inbound": "dedup.duplicate_inbound",
+
+  // Health budget exceeded (events-infra.ts; emitter packages/observability/health-aggregator)
+  // timestamp is envelope-only — stripped from data.
+  "health:budget_exceeded": "health.budget_exceeded",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**
@@ -368,6 +447,330 @@ function translatePayload(
         durationMs: payload.durationMs,
         layerCount: payload.layerCount,
         layers: payload.layers,
+      };
+
+    // ---- Queue lifecycle ----
+    // sessionKey is envelope-only — stripped from data.
+
+    case "queue:enqueued":
+      return {
+        channelType: payload.channelType,
+        queueDepth: payload.queueDepth,
+        mode: payload.mode,
+      };
+
+    case "queue:dequeued":
+      return {
+        channelType: payload.channelType,
+        waitTimeMs: payload.waitTimeMs,
+      };
+
+    case "queue:overflow":
+      return {
+        channelType: payload.channelType,
+        policy: payload.policy,
+        droppedCount: payload.droppedCount,
+      };
+
+    case "queue:coalesced":
+      return {
+        channelType: payload.channelType,
+        messageCount: payload.messageCount,
+      };
+
+    // ---- Execution control ----
+    // agentId and sessionKey are envelope-only — stripped from data.
+
+    case "execution:aborted":
+      return {
+        reason: payload.reason,
+      };
+
+    case "execution:budget_warning":
+      return {
+        totalTokens: payload.totalTokens,
+        llmCallCount: payload.llmCallCount,
+        projectedCallsLeft: payload.projectedCallsLeft,
+      };
+
+    case "execution:prompt_timeout":
+      return {
+        timeoutMs: payload.timeoutMs,
+      };
+
+    case "execution:output_escalated":
+      return {
+        originalMaxTokens: payload.originalMaxTokens,
+        escalatedMaxTokens: payload.escalatedMaxTokens,
+      };
+
+    case "execution:signed_replay_recovered":
+      return {
+        blocksRemoved: payload.blocksRemoved,
+        thoughtSignaturesStripped: payload.thoughtSignaturesStripped,
+        succeeded: payload.succeeded,
+      };
+
+    // ---- Security + Sender (scanned subset) ----
+    // SECURITY INVARIANT: patterns[] (verbatim injection strings) and
+    // senderId (user identifier) are intentionally NOT forwarded.
+    // sanitizeForPersistence is a defense-in-depth backstop but the
+    // translator is the primary control.
+
+    case "security:injection_detected":
+      // patterns[] must NEVER be forwarded — they are verbatim attacker
+      // injection strings. Only source + riskLevel enter the trajectory.
+      return {
+        source: payload.source,
+        riskLevel: payload.riskLevel,
+      };
+
+    case "sender:blocked":
+      // senderId (user identifier) and channelId must NEVER be forwarded.
+      // Only channelType enters the trajectory.
+      return {
+        channelType: payload.channelType,
+      };
+
+    // ---- Delivery retry ----
+    // SECURITY INVARIANT: chatId (Telegram long-decimal ID) and
+    // channelId are intentionally NOT forwarded. Only retry telemetry enters the
+    // trajectory. sanitizeForPersistence is a defense-in-depth backstop for the
+    // error strings, but translator omission is the primary control.
+
+    case "retry:attempted":
+      return {
+        attempt: payload.attempt,
+        maxAttempts: payload.maxAttempts,
+        delayMs: payload.delayMs,
+        error: payload.error,
+      };
+
+    case "retry:exhausted":
+      return {
+        totalAttempts: payload.totalAttempts,
+        finalError: payload.finalError,
+      };
+
+    case "retry:markdown_fallback":
+      return {
+        originalParseMode: payload.originalParseMode,
+      };
+
+    // ---- MCP server reliability ----
+    // serverName + connection telemetry. lastError and reason are
+    // connection-error strings — low PII risk; bounded by payload limiter.
+
+    case "mcp:server:disconnected":
+      return {
+        serverName: payload.serverName,
+        reason: payload.reason,
+      };
+
+    case "mcp:server:reconnecting":
+      return {
+        serverName: payload.serverName,
+        attempt: payload.attempt,
+        maxAttempts: payload.maxAttempts,
+        nextDelayMs: payload.nextDelayMs,
+      };
+
+    case "mcp:server:reconnect_failed":
+      return {
+        serverName: payload.serverName,
+        attempts: payload.attempts,
+        lastError: payload.lastError,
+      };
+
+    case "mcp:server:reconnected":
+      return {
+        serverName: payload.serverName,
+        attempt: payload.attempt,
+        toolCount: payload.toolCount,
+        durationMs: payload.durationMs,
+      };
+
+    case "mcp:server:tools_changed":
+      return {
+        serverName: payload.serverName,
+        previousToolCount: payload.previousToolCount,
+        currentToolCount: payload.currentToolCount,
+        addedTools: payload.addedTools,
+        removedTools: payload.removedTools,
+      };
+
+    // ---- Channel lifecycle + health ----
+    // lastMessageAt and timestamp are noise — omitted.
+    // error on channel:health_changed may be null — conditional spread only
+    // when non-null (match the tool:executed convention for nullable fields).
+
+    case "channel:health_changed":
+      return {
+        channelType: payload.channelType,
+        previousState: payload.previousState,
+        currentState: payload.currentState,
+        connectionMode: payload.connectionMode,
+        ...(payload.error !== null ? { error: payload.error } : {}),
+      };
+
+    case "channel:registered":
+      // capabilities is omitted (metadata with no diagnostic value for trajectory).
+      // Synthetic `event` field distinguishes this from channel:deregistered (both
+      // map to channel.lifecycle per the dual-mapping pattern).
+      return {
+        channelType: payload.channelType,
+        pluginId: payload.pluginId,
+        event: "registered",
+      };
+
+    case "channel:deregistered":
+      return {
+        channelType: payload.channelType,
+        pluginId: payload.pluginId,
+        event: "deregistered",
+      };
+
+    // ---- Security rest (non-scanned subset) ----
+    // SECURITY INVARIANT: patterns[] (verbatim taint strings) and
+    // message (may reference secret names/config paths) are intentionally
+    // NOT forwarded. sanitizeForPersistence is a defense-in-depth backstop.
+
+    case "security:memory_tainted":
+      // patterns[] must NEVER be forwarded — they are verbatim injection strings.
+      // Only trust levels + blocked flag enter the trajectory.
+      return {
+        originalTrustLevel: payload.originalTrustLevel,
+        adjustedTrustLevel: payload.adjustedTrustLevel,
+        blocked: payload.blocked,
+      };
+
+    case "security:warn":
+      // message may contain diagnostic text referencing secret names or config paths.
+      // Only category enters the trajectory.
+      return {
+        category: payload.category,
+      };
+
+    // ---- Compaction signals ----
+    // agentId and sessionKey are envelope-only — stripped from data.
+
+    case "compaction:started":
+      // All source fields (agentId, sessionKey, timestamp) are envelope-only.
+      // Return empty object — event is a pure lifecycle signal; type is the diagnostic.
+      return {};
+
+    case "compaction:flush":
+      return {
+        memoriesWritten: payload.memoriesWritten,
+        trigger: payload.trigger,
+        success: payload.success,
+      };
+
+    case "compaction:recommended":
+      return {
+        contextPercent: payload.contextPercent,
+        contextTokens: payload.contextTokens,
+        contextWindow: payload.contextWindow,
+      };
+
+    // ---- Context engine internals ----
+    // agentId and sessionKey are envelope-only — stripped from data.
+    // Content fields (message bodies, raw text) are NOT in any of these payloads;
+    // only counts, sizes, and category tags are forwarded.
+
+    case "context:evicted":
+      return {
+        evictedCount: payload.evictedCount,
+        evictedChars: payload.evictedChars,
+        categories: payload.categories,
+      };
+
+    case "context:masked":
+      return {
+        maskedCount: payload.maskedCount,
+        totalChars: payload.totalChars,
+        persistedToDisk: payload.persistedToDisk,
+      };
+
+    case "context:reread":
+      return {
+        rereadCount: payload.rereadCount,
+        rereadTools: payload.rereadTools,
+      };
+
+    case "context:overflow":
+      return {
+        contextTokens: payload.contextTokens,
+        budgetTokens: payload.budgetTokens,
+        recoveryAction: payload.recoveryAction,
+      };
+
+    case "context:integrity":
+      // conversationId is the DAG conversation identifier — not an envelope field.
+      // agentId + sessionKey remain envelope-only and are stripped.
+      return {
+        conversationId: payload.conversationId,
+        issueCount: payload.issueCount,
+        repairsApplied: payload.repairsApplied,
+        errorsLogged: payload.errorsLogged,
+        issueTypes: payload.issueTypes,
+        durationMs: payload.durationMs,
+      };
+
+    case "context:rehydrated":
+      return {
+        sectionsInjected: payload.sectionsInjected,
+        filesInjected: payload.filesInjected,
+        skillsInjected: payload.skillsInjected,
+        overflowStripped: payload.overflowStripped,
+      };
+
+    // ---- Approval / human-in-the-loop ----
+    // SECURITY INVARIANT: approval:requested.params is raw unconstrained
+    // tool arguments — file paths, message bodies, or credentials. MUST be omitted
+    // entirely. agentId, sessionKey, createdAt are envelope-only — stripped from data.
+    // channelType is optional on the source event — conditional spread.
+    // approval:resolved.reason is optional — conditional spread.
+    // resolvedAt is envelope noise — stripped from data.
+
+    case "approval:requested":
+      return {
+        requestId: payload.requestId,
+        toolName: payload.toolName,
+        action: payload.action,
+        trustLevel: payload.trustLevel,
+        timeoutMs: payload.timeoutMs,
+        ...(payload.channelType !== undefined ? { channelType: payload.channelType } : {}),
+      };
+
+    case "approval:resolved":
+      return {
+        requestId: payload.requestId,
+        approved: payload.approved,
+        approvedBy: payload.approvedBy,
+        ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+      };
+
+    // ---- Dedup ----
+    // firstSeenAt and duplicateAt are intentionally omitted — envelope ts covers timing.
+    // chatId redaction is handled at the bundle boundary.
+
+    case "dedup:duplicate_inbound":
+      return {
+        messageId: payload.messageId,
+        channelType: payload.channelType,
+        chatId: payload.chatId,
+        deltaMs: payload.deltaMs,
+        source: payload.source,
+      };
+
+    // ---- Health budget ----
+    // timestamp is envelope-only — stripped from data.
+    case "health:budget_exceeded":
+      return {
+        kind: payload.kind,
+        count: payload.count,
+        windowMs: payload.windowMs,
       };
 
     default: {

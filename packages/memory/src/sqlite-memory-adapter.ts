@@ -92,7 +92,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
 
       const durationMs = systemNowMs() - startMs;
       // hasEmbedding=false implies embedding will be queued for background generation
-      this.logger?.debug({ durationMs, op: "store", hasEmbedding: !!entry.embedding, embeddingQueued: !entry.embedding, memoryType }, "Memory store complete");
+      this.logger?.info({ step: "memory-store", durationMs, op: "store", hasEmbedding: !!entry.embedding, embeddingQueued: !entry.embedding, memoryType }, "Memory store complete");
       return ok(entry);
     } catch (e: unknown) {
       return err(e instanceof Error ? e : new Error(String(e)));

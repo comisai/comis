@@ -28,7 +28,8 @@ export type CommandType =
   | "export"                           // Session export to HTML
   | "stop"                             // Execution cancellation
   | "fork" | "branch" // Conversation branching
-  | "budget"; // User-specified per-turn token budget
+  | "budget" // User-specified per-turn token budget
+  | "export-trajectory"; // Owner-gated bundle export
 
 // ---------------------------------------------------------------------------
 // Parser types

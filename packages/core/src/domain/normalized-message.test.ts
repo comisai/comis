@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from "vitest";
-import { parseMessage, AttachmentSchema } from "./normalized-message.js";
+import { describe, expect, it, expectTypeOf } from "vitest";
+import { parseMessage, AttachmentSchema, type NormalizedMessage } from "./normalized-message.js";
 
 const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
 const VALID_UUID_2 = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
@@ -290,6 +290,89 @@ describe("NormalizedMessage", () => {
         durationMs: 5000.5,
       });
       expect(result.success).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Concrete metadata.traceId typing
+  // ---------------------------------------------------------------------------
+  describe("metadata.traceId concrete typing", () => {
+    it("metadata.traceId is typed as string | undefined at the TypeScript type level", () => {
+      // With z.looseObject({ traceId: z.guid().optional() }), the type is string | undefined.
+      expectTypeOf<NormalizedMessage["metadata"]["traceId"]>().toEqualTypeOf<string | undefined>();
+    });
+
+    it("rejects a non-uuid string in metadata.traceId", () => {
+      // traceId must be a valid UUID when present.
+      const result = parseMessage(validMessage({ metadata: { traceId: "not-a-uuid" } }));
+      expect(result.ok).toBe(false);
+    });
+
+    it("accepts a valid UUID in metadata.traceId alongside arbitrary metadata keys", () => {
+      const result = parseMessage(
+        validMessage({
+          metadata: {
+            traceId: VALID_UUID,
+            isButtonCallback: true,
+            callbackData: "some-callback-data",
+          },
+        }),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.metadata.traceId).toBe(VALID_UUID);
+        expect(result.value.metadata["isButtonCallback"]).toBe(true);
+      }
+    });
+
+    it("accepts metadata without traceId (traceId is optional)", () => {
+      const result = parseMessage(validMessage({ metadata: { isButtonCallback: true } }));
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.metadata.traceId).toBeUndefined();
+      }
+    });
+  });
+
+  describe("getMessageTraceId helper", () => {
+    it("getMessageTraceId is exported from the module", async () => {
+      const mod = await import("./normalized-message.js");
+      expect(typeof mod.getMessageTraceId).toBe("function");
+    });
+
+    it("getMessageTraceId returns the traceId string when present", async () => {
+      const { getMessageTraceId } = await import("./normalized-message.js");
+      const result = parseMessage(validMessage({ metadata: { traceId: VALID_UUID } }));
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(getMessageTraceId(result.value)).toBe(VALID_UUID);
+      }
+    });
+
+    it("getMessageTraceId returns undefined when traceId is absent", async () => {
+      const { getMessageTraceId } = await import("./normalized-message.js");
+      const result = parseMessage(validMessage());
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(getMessageTraceId(result.value)).toBeUndefined();
+      }
+    });
+
+    it("getMessageTraceId returns undefined when metadata.traceId is a non-string value (defensive read)", async () => {
+      const { getMessageTraceId } = await import("./normalized-message.js");
+      // Direct type cast to test defensive behavior — covers runtime edge cases
+      // where old messages may not have been through the new schema validator.
+      const msg = {
+        id: VALID_UUID,
+        channelId: "general",
+        channelType: "telegram",
+        senderId: "user-123",
+        text: "Hello",
+        timestamp: 1700000000,
+        attachments: [],
+        metadata: { traceId: 42 as unknown as string },
+      } as NormalizedMessage;
+      expect(getMessageTraceId(msg)).toBeUndefined();
     });
   });
 });

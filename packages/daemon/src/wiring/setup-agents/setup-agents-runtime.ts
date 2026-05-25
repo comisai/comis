@@ -521,10 +521,18 @@ export async function setupSingleAgent(
     //
     // Operators who set `diagnostics.trajectory.enabled: false` in YAML
     // disable the recorder entirely.
+    //
+    // Precedence for trajectoryDir:
+    //   1. diagnostics.trajectory.dir (explicit YAML knob — unchanged)
+    //   2. observability.trajectory.dirOverride (env-layer / YAML knob)
+    //   3. env fallback inside paths.ts:readEnvDir() (defense-in-depth)
+    //   4. session co-location / cwd (default)
     trajectoryConfig: container.config.diagnostics?.trajectory
       ? {
           enabled: container.config.diagnostics.trajectory.enabled,
-          dir: container.config.diagnostics.trajectory.dir,
+          dir:
+            container.config.diagnostics.trajectory.dir ??
+            container.config.observability?.trajectory?.dirOverride,
           maxFileBytes: container.config.diagnostics.trajectory.maxFileBytes,
           eventTypes: container.config.diagnostics.trajectory.eventTypes,
         }

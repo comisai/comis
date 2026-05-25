@@ -16,10 +16,12 @@
  * @module
  */
 
+import * as os from "node:os";
+import * as pathModule from "node:path";
 import { SessionManager as SdkSessionManager } from "@earendil-works/pi-coding-agent";
-import { formatSessionKey, safePath, systemNowDate, systemNowMs, type SessionKey } from "@comis/core";
+import { formatSessionKey, safePath, systemDateFrom, systemNowDate, systemNowMs, type SessionKey } from "@comis/core";
 import type { ComisLogger, FileLockPort, TypedEventBus } from "@comis/core";
-import { ensureContainedDir, writeRegularFile, type SessionTrajectoryHandleRegistry } from "@comis/observability";
+import { ensureContainedDir, writeRegularFile, buildTraceArtifacts, appendSessionIndexEntry, type SessionTrajectoryHandleRegistry, type TraceArtifactsRunState } from "@comis/observability";
 import { suppressError, type Result } from "@comis/shared";
 import { unlink, rm, rmdir } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
@@ -79,6 +81,22 @@ export interface ComisSessionManagerDeps {
    * singleton registry from setup-agents-registry here.
    */
   trajectoryRegistry?: SessionTrajectoryHandleRegistry;
+  /**
+   * Optional provider of per-session run-state for the `trace.artifacts`
+   * lifecycle envelope. Pi-executor registers a closure pulling the latest
+   * `BridgeMetricsState` snapshot. When `undefined`, the session manager
+   * emits a minimal `"destroyed"` artifacts payload with zero-count usage.
+   */
+  sessionStateProvider?: (sessionKey: string) => TraceArtifactsRunState | undefined;
+  /**
+   * Comis data root directory (e.g. `~/.comis`). Used by the session-index
+   * writer to derive the date-rolled JSONL path
+   * `<dataDir>/logs/session-index.YYYY-MM-DD.jsonl`.
+   *
+   * When omitted, defaults to `~/.comis` via `os.homedir()` so existing
+   * callers (tests, legacy harnesses) work without changes.
+   */
+  dataDir?: string;
 }
 
 /**
@@ -261,11 +279,36 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       // the EventBus emit to a recorder.recordEvent call (sync), which
       // enqueues the JSONL line. trajectoryRegistry.close then runs
       // flushAndClose which awaits the queue tail, guaranteeing the
-      // session.ended line lands on disk. The session.ended event
-      // fires here, NOT on per-turn
-      // agent_end. Counters are zero placeholders — the session manager
-      // doesn't accumulate per-session totals; the `exitReason:"destroyed"`
-      // discriminator distinguishes from a normal end-of-turn close.
+      // session.ended line lands on disk. The session.ended event fires
+      // here on session-destroy, NOT on per-turn agent_end. Counters are
+      // zero placeholders — the session manager doesn't accumulate
+      // per-session totals; the `exitReason:"destroyed"` discriminator
+      // distinguishes from a normal end-of-turn close.
+
+      // Emit trace.artifacts directly via the recorder BEFORE session:ended
+      // so it lands in the trajectory in the correct order
+      // (session.started → trace.metadata → … → trace.artifacts →
+      // session.ended). Direct emit — no bus bridge.
+      if (deps.trajectoryRegistry !== undefined) {
+        const recorder = deps.trajectoryRegistry.getRecorder?.(sessionKeyStr);
+        if (recorder != null) {
+          const runState = deps.sessionStateProvider?.(sessionKeyStr) ?? {
+            finalStatus: "destroyed",
+            aborted: false,
+            usage: {
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+            cumulativeCostUsd: 0,
+            turnCount: 0,
+          };
+          recorder.recordEvent("trace.artifacts", buildTraceArtifacts(runState));
+        }
+      }
+
       if (deps.eventBus !== undefined) {
         deps.eventBus.emit("session:ended", {
           agentId: "",
@@ -279,6 +322,21 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           timestamp: systemNowMs(),
         });
       }
+      // Append session_ended to the date-rolled session index JSONL
+      // immediately after the session:ended bus emit.
+      appendSessionIndexEntry(
+        deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
+        {
+          traceSchema: "comis-session-index",
+          schemaVersion: 1,
+          event: "session_ended",
+          ts: systemDateFrom(systemNowMs()).toISOString(),
+          sessionId: sessionKeyStr,
+          exitReason: "destroyed",
+          turnCount: 0,
+          totalTokens: 0,
+        },
+      );
       if (deps.trajectoryRegistry !== undefined) {
         // Best-effort: close() swallows per-entry errors. Awaiting it
         // ensures the flush-tail completes before the JSONL unlink races

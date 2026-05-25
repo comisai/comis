@@ -116,7 +116,7 @@ export interface ToolLogger {
 
 /**
  * Dependencies for the exec tool factory. Backward compatibility is NOT
- * preserved (see CLAUDE.md user-memory `feedback_no_backward_compat`).
+ * preserved.
  *
  * `toolCapabilityPort` is REQUIRED — wires the install-detour policy gate
  * inside `execute(...)` consuming `port.getInstallDetourMode()`. Daemon

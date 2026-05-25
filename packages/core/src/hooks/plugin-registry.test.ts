@@ -212,6 +212,48 @@ describe("PluginRegistry", () => {
     });
   });
 
+  // ─── Count ──────────────────────────────────────────────────────
+
+  describe("count()", () => {
+    it("returns 0 for a newly created registry with no plugins", () => {
+      const registry = createPluginRegistry();
+
+      expect(registry.count()).toBe(0);
+    });
+
+    it("returns 1 after registering one plugin", () => {
+      const registry = createPluginRegistry();
+      const plugin = createTestPlugin({ id: "alpha" });
+
+      registry.register(plugin);
+
+      expect(registry.count()).toBe(1);
+    });
+
+    it("returns 2 after registering two distinct plugins", () => {
+      const registry = createPluginRegistry();
+      const pluginA = createTestPlugin({ id: "alpha" });
+      const pluginB = createTestPlugin({ id: "beta" });
+
+      registry.register(pluginA);
+      registry.register(pluginB);
+
+      expect(registry.count()).toBe(2);
+    });
+
+    it("decrements count after unregistering one plugin", () => {
+      const registry = createPluginRegistry();
+      const pluginA = createTestPlugin({ id: "alpha" });
+      const pluginB = createTestPlugin({ id: "beta" });
+
+      registry.register(pluginA);
+      registry.register(pluginB);
+      registry.unregister("alpha");
+
+      expect(registry.count()).toBe(1);
+    });
+  });
+
   // ─── Deactivation ───────────────────────────────────────────────
 
   describe("deactivation", () => {

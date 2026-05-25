@@ -41,7 +41,7 @@ import { ok, err, type Result } from "@comis/shared";
  * real packages, the TODO is stale — strip it so the YAML stays clean.
  * Keep operator-authored comments (anything else) intact.
  */
-const PHASE_25_TODO_COMMENT = " TODO: list npm/pip packages this MCP replaces";
+const STUB_TODO_COMMENT = " TODO: list npm/pip packages this MCP replaces";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -162,7 +162,7 @@ export function setHintFields(
         if (p.key.value !== "replacesPackages") continue;
         // Strip ONLY the generated stub. Operator-authored commentBefore
         // on the same key is left alone.
-        if (p.key.commentBefore === PHASE_25_TODO_COMMENT) {
+        if (p.key.commentBefore === STUB_TODO_COMMENT) {
           delete p.key.commentBefore;
         }
         break;

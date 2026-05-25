@@ -158,6 +158,7 @@ export interface ShutdownDeps {
   outputRetentionShutdown?: () => void;
   /** Stop the channel health monitor (from setupChannelHealthMonitor). */
   stopChannelHealthMonitor?: () => void;
+  /** Unsubscribe health budget aggregator. */ unsubscribeHealthAggregator?: () => void;
 }
 
 /** All services produced by the shutdown setup phase. */
@@ -257,6 +258,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     shutdownDeliveryMirror,
     outputRetentionShutdown,
     stopChannelHealthMonitor,
+    unsubscribeHealthAggregator,
   } = deps;
 
   // Inlined graceful-shutdown body: SIGTERM/
@@ -374,8 +376,8 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
             const serialized = approvalGate.serializePending();
             if (serialized.length > 0) {
               // Route through the fs-safe substrate so the
-              // restart-approvals hand-off lands at mode `0o600` per
-              // §1.4. Best-effort contract preserved — Result.err is
+              // restart-approvals hand-off lands at mode `0o600`.
+              // Best-effort contract preserved — Result.err is
               // logged + shutdown continues so a write failure does NOT
               // block daemon teardown.
               const result = writeRegularFile({
@@ -531,6 +533,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "channel-health-monitor", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "channel-health-monitor", daemonLogger);
       }
+      if (unsubscribeHealthAggregator) unsubscribeHealthAggregator(); // health budget aggregator
       if (heartbeatRunner) {
         const stopMs = systemNowMs();
         await withStepTimeout(() => {

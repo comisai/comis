@@ -99,7 +99,7 @@ export type {
   SecurityUpdateMonitorConfig,
   GitMonitorConfig,
 } from "./schema-observability.js";
-export type { ObservabilityConfig, ObservabilityPersistenceConfig } from "./schema-observability.js";
+export type { ObservabilityConfig, ObservabilityPersistenceConfig, TrajectoryObservabilityConfig } from "./schema-observability.js";
 export type { PluginsConfig, PluginEntry } from "./schema-plugins.js";
 export type {
   QueueConfig,

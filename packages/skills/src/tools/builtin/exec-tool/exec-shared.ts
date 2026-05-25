@@ -445,7 +445,7 @@ export async function evaluateInstallDetourGate(deps: {
               commandDigest: installDetourDecision.commandDigest,
             },
             agentId: ctx.userId ?? "unknown",
-            sessionKey: ctx.sessionKey,
+            sessionKey: ctx.sessionKey ?? "",
             trustLevel: (ctx.trustLevel ?? "admin") as "admin" | "user" | "guest",
             channelType: ctx.channelType,
           });

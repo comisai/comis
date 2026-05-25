@@ -110,7 +110,7 @@ describe("setupLogging", () => {
       _createLogLevelManager: mockCreateLogLevelManager,
     });
 
-    expect(mockCreateFileTransport).toHaveBeenCalledWith(loggingConfig, "debug");
+    expect(mockCreateFileTransport).toHaveBeenCalledWith(loggingConfig, "debug", undefined);
   });
 
   // -------------------------------------------------------------------------

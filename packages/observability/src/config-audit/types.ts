@@ -22,9 +22,9 @@
  * Both shapes match the record schemas verbatim:
  *
  *   - `event` is the discriminant ("config.write" | "config.observe"),
- *     NOT `phase` (renamed in the deviation G fix).
- *   - `source` is the fixed literal `"config-io"` per the design table.
- *     The pre-fix four-value enum (last-known-good-save / restore /
+ *     NOT `phase` (renamed).
+ *   - `source` is the fixed literal `"config-io"`.
+ *     The prior four-value enum (last-known-good-save / restore /
  *     config-patch-rpc / cli-sync-tooling) is preserved verbatim in
  *     the new `callerSource: string` field so consumers (CLI audit
  *     show, downstream forensics) keep the call-site provenance.

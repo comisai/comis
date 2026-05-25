@@ -122,6 +122,7 @@ import { runSafetyGates } from "./safety-gate.js";
 import { applyPromptRunOutcome, handleEnvelopeException } from "./message-envelope.js";
 import { finalizeLockResult } from "./executor-error-mapping.js";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
+import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
 export type { PiExecutorDeps } from "./pi-executor-types.js";
 
@@ -1060,7 +1061,7 @@ async function runSessionLocked(
       })
     : undefined;
 
-  // Quick 215: Resettable prompt timeout -- tool completions reset the timer
+  // Resettable prompt timeout -- tool completions reset the timer
   let currentResetTimer: (() => void) | undefined;
 
   // API-grounded token anchor -- updated on each turn_end, reset on compaction
@@ -1181,6 +1182,44 @@ async function runSessionLocked(
     // When undefined (non-daemon callers), the bridge falls back to the
     // legacy unconditional emit.
     ...(deps.trajectoryRegistry !== undefined ? { trajectoryRegistry: deps.trajectoryRegistry } : {}),
+    // Provide a snapshot of harness/model/config at
+    // bridge-creation time so trace.metadata can be emitted once per session.
+    // Fields that are not readily available at this scope are omitted;
+    // buildTraceMetadata's compactObject strips undefined cleanly.
+    runtimeSnapshot: {
+      harness: {
+        type: "comis" as const,
+        // version is not yet threaded into PiExecutorDeps; a future change
+        // will wire deps.appVersion here. Use package.json version constant
+        // when available, otherwise "unknown" until that wiring lands.
+        version: "unknown",
+        os: process.platform,
+        node: process.version,
+        ...(deps.workspaceDir !== undefined ? { workspaceDir: deps.workspaceDir } : {}),
+      },
+      model: {
+        provider: resolvedModel?.provider ?? config.provider,
+        modelId: resolvedModel?.id ?? config.model,
+        ...(resolvedModel?.api !== undefined ? { modelApi: resolvedModel.api } : {}),
+      },
+      config,
+      // Populate plugins and skills from the registry snapshot.
+      // The minimal deps interface exposes getSnapshot?() optionally; legacy
+      // callers (tests with the two-method mock) safely degrade to [].
+      // TODO: wire deps.pluginRegistry once a plugin-registry
+      // seam exists at this scope. Until then, plugins[] stays empty by design.
+      plugins: [],
+      skills: deps.skillRegistry?.getSnapshot?.()?.skills?.map((s) => ({
+        id: s.name,
+        ...(s.version !== undefined ? { version: String(s.version) } : {}),
+      })) ?? [],
+      // Scaffold in place so future writers cannot bypass
+      // the redactor. When userPromptPrefixText is wired from a config path,
+      // pass it here; the helper routes it through redactString +
+      // substitutePathsInString before assignment. See pi-executor-prompting.ts.
+      prompting: buildPromptingSnapshot({}),
+      redaction: { policy: "platform-aware" },
+    },
     perExecutionBudgetCap: config.budgets?.perExecution,
     budgetWarningRef,
     toolRetryBreaker,
@@ -1242,6 +1281,7 @@ async function runSessionLocked(
   // Execution started bookend
   deps.logger.info(
     {
+      step: "agent-execute",
       agentId,
       sessionKey: formattedKey,
       modelId: resolvedModel?.id,

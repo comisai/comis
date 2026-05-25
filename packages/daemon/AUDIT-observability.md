@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:421–456`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 14 (5 required + 9 optional + 0 stale-fallback)
+**Field count:** 16 (5 required + 11 optional + 0 stale-fallback)
 **Location:** Co-located with the `@comis/daemon` package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes this audit from the npm tarball.
 
 ## Field Classification
@@ -27,6 +27,8 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | embeddingCacheStats | optional | memory.embeddingCache (routed through obs-handlers) returns null stats; cache-hit-rate dashboards show "no data" | packages/daemon/src/api/types.ts:449 |
 | embeddingCircuitBreakerState | optional | obs.diagnostics omits the embedding-breaker state field; UI shows "unknown" for breaker health | packages/daemon/src/api/types.ts:453 |
 | tokenTracker | optional | obs cache-stats RPC for token-tracker counters returns null; provider-token cache observability is disabled | packages/daemon/src/api/types.ts:456 |
+| dataDir | optional | obs.trace.* handlers default to $HOME/.comis at handler-construction time; session-index scan path falls back to the home directory convention | packages/daemon/src/api/types.ts:470 |
+| exportTrajectoryBundle | optional | obs.trace.export throws "exportTrajectoryBundle DI not configured" — the export RPC is unavailable until production wiring injects the bundle pipeline | packages/daemon/src/api/types.ts:477 |
 
 ## Removed Fields (stale-fallback — deleted)
 
@@ -35,7 +37,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 14
-- **Final count:** 14 (5 required + 9 optional)
+- **Final count:** 16 (5 required + 11 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

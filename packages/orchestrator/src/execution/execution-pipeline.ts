@@ -23,7 +23,7 @@ import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
 import { PerChannelStreamingConfigSchema } from "@comis/core";
 import type { SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
 import type { SendMessageOptions } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
+import { formatSessionKey, runWithContext, tryGetContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import type { AgentExecutor } from "@comis/agent";
@@ -289,7 +289,9 @@ export async function executeAndDeliver(
       // (Silent-execute path preserved verbatim from pre-inline pipeline —
       // one of two executor.execute call sites.)
       const policyResult = await runWithContext({
-        traceId: randomUUID(),
+        // Same reuse pattern as execution-execute.ts.
+        // Policy-retry path inherits the ingress traceId.
+        traceId: tryGetContext()?.traceId ?? randomUUID(),
         tenantId: sessionKey.tenantId,
         userId: sessionKey.userId,
         sessionKey: formatSessionKey(sessionKey),

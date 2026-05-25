@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { mkdirSync, writeFileSync, existsSync, mkdtempSync, statSync } from "node:fs";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -10,6 +10,17 @@ import type { SessionKey } from "@comis/core";
 // harness instead.
 import { createFileLock } from "@comis/core";
 import { createComisSessionManager } from "./comis-session-manager.js";
+
+// Mock @comis/observability so session-index writes don't hit real fs.
+vi.mock("@comis/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/observability")>();
+  return {
+    ...actual,
+    appendSessionIndexEntry: vi.fn().mockReturnValue("queued"),
+  };
+});
+
+import { appendSessionIndexEntry as mockAppendSessionIndexEntry } from "@comis/observability";
 
 const fileLock = createFileLock();
 
@@ -280,5 +291,257 @@ describe("comis-session-manager mode invariants on substrate-routed writes", () 
     const metadataPath = join(channelDir, "bot_session-metadata.json");
     expect(existsSync(metadataPath)).toBe(true);
     expect(statSync(metadataPath).mode & 0o777).toBe(0o600);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trace.artifacts emit BEFORE session:ended
+// ---------------------------------------------------------------------------
+
+describe("trace.artifacts direct emit before session:ended in destroySession", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* cleanup */ }
+    }
+    dirs.length = 0;
+  });
+
+  function setupChannelDir(baseDir: string): void {
+    const channelDir = join(baseDir, "default", "cron@3atest-job");
+    mkdirSync(channelDir, { recursive: true });
+    writeFileSync(join(channelDir, "bot.jsonl"), "{}");
+  }
+
+  it("emits trace.artifacts via recorder BEFORE session:ended bus emit", async () => {
+    const baseDir = makeTmpDir();
+    const lockDir = makeTmpDir();
+    dirs.push(baseDir, lockDir);
+    setupChannelDir(baseDir);
+
+    const order: string[] = [];
+    const mockRecorder = {
+      recordEvent: (type: string) => { order.push(`recorder:${type}`); return "queued" as const; },
+      flush: vi.fn(),
+      flushAndClose: vi.fn().mockResolvedValue(undefined),
+      filePath: "/tmp/test.trajectory.jsonl",
+    };
+
+    const trajectoryRegistry = {
+      close: vi.fn().mockResolvedValue(undefined),
+      closeAll: vi.fn(),
+      getOrCreate: vi.fn(),
+      hasSessionStartedBeenEmitted: vi.fn().mockReturnValue(false),
+      markSessionStarted: vi.fn(),
+      getRecorder: vi.fn().mockReturnValue(mockRecorder),
+    } as any;
+
+    const eventBus = {
+      emit: vi.fn((eventName: string) => { order.push(`bus:${eventName}`); }),
+    } as any;
+
+    const mgr = createComisSessionManager({
+      sessionBaseDir: baseDir,
+      lockDir,
+      cwd: baseDir,
+      fileLock,
+      eventBus,
+      trajectoryRegistry,
+    });
+
+    await mgr.destroySession(makeKey());
+
+    const artifactsIdx = order.findIndex((e) => e === "recorder:trace.artifacts");
+    const sessionEndedIdx = order.findIndex((e) => e === "bus:session:ended");
+
+    expect(artifactsIdx).toBeGreaterThanOrEqual(0);
+    expect(sessionEndedIdx).toBeGreaterThanOrEqual(0);
+    // trace.artifacts must appear BEFORE session:ended bus emit
+    expect(artifactsIdx).toBeLessThan(sessionEndedIdx);
+  });
+
+  it("emits trace.artifacts exactly once per destroySession call", async () => {
+    const baseDir = makeTmpDir();
+    const lockDir = makeTmpDir();
+    dirs.push(baseDir, lockDir);
+    setupChannelDir(baseDir);
+
+    const recordedTypes: string[] = [];
+    const mockRecorder = {
+      recordEvent: (type: string) => { recordedTypes.push(type); return "queued" as const; },
+      flush: vi.fn(),
+      flushAndClose: vi.fn().mockResolvedValue(undefined),
+      filePath: "/tmp/test.trajectory.jsonl",
+    };
+
+    const trajectoryRegistry = {
+      close: vi.fn().mockResolvedValue(undefined),
+      closeAll: vi.fn(),
+      getOrCreate: vi.fn(),
+      hasSessionStartedBeenEmitted: vi.fn().mockReturnValue(false),
+      markSessionStarted: vi.fn(),
+      getRecorder: vi.fn().mockReturnValue(mockRecorder),
+    } as any;
+
+    const mgr = createComisSessionManager({
+      sessionBaseDir: baseDir,
+      lockDir,
+      cwd: baseDir,
+      fileLock,
+      trajectoryRegistry,
+    });
+
+    await mgr.destroySession(makeKey());
+
+    const artifactsEmits = recordedTypes.filter((t) => t === "trace.artifacts");
+    expect(artifactsEmits).toHaveLength(1);
+  });
+
+  it("emitted trace.artifacts payload has required keys from sessionStateProvider", async () => {
+    const baseDir = makeTmpDir();
+    const lockDir = makeTmpDir();
+    dirs.push(baseDir, lockDir);
+    setupChannelDir(baseDir);
+
+    const capturedPayloads: Array<Record<string, unknown>> = [];
+    const mockRecorder = {
+      recordEvent: (type: string, data?: Record<string, unknown>) => {
+        if (type === "trace.artifacts" && data !== undefined) capturedPayloads.push(data);
+        return "queued" as const;
+      },
+      flush: vi.fn(),
+      flushAndClose: vi.fn().mockResolvedValue(undefined),
+      filePath: "/tmp/test.trajectory.jsonl",
+    };
+
+    const trajectoryRegistry = {
+      close: vi.fn().mockResolvedValue(undefined),
+      closeAll: vi.fn(),
+      getOrCreate: vi.fn(),
+      hasSessionStartedBeenEmitted: vi.fn().mockReturnValue(false),
+      markSessionStarted: vi.fn(),
+      getRecorder: vi.fn().mockReturnValue(mockRecorder),
+    } as any;
+
+    const sessionStateProvider = vi.fn().mockReturnValue({
+      finalStatus: "stop",
+      aborted: false,
+      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150, cacheReadTokens: 10, cacheWriteTokens: 0 },
+      cumulativeCostUsd: 0.005,
+      turnCount: 3,
+    });
+
+    const mgr = createComisSessionManager({
+      sessionBaseDir: baseDir,
+      lockDir,
+      cwd: baseDir,
+      fileLock,
+      trajectoryRegistry,
+      sessionStateProvider,
+    });
+
+    await mgr.destroySession(makeKey());
+
+    expect(capturedPayloads).toHaveLength(1);
+    const payload = capturedPayloads[0];
+    expect(payload.finalStatus).toBe("stop");
+    expect(payload.aborted).toBe(false);
+    expect(payload.usage).toBeDefined();
+    expect(payload.cumulativeCostUsd).toBeDefined();
+    expect(payload.turnCount).toBe(3);
+  });
+
+  it("uses fallback 'destroyed' payload when no sessionStateProvider is registered", async () => {
+    const baseDir = makeTmpDir();
+    const lockDir = makeTmpDir();
+    dirs.push(baseDir, lockDir);
+    setupChannelDir(baseDir);
+
+    const capturedPayloads: Array<Record<string, unknown>> = [];
+    const mockRecorder = {
+      recordEvent: (type: string, data?: Record<string, unknown>) => {
+        if (type === "trace.artifacts" && data !== undefined) capturedPayloads.push(data);
+        return "queued" as const;
+      },
+      flush: vi.fn(),
+      flushAndClose: vi.fn().mockResolvedValue(undefined),
+      filePath: "/tmp/test.trajectory.jsonl",
+    };
+
+    const trajectoryRegistry = {
+      close: vi.fn().mockResolvedValue(undefined),
+      closeAll: vi.fn(),
+      getOrCreate: vi.fn(),
+      hasSessionStartedBeenEmitted: vi.fn().mockReturnValue(false),
+      markSessionStarted: vi.fn(),
+      getRecorder: vi.fn().mockReturnValue(mockRecorder),
+    } as any;
+
+    // No sessionStateProvider
+    const mgr = createComisSessionManager({
+      sessionBaseDir: baseDir,
+      lockDir,
+      cwd: baseDir,
+      fileLock,
+      trajectoryRegistry,
+    });
+
+    await mgr.destroySession(makeKey());
+
+    expect(capturedPayloads).toHaveLength(1);
+    expect(capturedPayloads[0].finalStatus).toBe("destroyed");
+    expect(capturedPayloads[0].aborted).toBe(false);
+    expect(capturedPayloads[0].turnCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session-index session_ended emit site
+// ---------------------------------------------------------------------------
+
+describe("session-index session_ended emit", () => {
+  const indexDirs: string[] = [];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    for (const d of indexDirs) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* cleanup */ }
+    }
+    indexDirs.length = 0;
+  });
+
+  it("appendSessionIndexEntry called once with session_ended payload on destroySession", async () => {
+    const baseDir = mkdtempSync(join(tmpdir(), "comis-sidx-mgr-test-"));
+    const lockDir = mkdtempSync(join(tmpdir(), "comis-sidx-lock-test-"));
+    indexDirs.push(baseDir, lockDir);
+
+    const fakeEventBus = { emit: vi.fn(), on: vi.fn(), off: vi.fn(), once: vi.fn(), listenerCount: vi.fn().mockReturnValue(0) } as any;
+    const key: SessionKey = { tenantId: "default", userId: "bot", channelId: "cron:test-job" };
+
+    const mgr = createComisSessionManager({
+      sessionBaseDir: baseDir,
+      lockDir,
+      cwd: baseDir,
+      fileLock,
+      eventBus: fakeEventBus,
+    });
+
+    await mgr.destroySession(key);
+
+    const appendMock = vi.mocked(mockAppendSessionIndexEntry);
+    const sessionEndedCalls = appendMock.mock.calls.filter(
+      (c) => c[1].event === "session_ended",
+    );
+    expect(sessionEndedCalls).toHaveLength(1);
+
+    const payload = sessionEndedCalls[0][1] as { event: string; exitReason: string; traceSchema: string; schemaVersion: number; sessionId: string };
+    expect(payload.event).toBe("session_ended");
+    expect(payload.traceSchema).toBe("comis-session-index");
+    expect(payload.schemaVersion).toBe(1);
+    expect(payload.exitReason).toBe("destroyed");
+    expect(typeof payload.sessionId).toBe("string");
   });
 });

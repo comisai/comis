@@ -80,6 +80,107 @@ function mountForTest(opts: {
   return { app, token };
 }
 
+describe("mountMcpServerEndpoint -- auth gates", () => {
+  it("Gate 1 rejects POST /mcp/v1 with no Authorization header (401)", async () => {
+    const factorySpy = vi.fn(makeNoopBuildMcpServer());
+    const { app } = mountForTest({
+      bodyLimitBytes: 1_048_576,
+      buildMcpServerForClient: factorySpy,
+    });
+
+    const res = await app.request("/mcp/v1", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }),
+    });
+
+    expect(res.status).toBe(401);
+    expect(factorySpy).not.toHaveBeenCalled();
+    const body = (await res.json()) as {
+      error?: { code?: number; message?: string };
+    };
+    expect(body.error?.code).toBe(-32001);
+    expect(body.error?.message).toBe("Unauthorized");
+  });
+
+  it("Gate 2 rejects POST /mcp/v1 with an unrecognized bearer token (401)", async () => {
+    const factorySpy = vi.fn(makeNoopBuildMcpServer());
+    const { app } = mountForTest({
+      bodyLimitBytes: 1_048_576,
+      buildMcpServerForClient: factorySpy,
+    });
+
+    const res = await app.request("/mcp/v1", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${"z".repeat(64)}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }),
+    });
+
+    expect(res.status).toBe(401);
+    expect(factorySpy).not.toHaveBeenCalled();
+    const body = (await res.json()) as { error?: { message?: string } };
+    expect(body.error?.message).toBe("Unauthorized");
+  });
+
+  it("Gate 3 rejects a valid token lacking the mcp-client scope (403)", async () => {
+    const factorySpy = vi.fn(makeNoopBuildMcpServer());
+    const { app, token } = mountForTest({
+      bodyLimitBytes: 1_048_576,
+      tokenScopes: ["rpc"],
+      buildMcpServerForClient: factorySpy,
+    });
+
+    const res = await app.request("/mcp/v1", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(factorySpy).not.toHaveBeenCalled();
+    const body = (await res.json()) as { error?: { message?: string } };
+    expect(body.error?.message).toBe("Insufficient scope");
+  });
+});
+
+describe("mountMcpServerEndpoint -- McpServer initialization failure", () => {
+  it("returns 500 with a JSON-RPC error envelope when buildMcpServerForClient throws", async () => {
+    const factorySpy = vi.fn(() => {
+      throw new Error("registry exploded");
+    });
+    const { app, token } = mountForTest({
+      bodyLimitBytes: 1_048_576,
+      buildMcpServerForClient:
+        factorySpy as unknown as McpServerEndpointDeps["buildMcpServerForClient"],
+    });
+
+    const res = await app.request("/mcp/v1", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }),
+    });
+
+    // The factory throw is caught and mapped to a 500 with the JSON-RPC
+    // initialization-failed envelope (errorKind:"internal").
+    expect(factorySpy).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as {
+      error?: { code?: number; message?: string };
+    };
+    expect(body.error?.code).toBe(-32603);
+    expect(body.error?.message).toBe("MCP server initialization failed");
+  });
+});
+
 describe("mountMcpServerEndpoint -- body-size limit", () => {
   it("mountMcpServerEndpoint rejects POST /mcp/v1 with a body larger than the configured bodyLimitBytes with 413", async () => {
     const { app, token } = mountForTest({ bodyLimitBytes: 256 });

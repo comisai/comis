@@ -569,6 +569,30 @@ export interface InfraEvents {
   };
 
   // -------------------------------------------------------------------------
+  // Health budget events
+  // -------------------------------------------------------------------------
+
+  /**
+   * Per-errorKind threshold exceeded in a sliding window. Emitted by the
+   * health aggregator (packages/observability/src/health-aggregator)
+   * ONCE per window cross — not per subsequent event in the same window.
+   *
+   * `kind` is one of the 10 errorKind closed-union members (or a synthetic
+   * mapping for events that lack a typed errorKind field — see
+   * SYNTHETIC_ERROR_KIND_MAP).
+   */
+  "health:budget_exceeded": {
+    /** errorKind that crossed the threshold. */
+    kind: string;
+    /** Count of events observed within the window. */
+    count: number;
+    /** Window length in milliseconds. */
+    windowMs: number;
+    /** Timestamp of the threshold crossing (ms epoch). */
+    timestamp: number;
+  };
+
+  // -------------------------------------------------------------------------
   // Lifecycle reaction events
   // -------------------------------------------------------------------------
 

@@ -1363,8 +1363,8 @@ describe("MCP RPC Handlers", () => {
   // received `rlimits: undefined` (no prlimit wrap). The newEntry built at
   // mcp-handlers.ts:511-523 did NOT carry rlimits either, so even a
   // subsequent reconnect saw the same `undefined`. Combined with the
-  // config.patch block on integrations.mcp.servers, operators had NO
-  // supported path to apply rlimits to a new server via mcp_manage.
+  // single-writer guard (config.patch on integrations.mcp.servers is blocked),
+  // operators had NO supported path to apply rlimits to a new server via mcp_manage.
   //
   // Fix: add `rlimits` to McpConnectContract.request, forward to both the
   // spawn-time McpServerConfig and the persisted McpServerEntry.

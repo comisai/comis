@@ -32,7 +32,8 @@ import { createImapLifecycle } from "./imap-lifecycle.js";
 import { buildThreadingHeaders } from "./threading.js";
 import { isAllowedSender, isAutomatedSender } from "./sender-filter.js";
 import { mapEmailToNormalized } from "./message-mapper.js";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, runWithContext } from "@comis/core";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -165,10 +166,31 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
 
       lastActivity = systemNowMs();
 
-      // Dispatch to all registered handlers
-      for (const handler of handlers) {
-        await handler(normalized);
-      }
+      // Mint traceId at ingress, stamp into metadata.
+      // The "Inbound message" INFO log gives operators the same fleet-wide
+      // grep target (messageId=<id>) that exists for all other adapters.
+      const traceId = randomUUID();
+      normalized.metadata.traceId = traceId;
+      deps.logger.info(
+        {
+          step: "channels-inbound",
+          channelType,
+          messageId: normalized.id,
+          channelId,
+          traceId,
+          previewLen: (normalized.text ?? "").length,
+        },
+        "Inbound message",
+      );
+
+      await runWithContext(
+        { traceId, startedAt: systemNowMs(), channelType, tenantId: "default", trustLevel: "admin" },
+        async () => {
+          for (const handler of handlers) {
+            await handler(normalized);
+          }
+        },
+      );
     } catch (e) {
       deps.logger.warn(
         { err: e, channelType, submodule: "email", hint: "Failed to process inbound email", errorKind: "validation" as const },

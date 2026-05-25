@@ -33,7 +33,8 @@ import {
 import { mapSignalToNormalized } from "./message-mapper.js";
 import { convertIrToSignalTextStyles } from "./signal-format.js";
 import type { MarkdownIR } from "@comis/core";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, runWithContext } from "@comis/core";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -91,36 +92,46 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
             if (!normalized) continue;
 
             _lastMessageAt = systemNowMs();
+
+            // Mint traceId at ingress, stamp into metadata.
+            const traceId = randomUUID();
+            normalized.metadata.traceId = traceId;
+
             deps.logger.info(
-              { channelType: "signal" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length },
+              { step: "channels-inbound", channelType: "signal" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length, traceId },
               "Inbound message",
             );
 
-            for (const handler of handlers) {
-              try {
-                Promise.resolve(handler(normalized)).catch((handlerErr) => {
-                  deps.logger.error(
-                    {
-                      err: handlerErr,
-                      channelId: normalized.channelId,
-                      hint: "Check Signal message handler logic",
-                      errorKind: "internal" as const,
-                    },
-                    "Message handler error",
-                  );
-                });
-              } catch (handlerErr) {
-                deps.logger.error(
-                  {
-                    err: handlerErr,
-                    channelId: normalized.channelId,
-                    hint: "Check Signal message handler logic",
-                    errorKind: "internal" as const,
-                  },
-                  "Message handler error",
-                );
-              }
-            }
+            void runWithContext(
+              { traceId, startedAt: systemNowMs(), channelType: "signal", tenantId: "default", trustLevel: "admin" },
+              () => {
+                for (const handler of handlers) {
+                  try {
+                    Promise.resolve(handler(normalized)).catch((handlerErr) => {
+                      deps.logger.error(
+                        {
+                          err: handlerErr,
+                          channelId: normalized.channelId,
+                          hint: "Check Signal message handler logic",
+                          errorKind: "internal" as const,
+                        },
+                        "Message handler error",
+                      );
+                    });
+                  } catch (handlerErr) {
+                    deps.logger.error(
+                      {
+                        err: handlerErr,
+                        channelId: normalized.channelId,
+                        hint: "Check Signal message handler logic",
+                        errorKind: "internal" as const,
+                      },
+                      "Message handler error",
+                    );
+                  }
+                }
+              },
+            );
           } catch (parseErr) {
             deps.logger.debug({ err: parseErr }, "Failed to parse Signal SSE event");
           }
@@ -247,8 +258,8 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
 
       _lastMessageAt = systemNowMs();
       _lastError = undefined;
-      deps.logger.debug(
-        { channelType: "signal" as const, messageId, chatId, preview: text.slice(0, 1500) },
+      deps.logger.info(
+        { step: "channels-outbound", channelType: "signal" as const, messageId, chatId },
         "Outbound message",
       );
 

@@ -30,7 +30,6 @@ coverage/
 # Claude Code working directory
 .claude/
 
-
 .planning/
 
 # Build outputs (each package's dist/ is gitignored, built on CI)

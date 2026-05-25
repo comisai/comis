@@ -181,12 +181,9 @@ describe("McpServerEntrySchema transport inference", () => {
     expect(result.transport).toBe("sse");
   });
 
-  // Case 4: No inferable source — schema rejects. (NOTE: This case
-  // already throws under the current schema because `transport` is
-  // required-no-default; it will continue throwing after Task 2
-  // because the preprocess returns the entry unchanged and the
-  // enum validator then surfaces the error. The test pins the
-  // behavior at both ends of the refactor.)
+  // Case 4: No inferable source — schema rejects. The preprocess
+  // returns the entry unchanged when nothing can be inferred and
+  // the enum validator then surfaces the error.
   it("rejects when transport, command, and url are all missing", () => {
     expect(() =>
       McpServerEntrySchema.parse({ name: "broken" }),

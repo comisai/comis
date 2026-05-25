@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ok, type Result } from "@comis/shared";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, runWithContext, getMessageTraceId } from "@comis/core";
+import { randomUUID } from "node:crypto";
 import type {
   ChannelPort,
   ChannelStatus,
@@ -189,11 +190,28 @@ export class EchoChannelAdapter implements ChannelPort {
   /**
    * Simulate an incoming message by invoking all registered handlers.
    * This is the testing equivalent of receiving a message from a platform.
+   *
+   * Defense-in-depth wrap. Echo's primary consumers are e2e + chaos tests.
+   * The wrap exercises the runWithContext path so test harnesses can inject
+   * + observe traceId propagation in test mode. Pre-stamped traceIds (set by
+   * callers for assertion) are reused via getMessageTraceId; a fresh UUID is
+   * minted only when absent.
    */
   async injectMessage(msg: NormalizedMessage): Promise<void> {
-    for (const handler of this.messageHandlers) {
-      await handler(msg);
+    // Reuse pre-stamped traceId (chaos/e2e tests may inject a known value)
+    // or mint a fresh one as defense-in-depth fallback.
+    const traceId = getMessageTraceId(msg) ?? randomUUID();
+    if (typeof msg.metadata.traceId !== "string") {
+      msg.metadata.traceId = traceId;
     }
+    await runWithContext(
+      { traceId, startedAt: systemNowMs(), channelType: "echo", tenantId: "default", trustLevel: "admin" },
+      async () => {
+        for (const handler of this.messageHandlers) {
+          await handler(msg);
+        }
+      },
+    );
   }
 
   /**

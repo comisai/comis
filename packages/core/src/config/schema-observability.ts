@@ -104,6 +104,91 @@ const ObservabilityPersistenceSchema = z.strictObject({
 });
 
 /**
+ * Trajectory observability configuration schema.
+ *
+ * Defines the optional `dirOverride` that relocates the runtime trajectory
+ * file to an operator-specified directory. When set, the pointer sidecar
+ * at `<sessionFile>.trajectory-path.json` still lives next to the session
+ * JSONL and its `runtimeFile` field points at the relocated file.
+ *
+ * See also: `COMIS_TRAJECTORY_DIR` env var (projected via env-layer.ts).
+ * Precedence: diagnostics.trajectory.dir → observability.trajectory.dirOverride → env → default.
+ */
+const TrajectoryObservabilityConfigSchema = z.strictObject({
+  /** Override directory for runtime trajectory JSONL files. */
+  dirOverride: z.string().optional(),
+});
+
+/**
+ * Log rotation configuration schema.
+ *
+ * Cross-stream rotation policy applied to all 5 observability streams:
+ * daemon.log, cache-trace.jsonl, config-audit.jsonl,
+ * session-index.YYYY-MM-DD.jsonl, and *.trajectory.jsonl.
+ *
+ * Defaults: 50 MB max size, 5 files kept, 30 days retention, gzip enabled.
+ * Visible via `comis config get observability.logRotation`.
+ */
+const LogRotationConfigSchema = z.strictObject({
+  /** Maximum size in bytes before rotation is triggered. Defaults to 50 * 1024 * 1024 = 52428800 (50 MB). */
+  maxSizeBytes: z.number().int().positive().default(50 * 1024 * 1024),
+  /** Maximum number of rotated files to keep per stream. */
+  maxFiles: z.number().int().positive().default(5),
+  /** Maximum age in days before rotated files are pruned. */
+  maxAgeDays: z.number().int().positive().default(30),
+  /** Whether to gzip rotated files (appends .gz suffix). */
+  compressAged: z.boolean().default(true),
+});
+
+/**
+ * Alert budget threshold schema — per-errorKind sliding-window counter.
+ *
+ * `count`: maximum number of events of a given errorKind within `windowMs`
+ * before `health:budget_exceeded` is emitted once.
+ * `windowMs`: sliding window length in milliseconds.
+ *
+ * Both fields require a positive integer; zero or negative values are rejected
+ * at schema validation time (prevents deadlock/infinite latch).
+ */
+const AlertBudgetThresholdSchema = z.strictObject({
+  count: z.number().int().positive(),
+  windowMs: z.number().int().positive(),
+});
+
+/**
+ * Alert budget configuration schema.
+ *
+ * Defaults cover all 10 errorKind closed-union members. Operators may
+ * override individual thresholds; unrecognised errorKind keys are
+ * silently accepted (future-proofing) but won't fire unless the aggregator
+ * also knows about them.
+ *
+ * Visible via `comis config get observability.alertBudget`.
+ */
+export const AlertBudgetConfigSchema = z.strictObject({
+  /** Whether the health budget aggregator is enabled. Default true. */
+  enabled: z.boolean().default(true),
+  /**
+   * Per-errorKind threshold table. All 10 errorKind closed-union members
+   * are pre-seeded with sane defaults. Individual entries can be overridden;
+   * extra keys (unknown errorKinds) are accepted by the schema but ignored
+   * by the aggregator's lookup.
+   */
+  thresholds: z.record(z.string(), AlertBudgetThresholdSchema).default({
+    network:      { count: 100, windowMs: 60_000 },
+    config:       { count: 10,  windowMs: 60_000 },
+    auth:         { count: 20,  windowMs: 60_000 },
+    validation:   { count: 100, windowMs: 60_000 },
+    precondition: { count: 50,  windowMs: 60_000 },
+    timeout:      { count: 50,  windowMs: 60_000 },
+    resource:     { count: 10,  windowMs: 60_000 },
+    dependency:   { count: 20,  windowMs: 60_000 },
+    internal:     { count: 5,   windowMs: 60_000 },
+    platform:     { count: 50,  windowMs: 60_000 },
+  }),
+});
+
+/**
  * Root observability configuration schema.
  *
  * Has sensible defaults so an empty object produces a valid ObservabilityConfig.
@@ -111,7 +196,18 @@ const ObservabilityPersistenceSchema = z.strictObject({
 export const ObservabilityConfigSchema = z.strictObject({
   /** Persistence layer settings. */
   persistence: ObservabilityPersistenceSchema.default(() => ObservabilityPersistenceSchema.parse({})),
+  /** Trajectory storage override. */
+  trajectory: TrajectoryObservabilityConfigSchema.default(() => TrajectoryObservabilityConfigSchema.parse({})),
+  /** Cross-stream log rotation policy. */
+  logRotation: LogRotationConfigSchema.default(() => LogRotationConfigSchema.parse({})),
+  /** Alert budget rate-aggregator policy. */
+  alertBudget: AlertBudgetConfigSchema.default(() => AlertBudgetConfigSchema.parse({})),
 });
 
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
 export type ObservabilityPersistenceConfig = z.infer<typeof ObservabilityPersistenceSchema>;
+export type TrajectoryObservabilityConfig = z.infer<typeof TrajectoryObservabilityConfigSchema>;
+export type LogRotationConfig = z.infer<typeof LogRotationConfigSchema>;
+export type AlertBudgetConfig = z.infer<typeof AlertBudgetConfigSchema>;
+export type AlertBudgetThreshold = z.infer<typeof AlertBudgetThresholdSchema>;
+export { LogRotationConfigSchema };

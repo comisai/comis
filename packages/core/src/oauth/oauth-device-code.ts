@@ -119,8 +119,8 @@ function trimNonEmptyString(value: unknown): string | undefined {
 
 /**
  * Build the 3-key header set for the device-code flow.
- * Adaptation vs upstream: drop the cosmetic version-header lookup
- * (CLAUDE.md §2.2). Header values are fixed strings — no env reads.
+ * Adaptation vs upstream: drop the cosmetic version-header lookup.
+ * Header values are fixed strings — no env reads.
  */
 function resolveOpenAICodexDeviceCodeHeaders(contentType: string): Record<string, string> {
   return {

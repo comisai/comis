@@ -49,14 +49,20 @@
 import { randomUUID } from "node:crypto";
 
 import { systemDateFrom, systemGetEnv, systemNowMs, tryGetContext } from "@comis/core";
+import type { ComisLogger } from "@comis/core";
 
 import { getQueuedFileWriter, type QueuedFileWriter } from "../shared/queued-file-writer.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
+import {
+  BOUNDED_PAYLOAD_REASONS,
+  type BoundedPayloadReason,
+} from "../shared/bounded-payload.js";
 
 import { resolveTrajectoryFilePath } from "./paths.js";
 import { writeTrajectoryPointerFileBestEffort } from "./pointer-file.js";
 import type {
+  TraceTruncatedParams,
   TrajectoryEvent,
   TrajectoryEventType,
   TrajectoryRecorder,
@@ -73,10 +79,211 @@ const DEFAULT_MAX_QUEUED_BYTES = 4 * 1024 * 1024;
 const DEFAULT_SENTINEL_RESERVE_BYTES = 2 * 1024;
 const EVENT_SIZE_SENTINEL_REASON = "trajectory-event-size-limit";
 
+/**
+ * Soft capture cap.
+ *
+ * When `recordEvent` would push `writtenBytes` past this threshold the
+ * recorder emits `trace.truncated` INLINE (via `emitTruncatedInternal`)
+ * with `reason: "trajectory-runtime-file-size-limit"` and sets
+ * `state.closed = true`, stopping all further recording. The 50 MB hard
+ * cap on the underlying `QueuedFileWriter` chassis remains unchanged as a
+ * last-resort safety net.
+ *
+ * Overridable per-recorder via `budgets.captureMaxBytes` for test isolation.
+ */
+export const TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES = 10 * 1024 * 1024;
+
+// Trajectory-specific bounding constants.  The numeric values are
+// identical to PAYLOAD_BOUNDS in bounded-payload.ts (which enforces the
+// limits numerically via sanitizeForPersistence). These constants are
+// used only for the sentinel SHAPE emitted by limitTrajectoryPayloadValue,
+// not for re-enforcement of the numeric caps.
+const TRAJECTORY_DATA_STRING_LIMIT_CHARS = 32_768;
+const TRAJECTORY_DATA_ARRAY_LIMIT_ITEMS = 64;
+const TRAJECTORY_DATA_OBJECT_LIMIT_KEYS = 64;
+const TRAJECTORY_DATA_MAX_DEPTH = 6;
+
+/**
+ * Maximum number of concurrent trajectory writers kept in the module-level
+ * registry. When a new distinct file path would push the registry past this
+ * limit, the least-recently-used writer is evicted: `flushAndClose()` is
+ * called fire-and-forget, then deleted from the map. JavaScript `Map`
+ * preserves insertion order, making it a natural LRU structure:
+ * move-to-end on access, evict the first (oldest) key.
+ *
+ * Set to 100 — large enough for typical long-running daemon sessions with
+ * many concurrent agent sub-runs, small enough to prevent unbounded growth.
+ */
+export const MAX_TRAJECTORY_WRITERS = 100;
+
 // Module-level writer registry — keyed by file path. Multiple recorders
 // for the same file share one writer (rare, but matches the
 // queued-writer chassis contract).
 const writerRegistry = new Map<string, QueuedFileWriter>();
+
+// ---------------------------------------------------------------------------
+// limitTrajectoryPayloadValue — conversion wrapper
+//
+// Walks the value graph produced by sanitizeForPersistence and re-maps
+// any { __bounded__: "bounded-payload-*" } sentinel records into the
+// trajectory-specific { truncated: true, reason: "trajectory-*", ... }
+// shape.
+//
+// DOES NOT touch bounded-payload.ts or combined-walker.ts — those are
+// shared by cache-trace, config-audit, and system-prompt-report consumers
+// which key on __bounded__ and must keep seeing it.
+//
+// The function is pure (no I/O, no clock). No cycle guard is needed here
+// because sanitizeForPersistence already collapsed all cycles into
+// bounded-payload-cycle-detected sentinels, so the graph this function
+// receives is acyclic and finite.
+// ---------------------------------------------------------------------------
+
+/** Predicate: is `v` a bounded-payload sentinel emitted by sanitizeForPersistence? */
+function isBoundedSentinel(v: unknown): v is { __bounded__: BoundedPayloadReason } {
+  if (v === null || typeof v !== "object") return false;
+  const obj = v as Record<string, unknown>;
+  const reason = obj["__bounded__"];
+  if (typeof reason !== "string") return false;
+  // Check against the closed union of known reasons.
+  return (Object.values(BOUNDED_PAYLOAD_REASONS) as string[]).includes(reason);
+}
+
+/**
+ * Converts shared `{ __bounded__ }` sentinels in a sanitized payload graph
+ * into trajectory-specific `{ truncated: true, reason: "trajectory-*", ... }`
+ * sentinels.
+ *
+ * Recurses into plain objects and arrays for non-sentinel nodes.
+ * Exported so it can be unit-tested independently.
+ */
+export function limitTrajectoryPayloadValue(value: unknown): unknown {
+  // Primitives and null pass through unchanged.
+  if (value === null || typeof value !== "object") return value;
+
+  // Check for a bounded sentinel first (before recursing into child keys).
+  if (isBoundedSentinel(value)) {
+    const node = value as {
+      __bounded__: BoundedPayloadReason;
+      originalBytes?: number;
+      originalLength?: number;
+      originalKeyCount?: number;
+    };
+    const reason = node.__bounded__;
+
+    // Exhaustive switch — closed union discriminator.
+    switch (reason) {
+      case BOUNDED_PAYLOAD_REASONS.fieldSizeLimit:
+        return {
+          truncated: true,
+          reason: "trajectory-field-size-limit",
+          ...(node.originalBytes !== undefined
+            ? { originalChars: node.originalBytes }
+            : {}),
+          limitChars: TRAJECTORY_DATA_STRING_LIMIT_CHARS,
+        };
+
+      case BOUNDED_PAYLOAD_REASONS.arrayLengthLimit:
+        return {
+          truncated: true,
+          reason: "trajectory-array-length-limit",
+          ...(node.originalLength !== undefined
+            ? { originalItems: node.originalLength }
+            : {}),
+          limitItems: TRAJECTORY_DATA_ARRAY_LIMIT_ITEMS,
+        };
+
+      case BOUNDED_PAYLOAD_REASONS.objectKeyLimit:
+        return {
+          truncated: true,
+          reason: "trajectory-object-key-limit",
+          ...(node.originalKeyCount !== undefined
+            ? { originalKeys: node.originalKeyCount }
+            : {}),
+          limitKeys: TRAJECTORY_DATA_OBJECT_LIMIT_KEYS,
+        };
+
+      case BOUNDED_PAYLOAD_REASONS.depthLimit:
+        return {
+          truncated: true,
+          reason: "trajectory-depth-limit",
+          limitDepth: TRAJECTORY_DATA_MAX_DEPTH,
+        };
+
+      case BOUNDED_PAYLOAD_REASONS.cycleDetected:
+        return { truncated: true, reason: "trajectory-circular-reference" };
+
+      default: {
+        // Exhaustiveness check — if TypeScript narrows `reason` to `never`
+        // here, all cases are handled; a compile error means a new reason
+        // was added to BOUNDED_PAYLOAD_REASONS without a matching case.
+        const _exhaustive: never = reason;
+        // At runtime, return the node unchanged (forward-compatibility).
+        return _exhaustive;
+      }
+    }
+  }
+
+  // Recurse into arrays.
+  if (Array.isArray(value)) {
+    return value.map(limitTrajectoryPayloadValue);
+  }
+
+  // Recurse into plain objects.
+  const obj = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    result[key] = limitTrajectoryPayloadValue(obj[key]);
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// LRU writer acquisition
+//
+// Wraps `getQueuedFileWriter` with JS Map insertion-order LRU semantics:
+//   - On re-access: delete + re-set (moves key to the end = most-recently-used)
+//   - On new acquisition: after registering, evict the oldest keys until
+//     writerRegistry.size <= MAX_TRAJECTORY_WRITERS.
+//
+// Eviction calls flushAndClose() fire-and-forget (the QueuedFileWriter chassis
+// serialises writes on a promise chain; any in-flight writes will complete
+// before the file is closed). We guard against evicting the path just acquired.
+// ---------------------------------------------------------------------------
+
+interface AcquireOpts {
+  maxQueuedBytes: number;
+  maxFileBytes: number;
+  confinedBaseDir?: string;
+}
+
+function acquireWriter(filePath: string, opts: AcquireOpts): QueuedFileWriter {
+  // Move-to-end on re-access (LRU refresh).
+  if (writerRegistry.has(filePath)) {
+    const existing = writerRegistry.get(filePath)!;
+    writerRegistry.delete(filePath);
+    writerRegistry.set(filePath, existing);
+  }
+
+  // Register (or re-register refreshed) via the chassis helper.
+  const writer = getQueuedFileWriter(writerRegistry, filePath, opts);
+
+  // Evict oldest entries until we are within the cap.
+  // Guard: never evict the path we just acquired (it's always at the end
+  // after move-to-end + re-set, but check explicitly for the size=1 edge).
+  while (writerRegistry.size > MAX_TRAJECTORY_WRITERS) {
+    const oldestKey = writerRegistry.keys().next().value;
+    if (oldestKey === undefined || oldestKey === filePath) break;
+    const evicted = writerRegistry.get(oldestKey);
+    writerRegistry.delete(oldestKey);
+    if (evicted !== undefined) {
+      // Fire-and-forget: in-flight writes are drained by the chassis before close.
+      void evicted.flushAndClose();
+    }
+  }
+
+  return writer;
+}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -119,8 +326,16 @@ export function createTrajectoryRecorder(
   const maxQueuedBytes =
     init.budgets?.maxQueuedBytes ?? DEFAULT_MAX_QUEUED_BYTES;
   const usableFileBytes = Math.max(0, maxRuntimeFileBytes - sentinelReserveBytes);
+  // Soft capture cap — per-recorder override (default 10 MB).
+  // Must be ≤ usableFileBytes in practice; values larger than the 50 MB
+  // hard cap simply mean the hard cap fires first.
+  const captureMaxBytes =
+    init.budgets?.captureMaxBytes ?? TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES;
 
-  const writer = getQueuedFileWriter(writerRegistry, filePath, {
+  // Acquire writer via LRU-bookkeeping helper. Handles
+  // move-to-end on re-access and eviction of oldest writers when the
+  // registry would exceed MAX_TRAJECTORY_WRITERS.
+  const writer = acquireWriter(filePath, {
     maxQueuedBytes,
     maxFileBytes: maxRuntimeFileBytes,
     // Forward the caller's confinement base (typically
@@ -145,6 +360,10 @@ export function createTrajectoryRecorder(
     });
   }
 
+  // Extract optional logger for operator diagnostics.
+  // Uses @comis/core's structural ComisLogger contract — no @comis/infra dep.
+  const logger: ComisLogger | undefined = init.logger;
+
   // Mutable per-recorder state. Each recorder owns its own seq counter
   // and write-byte accumulator (the writer chassis is shared across
   // recorders for the same path, but the seq/byte accounting is local).
@@ -152,8 +371,46 @@ export function createTrajectoryRecorder(
     seq: 0,
     writtenBytes: 0,
     droppedEvents: 0,
+    droppedEventBytes: 0,
     closed: false,
+    // Guard: emit the hard-cap WARN at most once per recorder lifetime.
+    // Without this flag, every subsequent call to recordEvent after the
+    // hard-cap fires would re-emit the WARN.
+    hardCapWarnEmitted: false,
   };
+
+  // ---------------------------------------------------------------------------
+  // Shared internal helper for trace.truncated sentinel emission.
+  //
+  // Called both by the public `emitTraceTruncated` hook AND by the
+  // close-time emit in `flushAndClose`, ensuring identical envelope shape
+  // in both code paths. Bypasses the file-cap accounting — the
+  // sentinelReserveBytes head-room (default 2 KB) is what makes this safe
+  // even when the cap is exhausted.
+  // ---------------------------------------------------------------------------
+  function emitTruncatedInternal(params: TraceTruncatedParams): "queued" | "dropped" {
+    state.seq += 1;
+    const sanitized: Record<string, unknown> = {
+      reason: params.reason,
+      droppedEvents: params.droppedEvents,
+    };
+    if (params.droppedEventBytes !== undefined) {
+      sanitized.droppedEventBytes = params.droppedEventBytes;
+    }
+    if (params.limitBytes !== undefined) {
+      sanitized.limitBytes = params.limitBytes;
+    }
+    const sentinel = buildEvent({
+      type: "trace.truncated",
+      init,
+      seq: state.seq,
+      sanitized,
+    });
+    const line = encodeLine(sentinel);
+    // Bypass file-cap accounting — the sentinelReserveBytes head-room
+    // (default 2 KB) is what makes this safe even when the cap is exhausted.
+    return writer.write(line);
+  }
 
   const recorder: TrajectoryRecorder = {
     filePath,
@@ -172,10 +429,18 @@ export function createTrajectoryRecorder(
         | Record<string, unknown>
         | undefined;
 
+      // 1a. Convert shared __bounded__ sentinels to trajectory-specific
+      //     { truncated: true, reason: "trajectory-*" } shape.
+      //     limitTrajectoryPayloadValue is a pure walk that only touches
+      //     sentinel nodes; plain values pass through unchanged.
+      const bounded = limitTrajectoryPayloadValue(sanitized) as
+        | Record<string, unknown>
+        | undefined;
+
       // 2. Build the envelope.
       const evt = buildEvent({
         type,
-        ...(sanitized !== undefined ? { sanitized } : {}),
+        ...(bounded !== undefined ? { sanitized: bounded } : {}),
         init,
         seq: state.seq + 1,
         ...(parentEntryId !== undefined ? { parentEntryId } : {}),
@@ -202,10 +467,47 @@ export function createTrajectoryRecorder(
         bytes = Buffer.byteLength(line, "utf8");
       }
 
-      // 4. Per-file budget. Reserve head-room for the final
-      //    trace.truncated sentinel via flushAndClose.
+      // 4a. Soft capture cap. When writtenBytes would cross
+      //     TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES (default 10 MB,
+      //     overridable via budgets.captureMaxBytes), emit trace.truncated
+      //     INLINE and stop recording. emitTruncatedInternal bypasses the
+      //     file-cap accounting via sentinelReserveBytes head-room, so the
+      //     sentinel still lands even though state.closed is set.
+      if (state.writtenBytes + bytes > captureMaxBytes) {
+        state.droppedEvents += 1;
+        state.droppedEventBytes += bytes;
+        // Emit the inline sentinel before setting closed so emitTruncatedInternal
+        // can write to the file (it checks state.closed via emitTraceTruncated).
+        emitTruncatedInternal({
+          reason: "trajectory-runtime-file-size-limit",
+          droppedEvents: state.droppedEvents,
+          droppedEventBytes: state.droppedEventBytes,
+          limitBytes: captureMaxBytes,
+        });
+        state.closed = true;
+        return "dropped";
+      }
+
+      // 4b. Hard-cap safety net (50 MB). Reserve head-room for the final
+      //     trace.truncated sentinel via flushAndClose.
+      //
+      //     Emit a single WARN (errorKind:"resource") the first time the
+      //     hard cap fires so operators can observe the breach without
+      //     polling droppedEvents(). The guard flag prevents re-emission
+      //     on every subsequent dropped event.
       if (state.writtenBytes + bytes > usableFileBytes) {
         state.droppedEvents += 1;
+        if (logger !== undefined && !state.hardCapWarnEmitted) {
+          state.hardCapWarnEmitted = true;
+          logger.warn(
+            {
+              errorKind: "resource" as const,
+              limitBytes: usableFileBytes,
+              hint: "Trajectory runtime file hit the hard cap; enable observability.logRotation or raise the diagnostics.trajectory.maxFileBytes budget",
+            },
+            "Trajectory runtime file hit hard cap; writer halted",
+          );
+        }
         return "dropped";
       }
 
@@ -227,30 +529,34 @@ export function createTrajectoryRecorder(
     },
 
     async flushAndClose(): Promise<void> {
-      if (state.closed) return;
-      state.closed = true;
+      // Soft-cap inline close: state.closed may already be true
+      // if the soft cap fired inline during recordEvent. In that case we must
+      // still flush+close the underlying writer — the sentinel was already
+      // written inline, so we skip the droppedEvents branch but DO drain
+      // the write queue and close the file handle.
+      const alreadyClosed = state.closed;
+      if (!alreadyClosed) {
+        state.closed = true;
+      }
       await writer.flush();
 
-      // Local seq bump shared across the two sentinel branches so we
-      // never reuse a seq number when both fire in the same close.
-      let sentinelSeq = state.seq;
-
-      if (state.droppedEvents > 0) {
-        sentinelSeq += 1;
-        const sentinel = buildEvent({
-          type: "trace.truncated",
-          init,
-          seq: sentinelSeq,
-          sanitized: {
-            droppedEvents: state.droppedEvents,
-            reason: "file-or-queue-cap-exceeded",
-          },
+      // Only emit the close-time sentinel when the recorder was NOT
+      // already closed by an inline soft-cap event. An inline soft-cap
+      // close already emitted trace.truncated; emitting again here would
+      // produce a duplicate sentinel and a wrong droppedEvents count.
+      if (!alreadyClosed && state.droppedEvents > 0) {
+        // Close-time sentinel — delegates to the same codepath as the
+        // public hook so behaviour matches. Passes the legacy reason
+        // string; does NOT pass droppedEventBytes / limitBytes because
+        // the close-time path only has the drop count, not the byte
+        // accounting.
+        // state.seq is mutated by emitTruncatedInternal (increments by 1)
+        // so the subsequent trace.write_failures branch below picks up
+        // the bumped value without a separate sentinelSeq variable.
+        emitTruncatedInternal({
+          reason: "file-or-queue-cap-exceeded",
+          droppedEvents: state.droppedEvents,
         });
-        // Sentinel emit is unconditional — bypasses the file-cap
-        // accounting so the operator's bookkeeping is preserved even
-        // when the cap is exhausted. The 2 KB reserve makes this safe.
-        const line = encodeLine(sentinel);
-        writer.write(line);
       }
 
       // Emit trace.write_failures when the underlying queued writer
@@ -264,12 +570,12 @@ export function createTrajectoryRecorder(
       // sentinel record lands on disk.
       const failureCount = writer.failureCount();
       if (failureCount > 0) {
-        sentinelSeq += 1;
+        state.seq += 1;
         const lastError = writer.lastError();
         const sentinel = buildEvent({
           type: "trace.write_failures",
           init,
-          seq: sentinelSeq,
+          seq: state.seq,
           sanitized: {
             reason: "queued_writer_rejected",
             count: failureCount,
@@ -282,6 +588,18 @@ export function createTrajectoryRecorder(
       }
 
       await writer.flushAndClose();
+    },
+
+    emitTraceTruncated(params: TraceTruncatedParams): "queued" | "dropped" {
+      if (state.closed) return "dropped";
+      return emitTruncatedInternal(params);
+    },
+
+    // Expose the running dropped-event counter so callers
+    // at lifecycle-envelope emit sites (pi-event-bridge, comis-session-manager)
+    // can detect and log drops instead of silently ignoring the "dropped" signal.
+    droppedEvents(): number {
+      return state.droppedEvents;
     },
   };
 
