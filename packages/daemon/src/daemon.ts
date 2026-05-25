@@ -171,6 +171,7 @@ import { createTracingLogger } from "./observability/trace-logger.js";
 import { setupChannelHealthLogging } from "./observability/channel-health-logger.js";
 import { createProcessMonitor } from "./process/process-monitor.js";
 import { ok, err, suppressError } from "@comis/shared";
+import { exportTrajectoryBundle } from "@comis/observability";
 import { randomUUID } from "node:crypto";
 import { existsSync, chmodSync, statSync, mkdirSync, readFileSync, unlinkSync, cpSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
@@ -631,8 +632,26 @@ function buildChannelManagerDeps(deps: {
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
-    onSuspiciousContent,
+    onSuspiciousContent, dataDir,
   } = agents;
+  // Phase 6 EXPORT-01: build exportSessionBundle DI closure for the
+  // /export-trajectory slash command.  Uses exportTrajectoryBundle from
+  // @comis/observability (same pipeline as `comis trace export`).
+  const exportSessionBundle = async (sessionId: string): Promise<{ bundlePath: string }> => {
+    const sessionsDir = safePath(container.config.dataDir ?? dataDir, "sessions");
+    const sessionFile = safePath(sessionsDir, `${sessionId}.jsonl`);
+    const workspaceDir = defaultWorkspaceDir ?? safePath(container.config.dataDir ?? dataDir, "workspace");
+    const result = await exportTrajectoryBundle({
+      sessionId,
+      sessionKey: sessionId,
+      sessionFile,
+      workspaceDir,
+      traceId: sessionId,  // best-effort; bundle exporter uses for naming only
+      agentId: "unknown",  // best-effort; available in session file header
+    });
+    if (!result.ok) throw new Error(`Bundle export failed: ${result.error.kind}`);
+    return { bundlePath: result.value.bundleDir };
+  };
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger,
@@ -662,6 +681,7 @@ function buildChannelManagerDeps(deps: {
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     piSessionAdapters, costTrackers, deliveryQueue,
     cronExecutionTrackers: executionTrackers,
+    exportSessionBundle,
   };
 }
 
@@ -1023,6 +1043,11 @@ function buildRpcDispatchDeps(deps: {
     skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
     imageHandlerDeps,
     oauthCredentialStore: c.oauthCredentialStore,
+    // Phase 6 (06-03 / 06-05): wire observability DI seams.
+    // ObservabilityApiDeps.dataDir: used by obs.trace.* handlers for session-index + bundle export.
+    // ObservabilityApiDeps.exportTrajectoryBundle: DI seam for obs.trace.export RPC (comis trace export <sessionId>).
+    dataDir: c.dataDir,
+    exportTrajectoryBundle,
   };
 }
 

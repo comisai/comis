@@ -1,9 +1,9 @@
 # ChannelManagerDeps Audit
 
 **Generated:** 2026-05-11
-**Interface source:** `packages/orchestrator/src/channel-manager.ts:78–218` (37-field interface)
+**Interface source:** `packages/orchestrator/src/channel-manager.ts:78–218` (38-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-channels.ts:739` (single site — `createChannelManager({`)
-**Field count:** 37 (7 required + 30 optional + 0 stale-fallback)
+**Field count:** 38 (7 required + 31 optional + 0 stale-fallback)
 
 This file is co-located with the orchestrator package. `files: ["dist"]` in `packages/orchestrator/package.json` excludes it from the npm tarball.
 
@@ -56,6 +56,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | getEnforceFinalTag | optional | enforceFinalTag executor option is undefined (executor default applies) | packages/orchestrator/src/channel-manager.ts:198 |
 | processInboundMessage | required | — | packages/orchestrator/src/channel-manager.ts:205 |
 | getAllowFrom | optional | no allowFrom sender filter (all senders allowed) | packages/orchestrator/src/channel-manager.ts:217 |
+| exportSessionBundle | optional | /export-trajectory falls through to generic handleSlashCommand (no-op — export-trajectory has no case in command-handler.ts switch, returns handled:false, message with empty text reaches executor) | packages/orchestrator/src/channel-manager.ts:189 |
 
 ## Removed Fields (stale-fallback)
 
@@ -63,7 +64,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Summary
 
-- **Total fields:** 37 (7 required + 30 optional)
+- **Total fields:** 38 (7 required + 31 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value)
 

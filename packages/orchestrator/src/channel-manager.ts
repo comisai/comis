@@ -179,6 +179,14 @@ export interface ChannelManagerDeps {
   processInboundMessage: ProcessInboundMessageFn;
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];
+  /**
+   * Phase 6 (EXPORT-01): bundle export DI for the /export-trajectory slash
+   * command. When present, inbound-gate.ts special-cases /export-trajectory
+   * with owner-gate + DM routing before the generic handleSlashCommand block.
+   * When absent, /export-trajectory falls through to generic slash command
+   * handling (no-op). Injected by daemon wiring via ChannelManagerBuildDeps.
+   */
+  exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
 }
 
 export interface ChannelManager {
