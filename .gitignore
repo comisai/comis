@@ -30,10 +30,6 @@ coverage/
 # Claude Code working directory
 .claude/
 
-# Local Claude Code project instructions (not tracked)
-/CLAUDE.md
-
-
 .planning/
 
 # Build outputs (each package's dist/ is gitignored, built on CI)
