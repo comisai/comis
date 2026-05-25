@@ -366,4 +366,108 @@ describe("createDedupedRefreshFetch", () => {
     expect(dedupedRefreshSpy).toHaveBeenCalledTimes(1);
     expect(innerSpy).toHaveBeenCalledTimes(2);
   });
+
+  it("refresh itself fails → surfaces the original 401 with an auth WARN (no retry)", async () => {
+    await store.saveTokens("notion", {
+      access_token: EXPIRED_BEARER,
+      refresh_token: REFRESH_TOKEN,
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    await store.saveClientInformation("notion", CLIENT_INFO);
+    await store.saveDiscoveryState("notion", {
+      authorizationServerUrl: "https://auth.example.test",
+    });
+
+    // The deduper rejects (provider rejected the refresh_token, or 5xx).
+    const refreshError = new Error("invalid_grant: refresh_token revoked");
+    const dedupedRefreshSpy = vi.fn(async () => {
+      throw refreshError;
+    });
+    const deduper: RefreshDeduper = {
+      dedupedRefresh: dedupedRefreshSpy as unknown as RefreshDeduper["dedupedRefresh"],
+    };
+
+    const { fetch: inner, spy: innerSpy } = makeFetchSpy([
+      () => new Response("orig-401", { status: 401 }),
+    ]);
+
+    const wrapped = createDedupedRefreshFetch({
+      serverName: "notion",
+      tokenStore: store,
+      deduper,
+      innerFetch: inner,
+      logger,
+    });
+
+    const res = await wrapped("http://example.test/x", {
+      headers: { Authorization: `Bearer ${EXPIRED_BEARER}` },
+    });
+
+    // Original 401 surfaced verbatim (its body was cancelled before the failed
+    // refresh, per the socket-release contract); NO retry fired.
+    expect(res.status).toBe(401);
+    expect(dedupedRefreshSpy).toHaveBeenCalledTimes(1);
+    expect(innerSpy).toHaveBeenCalledTimes(1);
+
+    // An auth-kind WARN with an operator hint and the err OBJECT (Pino serializer).
+    const warn = logger.warn.mock.calls.find(([, m]) =>
+      typeof m === "string" && m.includes("deduped refresh failed"),
+    );
+    expect(warn).toBeDefined();
+    const payload = warn?.[0] as Record<string, unknown>;
+    expect(payload.errorKind).toBe("auth");
+    expect(payload.hint).toContain("comis mcp login");
+    expect(payload.err).toBeInstanceOf(Error);
+    expect(payload.err).toBe(refreshError);
+  });
+
+  it("refresh returns no access_token (provider spec violation) → surfaces 401, no retry", async () => {
+    await store.saveTokens("notion", {
+      access_token: EXPIRED_BEARER,
+      refresh_token: REFRESH_TOKEN,
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    await store.saveClientInformation("notion", CLIENT_INFO);
+    await store.saveDiscoveryState("notion", {
+      authorizationServerUrl: "https://auth.example.test",
+    });
+
+    // dedupedRefresh resolves but the rotated tokens carry NO access_token.
+    const dedupedRefreshSpy = vi.fn(async () => ({
+      tokens: { token_type: "Bearer", expires_in: 3600 } as OAuthTokens,
+    }));
+    const deduper: RefreshDeduper = {
+      dedupedRefresh: dedupedRefreshSpy as unknown as RefreshDeduper["dedupedRefresh"],
+    };
+
+    const { fetch: inner, spy: innerSpy } = makeFetchSpy([
+      () => new Response("orig-401", { status: 401 }),
+    ]);
+
+    const wrapped = createDedupedRefreshFetch({
+      serverName: "notion",
+      tokenStore: store,
+      deduper,
+      innerFetch: inner,
+      logger,
+    });
+
+    const res = await wrapped("http://example.test/x", {
+      headers: { Authorization: `Bearer ${EXPIRED_BEARER}` },
+    });
+
+    // No retry with an empty bearer (that would loop) — surface the 401.
+    // (Body already cancelled before the refresh, per the socket-release contract.)
+    expect(res.status).toBe(401);
+    expect(dedupedRefreshSpy).toHaveBeenCalledTimes(1);
+    expect(innerSpy).toHaveBeenCalledTimes(1);
+
+    const warn = logger.warn.mock.calls.find(([, m]) =>
+      typeof m === "string" && m.includes("no access_token"),
+    );
+    expect(warn).toBeDefined();
+    expect((warn?.[0] as Record<string, unknown>).errorKind).toBe("auth");
+  });
 });
