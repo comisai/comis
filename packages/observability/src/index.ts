@@ -371,3 +371,25 @@ export type {
   TurnCompletedEvent,
   SessionEndedEvent,
 } from "./session-index/index.js";
+
+// ---------------------------------------------------------------------------
+// Rotation surface (ROTATE-02).
+// ---------------------------------------------------------------------------
+//
+// Cross-stream log rotation policy helper + startup sweep.
+// The rotation module depends only on @comis/core and Node builtins —
+// no circular deps introduced.
+
+export {
+  applyRotationPolicy,
+  type RotationPolicy,
+  type ApplyRotationDeps,
+  type ApplyRotationInput,
+  type ApplyRotationResult,
+} from "./rotation/policy.js";
+
+export {
+  sweepRotatedFiles,
+  ROTATION_STREAM_PATTERNS,
+  type SweepDeps,
+} from "./rotation/sweep.js";

@@ -120,6 +120,27 @@ const TrajectoryObservabilityConfigSchema = z.strictObject({
 });
 
 /**
+ * Log rotation configuration schema (ROTATE-01).
+ *
+ * Cross-stream rotation policy applied to all 5 observability streams:
+ * daemon.log, cache-trace.jsonl, config-audit.jsonl,
+ * session-index.YYYY-MM-DD.jsonl, and *.trajectory.jsonl.
+ *
+ * Defaults: 50 MB max size, 5 files kept, 30 days retention, gzip enabled.
+ * Visible via `comis config get observability.logRotation`.
+ */
+const LogRotationConfigSchema = z.strictObject({
+  /** Maximum size in bytes before rotation is triggered. Defaults to 50 * 1024 * 1024 = 52428800 (50 MB). */
+  maxSizeBytes: z.number().int().positive().default(50 * 1024 * 1024),
+  /** Maximum number of rotated files to keep per stream. */
+  maxFiles: z.number().int().positive().default(5),
+  /** Maximum age in days before rotated files are pruned. */
+  maxAgeDays: z.number().int().positive().default(30),
+  /** Whether to gzip rotated files (appends .gz suffix). */
+  compressAged: z.boolean().default(true),
+});
+
+/**
  * Root observability configuration schema.
  *
  * Has sensible defaults so an empty object produces a valid ObservabilityConfig.
@@ -129,8 +150,12 @@ export const ObservabilityConfigSchema = z.strictObject({
   persistence: ObservabilityPersistenceSchema.default(() => ObservabilityPersistenceSchema.parse({})),
   /** Trajectory storage override (POINTER-02). */
   trajectory: TrajectoryObservabilityConfigSchema.default(() => TrajectoryObservabilityConfigSchema.parse({})),
+  /** Cross-stream log rotation policy (ROTATE-01). */
+  logRotation: LogRotationConfigSchema.default(() => LogRotationConfigSchema.parse({})),
 });
 
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
 export type ObservabilityPersistenceConfig = z.infer<typeof ObservabilityPersistenceSchema>;
 export type TrajectoryObservabilityConfig = z.infer<typeof TrajectoryObservabilityConfigSchema>;
+export type LogRotationConfig = z.infer<typeof LogRotationConfigSchema>;
+export { LogRotationConfigSchema };
