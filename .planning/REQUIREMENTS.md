@@ -178,7 +178,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
   - Acceptance: operators see policy in `comis config get observability.logRotation`
   - Design: D15 *(files: `packages/observability/src/rotation/policy.ts`, `packages/observability/src/rotation/sweep.ts`, `packages/daemon/src/observability/log-infra.ts`, `packages/daemon/src/wiring/setup-startup-invariants.ts`, `packages/observability/src/config-audit/append.ts`)*
   - Completed: 07-01 (commit d7c72d1)
-- [ ] **ROTATE-03**: `docs/operations/logging.mdx` documents the rotation policy
+- [x] **ROTATE-03**: `docs/operations/logging.mdx` documents the rotation policy
   - Design: D15
 
 ### Alert Budget
@@ -281,7 +281,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | EXPORT-01 | Phase 6 | Complete |
 | ROTATE-01 | Phase 7 Plan 01 | Complete (07-01: 48cddac, f1d70e9) |
 | ROTATE-02 | Phase 7 Plan 01 | Complete (07-01: d7c72d1) |
-| ROTATE-03 | Phase 7 | Pending |
+| ROTATE-03 | Phase 7 | Complete |
 | ALERT-01 | Phase 7 | Pending |
 | HYGIENE-01 | Phase 8 | Pending |
 | DOCS-01 | Phase 8 | Pending |
