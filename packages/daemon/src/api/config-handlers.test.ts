@@ -316,6 +316,14 @@ describe("config.patch", () => {
       } else {
         expect(fs.existsSync(auditPath)).toBe(false);
       }
+
+      // This test runs on REAL timers, so the successful patch scheduled a real
+      // 200ms setTimeout -> process.kill(pid, "SIGUSR2"). `.unref()` keeps it from
+      // holding the loop open, but it still FIRES if the worker is alive at 200ms
+      // (which it is under full-workspace load). Drain it into the mocked killSpy
+      // BEFORE afterEach runs restoreAllMocks — otherwise the real process.kill
+      // fires post-restore and terminates the vitest worker.
+      await vi.waitFor(() => expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2"));
     });
 
     it("writes the audit JSONL line when deps.auditEnabled === true (symmetric positive)", async () => {
@@ -343,6 +351,11 @@ describe("config.patch", () => {
         .split("\n")
         .filter((l) => l.length > 0);
       expect(lines.length).toBeGreaterThanOrEqual(1);
+
+      // Real-timer successful patch: drain the real 200ms SIGUSR2 restart timer
+      // into the mocked killSpy before afterEach restores process.kill. See the
+      // sibling auditEnabled:false test for the full rationale.
+      await vi.waitFor(() => expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2"));
     });
   });
 });
