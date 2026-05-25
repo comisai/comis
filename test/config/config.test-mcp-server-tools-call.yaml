@@ -45,7 +45,7 @@ gateway:
   tokens:
     # Primary daemon auth token (rpc/ws/admin) for the harness health check.
     - id: test-token
-      secret: mcp-svr-toolscall-primary-tok-1
+      secret: mcp-svr-toolscall-primary-token-1234
       scopes: ["rpc", "ws", "admin"]
     # mcp-client with memory_search allowlisted.
     - id: mcp-toolscall

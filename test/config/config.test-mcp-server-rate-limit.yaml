@@ -46,7 +46,7 @@ gateway:
   tokens:
     # Primary daemon auth token (rpc/ws/admin) so the harness health check works.
     - id: test-token
-      secret: mcp-svr-ratelimit-primary-tok-1
+      secret: mcp-svr-ratelimit-primary-token-1234
       scopes: ["rpc", "ws", "admin"]
     # mcp-client with memory_search allowlisted; no toolRateLimit override
     # (uses the default 30/min ceiling from the dispatcher).

@@ -16,10 +16,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  STUB_NOT_IMPLEMENTED_MSG,
-  buildMcpServerForClient,
-} from "./mcp-server-handlers.js";
+import { buildMcpServerForClient } from "./mcp-server-handlers.js";
 import type { TokenClient } from "@comis/gateway";
 
 // ---------------------------------------------------------------------------
@@ -306,22 +303,6 @@ describe("buildMcpServerForClient -- Phase 69 Plan 03 default-deny tools/list fi
     }
   });
 
-  // ------------------------------------------------------------------------
-  // Plan 04 -- the stub marker constant has been removed; the live dispatcher
-  // now handles tools/call. This regression test pins that the export no
-  // longer surfaces a "stub" marker string (defense in depth -- preventing
-  // a future refactor from re-introducing the stub).
-  // ------------------------------------------------------------------------
-
-  it("buildMcpServerForClient no longer exports a stub-marker constant after plan 04", () => {
-    // STUB_NOT_IMPLEMENTED_MSG remains exported for backward compatibility
-    // of the import statement (avoids breaking the test-file diff), but it
-    // must NOT be reachable from the live dispatcher callback path.
-    // Plan 04 replaces the stub with the live dispatcher, so the constant
-    // is now an inert deprecation marker that tests can reference but the
-    // dispatcher never emits.
-    expect(typeof STUB_NOT_IMPLEMENTED_MSG).toBe("string");
-  });
 });
 
 // ===========================================================================

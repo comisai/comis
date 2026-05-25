@@ -40,6 +40,43 @@ import { buildRpcAdapterDeps, buildDynamicRouterAndRegister } from "./setup-gate
 import { buildMcpServerForClient } from "../../api/mcp-server-handlers.js";
 
 // ---------------------------------------------------------------------------
+// Phase 69 Plan 04 -- MCP server dispatch constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Default per-MCP-client per-tool minute-bucket rate-limit ceiling. Per
+ * CONTEXT.md §1.7 (Phase 69 SERVE-07), 30 calls/min/tool. Per-client
+ * override via `gateway.tokens[].mcpClient.toolRateLimit[toolName]`.
+ */
+const MCP_DEFAULT_TOOL_RATE_LIMIT = 30;
+
+/**
+ * Mapping from MCP tool name -> daemon RPC method name. Most tools are
+ * 1:1 (the MCP tool name IS the RPC method); a small set of tools that
+ * compose multiple RPC methods or use dotted method names need explicit
+ * entries. The default branch returns the tool name as-is.
+ *
+ * The mapping is intentionally permissive (returns the tool name when not
+ * mapped) -- the security boundary is enforced UPSTREAM by Plan 02's
+ * mcpExportPolicy classification + Plan 03's registration filter + Plan
+ * 04's policy re-check. A typo'd tool name reaches the daemon RPC
+ * dispatcher which surfaces a structured "Unknown RPC method" error via
+ * the dispatch_error wrapping in the callback.
+ */
+function mcpToolNameToRpcMethod(toolName: string): string {
+  switch (toolName) {
+    // memory_search -> memory.search_files (the canonical AgentTool wires
+    // this via packages/skills/src/platform-tools/tools/memory-search-tool.ts:53).
+    case "memory_search":
+      return "memory.search_files";
+    case "memory_get":
+      return "memory.get_file";
+    default:
+      return toolName;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Deps / Result types
 // ---------------------------------------------------------------------------
 
@@ -264,15 +301,36 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     gatewayLogger.debug({ webEnabled: false }, "Web dashboard disabled");
   }
 
-  // Phase 69 SERVE-01/04 -- per-client MCP server factory. Built once at
-  // gateway-setup time and threaded into createGatewayServer so the Hono app
-  // mounts POST /mcp/v1 between rate-limit and the notFound catch-all. The
-  // factory closes over `daemonVersion` (advertised as serverInfo.version)
-  // and `gatewayLogger` (bound with module:"gateway"; the factory adds
-  // submodule:"mcp-server" / "tools-list-filter" at call sites).
+  // Phase 69 SERVE-01/04 + SERVE-07 -- per-client MCP server factory. Built
+  // once at gateway-setup time and threaded into createGatewayServer so the
+  // Hono app mounts POST /mcp/v1 between rate-limit and the notFound catch-
+  // all. The factory closes over `daemonVersion` (advertised as
+  // serverInfo.version), `gatewayLogger`, the trust-flag-isolated
+  // `daemonRpcForMcpClient` indirection, the default tool rate-limit
+  // ceiling, and the tool-name-to-RPC-method mapping.
+  //
+  // SECURITY -- `daemonRpcForMcpClient` is the indirection that NEVER
+  // injects `_trustLevel:"admin"`. The composition root wires it to the
+  // SAME `rpcCall` the LLM-side uses, but WITHOUT spreading the admin
+  // trust flag (compare to setup-gateway-api.ts:80-98 which DOES spread
+  // _trustLevel:"admin" for admin-scoped contracts). Even though Plan 02's
+  // mcpExportPolicy classification of all admin tools as `never-export`
+  // means admin RPC methods are never registered on the McpServer in the
+  // first place, this indirection is the belt-and-suspenders enforcer.
+  const daemonRpcForMcpClient = (
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> => rpcCall(method, params);
+
   const buildMcpServerForClientFactory = (client: TokenClient) =>
     buildMcpServerForClient(
-      { logger: gatewayLogger, daemonVersion: deps.daemonVersion },
+      {
+        logger: gatewayLogger,
+        daemonVersion: deps.daemonVersion,
+        daemonRpcForMcpClient,
+        defaultToolRateLimit: MCP_DEFAULT_TOOL_RATE_LIMIT,
+        toolNameToRpcMethod: mcpToolNameToRpcMethod,
+      },
       client,
     );
 
