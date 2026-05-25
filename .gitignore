@@ -30,6 +30,9 @@ coverage/
 # Claude Code working directory
 .claude/
 
+# Local Claude Code project instructions (not tracked)
+/CLAUDE.md
+
 
 .planning/
 
