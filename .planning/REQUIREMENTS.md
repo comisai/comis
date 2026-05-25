@@ -194,7 +194,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Operator Documentation
 
-- [ ] **DOCS-01**: `docs/operations/observability.mdx` rewritten to reflect new bridge mapping, lifecycle envelopes, INFO promotions, dedup detector
+- [x] **DOCS-01**: `docs/operations/observability.mdx` rewritten to reflect new bridge mapping, lifecycle envelopes, INFO promotions, dedup detector
   - Design: M3.4
 - [ ] **DOCS-02**: New `docs/operations/incident-bundle.mdx` documents `comis trace export` and `/export-trajectory` flow, including the privacy warning from design §8.5
   - Design: M3.4
@@ -284,7 +284,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | ROTATE-03 | Phase 7 | Complete |
 | ALERT-01 | Phase 7 Plan 03 | Complete (07-03: 69afc8e, 6482691, e372431) |
 | HYGIENE-01 | Phase 8 | Complete |
-| DOCS-01 | Phase 8 | Pending |
+| DOCS-01 | Phase 8 | Complete |
 | DOCS-02 | Phase 8 | Pending |
 | DOCS-03 | Phase 8 | Pending |
 

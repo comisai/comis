@@ -204,7 +204,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 
 **Plans:** 1/3 plans executed
 - [x] 08-01-PLAN.md — HYGIENE-01 pipeline-step-coverage architecture test (shrink-only) + step: tags across ~17 canonical emit sites (channels inbound/outbound, channel-registry, queue enqueue/dequeue, agent-execute, memory-store, dedup) [wave 1, type: tdd]
-- [ ] 08-02-PLAN.md — DOCS-01 observability.mdx end-to-end rewrite: 55-entry bridge mapping, lifecycle envelopes, INFO promotions, dedup detector, boot invariants, bundle export entry, log rotation cross-ref, alert budget, step: discipline, §12 worked example, original tracking-categories preserved [wave 1, type: execute, parallel with 08-01]
+- [x] 08-02-PLAN.md — DOCS-01 observability.mdx end-to-end rewrite: 55-entry bridge mapping, lifecycle envelopes, INFO promotions, dedup detector, boot invariants, bundle export entry, log rotation cross-ref, alert budget, step: discipline, §12 worked example, original tracking-categories preserved [wave 1, type: execute, parallel with 08-01]
 - [ ] 08-03-PLAN.md — DOCS-02 incident-bundle.mdx + DOCS-03 trace-cli.mdx (two NEW docs): bundle workflow + 8-file shape + 11 redaction patterns + §8.5 privacy warning verbatim + /export-trajectory routing; all 5 trace subcommands with copy-pasteable `node packages/cli/dist/cli.js trace ...` invocations + --json examples + "complaint to bundle in 3 commands" worked example [wave 1, type: execute, parallel with 08-01 and 08-02]
 
 ## Progress Table
