@@ -191,6 +191,59 @@ describe("GatewayTokenSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
+// GatewayTokenSchema -- Phase 69 mcp-client disjointness + mcpClient block
+// (RED: these assertions fail on pre-Phase-69 schema; GREEN once refine + block land)
+// ---------------------------------------------------------------------------
+
+describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
+  it("GatewayTokenSchema accepts a token with only the rpc scope", () => {
+    const result = GatewayTokenSchema.safeParse({ id: "t1", scopes: ["rpc"] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scopes).toEqual(["rpc"]);
+    }
+  });
+
+  it("GatewayTokenSchema accepts a token with only the mcp-client scope and an mcpClient block", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t2",
+      scopes: ["mcp-client"],
+      mcpClient: { allowlist: ["memory_search"] },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scopes).toEqual(["mcp-client"]);
+      expect(result.data.mcpClient).toBeDefined();
+      expect(result.data.mcpClient!.allowlist).toEqual(["memory_search"]);
+      // Defaults applied via the inner .default([]) / .default({}):
+      expect(result.data.mcpClient!.sessionAllowlist).toEqual([]);
+      expect(result.data.mcpClient!.toolRateLimit).toEqual({});
+    }
+  });
+
+  it("GatewayTokenSchema rejects a token co-issuing admin and mcp-client scopes", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t3",
+      scopes: ["admin", "mcp-client"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues[0];
+      expect(issue.message).toContain("[scope_disjointness]");
+      expect(issue.path).toEqual(["scopes"]);
+    }
+  });
+
+  it("GatewayTokenSchema accepts a token with admin scope but no mcp-client", () => {
+    const result = GatewayTokenSchema.safeParse({ id: "t4", scopes: ["admin"] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scopes).toEqual(["admin"]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GatewayRateLimitSchema
 // ---------------------------------------------------------------------------
 
