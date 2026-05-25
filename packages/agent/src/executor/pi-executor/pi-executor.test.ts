@@ -6337,6 +6337,30 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
 // ---------------------------------------------------------------------------
 
 describe("WR-01: populated runtimeSnapshot.skills", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Restore default mock returns after vi.clearAllMocks() wiped them.
+    mockPrompt.mockResolvedValue(undefined);
+    mockGetLastAssistantText.mockReturnValue("test response");
+    mockSetModel.mockResolvedValue(undefined);
+    mockSubscribe.mockReturnValue(vi.fn());
+    mockGetResult.mockReturnValue({
+      tokensUsed: { input: 100, output: 50, total: 150 },
+      cost: { total: 0.01 },
+      stepsExecuted: 2,
+      llmCalls: 1,
+      finishReason: "stop",
+    });
+    (createAgentSession as Mock).mockResolvedValue({
+      session: mockSession,
+      extensionsResult: {},
+    });
+    mockSession.messages = [
+      { role: "assistant", content: [{ type: "text", text: "test response" }] },
+    ];
+    mockGetSkills.mockReturnValue({ skills: [], diagnostics: [] });
+  });
+
   it("skillRegistry_with_getSnapshot_populates_trace_metadata_skills", async () => {
     // Arrange: skillRegistry mock that exposes getSnapshot() with two skills.
     const mockSkillRegistry = {
@@ -6355,7 +6379,7 @@ describe("WR-01: populated runtimeSnapshot.skills", () => {
     await executor.execute(testMessage, testSessionKey);
 
     // The runtimeSnapshot is passed to createPiEventBridge as a field.
-    // Capture it from the mock call to verify the skills mapping.
+    // vi.clearAllMocks() in beforeEach ensures mock.calls[0] is from this test.
     const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
     const snapshot = bridgeCall.runtimeSnapshot;
 
@@ -6379,6 +6403,7 @@ describe("WR-01: populated runtimeSnapshot.skills", () => {
     const executor = createPiExecutor(testConfig, deps);
     await executor.execute(testMessage, testSessionKey);
 
+    // vi.clearAllMocks() in beforeEach ensures mock.calls[0] is from this test.
     const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
     const snapshot = bridgeCall.runtimeSnapshot;
 

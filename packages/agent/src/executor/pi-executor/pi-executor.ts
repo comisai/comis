@@ -1204,9 +1204,17 @@ async function runSessionLocked(
         ...(resolvedModel?.api !== undefined ? { modelApi: resolvedModel.api } : {}),
       },
       config,
+      // WR-01 (Plan 05-04): populate plugins and skills from the registry snapshot.
+      // The minimal deps interface exposes getSnapshot?() optionally; legacy
+      // callers (tests with the two-method mock) safely degrade to [].
+      // TODO(WR-01 follow-up): wire deps.pluginRegistry once a plugin-registry
+      // seam exists at this scope. Until then, plugins[] stays empty by design.
       plugins: [],
-      skills: [],
-      prompting: {},
+      skills: deps.skillRegistry?.getSnapshot?.()?.skills?.map((s) => ({
+        id: s.name,
+        ...(s.version !== undefined ? { version: String(s.version) } : {}),
+      })) ?? [],
+      prompting: {},  // WR-02 placeholder; replaced by buildPromptingSnapshot in Task 2
       redaction: { policy: "platform-aware" },
     },
     perExecutionBudgetCap: config.budgets?.perExecution,
