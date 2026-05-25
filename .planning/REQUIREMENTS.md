@@ -140,7 +140,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
   - Acceptance: bundle of a real session has zero unredacted Telegram chat IDs (`\d{9,}` shape)
   - Acceptance: `email@host.com` becomes redacted
   - Design: D9 *(files: `packages/observability/src/redact/patterns.ts`, `packages/observability/src/trajectory/export.ts`)*
-- [ ] **REDACT-02**: Bundle-time path substitution replaces literal paths with `$WORKSPACE_DIR` / `$HOME` / `$STATE_DIR` placeholders
+- [x] **REDACT-02**: Bundle-time path substitution replaces literal paths with `$WORKSPACE_DIR` / `$HOME` / `$STATE_DIR` placeholders
   - Acceptance: a path containing `$HOME` is substituted, not echoed
   - Design: D9
 - [x] **REDACT-03**: Test fixtures cover each pattern + the bundle-time integration (both directions: redacts true positives, leaves legitimate values alone where designed)
@@ -264,7 +264,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | POINTER-01 | Phase 5 | Complete |
 | POINTER-02 | Phase 5 | Complete |
 | REDACT-01 | Phase 5 | Complete |
-| REDACT-02 | Phase 5 | Pending |
+| REDACT-02 | Phase 5 | Complete |
 | REDACT-03 | Phase 5 | Complete |
 | INDEX-01 | Phase 6 | Pending |
 | INDEX-02 | Phase 6 | Pending |
