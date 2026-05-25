@@ -139,7 +139,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
           normalized.metadata.traceId = traceId;
 
           deps.logger.info(
-            { channelType: "imessage" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length, traceId },
+            { step: "channels-inbound", channelType: "imessage" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length, traceId },
             "Inbound message",
           );
 
@@ -267,7 +267,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
       _lastMessageAt = systemNowMs();
       _lastError = undefined;
       deps.logger.info(
-        { channelType: "imessage" as const, messageId, chatId },
+        { step: "channels-outbound", channelType: "imessage" as const, messageId, chatId },
         "Outbound message",
       );
 

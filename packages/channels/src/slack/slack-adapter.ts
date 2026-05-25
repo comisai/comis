@@ -184,7 +184,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           normalized.metadata.traceId = traceId;
 
           deps.logger.info(
-            { channelType: "slack", messageId: normalized.id, chatId: event.channel, previewLen: (normalized.text ?? "").length, traceId },
+            { step: "channels-inbound", channelType: "slack", messageId: normalized.id, chatId: event.channel, previewLen: (normalized.text ?? "").length, traceId },
             "Inbound message",
           );
 
@@ -385,7 +385,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.info(
-          { channelType: "slack", messageId, chatId: channelId },
+          { step: "channels-outbound", channelType: "slack", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(messageId);
@@ -420,7 +420,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           text,
         });
         deps.logger.info(
-          { channelType: "slack", messageId, chatId: channelId },
+          { step: "channels-outbound", channelType: "slack", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(undefined);

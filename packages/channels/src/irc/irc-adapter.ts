@@ -138,7 +138,7 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
     normalized.metadata.traceId = traceId;
 
     deps.logger.info(
-      { channelType: "irc" as const, messageId: normalized.id, chatId: event.target, previewLen: (normalized.text ?? "").length, traceId },
+      { step: "channels-inbound", channelType: "irc" as const, messageId: normalized.id, chatId: event.target, previewLen: (normalized.text ?? "").length, traceId },
       "Inbound message",
     );
 
@@ -295,7 +295,7 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.info(
-          { channelType: "irc" as const, messageId: "sent", chatId },
+          { step: "channels-outbound", channelType: "irc" as const, messageId: "sent", chatId },
           "Outbound message",
         );
 

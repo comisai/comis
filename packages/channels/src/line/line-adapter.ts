@@ -130,7 +130,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
     normalized.metadata.traceId = traceId;
 
     deps.logger.info(
-      { channelType: "line" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length, traceId },
+      { step: "channels-inbound", channelType: "line" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length, traceId },
       "Inbound message",
     );
 
@@ -299,7 +299,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.info(
-          { channelType: "line" as const, messageId, chatId },
+          { step: "channels-outbound", channelType: "line" as const, messageId, chatId },
           "Outbound message",
         );
 

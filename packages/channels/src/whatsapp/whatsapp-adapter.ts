@@ -180,7 +180,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         normalized.metadata.traceId = traceId;
 
         deps.logger.info(
-          { channelType: "whatsapp", messageId: normalized.id, chatId: m.key.remoteJid ?? "", previewLen: (normalized.text ?? "").length, traceId },
+          { step: "channels-inbound", channelType: "whatsapp", messageId: normalized.id, chatId: m.key.remoteJid ?? "", previewLen: (normalized.text ?? "").length, traceId },
           "Inbound message",
         );
         void runWithContext(
@@ -292,7 +292,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.info(
-          { channelType: "whatsapp", messageId, chatId: channelId },
+          { step: "channels-outbound", channelType: "whatsapp", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(messageId);
@@ -327,7 +327,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
           edit: { remoteJid: channelId, id: messageId, fromMe: true },
         } as Parameters<typeof sock.sendMessage>[1]);
         deps.logger.info(
-          { channelType: "whatsapp", messageId, chatId: channelId },
+          { step: "channels-outbound", channelType: "whatsapp", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(undefined);

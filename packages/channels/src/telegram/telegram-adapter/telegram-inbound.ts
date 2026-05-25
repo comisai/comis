@@ -69,7 +69,7 @@ export function handleInboundMessage(
   normalized.metadata.traceId = traceId;
 
   deps.logger.info(
-    { channelType: "telegram", messageId: normalized.id, chatId: String(chatId), previewLen: (normalized.text ?? "").length, traceId },
+    { step: "channels-inbound", channelType: "telegram", messageId: normalized.id, chatId: String(chatId), previewLen: (normalized.text ?? "").length, traceId },
     "Inbound message",
   );
   runWithContext(

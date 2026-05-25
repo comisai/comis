@@ -174,6 +174,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
       normalized.metadata.traceId = traceId;
       deps.logger.info(
         {
+          step: "channels-inbound",
           channelType,
           messageId: normalized.id,
           channelId,

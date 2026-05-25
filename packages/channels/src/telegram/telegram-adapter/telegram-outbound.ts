@@ -118,7 +118,7 @@ export async function sendMessage(
     state.lastMessageAt = systemNowMs();
     state.lastError = undefined;
     deps.logger.info(
-      { channelType: "telegram", messageId: String(sent.message_id), chatId },
+      { step: "channels-outbound", channelType: "telegram", messageId: String(sent.message_id), chatId },
       "Outbound message",
     );
     return ok(String(sent.message_id));
@@ -168,7 +168,7 @@ export async function editMessage(
       }
     }
     deps.logger.info(
-      { channelType: "telegram", messageId, chatId },
+      { step: "channels-outbound", channelType: "telegram", messageId, chatId },
       "Outbound message",
     );
     return ok(undefined);

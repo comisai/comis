@@ -98,7 +98,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
             normalized.metadata.traceId = traceId;
 
             deps.logger.info(
-              { channelType: "signal" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length, traceId },
+              { step: "channels-inbound", channelType: "signal" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length, traceId },
               "Inbound message",
             );
 
@@ -259,7 +259,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
       _lastMessageAt = systemNowMs();
       _lastError = undefined;
       deps.logger.info(
-        { channelType: "signal" as const, messageId, chatId },
+        { step: "channels-outbound", channelType: "signal" as const, messageId, chatId },
         "Outbound message",
       );
 

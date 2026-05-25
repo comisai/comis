@@ -153,7 +153,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         normalized.metadata.traceId = traceId;
 
         deps.logger.info(
-          { channelType: "discord", messageId: normalized.id, chatId: msg.channelId, previewLen: (normalized.text ?? "").length, traceId },
+          { step: "channels-inbound", channelType: "discord", messageId: normalized.id, chatId: msg.channelId, previewLen: (normalized.text ?? "").length, traceId },
           "Inbound message",
         );
 
@@ -418,7 +418,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.info(
-          { channelType: "discord", messageId: firstMessage.id, chatId: channelId },
+          { step: "channels-outbound", channelType: "discord", messageId: firstMessage.id, chatId: channelId },
           "Outbound message",
         );
         return ok(firstMessage.id);
@@ -458,7 +458,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         await msg.edit(truncatedText);
 
         deps.logger.info(
-          { channelType: "discord", messageId, chatId: channelId },
+          { step: "channels-outbound", channelType: "discord", messageId, chatId: channelId },
           "Outbound message",
         );
         return ok(undefined);
