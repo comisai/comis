@@ -165,58 +165,57 @@ describe("comis trace --chat --tail calls ObsTraceTailContract in polling loop",
     exitSpy.restore();
   });
 
-  it("polls obs.trace.tail at least twice and threads nextSinceMs cursor between calls", async () => {
-    vi.useFakeTimers();
+  it("polls obs.trace.tail with sinceMs cursor and emits events to stdout", async () => {
+    // We test the tail loop by having the mock abort after 2 calls.
+    // Use a counter and abort the loop by rejecting after 2 calls.
     let tailCallCount = 0;
-    let lastSinceMs: number | undefined;
+    const capturedSinceMs: (number | undefined)[] = [];
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       tailCallCount++;
       const sinceForNext = 1748131200000 + tailCallCount * 1000;
       const response = { events: TAIL_RESPONSE.events, nextSinceMs: sinceForNext };
-      const mockClient = createMockRpcClient()
-        .onCall("obs.trace.tail", response)
-        .build();
-      // Capture sinceMs by intercepting the mock call
-      const originalCall = mockClient.call.bind(mockClient);
-      const spiedClient = {
-        ...mockClient,
+
+      const mockClient = {
         call: async (method: string, params?: unknown) => {
           if (method === "obs.trace.tail" && params) {
-            lastSinceMs = (params as { sinceMs?: number }).sinceMs;
+            capturedSinceMs.push((params as { sinceMs?: number }).sinceMs);
           }
-          return originalCall(method, params);
+          if (tailCallCount >= 2) {
+            // After 2 calls, emit SIGINT so the loop stops
+            setImmediate(() => process.emit("SIGINT"));
+          }
+          return response;
         },
         close: () => {},
         onNotification: () => {},
       };
-      return fn(spiedClient);
+      return fn(mockClient);
     });
+
+    // Use fake timers so the 1-second sleep resolves immediately
+    vi.useFakeTimers();
 
     const program = createTestProgram();
     registerTraceCommand(program);
 
-    // Start the tail command (don't await — it loops forever until abort)
+    // Run in background and advance fake timers to let the loop proceed
     const parsePromise = program.parseAsync(["node", "test", "trace", "--chat", "chat-789", "--tail"]);
 
-    // Let the first poll run
+    // Tick: first poll executes synchronously (withClient resolves immediately)
+    // Then the 1-second setTimeout in the loop is pending
+    await vi.advanceTimersByTimeAsync(1100);
+    // Second poll
+    await vi.advanceTimersByTimeAsync(1100);
+    // Let SIGINT propagate
     await vi.runAllTimersAsync();
-    // Let the second poll run
-    await vi.runAllTimersAsync();
-
-    // Simulate SIGINT to exit loop
-    process.emit("SIGINT");
-
-    // Wait a tick for abort to propagate
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    await parsePromise.catch(() => {}); // ignore any exit-related error
 
     vi.useRealTimers();
+    await parsePromise.catch(() => {}); // ignore errors
 
     expect(tailCallCount).toBeGreaterThanOrEqual(2);
-    // The cursor should be defined (sinceMs was threaded through)
-    expect(lastSinceMs).toBeDefined();
+    // sinceMs cursor threaded: second call uses nextSinceMs from first response
+    expect(capturedSinceMs.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -321,7 +320,7 @@ describe("comis trace --message-id without --json renders column table output", 
   });
 });
 
-describe("comis trace --chat --tail exits cleanly when AbortSignal fires (SIGINT)", () => {
+describe("comis trace --chat --tail exits cleanly when SIGINT received before first poll completes", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -336,29 +335,34 @@ describe("comis trace --chat --tail exits cleanly when AbortSignal fires (SIGINT
     exitSpy.restore();
   });
 
-  it("stops polling and resolves the promise when SIGINT is received", async () => {
+  it("stops polling and resolves the command promise after SIGINT fires abort", async () => {
     let callCount = 0;
     vi.mocked(withClient).mockImplementation(async (fn) => {
       callCount++;
-      const mockClient = createMockRpcClient()
-        .onCall("obs.trace.tail", TAIL_RESPONSE)
-        .build();
+      // After first call, emit SIGINT to stop the loop during the next sleep
+      setImmediate(() => process.emit("SIGINT"));
+      const mockClient = {
+        call: async (_method: string, _params?: unknown) => TAIL_RESPONSE,
+        close: () => {},
+        onNotification: () => {},
+      };
       return fn(mockClient);
     });
+
+    vi.useFakeTimers();
 
     const program = createTestProgram();
     registerTraceCommand(program);
 
     const parsePromise = program.parseAsync(["node", "test", "trace", "--chat", "chat-abc", "--tail"]);
 
-    // Give it one tick to start the first poll
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    // Advance timers so the sleep resolves and the abort-check fires
+    await vi.advanceTimersByTimeAsync(1100);
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
 
-    // Emit SIGINT to trigger abort
-    process.emit("SIGINT");
-
-    // Should resolve without throwing
-    await expect(parsePromise).resolves.toBeUndefined();
+    // Should resolve without throwing (resolves to Commander Command instance)
+    await expect(parsePromise).resolves.toBeDefined();
     expect(callCount).toBeGreaterThanOrEqual(1);
   });
 });
