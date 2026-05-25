@@ -408,7 +408,6 @@ function buildDispatchCallback(args: {
           };
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
         logger.warn(
           {
             clientId: client.id,
@@ -421,10 +420,19 @@ function buildDispatchCallback(args: {
           },
           "MCP tools/call validateInput threw",
         );
+        // Phase 69 WR-02: do NOT surface the raw err.message verbatim to
+        // the external MCP client. The structured `err` is captured on
+        // the WARN log above (server-side only); the on-wire response
+        // carries only the sentinel + correlation handles (clientId +
+        // toolName) so an operator can grep logs without exposing
+        // internal hints, file paths, or session keys.
         return {
           isError: true,
           content: [
-            { type: "text", text: `[invalid_args] validator threw: ${msg}` },
+            {
+              type: "text",
+              text: `[invalid_args] validator threw; check daemon logs (clientId=${client.id} toolName=${toolName})`,
+            },
           ],
         };
       }
@@ -442,7 +450,6 @@ function buildDispatchCallback(args: {
     try {
       rpcResult = await deps.daemonRpcForMcpClient(method, safeParams);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
       logger.warn(
         {
           clientId: client.id,
@@ -456,10 +463,22 @@ function buildDispatchCallback(args: {
         },
         "MCP tools/call dispatch error",
       );
+      // Phase 69 WR-02: do NOT surface the raw err.message verbatim to
+      // the external MCP client. Daemon RPC handlers throw messages that
+      // can include session keys, user IDs, file paths, and internal
+      // configuration hints (e.g., "Session not found:
+      // tenant-abc:user-123:channel-456. Available session keys: ...").
+      // Mirror the WS RPC posture (ws-handler.ts:384 -> "Internal error")
+      // and emit a generic response. The structured `err` is captured on
+      // the WARN log above; clientId + toolName are correlation handles
+      // for log search.
       return {
         isError: true,
         content: [
-          { type: "text", text: `[dispatch_error] ${msg}` },
+          {
+            type: "text",
+            text: `[dispatch_error] tool invocation failed; check daemon logs (clientId=${client.id} toolName=${toolName})`,
+          },
         ],
       };
     }

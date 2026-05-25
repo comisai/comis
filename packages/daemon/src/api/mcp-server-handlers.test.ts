@@ -718,6 +718,138 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
   //     read properties of undefined" (which would indicate the bug leaked).
   // ------------------------------------------------------------------------
 
+  // ------------------------------------------------------------------------
+  // Phase 69 WR-02 -- raw daemon RPC error message leaks to MCP client
+  //
+  // The pre-fix dispatcher returned `[dispatch_error] ${err.message}` --
+  // exposing whatever the daemon RPC handler threw (session keys, user
+  // IDs, internal hints, file paths). The WS RPC path emits a generic
+  // "Internal error" message for uncaught errors (ws-handler.ts:384) --
+  // mirror that posture on the MCP boundary.
+  //
+  // Post-fix invariants:
+  //   - Dispatch errors return isError:true with a GENERIC message
+  //     including the toolName + clientId (a correlation handle the
+  //     operator can grep against Pino logs).
+  //   - The raw err.message text must NOT appear in the MCP response.
+  //   - The structured WARN log still carries `err` so server-side
+  //     debugging is intact.
+  // ------------------------------------------------------------------------
+
+  it("buildMcpServerForClient dispatch wraps daemon RPC errors in a generic response that hides internal detail WR-02", async () => {
+    const { logger } = makeCapturingLogger();
+    const client = makeMcpClient(["mcp-client"], ["memory_search"]);
+
+    // Simulate a daemon RPC handler that throws a message containing a
+    // session key + tenant ID -- typical of "Session not found" errors
+    // from session.history and friends.
+    const secretMessage =
+      "Session not found: tenant-abc:user-123:channel-456. Available session keys: a,b,c";
+    const rpc: RpcRecorder = {
+      calls: [],
+      fn: async () => {
+        throw new Error(secretMessage);
+      },
+    };
+
+    const { capturedCallback, restore } = captureRegisteredCallback();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: memorySearchMapping,
+        },
+        client,
+      );
+
+      const cb = capturedCallback["memory_search"]!;
+      const r = (await cb({ query: "ok" })) as {
+        isError?: boolean;
+        content?: Array<{ type: string; text: string }>;
+      };
+      expect(r.isError).toBe(true);
+      const text = r.content?.[0]?.text ?? "";
+
+      // The MCP response must NOT carry the raw internal message.
+      expect(text).not.toContain("tenant-abc");
+      expect(text).not.toContain("user-123");
+      expect(text).not.toContain("channel-456");
+      expect(text).not.toContain("Available session keys");
+      expect(text).not.toContain(secretMessage);
+
+      // It SHOULD include the dispatch_error sentinel + correlation
+      // handles (toolName + clientId) so an operator can grep logs.
+      expect(text).toContain("[dispatch_error]");
+      expect(text).toContain("memory_search");
+      expect(text).toContain("test-client");
+    } finally {
+      restore();
+    }
+  });
+
+  // ------------------------------------------------------------------------
+  // Phase 69 WR-02 -- validator-threw path also leaks
+  //
+  // The `[invalid_args] validator threw: ${msg}` branch surfaced the raw
+  // thrown message verbatim. Same posture as the dispatch_error branch:
+  // sanitize the on-wire payload, keep the structured WARN log.
+  // ------------------------------------------------------------------------
+
+  it("buildMcpServerForClient dispatch sanitizes validator-throw error responses WR-02", async () => {
+    const { logger } = makeCapturingLogger();
+    const client = makeMcpClient(["mcp-client"], ["memory_search"]);
+    const rpc = makeRpcRecorder();
+
+    // Override stubRegistry.memory_search to throw from validateInput.
+    const secret = "tenant-internal-data: 0xCAFEBABE";
+    const originalMeta = stubRegistry.get("memory_search")!;
+    stubRegistry.set("memory_search", {
+      ...originalMeta,
+      validateInput: () => {
+        throw new Error(secret);
+      },
+    });
+
+    const { capturedCallback, restore } = captureRegisteredCallback();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: memorySearchMapping,
+        },
+        client,
+      );
+
+      const cb = capturedCallback["memory_search"]!;
+      const r = (await cb({ query: "ok" })) as {
+        isError?: boolean;
+        content?: Array<{ type: string; text: string }>;
+      };
+      expect(r.isError).toBe(true);
+      const text = r.content?.[0]?.text ?? "";
+
+      expect(text).not.toContain("tenant-internal-data");
+      expect(text).not.toContain("0xCAFEBABE");
+      expect(text).not.toContain(secret);
+      // The validator never even reached dispatch -- RPC was not called.
+      expect(rpc.calls.length).toBe(0);
+      // The sanitized response retains the invalid_args sentinel + the
+      // toolName for correlation but nothing else.
+      expect(text).toContain("[invalid_args]");
+      expect(text).toContain("memory_search");
+    } finally {
+      // Restore stub for other tests.
+      stubRegistry.set("memory_search", originalMeta);
+      restore();
+    }
+  });
+
   it("buildMcpServerForClient dispatch does not throw when daemon RPC returns undefined CR-01 info leak guard", async () => {
     const { logger } = makeCapturingLogger();
     const client = makeMcpClient(["mcp-client"], ["memory_search"]);
