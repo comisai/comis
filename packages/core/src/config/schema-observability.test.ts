@@ -163,4 +163,65 @@ describe("ObservabilityConfigSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // ALERT-01 RED tests — these MUST fail on pre-patch code because
+  // ObservabilityConfigSchema currently has no `alertBudget` key.
+
+  describe("alertBudget (ALERT-01)", () => {
+    it("alertBudget defaults: enabled === true", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.alertBudget.enabled).toBe(true);
+      }
+    });
+
+    it("alertBudget.thresholds.network defaults to { count: 100, windowMs: 60000 }", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.alertBudget.thresholds.network).toEqual({ count: 100, windowMs: 60000 });
+      }
+    });
+
+    it("alertBudget.thresholds.internal defaults to { count: 5, windowMs: 60000 }", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.alertBudget.thresholds.internal).toEqual({ count: 5, windowMs: 60000 });
+      }
+    });
+
+    it("all 10 errorKind names present as keys under thresholds", () => {
+      const errorKinds = [
+        "network", "config", "auth", "validation", "precondition",
+        "timeout", "resource", "dependency", "internal", "platform",
+      ];
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        for (const kind of errorKinds) {
+          expect(result.data.alertBudget.thresholds[kind], `missing errorKind: ${kind}`).toBeDefined();
+        }
+      }
+    });
+
+    it("override accepted: network threshold count can be set to 200 / windowMs to 30000", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        alertBudget: { thresholds: { network: { count: 200, windowMs: 30000 } } },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.alertBudget.thresholds.network?.count).toBe(200);
+        expect(result.data.alertBudget.thresholds.network?.windowMs).toBe(30000);
+      }
+    });
+
+    it("rejects zero count (z.number().int().positive() required)", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        alertBudget: { thresholds: { network: { count: 0, windowMs: 60000 } } },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
 });

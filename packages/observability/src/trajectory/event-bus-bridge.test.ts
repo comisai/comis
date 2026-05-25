@@ -2141,3 +2141,45 @@ describe("attachTrajectoryToEventBus -- DEDUP-03 dedup events", () => {
     expect(Array.from(TRAJECTORY_EVENT_TYPES as readonly string[])).toContain("dedup.duplicate_inbound");
   });
 });
+
+// ---------------------------------------------------------------------------
+// ALERT-01 — Health budget exceeded (bridge entry 55)
+// ---------------------------------------------------------------------------
+
+describe("ALERT-01 health:budget_exceeded entry (bridge entry 55)", () => {
+  it("bridge entry count is exactly 55 (ALERT-01 adds health:budget_exceeded)", () => {
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(55);
+  });
+
+  it("health:budget_exceeded mapped to health.budget_exceeded", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["health:budget_exceeded"]).toBe("health.budget_exceeded");
+  });
+
+  it("TRAJECTORY_EVENT_TYPES includes health.budget_exceeded", () => {
+    expect(Array.from(TRAJECTORY_EVENT_TYPES as readonly string[])).toContain("health.budget_exceeded");
+  });
+
+  it("emitting health:budget_exceeded produces trajectory health.budget_exceeded with kind/count/windowMs (timestamp is envelope-only §6.2)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("health:budget_exceeded", {
+      kind: "network",
+      count: 100,
+      windowMs: 60000,
+      timestamp: 1,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("health.budget_exceeded");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.kind).toBe("network");
+    expect(data.count).toBe(100);
+    expect(data.windowMs).toBe(60000);
+    // timestamp is envelope-only per design §6.2 — MUST NOT appear in data
+    expect(data.timestamp).toBeUndefined();
+    expect("timestamp" in data).toBe(false);
+  });
+});
