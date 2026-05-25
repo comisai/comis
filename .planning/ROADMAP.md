@@ -202,7 +202,10 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 
 **M3 + scope-close acceptance gate (validated at Phase 8 close):** The 2026-05-24 incident replay — fresh daemon, revert `96d62b16`, send one Telegram message — diagnoses the bug in under 5 minutes via `comis trace --message-id <id> | head -20` AND the operator finds the docs explaining what they're looking at without re-reading source. Coverage floors hold (lines 90 / branches 85 / functions 90 on `packages/*/src/**/*.ts`). `pnpm validate` clean.
 
-**Plans**: TBD
+**Plans:** 1/3 plans executed
+- [x] 08-01-PLAN.md — HYGIENE-01 pipeline-step-coverage architecture test (shrink-only) + step: tags across ~17 canonical emit sites (channels inbound/outbound, channel-registry, queue enqueue/dequeue, agent-execute, memory-store, dedup) [wave 1, type: tdd]
+- [ ] 08-02-PLAN.md — DOCS-01 observability.mdx end-to-end rewrite: 55-entry bridge mapping, lifecycle envelopes, INFO promotions, dedup detector, boot invariants, bundle export entry, log rotation cross-ref, alert budget, step: discipline, §12 worked example, original tracking-categories preserved [wave 1, type: execute, parallel with 08-01]
+- [ ] 08-03-PLAN.md — DOCS-02 incident-bundle.mdx + DOCS-03 trace-cli.mdx (two NEW docs): bundle workflow + 8-file shape + 11 redaction patterns + §8.5 privacy warning verbatim + /export-trajectory routing; all 5 trace subcommands with copy-pasteable `node packages/cli/dist/cli.js trace ...` invocations + --json examples + "complaint to bundle in 3 commands" worked example [wave 1, type: execute, parallel with 08-01 and 08-02]
 
 ## Progress Table
 
@@ -215,7 +218,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 | 5. Trajectory Pointer & Platform-Aware Redaction | 4/4 | Complete   | 2026-05-25 |
 | 6. Operator CLI & Slash-Command Export | 5/5 | Complete   | 2026-05-25 |
 | 7. Log Rotation & Alert Budget | 2/3 | In Progress|  |
-| 8. Pipeline-Tag Discipline & Operator Docs | 0/0 | Not started | - |
+| 8. Pipeline-Tag Discipline & Operator Docs | 1/3 | In Progress|  |
 
 ## Parallelization Notes
 
@@ -228,6 +231,7 @@ Per design §16, M1 supports a 2-stream parallel split for ~1 week wall-clock vs
 - **Phase 4 and Phase 5** can be parallelized in part (POINTER-01/02 in Phase 5 is independent of BUNDLE-01..04 in Phase 4), but the redaction-at-export-boundary (REDACT-*) depends on Phase 4's exporter — keep that part sequential.
 - **Phase 6** is mostly sequential internally (INDEX-* before CLI search modes that use the index).
 - **Phase 7 and Phase 8** can run in parallel (rotation is config + transport wiring; docs are markdown).
+- **Within Phase 8**: All 3 plans are Wave 1 parallel-safe — 08-01 touches production source + a new arch test; 08-02 rewrites `observability.mdx`; 08-03 creates two NEW doc files. Zero `files_modified` overlap.
 
 Plan-phase will surface fine-grained parallel splits per phase.
 

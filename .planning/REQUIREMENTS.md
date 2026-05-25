@@ -188,7 +188,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Pipeline-Tag Discipline
 
-- [ ] **HYGIENE-01**: Architecture test asserts each known pipeline stage emits at least one `step:`-tagged log line — closes G4
+- [x] **HYGIENE-01**: Architecture test asserts each known pipeline stage emits at least one `step:`-tagged log line — closes G4
   - Acceptance: `step:` coverage in `daemon.log` ≥ 50% (up from 3%)
   - Design: M3.3 *(file: `test/architecture/pipeline-step-coverage.test.ts` NEW)*
 
@@ -283,7 +283,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | ROTATE-02 | Phase 7 Plan 01 | Complete (07-01: d7c72d1) |
 | ROTATE-03 | Phase 7 | Complete |
 | ALERT-01 | Phase 7 Plan 03 | Complete (07-03: 69afc8e, 6482691, e372431) |
-| HYGIENE-01 | Phase 8 | Pending |
+| HYGIENE-01 | Phase 8 | Complete |
 | DOCS-01 | Phase 8 | Pending |
 | DOCS-02 | Phase 8 | Pending |
 | DOCS-03 | Phase 8 | Pending |
