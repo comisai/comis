@@ -2359,6 +2359,11 @@ async function bootShutdown(
   // Override-derived locals -- only consumed by setupShutdown below.
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
 
+  // Declared here (before setupShutdown) so the thunk captures the ref;
+  // assigned after emitStartupInvariants (step 9.1). Ref-object pattern
+  // mirrors shutdownRef.value — setupShutdown reads .fn at teardown time.
+  const _healthAggRef: { fn: (() => void) | undefined } = { fn: undefined };
+
   // 8. Graceful shutdown: signal-handler registration + teardown ordering
   //    both owned by setupShutdown; the previous
   //    `_registerGracefulShutdown` factory seam is gone.
@@ -2394,6 +2399,8 @@ async function bootShutdown(
     shutdownDeliveryMirror: shutdownMirror,
     outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,
     stopChannelHealthMonitor: stopChannelHealthMonitor ?? undefined,
+    // Thunk reads _healthAggRef.fn at teardown time — populated by step 9.1.
+    unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:
@@ -2429,7 +2436,7 @@ async function bootShutdown(
     ? pathDirname(expandTilde(_loggingFilePath))
     : undefined;
 
-  emitStartupInvariants({
+  _healthAggRef.fn = emitStartupInvariants({
     logger: daemonLogger,
     adaptersByType,
     rawHandlerCounts: channelManager?.getRawHandlerCounts() ?? new Map(),
@@ -2440,6 +2447,8 @@ async function bootShutdown(
     depSlotConsistency: { adaptersList: false, channelRegistry: true },
     logRotationPolicy: container.config.observability?.logRotation,
     logsDir: _logsDir,
+    alertBudgetPolicy: container.config.observability?.alertBudget,
+    eventBus: container.eventBus,
   });
 
   // Snapshot current config as last-known-good after successful startup.

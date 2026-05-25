@@ -11097,6 +11097,51 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "alertBudget": {
+        "enabled": true,
+        "thresholds": {
+          "auth": {
+            "count": 20,
+            "windowMs": 60000
+          },
+          "config": {
+            "count": 10,
+            "windowMs": 60000
+          },
+          "dependency": {
+            "count": 20,
+            "windowMs": 60000
+          },
+          "internal": {
+            "count": 5,
+            "windowMs": 60000
+          },
+          "network": {
+            "count": 100,
+            "windowMs": 60000
+          },
+          "platform": {
+            "count": 50,
+            "windowMs": 60000
+          },
+          "precondition": {
+            "count": 50,
+            "windowMs": 60000
+          },
+          "resource": {
+            "count": 10,
+            "windowMs": 60000
+          },
+          "timeout": {
+            "count": 50,
+            "windowMs": 60000
+          },
+          "validation": {
+            "count": 100,
+            "windowMs": 60000
+          }
+        }
+      },
       "logRotation": {
         "compressAged": true,
         "maxAgeDays": 30,
@@ -11112,6 +11157,109 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     },
     "immutable": false,
     "path": "observability",
+    "type": "object"
+  },
+  {
+    "default": {
+      "enabled": true,
+      "thresholds": {
+        "auth": {
+          "count": 20,
+          "windowMs": 60000
+        },
+        "config": {
+          "count": 10,
+          "windowMs": 60000
+        },
+        "dependency": {
+          "count": 20,
+          "windowMs": 60000
+        },
+        "internal": {
+          "count": 5,
+          "windowMs": 60000
+        },
+        "network": {
+          "count": 100,
+          "windowMs": 60000
+        },
+        "platform": {
+          "count": 50,
+          "windowMs": 60000
+        },
+        "precondition": {
+          "count": 50,
+          "windowMs": 60000
+        },
+        "resource": {
+          "count": 10,
+          "windowMs": 60000
+        },
+        "timeout": {
+          "count": 50,
+          "windowMs": 60000
+        },
+        "validation": {
+          "count": 100,
+          "windowMs": 60000
+        }
+      }
+    },
+    "immutable": false,
+    "path": "observability.alertBudget",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.alertBudget.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "auth": {
+        "count": 20,
+        "windowMs": 60000
+      },
+      "config": {
+        "count": 10,
+        "windowMs": 60000
+      },
+      "dependency": {
+        "count": 20,
+        "windowMs": 60000
+      },
+      "internal": {
+        "count": 5,
+        "windowMs": 60000
+      },
+      "network": {
+        "count": 100,
+        "windowMs": 60000
+      },
+      "platform": {
+        "count": 50,
+        "windowMs": 60000
+      },
+      "precondition": {
+        "count": 50,
+        "windowMs": 60000
+      },
+      "resource": {
+        "count": 10,
+        "windowMs": 60000
+      },
+      "timeout": {
+        "count": 50,
+        "windowMs": 60000
+      },
+      "validation": {
+        "count": 100,
+        "windowMs": 60000
+      }
+    },
+    "immutable": false,
+    "path": "observability.alertBudget.thresholds",
     "type": "object"
   },
   {
@@ -29407,6 +29555,51 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "observability": {
       "additionalProperties": false,
       "default": {
+        "alertBudget": {
+          "enabled": true,
+          "thresholds": {
+            "auth": {
+              "count": 20,
+              "windowMs": 60000
+            },
+            "config": {
+              "count": 10,
+              "windowMs": 60000
+            },
+            "dependency": {
+              "count": 20,
+              "windowMs": 60000
+            },
+            "internal": {
+              "count": 5,
+              "windowMs": 60000
+            },
+            "network": {
+              "count": 100,
+              "windowMs": 60000
+            },
+            "platform": {
+              "count": 50,
+              "windowMs": 60000
+            },
+            "precondition": {
+              "count": 50,
+              "windowMs": 60000
+            },
+            "resource": {
+              "count": 10,
+              "windowMs": 60000
+            },
+            "timeout": {
+              "count": 50,
+              "windowMs": 60000
+            },
+            "validation": {
+              "count": 100,
+              "windowMs": 60000
+            }
+          }
+        },
         "logRotation": {
           "compressAged": true,
           "maxAgeDays": 30,
@@ -29421,6 +29614,133 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "trajectory": {}
       },
       "properties": {
+        "alertBudget": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": true,
+            "thresholds": {
+              "auth": {
+                "count": 20,
+                "windowMs": 60000
+              },
+              "config": {
+                "count": 10,
+                "windowMs": 60000
+              },
+              "dependency": {
+                "count": 20,
+                "windowMs": 60000
+              },
+              "internal": {
+                "count": 5,
+                "windowMs": 60000
+              },
+              "network": {
+                "count": 100,
+                "windowMs": 60000
+              },
+              "platform": {
+                "count": 50,
+                "windowMs": 60000
+              },
+              "precondition": {
+                "count": 50,
+                "windowMs": 60000
+              },
+              "resource": {
+                "count": 10,
+                "windowMs": 60000
+              },
+              "timeout": {
+                "count": 50,
+                "windowMs": 60000
+              },
+              "validation": {
+                "count": 100,
+                "windowMs": 60000
+              }
+            }
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "thresholds": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "count": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "windowMs": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "count",
+                  "windowMs"
+                ],
+                "type": "object"
+              },
+              "default": {
+                "auth": {
+                  "count": 20,
+                  "windowMs": 60000
+                },
+                "config": {
+                  "count": 10,
+                  "windowMs": 60000
+                },
+                "dependency": {
+                  "count": 20,
+                  "windowMs": 60000
+                },
+                "internal": {
+                  "count": 5,
+                  "windowMs": 60000
+                },
+                "network": {
+                  "count": 100,
+                  "windowMs": 60000
+                },
+                "platform": {
+                  "count": 50,
+                  "windowMs": 60000
+                },
+                "precondition": {
+                  "count": 50,
+                  "windowMs": 60000
+                },
+                "resource": {
+                  "count": 10,
+                  "windowMs": 60000
+                },
+                "timeout": {
+                  "count": 50,
+                  "windowMs": 60000
+                },
+                "validation": {
+                  "count": 100,
+                  "windowMs": 60000
+                }
+              },
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "enabled",
+            "thresholds"
+          ],
+          "type": "object"
+        },
         "logRotation": {
           "additionalProperties": false,
           "default": {
@@ -29507,7 +29827,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "required": [
         "persistence",
         "trajectory",
-        "logRotation"
+        "logRotation",
+        "alertBudget"
       ],
       "type": "object"
     },

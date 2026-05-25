@@ -160,6 +160,10 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // DEDUP-03 (D12): Duplicate inbound detection (events-channel.ts; emitter packages/orchestrator — arch-scanned)
   // firstSeenAt and duplicateAt omitted by translator — envelope ts covers timing (design §13 Appendix B).
   "dedup:duplicate_inbound": "dedup.duplicate_inbound",
+
+  // ALERT-01 (D16): Health budget exceeded (events-infra.ts; emitter packages/observability/health-aggregator)
+  // timestamp is envelope-only per design §6.2 — stripped from data.
+  "health:budget_exceeded": "health.budget_exceeded",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**
@@ -758,6 +762,15 @@ function translatePayload(
         chatId: payload.chatId,
         deltaMs: payload.deltaMs,
         source: payload.source,
+      };
+
+    // ---- Health budget (ALERT-01) ----
+    // timestamp is envelope-only per design §6.2 — stripped from data.
+    case "health:budget_exceeded":
+      return {
+        kind: payload.kind,
+        count: payload.count,
+        windowMs: payload.windowMs,
       };
 
     default: {

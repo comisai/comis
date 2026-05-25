@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for setup-startup-invariants.ts (BOOT-01, BOOT-02).
+ * Unit tests for setup-startup-invariants.ts (BOOT-01, BOOT-02, ALERT-01).
  *
  * RED-first per AGENTS.md §2.10.
- * Three behaviours verified:
+ * Four behaviours verified:
  *   1. Normal clean boot → one INFO record, no WARN.
  *   2. Regression wiring (handlersPerAdapter > 1) → WARN with errorKind:"config".
  *   3. depSlotConsistency.adaptersList:true (2026-05-24 bug shape) → WARN with errorKind:"config".
+ *   4. alertBudgetPolicy provided → returns unsubscribe function; omitted → returns undefined.
  *
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
+import { TypedEventBus } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { emitStartupInvariants, type StartupInvariantsDeps } from "./setup-startup-invariants.js";
 
@@ -134,6 +136,57 @@ describe("emitStartupInvariants", () => {
         }),
         expect.any(String),
       );
+    });
+  });
+
+  describe("ALERT-01: health aggregator wiring", () => {
+    it("returns undefined when alertBudgetPolicy not provided", () => {
+      const deps = makeCleanDeps();
+      const result = emitStartupInvariants(deps);
+      expect(result).toBeUndefined();
+    });
+
+    it("returns an unsubscribe function when alertBudgetPolicy and eventBus are provided", () => {
+      const eventBus = new TypedEventBus();
+      const deps = makeCleanDeps({
+        alertBudgetPolicy: {
+          enabled: true,
+          thresholds: { network: { count: 100, windowMs: 60_000 } },
+        },
+        eventBus,
+      });
+      const result = emitStartupInvariants(deps);
+      expect(typeof result).toBe("function");
+    });
+
+    it("returned unsubscribe stops aggregator subscriptions", () => {
+      const eventBus = new TypedEventBus();
+      const budgetListener = vi.fn();
+      eventBus.on("health:budget_exceeded", budgetListener);
+
+      const deps = makeCleanDeps({
+        alertBudgetPolicy: {
+          enabled: true,
+          thresholds: { network: { count: 1, windowMs: 60_000 } },
+        },
+        eventBus,
+      });
+      const unsub = emitStartupInvariants(deps);
+      expect(typeof unsub).toBe("function");
+
+      // Unsubscribe first — aggregator should no longer fire.
+      unsub!();
+
+      eventBus.emit("tool:executed", {
+        toolName: "x",
+        toolCallId: "tc-1",
+        durationMs: 1,
+        success: false,
+        errorKind: "network",
+        timestamp: Date.now(),
+      });
+
+      expect(budgetListener).not.toHaveBeenCalled();
     });
   });
 });

@@ -16,7 +16,7 @@ describe("SYNTHETIC_ERROR_KIND_MAP", () => {
     expect(SYNTHETIC_ERROR_KIND_MAP["security:injection_detected"]).toBe("internal");
   });
 
-  it("security:memory_tainted → internal", () => {
+  it("maps security:memory_tainted to internal", () => {
     expect(SYNTHETIC_ERROR_KIND_MAP["security:memory_tainted"]).toBe("internal");
   });
 

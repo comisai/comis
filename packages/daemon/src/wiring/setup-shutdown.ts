@@ -158,6 +158,7 @@ export interface ShutdownDeps {
   outputRetentionShutdown?: () => void;
   /** Stop the channel health monitor (from setupChannelHealthMonitor). */
   stopChannelHealthMonitor?: () => void;
+  /** ALERT-01: unsubscribe health budget aggregator. */ unsubscribeHealthAggregator?: () => void;
 }
 
 /** All services produced by the shutdown setup phase. */
@@ -257,6 +258,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     shutdownDeliveryMirror,
     outputRetentionShutdown,
     stopChannelHealthMonitor,
+    unsubscribeHealthAggregator,
   } = deps;
 
   // Inlined graceful-shutdown body: SIGTERM/
@@ -531,6 +533,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "channel-health-monitor", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "channel-health-monitor", daemonLogger);
       }
+      if (unsubscribeHealthAggregator) unsubscribeHealthAggregator(); // ALERT-01: health budget aggregator
       if (heartbeatRunner) {
         const stopMs = systemNowMs();
         await withStepTimeout(() => {

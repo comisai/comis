@@ -21,6 +21,13 @@ import { sweepRotatedFiles } from "@comis/observability";
 import type { RotationPolicy } from "@comis/observability";
 
 // ---------------------------------------------------------------------------
+// Imports for health aggregator (ALERT-01)
+// ---------------------------------------------------------------------------
+import { createHealthAggregator } from "@comis/observability";
+import type { AlertBudgetPolicy } from "@comis/observability";
+import type { TypedEventBus } from "@comis/core";
+
+// ---------------------------------------------------------------------------
 // StartupInvariants interface (verbatim from design §5 D10)
 // ---------------------------------------------------------------------------
 
@@ -82,6 +89,17 @@ export interface StartupInvariantsDeps {
    * Required when logRotationPolicy is set for the startup sweep to run.
    */
   logsDir?: string;
+  /**
+   * Optional alert budget policy (ALERT-01).
+   * When provided (together with eventBus), attaches the health aggregator.
+   * The returned unsubscribe function should be called on daemon shutdown.
+   */
+  alertBudgetPolicy?: AlertBudgetPolicy;
+  /**
+   * Typed event bus — required when alertBudgetPolicy is set for the
+   * aggregator subscription to attach.
+   */
+  eventBus?: TypedEventBus;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,13 +110,17 @@ export interface StartupInvariantsDeps {
  * Collect startup invariants and emit:
  *   1. One `daemon:startup_invariants` INFO record with all 8 fields (BOOT-01).
  *   2. WARN(s) with errorKind:"config" + §6.1 hint when duplicate wiring detected (BOOT-02).
+ *   3. Optional: attach health budget aggregator (ALERT-01) when alertBudgetPolicy + eventBus provided.
  *
  * Must be called AFTER all boot stages complete and BEFORE the DaemonInstance
  * handle is returned (i.e., before the daemon accepts traffic).
  *
  * Does NOT crash the daemon — logs loud and continues (operator decides).
+ *
+ * Returns the aggregator unsubscribe function when attached (call on daemon shutdown),
+ * or `undefined` when alertBudgetPolicy/eventBus are not provided.
  */
-export function emitStartupInvariants(deps: StartupInvariantsDeps): void {
+export function emitStartupInvariants(deps: StartupInvariantsDeps): (() => void) | undefined {
   // ── Collect invariant fields ──────────────────────────────────────────────
 
   // adaptersByChannelType: one entry per dedup'd channelType (value always 1
@@ -173,4 +195,17 @@ export function emitStartupInvariants(deps: StartupInvariantsDeps): void {
       "Channel adapters wired via legacy deps.adapters slot; see AGENTS.md §6.1",
     );
   }
+
+  // ── ALERT-01: attach health budget aggregator ────────────────────────────
+  // Attach AFTER the invariant emit so the aggregator is not running during
+  // the BOOT-01 record construction, and AFTER the rotation sweep so the
+  // aggregator's first window starts with a clean log state.
+  if (deps.alertBudgetPolicy && deps.eventBus) {
+    return createHealthAggregator({
+      eventBus: deps.eventBus,
+      policy: deps.alertBudgetPolicy,
+      logger: deps.logger,
+    });
+  }
+  return undefined;
 }

@@ -142,6 +142,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Dedup (D12 / DEDUP-03)
   "dedup.duplicate_inbound",
 
+  // Health budget (ALERT-01 / D16)
+  "health.budget_exceeded",
+
   // Session transcript (Phase 4 D5 / BUNDLE-04).
   // Synthesized by buildTranscriptEvents in export.ts when the bundle
   // exporter merges session JSONL branch entries with runtime events.

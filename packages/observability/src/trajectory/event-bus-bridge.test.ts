@@ -738,6 +738,13 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       source: "pipeline",
       timestamp: 0,
     },
+    // ALERT-01 (D16)
+    "health:budget_exceeded": {
+      kind: "network",
+      count: 100,
+      windowMs: 60000,
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
