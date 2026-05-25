@@ -34,7 +34,7 @@
  */
 
 import { statSync, readFileSync } from "node:fs";
-import { systemNowMs, systemDateFrom, safePath } from "@comis/core";
+import { systemNowMs, systemDateFrom, safePath, systemGetEnv } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { ensureContainedDir, writeRegularFile } from "../shared/fs-safe.js";
 import { resolveTrajectoryPointerFilePath } from "./paths.js";
@@ -501,11 +501,11 @@ export async function exportTrajectoryBundle(
   // string-typed leaf in event.data. Number-typed fields (timestamps,
   // counts, seq) pass through untouched — prevents false positives on
   // numeric IDs (landmine §7.1 from 05-RESEARCH.md).
+  const homeDir = systemGetEnv("HOME");
   const redactionOpts: RedactionOpts = {
     workspaceDir: params.workspaceDir,
-    homeDir: process.env["HOME"],
-    stateDir:
-      process.env["HOME"] !== undefined ? `${process.env["HOME"]}/.comis` : undefined,
+    homeDir,
+    stateDir: homeDir !== undefined ? `${homeDir}/.comis` : undefined,
   };
   const redacted = capped.map((e) => redactEventForExport(e, redactionOpts));
 
