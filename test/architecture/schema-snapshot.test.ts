@@ -20,7 +20,11 @@
  */
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { McpConfigSchema, McpServerEntrySchema } from "@comis/core";
+import {
+  GatewayTokenSchema,
+  McpConfigSchema,
+  McpServerEntrySchema,
+} from "@comis/core";
 import { SkillManifestSchema } from "@comis/skills";
 
 describe("CI-03 — schema-snapshot pins JSON-Schema shape across phases", () => {
@@ -46,6 +50,19 @@ describe("CI-03 — schema-snapshot pins JSON-Schema shape across phases", () =>
     const schema = z.toJSONSchema(SkillManifestSchema, { reused: "inline", unrepresentable: "any" });
     await expect(JSON.stringify(schema, null, 2)).toMatchFileSnapshot(
       "./__snapshots__/SkillManifestSchema.json",
+    );
+  });
+
+  // Phase 69 SERVE-02 (Plan 01 Task 3) — pin the new mcp-client shape.
+  // The JSON-Schema output here captures the additive `mcpClient` block with its
+  // three sub-fields. NOTE: Zod's `.refine` is a runtime predicate and is NOT
+  // representable in JSON-Schema — the `[scope_disjointness]` rule is regression-
+  // tested separately in `packages/core/src/config/schema-gateway.test.ts`. This
+  // snapshot guards the shape; the unit test guards the refine.
+  it("GatewayTokenSchema JSON-Schema is stable (additive changes require snapshot update)", async () => {
+    const schema = z.toJSONSchema(GatewayTokenSchema, { reused: "inline", unrepresentable: "any" });
+    await expect(JSON.stringify(schema, null, 2)).toMatchFileSnapshot(
+      "./__snapshots__/GatewayTokenSchema.json",
     );
   });
 });
