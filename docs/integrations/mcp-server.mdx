@@ -1,0 +1,358 @@
+---
+title: "Comis as MCP server"
+description: "Use Comis as an MCP backend for Claude Desktop, Cursor, and other agent platforms."
+icon: "plug"
+---
+
+Other agent platforms (Claude Desktop, Cursor, custom apps) can use Comis as an
+**MCP backend**, accessing Comis skills and a curated set of platform tools via
+a single Streamable HTTP endpoint at `/mcp/v1`.
+
+This is the inverse of [MCP Integration](/skills/mcp): there, Comis _connects
+to_ third-party MCP servers; here, Comis _is_ the MCP server other platforms
+connect to.
+
+<Warning>
+Before you flip `/mcp/v1` live on any publicly reachable Comis instance,
+complete the **security-reviewer gate** on the 51-tool classification (see
+[Exposed tools](#exposed-tools)). The conservative defaults shipped in v2.4
+are the right starting point, but the literal `safe` / `permission-gated` /
+`never-export` split _is_ the security policy and must be human-reviewed.
+</Warning>
+
+## Why use this
+
+External agent platforms benefit from Comis's accumulated state and skills:
+
+<CardGroup cols={2}>
+  <Card title="Claude Desktop" icon="message-bot">
+    Hook into Comis's per-tenant memory, search past sessions, or invoke
+    web tools from any Claude Desktop conversation.
+  </Card>
+  <Card title="Cursor or other IDEs" icon="code">
+    Use Comis's web search, document extraction, or workspace tools from
+    inside your editor's MCP integration.
+  </Card>
+  <Card title="Custom agent apps" icon="cubes">
+    Build internal agents that call Comis as a skill backend via a single
+    HTTPS endpoint with bearer-token auth.
+  </Card>
+  <Card title="Cross-platform memory" icon="brain">
+    A Claude Desktop agent reads what your Discord agent remembered — same
+    memory store, same tenant.
+  </Card>
+</CardGroup>
+
+## Security model
+
+The `/mcp/v1` endpoint exposes only what the operator explicitly authorizes.
+Five invariants make this safe.
+
+<AccordionGroup>
+  <Accordion title="1. Default-deny tool exposure" icon="shield">
+    Every platform tool is annotated with `mcpExportPolicy` — one of
+    `safe`, `permission-gated`, or `never-export`. **Missing annotation is
+    treated as `never-export`** (default-deny). A CI architecture gate
+    rejects pull requests that add a tool without an explicit
+    classification.
+
+    See [Exposed tools](#exposed-tools) for the full 51-tool table.
+  </Accordion>
+  <Accordion title="2. mcp-client scope is disjoint from admin" icon="ban">
+    The `mcp-client` scope is rejected on any non-`/mcp/v1` route. Tokens
+    that try to co-issue `admin` and `mcp-client` are rejected at
+    config-load with `[scope_disjointness]`. An MCP client _cannot_
+    escalate by calling `tokens_manage` against itself — the admin scope
+    is structurally unreachable from the MCP path.
+  </Accordion>
+  <Accordion title="3. Rate limit: 30/min/tool/client by default" icon="gauge">
+    Every `tools/call` increments a per-`(client, tool)` minute bucket.
+    Calls beyond the ceiling return `[rate_limit_exceeded]` with a
+    `resetAt` epoch-ms. The default is `30/min`, overridable per token via
+    `mcpClient.toolRateLimit[name]`.
+  </Accordion>
+  <Accordion title="4. CONFIRMED-only resource visibility" icon="lock">
+    `resources/read` filters out outbound messages that have not yet been
+    delivered to the channel adapter (`deliveryStatus !== "pending"`).
+    External MCP clients never see in-flight outbound, only what's
+    already been delivered.
+  </Accordion>
+  <Accordion title="5. Trust-flag isolation at dispatch" icon="layer-group">
+    The dispatcher strips any `_trustLevel` field from MCP tool args
+    before invoking the underlying RPC, and the composition root's
+    indirection (`daemonRpcForMcpClient`) never spreads
+    `_trustLevel: "admin"`. Even if a `never-export` tool slipped past
+    the policy filter, the dispatch path makes admin-trust behavior
+    unreachable from the MCP wire.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+The endpoint inherits the gateway's TLS configuration. Strongly recommended:
+run `/mcp/v1` behind TLS in any deployment where the client is not on the
+same host. See [Hardening](/security/hardening) for `gateway.tls` setup.
+</Note>
+
+## Bootstrap — issuing an mcp-client token
+
+Token issuance is a two-step operator workflow.
+
+<Steps>
+  <Step title="Mint the token via the admin LLM">
+    An operator with an admin-scoped session asks the admin agent to call
+    `tokens_manage`:
+
+    ```
+    Operator: "Create a new token with scopes ['mcp-client']."
+
+    Admin agent -> tokens_manage(action="create", scopes=["mcp-client"])
+    ```
+
+    The agent returns the new token's `id` and `secret`. **Capture the
+    secret once** — it is hashed in storage and not recoverable.
+
+    <Warning>
+    The agent will refuse to create a token that co-issues `admin` and
+    `mcp-client` — the schema's `[scope_disjointness]` refine blocks
+    this at config-load. Never request both scopes on one token.
+    </Warning>
+  </Step>
+
+  <Step title="Attach the per-client config block in ~/.comis/config.yaml">
+    Add the `mcpClient` block under the matching token entry. This is the
+    operator's tool-export policy for this MCP client.
+
+    ```yaml
+    gateway:
+      enabled: true
+      host: "0.0.0.0"
+      port: 4766
+      tokens:
+        - id: claude-desktop-1
+          secret: "<the secret returned by tokens_manage>"
+          scopes: ["mcp-client"]
+          mcpClient:
+            # Permission-gated tools this client may invoke. Tools NOT in this
+            # list (and not in the always-on "safe" bucket) are hidden.
+            allowlist: ["memory_search", "web_search", "session_search"]
+            # Sessions this client may read via resources/*. Empty = no
+            # session resources visible.
+            sessionAllowlist: ["default:discord:guild123:channel456:user789"]
+            # Per-tool rate-limit override (calls / minute). Omitted tools
+            # use the 30/min default.
+            toolRateLimit:
+              memory_search: 60   # double the default for this client
+              web_search: 10      # tighten
+    ```
+
+    Then reload Comis (`pm2 restart comis` in dev, or HUP your daemon
+    process in prod) to pick up the new token.
+  </Step>
+</Steps>
+
+## Claude Desktop config
+
+Once your token is minted and the `mcpClient` block is attached, configure
+Claude Desktop's `mcpServers` block.
+
+```json
+{
+  "mcpServers": {
+    "comis": {
+      "url": "https://my-comis-host:4766/mcp/v1",
+      "headers": { "Authorization": "Bearer <your-mcp-client-secret>" }
+    }
+  }
+}
+```
+
+The Claude Desktop config file lives at one of these platform-specific paths:
+
+<Tabs>
+  <Tab title="macOS">
+    `~/Library/Application Support/Claude/claude_desktop_config.json`
+  </Tab>
+  <Tab title="Windows">
+    `%APPDATA%\Claude\claude_desktop_config.json`
+  </Tab>
+  <Tab title="Linux">
+    `~/.config/Claude/claude_desktop_config.json`
+  </Tab>
+</Tabs>
+
+Restart Claude Desktop. The Comis MCP server's tools and resources appear in
+the conversation's tool picker.
+
+<Tip>
+The same JSON shape works for Cursor, Continue, and most MCP-compatible
+clients — only the host config-file path differs. Cursor reads
+`~/.cursor/mcp.json`.
+</Tip>
+
+## Per-client config reference
+
+The `gateway.tokens[i].mcpClient` block has three optional fields:
+
+| Field | Type | Default | Purpose |
+| ----- | ---- | ------- | ------- |
+| `allowlist` | `string[]` | `[]` | Permission-gated tools this token may invoke. Tools in the `safe` bucket are exposed even with an empty allowlist. Tools NOT in this list and NOT in `safe` are hidden from `tools/list` and rejected on `tools/call`. |
+| `sessionAllowlist` | `string[]` | `[]` | Session keys this token may read via `resources/list` and `resources/read`. Session-key format: `{agent}:{channelType}:{channelId}:{userId}` (e.g. `default:discord:guild123:channel456:user789`). Empty means no session resources visible. |
+| `toolRateLimit` | `Record<string, number>` | `{}` | Per-tool rate-limit override in calls/minute. Tools not listed use the 30/min default. Buckets reset on the UTC-minute boundary. |
+
+<Note>
+The `mcpClient` block is **optional**. A token with `scopes: ["mcp-client"]`
+and no `mcpClient` block can only call `safe` tools, sees no session
+resources, and hits the default 30/min/tool ceiling.
+</Note>
+
+## Exposed tools
+
+Tools are partitioned into three buckets per `mcpExportPolicy`. This is the
+**v2.4 starting classification** — see the [security-reviewer gate](#security-reviewer-gate-on-the-51-tool-classification)
+before flipping `/mcp/v1` live on a publicly reachable instance.
+
+### `safe` (3) — exposed to any mcp-client token
+
+No allowlist required. These tools have no PII surface, perform no Comis
+state read, and operate purely on caller-supplied input.
+
+| Tool | Why `safe` |
+| ---- | ---------- |
+| `web_search` | Public web search; no Comis state read |
+| `web_fetch` | Public HTTP GET; no Comis state read |
+| `browser` | Public web browsing; no Comis state read |
+
+### `permission-gated` (20) — exposed only if token's `mcpClient.allowlist` includes the tool
+
+Caller-data-dependent. These read Comis state OR consume caller media that
+_may_ resolve to Comis-stored content.
+
+| Tool | Why `permission-gated` |
+| ---- | ---------------------- |
+| `read` | Workspace file read |
+| `ls` | Workspace directory listing |
+| `find` | Workspace search by name |
+| `grep` | Workspace content search |
+| `memory_search` | Reads Comis memory (per-tenant) |
+| `memory_get` | Reads Comis memory by key |
+| `session_search` | Reads session history |
+| `session_status` | Reads session metadata |
+| `sessions_list` | Enumerates sessions |
+| `sessions_history` | Reads full session transcript |
+| `ctx_search` | Context-engine read |
+| `ctx_inspect` | Context-engine inspect |
+| `ctx_expand` | Context-engine expand |
+| `ctx_recall` | Context-engine recall |
+| `obs_query` | Observability read |
+| `discover_tools` | Reveals registered tool surface (meta) |
+| `image_analyze` | Vision over caller-supplied OR Comis-stored media — _TODO: security-reviewer re-confirm_ |
+| `describe_video` | Same caveat as `image_analyze` |
+| `extract_document` | Same caveat as `image_analyze` |
+| `transcribe_audio` | Same caveat as `image_analyze` |
+
+### `never-export` (28) — NEVER exposed under any operator config
+
+Admin, mutation, outbound channel sends, cross-account, and cost-bearing
+synthesis. These cannot be added to an `allowlist` — the runtime filter
+always drops them.
+
+<Warning>
+Do NOT attempt to allowlist any of these. The runtime filter ignores them
+even if listed; the entry is silently dropped. Use a `permission-gated`
+tool if you need partial read access, or build a constrained admin
+delegation outside the MCP server surface.
+</Warning>
+
+| Category | Tools |
+| -------- | ----- |
+| Filesystem mutation | `write`, `edit`, `apply_patch` |
+| Process / command execution | `exec`, `process` |
+| Memory write / delete | `memory_store`, `memory_manage` |
+| Session mutation, send, spawn | `sessions_manage`, `sessions_send`, `sessions_spawn`, `subagents` |
+| Scheduled tasks | `pipeline`, `cron` |
+| Admin (9) | `gateway`, `heartbeat_manage`, `channels_manage`, `tokens_manage`, `skills_manage`, `mcp_manage`, `agents_manage`, `providers_manage`, `models_manage` |
+| Outbound channel send | `message`, `whatsapp_action`, `discord_action`, `telegram_action`, `slack_action` |
+| Cost-bearing synthesis | `tts_synthesize` |
+
+**Total:** 3 safe + 20 permission-gated + 28 never-export = 51 unique
+tools, the full platform-tool surface as of v2.4.
+
+### Security-reviewer gate on the 51-tool classification
+
+Before flipping `/mcp/v1` live on any publicly reachable Comis instance, a
+security reviewer must audit each classification against the threat model.
+Use the rubric:
+
+- **`safe`** — no PII, no Comis state read, no mutation, no outbound. Pure
+  caller-supplied input → pure caller-supplied output.
+- **`permission-gated`** — reads Comis state OR consumes caller data; the
+  operator gates per-token via `mcpClient.allowlist`.
+- **`never-export`** — admin, mutation, outbound channel send, secrets,
+  cross-account, or anything whose RPC contract is scoped `["admin"]`.
+
+The four media tools (`image_analyze`, `describe_video`, `extract_document`,
+`transcribe_audio`) are conservatively classified as `permission-gated` in
+v2.4. The reviewer decides whether any can be upgraded to `safe` (if the
+tool only ever reads caller-supplied media) or must stay
+`permission-gated` (if any code path resolves a Comis-stored media ID).
+
+## Wire-format notes
+
+The Comis MCP server runs `@modelcontextprotocol/sdk@1.29.0`. Compatible
+client SDK versions: **1.20.0 and newer**. Older clients may fail at
+`initialize` if the protocol-version negotiation cannot find a common
+version.
+
+By default the transport uses **Server-Sent Events (SSE)**. The SDK's
+`enableJsonResponse` option supports a JSON-only response mode, but Comis
+ships SSE by default. Most Claude Desktop and Cursor versions handle SSE
+natively. If you see a silent hang or an early-close from your client,
+verify the client's transport configuration matches.
+
+## Resource caching
+
+`resources/read` returns the **current CONFIRMED state** of a session.
+Re-reading the same URI may return _additional_ messages as outbound
+delivery completes (an in-flight outbound message that was hidden on the
+first read may appear on a later read once the channel adapter confirms
+delivery).
+
+This matches the MCP spec's "resources may change" semantics. Cache
+invalidation is the client's responsibility — if your client caches by
+URI, set a short TTL or invalidate on every conversation turn.
+
+## Troubleshooting
+
+| Error / symptom | Likely cause | Fix |
+| --------------- | ------------ | --- |
+| `401 Unauthorized` | Bearer token missing or invalid | Check the `Authorization: Bearer ...` header; re-mint the token via `tokens_manage` if you lost the secret. |
+| `403 Insufficient scope` | Token doesn't include `mcp-client` | Issue a new token with `scopes: ["mcp-client"]`. |
+| `403 disjoint-scope violation` | Token co-issues `admin` and `mcp-client` | Config validation should have caught this at load time. Re-mint the token with only `mcp-client`; check daemon logs for the `[scope_disjointness]` line. |
+| `tools/list` returns only 3 tools | Empty `mcpClient.allowlist` — only `safe` tools surface | Add the permission-gated tool names you want exposed to `mcpClient.allowlist` and reload. |
+| `[rate_limit_exceeded]` on every call | Default 30/min/tool exhausted | Tune via `mcpClient.toolRateLimit[name]` for the specific tool; or wait until the next UTC-minute boundary (`resetAt` in the error). |
+| `resources/list` returns empty | `mcpClient.sessionAllowlist` is empty | Add the specific session keys you want exposed. Format: `{agent}:{channelType}:{channelId}:{userId}`. |
+| Silent connection close after `initialize` | SDK version mismatch | Verify client SDK >= 1.20.0. Check daemon logs for `protocol-version-negotiation-failed`. |
+
+## What's NOT exposed
+
+Out of scope for the v2.4 server, deferred to v2.5+:
+
+- **`sampling/createMessage`** — server-initiated LLM calls from Comis back
+  to the client. Not advertised.
+- **`roots/notifications`** — workspace-root change notifications. Not
+  advertised.
+- **`prompts/*`** — Comis does not expose prompts via MCP. The `prompts`
+  capability is not advertised; clients should fall back gracefully.
+- **Native binary content in `tools/call` results** — image and audio tool
+  outputs are returned as text descriptions (JSON-stringified) in v2.4.
+  Native `{type: "image", data: base64}` content is deferred.
+
+## See also
+
+- [MCP Integration](/skills/mcp) — Comis as MCP _client_, the inverse
+  direction.
+- [Token Security](/security/secrets) — token storage and rotation.
+- [Hardening](/security/hardening) — TLS, reverse proxy, and gateway
+  hardening.
+- [Rate limiting](/reference/rate-limiting) — gateway-level rate limits
+  that apply _before_ the per-tool MCP rate limit.
