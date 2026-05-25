@@ -509,12 +509,29 @@ function stripTrustLevel(
 }
 
 /**
- * JSON.stringify with a fallback for circular structures. Returns
- * `"[unserializable]"` on failure so the wrapped content is always a string.
+ * JSON.stringify with a fallback for circular structures and the
+ * `undefined` value. Returns `"[unserializable]"` on failure so the wrapped
+ * content is always a string (the `: string` return type is binding).
+ *
+ * Phase 69 CR-01 (info-leak defense): `JSON.stringify(undefined)` returns the
+ * value `undefined`, not the string `"null"`. A naive
+ * `try { return JSON.stringify(v); }` therefore violates the `: string`
+ * contract when `v === undefined` (a legal return value for the
+ * `Promise<unknown>` indirection backing `daemonRpcForMcpClient`). The
+ * `undefined` then propagates into `wrapExternalContent`, which calls
+ * `content.replace(...)` and throws a `TypeError`. The MCP SDK catches the
+ * throw and surfaces the raw `TypeError` message to the external MCP client
+ * (information disclosure). Guard explicitly: callers receive `"undefined"`
+ * as the serialized form, which `wrapExternalContent` handles correctly.
  */
 function safeStringify(v: unknown): string {
+  if (v === undefined) return "undefined";
   try {
-    return JSON.stringify(v);
+    const s = JSON.stringify(v);
+    // JSON.stringify can still return undefined for values whose toJSON()
+    // returns undefined (e.g., functions, symbols nested in an array slot).
+    // Treat any non-string result as the "[unserializable]" sentinel.
+    return typeof s === "string" ? s : "[unserializable]";
   } catch {
     return "[unserializable]";
   }

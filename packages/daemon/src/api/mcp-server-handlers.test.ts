@@ -695,6 +695,90 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
     expect(((await cbB({ query: "q" })) as { isError?: boolean }).isError ?? false).toBe(false);
     expect(((await cbB({ query: "q" })) as { isError?: boolean }).isError).toBe(true);
   });
+
+  // ------------------------------------------------------------------------
+  // Phase 69 CR-01 -- safeStringify(undefined) info leak
+  //
+  // RED test pinning the fix: when the underlying RPC handler resolves to
+  // `undefined` (a legal value for the Promise<unknown> return type of
+  // daemonRpcForMcpClient), the dispatcher MUST NOT propagate the JavaScript
+  // `undefined` value into wrapExternalContent. JSON.stringify(undefined)
+  // returns the value `undefined`, not the string `"null"`, so a naive
+  // `safeStringify(v) -> JSON.stringify(v)` returns `undefined` (the value)
+  // -- and the `string` return type is a lie. Passing undefined to
+  // wrapExternalContent triggers String.prototype.replace on undefined ->
+  // TypeError; the SDK catches it and surfaces the raw TypeError message
+  // verbatim to the external MCP client (information disclosure).
+  //
+  // Post-fix invariants:
+  //   - rpcResult === undefined produces a wrapped response (no throw, no
+  //     isError) containing an empty/safe payload between the markers.
+  //   - The output is still a non-empty string (markers + SECURITY NOTICE).
+  //   - The output does NOT contain the literal text "TypeError" or "Cannot
+  //     read properties of undefined" (which would indicate the bug leaked).
+  // ------------------------------------------------------------------------
+
+  it("buildMcpServerForClient dispatch does not throw when daemon RPC returns undefined CR-01 info leak guard", async () => {
+    const { logger } = makeCapturingLogger();
+    const client = makeMcpClient(["mcp-client"], ["memory_search"]);
+
+    // The RPC handler resolves to `undefined` -- a legal value for the
+    // Promise<unknown> indirection but the value `safeStringify` mishandled.
+    // NOTE: don't use makeRpcRecorder() with undefined -- the default
+    // parameter substitutes the fallback object. Build the recorder
+    // directly so the captured returnValue stays literally `undefined`.
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const rpc: RpcRecorder = {
+      calls,
+      fn: async (method, params) => {
+        calls.push({ method, params });
+        return undefined; // <-- the bug-triggering value
+      },
+    };
+
+    const { capturedCallback, restore } = captureRegisteredCallback();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: memorySearchMapping,
+        },
+        client,
+      );
+
+      const cb = capturedCallback["memory_search"]!;
+      // The dispatcher must NOT throw. On the pre-fix code, await cb(...)
+      // rejects with TypeError: Cannot read properties of undefined
+      // (reading 'replace') inside wrapExternalContent's replaceMarkers.
+      // The SDK then catches and surfaces the raw message to the external
+      // MCP client (information disclosure).
+      const r = (await cb({ query: "ok" })) as {
+        isError?: boolean;
+        content?: Array<{ type: string; text: string }>;
+      };
+
+      // Sanity: the RPC was actually called with our undefined-returning fn.
+      expect(rpc.calls.length).toBe(1);
+      // The response is a happy-path wrap (NOT an isError).
+      expect(r.isError ?? false).toBe(false);
+      // The response carries content wrapped with the markers.
+      expect(r.content?.length).toBeGreaterThan(0);
+      const text = r.content?.[0]?.text ?? "";
+      expect(typeof text).toBe("string");
+      expect(text.length).toBeGreaterThan(0);
+      // The wrapped output carries the standard markers + SECURITY NOTICE.
+      expect(text).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+      expect(text).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/);
+      // The TypeError message MUST NOT leak to the external MCP client.
+      expect(text).not.toContain("TypeError");
+      expect(text).not.toContain("Cannot read properties of undefined");
+    } finally {
+      restore();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
