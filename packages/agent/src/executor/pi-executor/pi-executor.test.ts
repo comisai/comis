@@ -8,6 +8,9 @@ import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearS
 import { clearSessionToolSchemaSnapshot } from "../executor-session-state.js";
 import { resetPairedMemoryDedupForTests } from "../executor-post-execution.js";
 import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache-detection/index.js";
+// WR-02 (Plan 05-04): import buildPromptingSnapshot from the scaffold helper.
+// This import will fail (RED) until pi-executor-prompting.ts is created.
+import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock setup -- vi.hoisted runs before vi.mock factories
@@ -6410,5 +6413,48 @@ describe("WR-01: populated runtimeSnapshot.skills", () => {
     expect(snapshot).toBeDefined();
     // Back-compat: legacy mock without getSnapshot keeps skills []
     expect(snapshot.skills).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-02: buildPromptingSnapshot redaction scaffold (Plan 05-04)
+// ---------------------------------------------------------------------------
+
+describe("WR-02: buildPromptingSnapshot redaction scaffold", () => {
+  it("buildPromptingSnapshot_with_undefined_inputs_returns_empty", () => {
+    const result = buildPromptingSnapshot({});
+    expect(result).toEqual({});
+  });
+
+  it("buildPromptingSnapshot_redacts_userPromptPrefixText", () => {
+    // The long decimal ID (123456789012) should be redacted by the
+    // long-decimal-id pattern. The result must NOT contain the raw digits.
+    const result = buildPromptingSnapshot({
+      userPromptPrefixText: "User connected 123456789012 now",
+    });
+    expect(result.userPromptPrefixText).toBeDefined();
+    expect(result.userPromptPrefixText).toContain("<REDACTED:");
+    expect(result.userPromptPrefixText).not.toContain("123456789012");
+  });
+
+  it("buildPromptingSnapshot_substitutes_paths_in_userPromptPrefixText", () => {
+    const result = buildPromptingSnapshot({
+      userPromptPrefixText: "Read /Users/alice/foo first",
+      pathOpts: { homeDir: "/Users/alice" },
+    });
+    expect(result.userPromptPrefixText).toBeDefined();
+    expect(result.userPromptPrefixText).toContain("$HOME/foo");
+    expect(result.userPromptPrefixText).not.toContain("/Users/alice/foo");
+  });
+
+  it("buildPromptingSnapshot_preserves_byteLen_and_digest", () => {
+    const result = buildPromptingSnapshot({
+      systemPromptDigest: "sha256:abc",
+      systemPromptByteLen: 1234,
+    });
+    expect(result.systemPromptDigest).toBe("sha256:abc");
+    expect(result.systemPromptByteLen).toBe(1234);
+    // No userPromptPrefixText when not provided
+    expect(result.userPromptPrefixText).toBeUndefined();
   });
 });
