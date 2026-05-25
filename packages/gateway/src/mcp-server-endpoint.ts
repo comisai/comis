@@ -35,6 +35,7 @@
  */
 
 import type { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -81,6 +82,15 @@ export interface McpServerEndpointDeps {
    *  `module:"mcp-server"` via the parent binding plus
    *  `submodule:"endpoint"` here. */
   readonly logger: GatewayLogger;
+  /**
+   * Maximum POST body size in bytes. The Hono `bodyLimit` middleware fires
+   * BEFORE the route handler buffers the body via `c.req.json()`, so a
+   * holder of a valid mcp-client-scoped token cannot exhaust daemon heap
+   * memory by streaming a multi-gigabyte POST body (Phase 69 CR-02 DoS
+   * defense). Mirrors `config.httpBodyLimitBytes` -- the same ceiling
+   * `rest-api.ts` applies to POST /api/chat at line 329-337.
+   */
+  readonly bodyLimitBytes: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,9 +110,29 @@ export function mountMcpServerEndpoint(
   app: Hono<{ Bindings: NodeHttpBindings }>,
   deps: McpServerEndpointDeps,
 ): void {
-  const { tokenStore, buildMcpServerForClient, logger } = deps;
+  const { tokenStore, buildMcpServerForClient, logger, bodyLimitBytes } = deps;
 
-  app.post("/mcp/v1", async (c) => {
+  // Phase 69 CR-02 -- body-size limit before c.req.json() buffers the body.
+  // Without this gate, a holder of any valid mcp-client-scoped token can
+  // POST a multi-gigabyte body and the daemon's heap grows proportionally
+  // per concurrent request. The IP-level rate limiter caps request COUNT
+  // but not request BYTE COUNT. 413 is the canonical Hono bodyLimit
+  // response; we also wrap it in JSON-RPC error shape so MCP-aware clients
+  // see a structured response instead of a bare HTTP status.
+  const bodyLimitMw = bodyLimit({
+    maxSize: bodyLimitBytes,
+    onError: (c) =>
+      c.json(
+        {
+          jsonrpc: "2.0",
+          error: { code: -32600, message: "Request body too large" },
+          id: null,
+        },
+        413,
+      ),
+  });
+
+  app.post("/mcp/v1", bodyLimitMw, async (c) => {
     // Gate 1 — extract bearer.
     const token =
       extractBearerToken(c.req.header("authorization") ?? "") ?? "";

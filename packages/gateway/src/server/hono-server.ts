@@ -151,6 +151,11 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
         tokenStore: deps.tokenStore,
         buildMcpServerForClient: deps.buildMcpServerForClient,
         logger,
+        // Phase 69 CR-02 -- mirror the body-limit ceiling used by
+        // `/api/chat`. The bodyLimit middleware fires BEFORE the route
+        // handler reads c.req.json(), so an mcp-client cannot exhaust
+        // daemon heap by streaming a multi-GB body.
+        bodyLimitBytes: config.httpBodyLimitBytes,
       },
     );
   }
