@@ -175,7 +175,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         _lastMessageAt = systemNowMs();
         const normalized = mapBaileysToNormalized(m as BaileysMessage);
 
-        // D1 (Plan 01-03): mint traceId at ingress, stamp into metadata
+        // Mint traceId at ingress, stamp into metadata.
         const traceId = randomUUID();
         normalized.metadata.traceId = traceId;
 

@@ -24,7 +24,7 @@ export interface PluginRegistry {
   getHooksByName<K extends HookName>(hookName: K): readonly RegisteredHook<K>[];
   /** Deactivate all registered plugins (calls deactivate() if present). */
   deactivateAll(): Promise<Result<void, Error>>;
-  /** Number of registered plugins. Used by the boot invariant collector (BOOT-01). */
+  /** Number of registered plugins. Used by the boot invariant collector. */
   count(): number;
 }
 

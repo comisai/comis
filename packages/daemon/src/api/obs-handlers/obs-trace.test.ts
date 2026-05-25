@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * obs.trace.{search, tail, export} handler tests (CLI-06 / Plan 06-03).
+ * obs.trace.{search, tail, export} handler tests.
  *
  * Tests:
  *   1. bindObsTraceHandlers returns an object with exactly three keys
@@ -58,7 +58,7 @@ function makeDeps(overrides?: Partial<ObsHandlerDeps>): ObsHandlerDeps {
   } as unknown as ObsHandlerDeps;
 }
 
-describe("bindObsTraceHandlers (CLI-06 / Plan 06-03)", () => {
+describe("bindObsTraceHandlers", () => {
   beforeEach(() => {
     // Reset LRU between tests so LRU state does not leak across test runs.
     __resetLru();
@@ -205,8 +205,7 @@ describe("bindObsTraceHandlers (CLI-06 / Plan 06-03)", () => {
     // empty dataDir, whereas msg-1099 (still in LRU) would trigger a scan
     // of emptyDir (also no rows). The real size validation needs the exported
     // __lruSize helper or we count indirect evidence.
-    // Per plan design, export __lruSize alongside __resetLru.
-    // We'll import it and assert directly.
+    // Export __lruSize alongside __resetLru. We'll import it and assert directly.
     const { __lruSize } = await import("./obs-trace.js");
     expect(__lruSize()).toBe(1024);
   });

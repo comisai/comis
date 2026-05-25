@@ -8,8 +8,6 @@ import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearS
 import { clearSessionToolSchemaSnapshot } from "../executor-session-state.js";
 import { resetPairedMemoryDedupForTests } from "../executor-post-execution.js";
 import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache-detection/index.js";
-// WR-02 (Plan 05-04): import buildPromptingSnapshot from the scaffold helper.
-// This import will fail (RED) until pi-executor-prompting.ts is created.
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 
 // ---------------------------------------------------------------------------
@@ -6308,7 +6306,7 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
   });
 
   it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
-    // Per design §6.1, the pointer file <sessionFile>.trajectory-path.json
+    // The pointer file <sessionFile>.trajectory-path.json
     // is written by createTrajectoryRecorder ONLY when init.sessionFile
     // is provided. The recorder writer is already wired up
     // — this site is the missing production caller. Threading
@@ -6336,10 +6334,10 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-01: populated runtimeSnapshot.skills (Plan 05-04)
+// Populated runtimeSnapshot.skills
 // ---------------------------------------------------------------------------
 
-describe("WR-01: populated runtimeSnapshot.skills", () => {
+describe("populated runtimeSnapshot.skills", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Restore default mock returns after vi.clearAllMocks() wiped them.
@@ -6387,7 +6385,7 @@ describe("WR-01: populated runtimeSnapshot.skills", () => {
     const snapshot = bridgeCall.runtimeSnapshot;
 
     expect(snapshot).toBeDefined();
-    // WR-01: name->id mapping + version passthrough
+    // name->id mapping + version passthrough
     expect(snapshot.skills).toEqual([
       { id: "fileops", version: "1.0" },
       { id: "search" },
@@ -6417,10 +6415,10 @@ describe("WR-01: populated runtimeSnapshot.skills", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-02: buildPromptingSnapshot redaction scaffold (Plan 05-04)
+// buildPromptingSnapshot redaction scaffold
 // ---------------------------------------------------------------------------
 
-describe("WR-02: buildPromptingSnapshot redaction scaffold", () => {
+describe("buildPromptingSnapshot redaction scaffold", () => {
   it("buildPromptingSnapshot_with_undefined_inputs_returns_empty", () => {
     const result = buildPromptingSnapshot({});
     expect(result).toEqual({});

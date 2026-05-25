@@ -67,8 +67,8 @@ export const DEFAULT_KEEP_ROTATED = 5;
  *
  * `callerSource` is the original `source` enum value (e.g.,
  * "last-known-good-save", "config-patch-rpc", "cli-sync-tooling") —
- * stored under `callerSource` on the persisted record so the design
- * §9.2 top-level `source` slot is reserved for the fixed literal
+ * stored under `callerSource` on the persisted record so the
+ * top-level `source` slot is reserved for the fixed literal
  * `"config-io"`. Caller-site call patterns are unchanged.
  */
 export interface ConfigWriteAuditRecordBase {
@@ -117,7 +117,7 @@ export interface CreateBaseParams {
 /**
  * Stringify a POSIX dev/ino value. Both can be `bigint` on some
  * filesystems (POSIX `st_dev` and `st_ino` can exceed JS safe-integer
- * range); the design §9.2 contract for these two fields is
+ * range); the contract for these two fields is
  * `string | null`. Returns `null` when the input is null/undefined.
  */
 function stringifyPosixId(v: number | bigint | undefined | null): string | null {
@@ -318,7 +318,7 @@ function collectRotatedSiblings(filePath: string, keepRotated: number): string[]
  *
  * After the rename-shift, schedules a fire-and-forget call to
  * `applyRotationPolicy` so the freshly-rotated `.1` gets gzipped and
- * the age/count caps stay honored (ROTATE-02). The function itself
+ * the age/count caps stay honored. The function itself
  * remains synchronous; the gzip is a follow-up async task.
  */
 /**
@@ -368,7 +368,7 @@ export function rotateConfigAuditLogIfNeeded(
     // Can't rename — best-effort, leave the main file alone.
   }
 
-  // Fire-and-forget: gzip + age-prune + count-prune via shared helper (ROTATE-02).
+  // Fire-and-forget: gzip + age-prune + count-prune via shared helper.
   // The function stays synchronous; gzip is a follow-up async task.
   const effectivePolicy: RotationPolicy = policy ?? {
     maxSizeBytes: 50 * 1024 * 1024,
@@ -454,7 +454,7 @@ export class ConfigAuditAppendError extends Error {
 
 /**
  * Ensure the parent dir exists with mode 0o700, including for the
- * existing-parent case (via the OBS-HARD substrate migration).
+ * existing-parent case.
  *
  * Delegates to the shared `ensureContainedDir` substrate, which owns
  * the canonical `mkdir + lstat-gated chmod` pattern with
@@ -464,12 +464,12 @@ export class ConfigAuditAppendError extends Error {
  *
  *   - Existing-parent: `mkdirSync`'s `mode` arg is silently ignored
  *     on recursive EEXIST; the substrate's defensive chmod restores
- *     the §1.4 0o700 invariant, gated on a non-symlink `lstat`
+ *     the 0o700 invariant, gated on a non-symlink `lstat`
  *     (never chmod a symlinked dir — target may be shared state).
  *
  * The **file** itself is independently locked to `0o600` by the
  * defensive `fchmodSync(fd, 0o600)` inside `appendRegularFile`
- * (fs-safe.ts step 3) — per-record file-mode invariant is preserved
+ * — per-record file-mode invariant is preserved
  * regardless of the parent's pre-existing mode.
  *
  * The exported sync void signature is preserved for back-compat with

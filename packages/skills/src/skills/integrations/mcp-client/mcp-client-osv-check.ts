@@ -7,10 +7,8 @@
  * (MAL-* advisory IDs from the OpenSSF Malicious Packages dataset).
  * Cached on disk under `~/.comis/cache/osv/<ecosystem>-<pkg>.json` with
  * operator-configurable TTL (default 24h). Fail-open on network/API
- * errors per SAFETY-05 — a transient api.osv.dev outage must NOT block
- * every legitimate MCP connect.
- *
- * Per RESEARCH.md §"Pattern 4" + REQUIREMENTS.md SAFETY-05/06.
+ * errors — a transient api.osv.dev outage must NOT block every
+ * legitimate MCP connect.
  *
  * @module
  */
@@ -28,7 +26,7 @@ export const DEFAULT_OSV_CACHE_DIR = safePath(homedir(), ".comis", "cache", "osv
 const OSV_FETCH_TIMEOUT_MS = 5000;
 
 // ---------------------------------------------------------------------------
-// WR-06: in-process concurrency cap on OSV API calls.
+// In-process concurrency cap on OSV API calls.
 //
 // Pre-fix every `osvMalwareCheck` call independently invoked
 // `fetch(api.osv.dev/v1/query)`. A daemon starting with 5+ MCP servers
@@ -68,10 +66,10 @@ interface OsvCacheEntry {
 
 /**
  * Cache-entry shape validator. Used at cache READ time to reject
- * adversarially-shaped cache files (CR-01): a previously-installed
- * malicious package, or any actor with write access to the cache dir,
- * cannot poison the cache with `verdict: "Malicious"` (capital M) or
- * other near-misses that would silently pass the downstream
+ * adversarially-shaped cache files: a previously-installed malicious
+ * package, or any actor with write access to the cache dir, cannot
+ * poison the cache with `verdict: "Malicious"` (capital M) or other
+ * near-misses that would silently pass the downstream
  * `verdict === "malicious"` exact-match check at
  * mcp-client-connect.ts:93. The schema is intentionally STRICT:
  *   - `verdict` must be exactly `"safe"` or `"malicious"`.
@@ -97,7 +95,7 @@ export interface OsvCheckOptions {
   readonly fetchImpl?: typeof fetch;
 }
 
-/** OSV check result. `safe` is also returned on fail-open paths per SAFETY-05. */
+/** OSV check result. `safe` is also returned on fail-open paths. */
 export interface OsvCheckResult {
   readonly verdict: "safe" | "malicious";
   readonly advisoryIds: readonly string[];
@@ -124,10 +122,10 @@ export async function osvMalwareCheck(
   const cacheFileName = `${ecosystem}-${packageName.replace(/\//g, "_")}.json`;
   const cachePath = safePath(cacheDir, cacheFileName);
 
-  // Cache read — CR-01: validate the entry shape via Zod BEFORE trusting
-  // it. The pre-fix code did `JSON.parse(raw) as OsvCacheEntry` (an
-  // unsafe cast that lies). A previously-installed malicious package
-  // could write `{ "verdict": "Malicious", ... }` (capital M) — the
+  // Cache read — validate the entry shape via Zod BEFORE trusting it.
+  // The pre-fix code did `JSON.parse(raw) as OsvCacheEntry` (an unsafe
+  // cast that lies). A previously-installed malicious package could
+  // write `{ "verdict": "Malicious", ... }` (capital M) — the
   // downstream `verdict === "malicious"` exact-match check would NOT
   // fire, and the package would be treated as safe. Validation rejects
   // any cache entry whose shape does not match OsvCacheEntrySchema, and
@@ -149,7 +147,7 @@ export async function osvMalwareCheck(
   const firstCacheHit = readCache();
   if (firstCacheHit) return firstCacheHit;
 
-  // WR-06: serialize the NETWORK portion via the process-wide chain.
+  // Serialize the NETWORK portion via the process-wide chain.
   // Parallel daemon startup with N MCP servers fires N osvMalwareCheck
   // calls; pre-fix all N hit api.osv.dev simultaneously and could
   // trigger rate-limiting (429), which the fail-open path classifies
@@ -179,7 +177,7 @@ export async function osvMalwareCheck(
             packageName,
             ecosystem,
             status: res.status,
-            hint: "OSV API non-2xx; failing open per SAFETY-05",
+            hint: "OSV API non-2xx; failing open",
             errorKind: "dependency" as const,
           },
           "OSV API non-2xx — failing open",
@@ -193,7 +191,7 @@ export async function osvMalwareCheck(
           packageName,
           ecosystem,
           err: error instanceof Error ? error.message : String(error),
-          hint: "OSV API network/timeout error; failing open per SAFETY-05",
+          hint: "OSV API network/timeout error; failing open",
           errorKind: "network" as const,
         },
         "OSV API error — failing open",
@@ -207,7 +205,7 @@ export async function osvMalwareCheck(
 /**
  * Resolve the OSV verdict from a response and write the cache file.
  * Extracted so the on-chain function in osvMalwareCheck can return the
- * verdict from a single tail call (post-WR-06 refactor).
+ * verdict from a single tail call.
  */
 function resolveAndWriteCache(
   response: OsvResponse,
@@ -229,11 +227,11 @@ function resolveAndWriteCache(
   };
 
   try {
-    // CR-01: `fs.mkdirSync(dir, { mode })` ONLY sets perms on a NEWLY-
-    // created dir. If `cacheDir` pre-exists with looser perms (inherited
-    // from a shared parent, or a prior install) the cache files inside
-    // go in at 0o600 but the parent dir's perms — which control whether
-    // a different user can list/replace files — stay loose. `chmodSync`
+    // `fs.mkdirSync(dir, { mode })` ONLY sets perms on a NEWLY-created
+    // dir. If `cacheDir` pre-exists with looser perms (inherited from a
+    // shared parent, or a prior install) the cache files inside go in
+    // at 0o600 but the parent dir's perms — which control whether a
+    // different user can list/replace files — stay loose. `chmodSync`
     // enforces the tight 0o700 on existing dirs too.
     mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
     chmodSync(cacheDir, 0o700);
@@ -260,10 +258,10 @@ function resolveAndWriteCache(
  * Strip any `@<version-or-spec>` suffix from a package specifier, returning
  * the bare package name. Handles ALL npm spec shapes:
  *   - `foo@1.2.3`           -> `foo`         (semver)
- *   - `foo@latest`          -> `foo`         (dist-tag — CR-05 case 2)
+ *   - `foo@latest`          -> `foo`         (dist-tag)
  *   - `foo@^1.0.0-beta.1`   -> `foo`         (pre-release)
  *   - `foo@1.0.0+build.123` -> `foo`         (build metadata)
- *   - `foo@git+https://...` -> `foo`         (git URL — CR-05 case 2)
+ *   - `foo@git+https://...` -> `foo`         (git URL)
  *   - `foo@file:./local`    -> `foo`         (file spec)
  *   - `@scope/pkg@1.0`      -> `@scope/pkg`  (scoped semver)
  *   - `@scope/pkg@latest`   -> `@scope/pkg`  (scoped dist-tag)
@@ -276,7 +274,7 @@ function resolveAndWriteCache(
  * semver-shaped suffixes — dist-tags, pre-release, git URLs and file
  * specs slipped through unstripped, causing OSV queries to use the
  * literal `pkg@latest` package name (no match) and silently passing
- * malicious packages. Per CR-05 + RESEARCH.md §"Pattern 4".
+ * malicious packages.
  */
 function stripVersionSpec(pkg: string): string {
   // Scoped name: `@scope/pkg[@spec]` — preserve the leading `@scope/`.
@@ -304,24 +302,22 @@ function firstNonFlagIndex(argList: readonly string[], start = 0): number {
  * Recognized:
  *   - `npx [flags...] <pkg>[@spec]`           -> npm
  *   - `uvx [flags...] <pkg>` OR
- *     `uvx [flags...] --from <pkg> <tool>`    -> pypi (CR-05 fix: --from)
+ *     `uvx [flags...] --from <pkg> <tool>`    -> pypi (`--from` support)
  *   - `pnpm dlx [flags...] <pkg>[@spec]`      -> npm
  *
  * Command match is by `basename(command)` — exact, NOT `endsWith` (which
- * matched `/tmp/mynpx` as npx, a CR-05 surface). Version suffixes
+ * matched `/tmp/mynpx` as npx). Version suffixes
  * (`pkg@1.2.3`, `pkg@latest`, scoped, pre-release, git URLs, file specs)
  * are stripped uniformly via `stripVersionSpec`.
  *
  * Returns `null` for unrecognized commands (`node`, `python3`,
  * `/bin/sh`) — caller logs INFO and skips OSV check.
- *
- * Per RESEARCH.md §"Pattern 4" + Pitfall 4 + Phase 63 CR-05.
  */
 export function extractMcpPackageName(
   command: string,
   args: readonly string[] | undefined,
 ): { ecosystem: "npm" | "pypi"; name: string } | null {
-  // CR-05: exact basename match instead of endsWith. `/tmp/mynpx` is not
+  // Exact basename match instead of endsWith. `/tmp/mynpx` is not
   // npx — endsWith treated it as npx and parsed the first arg as a
   // package name. basename strips the directory and gives the executable
   // name, which we exact-match against the package-manager allowlist.
@@ -339,7 +335,7 @@ export function extractMcpPackageName(
   }
 
   // uvx [flags...] [--from <pkg>] <tool>
-  // CR-05: handle `--from <pkg>` — uvx's documented invocation for the
+  // Handle `--from <pkg>` — uvx's documented invocation for the
   // common case where the package name differs from the executable's
   // binary name. Pre-fix the parser saw `--from` (starts with `-`) and
   // returned null, silently skipping the OSV check.

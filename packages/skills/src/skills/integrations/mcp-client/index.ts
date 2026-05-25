@@ -55,14 +55,13 @@ export type {
 
 export { qualifyToolName, parseQualifiedName } from "./mcp-client-types.js";
 
-// Phase 63 SAFETY-01/02: stdio env-scrub primitives re-exported so the
-// daemon RPC handler + architecture / integration tests can consume them
-// via @comis/skills.
+// stdio env-scrub primitives re-exported so the daemon RPC handler +
+// architecture / integration tests can consume them via @comis/skills.
 export { MCP_STDIO_BUILTIN_ENV_ALLOWLIST, scrubStdioEnv } from "./mcp-client-discover.js";
 
-// Phase 63 SAFETY-05/06: pre-spawn OSV malware check + package-name
-// extraction for stdio MCP commands. Re-exported so the daemon RPC handler
-// + architecture / integration tests can consume them via @comis/skills.
+// Pre-spawn OSV malware check + package-name extraction for stdio MCP
+// commands. Re-exported so the daemon RPC handler + architecture /
+// integration tests can consume them via @comis/skills.
 export {
   osvMalwareCheck,
   extractMcpPackageName,
@@ -70,9 +69,9 @@ export {
 } from "./mcp-client-osv-check.js";
 export type { OsvCheckResult, OsvCheckOptions } from "./mcp-client-osv-check.js";
 
-// Phase 63 SAFETY-07: custom FetchLike with cross-host redirect header scrub
-// for SSE + Streamable HTTP MCP transports. Re-exported so the integration
-// test under test/integration/ can consume it via @comis/skills.
+// Custom FetchLike with cross-host redirect header scrub for SSE +
+// Streamable HTTP MCP transports. Re-exported so the integration test
+// under test/integration/ can consume it via @comis/skills.
 export { createRedirectPolicyFetch } from "./mcp-client-redirect-policy.js";
 export type { RedirectPolicyOptions } from "./mcp-client-redirect-policy.js";
 

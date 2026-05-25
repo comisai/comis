@@ -2,7 +2,7 @@
 /**
  * Tests for appendSessionIndexEntry — the append-only session index writer.
  *
- * Invariants verified (design §5 D14, INDEX-01):
+ * Invariants verified:
  *
  *   1. Writes one JSONL line to <dataDir>/logs/session-index.YYYY-MM-DD.jsonl
  *   2. Date-roll: a simulated day boundary creates a new file

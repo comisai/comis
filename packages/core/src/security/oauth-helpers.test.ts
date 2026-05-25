@@ -12,8 +12,8 @@
  *      closed-union mirror invariant (the `errorKind === code` mirror was
  *      narrowed to a closed Pino ErrorKind value)
  *
- * Test fixtures use neutral placeholders (AGENTS.md §2.2): no real emails,
- * tokens, or proprietary error_description strings.
+ * Test fixtures use neutral placeholders: no real emails, tokens, or
+ * proprietary error_description strings.
  *
  * @module
  */

@@ -148,7 +148,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         _lastMessageAt = systemNowMs();
         const normalized = mapDiscordToNormalized(msg);
 
-        // D1 (Plan 01-02): mint traceId at ingress, stamp into metadata
+        // Mint traceId at ingress, stamp into metadata
         const traceId = randomUUID();
         normalized.metadata.traceId = traceId;
 
@@ -248,7 +248,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
             },
           };
 
-          // D1 (Plan 01-02): mint traceId at ingress for interaction dispatch
+          // Mint traceId at ingress for interaction dispatch
           const traceId = randomUUID();
           normalized.metadata.traceId = traceId;
           runWithContext(

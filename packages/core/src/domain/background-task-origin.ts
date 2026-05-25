@@ -8,7 +8,7 @@
  *
  * Lives in @comis/core (not @comis/agent) so the event-bus payload type
  * in core/src/event-bus/events-infra.ts can carry it without violating
- * the inward-only dependency direction (AGENTS.md §1).
+ * the inward-only dependency direction.
  *
  * @module
  */

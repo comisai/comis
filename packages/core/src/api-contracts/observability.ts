@@ -11,13 +11,13 @@
  *   Cache (3):       agent.cacheStats, obs.getCacheStats, memory.embeddingCache
  *   Reset (2):       obs.reset, obs.reset.table
  *   SystemPrompt (2):obs.systemPromptReport.{latest,list}
- *   Trace (3):       obs.trace.{export,search,tail}  (CLI-06, Plan 06-02)
+ *   Trace (3):       obs.trace.{export,search,tail}
  *
  * The original 21 methods (all except the Trace group) are dispatched from
  * the web SPA only (packages/web/src/views/) and handled by
  * packages/daemon/src/api/obs-handlers.ts. The Trace group (obs.trace.*)
- * is also CLI-accessible via packages/cli/src/commands/trace.ts (Plan 06-04),
- * handled by packages/daemon/src/api/obs-handlers/obs-trace.ts (Plan 06-03).
+ * is also CLI-accessible via packages/cli/src/commands/trace.ts,
+ * handled by packages/daemon/src/api/obs-handlers/obs-trace.ts.
  *
  * **Loose-record use.** Response shapes carrying deeply nested or optional
  * fields use `z.record(z.string(), z.unknown())` as the escape hatch.
@@ -697,9 +697,9 @@ export const ObsSystemPromptReportListContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
-// obs.trace.export / obs.trace.search / obs.trace.tail  (CLI-06, Phase 6)
-// Handler: packages/daemon/src/api/obs-handlers/obs-trace.ts (Plan 06-03)
-// CLI:     packages/cli/src/commands/trace.ts (Plan 06-04)
+// obs.trace.export / obs.trace.search / obs.trace.tail
+// Handler: packages/daemon/src/api/obs-handlers/obs-trace.ts
+// CLI:     packages/cli/src/commands/trace.ts
 // ---------------------------------------------------------------------------
 
 /** Export a full session trace bundle. `sessionId` is required (min 1). */
@@ -787,7 +787,7 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsResetTableContract,
   ObsSystemPromptReportLatestContract,
   ObsSystemPromptReportListContract,
-  ObsTraceExportContract, // NEW (CLI-06)
-  ObsTraceSearchContract, // NEW (CLI-06)
-  ObsTraceTailContract, // NEW (CLI-06)
+  ObsTraceExportContract,
+  ObsTraceSearchContract,
+  ObsTraceTailContract,
 ] as const;

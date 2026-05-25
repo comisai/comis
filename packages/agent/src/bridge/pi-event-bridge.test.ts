@@ -363,8 +363,8 @@ describe("createPiEventBridge", () => {
       expect(endEmit).toBeDefined();
     });
 
-    // Fix D2 (log-review): errorKind on tool:executed when isError was true from the start.
-    it("Fix D2: isError=true with [invalid_value] errorText emits errorKind=validation", () => {
+    // errorKind on tool:executed when isError was true from the start.
+    it("isError=true with [invalid_value] errorText emits errorKind=validation", () => {
       const { listener } = createPiEventBridge(deps);
 
       // extractErrorText (bridge-event-handlers.ts) reads `obj.message`
@@ -382,7 +382,7 @@ describe("createPiEventBridge", () => {
       expect(endEmit![1].errorKind).toBe("validation");
     });
 
-    it("Fix D2: isError=true with generic errorText emits errorKind=dependency", () => {
+    it("isError=true with generic errorText emits errorKind=dependency", () => {
       const { listener } = createPiEventBridge(deps);
 
       const result = { message: "Network unreachable: connection refused" };
@@ -397,14 +397,14 @@ describe("createPiEventBridge", () => {
       expect(endEmit![1].errorKind).toBe("dependency");
     });
 
-    it("Fix D2: isError=true on an MCP-namespaced tool with timeout text emits errorKind=timeout", () => {
+    it("isError=true on an MCP-namespaced tool with timeout text emits errorKind=timeout", () => {
       const { listener } = createPiEventBridge(deps);
 
       // MCP-namespaced tool names follow `mcp__<server>--<tool>` (see
       // packages/shared/src/mcp-tool-name.ts). The bridge calls
       // extractMcpServerName to attribute the failure; when
       // classifyMcpErrorType detects "timed out" / "timeout" substrings,
-      // the Fix D2 mapping resolves to ErrorKind "timeout".
+      // the mapping resolves to ErrorKind "timeout".
       const result = { message: "mcp tool error: request timed out after 30s" };
       listener(makeToolExecutionEndEvent("mcp__example--search", "tc-d2c", true, result) as any);
 
@@ -4552,11 +4552,11 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(typeof payload.timestamp).toBe("number");
   });
 
-  it("agent_end_does_not_emit_session_ended (Gap F — moved to ComisSessionManager.destroySession per design §6.4)", () => {
-    // Per design §6.4 the mapping table makes session.ended fire on
-    // "(session) ended" — a session-destroy semantic, NOT a per-turn
-    // agent_end. The bridge case is now a trajectory no-op; per-turn
-    // duration metrics live on observability:token_usage (→ model.completed).
+  it("agent_end_does_not_emit_session_ended (moved to ComisSessionManager.destroySession)", () => {
+    // The mapping table makes session.ended fire on "(session) ended" —
+    // a session-destroy semantic, NOT a per-turn agent_end. The bridge
+    // case is now a trajectory no-op; per-turn duration metrics live on
+    // observability:token_usage (→ model.completed).
     const deps = createMockDeps();
     const { listener } = createPiEventBridge(deps);
 
@@ -4582,7 +4582,7 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(endCalls).toHaveLength(0);
   });
 
-  it("agent_start_emits_session_started_only_once_per_bridge_when_trajectoryRegistry_present (Gap F)", () => {
+  it("agent_start_emits_session_started_only_once_per_bridge_when_trajectoryRegistry_present", () => {
     // With the registry-backed latch, the bridge suppresses per-turn
     // session:started re-emits. The first agent_start fires; subsequent
     // ones consult the latch and short-circuit.
@@ -4653,7 +4653,7 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(stripped).toMatch(/case\s+"agent_start"\s*:\s*\{[\s\S]*?eventBus\.emit\("session:started"/m);
   });
 
-  it("structural: session:ended emit no longer appears in the agent_end switch case (Gap F — design §6.4)", async () => {
+  it("structural: session:ended emit no longer appears in the agent_end switch case", async () => {
     // Negative structural check: agent_end is now a trajectory no-op.
     // session.ended fires from ComisSessionManager.destroySession (the
     // semantic "session is over" boundary).
@@ -4668,10 +4668,10 @@ describe("session and tool-timeout lifecycle events", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LIFE-01: trace.metadata emit after session:started (Plan 01-05)
+// trace.metadata emit after session:started
 // ---------------------------------------------------------------------------
 
-describe("LIFE-01 — trace.metadata direct emit after session:started", () => {
+describe("trace.metadata direct emit after session:started", () => {
   it("emits trace.metadata exactly once per session via recorder.recordEvent (not eventBus)", () => {
     const recordEvents: Array<string> = [];
     const mockRecorder = {
@@ -4843,10 +4843,10 @@ describe("LIFE-01 — trace.metadata direct emit after session:started", () => {
 });
 
 // ---------------------------------------------------------------------------
-// INDEX-03 / INDEX-02: session-index emit sites (Plan 06-01)
+// session-index emit sites
 // ---------------------------------------------------------------------------
 
-describe("session-index emit sites (Plan 06-01)", () => {
+describe("session-index emit sites", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

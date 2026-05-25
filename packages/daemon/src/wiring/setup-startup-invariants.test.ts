@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for setup-startup-invariants.ts (BOOT-01, BOOT-02, ALERT-01).
+ * Unit tests for setup-startup-invariants.ts.
  *
- * RED-first per AGENTS.md §2.10.
  * Four behaviours verified:
  *   1. Normal clean boot → one INFO record, no WARN.
  *   2. Regression wiring (handlersPerAdapter > 1) → WARN with errorKind:"config".
@@ -80,8 +79,8 @@ describe("emitStartupInvariants", () => {
     });
   });
 
-  describe("BOOT-02: regression wiring — handlersPerAdapter > 1", () => {
-    it("emits WARN with errorKind:config and verbatim §6.1 hint when raw handler count exceeds 1", () => {
+  describe("regression wiring — handlersPerAdapter > 1", () => {
+    it("emits WARN with errorKind:config and verbatim hint when raw handler count exceeds 1", () => {
       const adapter = makeEchoAdapter();
       const deps = makeCleanDeps({
         adaptersByType: new Map([["telegram", adapter as any]]),
@@ -120,8 +119,8 @@ describe("emitStartupInvariants", () => {
     });
   });
 
-  describe("BOOT-02: depSlotConsistency.adaptersList:true (2026-05-24 bug shape)", () => {
-    it("emits WARN with errorKind:config and verbatim §6.1 hint when adaptersList is true", () => {
+  describe("depSlotConsistency.adaptersList:true (2026-05-24 bug shape)", () => {
+    it("emits WARN with errorKind:config and verbatim hint when adaptersList is true", () => {
       const deps = makeCleanDeps({
         depSlotConsistency: { adaptersList: true, channelRegistry: true },
       });
@@ -139,7 +138,7 @@ describe("emitStartupInvariants", () => {
     });
   });
 
-  describe("ALERT-01: health aggregator wiring", () => {
+  describe("health aggregator wiring", () => {
     it("returns undefined when alertBudgetPolicy not provided", () => {
       const deps = makeCleanDeps();
       const result = emitStartupInvariants(deps);

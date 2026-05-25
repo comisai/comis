@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Co-located unit tests for `scrubStdioEnv` and the
- * `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` constant introduced by Phase 63 plan 02
- * (SAFETY-01 / SAFETY-02).
+ * `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` constant.
  *
  * The legacy spread `{ ...systemEnvSnapshot(), ...config.env }` at
  * `mcp-client-discover.ts:80` leaked every daemon env var (OPENAI_API_KEY,
@@ -73,7 +72,7 @@ afterEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("scrubStdioEnv — built-in allowlist enforcement (SAFETY-01)", () => {
+describe("scrubStdioEnv — built-in allowlist enforcement", () => {
   it("scrubStdioEnv strips OPENAI_API_KEY from daemon env spread when not allowlisted", () => {
     process.env.PATH = "/usr/bin";
     process.env.HOME = "/h";
@@ -117,7 +116,7 @@ describe("scrubStdioEnv — built-in allowlist enforcement (SAFETY-01)", () => {
   });
 });
 
-describe("scrubStdioEnv — operator passthrough + extension (SAFETY-02)", () => {
+describe("scrubStdioEnv — operator passthrough + extension", () => {
   it("scrubStdioEnv lets operator-named config.env keys through regardless of allowlist", () => {
     // Daemon env is empty; only operator-named per-server config.env is
     // provided. Both keys (including OPENAI_API_KEY, which is NOT in the
@@ -140,7 +139,7 @@ describe("scrubStdioEnv — operator passthrough + extension (SAFETY-02)", () =>
   });
 });
 
-describe("scrubStdioEnv — Shellshock-style function-export skip (SAFETY-01)", () => {
+describe("scrubStdioEnv — Shellshock-style function-export skip", () => {
   it("scrubStdioEnv skips daemon env values starting with `()` (Bash CVE-2014-6271)", () => {
     process.env.PATH = "/u";
     process.env.LC_ALL = "() { :; }; echo pwned";
@@ -172,7 +171,7 @@ describe("MCP_STDIO_BUILTIN_ENV_ALLOWLIST — required-membership invariant", ()
 });
 
 // ---------------------------------------------------------------------------
-// Phase 63 Plan 06 (SAFETY-08) — wrapStdioCommand prlimit wrap.
+// wrapStdioCommand prlimit wrap.
 // ---------------------------------------------------------------------------
 //
 // These tests pin the deterministic wrap-shape behaviour of wrapStdioCommand:
@@ -312,7 +311,7 @@ describe("wrapStdioCommand — rlimits set with prlimit unavailable (macOS dev)"
   });
 });
 
-describe("wrapStdioCommand — WARN-once invariant (SAFETY-08)", () => {
+describe("wrapStdioCommand — WARN-once invariant", () => {
   beforeEach(() => {
     __resetPrlimitWarnForTests();
   });
@@ -338,7 +337,7 @@ describe("wrapStdioCommand — WARN-once invariant (SAFETY-08)", () => {
   });
 });
 
-describe("getPrlimitAvailable — module-init probe (SAFETY-08)", () => {
+describe("getPrlimitAvailable — module-init probe", () => {
   it("returns a boolean indicating whether prlimit(1) is on PATH at module load", () => {
     const available = getPrlimitAvailable();
     expect(typeof available).toBe("boolean");
@@ -346,7 +345,7 @@ describe("getPrlimitAvailable — module-init probe (SAFETY-08)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-02 — lazy probe + refreshPrlimitAvailable.
+// Lazy probe + refreshPrlimitAvailable.
 //
 // Pre-fix the prlimit availability check ran at module-load via an IIFE
 // and was cached in a const PRLIMIT_AVAILABLE. This had two
@@ -356,7 +355,7 @@ describe("getPrlimitAvailable — module-init probe (SAFETY-08)", () => {
 // (cached on first call) and exposes refreshPrlimitAvailable() so
 // operators who install util-linux post-hoc can force a re-probe.
 // ---------------------------------------------------------------------------
-describe("WR-02 — lazy probe + refreshPrlimitAvailable", () => {
+describe("lazy probe + refreshPrlimitAvailable", () => {
   it("getPrlimitAvailable returns the same value on repeated calls (cache hit on first probe)", () => {
     __resetPrlimitProbeForTests();
     const a = getPrlimitAvailable();

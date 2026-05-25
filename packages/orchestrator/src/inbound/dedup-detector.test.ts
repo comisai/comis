@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the bounded-LRU duplicate-message detector (DEDUP-02).
- *
- * RED state: dedup-detector.ts does not exist yet. These tests are written
- * first (TDD-first per AGENTS.md §2.10) and must FAIL on the pre-patch code.
+ * Unit tests for the bounded-LRU duplicate-message detector.
  *
  * Covers:
  *   - first_check_returns_isDuplicate_false
@@ -28,7 +25,7 @@ describe("createDedupDetector -- first check returns not-duplicate", () => {
 });
 
 describe("createDedupDetector -- duplicate detection within window", () => {
-  it("second_check_within_window_returns_isDuplicate_true_with_deltaMs_1 (incident-replay headline assertion)", () => {
+  it("second_check_within_window_returns_isDuplicate_true_with_deltaMs_1", () => {
     let now = 1000;
     const detector = createDedupDetector({ now: () => now });
 

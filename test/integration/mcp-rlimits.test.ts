@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 63 SAFETY-08 — stdio rlimits integration test (Linux-only).
+ * Stdio rlimits integration test (Linux-only).
  *
  * Validates the `prlimit(1)` composition end-to-end against a real
  * subprocess on Linux. Tests that:
@@ -32,7 +32,7 @@ import { platform } from "node:os";
 const isLinux = platform() === "linux";
 const describeLinux = isLinux ? describe : describe.skip;
 
-describeLinux("MCP stdio rlimits — SAFETY-08 integration (Linux only)", () => {
+describeLinux("MCP stdio rlimits — integration (Linux only)", () => {
   it("prlimit binary is present on the integration-test host (sanity check)", () => {
     const result = spawnSync("prlimit", ["--version"], { encoding: "utf-8", timeout: 2000 });
     expect(result.status).toBe(0);
@@ -78,7 +78,7 @@ describeLinux("MCP stdio rlimits — SAFETY-08 integration (Linux only)", () => 
 // macOS test path — confirms the assumption (prlimit absent) that motivates
 // the WARN-skip fallback in mcp-client-discover.ts:wrapStdioCommand. If a
 // future macOS release ships prlimit (very unlikely; util-linux is Linux-
-// specific), this test will fire as a signal to revisit the Pitfall-5 logic.
+// specific), this test will fire as a signal to revisit the fallback logic.
 if (!isLinux) {
   describe("MCP stdio rlimits — macOS dev graceful skip", () => {
     it("on macOS, prlimit is not in PATH (sanity for the WARN-skip fallback path)", () => {

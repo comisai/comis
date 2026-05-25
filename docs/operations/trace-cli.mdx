@@ -30,13 +30,13 @@ If you've aliased `comis` to that path, the shorter form works too.
 | `--since <dur> --where <filter>` | "Show me failures in the last 10 minutes" | obs.trace.search |
 | `export <sessionId>` | Produce a self-contained bundle for engineer handoff | obs.trace.export |
 
-All subcommands support `--json` for machine-readable output (CLI-07).
+All subcommands support `--json` for machine-readable output.
 
 ---
 
 ## `--message-id <uuid>`
 
-Search for all trace events associated with a specific inbound message (CLI-01). Use this when a
+Search for all trace events associated with a specific inbound message. Use this when a
 user can give you the messageId from their chat — it's the fastest path from complaint to trace.
 
 ```bash
@@ -78,7 +78,7 @@ Returns:
 
 ## `--trace-id <uuid>`
 
-Search all log and trajectory events by traceId (CLI-02). Use this when you've found a traceId in
+Search all log and trajectory events by traceId. Use this when you've found a traceId in
 a log line and want the full causal chain across the channel / queue / agent / delivery stages.
 
 ```bash
@@ -101,7 +101,7 @@ Same `{"rows": [...]}` structure as `--message-id --json`.
 
 ## `--chat <chatId> --tail`
 
-Stream trace events live for a specific chat (CLI-03). Use this when a user reports an issue
+Stream trace events live for a specific chat. Use this when a user reports an issue
 *while it's happening* — open a terminal, start `--tail` on their chat, and watch the next message
 in real time.
 
@@ -142,7 +142,7 @@ Each line is a JSON object with the same shape as a `rows[]` entry.
 
 ## `--since <dur> --where <filter>`
 
-Scan the session index for recent failures (CLI-04). Use this when you need a quick overview of
+Scan the session index for recent failures. Use this when you need a quick overview of
 what went wrong in the last N minutes across all chats.
 
 ```bash
@@ -177,7 +177,7 @@ Returns `{"rows": [...]}` with the same 4-field shape (`ts`, `event`, `sessionId
 
 ## `export <sessionId>`
 
-Export a self-contained diagnostic bundle for a session (CLI-05). Invokes the Phase 4 bundle
+Export a self-contained diagnostic bundle for a session. Invokes the bundle
 pipeline, applies `platform-aware-v1` redaction, and prints the bundle directory path.
 
 ```bash
@@ -280,7 +280,7 @@ surfaced in the per-line JSON objects.
 
 > A user reports: "I asked the bot a question 10 minutes ago and it never replied."
 
-This is the M3 acceptance gate — under 5 minutes from complaint to bundle.
+The acceptance gate — under 5 minutes from complaint to bundle.
 
 **Command 1 — Find sessions with recent errors:**
 
@@ -313,7 +313,7 @@ node packages/cli/dist/cli.js trace export <sessionId>
 
 Output: `Bundle written to: <path>`. Compress, share with engineer per [Incident Bundle](/operations/incident-bundle).
 
-Three commands. Under 5 minutes from complaint to bundle. This is the M3 acceptance gate.
+Three commands. Under 5 minutes from complaint to bundle. This is the acceptance gate.
 
 ---
 

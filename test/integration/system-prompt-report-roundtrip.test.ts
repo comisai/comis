@@ -13,7 +13,7 @@
  *      "why didn't the model use IDENTITY.md?" by checking
  *      injectedWorkspaceFiles[].
  *
- * Per AGENTS.md §2.5: imports from dist/ — requires `pnpm build` first.
+ * Imports from dist/ — requires `pnpm build` first.
  * Vitest aliases @comis/* → packages/*\/dist/index.js.
  *
  * @module

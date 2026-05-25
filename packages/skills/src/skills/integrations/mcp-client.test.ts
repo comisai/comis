@@ -355,7 +355,6 @@ describe("McpClientManager", () => {
       // The wrapper prefixes /usr/bin/env -u NODE_OPTIONS before the original
       // command + args, so Node children do not inherit the daemon's
       // NODE_OPTIONS (which would propagate --permission flags).
-      // See COMIS-E2E-FOLLOWUP-DESIGN.md Issue 2.
       expect(StdioClientTransport).toHaveBeenCalledWith(
         expect.objectContaining({
           command: "/usr/bin/env",
@@ -408,9 +407,9 @@ describe("McpClientManager", () => {
       const headers = { "Authorization": "Bearer test-token", "X-API-Key": "key123" };
       await mgr.connect(makeHttpConfig({ headers }));
 
-      // Phase 63 SAFETY-07: opts also carries `fetch: createRedirectPolicyFetch(...)`
+      // opts also carries `fetch: createRedirectPolicyFetch(...)`
       // alongside `requestInit`. Use objectContaining so the assertion stays
-      // robust when additional opts keys are wired in future phases.
+      // robust when additional opts keys are wired in future.
       expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
         expect.any(URL),
         expect.objectContaining({ requestInit: { headers } }),
@@ -422,7 +421,7 @@ describe("McpClientManager", () => {
       const headers = { "Authorization": "Bearer sse-token" };
       await mgr.connect(makeSseConfig({ headers }));
 
-      // Phase 63 SAFETY-07: opts also carries `fetch: createRedirectPolicyFetch(...)`.
+      // opts also carries `fetch: createRedirectPolicyFetch(...)`.
       expect(SSEClientTransport).toHaveBeenCalledWith(
         expect.any(URL),
         expect.objectContaining({ requestInit: { headers } }),
@@ -433,7 +432,7 @@ describe("McpClientManager", () => {
       const mgr = createMcpClientManager(makeDeps());
       await mgr.connect(makeHttpConfig());
 
-      // Phase 63 SAFETY-07: opts also carries `fetch: createRedirectPolicyFetch(...)`.
+      // opts also carries `fetch: createRedirectPolicyFetch(...)`.
       expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
         expect.any(URL),
         expect.objectContaining({ requestInit: undefined }),
@@ -488,9 +487,9 @@ describe("McpClientManager", () => {
   // -----------------------------------------------------------------------
 
   // -----------------------------------------------------------------------
-  // Phase 63 WR-03 — OSV malicious-verdict rejection without error-state entry
+  // OSV malicious-verdict rejection without error-state entry
   // -----------------------------------------------------------------------
-  describe("WR-03 OSV malicious-package rejection (Phase 63 SAFETY-05/06)", () => {
+  describe("OSV malicious-package rejection", () => {
     let originalFetch: typeof globalThis.fetch | undefined;
 
     beforeEach(() => {
@@ -512,7 +511,7 @@ describe("McpClientManager", () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ vulns: [{ id: "MAL-2026-WR-03" }] }),
+        json: async () => ({ vulns: [{ id: "MAL-2026-EVIL-PKG" }] }),
       } as unknown as Response);
       globalThis.fetch = mockFetch as unknown as typeof fetch;
 
@@ -521,7 +520,7 @@ describe("McpClientManager", () => {
       // DEFAULT_OSV_CACHE_DIR (~/.comis/cache/osv) by default, which we
       // cannot stub via opts since this path is the manager-level
       // connect flow. Mitigate by using a package name unique to this
-      // test (`evil-wr-03-pkg`) so no prior cache hit exists in a
+      // test (`evil-pkg`) so no prior cache hit exists in a
       // freshly-mkdtempSync'd home; failing that, the fetch mock fires
       // first and writes the new cache anyway, so the verdict is
       // deterministic.
@@ -530,9 +529,9 @@ describe("McpClientManager", () => {
 
       const result = await mgr.connect(
         makeStdioConfig({
-          name: "wr-03-evil",
+          name: "evil-server",
           command: "npx",
-          args: ["-y", "evil-wr-03-pkg-7c4f1d2a"],
+          args: ["-y", "evil-pkg-7c4f1d2a"],
         }),
       );
 
@@ -540,13 +539,13 @@ describe("McpClientManager", () => {
       if (result.ok) return;
       expect(result.error.message).toMatch(/\[osv_malware_detected\]/);
 
-      // WR-03 invariant: no error-state McpConnection was written. Pre-fix
+      // Invariant: no error-state McpConnection was written. Pre-fix
       // the catch path inside connectServer always wrote a `status:"error"`
       // entry that polluted the operator's view (mcp.list shows the
       // "error"-status server, but there is no spawned process to
       // reconnect). The fix runs OSV outside the try block so the throw
       // bubbles cleanly.
-      expect(mgr.getConnection("wr-03-evil")).toBeUndefined();
+      expect(mgr.getConnection("evil-server")).toBeUndefined();
     });
   });
 

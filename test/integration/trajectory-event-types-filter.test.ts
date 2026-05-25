@@ -31,7 +31,7 @@
  * Mirrors the daemon-level E2E pattern from
  * `test/integration/system-prompt-report-daemon-e2e.test.ts:54-119`.
  *
- * Per AGENTS.md §2.5: imports from `dist/` — requires `pnpm build` first.
+ * Imports from `dist/` — requires `pnpm build` first.
  *
  * @module
  */

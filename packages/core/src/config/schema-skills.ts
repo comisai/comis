@@ -106,7 +106,7 @@ const ToolDiscoverySchema = z.strictObject({
    *  "return only tools scoring >= 80% of the top match". Values > 1.0 fail
    *  validation at config load (stale raw-score overrides would produce zero
    *  matches under the new normalized semantics; fail-fast surfaces the
-   *  error immediately per AGENTS.md §3.4). */
+   *  error immediately). */
   minBm25Score: z.number().min(0).max(1).default(0.8),
   /** Minimum combined score (0..1 normalized) for hybrid mode. Default 0.35. */
   minHybridScore: z.number().min(0).max(1).default(0.35),

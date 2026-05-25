@@ -69,7 +69,7 @@ import type { RpcHandler } from "./types.js";
 import type { WorkspaceApiDeps as McpHandlerDeps } from "./types.js";
 export type { McpHandlerDeps };
 
-// Phase 63 SAFETY-03/04/09: plaintext-secret heuristic. Extracted to
+// Plaintext-secret heuristic. Extracted to
 // `./mcp-plaintext-secret.ts` (keeps this leaf under the 800-line cap).
 // Re-exported so the architecture-tier negative-control test
 // (`mcp-plaintext-secret-false-positives.test.ts`) reaches it via the
@@ -78,11 +78,11 @@ export { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
 import { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
 
 // ---------------------------------------------------------------------------
-// Phase 47-02: persistMcpServers helper
+// persistMcpServers helper
 // ---------------------------------------------------------------------------
 
 /**
- * D-04 outcome shape — the persistMcpServers result spliced into
+ * Outcome shape — the persistMcpServers result spliced into
  * McpConnect/McpDisconnect responses.
  */
 interface PersistMcpResult {
@@ -91,7 +91,7 @@ interface PersistMcpResult {
 }
 
 /**
- * Phase 47: Persist the full integrations.mcp.servers array to config.yaml
+ * Persist the full integrations.mcp.servers array to config.yaml
  * + emit one config-audit JSONL record. Idempotent — re-calling with the
  * same actionType/entityId produces multiple JSONL records but converges
  * the YAML to the desired state.
@@ -100,9 +100,8 @@ interface PersistMcpResult {
  * with three deviations:
  *   1. Full-array patch (deepMerge replaces arrays; caller computes it).
  *   2. Direct appendConfigAuditWithOutcome call after persistToConfig
- *      because persistToConfig's audit:event has no JSONL subscriber
- *      (RESEARCH.md §"R8 Audit JSONL Field-Name Verification").
- *   3. Returns D-04 outcome for the caller to splice into the response.
+ *      because persistToConfig's audit:event has no JSONL subscriber.
+ *   3. Returns outcome for the caller to splice into the response.
  *
  * @param deps - Mcp handler deps slice (must contain persistDeps for the
  *   persist path to fire; otherwise short-circuits to "skipped").
@@ -148,13 +147,13 @@ async function persistMcpServers(
   if (persistResult.ok) {
     appendConfigAuditWithOutcome(auditBase, { kind: "rename" }, deps.persistDeps.logger);
 
-    // D-07/D-08/PERSIST-08: in-memory atomic swap. The disk write
+    // In-memory atomic swap. The disk write
     // succeeded; now refresh `container.config.integrations` so concurrent
     // readers (obs_query, mcp.list RPC, observability dashboards) see the
-    // new entry without waiting for a daemon restart. Per D-08, clone the
+    // new entry without waiting for a daemon restart. Clone the
     // FULL integrations subtree (NOT just .mcp.servers) so mid-update
     // readers observe either the pre-state OR the post-state, never a
-    // partial array. Per RESEARCH.md Plan-time risk #7, optional-chain on
+    // partial array. Optional-chain on
     // `deps.container?.config` — existing test fixtures construct deps
     // without a container field. Node 22 ships `structuredClone`
     // built-in; no polyfill required.
@@ -170,7 +169,7 @@ async function persistMcpServers(
       const integrationsIn = deps.container.config.integrations as
         | MutableIntegrations
         | undefined;
-      // WR-05: when integrations is missing in-memory we still need to
+      // When integrations is missing in-memory we still need to
       // build a swap value — but the data-loss case (any disk-state
       // braveSearch/media/autoReply silently dropped from the in-memory
       // view until next reload) deserves an observable log line so the
@@ -321,7 +320,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // the same field names with type-narrowing.
       const userParams = stripInternalFields(rawParams);
 
-      // Phase 63 SAFETY-03/04/09: plaintext-secret reject (pre-Zod).
+      // Plaintext-secret reject (pre-Zod).
       // Mirrors the findUnresolvedEnvRefs pattern at lines below.
       // Reads from userParams.env (raw, pre-parse). Per-server opt-out via
       // userParams.disablePlaintextSecretCheck = true logs WARN and allows.
@@ -357,13 +356,13 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const manager = deps.mcpClientManager;
 
-      // Phase 63 SAFETY-02 / SAFETY-06: copy operator-extension allowlist +
+      // Copy operator-extension allowlist +
       // OSV check toggles from the config root so they reach the spawn-time
       // helpers (scrubStdioEnv + osvMalwareCheck) in @comis/skills. The
       // optional chain mirrors the McpConnect persist site below — test
       // fixtures construct deps without a `container`, in which case the
       // built-in `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` is the only protection
-      // and the OSV check falls back to Plan 01's defaults (enabled: true,
+      // and the OSV check falls back to defaults (enabled: true,
       // ttlMs: 24h) at the call site in mcp-client-connect.ts.
       const mcpConfigRoot = deps.container?.config?.integrations?.mcp as
         | {
@@ -373,11 +372,11 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           }
         | undefined;
 
-      // Phase 63 SAFETY-08 + CR-03: per-server rlimits resolution.
+      // Per-server rlimits resolution.
       // McpConnectContract.request now accepts an explicit `rlimits` field
-      // (CR-03 — pre-fix the only path was the persisted entry, which
+      // (pre-fix the only path was the persisted entry, which
       // didn't exist on first connect and was never written by the
-      // handler, deadlocking SAFETY-08 for new servers). Resolution
+      // handler, deadlocking rlimits for new servers). Resolution
       // order:
       //   1. caller-supplied `params.rlimits` (current connect's intent)
       //   2. otherwise the previously-persisted entry's `rlimits`
@@ -422,7 +421,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         throw new Error(`Failed to connect MCP server "${params.server_name}": ${result.error.message}`);
       }
 
-      // Phase 47 (R1, R6): compute the full new servers array.
+      // Compute the full new servers array.
       // Read-current + filter-by-name + append. deepMerge replaces arrays
       // wholesale, so we MUST pass the full array, not a partial. The
       // optional chain on `deps.container` keeps existing test fixtures
@@ -437,19 +436,19 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         ...(params.command !== undefined && { command: params.command }),
         ...(params.args !== undefined && { args: params.args }),
         ...(params.url !== undefined && { url: params.url }),
-        // Phase 47 (R5): pass params.env (unresolved `${KEY}` references),
+        // Pass params.env (unresolved `${KEY}` references),
         // NOT the resolved values used for spawn. deepMerge does not
         // transform string values.
         ...(params.env !== undefined && { env: params.env }),
         ...(params.headers !== undefined && { headers: params.headers }),
-        // Phase 63 CR-03: persist rlimits onto the McpServerEntry so the
-        // SAFETY-08 protection survives a daemon restart AND so subsequent
+        // Persist rlimits onto the McpServerEntry so the
+        // protection survives a daemon restart AND so subsequent
         // reconnects/connects can read it back. `resolvedRlimits` carries
         // either the caller-supplied value or (when the caller omitted it)
         // the prior persisted value — preserving the field across noop
         // reconnects rather than dropping it.
         ...(resolvedRlimits !== undefined && { rlimits: resolvedRlimits }),
-        // Phase 63 CR-04: persist disablePlaintextSecretCheck so the
+        // Persist disablePlaintextSecretCheck so the
         // per-server opt-out survives a daemon restart. Pre-fix the
         // handler honored the flag at runtime but dropped it from the
         // YAML, so reload + symmetric reconnect could re-fire the guard.
@@ -463,7 +462,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         newEntry,
       ];
 
-      // Phase 47 (R1, R8, D-04): persist + audit JSONL + response-augment.
+      // Persist + audit JSONL + response-augment.
       const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
       const persistOutcome = await persistMcpServers(
         deps,
@@ -509,7 +508,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       await manager.disconnect(name);
 
-      // Phase 47 (R2, R6): compute the filtered servers array.
+      // Compute the filtered servers array.
       // Removed entry is named; remaining entries preserved in pre-call
       // order. Empty result array is intentional — the array slot remains
       // so subsequent persists repopulate it without recreating the path.
@@ -518,7 +517,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
       const newServers: McpServerEntry[] = currentServers.filter((s) => s.name !== params.server_name);
 
-      // Phase 47 (R2, R8, D-04): persist + audit JSONL + response-augment.
+      // Persist + audit JSONL + response-augment.
       const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
       const persistOutcome = await persistMcpServers(
         deps,
@@ -556,12 +555,12 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // never let internals flow into Zod parsing.
       const userParams = stripInternalFields(rawParams);
 
-      // Phase 63 CR-02: apply the same pre-spawn safety controls as
+      // Apply the same pre-spawn safety controls as
       // mcp.connect. mcp.test IS a pre-spawn surface (it actually spawns
-      // the child to probe it) — Phase 63's hardening of only mcp.connect
+      // the child to probe it) — earlier hardening of only mcp.connect
       // left this method as a bypass: an admin (or any code path that
       // landed at this RPC) could pass a raw `ghp_...` PAT in env or
-      // spawn `npx <malicious-pkg>` and Phase 63's guards would not fire.
+      // spawn `npx <malicious-pkg>` and the guards would not fire.
       // Mirror the mcp.connect plaintext-secret guard here. Read from
       // userParams (raw, pre-parse). Per-server opt-out via
       // userParams.disablePlaintextSecretCheck = true logs WARN and
@@ -593,7 +592,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const params = McpTestContract.request.parse(userParams);
 
-      // Phase 63 CR-02: plumb operator-extension allowlist + OSV toggles +
+      // Plumb operator-extension allowlist + OSV toggles +
       // persisted rlimits from the config root, same as mcp.connect. The
       // optional chain mirrors mcp.connect — test fixtures construct deps
       // without a `container`, in which case the built-in allowlist is
@@ -606,7 +605,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           }
         | undefined;
 
-      // Phase 63 CR-02: rlimits resolution — caller-supplied wins,
+      // Rlimits resolution — caller-supplied wins,
       // otherwise read the persisted entry by the user-supplied `name`
       // (NOT the internally-namespaced `__test__<name>` — the persisted
       // entry uses the operator-visible identifier). The handler reads
@@ -626,14 +625,14 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         env: params.env,
         headers: params.headers,
         enabled: true,
-        // Phase 63 CR-02 — plumb the same protections as mcp.connect.
+        // Plumb the same protections as mcp.connect.
         safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,
         osvCheckEnabled: mcpConfigRoot?.osvCheckEnabled,
         osvCacheTtlMs: mcpConfigRoot?.osvCacheTtlMs,
         rlimits: resolvedRlimits,
       };
 
-      // Phase 63 CR-02: pre-spawn env-ref validation. Mirrors the
+      // Pre-spawn env-ref validation. Mirrors the
       // mcp.connect site — reject when any env value references a key
       // not present in the secrets store. Skipped only when secretManager
       // is unwired (test setups).
@@ -702,12 +701,12 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const manager = deps.mcpClientManager;
 
-      // Phase 47 (D-02 / R7 SPEC numbering): override-rejection guard.
+      // Override-rejection guard.
       // mcp_manage(reconnect) MUST NOT accept transport/command/args/url/
       // headers/env when the server has stored runtime config — the contract
       // is "reconnect re-uses the stored config; to change params, disconnect
-      // then connect". Per RESEARCH.md §"D-02 Error-Key Convention Verification",
-      // throw a raw Error (NOT throwToolError — that lives in @comis/skills,
+      // then connect".
+      // Throw a raw Error (NOT throwToolError — that lives in @comis/skills,
       // not @comis/daemon — cross-package boundary) with the bracketed
       // error-code prefix so the LLM can self-correct.
       //

@@ -86,41 +86,41 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // payload-fence semantics for both events).
   "context:pipeline": "context.compiled",
 
-  // ---- Queue / Execution / Sender (D6) ----
-  // BRIDGE-01: Queue lifecycle — events-channel.ts
+  // ---- Queue / Execution / Sender ----
+  // Queue lifecycle — events-channel.ts
   "queue:enqueued": "queue.enqueued",
   "queue:dequeued": "queue.dequeued",
   "queue:overflow": "queue.overflow",
   "queue:coalesced": "queue.coalesced",
 
-  // BRIDGE-03: Execution control — events-messaging.ts
+  // Execution control — events-messaging.ts
   "execution:aborted": "execution.aborted",
   "execution:budget_warning": "execution.budget_warning",
   "execution:prompt_timeout": "execution.prompt_timeout",
   "execution:output_escalated": "execution.output_escalated",
   // Maps to "execution.replay_recovered" (NOT "execution.signed_replay_recovered")
-  // per research table canonical name (design §13 Appendix B).
+  // per canonical name.
   "execution:signed_replay_recovered": "execution.replay_recovered",
 
-  // BRIDGE-04 (scanned subset): Security + Sender
-  // patterns[] and senderId are intentionally omitted in translatePayload (L4/L2).
+  // Security + Sender (scanned subset)
+  // patterns[] and senderId are intentionally omitted in translatePayload.
   "security:injection_detected": "security.injection_detected",
   "sender:blocked": "sender.blocked",
 
-  // BRIDGE-02: Delivery retry (events-channel.ts; emitter packages/core/delivery — not arch-scanned)
-  // chatId (Telegram long-decimal ID, L3) and channelId are intentionally omitted (T-02-09).
+  // Delivery retry (events-channel.ts; emitter packages/core/delivery — not arch-scanned)
+  // chatId (Telegram long-decimal ID) and channelId are intentionally omitted.
   "retry:attempted": "delivery.retry",
   "retry:exhausted": "delivery.retry_exhausted",
   "retry:markdown_fallback": "delivery.markdown_fallback",
 
-  // BRIDGE-05: MCP server reliability (events-infra.ts; emitter packages/skills — not arch-scanned)
+  // MCP server reliability (events-infra.ts; emitter packages/skills — not arch-scanned)
   "mcp:server:disconnected": "mcp.disconnected",
   "mcp:server:reconnecting": "mcp.reconnecting",
   "mcp:server:reconnect_failed": "mcp.reconnect_failed",
   "mcp:server:reconnected": "mcp.reconnected",
   "mcp:server:tools_changed": "mcp.tools_changed",
 
-  // BRIDGE-06: Channel lifecycle + health (events-channel.ts; emitter packages/channels — not arch-scanned)
+  // Channel lifecycle + health (events-channel.ts; emitter packages/channels — not arch-scanned)
   // Both channel:registered and channel:deregistered map to the same trajectory type.
   // Translator adds a synthetic `event` discriminator: "registered" | "deregistered".
   // Precedent: model:fallback_attempt + model:lkw_fallback_attempt share model.fallback_attempt.
@@ -128,19 +128,19 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "channel:registered": "channel.lifecycle",
   "channel:deregistered": "channel.lifecycle",
 
-  // BRIDGE-04 rest: Security (non-scanned emitters — packages/daemon + packages/core/security)
-  // SECURITY INVARIANT: patterns[] (verbatim taint strings — L4) and message (may reference
-  // secret names/config paths — L5) are intentionally NOT forwarded.
+  // Security (non-scanned emitters — packages/daemon + packages/core/security)
+  // SECURITY INVARIANT: patterns[] (verbatim taint strings) and message (may reference
+  // secret names/config paths) are intentionally NOT forwarded.
   "security:memory_tainted": "security.memory_tainted",
   "security:warn": "security.warn",
 
-  // BRIDGE-07: Compaction signals (events-messaging.ts; emitters in packages/agent — arch-scanned)
-  // All 3 are in EVENTS_NOT_TRAJECTORY_MAPPED and must be removed when bridged (L7).
+  // Compaction signals (events-messaging.ts; emitters in packages/agent — arch-scanned)
+  // All 3 are in EVENTS_NOT_TRAJECTORY_MAPPED and must be removed when bridged.
   "compaction:started": "compaction.started",
   "compaction:flush": "compaction.flush",
   "compaction:recommended": "compaction.recommended",
 
-  // BRIDGE-07: Context engine internals (events-messaging.ts; emitters in packages/agent — arch-scanned)
+  // Context engine internals (events-messaging.ts; emitters in packages/agent — arch-scanned)
   // 5 of 6 are in EVENTS_NOT_TRAJECTORY_MAPPED and must be removed when bridged.
   // context:integrity uses optional chaining (?.emit) — not in arch-test scope; no allowlist change needed.
   "context:evicted": "context.evicted",
@@ -150,19 +150,19 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "context:integrity": "context.integrity",
   "context:rehydrated": "context.rehydrated",
 
-  // BRIDGE-08: Approval / human-in-the-loop (events-infra.ts; emitter packages/core/approval — not arch-scanned)
-  // SECURITY INVARIANT (T-02-11): approval:requested.params is raw unconstrained tool arguments
-  // (file paths, message bodies, credentials — HIGHEST risk field in the phase, L2).
+  // Approval / human-in-the-loop (events-infra.ts; emitter packages/core/approval — not arch-scanned)
+  // SECURITY INVARIANT: approval:requested.params is raw unconstrained tool arguments
+  // (file paths, message bodies, credentials — HIGHEST risk field in the phase).
   // Translator MUST omit params entirely — sanitizeForPersistence is defense-in-depth only.
   "approval:requested": "approval.requested",
   "approval:resolved": "approval.resolved",
 
-  // DEDUP-03 (D12): Duplicate inbound detection (events-channel.ts; emitter packages/orchestrator — arch-scanned)
-  // firstSeenAt and duplicateAt omitted by translator — envelope ts covers timing (design §13 Appendix B).
+  // Duplicate inbound detection (events-channel.ts; emitter packages/orchestrator — arch-scanned)
+  // firstSeenAt and duplicateAt omitted by translator — envelope ts covers timing.
   "dedup:duplicate_inbound": "dedup.duplicate_inbound",
 
-  // ALERT-01 (D16): Health budget exceeded (events-infra.ts; emitter packages/observability/health-aggregator)
-  // timestamp is envelope-only per design §6.2 — stripped from data.
+  // Health budget exceeded (events-infra.ts; emitter packages/observability/health-aggregator)
+  // timestamp is envelope-only — stripped from data.
   "health:budget_exceeded": "health.budget_exceeded",
 } as const satisfies Record<string, TrajectoryEventType>;
 
@@ -250,9 +250,9 @@ export function attachTrajectoryToEventBus(
  * Translate one EventBus payload into the `data` payload of a trajectory event.
  *
  * Correlation keys (`traceId`, `agentId`, `sessionKey`, `sessionId`) are
- * envelope-only per design §6.2. Bridge payload translators MUST NOT
- * echo them into `data` — the recorder's envelope already carries them
- * via `TrajectoryRecorderInit` + AsyncLocalStorage.
+ * envelope-only. Bridge payload translators MUST NOT echo them into `data`
+ * — the recorder's envelope already carries them via `TrajectoryRecorderInit`
+ * + AsyncLocalStorage.
  */
 function translatePayload(
   eventName: TrajectoryBridgedEventName,
@@ -426,8 +426,8 @@ function translatePayload(
 
     case "context:pipeline":
       // Envelope-only correlation keys (agentId, sessionKey) intentionally
-      // stripped per design §6.2. The trajectory envelope carries them
-      // via TrajectoryRecorderInit + AsyncLocalStorage.
+      // stripped. The trajectory envelope carries them via
+      // TrajectoryRecorderInit + AsyncLocalStorage.
       return {
         tokensLoaded: payload.tokensLoaded,
         tokensEvicted: payload.tokensEvicted,
@@ -449,8 +449,8 @@ function translatePayload(
         layers: payload.layers,
       };
 
-    // ---- Queue lifecycle (BRIDGE-01) ----
-    // sessionKey is envelope-only per design §6.2 — stripped from data.
+    // ---- Queue lifecycle ----
+    // sessionKey is envelope-only — stripped from data.
 
     case "queue:enqueued":
       return {
@@ -478,8 +478,8 @@ function translatePayload(
         messageCount: payload.messageCount,
       };
 
-    // ---- Execution control (BRIDGE-03) ----
-    // agentId and sessionKey are envelope-only per design §6.2 — stripped from data.
+    // ---- Execution control ----
+    // agentId and sessionKey are envelope-only — stripped from data.
 
     case "execution:aborted":
       return {
@@ -511,9 +511,9 @@ function translatePayload(
         succeeded: payload.succeeded,
       };
 
-    // ---- Security + Sender (BRIDGE-04 scanned subset) ----
-    // SECURITY INVARIANT: patterns[] (verbatim injection strings — L4) and
-    // senderId (user identifier — L4/L2) are intentionally NOT forwarded.
+    // ---- Security + Sender (scanned subset) ----
+    // SECURITY INVARIANT: patterns[] (verbatim injection strings) and
+    // senderId (user identifier) are intentionally NOT forwarded.
     // sanitizeForPersistence is a defense-in-depth backstop but the
     // translator is the primary control.
 
@@ -532,11 +532,11 @@ function translatePayload(
         channelType: payload.channelType,
       };
 
-    // ---- Delivery retry (BRIDGE-02) ----
-    // SECURITY INVARIANT (T-02-09): chatId (Telegram long-decimal ID, L3) and
+    // ---- Delivery retry ----
+    // SECURITY INVARIANT: chatId (Telegram long-decimal ID) and
     // channelId are intentionally NOT forwarded. Only retry telemetry enters the
     // trajectory. sanitizeForPersistence is a defense-in-depth backstop for the
-    // error strings (BOUND-01), but translator omission is the primary control.
+    // error strings, but translator omission is the primary control.
 
     case "retry:attempted":
       return {
@@ -557,9 +557,9 @@ function translatePayload(
         originalParseMode: payload.originalParseMode,
       };
 
-    // ---- MCP server reliability (BRIDGE-05) ----
+    // ---- MCP server reliability ----
     // serverName + connection telemetry. lastError and reason are
-    // connection-error strings — low PII risk; bounded by BOUND-01.
+    // connection-error strings — low PII risk; bounded by payload limiter.
 
     case "mcp:server:disconnected":
       return {
@@ -599,7 +599,7 @@ function translatePayload(
         removedTools: payload.removedTools,
       };
 
-    // ---- Channel lifecycle + health (BRIDGE-06) ----
+    // ---- Channel lifecycle + health ----
     // lastMessageAt and timestamp are noise — omitted.
     // error on channel:health_changed may be null — conditional spread only
     // when non-null (match the tool:executed convention for nullable fields).
@@ -630,13 +630,13 @@ function translatePayload(
         event: "deregistered",
       };
 
-    // ---- Security rest (BRIDGE-04 non-scanned subset) ----
-    // SECURITY INVARIANT: patterns[] (verbatim taint strings, L4) and
-    // message (may reference secret names/config paths, L5) are intentionally
+    // ---- Security rest (non-scanned subset) ----
+    // SECURITY INVARIANT: patterns[] (verbatim taint strings) and
+    // message (may reference secret names/config paths) are intentionally
     // NOT forwarded. sanitizeForPersistence is a defense-in-depth backstop.
 
     case "security:memory_tainted":
-      // patterns[] must NEVER be forwarded — they are verbatim injection strings (L4).
+      // patterns[] must NEVER be forwarded — they are verbatim injection strings.
       // Only trust levels + blocked flag enter the trajectory.
       return {
         originalTrustLevel: payload.originalTrustLevel,
@@ -645,17 +645,17 @@ function translatePayload(
       };
 
     case "security:warn":
-      // message may contain diagnostic text referencing secret names or config paths (L5).
+      // message may contain diagnostic text referencing secret names or config paths.
       // Only category enters the trajectory.
       return {
         category: payload.category,
       };
 
-    // ---- Compaction signals (BRIDGE-07) ----
-    // agentId and sessionKey are envelope-only per design §6.2 — stripped from data.
+    // ---- Compaction signals ----
+    // agentId and sessionKey are envelope-only — stripped from data.
 
     case "compaction:started":
-      // All source fields (agentId, sessionKey, timestamp) are envelope-only (L6).
+      // All source fields (agentId, sessionKey, timestamp) are envelope-only.
       // Return empty object — event is a pure lifecycle signal; type is the diagnostic.
       return {};
 
@@ -673,8 +673,8 @@ function translatePayload(
         contextWindow: payload.contextWindow,
       };
 
-    // ---- Context engine internals (BRIDGE-07) ----
-    // agentId and sessionKey are envelope-only per design §6.2 — stripped from data.
+    // ---- Context engine internals ----
+    // agentId and sessionKey are envelope-only — stripped from data.
     // Content fields (message bodies, raw text) are NOT in any of these payloads;
     // only counts, sizes, and category tags are forwarded.
 
@@ -725,8 +725,8 @@ function translatePayload(
         overflowStripped: payload.overflowStripped,
       };
 
-    // ---- Approval / human-in-the-loop (BRIDGE-08) ----
-    // SECURITY INVARIANT (T-02-11): approval:requested.params is raw unconstrained
+    // ---- Approval / human-in-the-loop ----
+    // SECURITY INVARIANT: approval:requested.params is raw unconstrained
     // tool arguments — file paths, message bodies, or credentials. MUST be omitted
     // entirely. agentId, sessionKey, createdAt are envelope-only — stripped from data.
     // channelType is optional on the source event — conditional spread.
@@ -751,9 +751,9 @@ function translatePayload(
         ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
       };
 
-    // ---- Dedup (DEDUP-03 / D12) ----
-    // firstSeenAt and duplicateAt are intentionally omitted — envelope ts covers timing
-    // per design §13 Appendix B. chatId redaction is the Phase 5 bundle-boundary concern.
+    // ---- Dedup ----
+    // firstSeenAt and duplicateAt are intentionally omitted — envelope ts covers timing.
+    // chatId redaction is handled at the bundle boundary.
 
     case "dedup:duplicate_inbound":
       return {
@@ -764,8 +764,8 @@ function translatePayload(
         source: payload.source,
       };
 
-    // ---- Health budget (ALERT-01) ----
-    // timestamp is envelope-only per design §6.2 — stripped from data.
+    // ---- Health budget ----
+    // timestamp is envelope-only — stripped from data.
     case "health:budget_exceeded":
       return {
         kind: payload.kind,

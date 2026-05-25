@@ -51,7 +51,7 @@ never wired into any production flow.
 Existing `~/.comis/secrets.db` files retain orphan `last_used_at` and
 `usage_count` columns. SQLite tolerates extra columns at INSERT/SELECT when
 not listed in the statement, so legacy databases continue to work without
-migration. Per AGENTS.md §2.9 no-backward-compatibility policy: no
+migration. Per the no-backward-compatibility policy: no
 `ALTER TABLE DROP COLUMN` migration is run, no shim is added. To clean up
 manually:
 
@@ -116,7 +116,7 @@ Three memory tables are no longer created on fresh `~/.comis/memory.db` database
 
 Existing legacy `memory.db` files retain these tables as orphans — harmless
 because no code path reads or writes them after this deletion (SQLite tolerates
-unreferenced tables). Per AGENTS.md §2.9 no-backward-compatibility policy: no
+unreferenced tables). Per the no-backward-compatibility policy: no
 `ALTER TABLE DROP TABLE` migration is run, no shim is added. To clean up
 manually:
 
@@ -166,8 +166,8 @@ sqlite3 ~/.comis/memory.db \
 ### Memory + Core port/schema deletions — backward-compatibility stragglers
 
 This sub-release closes 5 backward-compatibility stragglers that escaped v2.1's
-line-pinned `noBackwardCompatAllowlist` regex. Per AGENTS.md §2.9 (no backward
-compatibility) the project does not ship migration shims, alias re-exports, or
+line-pinned `noBackwardCompatAllowlist` regex. Per the no-backward-compatibility
+policy the project does not ship migration shims, alias re-exports, or
 default-to-old-behavior fallbacks — these stragglers are mostly migration shims,
 comment-only "legacy" naming, and one redundant event-payload field.
 
@@ -204,8 +204,7 @@ rm ~/.comis/memory.db   # daemon recreates on next start with current schema
 
 The earlier agent-isolation migration shipped 2026-05-11; v2.3 starts
 2026-05-21 — all real users would have re-created their DBs in the
-intervening 10-day window. Per AGENTS.md §2.9 no-backward-compatibility
-policy.
+intervening 10-day window. Per the no-backward-compatibility policy.
 
 #### Engineering-Facing Changes
 
@@ -253,7 +252,7 @@ This release removes ~2,500 prod LOC of verified-dead code across `packages/skil
 ZodError: Unrecognized key(s) in object: 'priorityEnabled'
 ```
 
-Per AGENTS.md §2.9, no migration shim is provided (no `.passthrough()` fallback) — the failure is loud and immediate at startup, matching Comis's design preference for legible Zod errors over silent compat layers.
+Per the no-backward-compatibility policy, no migration shim is provided (no `.passthrough()` fallback) — the failure is loud and immediate at startup, matching Comis's design preference for legible Zod errors over silent compat layers.
 
 #### Engineering-Facing Changes
 
@@ -267,9 +266,9 @@ Per AGENTS.md §2.9, no migration shim is provided (no `.passthrough()` fallback
 - **`browser-tool.ts` signature narrowed**: `RpcCall`-or-deps-object dual-shape signature narrowed to canonical form; 10 daemon imports of `RpcCall` retargeted from `@comis/skills` to `@comis/skills/platform-tools`; transitional `RpcCall` re-export at `packages/skills/src/skills/index.ts:224` deleted.
 - **Architecture allowlists trimmed**: 2 `rawThrowAllowlist` entries (`discord-resolver.ts`, `signal-resolver.ts`); 6 `public-api-policy` orphan baselines (`createPriorityScheduler`, `PrioritySchedulerDeps`, `LaneStats`, `PriorityLaneConfigSchema`, `LaneAssignmentConfigSchema`, `parseSanitizedMcpToolName`); 1 path-tail allowlist entry (`browser-tool.ts`).
 
-### Observability Stack Hardening: Workstream A Closeout
+### Observability Stack Hardening
 
-This release closes three drifts between the Workstream A observability-stack design notes and shipped code (cache-breaks dir-mode invariant, `diagnostics.cacheTrace.enabled` default flip without doc-update, and the §7.2 stage-taxonomy divergence), and adds a build-failing architecture-test layer that prevents future drift.
+This release closes three drifts between the observability-stack design notes and shipped code (cache-breaks dir-mode invariant, `diagnostics.cacheTrace.enabled` default flip without doc-update, and the stage-taxonomy divergence), and adds a build-failing architecture-test layer that prevents future drift.
 
 #### Operator-Facing Changes
 
@@ -279,10 +278,10 @@ This release closes three drifts between the Workstream A observability-stack de
 
 #### Engineering-Facing Changes
 
-- **~10 observability-adjacent writers migrated to `@comis/observability/shared/fs-safe.ts`** — `cache-break-diff-writer.ts`, `background-task-persistence.ts`, `microcompaction-guard.ts`, `comis-session-manager.ts`, `sanitize-session-secrets.ts`, `restart-continuation.ts`, `setup-shutdown.ts`, `device-pairing.ts`, `device-identity.ts`, `skill-handlers.ts`, plus 6 graph-* writers. All now use `ensureContainedDir` + `writeRegularFile` from the shared substrate, restoring the design §1.4 `0o700`/`0o600` mode invariant for every artifact under `~/.comis/`.
+- **~10 observability-adjacent writers migrated to `@comis/observability/shared/fs-safe.ts`** — `cache-break-diff-writer.ts`, `background-task-persistence.ts`, `microcompaction-guard.ts`, `comis-session-manager.ts`, `sanitize-session-secrets.ts`, `restart-continuation.ts`, `setup-shutdown.ts`, `device-pairing.ts`, `device-identity.ts`, `skill-handlers.ts`, plus 6 graph-* writers. All now use `ensureContainedDir` + `writeRegularFile` from the shared substrate, restoring the `0o700`/`0o600` mode invariant for every artifact under `~/.comis/`.
 - **New `ensureContainedDir` substrate helper** in `@comis/observability/shared/fs-safe.ts`, joining `appendRegularFile` and `writeRegularFile` as the three canonical entry points for any writer under `~/.comis/`. Unifies the previously-duplicated `mkdir + lstat-gated chmod + symlink-rejection` pattern; opt-in `confinedBaseDir` real-path check via the existing `assertConfinedPath` internal helper.
-- **Design doc §§1.3/1.4/2.8/7.2/7.4/12 parity sweep** — six edits to the design notes aligning the design language with shipped code (default-on cacheTrace, new maxFileBytes knob, §7.2 stage taxonomy rewrite to enumerate the 11 shipped stages).
-- **EventBus extension:** the existing `prompt:submitted` event is now consumed by both trajectory (via `attachTrajectoryToEventBus`) and cache-trace (via the extended `attachCacheTraceToEventBus`) bridges. The cache-trace bridge's mapping table extends from 1 → 8 event subscriptions, wiring the 7 previously-reserved-but-unwired stages from the §7.2 taxonomy.
+- **Design doc parity sweep** — six edits to the design notes aligning the design language with shipped code (default-on cacheTrace, new maxFileBytes knob, stage taxonomy rewrite to enumerate the 11 shipped stages).
+- **EventBus extension:** the existing `prompt:submitted` event is now consumed by both trajectory (via `attachTrajectoryToEventBus`) and cache-trace (via the extended `attachCacheTraceToEventBus`) bridges. The cache-trace bridge's mapping table extends from 1 → 8 event subscriptions, wiring the 7 previously-reserved-but-unwired stages from the stage taxonomy.
 
 #### Architecture Tests
 
@@ -290,11 +289,11 @@ Three new tests form the design ↔ code enforcement layer:
 
 - **`test/architecture/observability-mode-invariants.test.ts`** — AST walker over `packages/**/src/**/*.ts` flagging any direct `fs.mkdirSync` / `fs.writeFileSync` / `fs.promises.mkdir` / `fs.promises.writeFile` call lacking an explicit literal `mode:` arg of `0o700` (mkdir) or `0o600` (writeFile). Allowlist is empty after this release's sweep; the `fs-safe.ts` substrate is path-allowlisted (it's the layer the rule defers to). Inline `// fs-safe-allowed: <reason>` opt-out follows the `// @allow-throw:` precedent.
 - **`test/architecture/cache-trace-stages-known.test.ts`** — closed-union enforcement on every `recordStage(<literal>, ...)` call site in `packages/observability/src/cache-trace/` and `packages/agent/src/` — the first arg must be a member of `CACHE_TRACE_STAGES`. Also asserts every member of `CACHE_TRACE_STAGES` has at least one producer call site (excluding `cache_trace.write_failures` which is sentinel-only).
-- **`test/architecture/design-schema-parity.test.ts`** — parses the §12 Zod block in the design notes and asserts field-by-field default parity against the runtime `DiagnosticsConfigSchema` in `packages/core/src/config/schema-diagnostics.ts` for every `diagnostics.*` default (`trajectory.enabled`, `trajectory.maxFileBytes`, `cacheTrace.enabled`, `cacheTrace.maxFileBytes`, `cacheTrace.includeMessages`, `cacheTrace.includePrompt`, `cacheTrace.includeSystem`, `configAudit.enabled`, `configAudit.rotateAtBytes`, `configAudit.keepRotated`).
+- **`test/architecture/design-schema-parity.test.ts`** — parses the Zod block in the design notes and asserts field-by-field default parity against the runtime `DiagnosticsConfigSchema` in `packages/core/src/config/schema-diagnostics.ts` for every `diagnostics.*` default (`trajectory.enabled`, `trajectory.maxFileBytes`, `cacheTrace.enabled`, `cacheTrace.maxFileBytes`, `cacheTrace.includeMessages`, `cacheTrace.includePrompt`, `cacheTrace.includeSystem`, `configAudit.enabled`, `configAudit.rotateAtBytes`, `configAudit.keepRotated`).
 
 #### SemVer note
 
-The cache-trace v1 schema (`schemaVersion: 1` in `traceSchema: "comis-cache-trace"`) is the now-stable baseline. The §7.2 stage taxonomy was rewritten on 2026-05-21 to match shipped code (closing the pre-existing reserved-but-unwired gap); the append-only insertion-order rule applies from 2026-05-21 forward. New stages may be appended; existing stages may not be reordered or removed without bumping `schemaVersion`.
+The cache-trace v1 schema (`schemaVersion: 1` in `traceSchema: "comis-cache-trace"`) is the now-stable baseline. The stage taxonomy was rewritten on 2026-05-21 to match shipped code (closing the pre-existing reserved-but-unwired gap); the append-only insertion-order rule applies from 2026-05-21 forward. New stages may be appended; existing stages may not be reordered or removed without bumping `schemaVersion`.
 
 ### Unreleased / v2.1 — Backward-Compatibility + Dead-Code Removal
 

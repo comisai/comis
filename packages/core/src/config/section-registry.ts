@@ -13,8 +13,7 @@
  *
  * NOT a public export — implementation detail. Public API surface remains
  * `getConfigSchema`, `getConfigSections`, `getFieldMetadata`,
- * `getManagedSectionRedirect`, `formatRedirectHint` (per AGENTS.md §2.3
- * minimal-surface rule).
+ * `getManagedSectionRedirect`, `formatRedirectHint` (minimal-surface rule).
  *
  * @module
  */

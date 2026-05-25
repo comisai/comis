@@ -89,7 +89,7 @@ export interface ChannelManagerBuildDeps {
     getBySession(key: string): { totalTokens: number; totalCost: number };
   }>;
   cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
-  /** Phase 6 EXPORT-01: DI seam for /export-trajectory. Absent → command falls through to generic slash handling. */
+  /** DI seam for /export-trajectory. Absent → command falls through to generic slash handling. */
   exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
 }
 
@@ -509,7 +509,7 @@ export async function buildAndStartChannelManager(
           uptime: `${Math.floor(process.uptime() / 60)}m`,
         };
       },
-      exportSessionBundle: deps.exportSessionBundle, // Phase 6 EXPORT-01
+      exportSessionBundle: deps.exportSessionBundle,
     });
 
     await channelManager.startAll();

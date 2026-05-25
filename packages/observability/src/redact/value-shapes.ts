@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Bundle-time value-shape redactors (Phase 5 D9, REDACT-01 + REDACT-02).
+ * Bundle-time value-shape redactors.
  *
  * The 11 patterns target the bundle export pipeline — distinct from
  * the Pino-level credential patterns in patterns.ts (which carry
@@ -9,14 +9,13 @@
  * Application contract:
  *   - redactString applies all 11 patterns to a string leaf.
  *   - substitutePathsInString replaces literal filesystem paths with
- *     $WORKSPACE_DIR / $STATE_DIR / $HOME placeholders, longest-first
- *     (REDACT-02, Plan 05-03). Uses String.replaceAll for literal
- *     matching — no regex metachar hazards on path strings.
+ *     $WORKSPACE_DIR / $STATE_DIR / $HOME placeholders, longest-first.
+ *     Uses String.replaceAll for literal matching — no regex metachar
+ *     hazards on path strings.
  *   - walkAndRedactStrings recurses through arrays/objects, applying
  *     redactString then substitutePathsInString to every string-typed
  *     leaf. Numbers, booleans, and null pass through untouched. This
- *     prevents false positives on number-typed timestamps and counts
- *     (landmine §7.1 from 05-RESEARCH.md).
+ *     prevents false positives on number-typed timestamps and counts.
  *   - redactEventForExport wraps walkAndRedactStrings for a TrajectoryEvent's
  *     `data` field, returning a new event with envelope fields preserved.
  *     Returns the event reference unchanged when `data` is undefined.
@@ -28,11 +27,10 @@
  * is caught by basic-auth first, with the residual "Authorization"
  * substring caught by the field-name pass.
  *
- * Path substitution ordering (REDACT-02): workspaceDir before stateDir
- * before homeDir — sorted by literal path length descending so the
- * most-specific (longest) prefix always wins. Using String.replaceAll
- * with a literal string (not a regex) avoids metachar surprises in
- * paths like `/Users/me/.comis/[brackets]`.
+ * Path substitution ordering: workspaceDir before stateDir before homeDir —
+ * sorted by literal path length descending so the most-specific (longest)
+ * prefix always wins. Using String.replaceAll with a literal string (not a
+ * regex) avoids metachar surprises in paths like `/Users/me/.comis/[brackets]`.
  *
  * Performance: all replacements go through replacePatternBounded for
  * ReDoS protection (CHUNK_SIZE=16384, SINGLE_PASS_THRESHOLD=32768).
@@ -59,10 +57,10 @@ export interface ValueShapePattern {
 }
 
 /**
- * Options for path substitution at bundle export time (REDACT-02, Plan 05-03).
+ * Options for path substitution at bundle export time.
  * Declared here so redactEventForExport's signature is forward-compatible.
  * The fields are not used by this module — they are consumed by the path
- * substitution primitive that Plan 05-03 will wire into the pipeline.
+ * substitution primitive that the pipeline wires in.
  */
 export interface RedactionOpts {
   /** Agent workspace directory path (longest; substituted first). */
@@ -74,8 +72,7 @@ export interface RedactionOpts {
 }
 
 // ---------------------------------------------------------------------------
-// Pattern definitions (verbatim from OBSERVABILITY_DESIGN.md §5 D9 /
-// 05-CONTEXT.md decision 4 — 11 patterns)
+// Pattern definitions — 11 patterns
 // ---------------------------------------------------------------------------
 
 /**
@@ -84,7 +81,7 @@ export interface RedactionOpts {
  * Field-name patterns (secret-field, payload-field, identifier-field):
  * Apply to string contents without `^...$` anchors — they catch substring
  * mentions in body text (e.g., "my password is foo" → "<REDACTED:secret-field>
- * is foo"). See 05-PLAN.md Reading A decision.
+ * is foo").
  *
  * Shape-anchored patterns use `\b...\b` word boundaries for precision.
  *
@@ -121,7 +118,7 @@ const PATTERNS: ReadonlyArray<ValueShapePattern> = Object.freeze([
   },
   {
     id: "url-userinfo",
-    // eslint-disable-next-line no-useless-escape -- verbatim from OBSERVABILITY_DESIGN.md §5 D9
+    // eslint-disable-next-line no-useless-escape -- verbatim pattern
     regex: /\b([a-z][a-z0-9+.-]*:\/\/)([^\/@\s:?#]+)(?::([^\/@\s?#]+))?@/gi,
     sentinel: "<REDACTED:url-userinfo>",
   },
@@ -263,8 +260,7 @@ export function substitutePathsInString(s: string, opts: RedactionOpts): string 
  * Each pattern has `id`, `regex`, and `sentinel` fields.
  * The sentinel is exactly `<REDACTED:${id}>`.
  *
- * Use this accessor in tests to iterate patterns by id (REDACT-03 fixture
- * completeness check).
+ * Use this accessor in tests to iterate patterns by id.
  */
 export function getValueShapePatterns(): ReadonlyArray<ValueShapePattern> {
   return PATTERNS;
@@ -327,7 +323,7 @@ export function redactString(value: string): string {
  * Returns a new value graph — the input is never mutated.
  *
  * @param value - any JavaScript value
- * @param opts - optional path substitution hints (REDACT-02, Plan 05-03)
+ * @param opts - optional path substitution hints
  * @param seen - internal WeakSet for cycle detection (callers omit this)
  * @returns the redacted copy of `value` with the same shape
  */
@@ -361,15 +357,15 @@ export function walkAndRedactStrings(
 
 /**
  * Walk `event.data`, apply the 11 value-shape patterns then path
- * substitution (REDACT-02) to every string-typed leaf, and return a
- * new event with the redacted data. Envelope fields (`ts`, `seq`,
- * `traceId`, `sessionId`, etc.) are byte-equal pre/post — only `data`
- * is transformed.
+ * substitution to every string-typed leaf, and return a new event with
+ * the redacted data. Envelope fields (`ts`, `seq`, `traceId`,
+ * `sessionId`, etc.) are byte-equal pre/post — only `data` is
+ * transformed.
  *
  * Returns the event reference unchanged when `event.data` is undefined.
  *
  * @param event - a TrajectoryEvent whose data field will be redacted
- * @param opts - path substitution hints (REDACT-02, Plan 05-03)
+ * @param opts - path substitution hints
  * @returns a new TrajectoryEvent with redacted data, or the original event
  */
 export function redactEventForExport(

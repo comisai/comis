@@ -64,7 +64,7 @@ function makeBus(): TypedEventBus {
 // ---------------------------------------------------------------------------
 
 describe("attachTrajectoryToEventBus -- tool events", () => {
-  it("tool_started_maps_to_tool.call with toolName + toolCallId; correlation keys stripped from data (design §6.2)", () => {
+  it("tool_started_maps_to_tool.call with toolName + toolCallId; correlation keys stripped from data", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -83,7 +83,7 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     const data = recorder.calls[0].data as Record<string, unknown>;
     expect(data.toolName).toBe("bash");
     expect(data.toolCallId).toBe("tc-1");
-    // Envelope-only correlation keys (deviation C) — must NOT appear in data.
+    // Envelope-only correlation keys — must NOT appear in data.
     expect(data.traceId).toBeUndefined();
     expect(data.agentId).toBeUndefined();
     expect(data.sessionKey).toBeUndefined();
@@ -340,7 +340,7 @@ describe("attachTrajectoryToEventBus -- unsubscribe + filter", () => {
   });
 });
 
-describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (design §6.2)", () => {
+describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", () => {
   // Parameterized over EVERY mapped event name. Each emit carries the
   // four correlation keys (`traceId`, `agentId`, `sessionKey`, `sessionId`);
   // the bridge MUST strip them out before handing to `recordEvent`.
@@ -466,7 +466,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       ],
       timestamp: 0,
     },
-    // BRIDGE-01 queue events
+    // queue events
     "queue:enqueued": {
       sessionKey: "t1:u1:c1",
       channelType: "telegram",
@@ -493,7 +493,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       messageCount: 3,
       timestamp: 0,
     },
-    // BRIDGE-03 execution events
+    // execution events
     "execution:aborted": {
       sessionKey: "t1:u1:c1",
       reason: "user_stop",
@@ -529,7 +529,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       succeeded: true,
       timestamp: 0,
     },
-    // BRIDGE-04 scanned subset
+    // scanned subset
     "security:injection_detected": {
       source: "user_input",
       patterns: ["test"],
@@ -542,7 +542,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       channelId: "chan-1",
       timestamp: 0,
     },
-    // BRIDGE-02 retry events
+    // retry events
     "retry:attempted": {
       channelId: "chan-1",
       chatId: "12345678901",
@@ -565,7 +565,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       originalParseMode: "MarkdownV2",
       timestamp: 0,
     },
-    // BRIDGE-05 mcp events
+    // mcp events
     "mcp:server:disconnected": {
       serverName: "fs-server",
       reason: "transport_closed",
@@ -599,7 +599,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       removedTools: [],
       timestamp: 0,
     },
-    // BRIDGE-06 channel events
+    // channel events
     "channel:health_changed": {
       channelType: "telegram",
       previousState: "healthy",
@@ -620,7 +620,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       pluginId: "tg",
       timestamp: 0,
     },
-    // BRIDGE-04 rest: security events
+    // security events
     "security:memory_tainted": {
       agentId: "agent-1",
       originalTrustLevel: "trusted",
@@ -635,7 +635,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       message: "warn",
       timestamp: 0,
     },
-    // BRIDGE-07 compaction events
+    // compaction events
     "compaction:started": {
       agentId: "agent-1",
       sessionKey: "t1:u1:c1",
@@ -656,7 +656,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       contextWindow: 200000,
       timestamp: 0,
     },
-    // BRIDGE-07 context events
+    // context events
     "context:evicted": {
       agentId: "agent-1",
       sessionKey: "t1:u1:c1",
@@ -708,7 +708,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       overflowStripped: false,
       timestamp: 0,
     },
-    // BRIDGE-08 approval events
+    // approval events
     "approval:requested": {
       requestId: "req-1",
       toolName: "bash",
@@ -727,7 +727,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       approvedBy: "owner",
       resolvedAt: 0,
     },
-    // DEDUP-03 (D12)
+    // duplicate inbound dedup event
     "dedup:duplicate_inbound": {
       messageId: "m1",
       channelType: "telegram",
@@ -738,7 +738,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (des
       source: "pipeline",
       timestamp: 0,
     },
-    // ALERT-01 (D16)
+    // health budget exceeded event
     "health:budget_exceeded": {
       kind: "network",
       count: 100,
@@ -889,11 +889,11 @@ describe("attachTrajectoryToEventBus -- context engine", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BRIDGE-01/03/04 — Queue, Execution, Security, Sender bridge tests
+// Queue, Execution, Security, Sender bridge tests
 // ---------------------------------------------------------------------------
 
-describe("BRIDGE-01/03/04 queue + execution + sender", () => {
-  // ---- BRIDGE-01: Queue lifecycle events ----
+describe("queue + execution + sender bridge", () => {
+  // ---- Queue lifecycle events ----
 
   it("queue_enqueued_maps_to_queue.enqueued with channelType/queueDepth/mode; sessionKey stripped", () => {
     const bus = makeBus();
@@ -1028,7 +1028,7 @@ describe("BRIDGE-01/03/04 queue + execution + sender", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
-  // ---- BRIDGE-03: Execution lifecycle events ----
+  // ---- Execution lifecycle events ----
 
   it("execution_aborted_maps_to_execution.aborted with reason; sessionKey/agentId stripped", () => {
     const bus = makeBus();
@@ -1146,7 +1146,7 @@ describe("BRIDGE-01/03/04 queue + execution + sender", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
-  // ---- BRIDGE-04 (scanned subset): Security + Sender ----
+  // ---- Security + Sender (scanned subset) ----
 
   it("security_injection_detected_maps_to_security.injection_detected with source/riskLevel only; patterns[] MUST NOT be forwarded (L4 security invariant)", () => {
     const bus = makeBus();
@@ -1214,7 +1214,7 @@ describe("BRIDGE-01/03/04 queue + execution + sender", () => {
 
   // ---- Coverage spot-check ----
 
-  it("TRAJECTORY_BRIDGE_MAPPING contains all 11 new BRIDGE-01/03/04 keys", () => {
+  it("TRAJECTORY_BRIDGE_MAPPING contains all 11 new queue/execution/security/sender keys", () => {
     const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
     const expected = [
       "queue:enqueued",
@@ -1238,13 +1238,13 @@ describe("BRIDGE-01/03/04 queue + execution + sender", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BRIDGE-02/05/06 — Retry (delivery), MCP server, Channel lifecycle + health
+// Retry (delivery), MCP server, Channel lifecycle + health
 // ---------------------------------------------------------------------------
 
-describe("BRIDGE-02/05/06 retry + mcp + channel", () => {
-  // ---- BRIDGE-02: Retry (delivery reliability) events ----
+describe("retry + mcp + channel bridge", () => {
+  // ---- Retry (delivery reliability) events ----
 
-  it("retry_attempted_maps_to_delivery.retry with attempt/maxAttempts/delayMs/error; chatId+channelId MUST NOT be forwarded (L3 PII invariant)", () => {
+  it("retry_attempted_maps_to_delivery.retry with attempt/maxAttempts/delayMs/error; chatId+channelId MUST NOT be forwarded (PII invariant)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -1269,7 +1269,7 @@ describe("BRIDGE-02/05/06 retry + mcp + channel", () => {
     expect(data.delayMs).toBe(1000);
     expect(data.error).toBe("ETIMEDOUT");
 
-    // chatId (Telegram long-decimal ID, L3) must NEVER appear.
+    // chatId (Telegram long-decimal ID) must NEVER appear.
     expect(data.chatId).toBeUndefined();
     expect("chatId" in data).toBe(false);
 
@@ -1301,7 +1301,7 @@ describe("BRIDGE-02/05/06 retry + mcp + channel", () => {
     expect(data.totalAttempts).toBe(5);
     expect(data.finalError).toBe("Connection refused");
 
-    // chatId (L3) and channelId must NEVER appear.
+    // chatId and channelId must NEVER appear.
     expect(data.chatId).toBeUndefined();
     expect("chatId" in data).toBe(false);
     expect(data.channelId).toBeUndefined();
@@ -1327,7 +1327,7 @@ describe("BRIDGE-02/05/06 retry + mcp + channel", () => {
 
     expect(data.originalParseMode).toBe("MarkdownV2");
 
-    // chatId (L3) and channelId must NEVER appear.
+    // chatId and channelId must NEVER appear.
     expect(data.chatId).toBeUndefined();
     expect("chatId" in data).toBe(false);
     expect(data.channelId).toBeUndefined();
@@ -1335,7 +1335,7 @@ describe("BRIDGE-02/05/06 retry + mcp + channel", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
-  // ---- BRIDGE-05: MCP server reliability events ----
+  // ---- MCP server reliability events ----
 
   it("mcp_server_disconnected_maps_to_mcp.disconnected with serverName+reason; timestamp omitted", () => {
     const bus = makeBus();
@@ -1453,7 +1453,7 @@ describe("BRIDGE-02/05/06 retry + mcp + channel", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
-  // ---- BRIDGE-06: Channel lifecycle + health events ----
+  // ---- Channel lifecycle + health events ----
 
   it("channel_health_changed_maps_to_channel.health_changed with channelType/previousState/currentState/connectionMode; lastMessageAt+timestamp omitted; error forwarded conditionally", () => {
     const bus = makeBus();
@@ -1594,20 +1594,20 @@ describe("BRIDGE-02/05/06 retry + mcp + channel", () => {
 
   // ---- Coverage spot-check ----
 
-  it("TRAJECTORY_BRIDGE_MAPPING contains all 11 new BRIDGE-02/05/06 keys and total mapping is ≥ 40", () => {
+  it("TRAJECTORY_BRIDGE_MAPPING contains all 11 new retry/mcp/channel keys and total mapping is ≥ 40", () => {
     const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
     const expected = [
-      // BRIDGE-02 retry
+      // retry
       "retry:attempted",
       "retry:exhausted",
       "retry:markdown_fallback",
-      // BRIDGE-05 mcp
+      // mcp
       "mcp:server:disconnected",
       "mcp:server:reconnecting",
       "mcp:server:reconnect_failed",
       "mcp:server:reconnected",
       "mcp:server:tools_changed",
-      // BRIDGE-06 channel
+      // channel
       "channel:health_changed",
       "channel:registered",
       "channel:deregistered",
@@ -1624,13 +1624,13 @@ describe("BRIDGE-02/05/06 retry + mcp + channel", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BRIDGE-04rest/07/08 — Security (rest), Compaction, Context, Approval
+// Security (rest), Compaction, Context, Approval
 // ---------------------------------------------------------------------------
 
-describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () => {
-  // ---- BRIDGE-04 rest: security:memory_tainted + security:warn ----
+describe("security + compaction + context + approval bridge", () => {
+  // ---- security:memory_tainted + security:warn ----
 
-  it("security_memory_tainted_maps_to_security.memory_tainted with originalTrustLevel/adjustedTrustLevel/blocked; patterns[] MUST NOT be forwarded (L4 security invariant)", () => {
+  it("security_memory_tainted_maps_to_security.memory_tainted with originalTrustLevel/adjustedTrustLevel/blocked; patterns[] MUST NOT be forwarded (security invariant)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -1653,7 +1653,7 @@ describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () =>
     expect(data.adjustedTrustLevel).toBe("tainted");
     expect(data.blocked).toBe(true);
 
-    // patterns[] must NOT appear — verbatim injection strings (L4).
+    // patterns[] must NOT appear — verbatim injection strings.
     expect(data.patterns).toBeUndefined();
     expect("patterns" in data).toBe(false);
 
@@ -1662,7 +1662,7 @@ describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () =>
     expect(data.timestamp).toBeUndefined();
   });
 
-  it("security_warn_maps_to_security.warn with category only; message MUST NOT be forwarded (L5 PII invariant)", () => {
+  it("security_warn_maps_to_security.warn with category only; message MUST NOT be forwarded (PII invariant)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -1681,7 +1681,7 @@ describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () =>
     // Only category in data.
     expect(data.category).toBe("secret_access");
 
-    // message must NOT appear — may reference secrets/config paths (L5).
+    // message must NOT appear — may reference secrets/config paths.
     expect(data.message).toBeUndefined();
     expect("message" in data).toBe(false);
 
@@ -1690,9 +1690,9 @@ describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () =>
     expect(data.timestamp).toBeUndefined();
   });
 
-  // ---- BRIDGE-07: Compaction events ----
+  // ---- Compaction events ----
 
-  it("compaction_started_maps_to_compaction.started with empty data object (all fields are envelope-only, L6)", () => {
+  it("compaction_started_maps_to_compaction.started with empty data object (all fields are envelope-only)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -1764,7 +1764,7 @@ describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () =>
     expect(data.timestamp).toBeUndefined();
   });
 
-  // ---- BRIDGE-07: Context engine events ----
+  // ---- Context engine events ----
 
   it("context_evicted_maps_to_context.evicted with evictedCount/evictedChars/categories; envelope stripped", () => {
     const bus = makeBus();
@@ -1928,9 +1928,9 @@ describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () =>
     expect(data.timestamp).toBeUndefined();
   });
 
-  // ---- BRIDGE-08: Approval events ----
+  // ---- Approval events ----
 
-  it("approval_requested_maps_to_approval.requested with requestId/toolName/action/trustLevel/timeoutMs/channelType; params MUST NOT be forwarded (L2 HIGHEST risk PII)", () => {
+  it("approval_requested_maps_to_approval.requested with requestId/toolName/action/trustLevel/timeoutMs/channelType; params MUST NOT be forwarded (HIGHEST risk PII)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -1960,7 +1960,7 @@ describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () =>
     expect(data.timeoutMs).toBe(60000);
     expect(data.channelType).toBe("telegram");
 
-    // params MUST NEVER appear — raw unbounded tool args, highest-risk field (L2).
+    // params MUST NEVER appear — raw unbounded tool args, highest-risk field.
     expect(data.params).toBeUndefined();
     expect("params" in data).toBe(false);
 
@@ -2057,26 +2057,26 @@ describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () =>
     expect("resolvedAt" in data).toBe(false);
   });
 
-  // ---- Coverage spot-check (BRIDGE-09 count): in arch test file ----
+  // ---- Coverage spot-check (count): in arch test file ----
 
-  it("TRAJECTORY_BRIDGE_MAPPING contains all 13 new BRIDGE-04rest/07/08 keys and total mapping is ≥ 53", () => {
+  it("TRAJECTORY_BRIDGE_MAPPING contains all 13 new security/compaction/context/approval keys and total mapping is ≥ 53", () => {
     const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
     const expected = [
-      // BRIDGE-04 rest
+      // security rest
       "security:memory_tainted",
       "security:warn",
-      // BRIDGE-07 compaction
+      // compaction
       "compaction:started",
       "compaction:flush",
       "compaction:recommended",
-      // BRIDGE-07 context
+      // context
       "context:evicted",
       "context:masked",
       "context:reread",
       "context:overflow",
       "context:integrity",
       "context:rehydrated",
-      // BRIDGE-08 approval
+      // approval
       "approval:requested",
       "approval:resolved",
     ];
@@ -2089,10 +2089,10 @@ describe("BRIDGE-04rest/07/08 security + compaction + context + approval", () =>
 });
 
 // ---------------------------------------------------------------------------
-// DEDUP-03 (D12): dedup:duplicate_inbound → dedup.duplicate_inbound
+// dedup:duplicate_inbound → dedup.duplicate_inbound
 // ---------------------------------------------------------------------------
 
-describe("attachTrajectoryToEventBus -- DEDUP-03 dedup events", () => {
+describe("attachTrajectoryToEventBus -- dedup events", () => {
   it("dedup_duplicate_inbound_maps_to_dedup.duplicate_inbound_trajectory_type", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -2134,7 +2134,7 @@ describe("attachTrajectoryToEventBus -- DEDUP-03 dedup events", () => {
     expect(data.chatId).toBe("123");
     expect(data.deltaMs).toBe(1);
     expect(data.source).toBe("pipeline");
-    // firstSeenAt and duplicateAt intentionally omitted (envelope ts covers timing, design §13 Appendix B)
+    // firstSeenAt and duplicateAt intentionally omitted (envelope ts covers timing)
     expect("firstSeenAt" in data).toBe(false);
     expect("duplicateAt" in data).toBe(false);
   });
@@ -2150,11 +2150,11 @@ describe("attachTrajectoryToEventBus -- DEDUP-03 dedup events", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ALERT-01 — Health budget exceeded (bridge entry 55)
+// Health budget exceeded (bridge entry 55)
 // ---------------------------------------------------------------------------
 
-describe("ALERT-01 health:budget_exceeded entry (bridge entry 55)", () => {
-  it("bridge entry count is exactly 55 (ALERT-01 adds health:budget_exceeded)", () => {
+describe("health:budget_exceeded entry (bridge entry 55)", () => {
+  it("bridge entry count is exactly 55 (health:budget_exceeded included)", () => {
     expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(55);
   });
 
@@ -2167,7 +2167,7 @@ describe("ALERT-01 health:budget_exceeded entry (bridge entry 55)", () => {
     expect(Array.from(TRAJECTORY_EVENT_TYPES as readonly string[])).toContain("health.budget_exceeded");
   });
 
-  it("emitting health:budget_exceeded produces trajectory health.budget_exceeded with kind/count/windowMs (timestamp is envelope-only §6.2)", () => {
+  it("emitting health:budget_exceeded produces trajectory health.budget_exceeded with kind/count/windowMs (timestamp is envelope-only)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -2185,7 +2185,7 @@ describe("ALERT-01 health:budget_exceeded entry (bridge entry 55)", () => {
     expect(data.kind).toBe("network");
     expect(data.count).toBe(100);
     expect(data.windowMs).toBe(60000);
-    // timestamp is envelope-only per design §6.2 — MUST NOT appear in data
+    // timestamp is envelope-only — MUST NOT appear in data
     expect(data.timestamp).toBeUndefined();
     expect("timestamp" in data).toBe(false);
   });

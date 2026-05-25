@@ -29,7 +29,7 @@ export type CommandType =
   | "stop"                             // Execution cancellation
   | "fork" | "branch" // Conversation branching
   | "budget" // User-specified per-turn token budget
-  | "export-trajectory"; // Owner-gated bundle export (Phase 6, EXPORT-01)
+  | "export-trajectory"; // Owner-gated bundle export
 
 // ---------------------------------------------------------------------------
 // Parser types

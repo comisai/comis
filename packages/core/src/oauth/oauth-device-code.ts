@@ -12,12 +12,12 @@
  *   1. ORIGINATOR header is the literal "comis".
  *   2. The cosmetic version-header lookup is DROPPED — header is
  *      informational; CLAUDE.md forbids reading runtime env in library code.
- *   3. trimNonEmptyString is INLINE (3-line helper) per AGENTS.md §2.3.
+ *   3. trimNonEmptyString is INLINE (3-line helper).
  *   4. resolveCodexAccessTokenExpiry is imported from Comis's
  *      oauth-identity.ts module (same signature as the upstream variant).
- *   5. Public boundary returns Result<T,E> per AGENTS.md §2.1 — internal
- *      helpers still throw, but the top-level loginOpenAICodexDeviceCode
- *      wraps everything in try/catch + rewriteOAuthError + narrowing.
+ *   5. Public boundary returns Result<T,E> — internal helpers still throw,
+ *      but the top-level loginOpenAICodexDeviceCode wraps everything in
+ *      try/catch + rewriteOAuthError + narrowing.
  *
  * Protocol: OpenAI's proprietary 3-step device-code flow (NOT RFC 8628):
  *   1. POST /api/accounts/deviceauth/usercode -> device_auth_id + user_code
@@ -26,8 +26,7 @@
  *   3. POST /oauth/token grant_type=authorization_code -> tokens
  *
  * This module never logs — the caller (oauth-login-runner.ts) is responsible
- * for surfacing progress via prompter.log.info / Pino. Per AGENTS.md §2.4 no
- * logger import.
+ * for surfacing progress via prompter.log.info / Pino. No logger import.
  *
  * @module
  */
@@ -109,8 +108,8 @@ interface OpenAICodexDeviceCodeCredentials {
 // -------- Helpers (port verbatim from upstream, with Comis adaptations) --------
 
 /**
- * INLINE 3-line helper per AGENTS.md §2.3 (rule of three not met — same
- * shape as the helper in oauth-identity.ts but kept local to avoid coupling).
+ * INLINE 3-line helper (rule of three not met — same shape as the helper
+ * in oauth-identity.ts but kept local to avoid coupling).
  */
 function trimNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -120,8 +119,8 @@ function trimNonEmptyString(value: unknown): string | undefined {
 
 /**
  * Build the 3-key header set for the device-code flow.
- * Adaptation vs upstream: drop the cosmetic version-header lookup
- * (CLAUDE.md §2.2). Header values are fixed strings — no env reads.
+ * Adaptation vs upstream: drop the cosmetic version-header lookup.
+ * Header values are fixed strings — no env reads.
  */
 function resolveOpenAICodexDeviceCodeHeaders(contentType: string): Record<string, string> {
   return {

@@ -104,7 +104,7 @@ const ObservabilityPersistenceSchema = z.strictObject({
 });
 
 /**
- * Trajectory observability configuration schema (POINTER-02).
+ * Trajectory observability configuration schema.
  *
  * Defines the optional `dirOverride` that relocates the runtime trajectory
  * file to an operator-specified directory. When set, the pointer sidecar
@@ -120,7 +120,7 @@ const TrajectoryObservabilityConfigSchema = z.strictObject({
 });
 
 /**
- * Log rotation configuration schema (ROTATE-01).
+ * Log rotation configuration schema.
  *
  * Cross-stream rotation policy applied to all 5 observability streams:
  * daemon.log, cache-trace.jsonl, config-audit.jsonl,
@@ -141,14 +141,14 @@ const LogRotationConfigSchema = z.strictObject({
 });
 
 /**
- * Alert budget threshold schema — per-errorKind sliding-window counter (ALERT-01).
+ * Alert budget threshold schema — per-errorKind sliding-window counter.
  *
  * `count`: maximum number of events of a given errorKind within `windowMs`
  * before `health:budget_exceeded` is emitted once.
  * `windowMs`: sliding window length in milliseconds.
  *
  * Both fields require a positive integer; zero or negative values are rejected
- * at schema validation time (T-07-03-02: prevents deadlock/infinite latch).
+ * at schema validation time (prevents deadlock/infinite latch).
  */
 const AlertBudgetThresholdSchema = z.strictObject({
   count: z.number().int().positive(),
@@ -156,7 +156,7 @@ const AlertBudgetThresholdSchema = z.strictObject({
 });
 
 /**
- * Alert budget configuration schema (ALERT-01 / G10).
+ * Alert budget configuration schema.
  *
  * Defaults cover all 10 errorKind closed-union members. Operators may
  * override individual thresholds; unrecognised errorKind keys are
@@ -172,7 +172,7 @@ export const AlertBudgetConfigSchema = z.strictObject({
    * Per-errorKind threshold table. All 10 errorKind closed-union members
    * are pre-seeded with sane defaults. Individual entries can be overridden;
    * extra keys (unknown errorKinds) are accepted by the schema but ignored
-   * by the aggregator's lookup (Pitfall 5 / T-07-03-05).
+   * by the aggregator's lookup.
    */
   thresholds: z.record(z.string(), AlertBudgetThresholdSchema).default({
     network:      { count: 100, windowMs: 60_000 },
@@ -196,11 +196,11 @@ export const AlertBudgetConfigSchema = z.strictObject({
 export const ObservabilityConfigSchema = z.strictObject({
   /** Persistence layer settings. */
   persistence: ObservabilityPersistenceSchema.default(() => ObservabilityPersistenceSchema.parse({})),
-  /** Trajectory storage override (POINTER-02). */
+  /** Trajectory storage override. */
   trajectory: TrajectoryObservabilityConfigSchema.default(() => TrajectoryObservabilityConfigSchema.parse({})),
-  /** Cross-stream log rotation policy (ROTATE-01). */
+  /** Cross-stream log rotation policy. */
   logRotation: LogRotationConfigSchema.default(() => LogRotationConfigSchema.parse({})),
-  /** Alert budget rate-aggregator policy (ALERT-01). */
+  /** Alert budget rate-aggregator policy. */
   alertBudget: AlertBudgetConfigSchema.default(() => AlertBudgetConfigSchema.parse({})),
 });
 

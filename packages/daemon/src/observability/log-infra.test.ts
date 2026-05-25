@@ -289,9 +289,9 @@ describe("createFileTransport", () => {
     }
   });
 
-  // ROTATE-02 tests — assert the new logRotation parameter behaviour.
+  // Assert the new logRotation parameter behaviour.
 
-  it("converts logRotation.maxSizeBytes to MB string for pino-roll (ROTATE-02)", () => {
+  it("converts logRotation.maxSizeBytes to MB string for pino-roll", () => {
     const transport = createFileTransport(defaultConfig, undefined, {
       maxSizeBytes: 52428800,
       maxFiles: 5,
@@ -300,7 +300,7 @@ describe("createFileTransport", () => {
     expect(rollOpts.size).toBe("50m");
   });
 
-  it("uses logRotation.maxFiles as limit.count when logRotation provided (ROTATE-02)", () => {
+  it("uses logRotation.maxFiles as limit.count when logRotation provided", () => {
     const transport = createFileTransport(defaultConfig, undefined, {
       maxSizeBytes: 50 * 1024 * 1024,
       maxFiles: 7,
@@ -310,7 +310,7 @@ describe("createFileTransport", () => {
     expect(limit.count).toBe(7);
   });
 
-  it("falls back to config.maxSize when logRotation is absent (ROTATE-02)", () => {
+  it("falls back to config.maxSize when logRotation is absent", () => {
     const transport = createFileTransport({ ...defaultConfig, maxSize: "10m" });
     const rollOpts = transport.targets[0]!.options as Record<string, unknown>;
     expect(rollOpts.size).toBe("10m");

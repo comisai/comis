@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Trace-propagation architecture test (TRACE-01, design §5 D1).
+ * Trace-propagation architecture test.
  *
  * Every adapter inbound dispatch site (the `for (const handler of …)`
  * fanout loop) must run inside a `runWithContext(…)` call, so the
  * traceId minted at ingress propagates through the entire handler
  * chain via AsyncLocalStorage. The orchestrator's `adapter.onMessage(
  * async msg => …)` registration body at channel-manager.ts:269 is
- * the second wrap site (defense-in-depth — see design doc Pattern 2).
+ * the second wrap site (defense-in-depth).
  *
  * Shrink-only: this test has NO allowlist. The only way to comply
  * is to add `runWithContext` around the dispatch loop.
- *
- * Walker pattern mirrors test/architecture/trajectory-event-types-known.test.ts.
  *
  * @module
  */
@@ -151,16 +149,16 @@ describe("trace-propagation -- every adapter inbound dispatch runs inside runWit
       violations,
       formatViolations({
         description:
-          "Trace propagation: every adapter inbound dispatch site must run inside runWithContext({ traceId, channelType }, fn) so the traceId minted at ingress propagates via AsyncLocalStorage. Adapters that bypass this lose channel→queue→agent correlation (G1 in OBSERVABILITY_DESIGN.md).",
+          "Trace propagation: every adapter inbound dispatch site must run inside runWithContext({ traceId, channelType }, fn) so the traceId minted at ingress propagates via AsyncLocalStorage. Adapters that bypass this lose channel→queue→agent correlation.",
         violations: violations.map((v) => ({
           file: `${repoRelative(v.file)}:${v.line}`,
           line: v.line,
           snippet: v.snippet,
         })),
         suggestedFix:
-          "Wrap the dispatch loop body in runWithContext({ traceId: randomUUID(), channelType, channelId? }, () => { /* existing for-handler loop */ }). The wrap must appear within 50 lines BEFORE the dispatch loop, in the same file. See .planning/phases/01-trace-propagation-lifecycle-envelopes/01-RESEARCH.md Pattern 2 for the canonical patch.",
+          "Wrap the dispatch loop body in runWithContext({ traceId: randomUUID(), channelType, channelId? }, () => { /* existing for-handler loop */ }). The wrap must appear within 50 lines BEFORE the dispatch loop, in the same file.",
         designRef:
-          ".planning/design/OBSERVABILITY_DESIGN.md §5 D1 (TraceId at channel ingress)",
+          "TraceId at channel ingress (defense-in-depth trace propagation)",
       }),
     ).toEqual([]);
   });

@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 
 // ---------------------------------------------------------------------------
-// Unit tests for buildPromptingSnapshot (WR-02, Plan 05-04)
+// Unit tests for buildPromptingSnapshot
 // ---------------------------------------------------------------------------
 
 describe("buildPromptingSnapshot", () => {

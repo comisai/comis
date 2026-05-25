@@ -187,7 +187,7 @@ export async function setupSingleAgent(
   // surface as TS errors, not silent runtime failures.
   //
   // All path constructions in this block use safePath from @comis/core (NOT
-  // path.join — AGENTS.md §2.2 ESLint security rule).
+  // path.join — ESLint security rule).
   // When storage === "encrypted", the OAuth profile adapter SHARES the
   // existing secretsDb handle from createSqliteSecretStore (no dual-handle).
   // -------------------------------------------------------------------------
@@ -298,7 +298,7 @@ export async function setupSingleAgent(
     // triage of EACCES / disk-full vs lock contention.
     logger: agentLogger,
     // Bus + registry let destroySession emit `session:ended` and drain
-    // the trajectory recorder before unlinking the JSONL (design §6.4).
+    // the trajectory recorder before unlinking the JSONL.
     eventBus: container.eventBus,
     trajectoryRegistry: deps.trajectoryRegistry,
   });
@@ -522,7 +522,7 @@ export async function setupSingleAgent(
     // Operators who set `diagnostics.trajectory.enabled: false` in YAML
     // disable the recorder entirely.
     //
-    // Precedence for trajectoryDir (POINTER-02):
+    // Precedence for trajectoryDir:
     //   1. diagnostics.trajectory.dir (explicit YAML knob — unchanged)
     //   2. observability.trajectory.dirOverride (env-layer / YAML knob)
     //   3. env fallback inside paths.ts:readEnvDir() (defense-in-depth)
@@ -539,7 +539,7 @@ export async function setupSingleAgent(
       : undefined,
     // Session-scoped trajectory recorder registry — same instance for
     // every per-agent executor so a session's recorder spans every
-    // turn (design §6.4 + §6.5 + §6.8). Daemon shutdown drains via
+    // turn. Daemon shutdown drains via
     // `closeAll()` on the registry surfaced through AgentsResult.
     trajectoryRegistry: deps.trajectoryRegistry,
     // Forward AppConfig.diagnostics.cacheTrace into the executor. The

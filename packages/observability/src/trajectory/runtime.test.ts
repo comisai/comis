@@ -381,7 +381,7 @@ describe("createTrajectoryRecorder -- trace.write_failures sentinel", () => {
   });
 });
 
-describe("createTrajectoryRecorder -- pointer file (design §6.1)", () => {
+describe("createTrajectoryRecorder -- pointer file", () => {
   it("creates_pointer_file_when_sessionFile_provided", async () => {
     const sessionFile = join(tmpDir, "session.jsonl");
     const recorder = createTrajectoryRecorder({
@@ -433,7 +433,7 @@ describe("createTrajectoryRecorder -- pointer file (design §6.1)", () => {
   });
 });
 
-describe("createTrajectoryRecorder -- envelope shape (design §6.2)", () => {
+describe("createTrajectoryRecorder -- envelope shape", () => {
   it("emits_source_runtime_on_envelope by default", async () => {
     const recorder = createTrajectoryRecorder({
       agentId: "agent-1",
@@ -520,7 +520,7 @@ describe("createTrajectoryRecorder -- envelope shape (design §6.2)", () => {
   });
 });
 
-describe("createTrajectoryRecorder -- emitTraceTruncated public hook (LIFE-03)", () => {
+describe("createTrajectoryRecorder -- emitTraceTruncated public hook", () => {
   it("public hook writes one trace.truncated event with the supplied payload", async () => {
     const recorder = createTrajectoryRecorder({
       agentId: "agent-1",
@@ -682,16 +682,11 @@ describe("createTrajectoryRecorder -- traceId resolution", () => {
   });
 });
 
-describe("BOUND-01 trajectory payload bounding sentinels", () => {
+describe("trajectory payload bounding sentinels", () => {
   // These tests assert the trajectory-specific sentinel shape produced by
   // limitTrajectoryPayloadValue — which must convert the shared
   // __bounded__ sentinel (from sanitizeForPersistence) into the
-  // trajectory { truncated: true, reason: "trajectory-*", ... } shape
-  // demanded by BOUND-01 acceptance criteria.
-  //
-  // On pre-patch code (no wrapper), the recorder emits __bounded__ records,
-  // so all four assertions on `truncated` / `reason` / `originalChars` /
-  // `limitChars` will FAIL — confirming RED state.
+  // trajectory { truncated: true, reason: "trajectory-*", ... } shape.
 
   it("5MB string field is recorded as trajectory-field-size-limit sentinel", async () => {
     const recorder = createTrajectoryRecorder({
@@ -789,9 +784,9 @@ describe("BOUND-01 trajectory payload bounding sentinels", () => {
   });
 });
 
-describe("BOUND-02/03 file caps + writer LRU", () => {
+describe("file caps + writer LRU", () => {
   // ---------------------------------------------------------------------------
-  // Test 1 — Soft cap inline trace.truncated (BOUND-02)
+  // Test 1 — Soft cap inline trace.truncated
   //
   // Constructs a recorder with a tiny captureMaxBytes override so we can
   // cross the soft cap without writing megabytes. Writes events until the
@@ -801,9 +796,6 @@ describe("BOUND-02/03 file caps + writer LRU", () => {
   //       reason "trajectory-runtime-file-size-limit" — emitted INLINE,
   //       not only at flushAndClose
   //   (c) no further data events appear after the trace.truncated sentinel
-  //
-  // Fails RED because no soft cap (TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES
-  // check) exists in current code — only the 50MB hard cap.
   // ---------------------------------------------------------------------------
   it("soft_cap_fires_inline_trace_truncated_and_stops_recording when captureMaxBytes is crossed", async () => {
     // Use a tiny soft cap (2 KB) to trigger quickly. Hard cap (maxRuntimeFileBytes)
@@ -861,15 +853,13 @@ describe("BOUND-02/03 file caps + writer LRU", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 2 — WR-04 drop signal observable (BOUND-02 / WR-04 carry-over)
+  // Test 2 — drop signal observable
   //
   // Forces a drop via a tiny captureMaxBytes and asserts the recorder
   // exposes a droppedEvents() accessor that returns > 0 after the drop.
-  // Satisfies WR-04: drops are observable (not silent).
-  //
-  // Fails RED because no droppedEvents() accessor exists on the recorder today.
+  // Drops must be observable (not silent).
   // ---------------------------------------------------------------------------
-  it("droppedEvents_accessor_returns_nonzero_count_after_soft_cap_drop (WR-04)", async () => {
+  it("droppedEvents_accessor_returns_nonzero_count_after_soft_cap_drop", async () => {
     const softCap = 1024;
     const recorder = createTrajectoryRecorder({
       agentId: "agent-1",
@@ -894,7 +884,7 @@ describe("BOUND-02/03 file caps + writer LRU", () => {
     }
     expect(dropped).toBe(true);
 
-    // WR-04: droppedEvents() accessor must exist and return > 0
+    // droppedEvents() accessor must exist and return > 0
     expect(typeof (recorder as { droppedEvents?: unknown }).droppedEvents).toBe("function");
     const count = (recorder as unknown as { droppedEvents(): number }).droppedEvents();
     expect(count).toBeGreaterThan(0);
@@ -903,21 +893,18 @@ describe("BOUND-02/03 file caps + writer LRU", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 3 — LRU eviction at MAX_TRAJECTORY_WRITERS (BOUND-03)
+  // Test 3 — LRU eviction at MAX_TRAJECTORY_WRITERS
   //
   // Creates MAX_TRAJECTORY_WRITERS + 1 = 101 recorders each with a distinct
   // file path. After the 101st recorder is constructed asserts:
   //   (a) writerRegistry.size === MAX_TRAJECTORY_WRITERS (100) — oldest evicted
   //   (b) MAX_TRAJECTORY_WRITERS is exported from runtime.ts
   //   (c) TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES is exported from runtime.ts
-  //
-  // Fails RED because writerRegistry is an unbounded plain Map today
-  // (size will be 101, not 100) and MAX_TRAJECTORY_WRITERS is not exported.
   // ---------------------------------------------------------------------------
   it("LRU_eviction_caps_writerRegistry_at_MAX_TRAJECTORY_WRITERS_when_101_recorders_constructed", async () => {
-    // MAX_TRAJECTORY_WRITERS must be exported from runtime.ts (RED: not yet exported)
+    // MAX_TRAJECTORY_WRITERS must be exported from runtime.ts
     expect(MAX_TRAJECTORY_WRITERS).toBe(100);
-    // TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES must be exported (RED: not yet exported)
+    // TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES must be exported
     expect(TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES).toBe(10 * 1024 * 1024);
 
     const recorders: ReturnType<typeof createTrajectoryRecorder>[] = [];
@@ -959,31 +946,25 @@ describe("BOUND-02/03 file caps + writer LRU", () => {
   // ---------------------------------------------------------------------------
   // Test 4 — TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES constant export
   //
-  // Verifies the exported constant has the correct value per design §5 D7.
-  // Fails RED because TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES is not exported yet.
+  // Verifies the exported constant has the correct value.
   // ---------------------------------------------------------------------------
   it("TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES_exported_as_10MB", () => {
-    // This import would fail to compile on pre-patch code (export doesn't exist).
     expect(TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES).toBe(10 * 1024 * 1024);
   });
 
   // ---------------------------------------------------------------------------
-  // Test 5 — Hard-cap 50 MB safety net emits errorKind:"resource" WARN once
+  // Test 5 — Hard-cap safety net emits errorKind:"resource" WARN once
   //
-  // The 50 MB hard-cap branch (step 4b in recordEvent) is distinct from the
-  // 10 MB soft cap (step 4a). The hard cap fires when writtenBytes would
-  // exceed usableFileBytes (maxRuntimeFileBytes - sentinelReserveBytes).
-  // It silently drops the event — but SC3 + BOUND-02 require a WARN with
+  // The hard-cap branch in recordEvent is distinct from the soft cap. The
+  // hard cap fires when writtenBytes would exceed usableFileBytes
+  // (maxRuntimeFileBytes - sentinelReserveBytes). It silently drops the
+  // event — but the implementation must emit a WARN with
   // errorKind:"resource" and hint pointing to observability.logRotation.
   //
   // The WARN must fire ONCE per recorder (not once per dropped event after
   // the cap — a flag guards repeat emission).
-  //
-  // Fails RED because:
-  //   (a) TrajectoryRecorderInit has no `logger` field
-  //   (b) the hard-cap branch emits no logger.warn call
   // ---------------------------------------------------------------------------
-  it("hard_cap_50mb_emits_errorKind_resource_WARN_once_via_injected_logger (SC3/BOUND-02)", async () => {
+  it("hard_cap_emits_errorKind_resource_WARN_once_via_injected_logger", async () => {
     const warnCalls: Array<[Record<string, unknown>, string]> = [];
     const mockLogger = {
       level: "warn",

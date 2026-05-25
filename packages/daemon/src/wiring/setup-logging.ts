@@ -2,8 +2,8 @@
 /**
  * Logging subsystem setup: file transport, tracing logger, log level
  * manager, module-bound loggers, and daemon version detection.
- * Extracted from daemon.ts steps 1.5 through 3.7 to isolate
- * infrastructure concerns from the main wiring sequence.
+ * Extracted from daemon.ts to isolate infrastructure concerns from the
+ * main wiring sequence.
  * @module
  */
 
@@ -56,7 +56,7 @@ export function setupLogging(deps: {
 
   // 1.5. Construct file transport from logging config.
   // Forward observability.logRotation policy when present so pino-roll uses
-  // the cross-stream policy (ROTATE-02).  The logRotation policy takes
+  // the cross-stream policy. The logRotation policy takes
   // precedence over daemon.logging.maxSize/maxFiles for daemon.log.
   const loggingConfig = container.config.daemon?.logging;
   const configLogLevel = container.config.logLevel ?? "info";

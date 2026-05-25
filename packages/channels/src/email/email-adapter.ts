@@ -166,10 +166,9 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
 
       lastActivity = systemNowMs();
 
-      // D1 (Plan 01-03): mint traceId at ingress, stamp into metadata.
-      // NOTE: The Email adapter previously dispatched without an "Inbound message"
-      // INFO log — adding it here gives operators the same fleet-wide grep target
-      // (messageId=<id>) that exists for all other adapters (AGENTS.md §2.7).
+      // Mint traceId at ingress, stamp into metadata.
+      // The "Inbound message" INFO log gives operators the same fleet-wide
+      // grep target (messageId=<id>) that exists for all other adapters.
       const traceId = randomUUID();
       normalized.metadata.traceId = traceId;
       deps.logger.info(

@@ -25,7 +25,7 @@
  * `dataDir: <tempDir>` and pass `COMIS_CONFIG_PATHS=<tempConfigYaml>`
  * to the spawned CLI.
  *
- * Per AGENTS.md §2.5: imports from dist/ — requires `pnpm build` first.
+ * Imports from dist/ — requires `pnpm build` first.
  *
  * Run with: `pnpm build && pnpm test:integration -- oauth-doctor`.
  *

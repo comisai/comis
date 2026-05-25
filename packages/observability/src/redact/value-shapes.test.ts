@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Value-shape redactor tests (REDACT-01 / REDACT-03).
+ * Value-shape redactor tests.
  *
  * Per-pattern positive + negative fixtures; walker tests; per-event redactor tests.
- * This file is the RED gate — tests fail before value-shapes.ts lands.
  *
  * @module
  */
@@ -387,7 +386,7 @@ describe("redactEventForExport", () => {
 });
 
 // ---------------------------------------------------------------------------
-// substitutePathsInString (REDACT-02)
+// substitutePathsInString
 // ---------------------------------------------------------------------------
 
 describe("substitutePathsInString", () => {
@@ -437,7 +436,7 @@ describe("substitutePathsInString", () => {
 });
 
 // ---------------------------------------------------------------------------
-// walkAndRedactStrings with opts (REDACT-02)
+// walkAndRedactStrings with opts
 // ---------------------------------------------------------------------------
 
 describe("walkAndRedactStrings with RedactionOpts", () => {

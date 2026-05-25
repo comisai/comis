@@ -450,7 +450,7 @@ export interface ChannelEvents {
   };
 
   // -------------------------------------------------------------------------
-  // Dedup events (D12 / DEDUP-01)
+  // Dedup events
   // -------------------------------------------------------------------------
 
   /** Duplicate inbound message detected within dedup window */

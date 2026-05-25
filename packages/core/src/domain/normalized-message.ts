@@ -61,11 +61,11 @@ export const NormalizedMessageSchema = z.strictObject({
      * `z.looseObject` (zod v4 passthrough equivalent). The one concrete typed
      * field is:
      *
-     * - `traceId?: string` — Channel-ingress trace identifier (D1, Plan 01-01).
+     * - `traceId?: string` — Channel-ingress trace identifier.
      *   Auto-injected by channel adapters before the handler fanout; the
      *   orchestrator's `adapter.onMessage` wrap reads this via
      *   `getMessageTraceId(msg)` to reuse the ingress traceId in its
-     *   `runWithContext` call (defense-in-depth per OBSERVABILITY_DESIGN.md §5).
+     *   `runWithContext` call (defense-in-depth).
      *   Must be a valid UUID when present (z.guid validation).
      */
     metadata: z.looseObject({ traceId: z.guid().optional() }).default({}),
@@ -90,7 +90,7 @@ export function parseMessage(raw: unknown): Result<NormalizedMessage, z.ZodError
  * Returns the `metadata.traceId` string when it is present and is a string;
  * returns `undefined` otherwise. The defensive `typeof v === "string"` check
  * guards against messages that were not parsed through the new schema (e.g.
- * messages constructed before Plan 01-01 shipped, or from external sources).
+ * messages constructed before the schema change shipped, or from external sources).
  *
  * Usage (orchestrator wrap site):
  * ```typescript

@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for Echo adapter runWithContext wrap (TRACE-01).
+ * Unit tests for Echo adapter runWithContext wrap.
  *
  * Asserts that injectMessage wraps handler dispatch in runWithContext
  * and that a pre-stamped traceId on msg.metadata.traceId is reused
  * (not overwritten) — defense-in-depth for chaos tests that inject
  * a known traceId for assertion.
- *
- * RED state: fails before the runWithContext wrap is added to
- * echo-adapter.ts (tryGetContext() returns undefined).
  *
  * @module
  */
@@ -39,8 +36,8 @@ function makeEchoMsg(overrides?: Partial<NormalizedMessage>): NormalizedMessage 
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("EchoChannelAdapter -- injectMessage runWithContext wrap (TRACE-01)", () => {
-  it("injectMessage wraps handler dispatch in runWithContext (TRACE-01)", async () => {
+describe("EchoChannelAdapter -- injectMessage runWithContext wrap", () => {
+  it("injectMessage wraps handler dispatch in runWithContext", async () => {
     let ctxTraceId: string | undefined;
     let ctxChannelType: string | undefined;
     let stampedTraceId: string | undefined;

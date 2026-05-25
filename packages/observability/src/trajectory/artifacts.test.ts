@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Co-located unit tests for buildTraceArtifacts (LIFE-02, design §5 D4).
+ * Co-located unit tests for buildTraceArtifacts.
  *
  * @module
  */
@@ -21,7 +21,7 @@ const baseRunState: TraceArtifactsRunState = {
   turnCount: 1,
 };
 
-describe("buildTraceArtifacts (LIFE-02)", () => {
+describe("buildTraceArtifacts", () => {
   it("returns payload with required top-level keys", () => {
     const payload = buildTraceArtifacts(baseRunState);
     expect(payload).toHaveProperty("finalStatus", "stop");

@@ -84,8 +84,8 @@ import { createProviderHandlers } from "./provider-handlers.js";
  * are migrated to `throw new PreconditionError(...)` /
  * `throw new ValidationError(...)`. The typed-error migration of the
  * remaining bare-Error handlers in packages/daemon/src/api/ is deferred.
- * The deletion is intentional per AGENTS.md §2.9 — keeping the substring
- * fallbacks was the BC shim; the migration is incremental hardening.
+ * The deletion is intentional — keeping the substring fallbacks was the
+ * BC shim; the migration is incremental hardening.
  */
 export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: string; level: "warn" | "error" } {
   // Typed errors: instanceof checks. Add new typed classes here as

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Co-located unit tests for buildTraceMetadata (LIFE-01, design §5 D4).
+ * Co-located unit tests for buildTraceMetadata.
  *
  * @module
  */
@@ -17,8 +17,8 @@ const baseParams: TraceMetadataParams = {
   redaction: { policy: "platform-aware" },
 };
 
-describe("buildTraceMetadata (LIFE-01)", () => {
-  it("returns the 7 top-level keys per design §5 D4", () => {
+describe("buildTraceMetadata", () => {
+  it("returns the 7 top-level keys", () => {
     const payload = buildTraceMetadata(baseParams);
     expect(Object.keys(payload).sort()).toEqual(
       ["config", "harness", "model", "plugins", "prompting", "redaction", "skills"].sort(),

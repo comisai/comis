@@ -8,8 +8,8 @@ import type {
 } from "./graph-coordinator-state.js";
 
 // ---------------------------------------------------------------------------
-// Local factories (per AGENTS.md §2.5 — hand-built objects, `as unknown as T`
-// when only a subset of GraphRunState fields are touched by the SUT)
+// Local factories — hand-built objects, `as unknown as T` when only a subset
+// of GraphRunState fields are touched by the SUT.
 // ---------------------------------------------------------------------------
 
 function makeState(overrides: Partial<CoordinatorSharedState> = {}): CoordinatorSharedState {

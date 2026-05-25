@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Behavior tests for `comis trace` CLI subcommands (CLI-01..05, CLI-07).
+ * Behavior tests for `comis trace` CLI subcommands.
  *
  * Covers all 5 subcommands plus --json flag routing and error handling.
  * Uses mocked RPC layer via withClient + createMockRpcClient.
@@ -407,12 +407,12 @@ describe("trace.ts source file contains no raw client.call() invocations", () =>
   it("confirms trace.ts uses only callTyped (no raw client.call) to uphold arch invariant", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const traceSrc = resolve(here, "trace.ts");
-    // The file may not exist yet during RED phase — if so, skip the content check.
+    // The file may not exist yet — if so, skip the content check.
     let content: string;
     try {
       content = readFileSync(traceSrc, "utf8");
     } catch {
-      // File doesn't exist yet (RED phase). The arch test will enforce this at GREEN.
+      // File doesn't exist yet. The arch test will enforce this once present.
       return;
     }
     // Remove comment lines to avoid false positives

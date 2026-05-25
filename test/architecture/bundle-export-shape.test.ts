@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture test — BUNDLE-* shape invariants.
+ * Architecture test — bundle export shape invariants.
  *
  * Pins, by AST/text inspection of the production source:
- *   1. The 4 BUNDLE-03 hard-limit constants (design §5 D5 lines 317–321)
- *      with exact values.
- *   2. The TrajectoryBundleWarning.code closed union — exactly the 6 §6.2
+ *   1. The 4 hard-limit constants with exact values.
+ *   2. The TrajectoryBundleWarning.code closed union — exactly the 6
  *      values, no more, no less.
  *   3. The FILE_PLAN array in bundle-exporter.ts enumerates exactly the 7
  *      non-manifest files (manifest.json is written separately) with exact
  *      mediaTypes, and "manifest.json" appears ≥2 times in the file.
- *   4. TrajectoryBundleManifest has the expected readonly field set per §6.2.
- *   5. The privacy-warning docstring (design §8.5) is present in
+ *   4. TrajectoryBundleManifest has the expected readonly field set.
+ *   5. The privacy-warning docstring is present in
  *      bundle-exporter.ts (the module that owns the exporter pipeline).
  *
  * Shrink-only: no allowlist entries. Constants and union values are pinned
@@ -53,7 +52,7 @@ const bundleExporterCode = stripComments(bundleExporterContent);
 // Case 1: Hard-limit constants exist in export.ts with exact values
 // ---------------------------------------------------------------------------
 
-describe("bundle-export-shape: BUNDLE-03 hard-limit constants (export.ts)", () => {
+describe("bundle-export-shape: hard-limit constants (export.ts)", () => {
   it("MAX_TRAJECTORY_RUNTIME_EVENTS is declared as 200_000 in export.ts", () => {
     // Use global flag so .match() returns all occurrences (array length == occurrence count).
     const matches = exportCode.match(
@@ -100,7 +99,7 @@ describe("bundle-export-shape: BUNDLE-03 hard-limit constants (export.ts)", () =
 // ---------------------------------------------------------------------------
 
 describe("bundle-export-shape: TrajectoryBundleWarning.code closed union (export.ts)", () => {
-  it("TrajectoryBundleWarning.code has exactly the 6 design §6.2 values", () => {
+  it("TrajectoryBundleWarning.code has exactly the 6 values", () => {
     // Locate the TrajectoryBundleWarning interface block.
     const interfaceBlockMatch = exportContent.match(
       /export interface TrajectoryBundleWarning\s*\{([\s\S]*?)^}/m,
@@ -176,7 +175,7 @@ describe("bundle-export-shape: FILE_PLAN 7-file + manifest shape (bundle-exporte
     expect(names).toEqual(expectedNames);
   });
 
-  it("FILE_PLAN entries have correct mediaTypes per design §5 D5 table", () => {
+  it("FILE_PLAN entries have correct mediaTypes", () => {
     const filePlanMatch = bundleExporterCode.match(
       /const FILE_PLAN[\s\S]*?= \[([\s\S]*?)\];/,
     );
@@ -195,7 +194,7 @@ describe("bundle-export-shape: FILE_PLAN 7-file + manifest shape (bundle-exporte
       nameToMediaType[nameMatches[i]![1]!] = mediaTypeMatches[i]![1]!;
     }
 
-    // Locked table from design §5 D5.
+    // Locked table.
     const expectedMediaTypes: Record<string, string> = {
       "events.jsonl": "application/x-ndjson",
       "session-branch.json": "application/json",
@@ -231,7 +230,7 @@ describe("bundle-export-shape: FILE_PLAN 7-file + manifest shape (bundle-exporte
 // ---------------------------------------------------------------------------
 
 describe("bundle-export-shape: TrajectoryBundleManifest field set (export.ts)", () => {
-  it("TrajectoryBundleManifest has all required §6.2 fields", () => {
+  it("TrajectoryBundleManifest has all required fields", () => {
     const manifestBlockMatch = exportContent.match(
       /export interface TrajectoryBundleManifest\s*\{([\s\S]*?)^}/m,
     );
@@ -246,7 +245,7 @@ describe("bundle-export-shape: TrajectoryBundleManifest field set (export.ts)", 
     const fieldMatches = [...block.matchAll(/readonly (\w+)\??:/g)];
     const fields = fieldMatches.map((m) => m[1]!);
 
-    // Required fields per design §6.2 (11 required).
+    // Required fields (11 required).
     const requiredFields = [
       "traceSchema",
       "schemaVersion",
@@ -267,7 +266,7 @@ describe("bundle-export-shape: TrajectoryBundleManifest field set (export.ts)", 
       );
     }
 
-    // Optional fields per design §6.2.
+    // Optional fields.
     const optionalFields = ["sessionKey", "contents", "supplementalFiles", "warnings"];
     for (const field of optionalFields) {
       expect(fields, `TrajectoryBundleManifest must have optional field: ${field}`).toContain(
@@ -281,19 +280,19 @@ describe("bundle-export-shape: TrajectoryBundleManifest field set (export.ts)", 
 });
 
 // ---------------------------------------------------------------------------
-// Case 5: Privacy warning docstring present in bundle-exporter.ts (§8.5)
+// Case 5: Privacy warning docstring present in bundle-exporter.ts
 // ---------------------------------------------------------------------------
 
 describe("bundle-export-shape: privacy warning docstring (bundle-exporter.ts)", () => {
-  it("bundle-exporter.ts module docstring references design §8.5 privacy warning", () => {
-    // The design §8.5 privacy note must appear in the module's docstring.
-    // Phase 5 D9 redaction implementer will see this as the contract being upgraded.
+  it("bundle-exporter.ts module docstring references privacy warning", () => {
+    // The privacy note must appear in the module's docstring.
+    // The redaction implementer will see this as the contract being upgraded.
     const hasPrivacyRef = /§8\.?5|Privacy Warning|session.?branch\.json.*PII|raw.?content|redact/i.test(
       bundleExporterContent,
     );
     expect(
       hasPrivacyRef,
-      "bundle-exporter.ts must contain a design §8.5 privacy/PII reference in its module docstring",
+      "bundle-exporter.ts must contain a privacy/PII reference in its module docstring",
     ).toBe(true);
   });
 });

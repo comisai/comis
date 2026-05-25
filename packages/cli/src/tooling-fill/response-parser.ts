@@ -16,8 +16,8 @@
  * grammar. Shell-shaped strings INSIDE the JSON array pass through here and
  * are filtered downstream by validatePackageNames.
  *
- * No I/O, no logger. Returns Result per AGENTS.md §2.1; errorKind is the
- * closed union "validation" with a discriminated `reason` for each failure.
+ * No I/O, no logger. Returns Result; errorKind is the closed union
+ * "validation" with a discriminated `reason` for each failure.
  *
  * @module
  */

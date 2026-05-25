@@ -6,7 +6,7 @@ icon: "chart-line"
 
 A fleet-wide bug must be diagnosable from one structured artifact with one command in under five minutes.
 
-This page documents the observability foundations rebuilt in Milestones 1–3 (Phases 1–7). It covers the trajectory layer, the 55-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
+This page documents the observability foundations. It covers the trajectory layer, the 55-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
 
 <CardGroup cols={2}>
   <Card title="Incident Bundle" icon="folder-tree" href="/operations/incident-bundle">
@@ -64,7 +64,7 @@ The bundle exporter reads `trace.metadata` to populate `metadata.json` and `trac
 
 ## 4. Bridge Mapping (55 entries)
 
-The trajectory bus-bridge maps 55 event types from the typed event bus to trajectory events (up from 18 pre-milestone — a ~3× coverage improvement that closes the G2 gap).
+The trajectory bus-bridge maps 55 event types from the typed event bus to trajectory events (up from 18 previously — a ~3× coverage improvement).
 
 <Info>
 **Architecture invariant:** `test/architecture/trajectory-event-types-known.test.ts` asserts the disjoint-set invariant (no overlap between bridge-mapped types and direct-emit types) and a bridge count ≥ 45. Current count: 55.
@@ -111,7 +111,7 @@ The `MAX_TRAJECTORY_WRITERS = 100` constant is exported from `packages/observabi
 
 ## 6. Forensic INFO Promotions
 
-Seven forensic events that fire at most O(1) per turn are promoted from DEBUG to INFO so production daemons at `logLevel: info` retain the signal needed to diagnose the 2026-05-24 duplicate-adapter incident class (closes G5).
+Seven forensic events that fire at most O(1) per turn are promoted from DEBUG to INFO so production daemons at `logLevel: info` retain the signal needed to diagnose the 2026-05-24 duplicate-adapter incident class.
 
 Before this change, `Message enqueued` was `level: 20` (DEBUG). A production daemon at `logLevel: info` would have silently discarded it — making the duplicate-enqueue symptom invisible without enabling debug logging first.
 
@@ -174,7 +174,7 @@ If `handlersPerAdapter[<type>] > 1`, a WARN fires immediately:
 {
   "level": 40,
   "msg": "Duplicate adapter registration detected",
-  "hint": "Duplicate adapter registration detected; see AGENTS.md §6.1",
+  "hint": "Duplicate adapter registration detected",
   "errorKind": "config",
   "handlersPerAdapter": { "telegram": 2 }
 }
@@ -188,11 +188,11 @@ If you see a `handlersPerAdapter` WARN at boot, do not proceed to production. Th
 
 ---
 
-## 9. step: Discipline (HYGIENE-01)
+## 9. step: Discipline
 
-Every known pipeline stage emits at least one log line carrying `step: "<stage>"` — enforced by `test/architecture/pipeline-step-coverage.test.ts` (HYGIENE-01).
+Every known pipeline stage emits at least one log line carrying `step: "<stage>"` — enforced by `test/architecture/pipeline-step-coverage.test.ts`.
 
-**Why it matters:** before this change, only 3% of `daemon.log` lines (15 of 480 sampled) carried a `step:` field. Filtering by pipeline stage required reading every log line. The target after HYGIENE-01 is ≥ 50% coverage.
+**Why it matters:** before this change, only 3% of `daemon.log` lines (15 of 480 sampled) carried a `step:` field. Filtering by pipeline stage required reading every log line. The target is ≥ 50% coverage.
 
 The authoritative stage token map lives in `test/architecture/pipeline-step-coverage.test.ts` — consult it when adding new log call sites.
 
@@ -205,7 +205,7 @@ jq 'select(.step == "queue-enqueue")' ~/.comis/logs/daemon.log
 Other useful stage tokens: `"channels-inbound"`, `"queue-dequeue"`, `"agent-execute"`, `"delivery-outbound"`.
 
 <Info>
-Cross-reference: HYGIENE-01 was shipped in Phase 8, Plan 01. The architecture test is shrink-only — adding a new stage without a `step:`-tagged emit fails CI.
+The architecture test is shrink-only — adding a new stage without a `step:`-tagged emit fails CI.
 </Info>
 
 ---
@@ -314,11 +314,11 @@ jq 'select(.event == "health:budget_exceeded")' ~/.comis/logs/daemon.log
 
 ## 14. Worked Example — 2026-05-24 Incident Replay
 
-This section shows how the four observability signals introduced in Milestones 1–3 surface the 2026-05-24 duplicate-adapter bug in under five minutes.
+This section shows how the four observability signals surface the 2026-05-24 duplicate-adapter bug in under five minutes.
 
 **Setup:** fresh daemon, `setup-channels-runtime.ts:217` regression re-introduced (the same Telegram adapter passed into both `deps.adapters` and `deps.channelRegistry`). Boot the daemon, send one Telegram message.
 
-### Signal 1 — Boot WARN (Section 8)
+### Signal 1 — Boot WARN
 
 ```json
 {
@@ -330,14 +330,14 @@ This section shows how the four observability signals introduced in Milestones 1
 {
   "level": 40,
   "msg": "Duplicate adapter registration detected",
-  "hint": "Duplicate adapter registration detected; see AGENTS.md §6.1",
+  "hint": "Duplicate adapter registration detected",
   "errorKind": "config"
 }
 ```
 
 Root cause visible at boot — before any user traffic.
 
-### Signal 2 — Two `queue.enqueued` trajectory events (Sections 4, 6)
+### Signal 2 — Two `queue.enqueued` trajectory events
 
 ```bash
 jq 'select(.type == "queue.enqueued")' ~/.comis/workspace/sessions/default/**/*.trajectory.jsonl
@@ -345,7 +345,7 @@ jq 'select(.type == "queue.enqueued")' ~/.comis/workspace/sessions/default/**/*.
 
 Returns two entries with `queueDepth: 1` and `queueDepth: 2`, same `sessionKey`, same timestamp window — the duplicate processing visible in the structured artifact.
 
-### Signal 3 — dedup:duplicate_inbound (Section 7)
+### Signal 3 — dedup:duplicate_inbound
 
 ```json
 {
@@ -361,7 +361,7 @@ Returns two entries with `queueDepth: 1` and `queueDepth: 2`, same `sessionKey`,
 
 Fires within 1 ms of the duplicate inbound. `deltaMs: 1` matches the original incident's two `Message enqueued` lines at `06:01:47.385` and `06:01:47.386`.
 
-### Signal 4 — comis trace (Section 10)
+### Signal 4 — comis trace
 
 ```bash
 node packages/cli/dist/cli.js trace --message-id d9f5e08e
@@ -384,7 +384,7 @@ All four signals — in a single terminal session. Time from user complaint to i
 ## 15. Existing Tracking Surfaces (pre-existing, preserved for completeness)
 
 <Note>
-The following tracking surfaces predate the Milestone 1–3 observability work and continue to operate as before. They are referenced by the web dashboard at [/web-dashboard/observability](/web-dashboard/observability).
+The following tracking surfaces predate the observability work above and continue to operate as before. They are referenced by the web dashboard at [/web-dashboard/observability](/web-dashboard/observability).
 </Note>
 
 ### Token Tracking

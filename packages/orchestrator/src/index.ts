@@ -14,7 +14,7 @@ export * from "./inbound/setup-and-route.js";
 export * from "./inbound/resolve-and-preprocess.js";
 export * from "./inbound/inbound-gate.js";
 
-// Dedup detector (DEDUP-02). Re-exported so test/integration replay harness
+// Dedup detector. Re-exported so test/integration replay harness
 // and the perf test can import createDedupDetector from @comis/orchestrator.
 // Consumer: test/integration/incident-replay-2026-05-24.test.ts
 export { createDedupDetector } from "./inbound/dedup-detector.js";

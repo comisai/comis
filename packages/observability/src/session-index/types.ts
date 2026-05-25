@@ -6,12 +6,12 @@
  * `~/.comis/logs/session-index.YYYY-MM-DD.jsonl`:
  *
  *   - `session_started` — once per session, fired from pi-event-bridge
- *     inside the !alreadyEmitted guard (INDEX-03)
+ *     inside the !alreadyEmitted guard
  *   - `turn_completed` — once per LLM turn, fired from the
  *     `observability:token_usage` bus event which carries BOTH input
- *     AND output tokens (INDEX-02)
+ *     AND output tokens
  *   - `session_ended` — once per session destroy, fired from
- *     comis-session-manager (INDEX-03)
+ *     comis-session-manager
  *
  * @module
  */
@@ -49,7 +49,7 @@ export interface SessionStartedEvent extends SessionIndexEventBase {
 /**
  * Emitted once per LLM turn, sourced from the `observability:token_usage`
  * bus event which carries both input AND output tokens (not from onTurnUsage
- * which only has input tokens — see research §4 pitfall 4).
+ * which only has input tokens).
  */
 export interface TurnCompletedEvent extends SessionIndexEventBase {
   readonly event: "turn_completed";
@@ -83,7 +83,7 @@ export interface SessionEndedEvent extends SessionIndexEventBase {
   readonly totalTokens: number;
 }
 
-/** Discriminated union of all session index event types (design §5 D14). */
+/** Discriminated union of all session index event types. */
 export type SessionIndexEvent =
   | SessionStartedEvent
   | TurnCompletedEvent

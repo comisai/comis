@@ -239,9 +239,8 @@ function profileExpiryFinding(profile: OAuthProfile): DoctorFinding {
  * stored (now-stale) token.
  *
  * Duplicates ~30 LoC of refresh-POST machinery from
- * `refreshOpenAICodexTokenLocal`. Per AGENTS.md §2.3 rule of three, two
- * call-sites is below the extraction threshold — duplicate over premature
- * abstraction.
+ * `refreshOpenAICodexTokenLocal`. By the rule of three, two call-sites is
+ * below the extraction threshold — duplicate over premature abstraction.
  *
  * NEVER prints `profile.refresh` in any returned finding.
  */

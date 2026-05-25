@@ -28,7 +28,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | embeddingCircuitBreakerState | optional | obs.diagnostics omits the embedding-breaker state field; UI shows "unknown" for breaker health | packages/daemon/src/api/types.ts:453 |
 | tokenTracker | optional | obs cache-stats RPC for token-tracker counters returns null; provider-token cache observability is disabled | packages/daemon/src/api/types.ts:456 |
 | dataDir | optional | obs.trace.* handlers default to $HOME/.comis at handler-construction time; session-index scan path falls back to the home directory convention | packages/daemon/src/api/types.ts:470 |
-| exportTrajectoryBundle | optional | obs.trace.export throws "exportTrajectoryBundle DI not configured" — the export RPC is unavailable until production wiring injects the Phase 4 bundle pipeline | packages/daemon/src/api/types.ts:477 |
+| exportTrajectoryBundle | optional | obs.trace.export throws "exportTrajectoryBundle DI not configured" — the export RPC is unavailable until production wiring injects the bundle pipeline | packages/daemon/src/api/types.ts:477 |
 
 ## Removed Fields (stale-fallback — deleted)
 

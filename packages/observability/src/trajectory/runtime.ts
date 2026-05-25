@@ -80,7 +80,7 @@ const DEFAULT_SENTINEL_RESERVE_BYTES = 2 * 1024;
 const EVENT_SIZE_SENTINEL_REASON = "trajectory-event-size-limit";
 
 /**
- * Soft capture cap (BOUND-02 / design §5 D7).
+ * Soft capture cap.
  *
  * When `recordEvent` would push `writtenBytes` past this threshold the
  * recorder emits `trace.truncated` INLINE (via `emitTruncatedInternal`)
@@ -105,11 +105,11 @@ const TRAJECTORY_DATA_MAX_DEPTH = 6;
 
 /**
  * Maximum number of concurrent trajectory writers kept in the module-level
- * registry (BOUND-03 / design §5 D7). When a new distinct file path would
- * push the registry past this limit, the least-recently-used writer is
- * evicted: `flushAndClose()` is called fire-and-forget, then deleted from
- * the map. JavaScript `Map` preserves insertion order, making it a natural
- * LRU structure: move-to-end on access, evict the first (oldest) key.
+ * registry. When a new distinct file path would push the registry past this
+ * limit, the least-recently-used writer is evicted: `flushAndClose()` is
+ * called fire-and-forget, then deleted from the map. JavaScript `Map`
+ * preserves insertion order, making it a natural LRU structure:
+ * move-to-end on access, evict the first (oldest) key.
  *
  * Set to 100 — large enough for typical long-running daemon sessions with
  * many concurrent agent sub-runs, small enough to prevent unbounded growth.
@@ -122,17 +122,16 @@ export const MAX_TRAJECTORY_WRITERS = 100;
 const writerRegistry = new Map<string, QueuedFileWriter>();
 
 // ---------------------------------------------------------------------------
-// limitTrajectoryPayloadValue — conversion wrapper (BOUND-01)
+// limitTrajectoryPayloadValue — conversion wrapper
 //
 // Walks the value graph produced by sanitizeForPersistence and re-maps
 // any { __bounded__: "bounded-payload-*" } sentinel records into the
 // trajectory-specific { truncated: true, reason: "trajectory-*", ... }
-// shape required by BOUND-01 acceptance criteria.
+// shape.
 //
 // DOES NOT touch bounded-payload.ts or combined-walker.ts — those are
 // shared by cache-trace, config-audit, and system-prompt-report consumers
-// which key on __bounded__ and must keep seeing it (Option A from
-// 02-RESEARCH.md §BOUND-01).
+// which key on __bounded__ and must keep seeing it.
 //
 // The function is pure (no I/O, no clock). No cycle guard is needed here
 // because sanitizeForPersistence already collapsed all cycles into
@@ -153,7 +152,7 @@ function isBoundedSentinel(v: unknown): v is { __bounded__: BoundedPayloadReason
 /**
  * Converts shared `{ __bounded__ }` sentinels in a sanitized payload graph
  * into trajectory-specific `{ truncated: true, reason: "trajectory-*", ... }`
- * sentinels required by BOUND-01.
+ * sentinels.
  *
  * Recurses into plain objects and arrays for non-sentinel nodes.
  * Exported so it can be unit-tested independently.
@@ -172,7 +171,7 @@ export function limitTrajectoryPayloadValue(value: unknown): unknown {
     };
     const reason = node.__bounded__;
 
-    // Exhaustive switch — closed union discriminator per AGENTS.md §2.8.
+    // Exhaustive switch — closed union discriminator.
     switch (reason) {
       case BOUNDED_PAYLOAD_REASONS.fieldSizeLimit:
         return {
@@ -240,7 +239,7 @@ export function limitTrajectoryPayloadValue(value: unknown): unknown {
 }
 
 // ---------------------------------------------------------------------------
-// LRU writer acquisition (BOUND-03)
+// LRU writer acquisition
 //
 // Wraps `getQueuedFileWriter` with JS Map insertion-order LRU semantics:
 //   - On re-access: delete + re-set (moves key to the end = most-recently-used)
@@ -327,13 +326,13 @@ export function createTrajectoryRecorder(
   const maxQueuedBytes =
     init.budgets?.maxQueuedBytes ?? DEFAULT_MAX_QUEUED_BYTES;
   const usableFileBytes = Math.max(0, maxRuntimeFileBytes - sentinelReserveBytes);
-  // Soft capture cap — BOUND-02 per-recorder override (default 10 MB).
+  // Soft capture cap — per-recorder override (default 10 MB).
   // Must be ≤ usableFileBytes in practice; values larger than the 50 MB
   // hard cap simply mean the hard cap fires first.
   const captureMaxBytes =
     init.budgets?.captureMaxBytes ?? TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES;
 
-  // Acquire writer via LRU-bookkeeping helper (BOUND-03). Handles
+  // Acquire writer via LRU-bookkeeping helper. Handles
   // move-to-end on re-access and eviction of oldest writers when the
   // registry would exceed MAX_TRAJECTORY_WRITERS.
   const writer = acquireWriter(filePath, {
@@ -348,11 +347,11 @@ export function createTrajectoryRecorder(
       : {}),
   });
 
-  // Best-effort pointer-file sidecar at `<sessionFile>.trajectory-path.json`
-  // (design §6.1 + §2.3). Only emit when the recorder was constructed
-  // alongside a per-session JSONL file — the env / cwd fallback paths
-  // have no session file to anchor the pointer to. Errors are swallowed
-  // by the helper; a missing pointer MUST NOT block trajectory writes.
+  // Best-effort pointer-file sidecar at `<sessionFile>.trajectory-path.json`.
+  // Only emit when the recorder was constructed alongside a per-session
+  // JSONL file — the env / cwd fallback paths have no session file to
+  // anchor the pointer to. Errors are swallowed by the helper; a missing
+  // pointer MUST NOT block trajectory writes.
   if (init.sessionFile !== undefined) {
     writeTrajectoryPointerFileBestEffort({
       sessionFile: init.sessionFile,
@@ -361,7 +360,7 @@ export function createTrajectoryRecorder(
     });
   }
 
-  // Extract optional logger for operator diagnostics (SC3 / BOUND-02).
+  // Extract optional logger for operator diagnostics.
   // Uses @comis/core's structural ComisLogger contract — no @comis/infra dep.
   const logger: ComisLogger | undefined = init.logger;
 
@@ -374,9 +373,9 @@ export function createTrajectoryRecorder(
     droppedEvents: 0,
     droppedEventBytes: 0,
     closed: false,
-    // Guard: emit the hard-cap WARN at most once per recorder lifetime
-    // (SC3 / BOUND-02). Without this flag, every subsequent call to
-    // recordEvent after the hard-cap fires would re-emit the WARN.
+    // Guard: emit the hard-cap WARN at most once per recorder lifetime.
+    // Without this flag, every subsequent call to recordEvent after the
+    // hard-cap fires would re-emit the WARN.
     hardCapWarnEmitted: false,
   };
 
@@ -431,7 +430,7 @@ export function createTrajectoryRecorder(
         | undefined;
 
       // 1a. Convert shared __bounded__ sentinels to trajectory-specific
-      //     { truncated: true, reason: "trajectory-*" } shape (BOUND-01).
+      //     { truncated: true, reason: "trajectory-*" } shape.
       //     limitTrajectoryPayloadValue is a pure walk that only touches
       //     sentinel nodes; plain values pass through unchanged.
       const bounded = limitTrajectoryPayloadValue(sanitized) as
@@ -468,8 +467,8 @@ export function createTrajectoryRecorder(
         bytes = Buffer.byteLength(line, "utf8");
       }
 
-      // 4a. Soft capture cap (BOUND-02 / design §5 D7). When writtenBytes
-      //     would cross TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES (default 10 MB,
+      // 4a. Soft capture cap. When writtenBytes would cross
+      //     TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES (default 10 MB,
       //     overridable via budgets.captureMaxBytes), emit trace.truncated
       //     INLINE and stop recording. emitTruncatedInternal bypasses the
       //     file-cap accounting via sentinelReserveBytes head-room, so the
@@ -492,10 +491,10 @@ export function createTrajectoryRecorder(
       // 4b. Hard-cap safety net (50 MB). Reserve head-room for the final
       //     trace.truncated sentinel via flushAndClose.
       //
-      //     SC3 / BOUND-02: emit a single WARN (errorKind:"resource") the
-      //     first time the hard cap fires so operators can observe the
-      //     breach without polling droppedEvents(). The guard flag prevents
-      //     re-emission on every subsequent dropped event.
+      //     Emit a single WARN (errorKind:"resource") the first time the
+      //     hard cap fires so operators can observe the breach without
+      //     polling droppedEvents(). The guard flag prevents re-emission
+      //     on every subsequent dropped event.
       if (state.writtenBytes + bytes > usableFileBytes) {
         state.droppedEvents += 1;
         if (logger !== undefined && !state.hardCapWarnEmitted) {
@@ -530,7 +529,7 @@ export function createTrajectoryRecorder(
     },
 
     async flushAndClose(): Promise<void> {
-      // Soft-cap inline close (BOUND-02): state.closed may already be true
+      // Soft-cap inline close: state.closed may already be true
       // if the soft cap fired inline during recordEvent. In that case we must
       // still flush+close the underlying writer — the sentinel was already
       // written inline, so we skip the droppedEvents branch but DO drain
@@ -550,7 +549,7 @@ export function createTrajectoryRecorder(
         // public hook so behaviour matches. Passes the legacy reason
         // string; does NOT pass droppedEventBytes / limitBytes because
         // the close-time path only has the drop count, not the byte
-        // accounting (that lives in Phase 2 D7).
+        // accounting.
         // state.seq is mutated by emitTruncatedInternal (increments by 1)
         // so the subsequent trace.write_failures branch below picks up
         // the bumped value without a separate sentinelSeq variable.
@@ -596,7 +595,7 @@ export function createTrajectoryRecorder(
       return emitTruncatedInternal(params);
     },
 
-    // WR-04 carry-over: expose the running dropped-event counter so callers
+    // Expose the running dropped-event counter so callers
     // at lifecycle-envelope emit sites (pi-event-bridge, comis-session-manager)
     // can detect and log drops instead of silently ignoring the "dropped" signal.
     droppedEvents(): number {
@@ -629,7 +628,7 @@ interface BuildEventInput {
    * Sanitized payload. The recorder always hands `sanitizeForPersistence`
    * output through here; `sanitizeForPersistence` returns object-shaped
    * values (or undefined when input was undefined), matching the envelope
-   * `data?: Record<string, unknown>` contract from design §6.2.
+   * `data?: Record<string, unknown>` contract.
    */
   readonly sanitized?: Record<string, unknown>;
   readonly parentEntryId?: string;
@@ -641,8 +640,7 @@ function buildEvent(input: BuildEventInput): TrajectoryEvent {
     traceSchema: "comis-trajectory",
     schemaVersion: 1,
     // Live recorder emits — `source` is a single-member union
-    // preserved for forward-compatibility of on-disk JSONL artifacts
-    // (design §6.2 + §1.4).
+    // preserved for forward-compatibility of on-disk JSONL artifacts.
     source: "runtime",
     type: input.type,
     // systemDateFrom + systemNowMs goes through the sanctioned-root

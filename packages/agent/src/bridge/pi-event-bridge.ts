@@ -49,11 +49,11 @@ import { extractMcpServerName } from "@comis/shared";
 import { classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
 
 /**
- * Fix D2 (log-review): classify a tool failure's errorKind when the SDK
- * reported `isError: true` from the start (i.e., `toolSuccess === false`
- * BEFORE the exitCode branch flips it). Pre-fix this branch left
- * `toolErrorKind` undefined and the `tool:executed` event payload
- * lacked `errorKind` for the most common failure path. Heuristic:
+ * Classify a tool failure's errorKind when the SDK reported `isError: true`
+ * from the start (i.e., `toolSuccess === false` BEFORE the exitCode branch
+ * flips it). Previously this branch left `toolErrorKind` undefined and the
+ * `tool:executed` event payload lacked `errorKind` for the most common
+ * failure path. Heuristic:
  *  - errorText starting with `[invalid_value]` / `[validation]` → validation
  *  - otherwise → dependency (external tool / MCP server returned an error)
  */
@@ -222,10 +222,9 @@ export interface PiEventBridgeDeps {
   /**
    * Session-scoped trajectory registry. When present, the bridge's
    * `agent_start` case consults `hasSessionStartedBeenEmitted(formattedKey)`
-   * to suppress per-turn `session:started` re-emits (design §6.4 mapping
-   * table — `session.started` fires once per session, NOT per pi-mono
-   * turn). The bridge itself is per-turn; the registry survives every
-   * turn so the latch lives there.
+   * to suppress per-turn `session:started` re-emits — `session.started`
+   * fires once per session, NOT per pi-mono turn. The bridge itself is
+   * per-turn; the registry survives every turn so the latch lives there.
    *
    * When omitted (legacy/test callers), the bridge falls back to the
    * pre-tlx unconditional emit so existing harnesses keep working.
@@ -235,7 +234,7 @@ export interface PiEventBridgeDeps {
    * Snapshot passed into `trace.metadata` once per session, immediately
    * after `session.started`. Contains harness/model/config/plugins/skills/
    * prompting/redaction. When omitted, the trace.metadata lifecycle envelope
-   * is skipped for this session. Plan 01-05 (LIFE-01).
+   * is skipped for this session.
    *
    * The config field is run through `sanitizeForPersistence` inside
    * `buildTraceMetadata` — raw config may contain secrets.
@@ -369,14 +368,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           if (m.agentStartMs === undefined) {
             m.agentStartMs = systemNowMs();
           }
-          // Suppress per-turn re-emits: design §6.4 makes session.started
-          // fire ONCE per session (not per pi-mono turn). The bridge is
-          // per-turn, so consult the session-scoped trajectoryRegistry
-          // latch — it survives across turns and resets only when the
-          // session is destroyed (or the daemon restarts and rebuilds
-          // the registry fresh). When the registry is absent
-          // (legacy/test callers), fall through to the legacy
-          // unconditional emit so existing harnesses keep working.
+          // Suppress per-turn re-emits: session.started fires ONCE per
+          // session (not per pi-mono turn). The bridge is per-turn, so
+          // consult the session-scoped trajectoryRegistry latch — it
+          // survives across turns and resets only when the session is
+          // destroyed (or the daemon restarts and rebuilds the registry
+          // fresh). When the registry is absent (legacy/test callers),
+          // fall through to the legacy unconditional emit so existing
+          // harnesses keep working.
           const formattedKey = formatSessionKey(deps.sessionKey);
           if (deps.trajectoryRegistry?.hasSessionStartedBeenEmitted(formattedKey) === true) {
             break;
@@ -394,10 +393,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             timestamp: systemNowMs(),
           });
           deps.trajectoryRegistry?.markSessionStarted(formattedKey);
-          // INDEX-03 (Plan 06-01): append session_started to the date-rolled
-          // session index JSONL. Co-located with the session:started bus emit +
-          // trajectoryRegistry latch so session_started fires exactly once per
-          // session (same guard).
+          // Append session_started to the date-rolled session index JSONL.
+          // Co-located with the session:started bus emit + trajectoryRegistry
+          // latch so session_started fires exactly once per session (same
+          // guard).
           appendSessionIndexEntry(
             deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
             {
@@ -413,9 +412,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               traceIds: [deps.executionId],
             },
           );
-          // LIFE-01 (Plan 01-05): emit the trace.metadata lifecycle envelope
-          // directly via the recorder — no bus event source per design §6.2
-          // Appendix B "(NEW D4) direct".
+          // Emit the trace.metadata lifecycle envelope directly via the
+          // recorder — no bus event source.
           if (deps.runtimeSnapshot !== undefined) {
             const recorder = deps.trajectoryRegistry?.getRecorder?.(formattedKey);
             if (recorder != null) {
@@ -426,12 +424,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         }
 
         case "agent_end": {
-          // session:ended is NO LONGER emitted from agent_end (design
-          // §6.4 — "(session) ended" is a session-destroy semantic, not
-          // per-turn). The emit moved to
-          // ComisSessionManager.destroySession. Per-turn duration metrics
-          // are surfaced via observability:token_usage → model.completed,
-          // which already carries durationMs.
+          // session:ended is NO LONGER emitted from agent_end —
+          // "(session) ended" is a session-destroy semantic, not
+          // per-turn. The emit moved to ComisSessionManager.destroySession.
+          // Per-turn duration metrics are surfaced via
+          // observability:token_usage → model.completed, which already
+          // carries durationMs.
           //
           // We preserve the m.agentStartMs / m.lastStopReason reads since
           // other accumulators may rely on these — only the eventBus
@@ -534,14 +532,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const mcpServer = extractMcpServerName(endEvent.toolName);
           if (!toolSuccess) {
             errorText = extractErrorText(endEvent.result);
-            // Fix D2 (log-review): when toolSuccess was already false from
-            // the SDK's isError flag (not flipped by an exitCode check),
-            // toolErrorKind is still undefined here. Classify it so the
-            // downstream tool:executed event carries an actionable
-            // errorKind for trajectory + alerting consumers. For MCP
-            // tools, mirror the dedicated MCP classifier into the closed
-            // ErrorKind union (timeout → timeout, connection/transport →
-            // dependency, everything else → classifyToolError fallback).
+            // When toolSuccess was already false from the SDK's isError
+            // flag (not flipped by an exitCode check), toolErrorKind is
+            // still undefined here. Classify it so the downstream
+            // tool:executed event carries an actionable errorKind for
+            // trajectory + alerting consumers. For MCP tools, mirror the
+            // dedicated MCP classifier into the closed ErrorKind union
+            // (timeout → timeout, connection/transport → dependency,
+            // everything else → classifyToolError fallback).
             if (toolErrorKind === undefined) {
               if (mcpServer !== undefined) {
                 const mcpKind = classifyMcpErrorType(errorText);
@@ -1213,10 +1211,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               ...costCorrectionField,
             });
 
-            // INDEX-02 (Plan 06-01): append turn_completed to the session index.
-            // Co-located with observability:token_usage emit (the only site that
-            // carries BOTH input AND output tokens per turn — onTurnUsage only
-            // has input tokens, see research §4 pitfall 4).
+            // Append turn_completed to the session index. Co-located with
+            // observability:token_usage emit (the only site that carries
+            // BOTH input AND output tokens per turn — onTurnUsage only
+            // has input tokens).
             appendSessionIndexEntry(
               deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
               {

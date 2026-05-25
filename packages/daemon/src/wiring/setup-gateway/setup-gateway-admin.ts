@@ -26,8 +26,8 @@ import { suppressError } from "@comis/shared";
 /**
  * Build the structured log fields for the gateway "Agent execution requested"
  * INFO line. Replaces the previous behavior of logging the first 200 chars
- * of the raw user message, which violated AGENTS.md §2.2 (no message bodies
- * in logs at any level). Emits message length plus a short SHA-256 prefix
+ * of the raw user message, which violated the no-message-bodies-in-logs rule
+ * at any level. Emits message length plus a short SHA-256 prefix
  * for correlation, never the body itself.
  *
  * @param input.agentId       Resolved agent ID (already trust-derived).

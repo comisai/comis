@@ -1706,13 +1706,13 @@ describe("executeAndDeliver", () => {
   });
 
   // -------------------------------------------------------------------
-  // TRACE-01: policy-retry path runWithContext must reuse ingress traceId
+  // policy-retry path runWithContext must reuse ingress traceId
   // -------------------------------------------------------------------
-  describe("TRACE-01 — policy-retry runWithContext reuses ingress traceId", () => {
-    it("policy-deny path: executor sees ingress traceId, not a fresh mint (TRACE-01)", async () => {
-      // The policy-deny path in executeAndDeliver (line ~291 in execution-pipeline.ts)
-      // calls runWithContext with traceId: randomUUID() — the second mint site (G1).
-      // After Plan 01-04, it must reuse tryGetContext()?.traceId from the outer scope.
+  describe("policy-retry runWithContext reuses ingress traceId", () => {
+    it("policy-deny path: executor sees ingress traceId, not a fresh mint", async () => {
+      // The policy-deny path in executeAndDeliver calls runWithContext with
+      // traceId: randomUUID() — it must reuse tryGetContext()?.traceId from
+      // the outer scope.
       const ingressTraceId = "550e8400-e29b-41d4-a716-446655440003";
 
       let capturedTraceId: string | undefined;
@@ -1761,7 +1761,7 @@ describe("executeAndDeliver", () => {
           ),
       );
 
-      // TRACE-01: policy-retry path must inherit the ingress traceId
+      // policy-retry path must inherit the ingress traceId
       expect(capturedTraceId, "policy-deny executor should see ingress traceId, not a fresh mint").toBe(ingressTraceId);
     });
   });

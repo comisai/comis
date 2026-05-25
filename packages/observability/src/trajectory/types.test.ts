@@ -2,10 +2,8 @@
 import { describe, it, expect, expectTypeOf } from "vitest";
 import { TRAJECTORY_EVENT_TYPES, type TrajectoryEventSource, type TrajectoryEventType, type TrajectoryEvent } from "./types.js";
 
-describe("TrajectoryEventSource union (TRACE-02)", () => {
-  it("declares the 3-member union per design §6.2", () => {
-    // RED: fails today because the union is single-member "runtime".
-    // GREEN: after widening to "runtime" | "transcript" | "export", this passes.
+describe("TrajectoryEventSource union", () => {
+  it("declares the 3-member union", () => {
     expectTypeOf<TrajectoryEventSource>().toEqualTypeOf<"runtime" | "transcript" | "export">();
   });
 
@@ -15,7 +13,7 @@ describe("TrajectoryEventSource union (TRACE-02)", () => {
   });
 });
 
-describe("TRAJECTORY_EVENT_TYPES contains lifecycle envelope types (LIFE-01/02)", () => {
+describe("TRAJECTORY_EVENT_TYPES contains lifecycle envelope types", () => {
   it("includes trace.metadata", () => {
     expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes("trace.metadata")).toBe(true);
   });
@@ -25,14 +23,13 @@ describe("TRAJECTORY_EVENT_TYPES contains lifecycle envelope types (LIFE-01/02)"
   });
 });
 
-describe("TrajectoryEvent forward-declared optional fields (design §6.1)", () => {
+describe("TrajectoryEvent forward-declared optional fields", () => {
   it("carries optional sourceSeq?: number", () => {
     expectTypeOf<TrajectoryEvent["sourceSeq"]>().toEqualTypeOf<number | undefined>();
   });
 
   it("carries optional parentEntryId?: string | null", () => {
-    // The existing parentEntryId field is typed as string | undefined; this test
-    // requires it to be widened to string | null | undefined per design §6.1
+    // parentEntryId is widened to string | null | undefined
     // (null distinguishes "explicit root" from "missing").
     expectTypeOf<TrajectoryEvent["parentEntryId"]>().toEqualTypeOf<string | null | undefined>();
   });

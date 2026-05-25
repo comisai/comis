@@ -8,8 +8,6 @@
  * Events listed here also drive the aggregator's subscription set —
  * `Object.keys(SYNTHETIC_ERROR_KIND_MAP)` is iterated at attach time.
  *
- * RESEARCH §ALERT-01 simplest correct approach (Phase 7).
- *
  * @module
  */
 import type { EventMap } from "@comis/core";

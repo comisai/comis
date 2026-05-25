@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Bounded-LRU duplicate inbound message detector (DEDUP-02).
+ * Bounded-LRU duplicate inbound message detector.
  *
  * Keyed by messageId string. A Map<string, number> (messageId → firstSeenAt)
  * is used for FIFO insertion-order eviction. The check is entirely synchronous
- * — no await, no setInterval (Landmine 5 per 03-RESEARCH.md).
+ * — no await, no setInterval.
  *
  * Eviction strategy (per .check() call — no background timer):
  *   1. Sweep the front of the Map deleting entries whose firstSeenAt is

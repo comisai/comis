@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for iMessage adapter runWithContext wrap (TRACE-01).
+ * Unit tests for iMessage adapter runWithContext wrap.
  *
  * Asserts that the onNotification handler stamps msg.metadata.traceId
  * and runs handlers inside runWithContext so the traceId propagates
  * via AsyncLocalStorage.
- *
- * RED state: fails before the runWithContext wrap is added to
- * imessage-adapter.ts (traceId is undefined; tryGetContext() returns undefined).
  *
  * @module
  */
@@ -100,7 +97,7 @@ function makeMessageNotification() {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("imessage-adapter -- onNotification runWithContext wrap (TRACE-01)", () => {
+describe("imessage-adapter -- onNotification runWithContext wrap", () => {
   beforeEach(() => {
     capturedNotificationHandler = undefined;
     vi.clearAllMocks();

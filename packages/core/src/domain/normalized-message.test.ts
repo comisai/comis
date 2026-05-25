@@ -294,18 +294,16 @@ describe("NormalizedMessage", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Task 2 (TRACE-03, Plan 01-01): concrete metadata.traceId typing
+  // Concrete metadata.traceId typing
   // ---------------------------------------------------------------------------
-  describe("metadata.traceId concrete typing (TRACE-03, Plan 01-01)", () => {
+  describe("metadata.traceId concrete typing", () => {
     it("metadata.traceId is typed as string | undefined at the TypeScript type level", () => {
-      // RED: fails today because metadata is Record<string, unknown>.
-      // GREEN: after z.looseObject({ traceId: z.guid().optional() }), the type is string | undefined.
+      // With z.looseObject({ traceId: z.guid().optional() }), the type is string | undefined.
       expectTypeOf<NormalizedMessage["metadata"]["traceId"]>().toEqualTypeOf<string | undefined>();
     });
 
     it("rejects a non-uuid string in metadata.traceId", () => {
-      // RED: today metadata accepts unknown values so any string passes.
-      // GREEN: after schema change, traceId must be a valid UUID when present.
+      // traceId must be a valid UUID when present.
       const result = parseMessage(validMessage({ metadata: { traceId: "not-a-uuid" } }));
       expect(result.ok).toBe(false);
     });
@@ -336,7 +334,7 @@ describe("NormalizedMessage", () => {
     });
   });
 
-  describe("getMessageTraceId helper (TRACE-03, Plan 01-01)", () => {
+  describe("getMessageTraceId helper", () => {
     it("getMessageTraceId is exported from the module", async () => {
       const mod = await import("./normalized-message.js");
       expect(typeof mod.getMessageTraceId).toBe("function");

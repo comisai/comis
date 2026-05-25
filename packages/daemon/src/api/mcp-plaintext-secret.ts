@@ -1,27 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plaintext-secret detection heuristic for the Phase 63 SAFETY-03/04/09
- * pre-Zod guard on `mcp.connect` and `mcp.test`.
+ * Plaintext-secret detection heuristic for the pre-Zod guard on
+ * `mcp.connect` and `mcp.test`.
  *
  * Extracted from `mcp-handlers.ts` to keep that leaf under the 800-line
- * per-file cap. The heuristic shape, prefix list, and entropy floor
- * remain byte-identical to the in-handler version Phase 63 originally
- * shipped; CR-06 added the delimiter-char predicate that excludes
- * URL-/path-/sentence-shaped values from the entropy backstop. Exported
- * so the architecture-tier `mcp-plaintext-secret-false-positives.test.ts`
- * negative + positive control table can re-use the helper via the
- * `@comis/daemon` barrel.
+ * per-file cap. The delimiter-char predicate excludes URL-/path-/sentence-shaped
+ * values from the entropy backstop. Exported so the architecture-tier
+ * `mcp-plaintext-secret-false-positives.test.ts` negative + positive control
+ * table can re-use the helper via the `@comis/daemon` barrel.
  *
  * @module
  */
 
 /**
  * Real-world credential prefixes that almost-certainly indicate a raw
- * secret pasted into MCP env. Per RESEARCH.md §"Pitfall 6" + REQUIREMENTS.md
- * SAFETY-03. Extended beyond the spec's initial list to add Notion v2
- * (`ntn_`), Notion legacy (`secret_`), GitLab PAT (`glpat-`), Stripe
- * live/test (`sk_live_`, `sk_test_`), and GitHub fine-grained PAT
- * (`github_pat_`).
+ * secret pasted into MCP env. Includes Notion v2 (`ntn_`), Notion legacy
+ * (`secret_`), GitLab PAT (`glpat-`), Stripe live/test (`sk_live_`,
+ * `sk_test_`), and GitHub fine-grained PAT (`github_pat_`).
  *
  * Order matters for the early-return scan: list longer / more-specific
  * prefixes BEFORE their shorter generalizations (e.g. `sk-ant-` before
@@ -64,10 +59,10 @@ function shannonEntropy(value: string): number {
 }
 
 /**
- * Length floor for the entropy backstop. Tuned per RESEARCH.md
- * §"Pitfall 6" to avoid the 40-char OpenAI org-ID false positive.
- * Real tokens are all ≥ 41 chars; setting the floor at 44 retains
- * full real-token rejection while clearing the org-ID FP.
+ * Length floor for the entropy backstop. Tuned to avoid the 40-char
+ * OpenAI org-ID false positive. Real tokens are all ≥ 41 chars; setting
+ * the floor at 44 retains full real-token rejection while clearing the
+ * org-ID FP.
  */
 const PLAINTEXT_SECRET_LENGTH_FLOOR = 44;
 
@@ -75,15 +70,15 @@ const PLAINTEXT_SECRET_LENGTH_FLOOR = 44;
 const PLAINTEXT_SECRET_ENTROPY_FLOOR = 3.5;
 
 /**
- * CR-06: Reject the entropy-backstop on ALL values containing URL- /
- * path- / sentence-delimiter characters. Real credential bodies are
- * URL-safe base64 / base32 / hex / alphanumeric + `_ - . +`. None of
- * the curated-prefix tokens (ghp_, sk-, AKIA, etc.) contain any of
- * these. Connection strings (`postgres://`, `mongodb+srv://`),
- * filesystem paths (`/usr/...`), URLs (`https://...`), comma-separated
- * region lists (`us-east-1,us-east-2,...`), and sentence-like config
- * values (`"this is a 50 character ..."`) all contain at least one of
- * these chars and are reliably non-secret operator-config shapes.
+ * Reject the entropy-backstop on ALL values containing URL- / path- /
+ * sentence-delimiter characters. Real credential bodies are URL-safe
+ * base64 / base32 / hex / alphanumeric + `_ - . +`. None of the curated-prefix
+ * tokens (ghp_, sk-, AKIA, etc.) contain any of these. Connection strings
+ * (`postgres://`, `mongodb+srv://`), filesystem paths (`/usr/...`), URLs
+ * (`https://...`), comma-separated region lists (`us-east-1,us-east-2,...`),
+ * and sentence-like config values (`"this is a 50 character ..."`) all
+ * contain at least one of these chars and are reliably non-secret
+ * operator-config shapes.
  *
  * Predicate: contains ANY of whitespace, `:`, `/`, `?`, `&`, `=`, `@`,
  * `,`. If any of these are present the backstop short-circuits to
@@ -99,10 +94,10 @@ const NON_CREDENTIAL_DELIMITER_RE = /[\s:/?&=@,]/;
  *   - OR (Shannon entropy > 3.5 AND length >= 44 AND no
  *     URL-/path-/sentence-delimiter chars) — backstop for generic
  *     high-entropy keys not matching the curated prefix list. The
- *     delimiter-char predicate (CR-06) excludes URLs, connection
- *     strings, filesystem paths, comma-separated lists, and
- *     sentence-shaped operator-config values, all of which had FPs
- *     under the entropy-only backstop.
+ *     delimiter-char predicate excludes URLs, connection strings,
+ *     filesystem paths, comma-separated lists, and sentence-shaped
+ *     operator-config values, all of which had FPs under the entropy-only
+ *     backstop.
  *
  * NON-secrets that PASS (verified by the architecture-tier
  * mcp-plaintext-secret-false-positives.test.ts negative-control table):
@@ -120,8 +115,8 @@ const NON_CREDENTIAL_DELIMITER_RE = /[\s:/?&=@,]/;
  *
  * Exported so the architecture-tier
  * `test/architecture/mcp-plaintext-secret-false-positives.test.ts`
- * (SAFETY-09 negative + positive control table) can re-use the helper
- * via the `@comis/daemon` barrel without duplicating the heuristic.
+ * negative + positive control table can re-use the helper via the
+ * `@comis/daemon` barrel without duplicating the heuristic.
  */
 export function looksLikePlaintextSecret(value: string): boolean {
   if (typeof value !== "string" || value.length === 0) return false;
@@ -131,7 +126,7 @@ export function looksLikePlaintextSecret(value: string): boolean {
   for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
     if (value.startsWith(prefix)) return true;
   }
-  // CR-06: entropy backstop only applies to credential-shaped values
+  // Entropy backstop only applies to credential-shaped values
   // (no URL/path/sentence delimiter chars). This eliminates the
   // false-positive class around connection strings, file paths, URLs,
   // comma-lists, and sentence-shaped operator config values.

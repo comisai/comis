@@ -374,7 +374,7 @@ Increase `maxFiles` or `maxAgeDays` if you need more history; reduce them on tig
 
 **`session-index.YYYY-MM-DD.jsonl`** — a new file starts each UTC day (date-roll). Old dated files are pruned by the startup sweep against `maxFiles` and `maxAgeDays`. Only today's dated file is treated as the active base and is never pruned.
 
-**`*.trajectory.jsonl`** — one file per agent session, with a 10 MB soft cap and a 50 MB hard cap applied in-session (BOUND-02). Accumulated session files across past sessions are pruned by the startup sweep against `maxFiles` and `maxAgeDays`.
+**`*.trajectory.jsonl`** — one file per agent session, with a 10 MB soft cap and a 50 MB hard cap applied in-session. Accumulated session files across past sessions are pruned by the startup sweep against `maxFiles` and `maxAgeDays`.
 
 ### Legacy `daemon.logging` Keys (Backward Compatibility)
 

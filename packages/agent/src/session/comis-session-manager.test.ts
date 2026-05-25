@@ -92,7 +92,7 @@ describe("destroySession", () => {
   });
 });
 
-describe("destroySession — session:ended emit + trajectoryRegistry close (design §6.4)", () => {
+describe("destroySession — session:ended emit + trajectoryRegistry close", () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const d of dirs) {
@@ -249,7 +249,7 @@ describe("comis-session-manager honors §1.4 mode invariants on substrate-routed
 
   it("with_session_creates_per_channel_dir_with_mode_0o700", async () => {
     // withSession routes the per-channel directory creation through
-    // ensureContainedDir so design §1.4's `0o700` invariant holds for every
+    // ensureContainedDir so the `0o700` invariant holds for every
     // artifact dir under ~/.comis/agents/.
     const baseDir = makeTmpDir();
     const lockDir = makeTmpDir();
@@ -270,7 +270,7 @@ describe("comis-session-manager honors §1.4 mode invariants on substrate-routed
 
   it("write_session_metadata_writes_companion_file_with_mode_0o600", async () => {
     // writeSessionMetadata routes the sentinel JSON write through
-    // writeRegularFile so design §1.4's `0o600` invariant holds for the
+    // writeRegularFile so the `0o600` invariant holds for the
     // `_session-metadata.json` companion file.
     const baseDir = makeTmpDir();
     const lockDir = makeTmpDir();
@@ -295,10 +295,10 @@ describe("comis-session-manager honors §1.4 mode invariants on substrate-routed
 });
 
 // ---------------------------------------------------------------------------
-// LIFE-02: trace.artifacts emit BEFORE session:ended (Plan 01-05)
+// trace.artifacts emit BEFORE session:ended
 // ---------------------------------------------------------------------------
 
-describe("LIFE-02 — trace.artifacts direct emit before session:ended in destroySession", () => {
+describe("trace.artifacts direct emit before session:ended in destroySession", () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const d of dirs) {
@@ -496,10 +496,10 @@ describe("LIFE-02 — trace.artifacts direct emit before session:ended in destro
 });
 
 // ---------------------------------------------------------------------------
-// INDEX-03: session-index session_ended emit site (Plan 06-01)
+// session-index session_ended emit site
 // ---------------------------------------------------------------------------
 
-describe("session-index session_ended emit (Plan 06-01)", () => {
+describe("session-index session_ended emit", () => {
   const indexDirs: string[] = [];
 
   beforeEach(() => {

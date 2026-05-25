@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * Trace correlation and export RPC handlers (Plan 06-03 / CLI-06).
+ * Trace correlation and export RPC handlers.
  *
  * Implements three admin-scoped RPC handlers:
  *   - obs.trace.search: messageId LRU lookup or session-index scan
  *   - obs.trace.tail:   cursor-based polling for chat activity
- *   - obs.trace.export: delegates to Phase 4 exportTrajectoryBundle DI seam
+ *   - obs.trace.export: delegates to the exportTrajectoryBundle DI seam
  *
  * Data access is bounded to the last 2 days of session-index JSONL files
  * living under `<dataDir>/logs/`. Result rows are capped per request.limit
@@ -78,7 +78,7 @@ function defaultDataDir(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Date helpers: produce "YYYY-MM-DD" without new Date() (AGENTS.md §2.4)
+// Date helpers: produce "YYYY-MM-DD" without new Date()
 // ---------------------------------------------------------------------------
 
 function todayKey(): string {
@@ -256,10 +256,10 @@ function parseSinceDuration(input: string, now: number): number {
  * Returns a Record<string, RpcHandler> that is object-spread compatible
  * with createObsHandlers in index.ts.
  *
- * @param deps - ObsHandlerDeps with optional Plan 06-03 fields:
+ * @param deps - ObsHandlerDeps with optional trace-handler fields:
  *   - `dataDir`: data directory containing logs/session-index.*.jsonl files.
  *     Defaults to `~/.comis` at handler-construction time.
- *   - `exportTrajectoryBundle`: DI seam for the Phase 4 bundle pipeline.
+ *   - `exportTrajectoryBundle`: DI seam for the bundle pipeline.
  *     Production wires the real function; tests inject a stub.
  */
 export function bindObsTraceHandlers(deps: ObsHandlerDeps): Record<string, RpcHandler> {
@@ -323,7 +323,7 @@ export function bindObsTraceHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
     },
 
     // -----------------------------------------------------------------------
-    // obs.trace.export — delegates to Phase 4 exportTrajectoryBundle DI seam
+    // obs.trace.export — delegates to the exportTrajectoryBundle DI seam
     // -----------------------------------------------------------------------
     [ObsTraceExportContract.method]: async (rawParams) => {
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as string | undefined;
@@ -336,13 +336,13 @@ export function bindObsTraceHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
       }
 
       // Derive sessionFile path from dataDir + sessionId.
-      // Convention: <dataDir>/sessions/<sessionId>.jsonl (Phase 4 / Phase 6).
+      // Convention: <dataDir>/sessions/<sessionId>.jsonl.
       const sessionsDir = safePath(dataDir, "sessions");
       const sessionFile = safePath(sessionsDir, `${params.sessionId}.jsonl`);
 
       // workspaceDir defaults to <dataDir>/workspace; traceId and agentId are
       // best-effort placeholders when not resolvable from the session index at
-      // this handler layer (Phase 4 bundle-exporter uses them for naming only).
+      // this handler layer (bundle-exporter uses them for naming only).
       const workspaceDir = safePath(dataDir, "workspace");
 
       const exportResult = await deps.exportTrajectoryBundle({

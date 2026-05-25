@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for orchestrator channel-manager runWithContext wrap (TRACE-01).
+ * Unit tests for orchestrator channel-manager runWithContext wrap.
  *
  * Asserts that the adapter.onMessage handler body wraps in runWithContext —
  * defense-in-depth at the orchestrator level. The wrap reuses the traceId
- * minted at adapter ingress (Plans 01-02, 01-03) via getMessageTraceId, and
- * falls back to randomUUID() if a future adapter bypasses ingress wrapping.
- *
- * RED state: fails before the runWithContext wrap is added to channel-manager.ts
- * (tryGetContext() returns undefined inside processInboundMessage).
+ * minted at adapter ingress via getMessageTraceId, and falls back to
+ * randomUUID() if a future adapter bypasses ingress wrapping.
  *
  * @module
  */
@@ -119,7 +116,7 @@ function makeDeps(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("channel-manager -- adapter.onMessage handler runWithContext wrap (TRACE-01)", () => {
+describe("channel-manager -- adapter.onMessage handler runWithContext wrap", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

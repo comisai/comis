@@ -30,7 +30,7 @@ vi.mock("@comis/skills", async (importOriginal) => {
   };
 });
 
-// Phase 47-02: mock the persistence + audit-log helpers so unit tests don't
+// Mock the persistence + audit-log helpers so unit tests don't
 // hit the real filesystem. Existing tests don't inject persistDeps so they
 // never reach these mocks; the new mcp.connect/disconnect persistence tests
 // below assert directly on the mocked call args.
@@ -285,20 +285,20 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 63 SAFETY-03/04/09 — plaintext-secret pre-Zod guard on mcp.connect.
+  // Plaintext-secret pre-Zod guard on mcp.connect.
   //
   // The guard runs IMMEDIATELY AFTER stripInternalFields and BEFORE
   // McpConnectContract.request.parse. It scans userParams.env values for
   // (a) known credential prefixes (ghp_, sk-, AKIA, etc.) OR (b) the
   // entropy backstop (Shannon entropy > 3.5 AND length >= 44). The
-  // per-server `disablePlaintextSecretCheck: true` opt-out from Plan 01's
+  // per-server `disablePlaintextSecretCheck: true` opt-out in
   // McpServerEntrySchema is the last-resort escape hatch — WARN-and-allow.
   //
-  // Length floor 44 (NOT 40) per RESEARCH.md §"Pitfall 6": eliminates the
+  // Length floor 44 (NOT 40): eliminates the
   // OpenAI 40-char org-ID false positive without losing any real-token
   // rejection.
   // -------------------------------------------------------------------------
-  describe("mcp.connect plaintext-secret guard (Phase 63 SAFETY-03/04/09)", () => {
+  describe("mcp.connect plaintext-secret guard", () => {
     it("rejects ghp_ GitHub PAT prefix with [plaintext_secret_in_env] naming the variable", async () => {
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await expect(
@@ -424,7 +424,7 @@ describe("MCP RPC Handlers", () => {
         transport: "stdio",
         command: "npx",
         env: { GITHUB_TOKEN: "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
-        // Per-server opt-out from McpServerEntrySchema (Plan 01).
+        // Per-server opt-out from McpServerEntrySchema.
         disablePlaintextSecretCheck: true,
       } as any);
       expect(manager.connect).toHaveBeenCalled();
@@ -457,15 +457,15 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 63 SAFETY-03/09 — looksLikePlaintextSecret pure-function unit tests.
+  // looksLikePlaintextSecret pure-function unit tests.
   //
   // Direct pure-function coverage so the heuristic shape (prefix list +
   // entropy >3.5 AND length >=44 backstop) is pinned independent of the
   // RPC handler integration. Architecture-tier negative-control test
-  // (test/architecture/mcp-plaintext-secret-false-positives.test.ts) is
-  // Task 2's deliverable; this block is the daemon-resident smoke check.
+  // (test/architecture/mcp-plaintext-secret-false-positives.test.ts)
+  // covers the broader matrix; this block is the daemon-resident smoke check.
   // -------------------------------------------------------------------------
-  describe("looksLikePlaintextSecret pure-function heuristic (Phase 63 SAFETY-03/09)", () => {
+  describe("looksLikePlaintextSecret pure-function heuristic", () => {
     it("returns true for ghp_ GitHub PAT prefix", () => {
       expect(looksLikePlaintextSecret("ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789")).toBe(true);
     });
@@ -680,7 +680,7 @@ describe("MCP RPC Handlers", () => {
     });
 
     // -------------------------------------------------------------------------
-    // Phase 63 CR-02 — mcp.test must apply the same pre-spawn safety controls
+    // mcp.test must apply the same pre-spawn safety controls
     // as mcp.connect. Pre-fix the handler built McpServerConfig and called
     // tempManager.connect(config) WITHOUT:
     //   - plaintext-secret guard (raw tokens could be passed in env and
@@ -694,11 +694,11 @@ describe("MCP RPC Handlers", () => {
     //   - rlimits plumb-through (test spawns had no resource caps)
     //
     // mcp.test IS a pre-spawn surface (it actually spawns the child to
-    // probe it). Phase 63 hardened only mcp.connect — an attacker could
+    // probe it). The earlier hardening covered only mcp.connect — an attacker could
     // simply call mcp.test instead. The fix mirrors every guard from
     // mcp.connect onto mcp.test.
     // -------------------------------------------------------------------------
-    describe("mcp.test Phase 63 safety parity (CR-02)", () => {
+    describe("mcp.test safety parity", () => {
       it("rejects ghp_ plaintext secret with [plaintext_secret_in_env] same as mcp.connect", async () => {
         const handlers = createMcpHandlers({
           mcpClientManager: createMockManager(),
@@ -1039,12 +1039,11 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 47-02: persistence + audit-log integration (R1, R2, R4, R6, R7, R8,
-  // D-02, D-04). Sibling plan 47-04 owns the full coverage matrix — these
-  // tests are the minimum surface 47-02 ships to prove the wiring is correct.
+  // Persistence + audit-log integration. These
+  // tests are the minimum surface to prove the wiring is correct.
   // -------------------------------------------------------------------------
 
-  // WR-08: makePersistDeps used to return two DIFFERENT object literals for
+  // makePersistDeps used to return two DIFFERENT object literals for
   // `persistDeps.container` and the outer `container` field. In production
   // wiring (rpc-dispatch.ts:248-267) both refer to the SAME `deps.container`
   // reference — a bug where the in-memory refresh wrote to the wrong
@@ -1069,14 +1068,14 @@ describe("MCP RPC Handlers", () => {
   }
 
   // -------------------------------------------------------------------------
-  // WR-08 — production parity: makePersistDeps's `persistDeps.container` and
+  // Production parity: makePersistDeps's `persistDeps.container` and
   // outer `container` MUST refer to the same object. In production wiring
   // (rpc-dispatch.ts) both reach the same `deps.container`. Pre-fix the
   // fixture returned two object literals and a bug in the in-memory swap
   // path that wrote to the wrong container would pass tests but fail in
   // production.
   // -------------------------------------------------------------------------
-  describe("makePersistDeps — WR-08 production parity (shared container reference)", () => {
+  describe("makePersistDeps — production parity (shared container reference)", () => {
     it("persistDeps.container and outer container point to the SAME object", () => {
       const { persistDeps, container } = makePersistDeps([]);
       expect(persistDeps.container).toBe(container);
@@ -1101,7 +1100,7 @@ describe("MCP RPC Handlers", () => {
     mockAppendConfigAuditWithOutcome.mockClear();
   });
 
-  describe("mcp.connect persistence (Phase 47-02)", () => {
+  describe("mcp.connect persistence", () => {
     it("calls persistToConfig with skipRestart:true and mcp.connect actionType after a successful manager.connect", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [makeTool("price")])));
       const { persistDeps, container } = makePersistDeps([]);
@@ -1136,7 +1135,7 @@ describe("MCP RPC Handlers", () => {
       ]);
     });
 
-    it("does NOT call persistToConfig when manager.connect returns err (R4 spawn-failure isolation)", async () => {
+    it("does NOT call persistToConfig when manager.connect returns err (spawn-failure isolation)", async () => {
       (manager.connect as any).mockResolvedValue(err(new Error("spawn ENOENT")));
       const { persistDeps, container } = makePersistDeps([]);
       const handlers = createMcpHandlers({
@@ -1171,7 +1170,7 @@ describe("MCP RPC Handlers", () => {
       expect(mockPersistToConfig).not.toHaveBeenCalled();
     });
 
-    it("returns persistence:'persisted' and emits an audit JSONL record on persist success (R8 + D-04)", async () => {
+    it("returns persistence:'persisted' and emits an audit JSONL record on persist success", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
       const { persistDeps, container } = makePersistDeps([]);
       const handlers = createMcpHandlers({
@@ -1197,7 +1196,7 @@ describe("MCP RPC Handlers", () => {
       );
     });
 
-    it("preserves unresolved env-ref literals in the persisted patch (R5)", async () => {
+    it("preserves unresolved env-ref literals in the persisted patch", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ywithenv", [])));
       const sm = createSecretManager({ YFINANCE_PROXY_LIST: "secret-value-not-in-yaml" });
       const { persistDeps, container } = makePersistDeps([]);
@@ -1220,7 +1219,7 @@ describe("MCP RPC Handlers", () => {
       expect(callOpts.patch.integrations.mcp.servers[0].env.PROXY).toBe("${YFINANCE_PROXY_LIST}");
     });
 
-    it("filters existing same-name entry and appends new one (R6 overwrite)", async () => {
+    it("filters existing same-name entry and appends new one (overwrite)", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
       const { persistDeps, container } = makePersistDeps([
         { name: "yfinance", transport: "stdio", command: "npx", args: ["v1"], enabled: true },
@@ -1252,7 +1251,7 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 63 CR-03 — rlimits accepted on mcp.connect AND persisted to the
+  // rlimits accepted on mcp.connect AND persisted to the
   // McpServerEntry, then applied to the spawn-time wrap on this and
   // subsequent connects.
   //
@@ -1260,15 +1259,15 @@ describe("MCP RPC Handlers", () => {
   // already-persisted entry, so a fresh `mcp.connect` of a new server
   // received `rlimits: undefined` (no prlimit wrap). The newEntry built at
   // mcp-handlers.ts:511-523 did NOT carry rlimits either, so even a
-  // subsequent reconnect saw the same `undefined`. Combined with R9
-  // (config.patch on integrations.mcp.servers is blocked), operators had
-  // NO supported path to apply rlimits to a new server via mcp_manage.
+  // subsequent reconnect saw the same `undefined`. Combined with the
+  // single-writer guard (config.patch on integrations.mcp.servers is blocked),
+  // operators had NO supported path to apply rlimits to a new server via mcp_manage.
   //
   // Fix: add `rlimits` to McpConnectContract.request, forward to both the
   // spawn-time McpServerConfig and the persisted McpServerEntry.
   // -------------------------------------------------------------------------
   // -------------------------------------------------------------------------
-  // Phase 63 WR-05 — in-memory swap preserves sibling integrations subkeys.
+  // In-memory swap preserves sibling integrations subkeys.
   //
   // Pre-fix the swap `(deps.container.config as ...).integrations = cloned`
   // overwrote the entire integrations subtree. When the prior in-memory
@@ -1286,7 +1285,7 @@ describe("MCP RPC Handlers", () => {
   // braveSearch+media must yield a post-state STILL containing
   // braveSearch+media + the updated mcp.servers entry.
   // -------------------------------------------------------------------------
-  describe("WR-05 — in-memory persist swap preserves sibling integrations subkeys", () => {
+  describe("in-memory persist swap preserves sibling integrations subkeys", () => {
     it("preserves braveSearch and media siblings through the mcp.connect persist swap", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
 
@@ -1365,7 +1364,7 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
-  describe("mcp.connect rlimits accepted, forwarded, and persisted (Phase 63 CR-03)", () => {
+  describe("mcp.connect rlimits accepted, forwarded, and persisted", () => {
     it("forwards rlimits to manager.connect (spawn-time) on a fresh connect with no prior persisted entry", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));
       const { persistDeps, container } = makePersistDeps([]);
@@ -1493,7 +1492,7 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 63 CR-04 — disablePlaintextSecretCheck:true must be persisted to
+  // disablePlaintextSecretCheck:true must be persisted to
   // the McpServerEntry so the opt-out survives a daemon restart.
   //
   // Pre-fix the handler read `userParams.disablePlaintextSecretCheck === true`
@@ -1507,7 +1506,7 @@ describe("MCP RPC Handlers", () => {
   //
   // Fix: persist disablePlaintextSecretCheck:true onto the McpServerEntry.
   // -------------------------------------------------------------------------
-  describe("mcp.connect disablePlaintextSecretCheck persisted (Phase 63 CR-04)", () => {
+  describe("mcp.connect disablePlaintextSecretCheck persisted", () => {
     it("persists disablePlaintextSecretCheck:true onto the McpServerEntry", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("optout", [])));
       const { persistDeps, container } = makePersistDeps([]);
@@ -1556,8 +1555,8 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
-  describe("mcp.disconnect persistence (Phase 47-02)", () => {
-    it("calls persistToConfig with the filtered array on a successful disconnect (R2 + R7)", async () => {
+  describe("mcp.disconnect persistence", () => {
+    it("calls persistToConfig with the filtered array on a successful disconnect", async () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
       const { persistDeps, container } = makePersistDeps([
         { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
@@ -1584,7 +1583,7 @@ describe("MCP RPC Handlers", () => {
       ]);
     });
 
-    it("does NOT call persistToConfig when runtime has no such server (D-01 fail-loud preserved)", async () => {
+    it("does NOT call persistToConfig when runtime has no such server (fail-loud preserved)", async () => {
       (manager.getConnection as any).mockReturnValue(undefined);
       const { persistDeps, container } = makePersistDeps([]);
       const handlers = createMcpHandlers({
@@ -1602,7 +1601,7 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
-  describe("mcp.reconnect override-rejection (Phase 47-02 D-02)", () => {
+  describe("mcp.reconnect override-rejection", () => {
     it("throws [reconnect_with_overrides_not_allowed] when override params are supplied AND a stored connection exists", async () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
@@ -1637,30 +1636,24 @@ describe("MCP RPC Handlers", () => {
   });
 
   // ===========================================================================
-  // Phase 47-04: per-acceptance-criterion R-tag unit tests
+  // Additional per-criterion unit tests
   //
-  // 47-02 added the baseline persistence test scaffolding (39 tests total);
-  // 47-04 extends it with the explicit per-R-tag tests called out in SPEC.md
-  // and the per-field D-02 loop. Net new behavioral coverage delivered here:
+  // Extends the baseline persistence test scaffolding with explicit
+  // per-criterion tests and the per-field override loop. Net new behavioral
+  // coverage delivered here:
   //
-  //   - R2 sole-entry (disconnect of the only entry leaves `[]`, not undefined)
-  //   - R7 SPEC skipRestart explicitly asserted on both connect AND disconnect
-  //   - D-02 per-field loop (command, args, url, headers, env in addition to
+  //   - sole-entry (disconnect of the only entry leaves `[]`, not undefined)
+  //   - skipRestart explicitly asserted on both connect AND disconnect
+  //   - per-field override loop (command, args, url, headers, env in addition to
   //     the existing transport assertion)
-  //   - D-02 happy-path: reconnect with NO override fields does not fire guard
-  //   - D-04 runtime_only outcome: persist err → response has warning
-  //   - D-04 disconnect happy-path explicitly returns persistence:'persisted'
-  //   - R8 failed-audit branch: appendConfigAuditWithOutcome called with
+  //   - happy-path: reconnect with NO override fields does not fire guard
+  //   - runtime_only outcome: persist err → response has warning
+  //   - disconnect happy-path explicitly returns persistence:'persisted'
+  //   - failed-audit branch: appendConfigAuditWithOutcome called with
   //     {kind:'failed', message} when persistToConfig returns err
-  //
-  // Existing 47-02 tests already cover R1, R4, R5, R6, D-04 skipped + persisted,
-  // D-01 fail-loud. These re-tag-only assertions are intentionally separated
-  // into their own describe blocks so the SPEC's R-tag → test mapping is
-  // unambiguous and the verifier can trace each acceptance criterion to a
-  // distinct `it(...)` line.
   // ===========================================================================
 
-  describe("Phase 47-04 R2 sole-entry — disconnect of the only entry leaves []", () => {
+  describe("sole-entry — disconnect of the only entry leaves []", () => {
     it("persists an empty array (NOT undefined) when removing the sole entry", async () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
       const { persistDeps, container } = makePersistDeps([
@@ -1683,7 +1676,7 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
-  describe("Phase 47-04 R7 SPEC — skipRestart:true on both connect and disconnect persists", () => {
+  describe("skipRestart:true on both connect and disconnect persists", () => {
     it("connect passes skipRestart:true to persistToConfig", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
       const { persistDeps, container } = makePersistDeps([]);
@@ -1724,17 +1717,17 @@ describe("MCP RPC Handlers", () => {
   });
 
   // ===========================================================================
-  // Phase 62-09 R7 in-memory state effect (D-07/D-08/PERSIST-08)
+  // In-memory state effect
   //
   // The orphan-branch persistMcpServers wrote to disk but did NOT update
-  // container.config.integrations.mcp.servers. CONTEXT.md D-07 locks the
-  // in-memory refresh into Phase 62. After a successful persist, the
+  // container.config.integrations.mcp.servers. The in-memory refresh
+  // is now part of the contract. After a successful persist, the
   // container.config.integrations subtree is structuredClone'd, .mcp.servers
   // is overwritten with the new array, and the whole subtree is atomically
   // swapped onto container.config.integrations.
   // ===========================================================================
 
-  describe("Phase 62-09 R7 in-memory state effect — container.config refresh after persist (D-07/D-08)", () => {
+  describe("in-memory state effect — container.config refresh after persist", () => {
     it("connect: container.config.integrations.mcp.servers reflects the new entry after persist", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
       const { persistDeps, container } = makePersistDeps([]);
@@ -1751,7 +1744,7 @@ describe("MCP RPC Handlers", () => {
         command: "npx",
       });
 
-      // R7: post-call in-memory state has the new entry.
+      // Post-call in-memory state has the new entry.
       expect(container.config.integrations.mcp.servers).toHaveLength(1);
       expect(container.config.integrations.mcp.servers[0]).toEqual(
         expect.objectContaining({ name: "ctx7", transport: "stdio", command: "npx", enabled: true }),
@@ -1773,14 +1766,14 @@ describe("MCP RPC Handlers", () => {
 
       await handlers["mcp.disconnect"]({ server_name: "yfinance" });
 
-      // R7: post-call in-memory state has only "other".
+      // Post-call in-memory state has only "other".
       expect(container.config.integrations.mcp.servers).toHaveLength(1);
       expect(container.config.integrations.mcp.servers[0]).toEqual(
         expect.objectContaining({ name: "other" }),
       );
     });
 
-    it("D-08 atomic swap: post-persist integrations object identity differs from the pre-call object", async () => {
+    it("atomic swap: post-persist integrations object identity differs from the pre-call object", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
       const { persistDeps, container } = makePersistDeps([
         { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
@@ -1793,7 +1786,7 @@ describe("MCP RPC Handlers", () => {
       } as any);
 
       // Capture the pre-call integrations object identity. After a successful
-      // persist, D-08 requires the swap to replace the .integrations subtree
+      // persist, the swap must replace the .integrations subtree
       // with a structuredClone'd copy (NOT mutate the original in place) —
       // so a reader holding the prior reference observes the pre-state.
       const preIntegrations = container.config.integrations;
@@ -1821,8 +1814,7 @@ describe("MCP RPC Handlers", () => {
     it("does NOT throw and skips the swap when deps.container is absent (existing test fixture invariant)", async () => {
       // persistDeps is still wired so persistToConfig runs; container is OMITTED.
       // The orphan-branch test fixtures construct deps without container and
-      // the swap MUST optional-chain away cleanly per RESEARCH.md Plan-time
-      // risk #7.
+      // the swap MUST optional-chain away cleanly.
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
       const { persistDeps } = makePersistDeps([]);
       const handlers = createMcpHandlers({
@@ -1872,9 +1864,9 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
-  describe("Phase 47-04 D-02 per-field — reconnect-override-rejection fires for every override field independently", () => {
-    // Plan 47-02 covered the `transport` override; 47-04 adds explicit coverage
-    // for command, args, url, headers, env so every D-02 override surface is
+  describe("per-field — reconnect-override-rejection fires for every override field independently", () => {
+    // Earlier work covered the `transport` override; this adds explicit coverage
+    // for command, args, url, headers, env so every override surface is
     // pinned to a regression-safe assertion.
     const overrideFields: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
       ["command", { command: "node" }],
@@ -1910,7 +1902,7 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
-  describe("Phase 47-04 D-04 runtime_only — persist err surfaces warning in response", () => {
+  describe("runtime_only — persist err surfaces warning in response", () => {
     it("returns persistence:'runtime_only' + warning when persistToConfig returns err on connect", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
       mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "EACCES: write failed" } as never);
@@ -1951,7 +1943,7 @@ describe("MCP RPC Handlers", () => {
       expect(result.warning).toBe("ENOSPC: out of disk");
     });
 
-    it("disconnect happy path explicitly returns persistence:'persisted' (D-04 disconnect mirror)", async () => {
+    it("disconnect happy path explicitly returns persistence:'persisted' (disconnect mirror)", async () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
       const { persistDeps, container } = makePersistDeps([
         { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
@@ -1974,7 +1966,7 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
-  describe("Phase 47-04 R8 — failed audit JSONL on persistToConfig err", () => {
+  describe("failed audit JSONL on persistToConfig err", () => {
     it("calls appendConfigAuditWithOutcome with {kind:'failed', message} when persist fails on connect", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("yfinance", [])));
       mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "EACCES: write failed" } as never);
@@ -2037,22 +2029,22 @@ describe("MCP RPC Handlers", () => {
 });
 
 // ===========================================================================
-// Phase 47-04 R9 cross-test — gateway-patch single-writer guard
+// Cross-test — gateway-patch single-writer guard
 //
-// R9 is delivered as the `integrations.mcp.servers is managed by mcp_manage`
-// throw in config-write.ts (47-03). The full positive-and-negative coverage
+// The single-writer guard is delivered as the `integrations.mcp.servers is managed by mcp_manage`
+// throw in config-write.ts. The full positive-and-negative coverage
 // lives in packages/daemon/src/api/config-handlers.test.ts:2154+ (5 tests).
 // This describe block adds a focused mcp-handlers-resident cross-test that
 // asserts the guard fires from the same factory consumers use in production,
-// keeping the SPEC R9 acceptance traceable to a test in the file collocated
+// keeping acceptance traceable to a test in the file collocated
 // with the mcp_manage writer surface.
 // ===========================================================================
 
-describe("Phase 47-04 R9 — gateway-patch single-writer guard (cross-test from mcp-handlers test file)", () => {
+describe("gateway-patch single-writer guard (cross-test from mcp-handlers test file)", () => {
   it("rejects config.patch against integrations.mcp.servers and routes the caller to mcp_manage", async () => {
     // Lazy-load the SUT here so the file-top vi.mock for persist-to-config does
     // not interfere — config-write.ts imports persist-to-config too, but the
-    // guard fires BEFORE that import is exercised (trust-check → R9 guard →
+    // guard fires BEFORE that import is exercised (trust-check → single-writer guard →
     // rate-limit → persist). The mock is therefore a non-issue.
     const { bindConfigWriteHandlers } = await import("./config-handlers/config-write.js");
 
@@ -2102,7 +2094,7 @@ describe("Phase 47-04 R9 — gateway-patch single-writer guard (cross-test from 
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("admin-trust check takes precedence over R9 (non-admin trust gets the trust error, not the R9 redirect)", async () => {
+  it("admin-trust check takes precedence over the guard (non-admin trust gets the trust error, not the redirect)", async () => {
     const { bindConfigWriteHandlers } = await import("./config-handlers/config-write.js");
     const handlers = bindConfigWriteHandlers(
       {

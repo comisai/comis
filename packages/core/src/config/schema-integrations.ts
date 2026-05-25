@@ -27,14 +27,12 @@ export const BraveSearchConfigSchema = z.strictObject({
  * requiring an explicit `transport`. Explicit `transport`
  * always wins.
  *
- * WR-01 — REJECTS ambiguous entries that supply BOTH `command` AND `url`
- * without an explicit `transport`. Pre-fix the first matching branch
- * (command -> stdio) won and the unused field passed through, silently
- * ignored at runtime by createTransport. The operator never saw a
- * warning. The fix surfaces a structured error key (via `z.NEVER` —
- * which converts the entry into a Zod-detected invalid value, producing
- * a parse error pointing at the ambiguity) so the operator must opt
- * IN explicitly via `transport: "stdio" | "http" | "sse"`.
+ * REJECTS ambiguous entries that supply BOTH `command` AND `url`
+ * without an explicit `transport`. Surfaces a structured error key
+ * (via `z.NEVER` — which converts the entry into a Zod-detected
+ * invalid value, producing a parse error pointing at the ambiguity)
+ * so the operator must opt IN explicitly via
+ * `transport: "stdio" | "http" | "sse"`.
  */
 const inferTransport = (input: unknown, ctx: z.RefinementCtx): unknown => {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -50,7 +48,7 @@ const inferTransport = (input: unknown, ctx: z.RefinementCtx): unknown => {
   const hasCommand = typeof entry.command === "string" && entry.command.length > 0;
   const hasUrl = typeof entry.url === "string" && entry.url.length > 0;
   if (hasCommand && hasUrl) {
-    // WR-01: ambiguous — operator supplied BOTH command and url with no
+    // Ambiguous — operator supplied BOTH command and url with no
     // explicit transport. Reject loudly rather than silently picking one.
     ctx.addIssue({
       code: "custom",

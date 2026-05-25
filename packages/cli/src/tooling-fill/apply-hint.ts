@@ -23,7 +23,7 @@
  * Design notes:
  *  - Pure function: no fs I/O, no Commander wiring. Caller wraps
  *    parseDocument + this module + doc.toString() in a Result shell.
- *  - Result<void, ApplyHintError> over throw — AGENTS.md §2.1.
+ *  - Result<void, ApplyHintError> over throw.
  *  - Same yaml@2.8.4 primitives as generate.ts (hasIn, setIn,
  *    createNode); no js-yaml dependency.
  *  - replacesPackages is fully replaced (not merged) — `--force=replace`
@@ -41,7 +41,7 @@ import { ok, err, type Result } from "@comis/shared";
  * real packages, the TODO is stale — strip it so the YAML stays clean.
  * Keep operator-authored comments (anything else) intact.
  */
-const PHASE_25_TODO_COMMENT = " TODO: list npm/pip packages this MCP replaces";
+const STUB_TODO_COMMENT = " TODO: list npm/pip packages this MCP replaces";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -162,7 +162,7 @@ export function setHintFields(
         if (p.key.value !== "replacesPackages") continue;
         // Strip ONLY the generated stub. Operator-authored commentBefore
         // on the same key is left alone.
-        if (p.key.commentBefore === PHASE_25_TODO_COMMENT) {
+        if (p.key.commentBefore === STUB_TODO_COMMENT) {
           delete p.key.commentBefore;
         }
         break;

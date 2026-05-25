@@ -45,7 +45,7 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 24 entries (21 original + 3 CLI-06 trace contracts)", () => {
+  it("OBSERVABILITY_CONTRACTS has exactly 24 entries", () => {
     expect(OBSERVABILITY_CONTRACTS.length).toBe(24);
   });
 
@@ -81,8 +81,7 @@ describe("observability-domain contracts", () => {
       // SystemPromptReport surface.
       "obs.systemPromptReport.latest",
       "obs.systemPromptReport.list",
-      // CLI-06 trace correlation contracts (Plan 06-02).
-      // Handlers added in Plan 06-03 (bidirectional arch test RED until then).
+      // Trace correlation contracts.
       "obs.trace.export",
       "obs.trace.search",
       "obs.trace.tail",
@@ -752,10 +751,10 @@ describe("observability-domain contracts", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ObsTrace contracts (CLI-06)
+// ObsTrace contracts
 // ---------------------------------------------------------------------------
 
-describe("ObsTrace contracts (CLI-06)", () => {
+describe("ObsTrace contracts", () => {
   // Test 1
   it("ObsTraceSearchContract method equals obs.trace.search", () => {
     expect(ObsTraceSearchContract.method).toBe("obs.trace.search");

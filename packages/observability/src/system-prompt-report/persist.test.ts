@@ -4,7 +4,7 @@
  *
  * Both dual targets (`observabilityStore` and the
  * `SessionStoreReportSink` soft port) are exercised. The persist
- * function returns `Result` per AGENTS.md §2.1 — never throws.
+ * function returns `Result` — never throws.
  */
 import { describe, it, expect, vi } from "vitest";
 import type { SystemPromptReport } from "./types.js";

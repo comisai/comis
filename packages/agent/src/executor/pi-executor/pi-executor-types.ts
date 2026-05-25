@@ -127,7 +127,7 @@ export interface PiExecutorDeps {
     getEligibleSkillNames(): Set<string>;
     initFromSdkSkills(sdkSkills: Array<{ name: string; description: string; filePath: string; baseDir: string; source: string; disableModelInvocation: boolean }>): void;
     /**
-     * WR-01 (Plan 05-04): optional accessor for the populated trace.metadata snapshot.
+     * Optional accessor for the populated trace.metadata snapshot.
      * Structural (not importing SkillSnapshot from @comis/skills) to avoid an
      * agent -> skills circular dependency.
      * Daemon wiring passes the full @comis/skills SkillRegistry which implements
@@ -206,10 +206,10 @@ export interface PiExecutorDeps {
    * Optional session-scoped trajectory recorder registry. When provided,
    * pi-executor delegates recorder lifecycle (lazy-create on first turn,
    * close on session destroy) to this registry instead of constructing
-   * a fresh recorder per `execute()` call. The registry guarantees the
-   * design §6.4 + §6.5 + §6.8 invariants: monotonic `seq` across all
-   * turns, exactly one `session.started`/`session.ended` per session,
-   * bridge subscription matches recorder lifetime.
+   * a fresh recorder per `execute()` call. The registry guarantees a
+   * monotonic `seq` across all turns, exactly one
+   * `session.started`/`session.ended` per session, and that the bridge
+   * subscription matches the recorder lifetime.
    *
    * Wired in the daemon composition root via
    * `createSessionTrajectoryHandleRegistry()` from @comis/observability.

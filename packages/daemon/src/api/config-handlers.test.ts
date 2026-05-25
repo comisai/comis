@@ -219,7 +219,7 @@ describe("config.patch", () => {
         result: string;
         event: string;
       };
-      // Design §9.2: `source` is the fixed literal "config-io"; legacy
+      // `source` is the fixed literal "config-io"; legacy
       // call-site identity ("config-patch-rpc") moves to `callerSource`.
       // Discriminant is `event`, not `phase`.
       expect(record.source).toBe("config-io");
@@ -258,7 +258,7 @@ describe("config.patch", () => {
       expect(record.result).toBe("rejected");
     });
 
-    it("Fix D1: rejected audit record carries the validator's errorMessage", async () => {
+    it("rejected audit record carries the validator's errorMessage", async () => {
       // Pre-fix the `rejected` outcome swallowed the rejection reason — the
       // persisted JSONL line only had `result: "rejected"` with no
       // errorMessage, so operators had to grep daemon logs to find why a
@@ -945,15 +945,15 @@ describe("config.patch env var reference validation", () => {
     tempConfig.cleanup();
   });
 
-  // Phase 47 R9: gateway-patch on integrations.mcp.servers is now REJECTED
+  // Gateway-patch on integrations.mcp.servers is now REJECTED
   // before the env-ref validator runs. The env-validator logic itself is
   // unchanged and still exercised by persistToConfig at the AppConfigSchema
-  // safeParse boundary (Plan 47-02). The tests below assert that the R9
+  // safeParse boundary. The tests below assert that the single-writer
   // guard supersedes the env-validator pathway for the gateway-patch
   // surface — the env-validator's behaviors are covered by unit tests on
   // `findUnresolvedEnvRefs` + the persistMcpServers integration tests.
 
-  it("R9: gateway-patch on integrations.mcp.servers is rejected before the env-ref validator (enabled:false placeholder)", async () => {
+  it("gateway-patch on integrations.mcp.servers is rejected before the env-ref validator (enabled:false placeholder)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -976,7 +976,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9: gateway-patch on integrations.mcp.servers is rejected before the env-ref validator (enabled:true missing ref)", async () => {
+  it("gateway-patch on integrations.mcp.servers is rejected before the env-ref validator (enabled:true missing ref)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -999,7 +999,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9: gateway-patch on integrations.mcp.servers is rejected even when the secret resolves", async () => {
+  it("gateway-patch on integrations.mcp.servers is rejected even when the secret resolves", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, { FINNHUB_API_KEY: "abc123" });
     const handlers = createConfigHandlers(deps);
 
@@ -1022,7 +1022,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9: gateway-patch on integrations.mcp.servers is rejected for multi-server payloads (route to mcp_manage)", async () => {
+  it("gateway-patch on integrations.mcp.servers is rejected for multi-server payloads (route to mcp_manage)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1052,7 +1052,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9: gateway-patch on integrations.mcp.servers is rejected for many-missing-vars payloads", async () => {
+  it("gateway-patch on integrations.mcp.servers is rejected for many-missing-vars payloads", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1079,7 +1079,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // Non-MCP patch: R9 + env-validator both skipped entirely.
+  // Non-MCP patch: single-writer guard + env-validator both skipped entirely.
   it("skips validator entirely for non-MCP patches", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
@@ -1095,10 +1095,10 @@ describe("config.patch env var reference validation", () => {
     expect(result).toMatchObject({ patched: true });
   });
 
-  // Empty servers array — even this no-op shape is rejected by R9. The
+  // Empty servers array — even this no-op shape is rejected. The
   // single-writer invariant treats integrations.mcp.servers as fully managed
   // by mcp_manage, no exceptions for "vacuous" payloads.
-  it("R9: rejects even an empty servers-array patch (no carve-out for no-op shapes)", async () => {
+  it("rejects even an empty servers-array patch (no carve-out for no-op shapes)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1112,12 +1112,12 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // BL-01 from 62-REVIEW: parent-path bypass shapes must produce the
+  // Parent-path bypass shapes must produce the
   // mcp_manage redirect, not the generic "immutable path" message that
-  // arises if the patch slips past the R9 guard and into the
+  // arises if the patch slips past the single-writer guard and into the
   // isImmutableConfigPath check.
 
-  it("R9 BL-01: parent-path bypass via { section:'integrations', key:'mcp', value:{ servers:[...] } } returns the mcp_manage redirect", async () => {
+  it("parent-path bypass via { section:'integrations', key:'mcp', value:{ servers:[...] } } returns the mcp_manage redirect", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1131,7 +1131,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9 BL-01: parent-path bypass via { section:'integrations', value:{ mcp:{ servers:[...] } } } returns the mcp_manage redirect", async () => {
+  it("parent-path bypass via { section:'integrations', value:{ mcp:{ servers:[...] } } } returns the mcp_manage redirect", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1144,7 +1144,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9 BL-01: parent-path bypass via { path:'integrations.mcp', value:{ servers:[...] } } returns the mcp_manage redirect", async () => {
+  it("parent-path bypass via { path:'integrations.mcp', value:{ servers:[...] } } returns the mcp_manage redirect", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1157,7 +1157,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9 BL-01: parent-path bypass via { path:'integrations', value:{ mcp:{ servers:[...] } } } returns the mcp_manage redirect", async () => {
+  it("parent-path bypass via { path:'integrations', value:{ mcp:{ servers:[...] } } } returns the mcp_manage redirect", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1170,12 +1170,12 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9 BL-01: parent-path NEGATIVE — { section:'integrations', value:{ media:{...} } } does NOT match (unrelated subtree)", async () => {
+  it("parent-path NEGATIVE — { section:'integrations', value:{ media:{...} } } does NOT match (unrelated subtree)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
     // This patch touches integrations.media (which is mutable), not mcp.servers —
-    // R9 must NOT fire. Whether the patch ultimately succeeds depends on schema
+    // single-writer guard must NOT fire. Whether the patch ultimately succeeds depends on schema
     // validation downstream; the assertion here is purely that the mcp_manage
     // redirect is NOT raised.
     await expect(
@@ -1791,14 +1791,14 @@ describe("config.patch type coercion", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 47 R9: config.patch on integrations.mcp.servers is REJECTED — the
+  // config.patch on integrations.mcp.servers is REJECTED — the
   // z.record(string,string) env + headers preservation behavior is now
-  // exercised on the persistToConfig writer path (covered by Plan 47-02's
+  // exercised on the persistToConfig writer path (covered by the
   // mcp-handlers tests). The coerceConfigValue + AppConfigSchema.safeParse
   // logic that originally enforced the preservation invariant is unchanged
   // and still runs inside persistToConfig.
   // -------------------------------------------------------------------------
-  it("R9: config.patch on integrations.mcp.servers is rejected (env z.record preservation moves to persistMcpServers)", async () => {
+  it("config.patch on integrations.mcp.servers is rejected (env z.record preservation moves to persistMcpServers)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, { GEMINI_API_KEY: "test-gemini-key" });
     const handlers = createConfigHandlers(deps);
 
@@ -1825,7 +1825,7 @@ describe("config.patch type coercion", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9: config.patch on integrations.mcp.servers is rejected (headers z.record preservation moves to persistMcpServers)", async () => {
+  it("config.patch on integrations.mcp.servers is rejected (headers z.record preservation moves to persistMcpServers)", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
 
@@ -2210,7 +2210,7 @@ describe("config.patch credential guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 47 R9: gateway-patch single-writer guard for integrations.mcp.servers
+// Gateway-patch single-writer guard for integrations.mcp.servers
 //
 // The mcp_manage RPC (mcp.connect / mcp.disconnect) is the canonical writer of
 // integrations.mcp.servers via persistToConfig. Direct gateway(action:"patch")
@@ -2223,10 +2223,10 @@ describe("config.patch credential guard", () => {
 // The guard mirrors the immutable-paths precedent at config-write.ts:144-152.
 // It does NOT remove the MUTABLE_CONFIG_OVERRIDES entry for
 // integrations.mcp.servers at immutable-keys.ts:38 — persistToConfig (in
-// mcp-handlers from Plan 47-02) needs that override entry to write through.
+// mcp-handlers) needs that override entry to write through.
 // ---------------------------------------------------------------------------
 
-describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () => {
+describe("config.patch single-writer guard (integrations.mcp.servers)", () => {
   let killSpy: ReturnType<typeof vi.spyOn>;
   let tempConfig: ReturnType<typeof createTempConfig>;
 
@@ -2243,7 +2243,7 @@ describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () =>
     tempConfig.cleanup();
   });
 
-  // R9 Test 1: path-format (legacy dot-notation).
+  // Test 1: path-format (legacy dot-notation).
   it("rejects gateway-patch with path: 'integrations.mcp.servers' and routes the caller to mcp_manage", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
@@ -2283,7 +2283,7 @@ describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () =>
     expect(killSpy).not.toHaveBeenCalled();
   });
 
-  // R9 Test 2: section/key format (canonical wire shape).
+  // Test 2: section/key format (canonical wire shape).
   it("rejects gateway-patch with section/key shape ('integrations' / 'mcp.servers')", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
@@ -2298,7 +2298,7 @@ describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () =>
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // R9 Test 3: sub-path (e.g., toggling enabled on a single server entry).
+  // Test 3: sub-path (e.g., toggling enabled on a single server entry).
   it("rejects gateway-patch on sub-paths like 'mcp.servers.0.enabled'", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
@@ -2313,8 +2313,8 @@ describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () =>
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // R9 Test 4: error precedence — guard fires BEFORE the rate-limit consume.
-  // Strategy: invoke the R9-rejected handler 10 times (more than the 5/min
+  // Test 4: error precedence — guard fires BEFORE the rate-limit consume.
+  // Strategy: invoke the rejected handler 10 times (more than the 5/min
   // budget), then verify that 5 legitimate patches still succeed. If the
   // guard burned tokens, the 5th legitimate patch would be rate-limited.
   it("guard does NOT consume rate-limit tokens (admins can probe without burning budget)", async () => {
@@ -2345,12 +2345,12 @@ describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () =>
     }
   });
 
-  // R9 Test 5: non-match on sibling integrations path (github).
+  // Test 5: non-match on sibling integrations path (github).
   // The guard prefix-matches "integrations.mcp.servers" — sibling paths like
   // "integrations.github" must fall through to the existing handler flow.
   // integrations.github isn't itself mutable so the patch ultimately fails
-  // for unrelated reasons — but it must NOT be rejected with the R9 message.
-  it("does NOT over-match: a sibling integrations.* path is not blocked by R9", async () => {
+  // for unrelated reasons — but it must NOT be rejected with the single-writer message.
+  it("does NOT over-match: a sibling integrations.* path is not blocked by the guard", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
 
@@ -2364,7 +2364,7 @@ describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () =>
     ).rejects.toThrow();
 
     // Inspect the actual thrown message — it must NOT mention "mcp_manage"
-    // (i.e., the existing handler flow rejected it for its own reasons, not R9).
+    // (i.e., the existing handler flow rejected it for its own reasons, not the single-writer guard).
     let err: unknown;
     try {
       await handlers["config.patch"]!({
@@ -2380,8 +2380,8 @@ describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () =>
     expect(msg).not.toMatch(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // R9 Test 6: non-match on unrelated top-level section.
-  it("does NOT over-match: an unrelated top-level section is not blocked by R9", async () => {
+  // Test 6: non-match on unrelated top-level section.
+  it("does NOT over-match: an unrelated top-level section is not blocked by the guard", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
 
@@ -2395,11 +2395,11 @@ describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () =>
     expect(result).toMatchObject({ patched: true });
   });
 
-  // R9 Test 7: admin-trust precedence — the existing trustLevel check at
+  // Test 7: admin-trust precedence — the existing trustLevel check at
   // config-write.ts:74-76 must STILL fire FIRST for non-admin callers, even
   // when the patch targets integrations.mcp.servers. Order is:
-  //   trust-check → R9 routing-redirect → rate-limit → contract.parse → ...
-  it("admin-trust check fires before R9 (non-admin callers get 'Admin access required')", async () => {
+  //   trust-check → routing-redirect → rate-limit → contract.parse → ...
+  it("admin-trust check fires before guard (non-admin callers get 'Admin access required')", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
 

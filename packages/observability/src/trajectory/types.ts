@@ -70,9 +70,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   "delivery.queued",
   "delivery.dispatched",
 
-  // Lifecycle envelopes (D4 / LIFE-01 + LIFE-02). Direct-emit by the
-  // agent executor — NOT via the EventBus bridge. See design §6.2
-  // Appendix B "(NEW D4) direct". Added Plan 01-01 (TRACE-02).
+  // Lifecycle envelopes. Direct-emit by the agent executor — NOT via the
+  // EventBus bridge.
   "trace.metadata",
   "trace.artifacts",
 
@@ -83,51 +82,51 @@ export const TRAJECTORY_EVENT_TYPES = [
   // QueuedFileWriter.failureCount() > 0.
   "trace.write_failures",
 
-  // Queue lifecycle (D6 / BRIDGE-01)
+  // Queue lifecycle
   "queue.enqueued",
   "queue.dequeued",
   "queue.overflow",
   "queue.coalesced",
 
-  // Execution control (D6 / BRIDGE-03)
+  // Execution control
   "execution.aborted",
   "execution.budget_warning",
   "execution.prompt_timeout",
   "execution.output_escalated",
   "execution.replay_recovered",
 
-  // Security + sender (D6 / BRIDGE-04 scanned subset)
+  // Security + sender (scanned subset)
   "security.injection_detected",
   "sender.blocked",
 
-  // Delivery retry (D6 / BRIDGE-02)
+  // Delivery retry
   "delivery.retry",
   "delivery.retry_exhausted",
   "delivery.markdown_fallback",
 
-  // MCP server reliability (D6 / BRIDGE-05)
+  // MCP server reliability
   "mcp.disconnected",
   "mcp.reconnecting",
   "mcp.reconnect_failed",
   "mcp.reconnected",
   "mcp.tools_changed",
 
-  // Channel lifecycle + health (D6 / BRIDGE-06)
+  // Channel lifecycle + health
   // channel.lifecycle is shared by channel:registered and channel:deregistered
   // (dual-mapping; translator adds synthetic event discriminator).
   "channel.health_changed",
   "channel.lifecycle",
 
-  // Security rest (D6 / BRIDGE-04)
+  // Security rest
   "security.memory_tainted",
   "security.warn",
 
-  // Compaction (D6 / BRIDGE-07)
+  // Compaction
   "compaction.started",
   "compaction.flush",
   "compaction.recommended",
 
-  // Context engine (D6 / BRIDGE-07)
+  // Context engine
   "context.evicted",
   "context.masked",
   "context.reread",
@@ -135,22 +134,22 @@ export const TRAJECTORY_EVENT_TYPES = [
   "context.integrity",
   "context.rehydrated",
 
-  // Approval / human-in-the-loop (D6 / BRIDGE-08)
+  // Approval / human-in-the-loop
   "approval.requested",
   "approval.resolved",
 
-  // Dedup (D12 / DEDUP-03)
+  // Dedup
   "dedup.duplicate_inbound",
 
-  // Health budget (ALERT-01 / D16)
+  // Health budget
   "health.budget_exceeded",
 
-  // Session transcript (Phase 4 D5 / BUNDLE-04).
+  // Session transcript.
   // Synthesized by buildTranscriptEvents in export.ts when the bundle
   // exporter merges session JSONL branch entries with runtime events.
   // The SDK SessionEntry.type is not in this closed union — it is carried
   // verbatim in data.entryType so downstream consumers can branch on it.
-  // One literal covers all SDK entry types; the union grows 44 → 45.
+  // One literal covers all SDK entry types.
   "session.transcript.entry",
 ] as const;
 
@@ -158,18 +157,16 @@ export const TRAJECTORY_EVENT_TYPES = [
 export type TrajectoryEventType = (typeof TRAJECTORY_EVENT_TYPES)[number];
 
 /**
- * Trajectory event source (design §6.2).
+ * Trajectory event source.
  *
- * - `"runtime"`    — emitted live by `createTrajectoryRecorder` during agent execution
- *                   (the only producer this phase ships; runtime recorder pins this value).
+ * - `"runtime"`    — emitted live by `createTrajectoryRecorder` during agent execution.
  * - `"transcript"` — emitted by the bundle exporter when merging session JSONL transcript
- *                   entries with runtime events (Phase 4 D5).
- * - `"export"`     — emitted by the bundle exporter for synthesized records (Phase 4 D5).
+ *                   entries with runtime events.
+ * - `"export"`     — emitted by the bundle exporter for synthesized records.
  *
- * Declaration widened in Plan 01-01 (TRACE-02); producers for transcript/export
- * land in Phase 4. On-disk JSONL files written before this widening lack ambient
- * "transcript"/"export" values — readers tolerate the narrower set per §6.4 additive
- * schema policy.
+ * On-disk JSONL files written before this widening lack ambient
+ * "transcript"/"export" values — readers tolerate the narrower set per the
+ * additive schema policy.
  */
 export type TrajectoryEventSource = "runtime" | "transcript" | "export";
 
@@ -190,7 +187,7 @@ export type TrajectoryEventSource = "runtime" | "transcript" | "export";
  *   metadata copied from `TrajectoryRecorderInit` when defined.
  * - `data`: typed payload (after `sanitizeForPersistence`).
  *
- * Envelope-vs-data discipline (design §6.2): `traceId`, `agentId`, `sessionId`,
+ * Envelope-vs-data discipline: `traceId`, `agentId`, `sessionId`,
  * `sessionKey` are envelope-only — they MUST NOT be duplicated into `data`.
  */
 export interface TrajectoryEvent {
@@ -216,19 +213,18 @@ export interface TrajectoryEvent {
   readonly modelApi?: string | null;
 
   readonly entryId: string;
-  /** Parent event ID for DAG reconstruction (design §6.1 / O2).
-   *  Forward-declared in Phase 1; populated by Phase 4 session-DAG writer.
+  /** Parent event ID for DAG reconstruction.
+   *  Populated by the session-DAG writer.
    *  `null` distinguishes "explicit root" from "missing". */
   readonly parentEntryId?: string | null;
 
-  /** Source-relative monotonic position (design §6.1). Used by the bundle
+  /** Source-relative monotonic position. Used by the bundle
    *  exporter as a tiebreak when merging runtime + transcript events with
-   *  identical `ts`. Forward-declared in Phase 1; populated by Phase 4
-   *  (bundle export) and downstream readers. */
+   *  identical `ts`. */
   readonly sourceSeq?: number;
 
   // Payload — passed through `sanitizeForPersistence` before write.
-  // Shape is intentionally `Record<string, unknown>` (matches design §6.2);
+  // Shape is intentionally `Record<string, unknown>`;
   // `sanitizeForPersistence` always returns an object-shaped value.
   readonly data?: Record<string, unknown>;
 }
@@ -294,20 +290,19 @@ export interface TrajectoryRecorderInit {
   readonly workspaceDir?: string;
   /**
    * Model-metadata cluster (provider id + model id + model API). Adding
-   * `modelApi` (design §6.2 deviation B) at the top level would push
-   * TrajectoryRecorderInit past the ≤12-optional-fields architecture
-   * invariant — clustering the three model identifiers into one
-   * optional field collapses three slots into one. Resolver in
-   * `runtime.ts` reads `init.model?.provider`, `init.model?.modelId`,
-   * `init.model?.modelApi` and lifts each onto the trajectory envelope
-   * when defined.
+   * `modelApi` at the top level would push TrajectoryRecorderInit past
+   * the ≤12-optional-fields architecture invariant — clustering the
+   * three model identifiers into one optional field collapses three
+   * slots into one. Resolver in `runtime.ts` reads
+   * `init.model?.provider`, `init.model?.modelId`, `init.model?.modelApi`
+   * and lifts each onto the trajectory envelope when defined.
    */
   readonly model?: {
     /** Provider id (e.g., "anthropic"). */
     readonly provider?: string;
     /** Model id (e.g., "claude-sonnet-4-20250514"). */
     readonly modelId?: string;
-    /** Model API (e.g., "messages", "responses"). `null` permitted per design §6.2. */
+    /** Model API (e.g., "messages", "responses"). `null` permitted. */
     readonly modelApi?: string | null;
   };
 
@@ -361,10 +356,8 @@ export interface TrajectoryRecorderInit {
  * Used by:
  *   - Internal close-time sentinel emit in `flushAndClose` (passes
  *     `reason: "file-or-queue-cap-exceeded"`).
- *   - Phase 2 D7 bounded-payload writer (passes reasons like
+ *   - Bounded-payload writer (passes reasons like
  *     `"trajectory-runtime-file-size-limit"`).
- *
- * @see design §5 D4 / D7
  */
 export interface TraceTruncatedParams {
   /** Human-readable reason code. E.g. "file-or-queue-cap-exceeded",
@@ -401,11 +394,10 @@ export interface TrajectoryRecorder {
    * When `data` exceeds `maxRuntimeEventBytes` after sanitization the
    * entire event is replaced with a single-key sentinel record.
    *
-   * `data` is typed `Record<string, unknown> | undefined` to match the
-   * design §6.2 contract. Pass `undefined` (or omit) when there is no
-   * payload — bridge translators that intentionally produce no
-   * correlation data still hand back an object so consumers can grep
-   * by key.
+   * `data` is typed `Record<string, unknown> | undefined`. Pass
+   * `undefined` (or omit) when there is no payload — bridge translators
+   * that intentionally produce no correlation data still hand back an
+   * object so consumers can grep by key.
    *
    * Returns "queued" on accept, "dropped" when the per-writer queue cap
    * would be exceeded (operator-tunable backpressure).
@@ -428,8 +420,8 @@ export interface TrajectoryRecorder {
 
   /**
    * Emit a `trace.truncated` event with operator-supplied reason and
-   * bound metadata. Used by D7 (Phase 2) to signal bound-exhaustion
-   * at any write-time location, NOT only at close.
+   * bound metadata. Used to signal bound-exhaustion at any write-time
+   * location, NOT only at close.
    *
    * The internal close-time sentinel emit in flushAndClose calls the
    * SAME codepath with reason `"file-or-queue-cap-exceeded"`.
@@ -441,8 +433,8 @@ export interface TrajectoryRecorder {
 
   /**
    * Returns the running count of events dropped by this recorder (both
-   * soft-cap and hard-cap drops). Observable counter for WR-04: callers
-   * at lifecycle-envelope emit sites can read this to detect silent drops.
+   * soft-cap and hard-cap drops). Observable counter — callers at
+   * lifecycle-envelope emit sites can read this to detect silent drops.
    *
    * Incremented on each call to `recordEvent` that returns `"dropped"`.
    */

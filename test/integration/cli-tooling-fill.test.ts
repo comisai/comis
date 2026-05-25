@@ -457,8 +457,8 @@ describe("comis config tooling-fill integration", () => {
             COMIS_GATEWAY_URL: `ws://127.0.0.1:${new URL(handle.gatewayUrl).port}/ws`,
             COMIS_GATEWAY_TOKEN: handle.authToken,
             // Test-only fault injector — orchestrator skips /api/chat and
-            // uses this as the literal agent response. AGENTS.md §2.2
-            // exception list allows test fault injectors.
+            // uses this as the literal agent response. Exception list
+            // allows test fault injectors.
             COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE: CANNED_AGENT_RESPONSE,
           },
           timeoutMs: 30_000,

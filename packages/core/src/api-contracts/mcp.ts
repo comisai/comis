@@ -278,11 +278,11 @@ export const McpConnectContract = defineContract({
     url: z.string().optional(),
     env: z.record(z.string(), z.string()).optional(),
     headers: z.record(z.string(), z.string()).optional(),
-    // Phase 63 CR-03: per-server stdio rlimits override accepted on
-    // `mcp.connect` so callers can supply rlimits at first-connect time.
-    // Mirrors McpServerEntrySchema.rlimits. Partial overrides allowed.
-    // The handler forwards to both the spawn-time McpServerConfig
-    // (wrapStdioCommand) and the persisted McpServerEntry.
+    // Per-server stdio rlimits override accepted on `mcp.connect` so
+    // callers can supply rlimits at first-connect time. Mirrors
+    // McpServerEntrySchema.rlimits. Partial overrides allowed. The handler
+    // forwards to both the spawn-time McpServerConfig (wrapStdioCommand)
+    // and the persisted McpServerEntry.
     rlimits: z
       .object({
         as: z.number().int().positive().optional(),
@@ -290,10 +290,10 @@ export const McpConnectContract = defineContract({
         cpu: z.number().int().positive().optional(),
       })
       .optional(),
-    // Phase 63 CR-04: per-server opt-out for the plaintext-secret
-    // heuristic. Accepted on `mcp.connect` and PERSISTED to the
-    // McpServerEntry so the opt-out survives a daemon restart. Default:
-    // false (heuristic enforced). Mirrors McpServerEntrySchema.
+    // Per-server opt-out for the plaintext-secret heuristic. Accepted on
+    // `mcp.connect` and PERSISTED to the McpServerEntry so the opt-out
+    // survives a daemon restart. Default: false (heuristic enforced).
+    // Mirrors McpServerEntrySchema.
     disablePlaintextSecretCheck: z.boolean().optional(),
   }),
   response: z.object({
@@ -424,10 +424,9 @@ export const McpTestContract = defineContract({
     url: z.string().optional(),
     env: z.record(z.string(), z.string()).optional(),
     headers: z.record(z.string(), z.string()).optional(),
-    // Phase 63 CR-02: mcp.test now applies the same pre-spawn safety
-    // controls as mcp.connect, including caller-supplied rlimits and the
-    // per-server plaintext-secret opt-out. Both fields mirror
-    // McpConnectContract.request.
+    // mcp.test applies the same pre-spawn safety controls as mcp.connect,
+    // including caller-supplied rlimits and the per-server plaintext-secret
+    // opt-out. Both fields mirror McpConnectContract.request.
     rlimits: z
       .object({
         as: z.number().int().positive().optional(),

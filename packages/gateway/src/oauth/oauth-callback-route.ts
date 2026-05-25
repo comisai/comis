@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: OAuth HTTP callback route; throws caught by Hono error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception.
+// @allow-throw: OAuth HTTP callback route; throws caught by Hono error-handler boundary web-user-facing flows exception.
 /**
  * OAuth callback route for the Comis gateway.
  *
@@ -13,7 +13,7 @@
  * page (200) on success or a "Login Failed" HTML page (400/500) on failure.
  *
  * HTTP method is GET, NOT POST (OAuth servers always redirect with GET).
- * Logging discipline (CLAUDE.md): submodule: "oauth-callback"
+ * Logging discipline: submodule: "oauth-callback"
  * on every line; NEVER log code/state/verifier/access/refresh values.
  *
  * @module

@@ -10,7 +10,7 @@
  * packages/agent/src/__tests__/fixtures/phase-8-skill-variants/README.md
  * (cost / latency implications for developers running locally).
  *
- * Top-level entry-point exception applies (AGENTS.md §2.2): test fault injectors
+ * Top-level entry-point exception applies: test fault injectors
  * may read process.env directly. This helper is the canonical injection surface
  * for the provider-gated suite.
  *

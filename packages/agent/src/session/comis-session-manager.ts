@@ -60,10 +60,10 @@ export interface ComisSessionManagerDeps {
   /**
    * Optional TypedEventBus. When provided, `destroySession` emits a
    * `session:ended` event with `exitReason: "destroyed"` BEFORE unlinking
-   * the JSONL transcript (design §6.4 mapping table — `session.ended`
-   * fires on session-destroy, NOT per-turn). When omitted (legacy / test
-   * harnesses, ephemeral sub-agent path), the emit step is a silent no-op
-   * and `destroySession` still unlinks the file as before.
+   * the JSONL transcript. `session.ended` fires on session-destroy, NOT
+   * per-turn. When omitted (legacy / test harnesses, ephemeral sub-agent
+   * path), the emit step is a silent no-op and `destroySession` still
+   * unlinks the file as before.
    *
    * Production wiring: daemon's setup-agents-runtime threads
    * `container.eventBus` here.
@@ -75,7 +75,7 @@ export interface ComisSessionManagerDeps {
    * the `session:ended` emit and BEFORE unlinking the JSONL — the
    * registry's `flushAndClose` drains the writer's queue tail so the
    * just-emitted `session.ended` JSONL line lands on disk before the
-   * recorder tears down (design §6.5).
+   * recorder tears down.
    *
    * Production wiring: daemon's setup-agents-runtime threads the
    * singleton registry from setup-agents-registry here.
@@ -83,10 +83,9 @@ export interface ComisSessionManagerDeps {
   trajectoryRegistry?: SessionTrajectoryHandleRegistry;
   /**
    * Optional provider of per-session run-state for the `trace.artifacts`
-   * lifecycle envelope (LIFE-02, Plan 01-05). Pi-executor registers a closure
-   * pulling the latest `BridgeMetricsState` snapshot. When `undefined`, the
-   * session manager emits a minimal `"destroyed"` artifacts payload with
-   * zero-count usage.
+   * lifecycle envelope. Pi-executor registers a closure pulling the latest
+   * `BridgeMetricsState` snapshot. When `undefined`, the session manager
+   * emits a minimal `"destroyed"` artifacts payload with zero-count usage.
    */
   sessionStateProvider?: (sessionKey: string) => TraceArtifactsRunState | undefined;
   /**
@@ -228,11 +227,10 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
 
       return withSessionLock(deps.fileLock, deps.lockDir, sessionKeyStr, async () => {
         // Ensure the directory tree exists for new sessions. Uses
-        // `ensureContainedDir` to honor design §1.4 mode invariant — every
-        // artifact dir under ~/.comis/ must be `0o700`. Result.err is logged
-        // at WARN per AGENTS.md §2.1; the contract is best-effort
-        // (SdkSessionManager.open below surfaces real errors via its own
-        // throw path).
+        // `ensureContainedDir` to honor the mode invariant — every artifact
+        // dir under ~/.comis/ must be `0o700`. Result.err is logged at WARN;
+        // the contract is best-effort (SdkSessionManager.open below surfaces
+        // real errors via its own throw path).
         const dirResult = ensureContainedDir({
           dir: dirname(sessionPath),
           mode: 0o700,
@@ -280,15 +278,15 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       // the EventBus emit to a recorder.recordEvent call (sync), which
       // enqueues the JSONL line. trajectoryRegistry.close then runs
       // flushAndClose which awaits the queue tail, guaranteeing the
-      // session.ended line lands on disk. Design §6.4 mapping:
-      // "(session) ended → session.ended" fires here, NOT on per-turn
-      // agent_end. Counters are zero placeholders — the session manager
-      // doesn't accumulate per-session totals; the `exitReason:"destroyed"`
-      // discriminator distinguishes from a normal end-of-turn close.
+      // session.ended line lands on disk. `session.ended` fires here on
+      // session-destroy, NOT on per-turn agent_end. Counters are zero
+      // placeholders — the session manager doesn't accumulate per-session
+      // totals; the `exitReason:"destroyed"` discriminator distinguishes
+      // from a normal end-of-turn close.
 
-      // LIFE-02 (Plan 01-05): emit trace.artifacts directly via the recorder
-      // BEFORE session:ended so it lands in the trajectory in the correct
-      // order (session.started → trace.metadata → … → trace.artifacts →
+      // Emit trace.artifacts directly via the recorder BEFORE session:ended
+      // so it lands in the trajectory in the correct order
+      // (session.started → trace.metadata → … → trace.artifacts →
       // session.ended). Direct emit — no bus bridge.
       if (deps.trajectoryRegistry !== undefined) {
         const recorder = deps.trajectoryRegistry.getRecorder?.(sessionKeyStr);
@@ -323,8 +321,8 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           timestamp: systemNowMs(),
         });
       }
-      // INDEX-03 (Plan 06-01): append session_ended to the date-rolled session
-      // index JSONL immediately after the session:ended bus emit.
+      // Append session_ended to the date-rolled session index JSONL
+      // immediately after the session:ended bus emit.
       appendSessionIndexEntry(
         deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
         {
@@ -401,9 +399,8 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           lastUpdated: systemNowDate().toISOString(),
         };
         // Uses `writeRegularFile` so the sentinel metadata file lands at
-        // mode `0o600` per design §1.4. Fire-and-forget contract preserved
-        // — Result.err is logged at WARN but never propagates to the
-        // caller.
+        // mode `0o600`. Fire-and-forget contract preserved — Result.err is
+        // logged at WARN but never propagates to the caller.
         const writeResult = writeRegularFile({
           path: metadataPath,
           content: JSON.stringify(merged, null, 2) + "\n",

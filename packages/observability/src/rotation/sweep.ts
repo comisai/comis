@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-stream rotation sweep (ROTATE-02).
+ * Per-stream rotation sweep.
  *
  * Iterates the 5 observability streams and applies the rotation
  * policy to each. Called at daemon startup (post-invariant-emit) and
@@ -141,7 +141,7 @@ export async function sweepRotatedFiles(
       ? safePath(logsDir, activeBase)
       : safePath(logsDir, "__no-active-base__");
 
-    // safePath throws PathTraversalError for symlinks that escape logsDir (T-07-01-01).
+    // safePath throws PathTraversalError for symlinks that escape logsDir.
     // Filter out any entries that throw — they are silently skipped (symlink-safe).
     const rotatedAbs: string[] = [];
     for (const n of rotated) {

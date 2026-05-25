@@ -625,8 +625,8 @@ export function registerConfigCommand(program: Command): void {
   // --- config tooling-fill --------------------------------------------------
   // Operator UX for materializing the description + replacesPackages fields
   // on tooling capability hints via the live Comis daemon. The orchestrator
-  // owns the full state machine; this callback is the composition root
-  // (AGENTS.md §2.4) — it builds the OrchestratorOpts bag, instantiates the
+  // owns the full state machine; this callback is the composition root —
+  // it builds the OrchestratorOpts bag, instantiates the
   // confirm-helper-backed PromptIO, and routes the result's exitCode into
   // process.exit.
   //

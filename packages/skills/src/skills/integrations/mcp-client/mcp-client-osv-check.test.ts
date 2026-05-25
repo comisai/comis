@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 63 plan 04 SAFETY-05/06 — co-located unit tests for the OSV
- * malware check + MCP-command package-name extractor introduced at
- * `mcp-client-osv-check.ts`.
+ * Co-located unit tests for the OSV malware check + MCP-command
+ * package-name extractor at `mcp-client-osv-check.ts`.
  *
- * Why TDD: per AGENTS.md §2.10 + CLAUDE.md "TDD-First", every behavior
- * change in production source starts with a failing test. This file
- * pins:
+ * TDD: every behavior change in production source starts with a failing
+ * test. This file pins:
  *
  *   - extractMcpPackageName: 8 cases over npx / uvx / pnpm dlx /
  *     unknown / absolute-path commands + npm `pkg@1.2.3` version strip.
@@ -55,7 +53,7 @@ afterEach(() => {
 // extractMcpPackageName — package-name extraction
 // ---------------------------------------------------------------------------
 
-describe("extractMcpPackageName — npx command parsing (SAFETY-05)", () => {
+describe("extractMcpPackageName — npx command parsing", () => {
   it("extractMcpPackageName parses npx -y @org/pkg into npm ecosystem entry", () => {
     expect(
       extractMcpPackageName("npx", ["-y", "@modelcontextprotocol/server-yfinance"]),
@@ -84,7 +82,7 @@ describe("extractMcpPackageName — npx command parsing (SAFETY-05)", () => {
   });
 });
 
-describe("extractMcpPackageName — uvx command parsing (SAFETY-05)", () => {
+describe("extractMcpPackageName — uvx command parsing", () => {
   it("extractMcpPackageName parses uvx pkg into pypi ecosystem entry", () => {
     expect(extractMcpPackageName("uvx", ["yfinance-mcp"])).toEqual({
       ecosystem: "pypi",
@@ -93,7 +91,7 @@ describe("extractMcpPackageName — uvx command parsing (SAFETY-05)", () => {
   });
 });
 
-describe("extractMcpPackageName — pnpm dlx command parsing (SAFETY-05)", () => {
+describe("extractMcpPackageName — pnpm dlx command parsing", () => {
   it("extractMcpPackageName parses pnpm dlx pkg into npm ecosystem entry", () => {
     expect(extractMcpPackageName("pnpm", ["dlx", "yfinance-mcp"])).toEqual({
       ecosystem: "npm",
@@ -102,7 +100,7 @@ describe("extractMcpPackageName — pnpm dlx command parsing (SAFETY-05)", () =>
   });
 });
 
-describe("extractMcpPackageName — unknown commands return null (SAFETY-05 Pitfall 4)", () => {
+describe("extractMcpPackageName — unknown commands return null", () => {
   it("extractMcpPackageName returns null for unrecognized node command", () => {
     expect(extractMcpPackageName("node", ["/path/to/server.js"])).toBeNull();
   });
@@ -113,7 +111,7 @@ describe("extractMcpPackageName — unknown commands return null (SAFETY-05 Pitf
 });
 
 // ---------------------------------------------------------------------------
-// CR-05 regressions — closing extractMcpPackageName OSV-bypass surfaces.
+// Regressions — closing extractMcpPackageName OSV-bypass surfaces.
 //
 // The pre-fix parser had several silent OSV-skip paths a malicious operator
 // (or LLM-driven config) could exploit:
@@ -135,7 +133,7 @@ describe("extractMcpPackageName — unknown commands return null (SAFETY-05 Pitf
 //   4. Multi-arg flag handling: `npx --prefer-online -y pkg` would be
 //      truncated to look at `argList[0] === "-y"` only.
 // ---------------------------------------------------------------------------
-describe("extractMcpPackageName — CR-05 dist-tag and pre-release suffix strip (SAFETY-05)", () => {
+describe("extractMcpPackageName — dist-tag and pre-release suffix strip", () => {
   it("strips @latest dist-tag from npx -y pkg@latest", () => {
     expect(extractMcpPackageName("npx", ["-y", "yfinance@latest"])).toEqual({
       ecosystem: "npm",
@@ -186,7 +184,7 @@ describe("extractMcpPackageName — CR-05 dist-tag and pre-release suffix strip 
   });
 });
 
-describe("extractMcpPackageName — CR-05 uvx --from support (SAFETY-05)", () => {
+describe("extractMcpPackageName — uvx --from support", () => {
   it("parses uvx --from <pkg> <tool> with --from preceding pkg as pypi", () => {
     expect(extractMcpPackageName("uvx", ["--from", "evil-pkg", "some-tool"])).toEqual({
       ecosystem: "pypi",
@@ -201,7 +199,7 @@ describe("extractMcpPackageName — CR-05 uvx --from support (SAFETY-05)", () =>
   });
 });
 
-describe("extractMcpPackageName — CR-05 basename match (SAFETY-05)", () => {
+describe("extractMcpPackageName — basename match", () => {
   it("returns null for command whose basename merely ends with 'npx' (suffix collision)", () => {
     // /tmp/mynpx is a hypothetical attacker symlink — the parser must NOT
     // treat it as npx via endsWith heuristic.
@@ -220,7 +218,7 @@ describe("extractMcpPackageName — CR-05 basename match (SAFETY-05)", () => {
   });
 });
 
-describe("extractMcpPackageName — CR-05 multi-flag arg skipping (SAFETY-05)", () => {
+describe("extractMcpPackageName — multi-flag arg skipping", () => {
   it("skips ALL leading dash-prefixed flags for npx, not just -y", () => {
     expect(
       extractMcpPackageName("npx", ["--prefer-online", "-y", "yfinance@1.2.3"]),
@@ -232,7 +230,7 @@ describe("extractMcpPackageName — CR-05 multi-flag arg skipping (SAFETY-05)", 
 // osvMalwareCheck — API + on-disk cache behavior
 // ---------------------------------------------------------------------------
 
-describe("osvMalwareCheck — cache lifecycle (SAFETY-06)", () => {
+describe("osvMalwareCheck — cache lifecycle", () => {
   it("osvMalwareCheck returns cached verdict without invoking fetch within TTL window", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -285,7 +283,7 @@ describe("osvMalwareCheck — cache lifecycle (SAFETY-06)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CR-01 regression — cache-shape validation guards against cache poisoning.
+  // Regression — cache-shape validation guards against cache poisoning.
   // A previously-installed malicious package (or attacker with cache write
   // access) cannot write a fake "safe" verdict and defeat future OSV checks
   // by hand-crafting JSON whose `verdict` is anything other than the closed
@@ -392,7 +390,7 @@ describe("osvMalwareCheck — cache lifecycle (SAFETY-06)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CR-01 regression — chmod on existing cache directory.
+  // Regression — chmod on existing cache directory.
   //
   // `fs.mkdirSync(dir, { recursive: true, mode: 0o700 })` ONLY sets mode
   // on newly-created directories. A pre-existing cache dir with looser
@@ -426,7 +424,7 @@ describe("osvMalwareCheck — cache lifecycle (SAFETY-06)", () => {
   });
 });
 
-describe("osvMalwareCheck — verdict resolution against OSV API (SAFETY-05)", () => {
+describe("osvMalwareCheck — verdict resolution against OSV API", () => {
   it("osvMalwareCheck returns malicious verdict for MAL- advisory ID match", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -476,7 +474,7 @@ describe("osvMalwareCheck — verdict resolution against OSV API (SAFETY-05)", (
 });
 
 // ---------------------------------------------------------------------------
-// WR-06 — process-wide concurrency cap on OSV API calls.
+// Process-wide concurrency cap on OSV API calls.
 //
 // Pre-fix N parallel osvMalwareCheck calls fired N parallel fetches at
 // api.osv.dev. The fix serializes the NETWORK portion via a shared
@@ -484,7 +482,7 @@ describe("osvMalwareCheck — verdict resolution against OSV API (SAFETY-05)", (
 // (including post-wait re-reads for parallel callers of the same pkg)
 // short-circuit before reaching the network call.
 // ---------------------------------------------------------------------------
-describe("osvMalwareCheck — WR-06 process-wide network serialization", () => {
+describe("osvMalwareCheck — process-wide network serialization", () => {
   it("serializes 5 concurrent osvMalwareCheck calls onto the shared fetch chain", async () => {
     // Track when each fetch begins / ends to detect overlap.
     const fetchEvents: Array<{ pkg: string; phase: "start" | "end"; t: number }> = [];
@@ -552,7 +550,7 @@ describe("osvMalwareCheck — WR-06 process-wide network serialization", () => {
   });
 });
 
-describe("osvMalwareCheck — fail-open semantics (SAFETY-05)", () => {
+describe("osvMalwareCheck — fail-open semantics", () => {
   it("osvMalwareCheck triggers fail-open with dependency errorKind on OSV API non-200", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,

@@ -280,10 +280,10 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
 /**
  * Closed set of trajectory event types emitted DIRECTLY by the
  * runtime recorder (not via the EventBus → bridge → recordEvent
- * path). These are lifecycle envelopes (design §6.2 Appendix B
- * "(NEW D4) direct") and the control-plane sentinels emitted
- * inside flushAndClose. Adding to this set is a closed-set
- * design decision, NOT an allowlist for missing bridge mappings.
+ * path). These are lifecycle envelopes and the control-plane
+ * sentinels emitted inside flushAndClose. Adding to this set is a
+ * closed-set design decision, NOT an allowlist for missing bridge
+ * mappings.
  *
  * Shrink-only: the set may only shrink (types can move to the bus
  * bridge path, reducing the direct-emit surface), never grow beyond
@@ -433,7 +433,7 @@ describe("trajectory-event-types-known -- bridge mapping coverage from emit site
     const overlapsBridge = [...DIRECT_EMIT_TRAJECTORY_TYPES].filter((t) => bridgedValues.has(t));
     expect(
       overlapsBridge,
-      "direct-emit types must NOT be in TRAJECTORY_BRIDGE_MAPPING values (design §6.2 Appendix B: direct-emit lifecycle envelopes are not bus-bridged)",
+      "direct-emit types must NOT be in TRAJECTORY_BRIDGE_MAPPING values (direct-emit lifecycle envelopes are not bus-bridged)",
     ).toEqual([]);
     const overlapsAllowlist = [...DIRECT_EMIT_TRAJECTORY_TYPES].filter((t) =>
       EVENTS_NOT_TRAJECTORY_MAPPED.has(t),
@@ -453,8 +453,8 @@ describe("trajectory-event-types-known -- bridge mapping coverage from emit site
     ).toEqual([]);
   });
 
-  it("bridge mapping has at least 45 entries (BRIDGE-09 final gate)", () => {
-    // After Phase 2 Plan 05, the mapping reaches 53 entries (40 + 13 new).
+  it("bridge mapping has at least 45 entries (final gate)", () => {
+    // The mapping currently has 53 entries.
     // This assertion confirms the ≥45 lower bound is satisfied with margin.
     expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBeGreaterThanOrEqual(45);
   });

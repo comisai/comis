@@ -156,10 +156,10 @@ export async function executeLlm(
   try {
     result = await withTimeout(
       runWithContext({
-        // D1 (Plan 01-04): reuse the ingress traceId from the channel-adapter
-        // runWithContext wrap (Plans 01-02 + 01-03). Fall back to a fresh
-        // mint only when called outside any ingress scope (scheduler heartbeats,
-        // background tasks, direct RPC entries that don't carry channel context).
+        // Reuse the ingress traceId from the channel-adapter runWithContext
+        // wrap. Fall back to a fresh mint only when called outside any
+        // ingress scope (scheduler heartbeats, background tasks, direct RPC
+        // entries that don't carry channel context).
         traceId: tryGetContext()?.traceId ?? randomUUID(),
         tenantId: sessionKey.tenantId,
         userId: sessionKey.userId,

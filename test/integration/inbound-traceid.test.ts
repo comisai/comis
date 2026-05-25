@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * End-to-end trace propagation integration test (TRACE-01).
+ * End-to-end trace propagation integration test.
  *
- * Acceptance criterion (REQUIREMENTS.md TRACE-01):
+ * Acceptance criterion:
  *   "grep messageId=<id> daemon.log returns lines all sharing one traceId"
  *
  * This test exercises the complete ALS traceId propagation chain:
  *
- *   EchoChannelAdapter.injectMessage(msg)          [Plan 01-03 wrap]
+ *   EchoChannelAdapter.injectMessage(msg)
  *     → runWithContext({ traceId: ingressTraceId })  [adapter ingress]
  *       → onMessage handler (orchestrator boundary)
- *         → executeLlm (execution-execute.ts)        [Plan 01-04 fix]
+ *         → executeLlm (execution-execute.ts)
  *           → runWithContext({ traceId: tryGetContext()?.traceId ?? newUUID })
  *             → executor.execute()                   [ALS scope]
  *               → tryGetContext()?.traceId === ingressTraceId ✓
  *
- * This is the literal TRACE-01 acceptance criterion: every hop from
- * channel adapter ingress through to agent execution carries the SAME
- * traceId that was minted at the adapter ingress.
+ * Every hop from channel adapter ingress through to agent execution carries
+ * the SAME traceId that was minted at the adapter ingress.
  *
  * Test scope: ALS propagation boundary contract (no full daemon boot).
  * Uses EchoChannelAdapter (the canonical test adapter) and lightweight mocks.
@@ -117,18 +116,18 @@ function makeCapturingExecutor(): { executor: AgentExecutor; getCapturedTraceId:
 const DEFAULT_CFG = PerChannelStreamingConfigSchema.parse({});
 
 // ---------------------------------------------------------------------------
-// TRACE-01: End-to-end traceId propagation
+// End-to-end traceId propagation
 // ---------------------------------------------------------------------------
 
-describe("TRACE-01 — end-to-end traceId propagation (channel → queue → executor)", () => {
+describe("end-to-end traceId propagation (channel → queue → executor)", () => {
   /**
    * Core acceptance criterion:
    *
-   * EchoChannelAdapter.injectMessage stamps a traceId at ingress (Plan 01-03).
-   * The registered handler calls executeLlm (Plan 01-04 fix).
+   * EchoChannelAdapter.injectMessage stamps a traceId at ingress.
+   * The registered handler calls executeLlm.
    * The executor's execute() sees the SAME traceId via ALS — no re-mint occurs.
    */
-  it("executeLlm inherits the Echo adapter ingress traceId end-to-end (TRACE-01)", async () => {
+  it("executeLlm inherits the Echo adapter ingress traceId end-to-end", async () => {
     const echo = new EchoChannelAdapter({ channelId: "echo-test", channelType: "echo" });
     const { executor, getCapturedTraceId } = makeCapturingExecutor();
     const deps = makeDeps();
@@ -161,7 +160,7 @@ describe("TRACE-01 — end-to-end traceId propagation (channel → queue → exe
     // The injected message's metadata.traceId is what Echo stamped.
     const ingressTraceId = msg.metadata.traceId as string;
 
-    // TRACE-01 acceptance: executor must see the ingress traceId, not a fresh mint
+    // Acceptance: executor must see the ingress traceId, not a fresh mint
     expect(ingressTraceId, "Echo should stamp metadata.traceId at ingress").toBeDefined();
     expect(ingressTraceId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/i);
 
@@ -181,7 +180,7 @@ describe("TRACE-01 — end-to-end traceId propagation (channel → queue → exe
    * minting a new one (via getMessageTraceId). The executor must also see
    * this known UUID end-to-end.
    */
-  it("pre-stamped msg.metadata.traceId flows through to executor end-to-end (TRACE-01)", async () => {
+  it("pre-stamped msg.metadata.traceId flows through to executor end-to-end", async () => {
     const knownTrace = "550e8400-e29b-41d4-a716-446655440099";
     const echo = new EchoChannelAdapter({ channelId: "echo-test", channelType: "echo" });
     const { executor, getCapturedTraceId } = makeCapturingExecutor();
@@ -205,7 +204,7 @@ describe("TRACE-01 — end-to-end traceId propagation (channel → queue → exe
     });
 
     // Pre-stamp the traceId — this is the "chaos test / test harness" scenario
-    // documented in the Echo adapter (D1, Plan 01-03).
+    // documented in the Echo adapter.
     const msg = makeMessage({ metadata: { traceId: knownTrace } });
     await echo.injectMessage(msg);
 
@@ -262,14 +261,14 @@ describe("TRACE-01 — end-to-end traceId propagation (channel → queue → exe
   /**
    * Policy-deny path (execution-pipeline.ts:~294) also reuses ingress traceId.
    *
-   * Exercises the second mint site from OBSERVABILITY_DESIGN.md G1:
+   * Exercises the second mint site:
    * executeAndDeliver → runWithContext in the policy-deny branch.
    *
    * The chain is: Echo ingress → outer ALS context (ingressTraceId)
    * → executeAndDeliver → policy denies → inner runWithContext →
    * executor.execute() → tryGetContext()?.traceId === ingressTraceId.
    */
-  it("policy-deny path in executeAndDeliver also inherits the ingress traceId (TRACE-01)", async () => {
+  it("policy-deny path in executeAndDeliver also inherits the ingress traceId", async () => {
     // This test exercises the second mint site via executeAndDeliver directly.
     // We import executeAndDeliver from @comis/orchestrator and simulate the
     // full outer-scope ALS chain that the Echo adapter + channel-manager establish.

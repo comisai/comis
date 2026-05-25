@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Startup invariants architecture test (BOOT-01, design §5 D10).
+ * Startup invariants architecture test.
  *
  * Asserts that packages/daemon/src/daemon.ts:
  *   1. Imports `emitStartupInvariants` from "./wiring/setup-startup-invariants.js"
@@ -8,8 +8,6 @@
  *      `saveLastKnownGood` in the bootShutdown function body.
  *
  * Shrink-only: no allowlist. The only way to comply is to add the call in daemon.ts.
- *
- * Pattern mirrors test/architecture/trace-propagation.test.ts.
  *
  * @module
  */

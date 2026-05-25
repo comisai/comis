@@ -105,12 +105,12 @@ export interface InboundPipelineDeps {
   getEnforceFinalTag?: (agentId: string) => boolean | undefined;
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];
-  /** Optional duplicate-inbound detector (DEDUP-02). When present, the pipeline checks each
+  /** Optional duplicate-inbound detector. When present, the pipeline checks each
    *  messageId before Phase 1 and emits dedup:duplicate_inbound + WARN on a duplicate within
    *  the window. Does NOT suppress — processing continues. */
   dedupDetector?: DedupDetector;
   /**
-   * Phase 6 (EXPORT-01): bundle export DI for the /export-trajectory slash command.
+   * Bundle export DI for the /export-trajectory slash command.
    * When present, inbound-gate.ts handles /export-trajectory with owner-gate + DM routing.
    * When absent, /export-trajectory falls through to generic handleSlashCommand (no-op).
    * Injected by daemon wiring (packages/daemon/src/wiring/).
@@ -182,7 +182,7 @@ export async function processInboundMessage(
     return;
   }
 
-  // DEDUP-02: detect duplicate messageId before any processing (do NOT suppress — log + continue per design §5 D12)
+  // Detect duplicate messageId before any processing (do NOT suppress — log + continue)
   if (deps.dedupDetector) {
     const dedupResult = deps.dedupDetector.check(msg.id);
     if (dedupResult.isDuplicate) {

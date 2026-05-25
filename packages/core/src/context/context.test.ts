@@ -317,12 +317,11 @@ describe("RequestContext", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Task 1 (TRACE-01, Plan 01-01): ingress-context without userId/sessionKey
+  // Ingress-context without userId/sessionKey
   // ---------------------------------------------------------------------------
-  describe("ingress context without userId/sessionKey (D1, Plan 01-01)", () => {
+  describe("ingress context without userId/sessionKey", () => {
     it("runWithContext accepts ingress context with only traceId + channelType (no userId/sessionKey)", () => {
-      // This test is RED on the pre-patch schema (userId/sessionKey are .min(1) required).
-      // After the patch (userId/sessionKey → .optional()), this MUST succeed.
+      // Validates that userId/sessionKey are optional on the schema.
       const traceId = randomUUID();
       const ctx = RequestContextSchema.parse({
         traceId,
@@ -362,7 +361,7 @@ describe("RequestContext", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Task 1 (TRACE-01, Plan 01-01): shrink-only audit — getContext().userId derefs
+  // Shrink-only audit — getContext().userId derefs
   // ---------------------------------------------------------------------------
   describe("getContext().userId/.sessionKey deref audit (shrink-only)", () => {
     const here = dirname(fileURLToPath(import.meta.url));
@@ -426,7 +425,7 @@ describe("RequestContext", () => {
       expect(
         violations,
         `Found getContext().userId or getContext().sessionKey deref in production code. ` +
-          `Use tryGetContext()?.userId ?? fallback — userId/sessionKey are .optional() since Plan 01-01. ` +
+          `Use tryGetContext()?.userId ?? fallback — userId/sessionKey are .optional(). ` +
           `Violating files:\n${violations.map((v) => `  ${v}`).join("\n")}`,
       ).toEqual([]);
     });

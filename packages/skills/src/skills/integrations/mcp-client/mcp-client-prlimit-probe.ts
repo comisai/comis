@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * prlimit(1) availability probe + WARN-once state for the
- * Phase 63 SAFETY-08 wrap. Extracted from mcp-client-discover.ts to
- * keep that leaf under the 500-line per-subdirectory cap.
- *
- * Phase 63 SAFETY-08: prlimit availability probe (lazy + cached, WR-02).
+ * prlimit(1) availability probe + WARN-once state for the rlimits wrap.
+ * Extracted from mcp-client-discover.ts to keep that leaf under the
+ * 500-line per-subdirectory cap.
  *
  * Whether `prlimit(1)` is on PATH. Probed LAZILY on first
  * `wrapStdioCommand` invocation rather than at module-load time. The
@@ -19,7 +17,6 @@
  * The probe is still cached on first call — subsequent connects see no
  * spawnSync overhead. To force a re-probe (e.g., after an operator
  * installs util-linux post-hoc), call `refreshPrlimitAvailable()`.
- * Per RESEARCH.md §"Pattern 3" + Pitfall 5.
  *
  * @module
  */
@@ -65,8 +62,8 @@ export function setPrlimitWarnEmitted(): void {
  * on the runtime probe outcome.
  *
  * @internal — test-only test seam; not re-exported from the package
- * barrel, but documented as `@internal` per WR-07 so a future
- * contributor does not promote it to public-API status.
+ * barrel, but documented as `@internal` so a future contributor does
+ * not promote it to public-API status.
  */
 export function getPrlimitAvailable(): boolean {
   return getPrlimitAvailableCached();
@@ -75,7 +72,7 @@ export function getPrlimitAvailable(): boolean {
 /**
  * Force a re-probe of `prlimit(1)` availability. Use after the
  * operator installs util-linux post-hoc; the next `wrapStdioCommand`
- * call will pick up the new state. Per WR-02.
+ * call will pick up the new state.
  */
 export function refreshPrlimitAvailable(): boolean {
   prlimitAvailableCache = probePrlimitAvailable();

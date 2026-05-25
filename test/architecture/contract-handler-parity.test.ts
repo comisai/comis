@@ -1,30 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CI-01 — contract↔handler-body field parity AST gate.
+ * Contract↔handler-body field parity AST gate.
  *
- * Per Phase 62 D-04: every REQUIRED (non-optional, non-`_X`-internal)
- * request field of every `defineContract(...)` MUST appear by literal name
- * in the matching handler body. This walker exists to prevent the exact
- * class of bug Phase 62 is recovering from: `de12e97d chore: sync
- * accumulated local commits` merged the contract scaffolding
- * (`McpConnectContract.response` with a new `persistence` field) but NOT
- * the matching handler-body persistence path — so `mcp.connect` silently
- * dropped the persistence call. With this gate in place, any future PR
- * that adds a new required request field but forgets to wire the handler
- * body fails the build with the contract name + missing field name.
+ * Every REQUIRED (non-optional, non-`_X`-internal) request field of every
+ * `defineContract(...)` MUST appear by literal name in the matching
+ * handler body. This walker exists to prevent the class of bug where
+ * contract scaffolding (e.g., a new `persistence` field on a response)
+ * is merged but the matching handler-body path is not — so the method
+ * silently drops the corresponding call. With this gate in place, any
+ * future PR that adds a new required request field but forgets to wire
+ * the handler body fails the build with the contract name + missing
+ * field name.
  *
- * Per Phase 62 D-05: legitimate parse-then-spread handlers
- * (e.g., handlers that do `const params = Contract.request.parse(...)`
- * and then `manager.connect({ ...params })`) can whitelist deferred
- * fields via a `// @contract-deferred-fields: <field1>,<field2>`
- * annotation comment on the same handler-factory line (or in the
- * leading trivia immediately before the `[Contract.method]:` key).
- * Annotations are CI-visible in PR diffs and easy to grep.
+ * Legitimate parse-then-spread handlers (e.g., handlers that do
+ * `const params = Contract.request.parse(...)` and then
+ * `manager.connect({ ...params })`) can whitelist deferred fields via a
+ * `// @contract-deferred-fields: <field1>,<field2>` annotation comment
+ * on the same handler-factory line (or in the leading trivia immediately
+ * before the `[Contract.method]:` key). Annotations are CI-visible in PR
+ * diffs and easy to grep.
  *
- * Per Phase 62 D-06: walked AST: contracts under
- * `packages/core/src/api-contracts/**\/*.ts`; handlers under
- * `packages/daemon/src/api/**\/*.ts`. Failure message surfaces the
- * contract name + the missing field name.
+ * Walked AST: contracts under `packages/core/src/api-contracts/**\/*.ts`;
+ * handlers under `packages/daemon/src/api/**\/*.ts`. Failure message
+ * surfaces the contract name + the missing field name.
  *
  * Design notes:
  *
@@ -62,14 +60,13 @@
  *   - If no migrated handler exists for a contract, also a violation
  *     (`<name>: no migrated handler found`).
  *
- * Reused / duplicated helpers per CONTEXT.md D-06 + PATTERNS.md
- * §contract-handler-parity.test.ts Option B: `listContractFiles`,
- * `listHandlerFiles` mirror the implementation in
+ * Reused / duplicated helpers: `listContractFiles`, `listHandlerFiles`
+ * mirror the implementation in
  * `api-contracts-bidirectional.test.ts:45-108`. The two helpers are
  * duplicated here rather than extracted to a shared module so this
  * test file is self-contained and the shared-helper extraction can
- * be revisited under AGENTS.md §2.3 rule-of-three when a third
- * architecture test wants them.
+ * be revisited under the rule-of-three when a third architecture test
+ * wants them.
  *
  * @module
  */
@@ -87,7 +84,7 @@ const HANDLER_DIR = resolve(REPO_ROOT, "packages/daemon/src/api");
 const INTERNAL_SET: ReadonlySet<string> = new Set<string>(INTERNAL_FIELD_NAMES);
 
 /**
- * Annotation tag used for D-05 escape-hatch comments. The walker greps
+ * Annotation tag used for escape-hatch comments. The walker greps
  * the leading trivia of each `[Contract.method]:` property-assignment
  * node for this tag; comma-separated field names following the tag are
  * subtracted from the required-set for that handler.
@@ -103,8 +100,7 @@ const INTERNAL_SET: ReadonlySet<string> = new Set<string>(INTERNAL_FIELD_NAMES);
 const DEFERRED_TAG = "@contract-deferred-fields:";
 
 // ---------------------------------------------------------------------------
-// Helpers — duplicated verbatim from api-contracts-bidirectional.test.ts
-// (Option B per CONTEXT.md / PATTERNS.md).
+// Helpers — duplicated verbatim from api-contracts-bidirectional.test.ts.
 // ---------------------------------------------------------------------------
 
 /**
@@ -413,7 +409,7 @@ function collectHandlerReferencesAndAnnotations(
 // Test.
 // ---------------------------------------------------------------------------
 
-describe("CI-01 — contract↔handler-body field parity", () => {
+describe("contract↔handler-body field parity", () => {
   it("every required contract request field is referenced (or annotated) in its handler body", () => {
     // 1. Aggregate `ContractName -> required-field-names` across all
     //    contract files.
@@ -444,8 +440,8 @@ describe("CI-01 — contract↔handler-body field parity", () => {
         // distinct from a missing field: surfaces author drift
         // where a contract was added without a matching computed-key
         // handler. The bidirectional test enforces the same shape
-        // from the opposite direction; reasserting here keeps CI-01
-        // self-contained.
+        // from the opposite direction; reasserting here keeps this
+        // test self-contained.
         violations.push(`${contractName}: no migrated handler found`);
         continue;
       }

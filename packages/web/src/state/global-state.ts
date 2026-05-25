@@ -149,7 +149,7 @@ export class GlobalStateNotInitializedError extends Error {
  *
  * The throw is appropriate here — app.ts is a Lit element top-level
  * entry; the throw is caught at the framework lifecycle boundary,
- * matching AGENTS.md §2.1's "CLI/web user-facing flows" exception.
+ * matching the "CLI/web user-facing flows" exception.
  *
  * Replaces 7-8 `this._globalState!.X` non-null-assertion sites in
  * `packages/web/src/app.ts`. The structural
@@ -160,7 +160,7 @@ export class GlobalStateNotInitializedError extends Error {
  * @returns The non-null GlobalState reference.
  * @throws {GlobalStateNotInitializedError} When `component._globalState` is null.
  */
-// @allow-throw: GlobalState null-check is a Lit lifecycle invariant; throw is caught at framework boundary (AGENTS.md §2.1 web-user-facing flows exception).
+// @allow-throw: GlobalState null-check is a Lit lifecycle invariant; throw is caught at framework boundary (web-user-facing flows exception).
 export function requireGlobalState(
   component: { readonly _globalState: GlobalState | null },
 ): GlobalState {

@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for IRC adapter runWithContext wrap (TRACE-01).
+ * Unit tests for IRC adapter runWithContext wrap.
  *
  * Asserts that the dispatchMessage function stamps msg.metadata.traceId
  * and runs handlers inside runWithContext so the traceId propagates
  * via AsyncLocalStorage.
- *
- * RED state: fails before the runWithContext wrap is added to
- * irc-adapter.ts (traceId is undefined; tryGetContext() returns undefined).
  *
  * @module
  */
@@ -106,7 +103,7 @@ function emitEvent(event: string, ...args: any[]): void {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("irc-adapter -- dispatchMessage runWithContext wrap (TRACE-01)", () => {
+describe("irc-adapter -- dispatchMessage runWithContext wrap", () => {
   beforeEach(() => {
     clearEventListeners();
     vi.clearAllMocks();

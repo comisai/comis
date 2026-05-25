@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Append-only session index writer (INDEX-01).
+ * Append-only session index writer.
  *
  * Writes session lifecycle events to
  * `<dataDir>/logs/session-index.YYYY-MM-DD.jsonl` — one JSONL record
@@ -10,15 +10,15 @@
  * so concurrent emit sites (session_started, turn_completed, session_ended) all
  * share a single writer per file-path without cross-call leakage.
  *
- * Security properties (T-06-01-01):
+ * Security properties:
  *   - File path is derived ONLY from `new Date().toISOString().slice(0,10)` —
- *     no user-controlled fields are used in the path (T-06-01-04).
+ *     no user-controlled fields are used in the path.
  *   - `confinedBaseDir: dataDir` ensures the writer stays inside dataDir for
  *     both production (`~/.comis`) and test (os.tmpdir() subtree) contexts.
  *   - QueuedFileWriter delegates to appendRegularFile which enforces
- *     O_NOFOLLOW + fchmod 0o600 (T-06-01-01).
+ *     O_NOFOLLOW + fchmod 0o600.
  *   - `maxQueuedBytes: 1MB` caps in-flight bytes; write() returns "dropped"
- *     under traffic spikes rather than blocking the event loop (T-06-01-03).
+ *     under traffic spikes rather than blocking the event loop.
  *
  * @module
  */
@@ -57,13 +57,13 @@ export function appendSessionIndexEntry(
   record: SessionIndexEvent,
 ): QueuedFileWriteResult {
   const date = systemDateFrom(systemNowMs()).toISOString().slice(0, 10); // "YYYY-MM-DD"
-  // safePath composition per AGENTS.md §2.2: each dynamic segment goes through safePath.
+  // safePath composition: each dynamic segment goes through safePath.
   // "logs" and the filename are literal/date-only (no user input) — safePath is belt-and-suspenders here.
   const logsDir = safePath(dataDir, "logs");
   const filePath = safePath(logsDir, `session-index.${date}.jsonl`);
   const writer = getQueuedFileWriter(writers, filePath, {
-    maxQueuedBytes: 1 * 1024 * 1024, // 1 MB in-flight cap (T-06-01-03)
-    confinedBaseDir: dataDir,         // Confinement to dataDir (T-06-01-01)
+    maxQueuedBytes: 1 * 1024 * 1024, // 1 MB in-flight cap
+    confinedBaseDir: dataDir,         // Confinement to dataDir
   });
   return writer.write(JSON.stringify(record) + "\n");
 }

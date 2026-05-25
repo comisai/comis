@@ -20,7 +20,7 @@
  * from `background_task:completed.timestamp` to this event for SLO tracking.
  *
  * Failure isolation: each handler is wrapped in suppressError so a single
- * completion's failure does not tear down the subscription (AGENTS §2.1).
+ * completion's failure does not tear down the subscription.
  *
  * @module
  */

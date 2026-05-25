@@ -3,25 +3,24 @@
  * Trajectory bundle export — types, constants, pure helpers, and
  * SDK-based session reader.
  *
- * This file is the Phase 4 source-of-truth for:
+ * Provides:
+ *   - Hard limits + bundle exporter pipeline helpers.
+ *   - Session DAG reader with cycle + missing-parent detection.
+ *   - TrajectoryBundleManifest + TrajectoryBundleWarning shape.
  *
- *   §5 D5 — Hard limits + bundle exporter pipeline helpers.
- *   §5 D3 — Session DAG reader with cycle + missing-parent detection.
- *   §6.2  — TrajectoryBundleManifest + TrajectoryBundleWarning shape.
- *
- * **Plan sequence:**
- *   - Plan 04-01: types, 4 hard-limit constants,
- *     `buildTranscriptEvents`, `sortTrajectoryEvents`.
- *   - Plan 04-02: adds `readSessionBranch(filePath)` and
- *     `ReadSessionBranchResult` — SESSION-02 DAG-aware reader.
- *   - Plan 04-03: adds `exportTrajectoryBundle(params)` via
- *     `bundle-exporter.ts` (co-located in this directory). The file
- *     split is required by the 800-line architecture invariant; the
- *     logical module boundary is unchanged. See bundle-exporter.ts.
+ * **Module layout:**
+ *   - types, 4 hard-limit constants, `buildTranscriptEvents`,
+ *     `sortTrajectoryEvents`.
+ *   - `readSessionBranch(filePath)` and `ReadSessionBranchResult` — the
+ *     DAG-aware reader.
+ *   - `exportTrajectoryBundle(params)` lives in `bundle-exporter.ts`
+ *     (co-located in this directory). The file split is required by the
+ *     800-line architecture invariant; the logical module boundary is
+ *     unchanged. See bundle-exporter.ts.
  *
  * **TYPE MAPPING (session.transcript.entry):**
  * SDK SessionEntry.type values ("message", "compaction", etc.) are NOT in
- * the `TrajectoryEventType` closed union. Phase 4 adds ONE literal to the
+ * the `TrajectoryEventType` closed union. We add ONE literal to the
  * union: `"session.transcript.entry"`. All synthesized transcript events
  * use this single type. The SDK entry type is carried verbatim inside
  * `data.entryType` so downstream consumers can branch on it without
@@ -49,7 +48,7 @@ import {
 import type { TrajectoryEvent, TrajectoryEventSource } from "./types.js";
 
 // ---------------------------------------------------------------------------
-// Hard-limit constants (design §5 D5 lines 317–321).
+// Hard-limit constants.
 //
 // Note: MAX_TRAJECTORY_SESSION_FILE_BYTES (50 MB) is numerically identical
 // to runtime.ts:TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES but semantically
@@ -107,7 +106,7 @@ function buildWarning(
 }
 
 // ---------------------------------------------------------------------------
-// TrajectoryBundleWarning (design §6.2)
+// TrajectoryBundleWarning
 // ---------------------------------------------------------------------------
 
 /**
@@ -133,7 +132,7 @@ export interface TrajectoryBundleWarning {
 }
 
 // ---------------------------------------------------------------------------
-// TrajectoryBundleManifest (design §6.2)
+// TrajectoryBundleManifest
 // ---------------------------------------------------------------------------
 
 /**
@@ -143,8 +142,6 @@ export interface TrajectoryBundleWarning {
  * `contents` auto-populates the `{path, mediaType, bytes}` entries for
  * all files in the bundle. `warnings` accumulates structured warnings
  * from the export pipeline capped at `MAX_TRAJECTORY_WARNING_ROWS` per code.
- *
- * Field order matches design §6.2 (reproduced verbatim).
  */
 export interface TrajectoryBundleManifest {
   readonly traceSchema: "comis-trajectory";
@@ -162,7 +159,7 @@ export interface TrajectoryBundleManifest {
   readonly contents?: Array<{ path: string; mediaType: string; bytes: number }>;
   readonly supplementalFiles?: string[];
   readonly warnings?: TrajectoryBundleWarning[];
-  /** Redaction policy applied at bundle export time (Phase 5 D9 REDACT-03). */
+  /** Redaction policy applied at bundle export time. */
   readonly redaction?: { readonly policy: string };
 }
 
@@ -204,7 +201,7 @@ export interface TranscriptSourceEntry {
 /**
  * Synthesizes one `source:"transcript"` TrajectoryEvent per branch entry.
  *
- * Contract (design §5 D5 step 4):
+ * Contract:
  * - Input `entries` must be in chronological order (caller's responsibility).
  * - Each output event has `entryId = entry.id` (preserves SDK DAG identity).
  * - `parentEntryId` chains through the SYNTHESIZED predecessor:
@@ -255,7 +252,7 @@ export function buildTranscriptEvents(
 // ---------------------------------------------------------------------------
 
 /**
- * Source-order rank for tiebreak sorting (design §5 D5 step 5).
+ * Source-order rank for tiebreak sorting.
  * Lower number = higher priority (sorts first).
  */
 const SOURCE_ORDER: Record<TrajectoryEventSource, number> = {
@@ -305,7 +302,7 @@ export function sortTrajectoryEvents(events: ReadonlyArray<TrajectoryEvent>): Tr
 }
 
 // ---------------------------------------------------------------------------
-// ReadSessionBranchResult + readSessionBranch (SESSION-02, Plan 04-02)
+// ReadSessionBranchResult + readSessionBranch
 // ---------------------------------------------------------------------------
 
 /**
@@ -340,7 +337,7 @@ function emptyResult(warnings: TrajectoryBundleWarning[]): ReadSessionBranchResu
  * leaf-to-root via parentId chain, emitting structured warnings on
  * cycles and missing parents.
  *
- * Algorithm (design §5 D3 + research §8):
+ * Algorithm:
  *   1. Pre-flight stat. If file > MAX_TRAJECTORY_SESSION_FILE_BYTES,
  *      return invalid-session-json warning, no throw, no SDK open.
  *   2. SdkSessionManager.open(filePath, dirname(filePath)) inside try/catch.
@@ -377,7 +374,7 @@ export function readSessionBranch(filePath: string): ReadSessionBranchResult {
   }
 
   // -------------------------------------------------------------------------
-  // Step 1b: size cap (50 MiB defense-in-depth; Plan 04-03 also stats).
+  // Step 1b: size cap (50 MiB defense-in-depth; bundle-exporter also stats).
   // -------------------------------------------------------------------------
   if (statResult.size > MAX_TRAJECTORY_SESSION_FILE_BYTES) {
     return emptyResult([
@@ -399,7 +396,7 @@ export function readSessionBranch(filePath: string): ReadSessionBranchResult {
     sm = SdkSessionManager.open(filePath, dirname(filePath));
   } catch {
     // Do NOT include the SDK error message — defense against adversarial
-    // error strings carrying attacker-controlled bytes (T-04-02-05).
+    // error strings carrying attacker-controlled bytes.
     return emptyResult([
       buildWarning("session", "invalid-session-json", 1, [], "SDK SessionManager.open failed"),
     ]);
@@ -469,7 +466,7 @@ export function readSessionBranch(filePath: string): ReadSessionBranchResult {
     }
   }
 
-  // If the hard cap was hit, record as a cyclic warning (T-04-02-04).
+  // If the hard cap was hit, record as a cyclic warning.
   if (iterCapHit && cycleCount === 0 && missingParentCount === 0) {
     cycleCount += 1;
     cycleRowIndices.push(MAX_TRAJECTORY_TOTAL_EVENTS - 1);
@@ -518,7 +515,7 @@ export function readSessionBranch(filePath: string): ReadSessionBranchResult {
 }
 
 // ---------------------------------------------------------------------------
-// Plan 04-03: exportTrajectoryBundle pipeline
+// exportTrajectoryBundle pipeline
 //
 // Defined in bundle-exporter.ts (co-located in this directory). The file
 // split is required by the 800-line architecture invariant — export.ts
@@ -526,6 +523,6 @@ export function readSessionBranch(filePath: string): ReadSessionBranchResult {
 //
 // bundle-exporter.ts imports types/helpers from this file. To avoid the
 // circular dependency that would result from re-exporting here, the barrel
-// (index.ts) exports from bundle-exporter.ts directly. Tests import Plan 03
-// symbols from bundle-exporter.ts.
+// (index.ts) exports from bundle-exporter.ts directly. Tests import bundle
+// exporter symbols from bundle-exporter.ts.
 // ---------------------------------------------------------------------------

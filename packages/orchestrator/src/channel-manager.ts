@@ -180,11 +180,11 @@ export interface ChannelManagerDeps {
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];
   /**
-   * Phase 6 (EXPORT-01): bundle export DI for the /export-trajectory slash
-   * command. When present, inbound-gate.ts special-cases /export-trajectory
-   * with owner-gate + DM routing before the generic handleSlashCommand block.
-   * When absent, /export-trajectory falls through to generic slash command
-   * handling (no-op). Injected by daemon wiring via ChannelManagerBuildDeps.
+   * Bundle export DI for the /export-trajectory slash command. When present,
+   * inbound-gate.ts special-cases /export-trajectory with owner-gate + DM
+   * routing before the generic handleSlashCommand block. When absent,
+   * /export-trajectory falls through to generic slash command handling (no-op).
+   * Injected by daemon wiring via ChannelManagerBuildDeps.
    */
   exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
 }
@@ -200,7 +200,7 @@ export interface ChannelManager {
   injectMessage(channelType: string, msg: NormalizedMessage): Promise<void>;
   /**
    * Raw onMessage-registration count per channelType, captured pre-dedup in startAll().
-   * Used by the boot invariant collector to detect duplicate-adapter wiring (BOOT-02).
+   * Used by the boot invariant collector to detect duplicate-adapter wiring.
    * Post-dedup (normal wiring) = 1; regression wiring (same adapter in both slots) = 2.
    */
   getRawHandlerCounts(): ReadonlyMap<string, number>;
@@ -232,7 +232,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
    * channelRegistry) BEFORE deduplication logic runs. This goes to 2 in the
    * regression where the same adapter appears in both slots, while adaptersByType
    * still holds only one entry (silent same-instance dedup). Used by the boot
-   * invariant collector (BOOT-02) to detect duplicate-adapter wiring.
+   * invariant collector to detect duplicate-adapter wiring.
    */
   const rawHandlerCounts = new Map<string, number>();
 
@@ -266,7 +266,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
         ? deps.channelRegistry.getChannelPlugins().map((p) => p.adapter)
         : [];
       for (const adapter of [...(deps.adapters ?? []), ...registryAdapters]) {
-        // Count raw registrations before dedup (BOOT-02 seam — goes to 2 in regression).
+        // Count raw registrations before dedup (seam — goes to 2 in regression).
         rawHandlerCounts.set(adapter.channelType, (rawHandlerCounts.get(adapter.channelType) ?? 0) + 1);
 
         const existing = adaptersByType.get(adapter.channelType);
@@ -295,11 +295,11 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       for (const adapter of adaptersByType.values()) {
         // Register message handler before starting
         adapter.onMessage(async (msg: NormalizedMessage) => {
-          // D1 (Plan 01-03): defense-in-depth wrap. Reuse the traceId minted
-          // at adapter ingress (Plans 01-02, 01-03) via getMessageTraceId;
-          // fall back to randomUUID() if a future adapter bypasses ingress
-          // wrap (catches regressions — channel→queue→agent correlation is
-          // preserved even without the adapter-level wrap).
+          // Defense-in-depth wrap. Reuse the traceId minted at adapter
+          // ingress via getMessageTraceId; fall back to randomUUID() if a
+          // future adapter bypasses ingress wrap (catches regressions —
+          // channel→queue→agent correlation is preserved even without the
+          // adapter-level wrap).
           const traceId = getMessageTraceId(msg) ?? randomUUID();
           if (typeof msg.metadata.traceId !== "string") {
             msg.metadata.traceId = traceId;

@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for sweepRotatedFiles (ROTATE-02).
- *
- * The sweep module does NOT exist on pre-patch code, so these tests must
- * fail at import time (RED gate).
+ * Tests for sweepRotatedFiles.
  */
 
 import * as fs from "node:fs";

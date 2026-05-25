@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Rotation policy helpers (ROTATE-02).
+ * Rotation policy helpers.
  *
  * `applyRotationPolicy` handles one already-rotated file set: gzip if
  * `compressAged` and not yet `.gz`, unlink if older than `maxAgeDays`,
@@ -26,9 +26,9 @@ import { systemNowMs } from "@comis/core";
 /**
  * Cross-stream rotation policy.
  *
- * Matches `LogRotationConfig` from `@comis/core` schema-observability.ts
- * (ROTATE-01). The interface is duplicated here so `@comis/observability`
- * does not need to import the Zod schema at runtime.
+ * Matches `LogRotationConfig` from `@comis/core` schema-observability.ts.
+ * The interface is duplicated here so `@comis/observability` does not need
+ * to import the Zod schema at runtime.
  */
 export interface RotationPolicy {
   readonly maxSizeBytes: number;

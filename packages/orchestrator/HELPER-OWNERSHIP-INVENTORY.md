@@ -30,7 +30,7 @@ These files are orchestration-only (inbound pipeline glue, execution coordinatio
 | execution-filter.ts | Execution coordination; imports `@comis/agent` (back-edge). | `orchestrator/src/execution/` |
 | execution-deliver.ts | **Bucket A.** Imports `ExecutionPipelineDeps` and `buildThreadSendOpts` from `execution-pipeline.ts` (A) and is imported only by `execution-pipeline.ts` (A). Calls into `DeliveryService` via deps — does not export a primitive, so it is NOT a delivery primitive (B); it is an orchestration stage. | `orchestrator/src/execution/` |
 | execution-policy.ts | **Bucket A.** Pick from `ExecutionPipelineDeps` and imported only by `execution-pipeline.ts` (A). First stage of the execution pipeline (send-policy gate + trust routing). Orchestration-internal — not a primitive. | `orchestrator/src/execution/` |
-| channel-manager.ts | Channel-manager lifecycle coordinator; imports `@comis/agent` (back-edge). Exports `createChannelManager`, `ChannelManager`, `ChannelManagerDeps` — the 50-row audit subject. | `orchestrator/src/` |
+| channel-manager.ts | Channel-manager lifecycle coordinator; imports `@comis/agent` (back-edge). Exports `createChannelManager`, `ChannelManager`, `ChannelManagerDeps`. | `orchestrator/src/` |
 | block-pacer.ts | Streaming delivery primitive consumed ONLY by 5 A-side files (channel-manager + execution-deliver + execution-pipeline + inbound-pipeline + inbound-route). Has no external consumer outside the orchestrator surface. | `orchestrator/src/execution/` (with execution-pipeline) |
 | block-coalescer.ts | Consumed ONLY by `execution-deliver.ts` (A). Streaming chunk-coalescing helper internal to the delivery stage. | `orchestrator/src/execution/` |
 | delivery-timing.ts | Consumed ONLY by `block-pacer.ts` (A). Streaming-delay calculation helper. Moves with block-pacer. | `orchestrator/src/execution/` |
@@ -98,6 +98,6 @@ These files stay in `packages/channels/` and are NOT exported. Orchestrator MUST
 
 ## Required actions (driven by this inventory)
 
-1. **Add `regex-guard` to `channels/src/index.ts`** before inbound-pipeline moves. Without this, `inbound-pipeline.ts` (moving to orchestrator) would have to fall back to a relative `@comis/channels/src/shared/regex-guard.js` path which is a forbidden cross-package internal import per AGENTS.md §1 ("Use public exports only — no cross-package internal imports").
+1. **Add `regex-guard` to `channels/src/index.ts`** before inbound-pipeline moves. Without this, `inbound-pipeline.ts` (moving to orchestrator) would have to fall back to a relative `@comis/channels/src/shared/regex-guard.js` path which is a forbidden cross-package internal import (use public exports only — no cross-package internal imports).
 2. **Add `mediaCompressor` (or whichever specific export `inbound-preprocess.ts` needs) to `channels/src/index.ts`** before inbound-preprocess moves. Same rationale as above.
 3. Verify post-move: every `import` in the moved A-files resolves to either (a) a relative path within orchestrator (other A-files moved together) or (b) `@comis/channels` / `@comis/agent` / `@comis/core` / `@comis/shared` bare-package imports. No `@comis/channels/dist/...` or `../../channels/src/...` allowed.

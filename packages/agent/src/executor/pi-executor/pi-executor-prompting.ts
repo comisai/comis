@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Prompting snapshot builder for trace.metadata (WR-02, Plan 05-04).
+ * Prompting snapshot builder for trace.metadata.
  *
  * Any string-typed input MUST flow through the redactor before being
- * assigned to a field — defense-in-depth per WR-02 / 01-CARRYOVER.md.
- * The bundle-time pass (Plan 05-03) is the secondary redaction layer.
+ * assigned to a field — defense-in-depth. The bundle-time pass is the
+ * secondary redaction layer.
  *
  * @module
  */

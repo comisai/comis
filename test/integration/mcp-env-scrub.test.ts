@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 63 SAFETY-01/02 — env-scrub integration test.
+ * env-scrub integration test.
  *
  * Verifies that the scrubbed env produced by `scrubStdioEnv` is actually
  * carried into a real subprocess. The mid-test child spawn uses

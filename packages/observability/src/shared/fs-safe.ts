@@ -26,10 +26,10 @@
  *      swapped after we opened it.
  *
  * Returns `Result<{ totalBytes }, SymlinkParentRejected |
- * FileSizeLimitExceeded | Error>` per AGENTS.md §2.1. The size cap
- * (`maxFileBytes`) is optional; when set, the helper rejects an append
- * that would push the cumulative size past the cap (strict greater-than
- * — an append landing exactly at the cap is allowed).
+ * FileSizeLimitExceeded | Error>`. The size cap (`maxFileBytes`) is
+ * optional; when set, the helper rejects an append that would push the
+ * cumulative size past the cap (strict greater-than — an append landing
+ * exactly at the cap is allowed).
  *
  * The implementation is intentionally synchronous (`fs.openSync` /
  * `fs.writeSync` / `fs.fstatSync`) — the observability writer chassis
@@ -485,7 +485,7 @@ export function writeRegularFile(
 // across `queued-file-writer.ts:ensureParentDir` and
 // `config-audit/append.ts:ensureConfigAuditParentDir`. The migration
 // routes ~10 sibling writers through this helper so every artifact-dir
-// under `~/.comis/` honors the §1.4 `0o700` invariant via ONE canonical
+// under `~/.comis/` honors the `0o700` invariant via ONE canonical
 // primitive.
 // ---------------------------------------------------------------------------
 
@@ -495,7 +495,7 @@ export interface EnsureContainedDirOptions {
   readonly dir: string;
   /**
    * Directory mode to set on create and re-assert on EEXIST (typically
-   * `0o700` for the §1.4 confidentiality invariant).
+   * `0o700` for the confidentiality invariant).
    */
   readonly mode: number;
   /**
@@ -517,7 +517,7 @@ export interface EnsureContainedDirSuccess {
   /**
    * `true` when this call created the directory (it did not exist
    * pre-call); `false` when the dir already existed (the defensive
-   * chmod ran to restore the §1.4 mode invariant).
+   * chmod ran to restore the mode invariant).
    */
   readonly created: boolean;
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 63 SAFETY-09 — plaintext-secret heuristic negative + positive control.
+ * Plaintext-secret heuristic negative + positive control.
  *
  * Table-driven invariant: representative NON-SECRET strings (Notion DB
  * UUIDs, Linear team IDs, Stripe customer IDs, OpenAI org IDs, file
@@ -8,7 +8,7 @@
  * real-token shapes (ghp_, sk-, sk-ant-, xoxb-, xoxp-, AKIA, secret_,
  * ntn_, glpat-, sk_live_, sk_test_, github_pat_) REJECT.
  *
- * Per RESEARCH.md §"Pitfall 6": heuristic =
+ * Heuristic:
  *   matchesPrefix(value, PLAINTEXT_SECRET_PREFIXES)
  *     OR (shannonEntropy(value) > 3.5 AND value.length >= 44).
  * Length-floor 44 (NOT 40) eliminates the OpenAI 40-char org-ID FP
@@ -16,7 +16,7 @@
  *
  * The test value-imports the compiled `looksLikePlaintextSecret` from
  * `@comis/daemon` via the architecture vitest alias map
- * (test/architecture/vitest.config.ts) — same precedent as Plan 02's
+ * (test/architecture/vitest.config.ts) — same precedent as the
  * MCP_STDIO_BUILTIN_ENV_ALLOWLIST architecture test pinning the runtime
  * allowlist constant.
  *
@@ -47,11 +47,11 @@ const NEGATIVE_CASES: ReadonlyArray<{ label: string; sample: string }> = [
   // Notion DB ID undashed (32 hex)
   { label: "Notion DB ID undashed 32-hex",     sample: "8f3b2c1a9d4e7f60b5e2c8d1a4f7b9c3" },
   // -----------------------------------------------------------------------
-  // CR-06 regressions — common operator-config values that the entropy
+  // Regression cases — common operator-config values that the entropy
   // backstop must NOT reject. Each value is a realistic non-secret an
-  // operator might place in `integrations.mcp.servers[*].env`. Per the
-  // CR-06 review, the pre-fix heuristic (length >= 44 AND entropy > 3.5)
-  // rejected all of these.
+  // operator might place in `integrations.mcp.servers[*].env`. The
+  // pre-fix heuristic (length >= 44 AND entropy > 3.5) rejected all of
+  // these.
   // -----------------------------------------------------------------------
   { label: "PostgreSQL connection string",     sample: "postgres://user:password@localhost:5432/database_production" },
   { label: "MongoDB SRV connection string",    sample: "mongodb+srv://cluster0.abcdef.mongodb.net/test?retryWrites=true&w=majority" },
@@ -91,7 +91,7 @@ const POSITIVE_CASES: ReadonlyArray<{ label: string; sample: string }> = [
   { label: "Stripe sk_test_ secret",           sample: "sk_test_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
 ];
 
-describe("plaintext-secret heuristic — SAFETY-09 false-positive negative control", () => {
+describe("plaintext-secret heuristic — false-positive negative control", () => {
   for (const { label, sample } of NEGATIVE_CASES) {
     it(`${label} (${sample.length} chars) passes the plaintext-secret heuristic without false-positive`, () => {
       expect(looksLikePlaintextSecret(sample)).toBe(false);
@@ -99,7 +99,7 @@ describe("plaintext-secret heuristic — SAFETY-09 false-positive negative contr
   }
 });
 
-describe("plaintext-secret heuristic — SAFETY-03 positive-control real-token shapes", () => {
+describe("plaintext-secret heuristic — positive-control real-token shapes", () => {
   for (const { label, sample } of POSITIVE_CASES) {
     it(`${label} (${sample.length} chars) is rejected by the plaintext-secret heuristic`, () => {
       expect(looksLikePlaintextSecret(sample)).toBe(true);

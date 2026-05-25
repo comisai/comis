@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Health aggregator types (ALERT-01).
+ * Health aggregator types.
  *
  * Shared interfaces for the alert budget policy configuration and
  * the `health:budget_exceeded` payload shape.

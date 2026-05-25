@@ -11,7 +11,7 @@
 //   2. The test/support/public-api-policy.ts entry for `@comis/daemon`
 //      tracks these four symbols + their consumer file paths.
 // Do NOT delete these re-exports without retargeting the consumers
-// listed in test/support/public-api-policy.ts (per AGENTS.md §2.9).
+// listed in test/support/public-api-policy.ts.
 
 // Daemon entry point and types for integration test harness
 export { main } from "./daemon.js";
@@ -38,7 +38,7 @@ export type { ContextHandlerDeps } from "./api/context-handlers.js";
 export { createAgentHandlers } from "./api/agent-handlers.js";
 export type { AgentHandlerDeps } from "./api/agent-handlers.js";
 
-// MCP management RPC handlers — re-exported so the Phase 47 MCP
+// MCP management RPC handlers — re-exported so the MCP
 // install persistence integration test
 // (test/integration/mcp-persistence.test.ts) can drive the actual
 // `mcp.connect` / `mcp.disconnect` RPC handlers against a real
@@ -53,7 +53,7 @@ export type { AgentHandlerDeps } from "./api/agent-handlers.js";
 // docs at packages/daemon/src/api/shared/persist-to-config.ts:12-43).
 export { createMcpHandlers } from "./api/mcp-handlers.js";
 export type { McpHandlerDeps } from "./api/mcp-handlers.js";
-// Phase 63 SAFETY-09: re-exported so the architecture-tier negative +
+// Re-exported so the architecture-tier negative +
 // positive control table at
 // test/architecture/mcp-plaintext-secret-false-positives.test.ts can pin
 // the heuristic shape against real-world token samples WITHOUT
@@ -72,7 +72,7 @@ export {
 // `LoggerOptions.disableRedaction` opt-in through to the SAME logger
 // instance the daemon uses for production code paths. Consumer is
 // test/support/daemon-harness.ts via
-// startTestDaemon({ disableRedaction: ...trueValue... }) for the residency
+// startTestDaemon({ disableRedaction: ...trueValue... }) for the
 // integration test.
 //
 // Note on phrasing: the literal token sequence `disableRedaction[:][space][true]`
@@ -84,7 +84,7 @@ export {
 export { createTracingLogger } from "./observability/trace-logger.js";
 export type { TracingLoggerOptions } from "./observability/trace-logger.js";
 
-// Startup invariant collector (BOOT-01/02) — re-exported so the M1
+// Startup invariant collector — re-exported so the
 // acceptance gate integration test can call emitStartupInvariants against
 // a mock logger without spinning up the full daemon.
 // Consumer: test/integration/incident-replay-2026-05-24.test.ts

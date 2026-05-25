@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for WhatsApp adapter runWithContext wrap (TRACE-01).
+ * Unit tests for WhatsApp adapter runWithContext wrap.
  *
  * Asserts that the messages.upsert Baileys event handler stamps
  * msg.metadata.traceId and runs handlers inside runWithContext so
  * the traceId propagates via AsyncLocalStorage.
- *
- * RED state: fails before the runWithContext wrap is added to
- * whatsapp-adapter.ts (traceId is undefined; tryGetContext() returns undefined).
  *
  * @module
  */
@@ -130,7 +127,7 @@ function makeBaileysMessage() {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("whatsapp-adapter -- messages.upsert runWithContext wrap (TRACE-01)", () => {
+describe("whatsapp-adapter -- messages.upsert runWithContext wrap", () => {
   beforeEach(() => {
     mockEv = createMockEv();
     vi.clearAllMocks();

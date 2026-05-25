@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits).
+// @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract — bootstrap() returns Result but daemon.ts is the entry point that catches it and exits.
 /**
  * Daemon Entry Point: composition root for the entire daemon process.
  *
@@ -634,9 +634,9 @@ function buildChannelManagerDeps(deps: {
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
     onSuspiciousContent, dataDir,
   } = agents;
-  // Phase 6 EXPORT-01: build exportSessionBundle DI closure for the
-  // /export-trajectory slash command.  Uses exportTrajectoryBundle from
-  // @comis/observability (same pipeline as `comis trace export`).
+  // Build exportSessionBundle DI closure for the /export-trajectory slash
+  // command. Uses exportTrajectoryBundle from @comis/observability (same
+  // pipeline as `comis trace export`).
   const exportSessionBundle = async (sessionId: string): Promise<{ bundlePath: string }> => {
     const sessionsDir = safePath(container.config.dataDir ?? dataDir, "sessions");
     const sessionFile = safePath(sessionsDir, `${sessionId}.jsonl`);
@@ -1043,7 +1043,7 @@ function buildRpcDispatchDeps(deps: {
     skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
     imageHandlerDeps,
     oauthCredentialStore: c.oauthCredentialStore,
-    // Phase 6 (06-03 / 06-05): wire observability DI seams.
+    // Wire observability DI seams.
     // ObservabilityApiDeps.dataDir: used by obs.trace.* handlers for session-index + bundle export.
     // ObservabilityApiDeps.exportTrajectoryBundle: DI seam for obs.trace.export RPC (comis trace export <sessionId>).
     dataDir: c.dataDir,
@@ -2360,8 +2360,8 @@ async function bootShutdown(
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
 
   // Declared here (before setupShutdown) so the thunk captures the ref;
-  // assigned after emitStartupInvariants (step 9.1). Ref-object pattern
-  // mirrors shutdownRef.value — setupShutdown reads .fn at teardown time.
+  // assigned after emitStartupInvariants. Ref-object pattern mirrors
+  // shutdownRef.value — setupShutdown reads .fn at teardown time.
   const _healthAggRef: { fn: (() => void) | undefined } = { fn: undefined };
 
   // 8. Graceful shutdown: signal-handler registration + teardown ordering
@@ -2399,7 +2399,7 @@ async function bootShutdown(
     shutdownDeliveryMirror: shutdownMirror,
     outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,
     stopChannelHealthMonitor: stopChannelHealthMonitor ?? undefined,
-    // Thunk reads _healthAggRef.fn at teardown time — populated by step 9.1.
+    // Thunk reads _healthAggRef.fn at teardown time — populated by emitStartupInvariants.
     unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
   });
 
@@ -2423,14 +2423,14 @@ async function bootShutdown(
     startupStartMs, instanceId,
   });
 
-  // 9.1. Boot invariant record (BOOT-01) + duplicate-wiring WARN (BOOT-02).
+  // 9.1. Boot invariant record + duplicate-wiring WARN.
   // Emitted AFTER the startup banner so the INFO record follows the human-readable
   // "Comis daemon started" line in log streams, and BEFORE saveLastKnownGood /
   // DaemonInstance return so WARNs fire before the daemon accepts traffic.
   // depSlotConsistency is passed explicitly — the daemon composition root is the
   // only site that knows which adapter slots were used (post-fix: channelRegistry
   // only, adaptersList removed from setup-channels-runtime.ts).
-  // Derive logsDir from daemon.logging.filePath for the startup sweep (ROTATE-02).
+  // Derive logsDir from daemon.logging.filePath for the startup sweep.
   const _loggingFilePath = container.config.daemon?.logging?.filePath;
   const _logsDir = _loggingFilePath
     ? pathDirname(expandTilde(_loggingFilePath))

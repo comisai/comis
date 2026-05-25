@@ -134,7 +134,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
           _lastMessageAt = systemNowMs();
           const normalized = mapImsgToNormalized(messageParams);
 
-          // D1 (Plan 01-03): mint traceId at ingress, stamp into metadata
+          // Mint traceId at ingress, stamp into metadata
           const traceId = randomUUID();
           normalized.metadata.traceId = traceId;
 

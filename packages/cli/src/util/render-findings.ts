@@ -141,7 +141,7 @@ function summaryParts(summary: FindingsSummary): string[] {
         break;
       case "warning":
         // Security uses "warning" as the count key — preserve the plural
-        // pre-fusion label `${result.warningCount} warnings` (WR-02 fix).
+        // pre-fusion label `${result.warningCount} warnings`.
         parts.push(chalk.yellow(`${count} warnings`));
         break;
       case "skip":
@@ -166,8 +166,8 @@ function summaryParts(summary: FindingsSummary): string[] {
  * The footer is emitted as-is (no chalk wrapping). Callers that want a colored
  * footer must supply pre-colored strings (e.g., `chalk.green("Audit PASSED")`
  * or `chalk.red.bold("Audit FAILED")`). This preserves severity-conditioned
- * styling per the WR-01 fix; an unconditional `chalk.cyan` wrap here would
- * obliterate caller-supplied red/green/etc. ANSI codes.
+ * styling; an unconditional `chalk.cyan` wrap here would obliterate
+ * caller-supplied red/green/etc. ANSI codes.
  */
 function emitSummary(summary: FindingsSummary): void {
   const parts = summaryParts(summary);
@@ -301,7 +301,7 @@ function renderSections(sections: ReadonlyArray<Section>): void {
  * Render findings or sections to stdout.
  *
  * Single source of truth for CLI table/listing rendering across the 5 CLI
- * sites consolidated in plan 58-02. See module doc for the per-site mapping.
+ * sites. See module doc for the per-site mapping.
  *
  * @param input - Discriminated payload: "findings" or "sections" variant
  * @param options - Render-mode + grouping options for findings variant
@@ -331,7 +331,7 @@ export function renderFindings(
     return;
   }
 
-  // Exhaustiveness — AGENTS.md §2.8 closed-union discriminator.
+  // Exhaustiveness — closed-union discriminator.
   const _exhaustive: never = input;
   return _exhaustive;
 }

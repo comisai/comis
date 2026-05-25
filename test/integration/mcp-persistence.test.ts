@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Phase 47 MCP install persistence -- integration test.
+// MCP install persistence -- integration test.
 //
 // Exercises the REAL persistToConfig + appendConfigAuditWithOutcome pipeline
 // against a tmpdir config path. The unit tests in
@@ -25,9 +25,9 @@
 // NOTE: This test mocks ONLY mcpClientManager.connect /
 // mcpClientManager.disconnect / mcpClientManager.getConnection because the
 // subprocess spawn is not the SUT -- persistence is. Real subprocess semantics
-// (env-var passing, fd inheritance) live in packages/skills, not Phase 47.
+// (env-var passing, fd inheritance) live in packages/skills.
 //
-// Per AGENTS.md section 2.5: imports from dist/ -- requires pnpm build first.
+// Imports from dist/ -- requires pnpm build first.
 // The vitest workspace alias @comis/* maps to packages/*/dist/index.js.
 //
 // Module-level state isolation: persistToConfig holds two PROCESS-WIDE
@@ -200,7 +200,7 @@ afterEach(() => {
 // Tests
 // ───────────────────────────────────────────────────────────────────
 
-describe("Phase 47 — MCP install persistence (real persistToConfig + audit JSONL)", () => {
+describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
   it("R1+R5+R8: mcp.connect persists env-ref unresolved + emits config-audit JSONL record", async () => {
     const container = makeContainer(parseYaml(readFileSync(configPath, "utf-8")));
     const manager = makeMockManager();

@@ -2,7 +2,7 @@
 /**
  * Tests for `writeTrajectoryPointerFileBestEffort`.
  *
- * Covers design §6.1 + §2.3:
+ * Covers:
  *   - writes_pointer_with_correct_shape
  *   - pointer_file_has_mode_0600
  *   - symlink_parent_dir_is_silent_noop
@@ -156,7 +156,7 @@ describe("writeTrajectoryPointerFileBestEffort", () => {
   it("writer_reader_symmetry: pointer path written matches resolveTrajectoryPointerFilePath result", () => {
     // Write a pointer file, then verify the path the writer used matches
     // what resolveTrajectoryPointerFilePath returns for the same sessionFile.
-    // This closes the writer/reader symmetry contract (POINTER-01 Test 6).
+    // This closes the writer/reader symmetry contract.
     const sessionFile = join(tmpRoot, "session.jsonl");
     const runtimeFile = join(tmpRoot, "elsewhere", "runtime.jsonl");
 
@@ -177,7 +177,7 @@ describe("writeTrajectoryPointerFileBestEffort", () => {
 describe("resolveTrajectoryPointerFilePath", () => {
   it("suffix_is_trajectory_path_json: returns <sessionFile>.trajectory-path.json", () => {
     // Pins the suffix so a future renamer cannot break the reader without
-    // this test catching it first (POINTER-01 Test 3).
+    // this test catching it first.
     expect(resolveTrajectoryPointerFilePath("/tmp/sess.jsonl"))
       .toBe("/tmp/sess.jsonl.trajectory-path.json");
   });

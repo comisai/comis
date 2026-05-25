@@ -741,7 +741,7 @@ describe("general slash command interception", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DEDUP-02: dedup-detector wiring in inbound pipeline
+// dedup-detector wiring in inbound pipeline
 // ---------------------------------------------------------------------------
 
 import { createDedupDetector } from "./dedup-detector.js";

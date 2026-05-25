@@ -125,7 +125,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
 
     _lastMessageAt = systemNowMs();
 
-    // D1 (Plan 01-03): mint traceId at ingress, stamp into metadata
+    // Mint traceId at ingress, stamp into metadata.
     const traceId = randomUUID();
     normalized.metadata.traceId = traceId;
 

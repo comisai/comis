@@ -22,7 +22,7 @@
  * Together these prove (a) the chain is connected in code and (b) the
  * library shape is compatible with what the runtime hands it.
  *
- * Per AGENTS.md §2.5: imports from `dist/` — requires `pnpm build` first.
+ * Imports from `dist/` — requires `pnpm build` first.
  *
  * @module
  */

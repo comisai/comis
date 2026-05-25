@@ -67,18 +67,17 @@ export async function connectServer(
     await disconnectServer(state, deps, config.name);
   }
 
-  // Phase 63 SAFETY-05/06 + WR-03: pre-spawn OSV malware check (stdio
-  // only) runs OUTSIDE the try block. Pre-fix the check sat inside the
-  // try and a malicious-verdict throw fell into the catch — which wrote
-  // an error-state McpConnection to `state.connections` with
-  // `status: "error"` and the [osv_malware_detected] message. That
-  // orphan error entry persisted across the operator's view (mcp.list
-  // shows it as an "error"-status server), confusing operators into
-  // thinking they could `mcp.reconnect` it. WR-03 fix: run the OSV
-  // check before the try block so the throw bubbles up cleanly to the
-  // caller and `state.connections.get(name)` returns undefined for
-  // malicious-package detections. Per RESEARCH.md §"Pattern 4" +
-  // Pitfall 4.
+  // Pre-spawn OSV malware check (stdio only) runs OUTSIDE the try
+  // block. If the check sat inside the try, a malicious-verdict throw
+  // would fall into the catch — which writes an error-state
+  // McpConnection to `state.connections` with `status: "error"` and the
+  // [osv_malware_detected] message. That orphan error entry would
+  // persist across the operator's view (mcp.list shows it as an
+  // "error"-status server), confusing operators into thinking they
+  // could `mcp.reconnect` it. Running the OSV check before the try
+  // block lets the throw bubble up cleanly to the caller and
+  // `state.connections.get(name)` returns undefined for
+  // malicious-package detections.
   if (
     config.transport === "stdio" &&
     config.command &&
@@ -130,7 +129,7 @@ export async function connectServer(
   }
 
   try {
-    // Create transport (logger threaded for Phase 63 SAFETY-08 prlimit-skip WARN)
+    // Create transport (logger threaded for prlimit-skip WARN)
     const transport = createTransport(config, logger);
 
     // Wire stderr capture for stdio transports

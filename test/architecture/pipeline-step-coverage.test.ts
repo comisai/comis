@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pipeline step-tag coverage architecture test (HYGIENE-01, design §3 G4, ROADMAP §Phase 8 SC1).
+ * Pipeline step-tag coverage architecture test.
  *
  * Every known pipeline stage MUST emit at least one `step:`-tagged log line so that
  * operators can reliably filter daemon.log by stage:
@@ -12,7 +12,7 @@
  * Shrink-only: NO allowlist. Every canonical emit site must carry a `step:` field.
  * Sites that cannot be tagged must be migrated — no exceptions.
  *
- * The 11 known stages from ROADMAP §Phase 8 SC1:
+ * The 11 known stages:
  *   inbound, queue, execution, retry, delivery, memory, context, security, mcp, compaction, dedup
  *
  * Walker pattern mirrors test/architecture/forensic-events-info-level.test.ts.
@@ -33,7 +33,7 @@ const REPO_ROOT = resolve(here, "../..");
 // ---------------------------------------------------------------------------
 
 /**
- * Authoritative mapping from ROADMAP SC1 stage name to accepted step: token values.
+ * Authoritative mapping from stage name to accepted step: token values.
  * When an existing tag in the codebase maps to a stage, include it here.
  * "delivery" accepts "channels-outbound","block-delivery","chunking","delivery" because
  * execution-deliver.ts already emits step:"block-delivery" and step:"chunking".
@@ -399,7 +399,7 @@ function scanPackagesForStepToken(
 
 const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
 const DESIGN_REF =
-  ".planning/design/OBSERVABILITY_DESIGN.md §3 G4 + §M3.3 (HYGIENE-01, ROADMAP §Phase 8 SC1)";
+  "OBSERVABILITY_DESIGN.md §3 G4 + §M3.3";
 
 // ===========================================================================
 // Test suite 1: Each known pipeline stage has at least one step:-tagged emit

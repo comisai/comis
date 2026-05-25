@@ -176,7 +176,7 @@ export type OAuthErrorCode =
  *
  * Domain consumers switch on `code` (the OAuth discriminator); logger
  * payloads use `logErrorKind` (the closed-union mirror that satisfies the
- * AGENTS.md §2.7 logging contract).
+ * logging contract).
  *
  * `rewritten.code` carries the OAuth-domain discriminator value (one of
  * "refresh_token_reused" | "invalid_grant" | …) into the OAuthError + event

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `comis trace` — operator CLI for trace correlation (Phase 6 / D13).
+ * `comis trace` — operator CLI for trace correlation.
  *
  * Subcommands:
- *   --message-id <uuid>       Search trace rows by inbound messageId (CLI-01)
- *   --trace-id <uuid>         Search trace rows by traceId (CLI-02)
- *   --chat <chatId> --tail    Live polling stream of trace events for a chat (CLI-03)
- *   --since <dur> --where <f> Session-index scan for failures in last N min (CLI-04)
- *   export <sessionId>        Invoke Phase 4 bundle pipeline; print path (CLI-05)
+ *   --message-id <uuid>       Search trace rows by inbound messageId
+ *   --trace-id <uuid>         Search trace rows by traceId
+ *   --chat <chatId> --tail    Live polling stream of trace events for a chat
+ *   --since <dur> --where <f> Session-index scan for failures in last N min
+ *   export <sessionId>        Invoke bundle pipeline; print path
  *
- * Per CLI-07, every subcommand supports --json (boolean) for machine consumption.
+ * Every subcommand supports --json (boolean) for machine consumption.
  * Per cli-uses-typed-rpc.test.ts arch invariant: ONLY callTyped is used; never client.call.
  *
  * @module
@@ -50,7 +50,7 @@ export function registerTraceCommand(program: Command): void {
     .description("Trace correlation and export (operator CLI)");
 
   // ------------------------------------------------------------------
-  // Search modes: --message-id, --trace-id, --since/--where (CLI-01..04)
+  // Search modes: --message-id, --trace-id, --since/--where
   // ------------------------------------------------------------------
   trace
     .option("--message-id <uuid>", "Trace by inbound messageId")
@@ -101,11 +101,11 @@ export function registerTraceCommand(program: Command): void {
     });
 
   // ------------------------------------------------------------------
-  // export subcommand (CLI-05)
+  // export subcommand
   // ------------------------------------------------------------------
   trace
     .command("export <sessionId>")
-    .description("Export session bundle (Phase 4 pipeline) and print path")
+    .description("Export session bundle and print path")
     .option("--json", "Machine-readable JSON output")
     .action(async (sessionId: string, options: { json?: boolean }) => {
       try {

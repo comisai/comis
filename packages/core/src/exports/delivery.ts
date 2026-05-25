@@ -3,7 +3,7 @@
 //
 // The channel-platform-agnostic delivery helpers (formatForChannel,
 // chunkForDelivery, chunkBlocks, RetryEngine, isPermanentError) live in
-// core/src/delivery/ so that `core → channels` stays one-way per AGENTS.md §1.
+// core/src/delivery/ so that `core → channels` stays one-way.
 //
 // The Markdown IR pipeline that underlies formatForChannel and chunkForDelivery
 // (markdown-ir, ir-renderer, ir-chunker, markdown-tables, sanitize-for-plain-text,
@@ -19,7 +19,7 @@ export { chunkBlocks } from "../delivery/block-chunker.js";
 // Note: block-chunker's ChunkMode + ChunkOptions are intentionally NOT
 // re-exported — block-chunker's "paragraph"/"newline"/"sentence"/"length"
 // ChunkMode collides with the streaming-config ChunkMode in
-// exports/config.js, and AGENTS.md §2.3 (KISS/YAGNI) forbids speculative
+// exports/config.js, and the KISS/YAGNI principle forbids speculative
 // public exports without callers. chunkBlocks is the only block-chunker
 // symbol consumed cross-package.
 export { createRetryEngine, createBlockRetryGuard } from "../delivery/retry-engine.js";

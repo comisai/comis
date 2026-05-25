@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * trace.artifacts payload assembly (LIFE-02, design §5 D4).
+ * trace.artifacts payload assembly.
  *
  * Emitted once per session, immediately BEFORE session.ended, by
  * comis-session-manager.destroySession. Direct emit — see

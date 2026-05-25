@@ -169,7 +169,7 @@ export interface ChannelsDeps {
   /** Per-agent cron execution trackers for enriched JSONL entries. */
   cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
   /**
-   * Phase 6 (EXPORT-01): DI seam for /export-trajectory slash command.
+   * DI seam for /export-trajectory slash command.
    * Threaded into buildAndStartChannelManager → createChannelManager →
    * pipelineDeps → inbound-gate dispatch guard. When absent, /export-trajectory
    * falls through to generic slash command handling (no-op). Production daemon

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * /export-trajectory slash command handler (EXPORT-01).
+ * /export-trajectory slash command handler.
  *
  * Owner-gated bundle export with DM-vs-group routing:
  *   DM context  -> inline reply with bundle path + privacy reminder
@@ -13,8 +13,6 @@
  *   - adapter             (for DM sendMessage)
  *
  * None of these are exposed through handleSlashCommand(text, sessionKey, agentId).
- *
- * Design: §M2.7 + research §6 Approach 1.
  *
  * @module
  */
@@ -64,7 +62,7 @@ export async function handleExportTrajectory(
   const { msg, sessionKey, adapter, deliveryService, exportSessionBundle, logger } = deps;
 
   // ---- Owner gate ----
-  // Pattern from inbound-gate.ts:189 (research §6 / pitfall 1).
+  // Pattern from inbound-gate.ts:189.
   // Only the session owner may trigger an export (STRIDE T-06-05-01).
   if (msg.senderId !== sessionKey.userId) {
     await deliveryService.deliverToChannel(
@@ -81,7 +79,7 @@ export async function handleExportTrajectory(
 
   // ---- Group: send the ack FIRST, then export ----
   // The ack fires before the await so group members see a prompt response
-  // even if the export takes several seconds (research §6 / pitfall 8).
+  // even if the export takes several seconds.
   // CRITICAL: the ack MUST NOT contain the bundle path (STRIDE T-06-05-02).
   if (isGroup) {
     await deliveryService.deliverToChannel(
@@ -93,7 +91,7 @@ export async function handleExportTrajectory(
   }
 
   // ---- Derive sessionId from SessionKey ----
-  // Uses the same convention as Plan 06-03's obs.trace.export RPC handler:
+  // Uses the same convention as the obs.trace.export RPC handler:
   // formatSessionKey → "tenantId:userId:channelId[:peer:peerId]..."
   const sessionId = formatSessionKey(sessionKey);
 
@@ -123,7 +121,7 @@ export async function handleExportTrajectory(
 
   if (isGroup) {
     // CRITICAL: Path goes ONLY to the DM — NEVER inline in the group.
-    // Research §6 / pitfall 7: msg.senderId is the Telegram user ID = DM chat ID.
+    // msg.senderId is the Telegram user ID = DM chat ID.
     await adapter.sendMessage(msg.senderId, message);
   } else {
     // DM context: inline reply is safe — it goes only to the owner.

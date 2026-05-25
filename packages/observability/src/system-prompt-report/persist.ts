@@ -13,8 +13,8 @@
  *     (limitPayloadValue + sanitizeDiagnosticPayload + redactSecrets)
  *     BEFORE the INSERT.
  *   - JSON.stringify's the sanitized report into `report_json`.
- *   - Returns `Result<void, PersistError>` per AGENTS.md §2.1 — never
- *     throws. Store errors degrade silently.
+ *   - Returns `Result<void, PersistError>` — never throws. Store errors
+ *     degrade silently.
  *
  * The `ObservabilityStore` interface is imported as a TYPE only from
  * `@comis/memory`. The narrow Pick<> shape decouples this module from

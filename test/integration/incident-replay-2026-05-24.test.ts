@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * M1 Acceptance Gate: 2026-05-24 Duplicate-Adapter Incident Replay
+ * 2026-05-24 Duplicate-Adapter Incident Replay
  *
  * Synthesizes the duplicate-adapter wiring that caused the 2026-05-24
  * Telegram regression at the orchestrator layer (no full daemon spin-up).
- * Proves the bug is now visible at all three independent layers as required
- * by design §9.2:
+ * Proves the bug is now visible at all three independent layers:
  *
  *   Layer 1 (boot):   emitStartupInvariants fires WARN with errorKind:"config"
  *                     when rawHandlerCounts["telegram"] === 2.
@@ -14,9 +13,9 @@
  *                      messageId arrives twice.
  *   Layer 3 (queue):   queue:enqueued fires twice with the same messageId when
  *                      a duplicate message is not suppressed (dedup does NOT
- *                      suppress — processing continues per design §5 D12).
+ *                      suppress — processing continues).
  *
- * Construction approach (per 03-RESEARCH.md §"Incident Replay Harness"):
+ * Construction approach:
  *   - Mirror channel-resilience.test.ts import block + EchoChannelAdapter setup
  *   - createChannelManager with SAME adapter in both deps.adapters AND
  *     channelRegistry to reproduce pre-fix wiring (rawHandlerCounts → 2)
@@ -94,7 +93,7 @@ function makeAdapterStub(channelType = "telegram"): ChannelPort {
 // LAYER 1: Boot WARN — duplicate-adapter wiring surfaced before traffic
 // ---------------------------------------------------------------------------
 
-describe("M1 acceptance gate: 2026-05-24 duplicate-adapter incident replay — Layer 1 (boot WARN)", () => {
+describe("2026-05-24 duplicate-adapter incident replay — Layer 1 (boot WARN)", () => {
   it("emitStartupInvariants emits WARN with errorKind:config when rawHandlerCounts shows telegram:2", async () => {
     // Reproduce the pre-fix wiring: same EchoChannelAdapter passed in both
     // deps.adapters and channelRegistry.getChannelPlugins(). channelManager
@@ -158,7 +157,7 @@ describe("M1 acceptance gate: 2026-05-24 duplicate-adapter incident replay — L
       depSlotConsistency: { adaptersList: true, channelRegistry: true },
     });
 
-    // --- Layer 1 assertion: BOOT-01 INFO record carries handlersPerAdapter:{telegram:2} ---
+    // --- Layer 1 assertion: INFO record carries handlersPerAdapter:{telegram:2} ---
     expect(invariantLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         handlersPerAdapter: { telegram: 2 },
@@ -166,7 +165,7 @@ describe("M1 acceptance gate: 2026-05-24 duplicate-adapter incident replay — L
       "daemon:startup_invariants",
     );
 
-    // --- Layer 1 assertion: BOOT-02 WARN with errorKind:config and §6.1 hint ---
+    // --- Layer 1 assertion: WARN with errorKind:config and duplicate-adapter hint ---
     const warnCalls = invariantLogger.warn.mock.calls;
     const duplicateHandlerWarn = warnCalls.find(
       (call: unknown[]) =>
@@ -190,7 +189,7 @@ describe("M1 acceptance gate: 2026-05-24 duplicate-adapter incident replay — L
 // LAYER 2: Dedup event fires with deltaMs:1 on second arrival
 // ---------------------------------------------------------------------------
 
-describe("M1 acceptance gate: 2026-05-24 duplicate-adapter incident replay — Layer 2 (dedup event)", () => {
+describe("2026-05-24 duplicate-adapter incident replay — Layer 2 (dedup event)", () => {
   it("dedup:duplicate_inbound fires once with deltaMs:1 and WARN errorKind:internal when same messageId arrives twice", async () => {
     // Controlled clock: first call = 1000 ms, second (duplicate check) = 1001 ms
     let nowVal = 1000;
@@ -273,7 +272,7 @@ describe("M1 acceptance gate: 2026-05-24 duplicate-adapter incident replay — L
 // LAYER 3: queue:enqueued fires twice — dedup does NOT suppress
 // ---------------------------------------------------------------------------
 
-describe("M1 acceptance gate: 2026-05-24 duplicate-adapter incident replay — Layer 3 (queue double-enqueue)", () => {
+describe("2026-05-24 duplicate-adapter incident replay — Layer 3 (queue double-enqueue)", () => {
   it("queue:enqueued fires twice with same channelType when duplicate message is NOT suppressed", async () => {
     // The dedup detector logs + emits but does NOT return early — processing continues
     // for BOTH messages. Both reach the commandQueue and emit queue:enqueued.
@@ -288,7 +287,7 @@ describe("M1 acceptance gate: 2026-05-24 duplicate-adapter incident replay — L
       queueEvents.push(ev as Record<string, unknown>);
     });
 
-    // Dedup detector — will log + emit but NOT suppress (design §5 D12)
+    // Dedup detector — will log + emit but NOT suppress
     let nowVal = 1000;
     const dedupDetector = createDedupDetector({ now: () => nowVal++ });
 

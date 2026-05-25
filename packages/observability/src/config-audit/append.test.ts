@@ -256,7 +256,7 @@ describe("config-audit/append", () => {
 // dir FIRST under default umask (0o755). mkdir's `mode` arg is silently
 // ignored when the dir already exists (recursive EEXIST). The fix:
 // defensively chmod to 0o700 after the mkdir attempt, gated on a
-// non-symlink lstat to preserve the §1.4 confused-deputy invariant
+// non-symlink lstat to preserve the confused-deputy invariant
 // (the chmod-target must be a real directory, not a symlink to
 // operator-owned shared state outside our trust boundary).
 // ---------------------------------------------------------------------------
@@ -355,7 +355,7 @@ describe("encodeRecord — sentinel on serialization failure", () => {
       expect(parsed.traceSchema).toBe("comis-config-audit");
       expect(parsed.schemaVersion).toBe(1);
       expect(parsed.__serializationError).toBe("record-not-serializable");
-      // Design §9.2 uses `ts` (ISO string). `tsMs` was dropped.
+      // Uses `ts` (ISO string). `tsMs` was dropped.
       expect(typeof parsed.ts).toBe("string");
       expect(Number.isFinite(Date.parse(parsed.ts))).toBe(true);
     } finally {
@@ -401,10 +401,10 @@ describe("encodeRecord — sentinel on serialization failure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ROTATE-02: rotateConfigAuditLogIfNeeded triggers gzip on .1 file
-// via shared applyRotationPolicy helper.
+// rotateConfigAuditLogIfNeeded triggers gzip on .1 file via shared
+// applyRotationPolicy helper.
 // ---------------------------------------------------------------------------
-describe("rotateConfigAuditLogIfNeeded — gzip via applyRotationPolicy (ROTATE-02)", () => {
+describe("rotateConfigAuditLogIfNeeded — gzip via applyRotationPolicy", () => {
   it("schedules applyRotationPolicy so config-audit.jsonl.1 becomes .1.gz after rotation", async () => {
     const filePath = path.join(tmpDir, "config-audit.jsonl");
     fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });

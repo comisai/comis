@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for Email adapter runWithContext wrap + Inbound message INFO log (TRACE-01).
+ * Unit tests for Email adapter runWithContext wrap + Inbound message INFO log.
  *
  * Asserts that:
  * 1. The IMAP onNewMessage dispatch stamps msg.metadata.traceId and runs handlers
  *    inside runWithContext so the traceId propagates via AsyncLocalStorage.
  * 2. deps.logger.info is called with { channelType: "email", messageId, traceId }
- *    and message "Inbound message" (Email lacked this log line prior to Plan 01-03).
- *
- * RED state: fails before the runWithContext wrap + INFO log are added to
- * email-adapter.ts (traceId is undefined; tryGetContext() returns undefined;
- * logger.info is never called with "Inbound message").
+ *    and message "Inbound message".
  *
  * @module
  */
@@ -135,7 +131,7 @@ function makeParsedEmail() {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("email-adapter -- IMAP dispatch runWithContext wrap + Inbound message INFO log (TRACE-01)", () => {
+describe("email-adapter -- IMAP dispatch runWithContext wrap + Inbound message INFO log", () => {
   beforeEach(() => {
     capturedImapHandler = undefined;
     vi.clearAllMocks();

@@ -57,7 +57,7 @@ export { safeJsonStringify } from "./shared/safe-json-stringify.js";
 
 // File-snapshot helper — sha256 + POSIX stat in one pass. Used by the
 // daemon's read-side audit producer (`readConfigFileObservation`) and
-// any other consumer that needs the design-§9.2 file-state block.
+// any other consumer that needs the file-state block.
 export { readFileSnapshot } from "./shared/file-snapshot.js";
 export type { FileSnapshot } from "./shared/file-snapshot.js";
 
@@ -116,7 +116,7 @@ export {
   sanitizeForPersistence,
 } from "./redact/redact-secrets.js";
 
-// Bundle-time value-shape redactors (Phase 5 D9, REDACT-01).
+// Bundle-time value-shape redactors.
 // Distinct from Pino-level patterns above — different sentinel shape
 // (`<REDACTED:type>` vs edge-keeping masks) and different consumer
 // (bundle export pipeline vs live log scrubbing).
@@ -180,7 +180,7 @@ export { buildTraceArtifacts } from "./trajectory/artifacts.js";
 export type { TraceArtifactsRunState, TraceArtifactsPayload } from "./trajectory/artifacts.js";
 
 // ---------------------------------------------------------------------------
-// Trajectory bundle export (Phase 4 D5).
+// Trajectory bundle export.
 // ---------------------------------------------------------------------------
 
 export {
@@ -200,7 +200,7 @@ export type {
   ReadSessionBranchResult,
 } from "./trajectory/export.js";
 
-// Plan 04-03: exportTrajectoryBundle lives in bundle-exporter.ts to avoid
+// exportTrajectoryBundle lives in bundle-exporter.ts to avoid
 // a circular import (bundle-exporter.ts → export.ts; export.ts must not
 // re-export bundle-exporter.ts or madge flags a circular .d.ts dependency).
 export { exportTrajectoryBundle } from "./trajectory/bundle-exporter.js";
@@ -357,7 +357,7 @@ export type {
 export { parseSince } from "./cache-stats/parse-since.js";
 
 // ---------------------------------------------------------------------------
-// Session-index surface (Phase 6 INDEX-01).
+// Session-index surface.
 // ---------------------------------------------------------------------------
 //
 // Append-only `session-index.YYYY-MM-DD.jsonl` writer via QueuedFileWriter.
@@ -373,7 +373,7 @@ export type {
 } from "./session-index/index.js";
 
 // ---------------------------------------------------------------------------
-// Rotation surface (ROTATE-02).
+// Rotation surface.
 // ---------------------------------------------------------------------------
 //
 // Cross-stream log rotation policy helper + startup sweep.
@@ -395,13 +395,13 @@ export {
 } from "./rotation/sweep.js";
 
 // ---------------------------------------------------------------------------
-// Health aggregator surface (ALERT-01).
+// Health aggregator surface.
 // ---------------------------------------------------------------------------
 //
 // Sliding-window in-process rate aggregator. Subscribes to health/safety
 // events on the typed EventBus, classifies each by errorKind, and emits
 // `health:budget_exceeded` ONCE per window cross. No external dependencies;
-// imports only @comis/core (no @comis/infra to avoid cycles — Option B).
+// imports only @comis/core (no @comis/infra to avoid cycles).
 
 export { createHealthAggregator } from "./health-aggregator/aggregator.js";
 export type {

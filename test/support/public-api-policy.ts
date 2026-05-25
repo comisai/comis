@@ -596,8 +596,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "AttachmentSchema",
       "NormalizedMessageSchema",
       "parseMessage",
-      // getMessageTraceId: typed accessor for NormalizedMessage.metadata.traceId (TRACE-03, Plan 01-01).
-      // Consumers: orchestrator channel-manager.ts (Plans 02-04) will read msg.metadata.traceId via this helper.
+      // getMessageTraceId: typed accessor for NormalizedMessage.metadata.traceId.
+      // Consumers: orchestrator channel-manager.ts will read msg.metadata.traceId via this helper.
       "getMessageTraceId",
       "TrustLevelSchema",
       "MemorySourceSchema",
@@ -1437,7 +1437,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ContextHandlerDeps",
       "createAgentHandlers",
       "AgentHandlerDeps",
-      // Phase 47 MCP install persistence — re-exported so the integration
+      // MCP install persistence — re-exported so the integration
       // test at test/integration/mcp-persistence.test.ts can drive the real
       // mcp.connect / mcp.disconnect handlers against a tmpdir config path.
       // The test imports these statically from @comis/daemon, but the
@@ -1451,19 +1451,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // writer (see persist-to-config.ts:12-43 module-level state docs).
       "_resetSigusr1Timer",
       "_resetMutationFence",
-      // Phase 63 SAFETY-09: plaintext-secret heuristic helper re-exported
+      // Plaintext-secret heuristic helper re-exported
       // so the architecture-tier negative + positive control table at
       // test/architecture/mcp-plaintext-secret-false-positives.test.ts can
       // assert the heuristic shape against real-world token samples
       // without duplicating the prefix list. The
       // public-export-consumers AST walker only scans packages/*/src/**
       // (NOT test/), mirroring the precedent set by
-      // MCP_STDIO_BUILTIN_ENV_ALLOWLIST / scrubStdioEnv from Plan 02.
+      // MCP_STDIO_BUILTIN_ENV_ALLOWLIST / scrubStdioEnv.
       "looksLikePlaintextSecret",
       // Residency-test harness consumers (dynamic require).
       "createTracingLogger",
       "TracingLoggerOptions",
-      // M1 acceptance gate (BOOT-01/02 replay harness).
+      // Replay harness consumers.
       // Consumer: test/integration/incident-replay-2026-05-24.test.ts
       "emitStartupInvariants",
       "StartupInvariantsDeps",
@@ -1759,7 +1759,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "expandGroups",
       "ToolFilterReason",
       "ToolPolicyResult",
-      // Phase 63 SAFETY-01/02 (plan 02): consumed by the architecture
+      // Consumed by the architecture
       // test `test/architecture/mcp-prespawn-allowlist.test.ts` and the
       // integration test `test/integration/mcp-env-scrub.test.ts` — both
       // outside packages/skills/, so the source-only consumer scan does
@@ -1768,7 +1768,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // test-API surface; not a baseline orphan.
       "MCP_STDIO_BUILTIN_ENV_ALLOWLIST",
       "scrubStdioEnv",
-      // Phase 63 SAFETY-05/06 (plan 04): consumed by the integration test
+      // Consumed by the integration test
       // `test/integration/mcp-osv-check.test.ts` — outside packages/skills/,
       // so the source-only consumer scan does not pick them up.
       // Internal-to-skills consumers live in mcp-client-connect.ts (where
@@ -1779,7 +1779,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DEFAULT_OSV_CACHE_DIR",
       "OsvCheckResult",
       "OsvCheckOptions",
-      // Phase 63 SAFETY-07 (plan 05): consumed by the integration test
+      // Consumed by the integration test
       // `test/integration/mcp-redirect-scrub.test.ts` — outside
       // packages/skills/, so the source-only consumer scan does not pick
       // them up. Internal-to-skills consumer lives in

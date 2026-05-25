@@ -60,11 +60,10 @@ export function handleInboundMessage(
   state.lastMessageAt = systemNowMs();
   const normalized = mapGrammyToNormalized(msg, chatId, state.botIdentity);
 
-  // D1 (Plan 01-02): mint traceId at ingress, stamp into metadata
-  // so the orchestrator's adapter.onMessage wrap (Plan 01-04) can
-  // reuse it. The Pino mixin reads ALS automatically — the
-  // "Inbound message" log line below picks up traceId once we
-  // enter the runWithContext scope.
+  // Mint traceId at ingress, stamp into metadata so the orchestrator's
+  // adapter.onMessage wrap can reuse it. The Pino mixin reads ALS
+  // automatically — the "Inbound message" log line below picks up
+  // traceId once we enter the runWithContext scope.
   const traceId = randomUUID();
   normalized.metadata.traceId = traceId;
 
@@ -121,10 +120,8 @@ export function bindInboundHandlers(
     }
   });
 
-  // D1 exception (Plan 01-02): poll events bypass runWithContext —
-  // they are aggregated votes via deps.onPollResult, not per-user
-  // inbound messages. No traceId semantic. See RESEARCH.md
-  // per-adapter map entry #2.
+  // Poll events bypass runWithContext — they are aggregated votes via
+  // deps.onPollResult, not per-user inbound messages. No traceId semantic.
   state.bot.on("poll", (ctx) => {
     if (!ctx.poll) return;
     const poll = ctx.poll;
@@ -206,7 +203,7 @@ export function bindInboundHandlers(
         }
       }
 
-      // D1 (Plan 01-02): mint traceId at ingress for callback_query dispatch
+      // Mint traceId at ingress for callback_query dispatch.
       const traceId = randomUUID();
       normalized.metadata.traceId = traceId;
       runWithContext(

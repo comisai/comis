@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for Slack adapter runWithContext wrap (TRACE-01).
+ * Unit tests for Slack adapter runWithContext wrap.
  *
  * Asserts that both the message event handler and the block_actions handler
  * stamp normalized.metadata.traceId and run handlers inside runWithContext
  * so the traceId propagates via AsyncLocalStorage.
- *
- * RED state: fails before the runWithContext wrap is added to
- * slack-adapter.ts (traceId is undefined; tryGetContext() returns undefined).
  *
  * @module
  */
@@ -137,7 +134,7 @@ function makeBlockAction(overrides: Record<string, unknown> = {}) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("slack-adapter -- message + block_actions runWithContext wrap (TRACE-01)", () => {
+describe("slack-adapter -- message + block_actions runWithContext wrap", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     eventHandlers.clear();

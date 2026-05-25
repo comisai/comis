@@ -179,7 +179,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           _lastMessageAt = systemNowMs();
           const normalized = mapSlackToNormalized(event);
 
-          // D1 (Plan 01-02): mint traceId at ingress, stamp into metadata
+          // Mint traceId at ingress, stamp into metadata.
           const traceId = randomUUID();
           normalized.metadata.traceId = traceId;
 
@@ -256,7 +256,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
               },
             };
 
-            // D1 (Plan 01-02): mint traceId at ingress for block_actions dispatch
+            // Mint traceId at ingress for block_actions dispatch.
             const traceId = randomUUID();
             normalized.metadata.traceId = traceId;
             runWithContext(

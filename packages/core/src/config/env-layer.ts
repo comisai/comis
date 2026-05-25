@@ -7,7 +7,7 @@
  *
  *   COMIS_GATEWAY_HOST → gateway.host (e.g. "0.0.0.0" inside the Docker image)
  *   COMIS_GATEWAY_PORT → gateway.port
- *   COMIS_TRAJECTORY_DIR → observability.trajectory.dirOverride (POINTER-02)
+ *   COMIS_TRAJECTORY_DIR → observability.trajectory.dirOverride
  *
  * The returned object is a partial config layer fed to mergeLayered() at
  * lower priority than YAML files: schema defaults < env layer < config.yaml.
@@ -26,7 +26,7 @@
 export interface GatewayEnvSource {
   COMIS_GATEWAY_HOST?: string | undefined;
   COMIS_GATEWAY_PORT?: string | undefined;
-  /** Relocates runtime trajectory JSONL files to a custom directory (POINTER-02). */
+  /** Relocates runtime trajectory JSONL files to a custom directory. */
   COMIS_TRAJECTORY_DIR?: string | undefined;
 }
 
@@ -51,7 +51,7 @@ export function buildGatewayEnvLayer(env: GatewayEnvSource): Record<string, unkn
     }
   }
 
-  // POINTER-02: project COMIS_TRAJECTORY_DIR → observability.trajectory.dirOverride.
+  // Project COMIS_TRAJECTORY_DIR → observability.trajectory.dirOverride.
   // Drop empty / whitespace-only values so a typo never silently relocates trajectory files.
   let observability: Record<string, unknown> | undefined;
   const rawTrajectoryDir = env.COMIS_TRAJECTORY_DIR;

@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for Signal adapter runWithContext wrap (TRACE-01).
+ * Unit tests for Signal adapter runWithContext wrap.
  *
  * Asserts that the SSE poll loop stamps msg.metadata.traceId and runs
  * handlers inside runWithContext so the traceId propagates via AsyncLocalStorage.
- *
- * RED state: fails before the runWithContext wrap is added to
- * signal-adapter.ts (traceId is undefined; tryGetContext() returns undefined).
  *
  * @module
  */
@@ -98,7 +95,7 @@ function makeEnvelope() {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("signal-adapter -- SSE poll loop runWithContext wrap (TRACE-01)", () => {
+describe("signal-adapter -- SSE poll loop runWithContext wrap", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(signalHealthCheck).mockResolvedValue(ok({ version: "0.11.12" }));

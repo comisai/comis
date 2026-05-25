@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * BOOT-01/02: Startup invariant collector and WARN emitter.
+ * Startup invariant collector and WARN emitter.
  *
  * Collects counts from all registries after boot completes and emits a single
  * `daemon:startup_invariants` INFO record. If any invariant indicates duplicate
  * adapter wiring, emits a WARN with errorKind:"config" BEFORE the daemon accepts
- * traffic (per design §5 D10, §9.2).
+ * traffic.
  *
  * Called from daemon.ts bootShutdown() immediately after emitStartupBanner().
  *
@@ -15,26 +15,25 @@ import type { ComisLogger } from "@comis/infra";
 import type { ChannelPort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Imports for startup sweep (ROTATE-02)
+// Imports for startup sweep
 // ---------------------------------------------------------------------------
 import { sweepRotatedFiles } from "@comis/observability";
 import type { RotationPolicy } from "@comis/observability";
 
 // ---------------------------------------------------------------------------
-// Imports for health aggregator (ALERT-01)
+// Imports for health aggregator
 // ---------------------------------------------------------------------------
 import { createHealthAggregator } from "@comis/observability";
 import type { AlertBudgetPolicy } from "@comis/observability";
 import type { TypedEventBus } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// StartupInvariants interface (verbatim from design §5 D10)
+// StartupInvariants interface
 // ---------------------------------------------------------------------------
 
 /**
  * Snapshot of daemon wiring state captured at the end of successful boot.
  * All values are counts or boolean flags — no secrets, paths, or message bodies.
- * See design §12 security note.
  */
 export interface StartupInvariants {
   adaptersByChannelType: Record<string, number>;       // expected count === 1 per type
@@ -79,7 +78,7 @@ export interface StartupInvariantsDeps {
     channelRegistry: boolean;   // expected true post-fix
   };
   /**
-   * Optional cross-stream log rotation policy (ROTATE-02).
+   * Optional cross-stream log rotation policy.
    * When provided (together with logsDir), triggers a non-blocking
    * startup sweep via sweepRotatedFiles after the invariant emit.
    */
@@ -90,7 +89,7 @@ export interface StartupInvariantsDeps {
    */
   logsDir?: string;
   /**
-   * Optional alert budget policy (ALERT-01).
+   * Optional alert budget policy.
    * When provided (together with eventBus), attaches the health aggregator.
    * The returned unsubscribe function should be called on daemon shutdown.
    */
@@ -108,9 +107,9 @@ export interface StartupInvariantsDeps {
 
 /**
  * Collect startup invariants and emit:
- *   1. One `daemon:startup_invariants` INFO record with all 8 fields (BOOT-01).
- *   2. WARN(s) with errorKind:"config" + §6.1 hint when duplicate wiring detected (BOOT-02).
- *   3. Optional: attach health budget aggregator (ALERT-01) when alertBudgetPolicy + eventBus provided.
+ *   1. One `daemon:startup_invariants` INFO record with all 8 fields.
+ *   2. WARN(s) with errorKind:"config" + hint when duplicate wiring detected.
+ *   3. Optional: attach health budget aggregator when alertBudgetPolicy + eventBus provided.
  *
  * Must be called AFTER all boot stages complete and BEFORE the DaemonInstance
  * handle is returned (i.e., before the daemon accepts traffic).
@@ -155,10 +154,10 @@ export function emitStartupInvariants(deps: StartupInvariantsDeps): (() => void)
     mcpServerCount,
   };
 
-  // ── BOOT-01: emit the INFO record ────────────────────────────────────────
+  // ── Emit the INFO record ─────────────────────────────────────────────────
   deps.logger.info(invariants, "daemon:startup_invariants");
 
-  // ── ROTATE-02: non-blocking startup sweep ───────────────────────────────
+  // ── Non-blocking startup sweep ──────────────────────────────────────────
   // Fires AFTER the invariant emit so the sweep's best-effort WARN logs do
   // not pollute the invariant record. Errors are caught inside sweepRotatedFiles.
   if (deps.logRotationPolicy && deps.logsDir) {
@@ -167,9 +166,9 @@ export function emitStartupInvariants(deps: StartupInvariantsDeps): (() => void)
     });
   }
 
-  // ── BOOT-02: emit WARN(s) on duplicate wiring ────────────────────────────
+  // ── Emit WARN(s) on duplicate wiring ─────────────────────────────────────
   // Check AFTER the INFO emit so the record is always present even when WARNs
-  // fire. Both checks use the verbatim §6.1 hint per REQUIREMENTS.md BOOT-02.
+  // fire.
 
   for (const [channelType, count] of Object.entries(handlersPerAdapter)) {
     if (count > 1) {
@@ -196,9 +195,9 @@ export function emitStartupInvariants(deps: StartupInvariantsDeps): (() => void)
     );
   }
 
-  // ── ALERT-01: attach health budget aggregator ────────────────────────────
+  // ── Attach health budget aggregator ──────────────────────────────────────
   // Attach AFTER the invariant emit so the aggregator is not running during
-  // the BOOT-01 record construction, and AFTER the rotation sweep so the
+  // the record construction, and AFTER the rotation sweep so the
   // aggregator's first window starts with a clean log state.
   if (deps.alertBudgetPolicy && deps.eventBus) {
     return createHealthAggregator({

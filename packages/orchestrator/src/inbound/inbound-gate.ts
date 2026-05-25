@@ -43,7 +43,7 @@ export type GateDeps = Pick<
   | "deliveryService"
 > & {
   /**
-   * Phase 6 (EXPORT-01): bundle export DI. Injected by daemon wiring.
+   * Bundle export DI. Injected by daemon wiring.
    * Optional — when absent, /export-trajectory falls through to the generic
    * handleSlashCommand block (where it will be handled as unrecognised if
    * the daemon has not provided this dep).
@@ -62,7 +62,7 @@ export type GateDecision =
   | { action: "skip" };
 
 // ---------------------------------------------------------------------------
-// Phase function
+// Gate function
 // ---------------------------------------------------------------------------
 
 /**
@@ -287,7 +287,7 @@ export async function evaluateInboundGate(
   }
 
   // -------------------------------------------------------------------
-  // /export-trajectory — owner-gated bundle export (Phase 6, EXPORT-01)
+  // /export-trajectory — owner-gated bundle export
   //
   // Handled BEFORE the generic handleSlashCommand block because:
   //   1. handleSlashCommand(text, sessionKey, agentId) is synchronous-shaped
@@ -296,7 +296,7 @@ export async function evaluateInboundGate(
   //      (msg.senderId === sessionKey.userId) and DM routing (adapter.sendMessage).
   //
   // "export-trajectory" is also in KNOWN_COMMANDS so parseSlashCommand
-  // returns found:true — the text NEVER reaches the LLM (STRIDE T-06-05-04).
+  // returns found:true — the text NEVER reaches the LLM.
   // -------------------------------------------------------------------
   if (
     msg.text &&

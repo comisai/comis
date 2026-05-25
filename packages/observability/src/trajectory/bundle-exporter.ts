@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Bundle exporter pipeline (Plan 04-03 — BUNDLE-01 / BUNDLE-02 / BUNDLE-04).
+ * Bundle exporter pipeline.
  *
  * This file contains the `exportTrajectoryBundle` function and its private
  * helpers. It lives alongside `export.ts` in the same `trajectory/` directory
@@ -8,27 +8,21 @@
  * cap. `export.ts` re-exports all public symbols from this file so barrel
  * consumers see a single import surface.
  *
- * **Privacy Warning (design §8.5):**
+ * **Privacy Warning:**
  * The bundle's `session-branch.json` file contains raw session content
- * (message text, tool inputs/outputs, PII). Redaction is deferred to
- * Phase 5 D9. Until redaction is applied, bundles MUST be treated as
+ * (message text, tool inputs/outputs, PII). Bundles MUST be treated as
  * sensitive. The output directory is created with mode 0o700 and each
  * file with 0o600 to limit scope to the operator, but this is NOT
  * a substitute for redaction.
  *
- * **Bundle output path note (deviation from design §5 D5):**
+ * **Bundle output path note:**
  * The bundle directory is written to `<workspaceDir>/trace-exports/`
- * (without an additional `.comis/` sub-prefix). The design document
- * phrases this as `<workspaceDir>/.comis/trace-exports/`, but since
- * `<workspaceDir>` already terminates in `.comis/workspace` (or similar),
- * appending `.comis/` would produce an unusual nested path. This deviation
- * is documented in `04-03-SUMMARY.md`.
+ * (without an additional `.comis/` sub-prefix). Since `<workspaceDir>`
+ * already terminates in `.comis/workspace` (or similar), appending
+ * `.comis/` would produce an unusual nested path.
  *
- * **WR-01 sessionStateProvider fold is NOT in scope (Phase 5):**
  * `exportTrajectoryBundle` reads `trace.metadata`/`trace.artifacts` events
- * directly from the runtime trajectory JSONL. The `sessionStateProvider`
- * would not change anything at the bundle level. Deferred to Phase 5
- * alongside D9 redaction.
+ * directly from the runtime trajectory JSONL.
  *
  * @module
  */
@@ -59,15 +53,15 @@ import {
 } from "../redact/value-shapes.js";
 
 // ---------------------------------------------------------------------------
-// Public types (BUNDLE-01)
+// Public types
 // ---------------------------------------------------------------------------
 
 /**
  * Parameters for `exportTrajectoryBundle`.
  *
- * The caller (future Phase 6 RPC handler) is responsible for resolving
- * `sessionFile` and `workspaceDir` through `safePath`/`sessionKeyToPath`
- * upstream. The exporter uses `ensureContainedDir` defensively.
+ * The caller is responsible for resolving `sessionFile` and `workspaceDir`
+ * through `safePath`/`sessionKeyToPath` upstream. The exporter uses
+ * `ensureContainedDir` defensively.
  */
 export interface ExportTrajectoryBundleParams {
   readonly sessionId: string;
@@ -133,13 +127,13 @@ function buildWarningLocal(
 /**
  * Read the runtime trajectory JSONL file for a session.
  *
- * Pointer-file resolution (design §6.1):
+ * Pointer-file resolution:
  *   1. Read `<sessionFile>.trajectory-path.json` (pointer file).
  *   2. If `traceSchema === "comis-trajectory-pointer"` && `schemaVersion === 1`
  *      → use `parsed.runtimeFile` as the absolute path.
  *   3. Else fall back to co-located `<sessionFile>.trajectory.jsonl`.
  *
- * File reading (T-04-03-02):
+ * File reading:
  *   - readFileSync as utf-8, split("\n"), parse each line.
  *   - Empty trailing lines are skipped.
  *   - JSON.parse failures → `invalid-runtime-json` warning per line.
@@ -283,15 +277,15 @@ interface SupplementalCaptures {
  *   `trace.metadata.prompting` + `.skills`.
  * - `systemPromptText`: plain-text system prompt (same as `systemPrompt`).
  * - `tools`: tool defs from `tool.call` event `data`, sorted + dedup'd on
- *   `toolName`, bounded at 256 items (T-04-03-05).
+ *   `toolName`, bounded at 256 items.
  *
  * @internal
  */
 function buildSupplementalCaptures(
   runtimeEvents: ReadonlyArray<TrajectoryEvent>,
 ): SupplementalCaptures {
-  // Find the LAST trace.metadata and trace.artifacts events (design §5 D4
-  // says "exactly one" but defense-in-depth takes the latest).
+  // Find the LAST trace.metadata and trace.artifacts events
+  // (defense-in-depth takes the latest).
   let lastMetadataData: Record<string, unknown> = {};
   let lastArtifactsData: Record<string, unknown> = {};
   for (const e of runtimeEvents) {
@@ -328,13 +322,11 @@ function buildSupplementalCaptures(
   };
 
   // system-prompt.txt: the plain-text full system prompt.
-  // Phase 4 ships what's available in the metadata event.
-  // Phase 5 will expand the metadata payload to carry the full text
-  // when redaction permits.
+  // Ships what's available in the metadata event.
   const systemPromptText = systemPrompt;
 
   // tools: walk tool.call events, dedup on toolName, sort alphabetically,
-  // cap at 256 (T-04-03-05).
+  // cap at 256.
   const seenTools = new Map<string, Record<string, unknown>>();
   for (const e of runtimeEvents) {
     if (e.type !== "tool.call" || e.data === undefined) continue;
@@ -401,14 +393,14 @@ function capWarnings(
 }
 
 // ---------------------------------------------------------------------------
-// exportTrajectoryBundle — main pipeline (BUNDLE-01 / BUNDLE-02 / BUNDLE-04)
+// exportTrajectoryBundle — main pipeline
 // ---------------------------------------------------------------------------
 
 /**
- * Export a trajectory bundle: stat the session file, read the branch (Plan
- * 04-02), read the runtime trajectory, synthesize transcript events (Plan
- * 04-01), merge-sort (Plan 04-01), build 4 supplemental captures, write an
- * 8-file directory with mode 0o700 + auto-populated manifest.contents.
+ * Export a trajectory bundle: stat the session file, read the branch, read
+ * the runtime trajectory, synthesize transcript events, merge-sort, build
+ * 4 supplemental captures, write an 8-file directory with mode 0o700 +
+ * auto-populated manifest.contents.
  *
  * **8-file bundle:**
  * | Filename           | MediaType            | Source                          |
@@ -496,11 +488,11 @@ export async function exportTrajectoryBundle(
         ]
       : [];
 
-  // Step 6b: apply bundle-time redaction (Phase 5 D9 / REDACT-01 + REDACT-02).
+  // Step 6b: apply bundle-time redaction.
   // The 11 value-shape patterns plus path substitution apply to every
   // string-typed leaf in event.data. Number-typed fields (timestamps,
   // counts, seq) pass through untouched — prevents false positives on
-  // numeric IDs (landmine §7.1 from 05-RESEARCH.md).
+  // numeric IDs.
   const homeDir = systemGetEnv("HOME");
   const redactionOpts: RedactionOpts = {
     workspaceDir: params.workspaceDir,
@@ -585,7 +577,7 @@ export async function exportTrajectoryBundle(
     },
     ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),
     // Redaction policy fingerprint — bundle consumers use this to identify
-    // which redaction pass was applied (Phase 5 D9, REDACT-03).
+    // which redaction pass was applied.
     redaction: { policy: "platform-aware-v1" },
   };
 
@@ -624,7 +616,7 @@ export async function exportTrajectoryBundle(
     {
       name: "metadata.json",
       mediaType: "application/json",
-      // Defense-in-depth for WR-01/WR-02 (Plan 05-04).
+      // Defense-in-depth.
       body: () =>
         JSON.stringify(walkAndRedactStrings(captures.metadata, redactionOpts), null, 2),
     },

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * trace.metadata payload assembly (LIFE-01, design §5 D4).
+ * trace.metadata payload assembly.
  *
  * Emitted once per session, immediately after session.started, by the
  * agent executor's bus bridge (packages/agent/src/bridge/pi-event-bridge.ts).

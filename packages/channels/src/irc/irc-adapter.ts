@@ -133,7 +133,7 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
       tags: event.tags,
     });
 
-    // D1 (Plan 01-03): mint traceId at ingress, stamp into metadata
+    // Mint traceId at ingress, stamp into metadata
     const traceId = randomUUID();
     normalized.metadata.traceId = traceId;
 

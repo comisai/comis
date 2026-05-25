@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Co-located unit tests for export.ts foundations (Phase 4 Plan 01),
- * readSessionBranch SESSION-01/SESSION-02 (Phase 4 Plan 02), and
- * exportTrajectoryBundle BUNDLE-01/02/04 (Phase 4 Plan 03).
+ * Co-located unit tests for export.ts foundations, readSessionBranch,
+ * and exportTrajectoryBundle.
  *
  * Tests cover:
- *   - Hard-limit constants with exact values (design §5 D5 lines 318–321)
+ *   - Hard-limit constants with exact values
  *   - buildTranscriptEvents: parentEntryId chaining, sourceSeq assignment,
  *     ts passthrough from SDK entry.timestamp
  *   - sortTrajectoryEvents: primary ts sort, source-order tiebreak,
  *     sourceSeq tiebreak, non-mutation
  *   - TrajectoryBundleManifest + TrajectoryBundleWarning type conformance
  *     (compile-time; TypeScript must accept the literal shapes)
- *   - SESSION-01: SDK-written session entries carry parentId (SDK contract)
- *   - SESSION-02: readSessionBranch reconstructs branch, cycle detection,
+ *   - SDK-written session entries carry parentId (SDK contract)
+ *   - readSessionBranch reconstructs branch, cycle detection,
  *     missing-parent detection, warning capping, file-not-found handling
  *   - exportTrajectoryBundle: 8-file bundle, manifest shape, events.jsonl
  *     merge+sort, round-trip, hard limits, corrupt JSONL, pointer-file
@@ -47,7 +46,7 @@ import {
   readSessionBranch,
   type ReadSessionBranchResult,
 } from "./export.js";
-// Plan 04-03 symbols live in bundle-exporter.ts to avoid a circular import
+// Bundle export symbols live in bundle-exporter.ts to avoid a circular import
 // (bundle-exporter.ts imports from export.ts; export.ts must not re-export
 // from bundle-exporter.ts or madge detects a circular .d.ts dependency).
 import {
@@ -101,7 +100,7 @@ function makeEvent(
 // Describe block
 // ---------------------------------------------------------------------------
 
-describe("export.ts foundations (Plan 04-01)", () => {
+describe("export.ts foundations", () => {
   // -------------------------------------------------------------------------
   // 1. Constants
   // -------------------------------------------------------------------------
@@ -222,7 +221,7 @@ describe("export.ts foundations (Plan 04-01)", () => {
   // 4. TrajectoryBundleManifest + TrajectoryBundleWarning compile-time types
   // -------------------------------------------------------------------------
 
-  it("TrajectoryBundleManifest is structurally assignable to design §6.2 shape", () => {
+  it("TrajectoryBundleManifest is structurally assignable to the canonical shape", () => {
     const warning: TrajectoryBundleWarning = {
       source: "session",
       code: "invalid-session-json",
@@ -262,14 +261,14 @@ describe("export.ts foundations (Plan 04-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// readSessionBranch (SESSION-01 + SESSION-02) — Phase 4 Plan 02
+// readSessionBranch
 // ---------------------------------------------------------------------------
 
 // Suppress type-only import used only for test type assertions
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 type _ReadSessionBranchResultCheck = ReadSessionBranchResult;
 
-describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
+describe("readSessionBranch", () => {
   let tmpDir: string;
 
   // Each test group creates its own tmpDir; afterEach cleans it up.
@@ -314,10 +313,10 @@ describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
   }
 
   // -------------------------------------------------------------------------
-  // SESSION-01: SDK-written session has parentId on every non-header entry
+  // SDK-written session has parentId on every non-header entry
   // -------------------------------------------------------------------------
 
-  it("SESSION-01: SDK-written session entries all have parentId field (SDK contract)", () => {
+  it("SDK-written session entries all have parentId field (SDK contract)", () => {
     const dir = makeTmpDir();
     const cwdDir = join(dir, "cwd");
     const sessionDir = join(dir, "sessions");
@@ -360,7 +359,7 @@ describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
     // Should have 3 entries (the 3 we appended).
     expect(entries.length).toBe(3);
 
-    // SESSION-01 contract: every non-header entry has parentId (string or null).
+    // Contract: every non-header entry has parentId (string or null).
     for (const entry of entries) {
       expect(typeof entry.parentId === "string" || entry.parentId === null).toBe(true);
     }
@@ -375,10 +374,10 @@ describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SESSION-02 Test 2: readSessionBranch on SDK-written session
+  // readSessionBranch on SDK-written session
   // -------------------------------------------------------------------------
 
-  it("SESSION-02: readSessionBranch reconstructs chronological branch from SDK session", () => {
+  it("readSessionBranch reconstructs chronological branch from SDK session", () => {
     const dir = makeTmpDir();
     const cwdDir = join(dir, "cwd");
     const sessionDir = join(dir, "sessions");
@@ -419,10 +418,10 @@ describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SESSION-02 Test 3: cycle detection emits cyclic-session-branch warning
+  // Cycle detection emits cyclic-session-branch warning
   // -------------------------------------------------------------------------
 
-  it("SESSION-02: cyclic session emits cyclic-session-branch warning and returns reachable suffix", () => {
+  it("cyclic session emits cyclic-session-branch warning and returns reachable suffix", () => {
     const dir = makeTmpDir();
 
     // Cycle: e1.parentId = e3.id AND e3.parentId = e1.id
@@ -454,10 +453,10 @@ describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SESSION-02 Test 4: missing-parent detection
+  // Missing-parent detection
   // -------------------------------------------------------------------------
 
-  it("SESSION-02: missing-parent session emits incomplete-session-branch warning and returns reachable suffix", () => {
+  it("missing-parent session emits incomplete-session-branch warning and returns reachable suffix", () => {
     const dir = makeTmpDir();
 
     const e1 = makeModelChangeEntry("e1", null);           // root
@@ -477,19 +476,19 @@ describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SESSION-02 Test 5: warning rows.length never exceeds MAX_TRAJECTORY_WARNING_ROWS
+  // Warning rows.length never exceeds MAX_TRAJECTORY_WARNING_ROWS
   // (cap invariant) — and deep chain (25 entries) traverses without error.
   //
   // Note: the leaf-to-root walk is a SINGLE-PATH walk that breaks on the
   // first cycle or missing-parent detection. This means `count` is at most 1
   // per code per walk. The cap invariant `rows.length <= MAX_TRAJECTORY_WARNING_ROWS`
   // is validated here via a well-formed 25-entry chain (0 warnings) AND via
-  // test 3/4 which confirm warning shape. The important contract is:
+  // the cycle/missing-parent tests above which confirm warning shape. The important contract is:
   //   - A well-formed deep chain traverses all entries without warnings.
   //   - Any detected warning ALWAYS has rows.length <= MAX_TRAJECTORY_WARNING_ROWS.
   // -------------------------------------------------------------------------
 
-  it("SESSION-02: deep 25-entry chain traverses fully (no warnings) and rows cap invariant holds", () => {
+  it("deep 25-entry chain traverses fully (no warnings) and rows cap invariant holds", () => {
     const dir = makeTmpDir();
 
     // 25 entries in a valid linear chain: e0 (root) <- e1 <- ... <- e24 (leaf).
@@ -512,7 +511,7 @@ describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
     expect(result.branchEntries[24]!.id).toBe("e24");
 
     // Cap invariant: any warning's rows.length is always <= MAX_TRAJECTORY_WARNING_ROWS.
-    // Verified by the missing-parent test (test 4) which fires a warning with rows.length === 1 <= 20.
+    // Verified by the missing-parent test which fires a warning with rows.length === 1 <= 20.
     // Here we re-verify the invariant holds on the clean path too (zero warnings → no violation).
     for (const w of result.warnings) {
       expect(w.rows.length).toBeLessThanOrEqual(MAX_TRAJECTORY_WARNING_ROWS);
@@ -520,10 +519,10 @@ describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SESSION-02 Test 6: missing file returns invalid-session-json warning, no throw
+  // Missing file returns invalid-session-json warning, no throw
   // -------------------------------------------------------------------------
 
-  it("SESSION-02: missing file path returns invalid-session-json warning without throwing", () => {
+  it("missing file path returns invalid-session-json warning without throwing", () => {
     const result = readSessionBranch("/nonexistent/path/that/does/not/exist.jsonl");
 
     expect(result.header).toBeNull();
@@ -533,10 +532,10 @@ describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SESSION-02 Test 7: leaf-to-root walk direction (5-entry chain)
+  // Leaf-to-root walk direction (5-entry chain)
   // -------------------------------------------------------------------------
 
-  it("SESSION-02: readSessionBranch reconstructs 5-entry chain in chronological root-first order", () => {
+  it("readSessionBranch reconstructs 5-entry chain in chronological root-first order", () => {
     const dir = makeTmpDir();
 
     // Chain: e1 <- e2 <- e3 <- e4 <- e5 (e5 is the leaf, e1 is the root)
@@ -563,7 +562,7 @@ describe("readSessionBranch (SESSION-01 + SESSION-02)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04) — Phase 4 Plan 03
+// exportTrajectoryBundle
 // ---------------------------------------------------------------------------
 
 /**
@@ -727,7 +726,7 @@ function setupBundleFixture(tmpDirBase: string): BundleFixture {
   return { workspaceDir, sessionFile, runtimeFile, sessionId, traceId, agentId, leafId, clock };
 }
 
-describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
+describe("exportTrajectoryBundle", () => {
   // Suppress unused-vars lint — the type import is a compile-time check.
   type _ParamsCheck = ExportTrajectoryBundleParams;
 
@@ -747,10 +746,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   }
 
   // -------------------------------------------------------------------------
-  // Test 1: BUNDLE-01 — directory contains exactly 8 files with exact names.
+  // Test 1: directory contains exactly 8 files with exact names.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-01: result is ok and bundleDir matches expected pattern", async () => {
+  it("result is ok and bundleDir matches expected pattern", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -779,10 +778,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 2: BUNDLE-01 — bundle directory created with mode 0o700.
+  // Test 2: bundle directory created with mode 0o700.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-01: bundle directory has mode 0o700", async () => {
+  it("bundle directory has mode 0o700", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -799,10 +798,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 3: BUNDLE-01 — each bundle file has mode 0o600.
+  // Test 3: each bundle file has mode 0o600.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-01: each bundle file has mode 0o600", async () => {
+  it("each bundle file has mode 0o600", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -823,10 +822,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 4: BUNDLE-02 — manifest.json matches TrajectoryBundleManifest shape.
+  // Test 4: manifest.json matches TrajectoryBundleManifest shape.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-02: manifest.json shape matches TrajectoryBundleManifest with auto-populated contents", async () => {
+  it("manifest.json shape matches TrajectoryBundleManifest with auto-populated contents", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -880,10 +879,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 5: BUNDLE-04 — events.jsonl sorted by ts with (source, sourceSeq) tiebreak.
+  // Test 5: events.jsonl sorted by ts with (source, sourceSeq) tiebreak.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-04: events.jsonl is sorted by ts with source-order tiebreak", async () => {
+  it("events.jsonl is sorted by ts with source-order tiebreak", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -926,10 +925,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 6: BUNDLE-04 round-trip — events.jsonl alone reconstructs tool calls.
+  // Test 6: round-trip — events.jsonl alone reconstructs tool calls.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-04 round-trip: events.jsonl alone reconstructs chronological tool-call timeline", async () => {
+  it("round-trip: events.jsonl alone reconstructs chronological tool-call timeline", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -955,10 +954,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 7: BUNDLE-02 — session-branch.json structure.
+  // Test 7: session-branch.json structure.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-02: session-branch.json contains {header, leafId, branchEntries}", async () => {
+  it("session-branch.json contains {header, leafId, branchEntries}", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -985,10 +984,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 8: BUNDLE-02 — metadata.json from latest trace.metadata.
+  // Test 8: metadata.json from latest trace.metadata.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-02: metadata.json populated from latest trace.metadata event", async () => {
+  it("metadata.json populated from latest trace.metadata event", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -1014,10 +1013,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 9: BUNDLE-02 — artifacts.json from latest trace.artifacts.
+  // Test 9: artifacts.json from latest trace.artifacts.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-02: artifacts.json populated from latest trace.artifacts event", async () => {
+  it("artifacts.json populated from latest trace.artifacts event", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -1039,10 +1038,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 10: BUNDLE-02 — prompts.json + system-prompt.txt from trace.metadata.
+  // Test 10: prompts.json + system-prompt.txt from trace.metadata.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-02: prompts.json and system-prompt.txt from trace.metadata.prompting", async () => {
+  it("prompts.json and system-prompt.txt from trace.metadata.prompting", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -1069,10 +1068,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 11: BUNDLE-02 — tools.json from tool.call events (sorted + dedup'd + bounded).
+  // Test 11: tools.json from tool.call events (sorted + dedup'd + bounded).
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-02: tools.json contains dedup'd sorted tool definitions from tool.call events", async () => {
+  it("tools.json contains dedup'd sorted tool definitions from tool.call events", async () => {
     const f = makeFixture();
     const result = await exportTrajectoryBundle({
       sessionId: f.sessionId,
@@ -1096,10 +1095,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 12: BUNDLE-03 — session file > 50 MB → err result.
+  // Test 12: session file > 50 MB → err result.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-03: session file > 50 MB returns session-file-too-large error, no bundle", async () => {
+  it("session file > 50 MB returns session-file-too-large error, no bundle", async () => {
     const f = makeFixture();
     // Truncate (extend) sessionFile to > 50 MB using sparse file.
     truncateSync(f.sessionFile, MAX_TRAJECTORY_SESSION_FILE_BYTES + 1024);
@@ -1122,10 +1121,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 13: BUNDLE-03 — corrupt runtime JSONL → manifest warnings, no crash.
+  // Test 13: corrupt runtime JSONL → manifest warnings, no crash.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-03: corrupt runtime JSONL emits warnings but bundle is still produced", async () => {
+  it("corrupt runtime JSONL emits warnings but bundle is still produced", async () => {
     const f = makeFixture();
     // Overwrite runtime file: 1 valid + 1 corrupt + 1 valid.
     const valid1 = JSON.stringify(
@@ -1157,10 +1156,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 14: BUNDLE-01 — missing runtime trajectory file → bundle with empty runtime.
+  // Test 14: missing runtime trajectory file → bundle with empty runtime.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-01: missing runtime trajectory file → bundle produced with empty runtime section", async () => {
+  it("missing runtime trajectory file → bundle produced with empty runtime section", async () => {
     const f = makeFixture();
     // Remove runtime file to simulate trajectory-disabled state.
     rmSync(f.runtimeFile);
@@ -1189,10 +1188,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 15: BUNDLE-01 — pointer file takes precedence over co-located convention.
+  // Test 15: pointer file takes precedence over co-located convention.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-01: pointer file takes precedence over co-located trajectory file", async () => {
+  it("pointer file takes precedence over co-located trajectory file", async () => {
     const f = makeFixture();
 
     // Create an alternate runtime file with a distinct event type.
@@ -1243,10 +1242,10 @@ describe("exportTrajectoryBundle (BUNDLE-01 + BUNDLE-02 + BUNDLE-04)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)
+// Bundle cap + sort invariant tests
 // ---------------------------------------------------------------------------
 
-describe("BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)", () => {
+describe("bundle cap + sort invariant tests", () => {
   let tmpDir: string;
 
   afterEach(() => {
@@ -1256,15 +1255,14 @@ describe("BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Case 1: BUNDLE-03 runtime event cap — 200_500 events → runtimeEventCount
+  // Case 1: runtime event cap — 200_500 events → runtimeEventCount
   //         capped at 200_000 + invalid-runtime-event warning fires.
   //
   // Note: writing 200_500 events produces ~40 MB of JSONL. The test is bounded
-  // (~5-10s) but intentionally exercises the cap at real scale. This is the
-  // price of the BUNDLE-03 invariant (see threat model T-04-04-03).
+  // (~5-10s) but intentionally exercises the cap at real scale.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-03: runtime event cap enforced at MAX_TRAJECTORY_RUNTIME_EVENTS=200_000 and warning fires", async () => {
+  it("runtime event cap enforced at MAX_TRAJECTORY_RUNTIME_EVENTS=200_000 and warning fires", async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "comis-bundle-cap-test-"));
     const fixture = setupBundleFixture(tmpDir);
 
@@ -1320,11 +1318,11 @@ describe("BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)", () => {
   }, 30_000); // generous timeout for 200k-event fixture write
 
   // -------------------------------------------------------------------------
-  // Case 2: BUNDLE-04 deterministic mixed-source sort — exact order including
+  // Case 2: deterministic mixed-source sort — exact order including
   //         tiebreak at identical ts (runtime before transcript).
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-04: mixed-source sort has exact ts order with runtime-before-transcript tiebreak at same ts", async () => {
+  it("mixed-source sort has exact ts order with runtime-before-transcript tiebreak at same ts", async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "comis-bundle-sort-test-"));
     const workspaceDir = mkdtempSync(join(tmpDir, "workspace-"));
     const sessionDir = join(workspaceDir, "sessions");
@@ -1389,7 +1387,7 @@ describe("BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)", () => {
     // Should have 6 events total: 3 runtime + 3 transcript.
     expect(eventsRaw.length).toBe(6);
 
-    // Exact order per design §5 D5 sort contract.
+    // Exact order per sort contract.
     expect(eventsRaw[0]!.ts).toBe("2026-01-01T00:00:01.000Z");
     expect(eventsRaw[0]!.source).toBe("runtime");
 
@@ -1411,7 +1409,7 @@ describe("BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Case 3: BUNDLE-03 warning-row 20-cap — 25 invalid JSON lines in runtime
+  // Case 3: warning-row 20-cap — 25 invalid JSON lines in runtime
   //         JSONL → invalid-runtime-json warning has rows.length === 20 (cap
   //         enforced) and count === 25 (true count preserved).
   //
@@ -1421,7 +1419,7 @@ describe("BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)", () => {
   // warning rows: 25 invalid JSON lines → count=25, rows.length=20.
   // -------------------------------------------------------------------------
 
-  it("BUNDLE-03: warning-row 20-cap enforced — 25 invalid runtime lines produces rows.length=20 and count=25", async () => {
+  it("warning-row 20-cap enforced — 25 invalid runtime lines produces rows.length=20 and count=25", async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "comis-bundle-warn-test-"));
     const fixture = setupBundleFixture(tmpDir);
 
@@ -1494,10 +1492,10 @@ describe("BUNDLE-03 + BUNDLE-04 invariant tests (Plan 04-04)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bundle redaction integration (REDACT-03) — Phase 5 Plan 03
+// Bundle redaction integration
 // ---------------------------------------------------------------------------
 
-describe("bundle redaction integration (REDACT-03)", () => {
+describe("bundle redaction integration", () => {
   let tmpDir: string;
 
   afterEach(() => {
@@ -1625,7 +1623,7 @@ describe("bundle redaction integration (REDACT-03)", () => {
     // Parse each line and collect all STRING-typed leaf values, then check
     // that none contain a raw long-decimal ID (9+ consecutive digits).
     // Number-typed fields (seq, timestamps, counts) are exempt — they are NOT
-    // strings so the walker correctly leaves them alone (landmine §7.1).
+    // strings so the walker correctly leaves them alone.
     const eventsText = readFileSync(join(bundleDir, "events.jsonl"), "utf-8");
 
     const longDecimalRe = /\b\d{9,}\b/;
@@ -1764,7 +1762,7 @@ describe("bundle redaction integration (REDACT-03)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 4: Number-typed fields survive redaction (landmine §7.1 verification).
+  // Test 4: Number-typed fields survive redaction.
   // ---------------------------------------------------------------------------
 
   it("number_typed_fields_survive: number data fields are not coerced to strings and not redacted", async () => {

@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for LINE adapter runWithContext wrap (TRACE-01).
+ * Unit tests for LINE adapter runWithContext wrap.
  *
  * Asserts that the webhook event handler stamps msg.metadata.traceId
  * and runs handlers inside runWithContext so the traceId propagates
  * via AsyncLocalStorage.
- *
- * RED state: fails before the runWithContext wrap is added to
- * line-adapter.ts (traceId is undefined; tryGetContext() returns undefined).
  *
  * @module
  */
@@ -108,7 +105,7 @@ function makeWebhookEvent() {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("line-adapter -- webhook event runWithContext wrap (TRACE-01)", () => {
+describe("line-adapter -- webhook event runWithContext wrap", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(isMessageEvent).mockReturnValue(true);

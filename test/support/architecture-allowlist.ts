@@ -8,9 +8,8 @@
  * base..head git-ref comparison.
  *
  * The `removedIn` template-literal type forces a compile error if a
- * stale phase reference is left behind -- e.g. `removedIn: "phase-foo"`
- * fails `tsc --noEmit`. This is load-bearing -- do NOT loosen the type
- * to `string`.
+ * stale reference is left behind. This is load-bearing -- do NOT loosen
+ * the type to `string`.
  *
  * Current state: the ALLOWLIST array is the EMPTY closed set. Every
  * historically-seeded violation has been closed; reintroducing a
@@ -23,7 +22,7 @@
 
 /**
  * One allowlist entry. Every field is required and immutable. Stale
- * phase refs in `removedIn` fail tsc; missing fields fail tsc.
+ * refs in `removedIn` fail tsc; missing fields fail tsc.
  */
 export interface AllowlistEntry {
   readonly id: `L${number}`;
@@ -50,8 +49,8 @@ export const ALLOWLIST: readonly AllowlistEntry[] = [
 
 /**
  * Letter-tagged code-quality phase identifiers, distinct from
- * `AllowlistEntry.removedIn` (which uses numeric phases like "phase-29").
- * This union exists because the template-literal type `'phase-${number}'`
+ * `AllowlistEntry.removedIn` (which uses numeric phases). This union
+ * exists because the template-literal type `'phase-${number}'`
  * structurally rejects letter-tagged phases at type-check time — a stale
  * `removedIn: "phase-Z"` fails `tsc --noEmit`.
  *
@@ -316,8 +315,8 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // message-envelope — all state-first) but the inside-lock withSession
   // callback body resisted further closure extraction without either a
   // 50+-field state shape or breaking the natural orchestrator-edge
-  // boundary. Pass-1 (co-equal extractions) + Pass-2 (5 closure-extracted
-  // helpers) shipped. Structural test GREEN non-vacuously.
+  // boundary. Co-equal extractions + 5 closure-extracted helpers
+  // shipped. Structural test GREEN non-vacuously.
   // Revisit the withSession callback split in a focused follow-up
   // — likely seam is sub-decomposing the bridge construction (~210L) and
   // stream-wrapper wiring (~30L) into independent helpers.
@@ -328,10 +327,10 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "deferred",
   },
   // Adjacent-files decision. Per-file decisions; line counts re-measured at
-  // HEAD; all 6 entries marked deferred with explicit reasons. File 6
-  // (executor-post-execution.ts) re-measured at 816L (>810 threshold), so its
-  // default split-attempt branch is foreclosed and the deferred-with-reason
-  // fallback applies.
+  // HEAD; all 6 entries marked deferred with explicit reasons. The sixth
+  // file (executor-post-execution.ts) re-measured at 816L (>810 threshold),
+  // so its default split-attempt branch is foreclosed and the deferred-with-
+  // reason fallback applies.
   {
     file: "packages/agent/src/bridge/pi-event-bridge.ts",
     lines: 1496,
@@ -872,7 +871,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   },
   {
     file: "packages/daemon/src/daemon.ts",
-    lineRanges: [[326, 326], [335, 335]], // INFORMATIONAL ONLY — see reason text. Post-Plan-59-03 actual throws are at daemon.ts: 432, 446, 888, 1318, 1327, 1914 (re-grep with `^[[:space:]]*throw `). lineRanges retained verbatim to avoid `allowlist-shrink.test.ts` tuple-key change (the shrink-test treats any lineRanges modification as an ADDITION). The raw-throw test (`test/architecture/raw-throw.test.ts`) filters on `{file}` alone, plus the file-level `// @allow-throw:` annotation at daemon.ts:2 — neither consults this `lineRanges` array.
+    lineRanges: [[326, 326], [335, 335]], // INFORMATIONAL ONLY — see reason text. Actual throws are at daemon.ts: 432, 446, 888, 1318, 1327, 1914 (re-grep with `^[[:space:]]*throw `). lineRanges retained verbatim to avoid `allowlist-shrink.test.ts` tuple-key change (the shrink-test treats any lineRanges modification as an ADDITION). The raw-throw test (`test/architecture/raw-throw.test.ts`) filters on `{file}` alone, plus the file-level `// @allow-throw:` annotation at daemon.ts:2 — neither consults this `lineRanges` array.
     reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution, secrets bootstrap, secret decryption, capability port resolution, hot-add post-shutdown guard); hard-fail at startup is the correct contract per AGENTS.md §6.2. stages/* was collapsed back into daemon.ts; the file-level `// @allow-throw: daemon bootstrap composition-root failures` annotation at daemon.ts:2 is the primary mechanism per test/architecture/raw-throw.test.ts. lineRanges retained pre-collapse (`[[326, 326], [335, 335]]`) to honor the shrink-only ratchet in allowlist-shrink.test.ts; actual post-collapse throw positions are noted in the inline comment on the lineRanges line above.",
     removedIn: "permanent",
   },
@@ -1290,8 +1289,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   // GlobalStateNotInitializedError when a Lit element queries GlobalState
   // before firstUpdated() completes. The throw is the correct boundary
   // signal — Lit catches it at the lifecycle boundary and surfaces it to
-  // the element's error handler. AGENTS.md §2.1 web-user-facing flows
-  // exception sanctions this; the file also bears the `@allow-throw:`
+  // the element's error handler. The file also bears the `@allow-throw:`
   // annotation so this entry is defense-in-depth.
   {
     file: "packages/web/src/state/global-state.ts",
@@ -1414,9 +1412,8 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   // Future refactor flag (cluster-split candidates marked `(b)` below): some
   // large deps bags mix 2-3 concerns and could be split into sub-interfaces
   // for clarity. The architectural test would still pass after the split
-  // (each sub-interface stays under the 12-optional threshold). Out of scope
-  // KISS/YAGNI says defer until a real refactor wave brings
-  // the structural improvement.
+  // (each sub-interface stays under the 12-optional threshold). KISS/YAGNI
+  // says defer until a real refactor wave brings the structural improvement.
 
   // -- (b) Clustered-optional deps bags: split candidates for a future refactor --
   {
@@ -1615,8 +1612,8 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
 // Future regressions: any new outside-sanctioned-root direct-global call in
 // packages/*/src/ MUST either retarget through the appropriate port at the
 // composition root or be added here as a carve-out with a real reason. If
-// you're adding an entry, the planner has missed an architectural decision —
-// surface it before committing.
+// you're adding an entry, an architectural decision was missed — surface it
+// before committing.
 // ============================================================================
 export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   // ============================================================================
@@ -1642,12 +1639,11 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   // deps.timers.setInterval. Drained 1 entry.
   //setup-cross-session.ts line numbers bumped due to
   // ClockPort/TimerPort thread-through into createSubAgentRunner. Underlying
-  // globals here are out of scope for this task (daemon wiring helpers
-  // retargeted in later plans).
+  // globals here are scoped for follow-on daemon wiring helper retargets.
   //setup-schedulers.ts line numbers bumped +4 due to
-  // ClockPort/TimerPort thread-through. Underlying globals here are out of
-  // scope for this plan (daemon wiring helpers retargeted in later plans);
-  // kept as allowlist entries pointing at the new line numbers.
+  // ClockPort/TimerPort thread-through. Underlying globals here are scoped
+  // for follow-on daemon wiring helper retargets; kept as allowlist entries
+  // pointing at the new line numbers.
   // ---- gateway ----
   // ---- memory ----
   // ---- orchestrator ----

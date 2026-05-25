@@ -181,12 +181,9 @@ describe("McpServerEntrySchema transport inference", () => {
     expect(result.transport).toBe("sse");
   });
 
-  // Case 4: No inferable source — schema rejects. (NOTE: This case
-  // already throws under the current schema because `transport` is
-  // required-no-default; it will continue throwing after Task 2
-  // because the preprocess returns the entry unchanged and the
-  // enum validator then surfaces the error. The test pins the
-  // behavior at both ends of the refactor.)
+  // Case 4: No inferable source — schema rejects. The preprocess
+  // returns the entry unchanged when nothing can be inferred and
+  // the enum validator then surfaces the error.
   it("rejects when transport, command, and url are all missing", () => {
     expect(() =>
       McpServerEntrySchema.parse({ name: "broken" }),
@@ -194,14 +191,13 @@ describe("McpServerEntrySchema transport inference", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-01 regression — schema must reject inconsistent command + url
-  // combinations BEFORE the runtime gets a chance to silently ignore one
-  // of them. Pre-fix the first matching inference branch (command -> stdio)
-  // won and the unused url field passed through, silently ignored at
-  // runtime by createTransport. Operator misconfiguration produced no
-  // warning.
+  // Schema must reject inconsistent command + url combinations BEFORE the
+  // runtime gets a chance to silently ignore one of them. Pre-fix the first
+  // matching inference branch (command -> stdio) won and the unused url
+  // field passed through, silently ignored at runtime by createTransport.
+  // Operator misconfiguration produced no warning.
   // -------------------------------------------------------------------------
-  it("rejects entries that supply BOTH command and url without an explicit transport (WR-01)", () => {
+  it("rejects entries that supply BOTH command and url without an explicit transport", () => {
     expect(() =>
       McpServerEntrySchema.parse({
         name: "both",
@@ -239,14 +235,14 @@ describe("McpServerEntrySchema transport inference", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 63-01 — additive safety-hardening fields (SAFETY-02/04/06/08).
+// Additive safety-hardening fields.
 //
 // Five additive Zod fields land on McpConfigSchema (3) and McpServerEntrySchema
 // (2). The tests pin both default values and validator rejection of bad inputs
-// so the rest of phase 63 can rely on a stable schema contract.
+// so consumers can rely on a stable schema contract.
 // ---------------------------------------------------------------------------
 
-describe("McpConfigSchema — Phase 63 safety hardening additive fields", () => {
+describe("McpConfigSchema — safety hardening additive fields", () => {
   it("produces safety-hardening defaults from an empty input object", () => {
     const result = McpConfigSchema.parse({});
     expect(result.safetyAllowedEnvKeys).toEqual([]);
@@ -280,7 +276,7 @@ describe("McpConfigSchema — Phase 63 safety hardening additive fields", () => 
   });
 });
 
-describe("McpServerEntrySchema — Phase 63 safety hardening additive fields", () => {
+describe("McpServerEntrySchema — safety hardening additive fields", () => {
   it("parses without disablePlaintextSecretCheck or rlimits when both are omitted", () => {
     const result = McpServerEntrySchema.parse({
       name: "yfinance",

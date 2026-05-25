@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for /export-trajectory slash command handler (EXPORT-01).
- *
- * RED phase: all tests fail until export-trajectory.ts is implemented.
+ * Tests for /export-trajectory slash command handler.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -22,7 +20,7 @@ import { isGroupMessage } from "@comis/channels";
 // Parser-level tests
 // ---------------------------------------------------------------------------
 
-describe("parseSlashCommand /export-trajectory (EXPORT-01)", () => {
+describe("parseSlashCommand /export-trajectory", () => {
   it("P1: returns found:true so text never reaches LLM", () => {
     const result = parseSlashCommand("/export-trajectory");
     expect(result.found).toBe(true);
@@ -83,7 +81,7 @@ function makeLogger() {
 // Handler-level tests
 // ---------------------------------------------------------------------------
 
-describe("handleExportTrajectory (EXPORT-01)", () => {
+describe("handleExportTrajectory", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("Test 1: rejects non-owner with 'Access denied' and does NOT export", async () => {

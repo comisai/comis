@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: getContext() invariant: AsyncLocalStorage scope assertion. Caller chose getContext() (vs tryGetContext()) signaling they require the context; throw is the contract per AGENTS.md §2.6. Consumed by request-path code which runs under the channel/RPC dispatch boundary.
+// @allow-throw: getContext() invariant: AsyncLocalStorage scope assertion. Caller chose getContext() (vs tryGetContext()) signaling they require the context; throw is the contract. Consumed by request-path code which runs under the channel/RPC dispatch boundary.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { z } from "zod";
 import { DeliveryOriginSchema } from "../domain/delivery-origin.js";
@@ -28,8 +28,8 @@ export type UserTrustLevel = z.infer<typeof UserTrustLevelSchema>;
  * traceId is a UUID for distributed tracing / log correlation.
  * trustLevel defaults to "admin" for standard authorization.
  *
- * userId/sessionKey are optional — they are NOT known at channel ingress
- * (D1, Plan 01-01). Channel adapters set traceId + channelType at ingress;
+ * userId/sessionKey are optional — they are NOT known at channel ingress.
+ * Channel adapters set traceId + channelType at ingress;
  * resolveAndPreprocess in inbound-pipeline.ts fills in userId/sessionKey
  * post-queue. Post-queue callers (execution-execute.ts) continue to set
  * both fields. An empty string "" is still rejected — only undefined is

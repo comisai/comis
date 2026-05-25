@@ -28,7 +28,7 @@
  * `test/integration/cli-sync-tooling.test.ts`; the gate logic is
  * locked in by the source-grep regression guard here).
  *
- * Per AGENTS.md §2.5: imports from `dist/` — requires `pnpm build` first.
+ * Imports from `dist/` — requires `pnpm build` first.
  *
  * @module
  */

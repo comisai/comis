@@ -85,11 +85,9 @@ describe("ObservabilityConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  // POINTER-02 RED tests — these MUST fail on pre-patch code because
-  // ObservabilityConfigSchema currently has no `trajectory` key; strictObject
-  // rejects unknown keys.
+  // trajectory key — strictObject rejects unknown keys.
 
-  it("accepts trajectory.dirOverride string (POINTER-02)", () => {
+  it("accepts trajectory.dirOverride string", () => {
     const result = ObservabilityConfigSchema.safeParse({
       trajectory: { dirOverride: "/var/comis/trj" },
     });
@@ -99,14 +97,14 @@ describe("ObservabilityConfigSchema", () => {
     }
   });
 
-  it("strictly rejects trajectory.unknownKey (strictObject enforcement) (POINTER-02)", () => {
+  it("strictly rejects trajectory.unknownKey (strictObject enforcement)", () => {
     const result = ObservabilityConfigSchema.safeParse({
       trajectory: { unknownKey: "x" },
     });
     expect(result.success).toBe(false);
   });
 
-  it("back-compat: omitting trajectory produces trajectory:{} (POINTER-02)", () => {
+  it("back-compat: omitting trajectory produces trajectory:{}", () => {
     const result = ObservabilityConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
@@ -118,10 +116,9 @@ describe("ObservabilityConfigSchema", () => {
     }
   });
 
-  // ROTATE-01 RED tests — these MUST fail on pre-patch code because
-  // ObservabilityConfigSchema currently has no `logRotation` key.
+  // logRotation key.
 
-  it("returns logRotation defaults with maxSizeBytes=52428800 (ROTATE-01)", () => {
+  it("returns logRotation defaults with maxSizeBytes=52428800", () => {
     const result = ObservabilityConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
@@ -133,7 +130,7 @@ describe("ObservabilityConfigSchema", () => {
     }
   });
 
-  it("accepts logRotation.maxSizeBytes override (ROTATE-01)", () => {
+  it("accepts logRotation.maxSizeBytes override", () => {
     const result = ObservabilityConfigSchema.safeParse({
       logRotation: { maxSizeBytes: 100 * 1024 * 1024 },
     });
@@ -143,31 +140,30 @@ describe("ObservabilityConfigSchema", () => {
     }
   });
 
-  it("rejects logRotation.maxFiles=0 (positive int required) (ROTATE-01)", () => {
+  it("rejects logRotation.maxFiles=0 (positive int required)", () => {
     const result = ObservabilityConfigSchema.safeParse({
       logRotation: { maxFiles: 0 },
     });
     expect(result.success).toBe(false);
   });
 
-  it("rejects logRotation.maxSizeBytes=-1 (positive int required) (ROTATE-01)", () => {
+  it("rejects logRotation.maxSizeBytes=-1 (positive int required)", () => {
     const result = ObservabilityConfigSchema.safeParse({
       logRotation: { maxSizeBytes: -1 },
     });
     expect(result.success).toBe(false);
   });
 
-  it("rejects logRotation.extraField (strictObject enforcement) (ROTATE-01)", () => {
+  it("rejects logRotation.extraField (strictObject enforcement)", () => {
     const result = ObservabilityConfigSchema.safeParse({
       logRotation: { extraField: "x" },
     });
     expect(result.success).toBe(false);
   });
 
-  // ALERT-01 RED tests — these MUST fail on pre-patch code because
-  // ObservabilityConfigSchema currently has no `alertBudget` key.
+  // alertBudget key.
 
-  describe("alertBudget (ALERT-01)", () => {
+  describe("alertBudget", () => {
     it("alertBudget defaults: enabled === true", () => {
       const result = ObservabilityConfigSchema.safeParse({});
       expect(result.success).toBe(true);

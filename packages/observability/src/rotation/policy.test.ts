@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for applyRotationPolicy (ROTATE-02).
+ * Tests for applyRotationPolicy.
  *
  * All tests use an isolated tmpdir per test case so parallel Vitest workers
- * never share file state. The policy module does NOT exist on pre-patch code,
- * so these tests must fail at import time (RED gate).
+ * never share file state.
  */
 
 import * as fs from "node:fs";

@@ -32,7 +32,7 @@ import type { ToolCapabilityPort, PromptSkillCapability, McpServerHint, SkillHin
 type _PublicTypeSurface = [InstallDetourDecision, DetourOverlap];
 
 // ---------------------------------------------------------------------------
-// Test fixtures (per-test factories per AGENTS.md §2.5)
+// Test fixtures (per-test factories)
 // ---------------------------------------------------------------------------
 
 

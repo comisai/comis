@@ -93,7 +93,7 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
 
   emitPreambleDebug(deps.logger, capabilityIndexResult, fullDynamicPreamble, deferredContext);
 
-  // Task 229: Inject top-1 RAG memory inline, adjacent to user message
+  // Inject top-1 RAG memory inline, adjacent to user message
   // for maximum LLM attention. Placed AFTER [End system context] and
   // BEFORE the user's actual question text.
   if (inlineMemory) {
@@ -201,9 +201,9 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
 }
 
 /**
- * Pino debug log for the assembled dynamic preamble. Submodule binding per
- * AGENTS.md §2.7: `deps.logger.child({ submodule })` attaches the label only
- * at this call site, not module-scope. Kept as a private helper so the main
+ * Pino debug log for the assembled dynamic preamble. Submodule binding:
+ * `deps.logger.child({ submodule })` attaches the label only at this call
+ * site, not module-scope. Kept as a private helper so the main
  * `wrapEnvelope` body stays under the 250L mental complexity ceiling.
  */
 function emitPreambleDebug(

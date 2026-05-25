@@ -2,10 +2,10 @@
 /**
  * Unit tests for execution-execute.ts (executeLlm stage).
  *
- * TRACE-01: Verifies that executeLlm reuses the ingress traceId from an outer
+ * Verifies that executeLlm reuses the ingress traceId from an outer
  * runWithContext scope rather than minting a fresh randomUUID() mid-pipeline.
  *
- * RED phase tests asserting the D1 traceId-reuse invariant:
+ * Tests asserting the traceId-reuse invariant:
  *   1. When called inside an outer runWithContext scope, the executor runs with
  *      the SAME traceId as the outer context (not a fresh mint).
  *   2. When called outside any runWithContext scope, the executor still gets a
@@ -110,20 +110,20 @@ function makeCapturingExecutor(): { executor: AgentExecutor; getCapturedTraceId:
 }
 
 // ---------------------------------------------------------------------------
-// Task 1: executeLlm traceId-reuse tests (TRACE-01 D1 closure)
+// executeLlm traceId-reuse tests
 // ---------------------------------------------------------------------------
 
-describe("executeLlm — TRACE-01 traceId propagation", () => {
-  it("reuses ingress traceId from outer runWithContext scope (TRACE-01)", async () => {
-    // The ingressTraceId is what channel adapters (Plans 01-02 + 01-03) stamp
-    // into the ALS context before dispatching to the orchestrator queue.
+describe("executeLlm — traceId propagation", () => {
+  it("reuses ingress traceId from outer runWithContext scope", async () => {
+    // The ingressTraceId is what channel adapters stamp into the ALS context
+    // before dispatching to the orchestrator queue.
     const ingressTraceId = "550e8400-e29b-41d4-a716-446655440001";
 
     const { executor, getCapturedTraceId } = makeCapturingExecutor();
     const deps = makeDeps();
 
     // Simulate the outer runWithContext scope that the channel adapter / channel-manager
-    // establishes at ingress. This is the scope that Plans 01-02 + 01-03 put in place.
+    // establishes at ingress.
     await runWithContext(
       {
         traceId: ingressTraceId,
@@ -147,7 +147,7 @@ describe("executeLlm — TRACE-01 traceId propagation", () => {
         ),
     );
 
-    // TRACE-01 acceptance: executor must see the ingress traceId, not a fresh mint
+    // Acceptance: executor must see the ingress traceId, not a fresh mint
     expect(getCapturedTraceId(), "executor should see the ingress traceId (not a fresh mint)").toBe(ingressTraceId);
   });
 

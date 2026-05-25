@@ -6,7 +6,7 @@
  * fallback (15s + 1s grace mirroring OpenClaw), and error rewriting for
  * 2 user-friendly mappings (unsupported_region, callback_validation_failed)
  * + 1 identity-decode error path. Returns Result<LoginRunnerSuccess, LoginError>
- * per AGENTS.md §2.1 — never throws at the public boundary.
+ * — never throws at the public boundary.
  *
  * Both the CLI (`comis auth login`) and wizard step 04 OpenAI OAuth branch
  * import and call loginOpenAICodexOAuth — this is the single shared runner.
@@ -17,7 +17,7 @@
  * vs manual-paste, fallback timing, error mapping, identity derivation via
  * resolveCodexAuthIdentity.
  *
- * Logging discipline (CLAUDE.md): submodule: "oauth-login" on every call.
+ * Logging discipline: submodule: "oauth-login" on every call.
  * NEVER log access tokens, refresh tokens, PKCE state, or callback `code`.
  * Identity in success logs uses redactEmailForLog (semi-redacted).
  *
@@ -47,7 +47,7 @@ import { systemNowMs, systemSetTimeout, systemClearTimeout } from "../runtime/sy
 /**
  * Minimal prompter shape used by the runner. Defined locally — the runner
  * cannot import WizardPrompter from @comis/cli (cli depends on agent, not
- * the reverse — AGENTS.md §1 hexagonal architecture).
+ * the reverse — hexagonal architecture).
  *
  * Production: @comis/cli's WizardPrompter STRUCTURALLY satisfies this
  * (TypeScript structural typing); the CLI passes its WizardPrompter
@@ -310,7 +310,7 @@ const NO_OP_LOGGER: ComisLogger = {
 /**
  * Shared identity-derivation + LoginRunnerSuccess builder used by both
  * the browser flow and the device-code flow. Extracted on the third
- * caller per AGENTS.md §2.3 rule-of-three.
+ * caller per rule-of-three.
  *
  * Returns ok(success) on identity success; err(identity_decode_failed)
  * when neither email nor profileName can be derived from the JWT.

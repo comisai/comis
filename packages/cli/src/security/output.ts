@@ -55,7 +55,7 @@ export function renderAuditTable(result: AuditResult): void {
     },
     // Pre-colored footers: green for pass, red+bold for fail. The renderer
     // emits the footer as-is, preserving the severity-conditioned signal
-    // operators rely on for CI alarm scanning (WR-01 fix).
+    // operators rely on for CI alarm scanning.
     footer: result.passed
       ? chalk.green("Audit PASSED (no critical findings)")
       : chalk.red.bold("Audit FAILED (critical findings detected)"),

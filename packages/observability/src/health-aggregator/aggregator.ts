@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Health aggregator (ALERT-01).
+ * Health aggregator.
  *
  * Subscribes to health/safety events on the typed EventBus, classifies
  * each by errorKind, maintains a sliding window per errorKind, and
@@ -12,11 +12,10 @@
  * Bounded: state is a Map<errorKind, { count, windowStart, latched }>.
  * Each errorKind in the policy table consumes O(1) memory. No external
  * dependencies. No timers — the window check happens lazily on each
- * inbound event (RESEARCH §Don't Hand-Roll).
+ * inbound event.
  *
  * Cycles: Uses ComisLogger from @comis/core (structural contract) —
- * the aggregator NEVER imports createLogger from @comis/infra
- * (Pitfall 5; Phase 2 Option B pattern).
+ * the aggregator NEVER imports createLogger from @comis/infra.
  *
  * @module
  */
@@ -63,7 +62,7 @@ export function createHealthAggregator(deps: CreateHealthAggregatorDeps): () => 
     if (kind === null) return;
 
     const threshold = deps.policy.thresholds[kind];
-    if (!threshold) return; // unknown errorKind — no policy entry, skip (T-07-03-05)
+    if (!threshold) return; // unknown errorKind — no policy entry, skip
 
     const t = now();
     let s = state.get(kind);

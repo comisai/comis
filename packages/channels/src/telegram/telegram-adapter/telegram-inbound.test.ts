@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for telegram-inbound runWithContext wrap (TRACE-01).
+ * Unit tests for telegram-inbound runWithContext wrap.
  *
  * Asserts that handleInboundMessage and the callback_query:data handler
  * both stamp msg.metadata.traceId and run handlers inside runWithContext
  * so the traceId propagates via AsyncLocalStorage.
- *
- * RED state: fails before the runWithContext wrap is added to
- * telegram-inbound.ts (traceId is undefined; tryGetContext() returns undefined).
  *
  * @module
  */
@@ -62,10 +59,10 @@ function makeMsg(): Message {
 }
 
 // ---------------------------------------------------------------------------
-// handleInboundMessage — runWithContext wrap (TRACE-01)
+// handleInboundMessage — runWithContext wrap
 // ---------------------------------------------------------------------------
 
-describe("telegram-inbound -- handleInboundMessage runWithContext wrap (TRACE-01)", () => {
+describe("telegram-inbound -- handleInboundMessage runWithContext wrap", () => {
   it("stamps msg.metadata.traceId before dispatching to handlers", async () => {
     let captured: NormalizedMessage | undefined;
     const handler = async (m: NormalizedMessage) => { captured = m; };

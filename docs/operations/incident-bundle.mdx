@@ -120,7 +120,7 @@ not required for primary diagnosis.
 
 ## Hard Limits
 
-The bundle pipeline enforces four hard limits (BUNDLE-03). Exceeding a limit does not crash the
+The bundle pipeline enforces four hard limits. Exceeding a limit does not crash the
 pipeline — it records a structured warning in `manifest.json` or returns a typed error.
 
 | Limit | Value | Behavior on hit |
@@ -168,7 +168,7 @@ The redactor applies 11 value-shape regex patterns to every string leaf in the b
 
 <Warning>
 Long-decimal-ID redaction (`\b\d{9,}\b`) is intentionally aggressive — it catches Telegram chat
-IDs but also legitimate counters and timestamps. This is the §8.3 design tradeoff: more aggressive
+IDs but also legitimate counters and timestamps. This is the design tradeoff: more aggressive
 at the export boundary, lighter at runtime. Do not rely on counters or sequence numbers surviving
 redaction in exported bundles.
 </Warning>

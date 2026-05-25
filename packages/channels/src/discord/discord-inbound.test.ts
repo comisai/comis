@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for Discord adapter runWithContext wrap (TRACE-01).
+ * Unit tests for Discord adapter runWithContext wrap.
  *
  * Asserts that both the MessageCreate and InteractionCreate handlers stamp
  * msg.metadata.traceId and run handlers inside runWithContext so the traceId
  * propagates via AsyncLocalStorage.
- *
- * RED state: fails before the runWithContext wrap is added to
- * discord-adapter.ts (traceId is undefined; tryGetContext() returns undefined).
  *
  * @module
  */
@@ -146,7 +143,7 @@ function makeInteraction(overrides: Record<string, unknown> = {}): any {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("discord-adapter -- MessageCreate + InteractionCreate runWithContext wrap (TRACE-01)", () => {
+describe("discord-adapter -- MessageCreate + InteractionCreate runWithContext wrap", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     eventHandlers.clear();

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: CLI helper consumed by command entry points; throws caught at Commander.js boundary per AGENTS.md §2.1.
+// @allow-throw: CLI helper consumed by command entry points; throws caught at Commander.js boundary.
 /**
  * WebSocket JSON-RPC 2.0 client for communicating with the Comis daemon gateway.
  *
@@ -410,10 +410,10 @@ export async function createRpcClient(url: string, token?: string): Promise<RpcC
  * @returns The result of fn
  */
 export async function withClient<T>(fn: (client: RpcClient) => Promise<T>): Promise<T> {
-  // Fix A (log-review): under VITEST=true, refuse to open a real WebSocket
-  // unless the test author opted in via COMIS_CLI_E2E=true. The previous
-  // regression let CLI tests silently open ws://localhost:4766 every 75s,
-  // leaving connection-refused noise in the operator's ~/.comis/logs/.
+  // Under VITEST=true, refuse to open a real WebSocket unless the test
+  // author opted in via COMIS_CLI_E2E=true. A previous regression let
+  // CLI tests silently open ws://localhost:4766 every 75s, leaving
+  // connection-refused noise in the operator's ~/.comis/logs/.
   // CLI tests should mock the RPC client (see test/support/factories.ts);
   // genuine end-to-end tests set COMIS_CLI_E2E=true explicitly.
   if (systemGetEnv("VITEST") === "true" && systemGetEnv("COMIS_CLI_E2E") !== "true") {
@@ -429,7 +429,7 @@ export async function withClient<T>(fn: (client: RpcClient) => Promise<T>): Prom
   const url = systemGetEnv("COMIS_GATEWAY_URL") ?? configDefaults.url;
   const token = systemGetEnv("COMIS_GATEWAY_TOKEN") ?? configDefaults.token;
 
-  // Hard-fail if sending bearer token over cleartext WebSocket to non-localhost (H-3)
+  // Hard-fail if sending bearer token over cleartext WebSocket to non-localhost.
   const allowInsecure = systemGetEnv("COMIS_INSECURE") === "1";
   checkTransportSecurity(url, token, allowInsecure);
 

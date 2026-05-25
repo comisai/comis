@@ -30,10 +30,7 @@ describe("setup-channels-runtime", () => {
     // if a closure capture is added/renamed without updating the deps
     // surface, the literal stops type-checking.
     //
-    // exportSessionBundle (Phase 6 EXPORT-01): DI seam for the
-    // /export-trajectory slash command.  Adding it here causes a
-    // TypeScript excess-property error on pre-patch code, providing the
-    // RED gate.
+    // exportSessionBundle: DI seam for the /export-trajectory slash command.
     const witness: Record<keyof ChannelManagerBuildDeps, true> = {
       container: true,
       executors: true,

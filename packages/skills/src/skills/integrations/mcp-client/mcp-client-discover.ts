@@ -45,13 +45,13 @@ export {
   __resetPrlimitProbeForTests,
 } from "./mcp-client-prlimit-probe.js";
 
-// Logger shape used by the Phase 63 SAFETY-08 WARN-skip path; matches the
+// Logger shape used by the WARN-skip path; matches the
 // `McpClientManagerDeps["logger"]` two-arg overload threaded through from
 // the connect / reconnect call sites.
 type ComisLoggerLike = McpClientManagerDeps["logger"];
 
 // ---------------------------------------------------------------------------
-// Phase 63 SAFETY-01/02: stdio env allowlist
+// stdio env allowlist
 // ---------------------------------------------------------------------------
 
 /**
@@ -71,8 +71,6 @@ type ComisLoggerLike = McpClientManagerDeps["logger"];
  *
  * Operator-extension via `config.integrations.mcp.safetyAllowedEnvKeys` is
  * additive — the built-in allowlist always applies.
- *
- * Per RESEARCH.md Pattern 5 + REQUIREMENTS.md SAFETY-01.
  */
 export const MCP_STDIO_BUILTIN_ENV_ALLOWLIST: readonly string[] = [
   // Standard POSIX (SDK's default 6)
@@ -111,7 +109,7 @@ const XDG_PREFIX = "XDG_";
  * (Bash CVE-2014-6271).
  *
  * Pure function; the only side-effect is the `systemEnvSnapshot()` read,
- * which is the sanctioned env-access path per AGENTS.md §2.2.
+ * which is the sanctioned env-access path.
  */
 export function scrubStdioEnv(
   configEnv: Record<string, string> | undefined,
@@ -159,17 +157,16 @@ const INSTRUCTIONS_TRUNCATED_SUFFIX = " [truncated]";
  * Wrap a stdio command so:
  *   1. NODE_OPTIONS strip — child Node process does NOT inherit the daemon's
  *      `--permission` flags. `env -u NODE_OPTIONS` clears it before Node reads
- *      it. Non-Node servers (uvx, Python) pass through as no-op. See
- *      COMIS-E2E-FOLLOWUP-DESIGN.md Issue 2.
- *   2. Per-server rlimits via `prlimit(1)` (Phase 63 SAFETY-08). When `rlimits`
- *      is set AND prlimit is available, prepends `prlimit --as=N --nofile=N
+ *      it. Non-Node servers (uvx, Python) pass through as no-op.
+ *   2. Per-server rlimits via `prlimit(1)`. When `rlimits` is set AND
+ *      prlimit is available, prepends `prlimit --as=N --nofile=N
  *      --cpu=N --`. Partial overrides accepted (`{ cpu: 600 }` → only `--cpu`).
  *      When `rlimits` is unset → no prlimit wrap. When prlimit is absent
  *      (macOS dev) → env-only wrap + ONE WARN per daemon process
  *      (`errorKind: "platform"`).
  *
  * Composition: `[prlimit --as=N --nofile=N --cpu=N --]  /usr/bin/env -u NODE_OPTIONS  <cmd> <args>`.
- * Exported for unit-test assertion. Per RESEARCH.md §"Pattern 3" + SAFETY-08.
+ * Exported for unit-test assertion.
  */
 export function wrapStdioCommand(
   command: string,
@@ -191,7 +188,7 @@ export function wrapStdioCommand(
   }
 
   // Rlimits requested but prlimit unavailable (macOS dev): WARN once + degrade.
-  // WR-02: read the LAZILY-cached probe result. The very first call to
+  // Read the LAZILY-cached probe result. The very first call to
   // wrapStdioCommand triggers the probe; subsequent calls hit the cache.
   // Operators who install util-linux post-hoc can force a re-probe via
   // refreshPrlimitAvailable().
@@ -214,7 +211,7 @@ export function wrapStdioCommand(
   }
 
   // Build prlimit flag set — emit ONLY the flags for fields explicitly set
-  // (partial-override semantics per Plan 06 must_haves).
+  // (partial-override semantics).
   const prlimitFlags: string[] = [];
   if (rlimits.as !== undefined) prlimitFlags.push(`--as=${rlimits.as}`);
   if (rlimits.nofile !== undefined) prlimitFlags.push(`--nofile=${rlimits.nofile}`);
@@ -253,12 +250,11 @@ export function createTransport(
       command: wrapped.command,
       args: wrapped.args,
       stderr: "pipe",  // capture stderr for debugging
-      // Phase 63 SAFETY-01/02: strict allowlist + operator-extension scrub.
-      // Replaces the prior `{ ...systemEnvSnapshot(), ...config.env }`
-      // spread, which leaked every daemon-process credential env var into
-      // every spawned MCP child. See REQUIREMENTS.md SAFETY-01 + the
-      // architecture-test dangerous-key negative-control list at
-      // test/architecture/mcp-prespawn-allowlist.test.ts for the
+      // Strict allowlist + operator-extension scrub. Replaces the prior
+      // `{ ...systemEnvSnapshot(), ...config.env }` spread, which leaked
+      // every daemon-process credential env var into every spawned MCP
+      // child. See the architecture-test dangerous-key negative-control
+      // list at test/architecture/mcp-prespawn-allowlist.test.ts for the
       // enforced denylist.
       env: scrubStdioEnv(config.env, config.safetyAllowedEnvKeys),
       ...(config.cwd ? { cwd: config.cwd } : {}),
@@ -271,11 +267,11 @@ export function createTransport(
       requestInit: config.headers
         ? { headers: config.headers }
         : undefined,
-      // Phase 63 SAFETY-07: cross-host redirect header scrub. Strips
-      // Authorization / Cookie / Proxy-Authorization on cross-host redirect
-      // (URL.host string mismatch including port); preserves on same-host
-      // (including http to https upgrade); throws [max_redirects_exceeded]
-      // after 20 hops. See mcp-client-redirect-policy.ts for the full policy.
+      // Cross-host redirect header scrub. Strips Authorization / Cookie /
+      // Proxy-Authorization on cross-host redirect (URL.host string mismatch
+      // including port); preserves on same-host (including http to https
+      // upgrade); throws [max_redirects_exceeded] after 20 hops. See
+      // mcp-client-redirect-policy.ts for the full policy.
       fetch: createRedirectPolicyFetch({ maxRedirections: 20 }),
     });
   } else if (config.transport === "http") {
@@ -286,8 +282,8 @@ export function createTransport(
       requestInit: config.headers
         ? { headers: config.headers }
         : undefined,
-      // Phase 63 SAFETY-07: cross-host redirect header scrub. Same policy as
-      // the SSE branch above; see mcp-client-redirect-policy.ts.
+      // Cross-host redirect header scrub. Same policy as the SSE branch
+      // above; see mcp-client-redirect-policy.ts.
       fetch: createRedirectPolicyFetch({ maxRedirections: 20 }),
     });
   }

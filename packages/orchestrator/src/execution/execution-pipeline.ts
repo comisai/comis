@@ -134,7 +134,7 @@ export function resolveStreamingConfig(
   streamingConfig?: StreamingConfig,
 ): PerChannelStreamingConfig {
   // No global streaming config provided — return the per-channel schema defaults.
-  // (Schema is the SSOT per AGENTS.md §6.4; no inline literals.)
+  // (Schema is the SSOT; no inline literals.)
   //
   // Documented deviation: the `StreamingConfigSchema.parse({})` lane is
   // satisfied at AppConfig parse time (operator YAML → AppConfig in
@@ -289,7 +289,7 @@ export async function executeAndDeliver(
       // (Silent-execute path preserved verbatim from pre-inline pipeline —
       // one of two executor.execute call sites.)
       const policyResult = await runWithContext({
-        // D1 (Plan 01-04): same reuse pattern as execution-execute.ts.
+        // Same reuse pattern as execution-execute.ts.
         // Policy-retry path inherits the ingress traceId.
         traceId: tryGetContext()?.traceId ?? randomUUID(),
         tenantId: sessionKey.tenantId,

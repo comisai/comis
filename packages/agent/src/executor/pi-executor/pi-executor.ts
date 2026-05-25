@@ -589,9 +589,8 @@ async function runSessionLocked(
     //     lifetime, this `execute()` call just looks it up (or
     //     materializes it on the first turn). `flushAndClose` runs in
     //     the daemon's shutdown chain via `closeAll()`, NOT in this
-    //     execute's finally — that's what fixes design §6.4 + §6.5
-    //     + §6.8 deviations (per-turn seq reset, repeated
-    //     session.started/ended).
+    //     execute's finally — that's what fixes the per-turn seq
+    //     reset + repeated session.started/ended deviations.
     //   - `deps.trajectoryRegistry` undefined → fall back to per-turn
     //     construction (legacy path; kept so tests + non-daemon callers
     //     keep working).
@@ -600,21 +599,20 @@ async function runSessionLocked(
       sessionId: formattedKey,
       sessionKey: formattedKey,
       workspaceDir: deps.workspaceDir,
-      // Pointer-file sidecar (design §6.1 + §6.2). createTrajectoryRecorder
+      // Pointer-file sidecar. createTrajectoryRecorder
       // calls writeTrajectoryPointerFileBestEffort when sessionFile is
       // set, producing <sessionFile>.trajectory-path.json next to the
       // per-session JSONL transcript. The pointer is best-effort
       // (symlinked parents / unwritable dirs no-op silently).
       // The registry's first-init-wins contract means the
-      // pointer is written exactly once at recorder creation, which is
-      // the correct moment per design §6.1.
+      // pointer is written exactly once at recorder creation.
       // sessionAdapter.getSessionPath is sync + pure (safePath under
       // the hood) — zero overhead at trajectoryInit construction.
       sessionFile: sessionAdapter.getSessionPath(sessionKey),
       // provider + modelId + modelApi live inside the `model` cluster
       // on TrajectoryRecorderInit (architecture invariant: ≤12 optional
       // fields per interface). The runtime lifts each cluster field
-      // onto the trajectory envelope when defined (design §6.2).
+      // onto the trajectory envelope when defined.
       // modelApi is not threaded from this site yet — wire it in when
       // resolvedModel exposes the API discriminator.
       model: {
@@ -1063,7 +1061,7 @@ async function runSessionLocked(
       })
     : undefined;
 
-  // Quick 215: Resettable prompt timeout -- tool completions reset the timer
+  // Resettable prompt timeout -- tool completions reset the timer
   let currentResetTimer: (() => void) | undefined;
 
   // API-grounded token anchor -- updated on each turn_end, reset on compaction
@@ -1180,20 +1178,20 @@ async function runSessionLocked(
     },
     getSessionJsonlPath: () => sessionAdapter.getSessionPath(sessionKey),
     // Forward the session-scoped registry so the bridge's `agent_start`
-    // case can suppress per-turn `session:started` re-emits (design §6.4).
+    // case can suppress per-turn `session:started` re-emits.
     // When undefined (non-daemon callers), the bridge falls back to the
     // legacy unconditional emit.
     ...(deps.trajectoryRegistry !== undefined ? { trajectoryRegistry: deps.trajectoryRegistry } : {}),
-    // LIFE-01 (Plan 01-05): provide a snapshot of harness/model/config at
+    // Provide a snapshot of harness/model/config at
     // bridge-creation time so trace.metadata can be emitted once per session.
     // Fields that are not readily available at this scope are omitted;
     // buildTraceMetadata's compactObject strips undefined cleanly.
     runtimeSnapshot: {
       harness: {
         type: "comis" as const,
-        // version is not yet threaded into PiExecutorDeps; Phase 2+ will
-        // wire deps.appVersion here. Use package.json version constant
-        // when available, otherwise "unknown" per Phase 1 deferred wiring.
+        // version is not yet threaded into PiExecutorDeps; a future change
+        // will wire deps.appVersion here. Use package.json version constant
+        // when available, otherwise "unknown" until that wiring lands.
         version: "unknown",
         os: process.platform,
         node: process.version,
@@ -1205,17 +1203,17 @@ async function runSessionLocked(
         ...(resolvedModel?.api !== undefined ? { modelApi: resolvedModel.api } : {}),
       },
       config,
-      // WR-01 (Plan 05-04): populate plugins and skills from the registry snapshot.
+      // Populate plugins and skills from the registry snapshot.
       // The minimal deps interface exposes getSnapshot?() optionally; legacy
       // callers (tests with the two-method mock) safely degrade to [].
-      // TODO(WR-01 follow-up): wire deps.pluginRegistry once a plugin-registry
+      // TODO: wire deps.pluginRegistry once a plugin-registry
       // seam exists at this scope. Until then, plugins[] stays empty by design.
       plugins: [],
       skills: deps.skillRegistry?.getSnapshot?.()?.skills?.map((s) => ({
         id: s.name,
         ...(s.version !== undefined ? { version: String(s.version) } : {}),
       })) ?? [],
-      // WR-02 (Plan 05-04): scaffold in place so future writers cannot bypass
+      // Scaffold in place so future writers cannot bypass
       // the redactor. When userPromptPrefixText is wired from a config path,
       // pass it here; the helper routes it through redactString +
       // substitutePathsInString before assignment. See pi-executor-prompting.ts.
