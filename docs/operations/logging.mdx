@@ -317,12 +317,78 @@ redaction rules are compiled once at startup for zero runtime overhead.
 
 ## Log Rotation
 
-When the log file reaches its size limit, the daemon automatically rotates it. The
-current file is renamed (e.g., `daemon.log.1`), and a new empty `daemon.log` starts
-receiving new entries. Old rotated files are deleted when the count exceeds the
-configured maximum.
+Comis automatically rotates all observability log streams to bound disk usage.
 
-You can customize the rotation behavior in your configuration:
+### `observability.logRotation` — Cross-Stream Policy
+
+A single policy governs five log streams under `~/.comis/logs/`:
+
+- `daemon.log` — daemon-wide structured JSON log
+- `cache-trace.jsonl` — per-turn cache observability (cache hits, misses, tokens)
+- `config-audit.jsonl` — config-write audit trail (all writes to config.yaml)
+- `session-index.YYYY-MM-DD.jsonl` — append-only session index (date-rolled, one file per UTC day)
+- `*.trajectory.jsonl` — per-session trajectory recordings (one file per agent session)
+
+Configure the policy under `observability.logRotation` in your `config.yaml`:
+
+```yaml
+# config.yaml
+observability:
+  logRotation:
+    maxSizeBytes: 52428800   # 50 MB; pino-roll rolls when daemon.log crosses this
+    maxFiles: 5              # keep 5 rotated copies per stream (oldest deleted)
+    maxAgeDays: 30           # delete rotated files older than 30 days
+    compressAged: true       # gzip rotated files (.log.gz / .jsonl.gz)
+```
+
+| Field | Default | What It Controls |
+|---|---|---|
+| `maxSizeBytes` | `52428800` (50 MB) | Size at which daemon.log rolls. Honored by pino-roll for `daemon.log` and by per-stream caps for the JSONL streams. |
+| `maxFiles` | `5` | Number of rotated copies retained per stream. Oldest deleted on rotation or startup sweep. |
+| `maxAgeDays` | `30` | Files older than this are deleted on the daemon-startup sweep (mtime-based). |
+| `compressAged` | `true` | Gzip rotated files after rename — saves ~5× disk space on JSON text. |
+
+### How to Verify
+
+Inspect the resolved policy, including any operator overrides, with:
+
+```bash
+comis config get observability.logRotation
+```
+
+### Storage Budget
+
+Worst-case storage: 5 streams × 5 files × 50 MB = **1.25 GB**.
+
+With `compressAged: true` (the default), gzipped JSON text compresses approximately 5×, so realistic steady-state is **~300 MB**.
+
+Increase `maxFiles` or `maxAgeDays` if you need more history; reduce them on tight disks.
+
+### Per-Stream Behavior
+
+**`daemon.log`** — pino-roll handles size-based rotation in a worker thread; rotated files become `daemon.1.log`, `daemon.2.log`, etc. The daemon-startup sweep gzips any uncompressed rotated files and removes those beyond `maxFiles` or older than `maxAgeDays`.
+
+**`cache-trace.jsonl`** — a per-file cap (50 MB) prevents a single cache-trace file from growing unbounded. The startup sweep prunes accumulated history against `maxFiles` and `maxAgeDays`.
+
+**`config-audit.jsonl`** — a small (10 MB) rename-shift rotation runs on every append, keeping the active file write-friendly. The startup sweep gzips the resulting rotated copies and prunes them by count and age.
+
+**`session-index.YYYY-MM-DD.jsonl`** — a new file starts each UTC day (date-roll). Old dated files are pruned by the startup sweep against `maxFiles` and `maxAgeDays`. Only today's dated file is treated as the active base and is never pruned.
+
+**`*.trajectory.jsonl`** — one file per agent session, with a 10 MB soft cap and a 50 MB hard cap applied in-session (BOUND-02). Accumulated session files across past sessions are pruned by the startup sweep against `maxFiles` and `maxAgeDays`.
+
+### Legacy `daemon.logging` Keys (Backward Compatibility)
+
+The legacy `daemon.logging.maxSize` and `daemon.logging.maxFiles` keys (documented below) continue to work for `daemon.log` specifically. When both are set, `observability.logRotation` takes precedence for the cross-stream sweep, and `daemon.logging.maxSize` retains its role as the pino-roll size threshold if you have not yet migrated to the new policy.
+
+<Info>
+Operators are encouraged to migrate to `observability.logRotation` for a unified,
+consistent rotation policy across all five log streams. The legacy `daemon.logging`
+keys remain supported for backward compatibility but govern only `daemon.log`.
+</Info>
+
+### Legacy `daemon.logging` Configuration
+
+You can still customize per-file daemon-log rotation using the legacy keys:
 
 ```yaml
 # config.yaml
@@ -336,13 +402,14 @@ daemon:
 | Setting | Default | What It Controls |
 |---|---|---|
 | `filePath` | `~/.comis/logs/daemon.log` | Path to the active log file. Supports `~` expansion. |
-| `maxSize` | `10m` | Maximum file size before rotation. Supports `k`, `m`, `g` suffixes. |
+| `maxSize` | `10m` | Maximum file size before rotation. Supports `k`, `m`, `g` suffixes. When `observability.logRotation.maxSizeBytes` is set, it overrides this threshold for pino-roll. |
 | `maxFiles` | 5 | Number of rotated files to keep. Older files are deleted. |
 
 <Info>
-The default settings (10 MB per file, 5 rotated copies) mean your logs will use at
-most about 60 MB of disk space. Adjust `maxSize` and `maxFiles` if you need to keep
-more or less history.
+With the new cross-stream policy active (the default), `observability.logRotation`
+controls the 50 MB roll threshold and the 5-file / 30-day retention for all streams.
+The `daemon.logging.maxSize` value still reaches pino-roll as the size threshold if
+you have not set `observability.logRotation.maxSizeBytes`.
 </Info>
 
 ## Trace Files

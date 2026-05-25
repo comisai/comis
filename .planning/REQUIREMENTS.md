@@ -170,12 +170,14 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Log Rotation
 
-- [ ] **ROTATE-01**: `observability.logRotation` schema added to `schema-daemon.ts` with surfaced defaults (`maxSizeBytes: 50 MB`, `maxFiles: 5`, `maxAgeDays: 30`, `compressAged: true`) — closes G9
-  - Design: D15 *(file: `packages/core/src/config/schema-daemon.ts`)*
-- [ ] **ROTATE-02**: Rotation policy applied to `daemon.log`, `cache-trace.jsonl`, `config-audit.jsonl`, `session-index.jsonl`, `*.trajectory.jsonl` via Pino transport + per-stream honoring
+- [x] **ROTATE-01**: `observability.logRotation` schema added to `schema-observability.ts` with surfaced defaults (`maxSizeBytes: 50 MB`, `maxFiles: 5`, `maxAgeDays: 30`, `compressAged: true`) — closes G9
+  - Design: D15 *(file: `packages/core/src/config/schema-observability.ts`)*
+  - Completed: 07-01 (commits 48cddac, f1d70e9)
+- [x] **ROTATE-02**: Rotation policy applied to `daemon.log`, `cache-trace.jsonl`, `config-audit.jsonl`, `session-index.jsonl`, `*.trajectory.jsonl` via Pino transport + per-stream honoring
   - Acceptance: 60 MB `daemon.log` rolls to `daemon.1.log.gz` automatically
   - Acceptance: operators see policy in `comis config get observability.logRotation`
-  - Design: D15 *(files: `packages/infra/src/logging/logger.ts`, `packages/observability/src/{trajectory,session-index,cache-trace,config-audit}/...`)*
+  - Design: D15 *(files: `packages/observability/src/rotation/policy.ts`, `packages/observability/src/rotation/sweep.ts`, `packages/daemon/src/observability/log-infra.ts`, `packages/daemon/src/wiring/setup-startup-invariants.ts`, `packages/observability/src/config-audit/append.ts`)*
+  - Completed: 07-01 (commit d7c72d1)
 - [ ] **ROTATE-03**: `docs/operations/logging.mdx` documents the rotation policy
   - Design: D15
 
@@ -277,8 +279,8 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | CLI-06 | Phase 6 | Complete |
 | CLI-07 | Phase 6 | Complete |
 | EXPORT-01 | Phase 6 | Complete |
-| ROTATE-01 | Phase 7 | Pending |
-| ROTATE-02 | Phase 7 | Pending |
+| ROTATE-01 | Phase 7 Plan 01 | Complete (07-01: 48cddac, f1d70e9) |
+| ROTATE-02 | Phase 7 Plan 01 | Complete (07-01: d7c72d1) |
 | ROTATE-03 | Phase 7 | Pending |
 | ALERT-01 | Phase 7 | Pending |
 | HYGIENE-01 | Phase 8 | Pending |

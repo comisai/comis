@@ -180,7 +180,10 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 4. `docs/operations/logging.mdx` documents the rotation policy with copy-pasteable config examples and the 5-stream × 5-file × 50 MB worst-case (1.25 GB → ~300 MB with gzip) storage budget
 5. Rotation is non-blocking on the inbound hot path; an architecture test asserts the Pino transport rotation happens off the main event loop (verified by synthetic 100 MB write under a synthetic clock)
 
-**Plans**: TBD
+**Plans** (3):
+- [x] 07-01-PLAN.md — observability.logRotation schema (ROTATE-01) + applyRotationPolicy helper + sweepRotatedFiles 5-stream sweep (ROTATE-02): LogRotationConfigSchema in ObservabilityConfigSchema; rotation/policy.ts (gzip+age+count-prune, lstat symlink gate); rotation/sweep.ts (5 stream patterns, safePath guard); pino-roll bytes→MB conversion; startup sweep hook; config-audit gzip extension [wave 1, type: tdd]
+- [ ] 07-02-PLAN.md — Alert budget aggregator (ALERT-01): rate-aggregator subscribed to health/safety events; sliding-window threshold; health:budget_exceeded event on per-errorKind cap [wave 2]
+- [ ] 07-03-PLAN.md — ROTATE-03 + retention docs: comis config get observability.logRotation CLI validation; docs/operations/logging.mdx with 5-stream storage budget worked example [wave 3]
 
 ### Phase 8: Pipeline-Tag Discipline & Operator Docs
 
@@ -211,7 +214,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 | 4. Session DAG & Bundle Exporter | 4/4 | Complete   | 2026-05-24 |
 | 5. Trajectory Pointer & Platform-Aware Redaction | 4/4 | Complete   | 2026-05-25 |
 | 6. Operator CLI & Slash-Command Export | 5/5 | Complete   | 2026-05-25 |
-| 7. Log Rotation & Alert Budget | 0/0 | Not started | - |
+| 7. Log Rotation & Alert Budget | 1/3 | In progress | - |
 | 8. Pipeline-Tag Discipline & Operator Docs | 0/0 | Not started | - |
 
 ## Parallelization Notes
