@@ -31,11 +31,13 @@ import {
   createTokenStore,
   WsConnectionManager,
   type GatewayServerHandle,
+  type TokenClient,
 } from "@comis/gateway";
 import type { SessionKey } from "@comis/core";
 import { mountGatewayRoutes } from "../setup-gateway-routes.js";
 import { buildGreetingGenerator } from "./setup-gateway-admin.js";
 import { buildRpcAdapterDeps, buildDynamicRouterAndRegister } from "./setup-gateway-rpc.js";
+import { buildMcpServerForClient } from "../../api/mcp-server-handlers.js";
 
 // ---------------------------------------------------------------------------
 // Deps / Result types
@@ -104,8 +106,22 @@ export interface GatewayDeps {
       toolResults?: number;
     } | undefined;
   }>;
-  /** Pre-resolved gateway tokens with secrets (config -> env -> auto-generated). */
-  resolvedTokens: Array<{ id: string; secret: string; scopes: string[] }>;
+  /** Pre-resolved gateway tokens with secrets (config -> env -> auto-generated).
+   *  Phase 69 SERVE-02: optional `mcpClient` block survives resolution so the
+   *  TokenStore can surface it on verified TokenClient instances. */
+  resolvedTokens: Array<{
+    id: string;
+    secret: string;
+    scopes: string[];
+    mcpClient?: {
+      allowlist: string[];
+      sessionAllowlist: string[];
+      toolRateLimit: Record<string, number>;
+    };
+  }>;
+  /** Daemon package version (read once from packages/daemon/package.json at
+   *  bootstrap). Advertised as MCP `serverInfo.version` (Phase 69 SERVE-01). */
+  daemonVersion: string;
   /** Set of suspended agent IDs for REST API status reporting. */
   suspendedAgents?: ReadonlySet<string>;
 }
@@ -248,6 +264,18 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     gatewayLogger.debug({ webEnabled: false }, "Web dashboard disabled");
   }
 
+  // Phase 69 SERVE-01/04 -- per-client MCP server factory. Built once at
+  // gateway-setup time and threaded into createGatewayServer so the Hono app
+  // mounts POST /mcp/v1 between rate-limit and the notFound catch-all. The
+  // factory closes over `daemonVersion` (advertised as serverInfo.version)
+  // and `gatewayLogger` (bound with module:"gateway"; the factory adds
+  // submodule:"mcp-server" / "tools-list-filter" at call sites).
+  const buildMcpServerForClientFactory = (client: TokenClient) =>
+    buildMcpServerForClient(
+      { logger: gatewayLogger, daemonVersion: deps.daemonVersion },
+      client,
+    );
+
   const gatewayHandle = _createGatewayServer({
     config: gwConfig,
     logger: gatewayLogger,
@@ -259,6 +287,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
       instanceId,
       startedAt: systemDateFrom(startupStartMs).toISOString(),
     },
+    buildMcpServerForClient: buildMcpServerForClientFactory,
   });
 
   // Mount all HTTP routes (webhooks, media, OpenAI-compatible API)

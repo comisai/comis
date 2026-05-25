@@ -6,8 +6,19 @@
 export { createGatewayServer } from "./server/hono-server.js";
 export type { GatewayServerHandle } from "./server/hono-server.js";
 
+// MCP server endpoint (Phase 69 SERVE-01/04): the mount helper itself stays
+// gateway-internal (consumed via relative import by hono-server.ts). The
+// daemon-side factory in packages/daemon/src/api/mcp-server-handlers.ts
+// imports TokenClient from this index to type its `buildMcpServerForClient`
+// signature; that re-export is below ("Auth -- Token").
+
 // Auth -- Token
 export { createTokenStore, extractBearerToken, checkScope } from "./auth/token-auth.js";
+// Phase 69 SERVE-01/04: TokenClient is consumed by the daemon's MCP server
+// factory (packages/daemon/src/api/mcp-server-handlers.ts) to type the
+// verified-client param. The other token types remain internal — daemon
+// callers obtain them transitively via `ReturnType<typeof createTokenStore>`.
+export type { TokenClient } from "./auth/token-auth.js";
 
 // Auth -- mTLS
 export { validateCertificates, extractClientCN } from "./auth/mtls-verifier.js";

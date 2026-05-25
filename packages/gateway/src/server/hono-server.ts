@@ -12,13 +12,15 @@ import { createServer as createHttpsServer } from "node:https";
 import type { RpcContext } from "../rpc/method-router.js";
 import type { RpcAdapterDeps } from "../rpc/rpc-adapters.js";
 import { validateCertificates } from "../auth/mtls-verifier.js";
-import { extractBearerToken, type TokenStore } from "../auth/token-auth.js";
+import { extractBearerToken, type TokenClient, type TokenStore } from "../auth/token-auth.js";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { createRateLimiter } from "../rate-limit/rate-limiter.js";
 import { createWsHandler, WsConnectionManager } from "../rpc/ws-handler.js";
 import { createRestApi, ActivityRingBuffer, subscribeActivityBuffer } from "../web/rest-api.js";
 import { createSseEndpoint } from "../web/sse-endpoint.js";
 import { createStaticMiddleware } from "../web/static-middleware.js";
+import { mountMcpServerEndpoint } from "../mcp-server-endpoint.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { GatewayLogger } from "./gateway-logger.js";
 
 export type { GatewayLogger };
@@ -55,6 +57,11 @@ export interface GatewayServerDeps {
     instanceId: string;
     startedAt: string;
   };
+  /** Per-client McpServer factory (Phase 69 SERVE-01/04). When provided,
+   *  the gateway mounts `POST /mcp/v1` between the global rate-limit
+   *  middleware and the catch-all 404 handler. Omit to leave the route
+   *  unmounted (deployments that disable the MCP server). */
+  readonly buildMcpServerForClient?: (client: TokenClient) => McpServer;
 }
 
 /**
@@ -127,6 +134,26 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
     }
     return rateLimiterMw(c, next);
   });
+
+  // Phase 69 SERVE-01/04 — MCP server endpoint. MUST be mounted AFTER the
+  // global rate-limit middleware (so layer-1 IP caps apply) and BEFORE the
+  // catch-all `app.notFound` handler (so /mcp/v1 doesn't fall through to
+  // the 404 branch). Per-client tools/list filter is enforced inside
+  // `buildMcpServerForClient` via the side-channel mcpExportPolicy registry.
+  if (deps.buildMcpServerForClient) {
+    mountMcpServerEndpoint(
+      // The Hono app is constructed without an explicit Bindings parameter,
+      // but `@hono/node-server` injects `{ incoming, outgoing }` into
+      // `c.env` at runtime. Cast narrows the public app type to the
+      // Bindings-aware shape the endpoint helper expects.
+      app as unknown as Parameters<typeof mountMcpServerEndpoint>[0],
+      {
+        tokenStore: deps.tokenStore,
+        buildMcpServerForClient: deps.buildMcpServerForClient,
+        logger,
+      },
+    );
+  }
 
   // Health endpoint — always available.
   // Includes daemon fingerprint (instanceId, startedAt) when provided so
