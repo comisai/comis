@@ -11097,6 +11097,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "logRotation": {
+        "compressAged": true,
+        "maxAgeDays": 30,
+        "maxFiles": 5,
+        "maxSizeBytes": 52428800
+      },
       "persistence": {
         "enabled": true,
         "retentionDays": 30,
@@ -11107,6 +11113,41 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "observability",
     "type": "object"
+  },
+  {
+    "default": {
+      "compressAged": true,
+      "maxAgeDays": 30,
+      "maxFiles": 5,
+      "maxSizeBytes": 52428800
+    },
+    "immutable": false,
+    "path": "observability.logRotation",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "observability.logRotation.compressAged",
+    "type": "boolean"
+  },
+  {
+    "default": 30,
+    "immutable": false,
+    "path": "observability.logRotation.maxAgeDays",
+    "type": "integer"
+  },
+  {
+    "default": 5,
+    "immutable": false,
+    "path": "observability.logRotation.maxFiles",
+    "type": "integer"
+  },
+  {
+    "default": 52428800,
+    "immutable": false,
+    "path": "observability.logRotation.maxSizeBytes",
+    "type": "integer"
   },
   {
     "default": {
@@ -29366,6 +29407,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "observability": {
       "additionalProperties": false,
       "default": {
+        "logRotation": {
+          "compressAged": true,
+          "maxAgeDays": 30,
+          "maxFiles": 5,
+          "maxSizeBytes": 52428800
+        },
         "persistence": {
           "enabled": true,
           "retentionDays": 30,
@@ -29374,6 +29421,46 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "trajectory": {}
       },
       "properties": {
+        "logRotation": {
+          "additionalProperties": false,
+          "default": {
+            "compressAged": true,
+            "maxAgeDays": 30,
+            "maxFiles": 5,
+            "maxSizeBytes": 52428800
+          },
+          "properties": {
+            "compressAged": {
+              "default": true,
+              "type": "boolean"
+            },
+            "maxAgeDays": {
+              "default": 30,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxFiles": {
+              "default": 5,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxSizeBytes": {
+              "default": 52428800,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "maxSizeBytes",
+            "maxFiles",
+            "maxAgeDays",
+            "compressAged"
+          ],
+          "type": "object"
+        },
         "persistence": {
           "additionalProperties": false,
           "default": {
@@ -29419,7 +29506,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       },
       "required": [
         "persistence",
-        "trajectory"
+        "trajectory",
+        "logRotation"
       ],
       "type": "object"
     },

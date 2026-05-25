@@ -38,9 +38,10 @@ import * as crypto from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { ok, err, type Result } from "@comis/shared";
+import { ok, err, suppressError, type Result } from "@comis/shared";
 import { appendRegularFile, ensureContainedDir } from "../shared/fs-safe.js";
 import { safePath, systemDateFrom, systemNowMs } from "@comis/core";
+import { applyRotationPolicy, type RotationPolicy } from "../rotation/policy.js";
 
 import { encodeAuditRecord } from "./encode-record.js";
 import { detectSuspicious } from "./suspicious.js";
@@ -290,6 +291,22 @@ export function finalizeConfigWriteAuditRecord(
 // ---------------------------------------------------------------------------
 
 /**
+ * Collect existing rotated siblings for a given base filePath.
+ * Checks filePath.1 through filePath.keepRotated (and their .gz variants).
+ * Returns absolute paths that exist on disk.
+ */
+function collectRotatedSiblings(filePath: string, keepRotated: number): string[] {
+  const siblings: string[] = [];
+  for (let i = 1; i <= keepRotated; i++) {
+    const bare = filePath + "." + i;
+    const gz = bare + ".gz";
+    if (fs.existsSync(gz)) siblings.push(gz);
+    else if (fs.existsSync(bare)) siblings.push(bare);
+  }
+  return siblings;
+}
+
+/**
  * Rotate the audit-log file when its current size + projected
  * appended bytes would exceed `rotateAtBytes`.
  *
@@ -298,6 +315,11 @@ export function finalizeConfigWriteAuditRecord(
  *
  * After this returns, the main path no longer exists — the next
  * `appendRegularFile` call will create it under `0o600`.
+ *
+ * After the rename-shift, schedules a fire-and-forget call to
+ * `applyRotationPolicy` so the freshly-rotated `.1` gets gzipped and
+ * the age/count caps stay honored (ROTATE-02). The function itself
+ * remains synchronous; the gzip is a follow-up async task.
  */
 /**
  * Exported so the observe-side writer (`append-observe.ts`) can share
@@ -309,6 +331,7 @@ export function rotateConfigAuditLogIfNeeded(
   appendBytes: number,
   rotateAtBytes: number,
   keepRotated: number,
+  policy?: RotationPolicy,
 ): void {
   let currentBytes: number;
   try {
@@ -344,6 +367,24 @@ export function rotateConfigAuditLogIfNeeded(
   } catch {
     // Can't rename — best-effort, leave the main file alone.
   }
+
+  // Fire-and-forget: gzip + age-prune + count-prune via shared helper (ROTATE-02).
+  // The function stays synchronous; gzip is a follow-up async task.
+  const effectivePolicy: RotationPolicy = policy ?? {
+    maxSizeBytes: 50 * 1024 * 1024,
+    maxFiles: keepRotated,
+    maxAgeDays: 30,
+    compressAged: true,
+  };
+  const rotatedFiles = collectRotatedSiblings(filePath, keepRotated);
+  suppressError(
+    applyRotationPolicy({
+      basePath: filePath,
+      rotatedFiles,
+      policy: effectivePolicy,
+    }),
+    "config-audit: post-rotation gzip+prune (best-effort; rename-shift already completed)",
+  );
 }
 
 // ---------------------------------------------------------------------------

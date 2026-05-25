@@ -165,7 +165,7 @@ export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
-import { createLogLevelManager } from "./observability/log-infra.js";
+import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
 import { createTokenTracker } from "./observability/token-tracker.js";
 import { createTracingLogger } from "./observability/trace-logger.js";
 import { setupChannelHealthLogging } from "./observability/channel-health-logger.js";
@@ -2423,6 +2423,12 @@ async function bootShutdown(
   // depSlotConsistency is passed explicitly — the daemon composition root is the
   // only site that knows which adapter slots were used (post-fix: channelRegistry
   // only, adaptersList removed from setup-channels-runtime.ts).
+  // Derive logsDir from daemon.logging.filePath for the startup sweep (ROTATE-02).
+  const _loggingFilePath = container.config.daemon?.logging?.filePath;
+  const _logsDir = _loggingFilePath
+    ? pathDirname(expandTilde(_loggingFilePath))
+    : undefined;
+
   emitStartupInvariants({
     logger: daemonLogger,
     adaptersByType,
@@ -2432,6 +2438,8 @@ async function bootShutdown(
     mcpClientManager: mcpClientManager ?? { getTools: () => [] },
     agentsConfig: agents,
     depSlotConsistency: { adaptersList: false, channelRegistry: true },
+    logRotationPolicy: container.config.observability?.logRotation,
+    logsDir: _logsDir,
   });
 
   // Snapshot current config as last-known-good after successful startup.

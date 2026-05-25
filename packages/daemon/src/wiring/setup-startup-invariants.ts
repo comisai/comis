@@ -15,6 +15,12 @@ import type { ComisLogger } from "@comis/infra";
 import type { ChannelPort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
+// Imports for startup sweep (ROTATE-02)
+// ---------------------------------------------------------------------------
+import { sweepRotatedFiles } from "@comis/observability";
+import type { RotationPolicy } from "@comis/observability";
+
+// ---------------------------------------------------------------------------
 // StartupInvariants interface (verbatim from design §5 D10)
 // ---------------------------------------------------------------------------
 
@@ -65,6 +71,17 @@ export interface StartupInvariantsDeps {
     adaptersList:    boolean;   // expected false post-fix
     channelRegistry: boolean;   // expected true post-fix
   };
+  /**
+   * Optional cross-stream log rotation policy (ROTATE-02).
+   * When provided (together with logsDir), triggers a non-blocking
+   * startup sweep via sweepRotatedFiles after the invariant emit.
+   */
+  logRotationPolicy?: RotationPolicy;
+  /**
+   * Directory containing observability log files (e.g. ~/.comis/logs/).
+   * Required when logRotationPolicy is set for the startup sweep to run.
+   */
+  logsDir?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +135,15 @@ export function emitStartupInvariants(deps: StartupInvariantsDeps): void {
 
   // ── BOOT-01: emit the INFO record ────────────────────────────────────────
   deps.logger.info(invariants, "daemon:startup_invariants");
+
+  // ── ROTATE-02: non-blocking startup sweep ───────────────────────────────
+  // Fires AFTER the invariant emit so the sweep's best-effort WARN logs do
+  // not pollute the invariant record. Errors are caught inside sweepRotatedFiles.
+  if (deps.logRotationPolicy && deps.logsDir) {
+    void sweepRotatedFiles(deps.logsDir, deps.logRotationPolicy, {
+      logger: deps.logger,
+    });
+  }
 
   // ── BOOT-02: emit WARN(s) on duplicate wiring ────────────────────────────
   // Check AFTER the INFO emit so the record is always present even when WARNs

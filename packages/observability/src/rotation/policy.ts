@@ -17,6 +17,7 @@ import { createGzip } from "node:zlib";
 import { createReadStream, createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import type { ComisLogger } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,7 +81,7 @@ export async function applyRotationPolicy(
   input: ApplyRotationInput,
   deps: ApplyRotationDeps = {},
 ): Promise<ApplyRotationResult> {
-  const now = deps.nowMs?.() ?? Date.now();
+  const now = deps.nowMs?.() ?? systemNowMs();
   const ageCutoffMs = now - input.policy.maxAgeDays * 86_400_000;
 
   // Stat all candidate files (lstat to skip symlinks).

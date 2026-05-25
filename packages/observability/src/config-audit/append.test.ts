@@ -399,3 +399,38 @@ describe("encodeRecord — sentinel on serialization failure", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// ROTATE-02: rotateConfigAuditLogIfNeeded triggers gzip on .1 file
+// via shared applyRotationPolicy helper.
+// ---------------------------------------------------------------------------
+describe("rotateConfigAuditLogIfNeeded — gzip via applyRotationPolicy (ROTATE-02)", () => {
+  it("schedules applyRotationPolicy so config-audit.jsonl.1 becomes .1.gz after rotation", async () => {
+    const filePath = path.join(tmpDir, "config-audit.jsonl");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+
+    // Seed the file to be just over the rotation threshold.
+    const rotateAtBytes = 512;
+    fs.writeFileSync(filePath, "x".repeat(400) + "\n", { mode: 0o600 });
+
+    // Trigger rotation — this should rename main → .1 and fire applyRotationPolicy.
+    const { rotateConfigAuditLogIfNeeded } = await import("./append.js");
+    rotateConfigAuditLogIfNeeded(filePath, 200, rotateAtBytes, 3);
+
+    // .1 must exist immediately after rotation (before async gzip completes).
+    expect(fs.existsSync(filePath + ".1")).toBe(true);
+
+    // Wait for the async gzip to complete (fire-and-forget pattern).
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+
+    // After gzip: .1.gz should exist and the uncompressed .1 should be removed.
+    expect(
+      fs.existsSync(filePath + ".1.gz"),
+      "config-audit.jsonl.1.gz should exist after gzip",
+    ).toBe(true);
+    expect(
+      fs.existsSync(filePath + ".1"),
+      "config-audit.jsonl.1 should be removed after gzip",
+    ).toBe(false);
+  });
+});

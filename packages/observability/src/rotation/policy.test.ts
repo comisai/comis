@@ -75,7 +75,7 @@ describe("applyRotationPolicy", () => {
     expect(decompressed.length).toBe(content.length);
   });
 
-  it("unlinks files older than maxAgeDays", async () => {
+  it("removes files older than maxAgeDays via age-prune", async () => {
     const basePath = path.join(tmpDir, "daemon.log");
     const oldGz = path.join(tmpDir, "daemon.2.log.gz");
 

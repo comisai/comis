@@ -54,10 +54,21 @@ export function setupLogging(deps: {
 }): LoggingResult {
   const { container, instanceId, _createTracingLogger, _createLogLevelManager } = deps;
 
-  // 1.5. Construct file transport from logging config
+  // 1.5. Construct file transport from logging config.
+  // Forward observability.logRotation policy when present so pino-roll uses
+  // the cross-stream policy (ROTATE-02).  The logRotation policy takes
+  // precedence over daemon.logging.maxSize/maxFiles for daemon.log.
   const loggingConfig = container.config.daemon?.logging;
   const configLogLevel = container.config.logLevel ?? "info";
-  const fileTransport = loggingConfig ? createFileTransport(loggingConfig, configLogLevel) : undefined;
+  const logRotation = container.config.observability?.logRotation
+    ? {
+        maxSizeBytes: container.config.observability.logRotation.maxSizeBytes,
+        maxFiles: container.config.observability.logRotation.maxFiles,
+      }
+    : undefined;
+  const fileTransport = loggingConfig
+    ? createFileTransport(loggingConfig, configLogLevel, logRotation)
+    : undefined;
 
   // 2. Create tracing logger (use config logLevel or default to "info")
   const rawLogger = _createTracingLogger({

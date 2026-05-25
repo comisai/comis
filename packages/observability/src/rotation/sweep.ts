@@ -17,8 +17,8 @@
  */
 
 import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import type { ComisLogger } from "@comis/core";
+import { safePath, systemDateFrom, systemNowMs } from "@comis/core";
 import { applyRotationPolicy, type RotationPolicy } from "./policy.js";
 
 // ---------------------------------------------------------------------------
@@ -136,11 +136,21 @@ export async function sweepRotatedFiles(
     if (rotated.length === 0) continue;
 
     // Use a sentinel basePath that won't exist when there is no real base.
+    // safePath(base, segment) ensures segments stay within the logsDir boundary.
     const basePath = activeBase
-      ? path.join(logsDir, activeBase)
-      : path.join(logsDir, "__no-active-base__");
+      ? safePath(logsDir, activeBase)
+      : safePath(logsDir, "__no-active-base__");
 
-    const rotatedAbs = rotated.map((n) => path.join(logsDir, n));
+    // safePath throws PathTraversalError for symlinks that escape logsDir (T-07-01-01).
+    // Filter out any entries that throw — they are silently skipped (symlink-safe).
+    const rotatedAbs: string[] = [];
+    for (const n of rotated) {
+      try {
+        rotatedAbs.push(safePath(logsDir, n));
+      } catch {
+        // PathTraversalError or other — skip this entry (symlink escape blocked)
+      }
+    }
 
     await applyRotationPolicy(
       { basePath, rotatedFiles: rotatedAbs, policy },
@@ -156,6 +166,7 @@ export async function sweepRotatedFiles(
 function isTodayDate(filename: string): boolean {
   const m = filename.match(/session-index\.(\d{4}-\d{2}-\d{2})\.jsonl$/);
   if (!m) return false;
-  const today = new Date().toISOString().slice(0, 10);
+  // systemDateFrom + systemNowMs are the sanctioned-root date/time helpers.
+  const today = systemDateFrom(systemNowMs()).toISOString().slice(0, 10);
   return m[1] === today;
 }

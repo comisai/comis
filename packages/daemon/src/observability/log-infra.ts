@@ -106,11 +106,27 @@ export function isPm2Managed(): boolean {
  * @param config - Logging config from DaemonConfigSchema.logging
  * @param level - Log level to apply to each target (Pino multi-transport
  *   targets default to "info" unless explicitly set)
+ * @param logRotation - Optional cross-stream rotation policy from
+ *   AppConfig.observability.logRotation. When provided, overrides
+ *   config.maxSize + config.maxFiles for the pino-roll transport.
+ *   IMPORTANT (RESEARCH Pitfall 1): pino-roll `size` treats bare numbers as
+ *   MB, NOT bytes. Always convert maxSizeBytes → "${Math.round(maxSizeBytes / (1024 * 1024))}m".
  * @returns Transport config to pass as LoggerOptions.transport
  */
-export function createFileTransport(config: LoggingConfig, level?: string): pino.TransportMultiOptions {
+export function createFileTransport(
+  config: LoggingConfig,
+  level?: string,
+  logRotation?: { maxSizeBytes: number; maxFiles: number },
+): pino.TransportMultiOptions {
   const expandedPath = expandTilde(config.filePath);
   const pm2Detected = isPm2Managed();
+
+  // Compute size string and file count from logRotation policy when present.
+  // pino-roll `size` semantics: bare numbers = MB (NOT bytes). Always use string form.
+  const sizeStr = logRotation
+    ? `${Math.round(logRotation.maxSizeBytes / (1024 * 1024))}m`  // RESEARCH Pitfall 1
+    : config.maxSize;
+  const countLimit = logRotation ? logRotation.maxFiles : config.maxFiles;
 
   const targets: pino.TransportTargetOptions[] = [];
 
@@ -119,10 +135,10 @@ export function createFileTransport(config: LoggingConfig, level?: string): pino
     target: "pino-roll",
     options: {
       file: expandedPath,
-      size: config.maxSize,
+      size: sizeStr,
       mkdir: true,
       limit: {
-        count: config.maxFiles,
+        count: countLimit,
         removeOtherLogFiles: true,
       },
     },
