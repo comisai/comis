@@ -27,21 +27,28 @@ export const GatewayTlsConfigSchema = z.strictObject({
  * is optional — when omitted, the secret is resolved at runtime via
  * environment variable or auto-generation.
  *
- * Phase 69 SERVE-02 / WR-01: the `mcpClient` block is only meaningful when
- * `scopes` includes `"mcp-client"`. The `.refine` below enforces
- * ADMIN-EQUIVALENT-DISJOINTNESS — a single token MUST NOT co-issue
- * `"mcp-client"` with either `"admin"` OR `"*"` (the wildcard scope grants
- * all scopes via `checkScope`, including admin). Either co-issuance is the
- * privilege-escalation pathway threat T-69-02 prevents. The refine surfaces
- * at config-load with the literal token `[scope_disjointness]` and
- * `errorKind: "config"`.
+ * Phase 69 SERVE-02 / WR-01 / WR-03: the `mcpClient` block is only meaningful
+ * when `scopes` includes `"mcp-client"`. The `.refine` below enforces
+ * SOLE-SCOPE-DISJOINTNESS — when `"mcp-client"` is present on a token, it
+ * MUST be the ONLY scope. This subsumes the original `admin` rejection
+ * (T-69-02), the WR-01 wildcard `*` rejection, AND the WR-03 rpc/ws
+ * rejection (an mcp-client token is an EXTERNAL trust boundary; its
+ * compromise must be containable to the MCP surface only -- it cannot
+ * also speak RPC or open a WebSocket).
+ *
+ * The refine surfaces at config-load with the literal token
+ * `[scope_disjointness]` and `errorKind: "config"`.
  */
 export const GatewayTokenSchema = z.strictObject({
     /** Unique identifier for this token */
     id: z.string().min(1),
     /** The secret value (min 32 chars; resolved at runtime if omitted; string or SecretRef) */
     secret: z.union([z.string().min(32), SecretRefSchema]).optional(),
-    /** Allowed scopes for this token (e.g., ["rpc", "ws", "admin", "mcp-client"]) */
+    /** Allowed scopes for this token. Each token expresses ONE trust posture:
+     *  RPC/WS operator tokens (`["rpc"]`, `["rpc", "ws"]`, `["admin"]`,
+     *  `["*"]`) OR an external MCP-server client (`["mcp-client"]` --
+     *  sole-scope per WR-03). The refine below rejects co-issuance of
+     *  `mcp-client` with any other scope. */
     scopes: z.array(z.string().min(1)).default([]),
     /** Per-MCP-client config block; only meaningful when `scopes` includes
      *  `"mcp-client"` (Phase 69 SERVE-02). Operators may omit it entirely when
@@ -60,16 +67,23 @@ export const GatewayTokenSchema = z.strictObject({
   })
   .refine(
     (t) => {
-      // Phase 69 WR-01: reject mcp-client co-issued with either `"admin"`
-      // OR `"*"` (the wildcard satisfies checkScope on every required
-      // scope, so it is admin-equivalent). The refine surfaces at
-      // config-load before the gateway boots.
+      // Phase 69 WR-03: when `mcp-client` is present on a token, it MUST
+      // be the ONLY scope. This subsumes WR-01 (`admin` / `*` rejection)
+      // and the original T-69-02 admin-disjointness rule.
+      //
+      // An mcp-client token is an EXTERNAL trust boundary. Allowing it to
+      // be co-issued with `rpc`, `ws`, or future operator scopes turns one
+      // compromised MCP credential into a full operator escalation.
+      // Tokens without `mcp-client` are unaffected by this rule.
       if (!t.scopes.includes("mcp-client")) return true;
-      return !t.scopes.includes("admin") && !t.scopes.includes("*");
+      // Must be the sole scope -- exactly one entry, and that entry is
+      // `"mcp-client"`. (Duplicate entries in the array would mean
+      // length > 1 too, which is also rejected: a hygiene win.)
+      return t.scopes.length === 1;
     },
     {
       message:
-        "[scope_disjointness] mcp-client MUST NOT be co-issued with admin or wildcard '*' scopes on a token",
+        "[scope_disjointness] mcp-client MUST be the sole scope of a token (no co-issuance with rpc, ws, admin, *, or any other scope)",
       path: ["scopes"],
     },
   );

@@ -274,6 +274,63 @@ describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 69 WR-03 -- mcp-client must be the SOLE scope
+  //
+  // The original refine only blocked `admin + mcp-client` (and WR-01 added
+  // `* + mcp-client`). A token with `["rpc", "mcp-client"]` still passed:
+  //   1. It satisfies the `/mcp/v1` gates (has mcp-client; no admin/*).
+  //   2. It also authenticates to /ws and satisfies checkScope(scopes, "rpc")
+  //      on every rpc-scoped RPC method.
+  //
+  // Operationally, an mcp-client token is supposed to be an EXTERNAL trust
+  // boundary -- its compromise should be containable to the MCP surface
+  // only. Allowing co-issuance with rpc/ws turns one compromised credential
+  // into a full RPC + WS escalation.
+  //
+  // The refine must therefore enforce: when `mcp-client` is in scopes, it
+  // is the ONLY scope. (Wildcard `*` and `admin` are already blocked by
+  // WR-01; this rule subsumes both.)
+  // -------------------------------------------------------------------------
+
+  it("GatewayTokenSchema rejects a token co-issuing rpc and mcp-client WR-03 mcp-client must be sole scope", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t7",
+      scopes: ["rpc", "mcp-client"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues[0];
+      expect(issue.message).toContain("[scope_disjointness]");
+      expect(issue.path).toEqual(["scopes"]);
+    }
+  });
+
+  it("GatewayTokenSchema rejects a token co-issuing ws and mcp-client WR-03", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t8",
+      scopes: ["ws", "mcp-client"],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("GatewayTokenSchema rejects a token co-issuing rpc ws and mcp-client WR-03", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t9",
+      scopes: ["rpc", "ws", "mcp-client"],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("GatewayTokenSchema accepts a token with only mcp-client scope WR-03 happy path", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t10",
+      scopes: ["mcp-client"],
+      mcpClient: { allowlist: [] },
+    });
+    expect(result.success).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
