@@ -1,460 +1,453 @@
 ---
 title: "Observability"
-description: "Token tracking, cost estimation, latency, and delivery tracing"
+description: "Trace correlation, bridge events, lifecycle envelopes, dedup detection, and operator-grade diagnostics"
 icon: "chart-line"
 ---
 
-Observability tells you how much your agents are doing, how much it costs, and
-how fast they respond. Think of it as the business intelligence layer for your
-AI operations -- it answers questions like "which agent costs the most?" and
-"are my messages getting delivered?"
+A fleet-wide bug must be diagnosable from one structured artifact with one command in under five minutes.
+
+This page documents the observability foundations rebuilt in Milestones 1–3 (Phases 1–7). It covers the trajectory layer, the 55-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
+
+<CardGroup cols={2}>
+  <Card title="Incident Bundle" icon="folder-tree" href="/operations/incident-bundle">
+    One-command bundle export — `comis trace export` and `/export-trajectory`.
+  </Card>
+  <Card title="Trace CLI" icon="terminal" href="/operations/trace-cli">
+    Copy-pasteable examples for every `comis trace` subcommand.
+  </Card>
+</CardGroup>
+
+---
+
+## 1. Trace Propagation
+
+Every inbound message receives a `traceId` at channel ingress — before the queue, before the agent, before delivery. The trace ID flows through the entire pipeline via AsyncLocalStorage (the trace-logger mixin in `packages/daemon/src/observability/trace-logger.ts`), so every Pino log line emitted during that turn carries the same `traceId` automatically.
+
+**Practical consequence:** `grep "traceId=<id>" ~/.comis/logs/daemon.log` returns the complete causal chain for a single message — channel ingress, queue enqueue, agent execution, and outbound delivery — without any cross-file correlation.
+
+The on-wire field is `normalized.metadata.traceId`; the helper `getMessageTraceId()` reads it. All 10 channel adapters wrap their dispatch loops in `runWithContext`, and the orchestrator's `adapter.onMessage` handler applies a defense-in-depth second wrap so no adapter can silently skip propagation.
 
 <Info>
-This page explains the underlying tracking systems. To view this data visually
-in your browser, see the
-[Web Dashboard Observability](/web-dashboard/observability) page.
+**Architecture invariant:** `test/architecture/trace-propagation.test.ts` asserts that every `adapter.onMessage(...)` registration site is wrapped in `runWithContext`. This test is shrink-only — violations are caught at CI time, not at incident time.
 </Info>
 
-## What Gets Tracked
+---
 
-Comis tracks six categories of operational data automatically. You do not need
-to configure anything -- tracking starts as soon as the daemon is running.
+## 2. Trajectory Layer
+
+Every agent session writes a `*.trajectory.jsonl` file co-located with the SDK transcript. This is the structured artifact the design goal refers to.
+
+Key properties:
+
+- **Schema-versioned** — `traceSchema: "comis-trajectory"`, `schemaVersion: 1`. Additive changes (new optional fields, new event types) stay on version 1.
+- **Content-free at runtime** — digests and structural fields only; no prompt text, response text, or tool-result bodies at recording time. Content is synthesized at bundle-export time from the SDK session JSONL.
+- **Multi-source discriminator** — `source: "runtime" | "transcript" | "export"`. Runtime events carry `"runtime"`. The bundle exporter synthesizes `"transcript"` events from the session JSONL and `"export"` events for bundle-level summaries.
+- **Causality DAG** — each event carries `entryId` (per-event UUID), monotonic `seq`, optional `sourceSeq`, and optional `parentEntryId`. The session branch is reconstructed leaf-to-root at export time.
+
+---
+
+## 3. Lifecycle Envelopes
+
+Three sentinel events fire once per session to bracket the trajectory with context:
+
+| Envelope | Fires | Carries | Once-per-session |
+|---|---|---|---|
+| `trace.metadata` | After `session.started` | harness, model, config, plugins, skills, prompting, redaction snapshot | Yes (latch in `pi-event-bridge.ts`) |
+| `trace.artifacts` | Before `session.ended` | finalStatus, abort, timeout, token usage, prompt-cache hit rate, compaction count, lastToolError | Yes (in `comis-session-manager.ts`) |
+| `trace.truncated` | When file fills | droppedEvents, droppedEventBytes, limitBytes | At most once per file (then writer halts) |
+
+`trace.metadata` answers "what configuration ran this session?" `trace.artifacts` answers "how did it end and what did it cost?" `trace.truncated` answers "was any data lost?" — a non-zero `droppedEvents` value means the trajectory file was capped before the session ended.
+
+The bundle exporter reads `trace.metadata` to populate `metadata.json` and `trace.artifacts` to populate `artifacts.json`.
+
+---
+
+## 4. Bridge Mapping (55 entries)
+
+The trajectory bus-bridge maps 55 event types from the typed event bus to trajectory events (up from 18 pre-milestone — a ~3× coverage improvement that closes the G2 gap).
+
+<Info>
+**Architecture invariant:** `test/architecture/trajectory-event-types-known.test.ts` asserts the disjoint-set invariant (no overlap between bridge-mapped types and direct-emit types) and a bridge count ≥ 45. Current count: 55.
+</Info>
+
+| Category | Bridge prefix | Event types |
+|---|---|---|
+| Queue | `queue.*` | enqueued, dequeued, overflow, coalesced |
+| Delivery | `delivery.*` | retry, retry_exhausted, markdown_fallback |
+| Execution | `execution.*` | aborted, budget_warning, prompt_timeout, output_escalated, replay_recovered |
+| Security | `security.*`, `sender.blocked` | injection_detected, memory_tainted, warn, sender_blocked |
+| MCP | `mcp.*` | disconnected, reconnecting, reconnect_failed, reconnected, tools_changed |
+| Channel | `channel.*` | health_changed, lifecycle |
+| Compaction | `compaction.*` | started, flush, recommended |
+| Context | `context.*` | evicted, masked, reread, overflow, integrity, rehydrated |
+| Approval | `approval.*` | requested, resolved |
+| Dedup | `dedup.duplicate_inbound` | duplicate_inbound |
+| Health | `health.budget_exceeded` | budget_exceeded |
+| Session | (direct emit — carve-out) | session.started, session.ended, session.transcript.entry, trace.metadata, trace.artifacts, trace.truncated, trace.write_failures |
+
+The `queue.enqueued` event — which carries `sessionKey`, `mode`, and `queueDepth` — is the trajectory signal that makes the 2026-05-24 duplicate-adapter bug visible from a single `jq` query.
+
+---
+
+## 5. Defense-in-depth Bounding
+
+Every payload that enters the trajectory recorder passes through `limitTrajectoryPayloadValue`, which enforces hard size limits before writing. Every truncation leaves a structured sentinel so consumers know exactly what was lost.
+
+| Bound | Limit | Sentinel on hit |
+|---|---|---|
+| Per-string chars | 32,768 | `{ truncated: true, reason: "trajectory-field-size-limit", originalChars, limitChars }` |
+| Per-array items | 64 | Items beyond cap dropped |
+| Per-object keys | 64 | Keys beyond cap dropped |
+| Recursion depth | 6 | Deeper levels dropped |
+| Per-event bytes | 256 KB | Event dropped, `droppedEvents++` |
+| File soft cap | 10 MB | Final `trace.truncated` event, recorder closes |
+| File hard cap | 50 MB | Writer halts, `droppedEvents` incremented |
+| Active writers (process-wide) | 100 (LRU) | Oldest writer evicted |
+| Circular reference | n/a | `{ truncated: true, reason: "trajectory-circular-reference" }` |
+
+The `MAX_TRAJECTORY_WRITERS = 100` constant is exported from `packages/observability/src/trajectory/runtime.ts:116`.
+
+---
+
+## 6. Forensic INFO Promotions
+
+Seven forensic events that fire at most O(1) per turn are promoted from DEBUG to INFO so production daemons at `logLevel: info` retain the signal needed to diagnose the 2026-05-24 duplicate-adapter incident class (closes G5).
+
+Before this change, `Message enqueued` was `level: 20` (DEBUG). A production daemon at `logLevel: info` would have silently discarded it — making the duplicate-enqueue symptom invisible without enabling debug logging first.
+
+| Event | Source module | Carries |
+|---|---|---|
+| Adapter registered | `packages/orchestrator/src/channel-manager.ts` | adapterId, channelType, handlersBefore, handlersAfter |
+| Message enqueued | `packages/orchestrator/src/queue/command-queue.ts` | channelType, mode, queueDepth, messageId |
+| Message dequeued | `packages/orchestrator/src/queue/command-queue.ts` | channelType, waitTimeMs |
+| Execution started | `packages/agent/src/executor/pi-executor/pi-executor.ts` | agentId, sessionKey, traceId |
+| Execution complete | `packages/agent/src/executor/executor-post-execution.ts` | finalStatus, durationMs, cacheHitRate, sessionCacheSavingsRate |
+| Memory store complete | `packages/memory/src/sqlite-memory-adapter.ts` | durationMs, op, hasEmbedding, memoryType |
+| Outbound message | 8 channel adapters | channelType, messageId, deliveryStatus |
+
+<Info>
+Per-turn INFO count grows from ~5 to ~10 lines (bounded). The architecture test `test/architecture/forensic-events-info-level.test.ts` (15 tests) enforces shrink-only — no forensic event may regress to DEBUG without failing CI.
+</Info>
+
+---
+
+## 7. Duplicate-Inbound Detector
+
+The dedup detector runs synchronously in the inbound hot path to catch the same `messageId` being processed more than once within a short window — the defining symptom of the 2026-05-24 duplicate-adapter incident class.
+
+**Implementation:** a bounded LRU at **1024 entries**, **10 s window** (`windowMs = 10_000`). On a duplicate `messageId` within the window, it:
+
+1. Emits `dedup:duplicate_inbound { messageId, channelType, chatId, firstSeenAt, duplicateAt, deltaMs, source }` on the typed event bus.
+2. Logs a WARN with `errorKind: "internal"` and `hint: "Same messageId processed twice; check channel adapter handler list and queue mode"`.
+3. Does **not** suppress processing — the duplicate continues through the pipeline so the full symptom is visible in the trajectory.
+
+The `dedup:duplicate_inbound` event is bridge entry #54, mapped to the `dedup.duplicate_inbound` trajectory event type.
+
+At 300 msg/s (10× expected production load), overhead is sub-microsecond per check (measured in `dedup-detector.perf.test.ts`).
+
+**Operator query:**
+
+```bash
+jq 'select(.event == "dedup:duplicate_inbound")' ~/.comis/logs/daemon.log
+```
+
+---
+
+## 8. Boot Invariants
+
+On every daemon startup, before traffic is accepted, a `daemon:startup_invariants` INFO record fires with 8 fields describing the wiring state:
+
+| Field | What it measures |
+|---|---|
+| `adaptersByChannelType` | Count of adapters per channel type |
+| `handlersPerAdapter` | Count of `onMessage` handlers per adapter |
+| `pluginRegistryCount` | Total registered plugins |
+| `channelRegistryCount` | Total registered channels |
+| `depSlotConsistency` | Whether the deprecated `adaptersList` slot is absent |
+| `agentCount` | Total configured agents |
+| `toolCatalogSize` | Total available tools |
+| `mcpServerCount` | Total MCP servers |
+
+If `handlersPerAdapter[<type>] > 1`, a WARN fires immediately:
+
+```json
+{
+  "level": 40,
+  "msg": "Duplicate adapter registration detected",
+  "hint": "Duplicate adapter registration detected; see AGENTS.md §6.1",
+  "errorKind": "config",
+  "handlersPerAdapter": { "telegram": 2 }
+}
+```
+
+This WARN fires **before** `saveLastKnownGood` and before the daemon begins accepting messages. In the 2026-05-24 incident, the duplicate adapter had been in production for days; the boot invariant would have surfaced it at the next restart with zero traffic impact.
+
+<Warning>
+If you see a `handlersPerAdapter` WARN at boot, do not proceed to production. The daemon will process every inbound message twice, producing duplicate AI responses. Check your `setup-channels-runtime.ts` wiring before accepting traffic.
+</Warning>
+
+---
+
+## 9. step: Discipline (HYGIENE-01)
+
+Every known pipeline stage emits at least one log line carrying `step: "<stage>"` — enforced by `test/architecture/pipeline-step-coverage.test.ts` (HYGIENE-01).
+
+**Why it matters:** before this change, only 3% of `daemon.log` lines (15 of 480 sampled) carried a `step:` field. Filtering by pipeline stage required reading every log line. The target after HYGIENE-01 is ≥ 50% coverage.
+
+The authoritative stage token map lives in `test/architecture/pipeline-step-coverage.test.ts` — consult it when adding new log call sites.
+
+**Operator filter pattern:**
+
+```bash
+jq 'select(.step == "queue-enqueue")' ~/.comis/logs/daemon.log
+```
+
+Other useful stage tokens: `"channels-inbound"`, `"queue-dequeue"`, `"agent-execute"`, `"delivery-outbound"`.
+
+<Info>
+Cross-reference: HYGIENE-01 was shipped in Phase 8, Plan 01. The architecture test is shrink-only — adding a new stage without a `step:`-tagged emit fails CI.
+</Info>
+
+---
+
+## 10. Session Index
+
+The session index at `~/.comis/logs/session-index.YYYY-MM-DD.jsonl` is an append-only lightweight index of session lifecycle events — the primary scan target for `comis trace --since 10m --where error`.
+
+Three event kinds:
+
+```jsonc
+// session_started — one per session open
+{ "traceSchema": "comis-session-index", "schemaVersion": 1,
+  "event": "session_started", "ts": "...", "sessionId": "...",
+  "sessionKey": "...", "channelType": "telegram", "chatId": "...",
+  "agentId": "...", "traceIds": ["..."] }
+
+// turn_completed — one per agent turn
+{ "event": "turn_completed", "ts": "...", "sessionId": "...",
+  "traceId": "...", "durationMs": 0, "inputTokens": 0, "outputTokens": 0,
+  "lastError": null }
+
+// session_ended — one per session close
+{ "event": "session_ended", "ts": "...", "sessionId": "...",
+  "endReason": "success", "turnCount": 0, "totalTokens": 0 }
+```
+
+Date-rolled files honor the same `observability.logRotation` policy as `daemon.log`.
+
+For full query examples see the [Trace CLI](/operations/trace-cli) reference.
+
+---
+
+## 11. Bundle Export
+
+When a user reports an issue, the operator workflow is:
+
+1. `comis trace --message-id <uuid>` or `comis trace --chat <chatId> --tail` to locate the session.
+2. `comis trace export <sessionId>` to produce a self-contained bundle directory.
+3. Share the bundle with the diagnosing engineer.
+
+Users can also trigger export via the `/export-trajectory` slash command in a direct message (or in a group channel, where the result is DM'd to the owner).
+
+<Warning>
+**Privacy:** bundle contents reflect the raw session and runtime trajectory at export time. Redaction applies platform-aware patterns (Telegram chat IDs, JWTs, AWS keys, URL userinfo, basic-auth, cookie headers, emails), substitutes paths, and omits identified PII fields — but redaction is heuristic. Always treat exported bundles as containing sensitive content; share only with authorized engineers, prefer DM/secure channels, and delete after triage.
+</Warning>
+
+Full bundle workflow, directory shape (8 files), and redaction policy (`platform-aware-v1`) are documented in:
+
+<Card title="Incident Bundle" icon="folder-tree" href="/operations/incident-bundle">
+  Bundle export workflow, 8-file directory shape, and redaction policy.
+</Card>
+
+---
+
+## 12. Log Rotation
+
+All 5 observability streams honor the `observability.logRotation` config block:
+
+| Stream | File pattern |
+|---|---|
+| Daemon log | `~/.comis/logs/daemon.log` |
+| Cache trace | `~/.comis/logs/cache-trace.jsonl` |
+| Config audit | `~/.comis/logs/config-audit.jsonl` |
+| Session index | `~/.comis/logs/session-index.YYYY-MM-DD.jsonl` |
+| Trajectory | `~/.comis/workspace/sessions/**/*.trajectory.jsonl` |
+
+**Defaults:**
+
+| Setting | Default | Notes |
+|---|---|---|
+| `maxSizeBytes` | `52428800` (50 MB) | Per-file size trigger |
+| `maxFiles` | `5` | Rotated copies to keep per stream |
+| `maxAgeDays` | `30` | Delete rotated files older than this |
+| `compressAged` | `true` | gzip rotated files |
+
+**Storage budget:** 5 streams × 5 files × 50 MB = 1.25 GB worst-case. With gzip compression, expect ~300 MB in practice.
+
+Operator action content (viewing, tuning, disk-constrained deployments) is in:
+
+<Card title="Logging" icon="file-lines" href="/operations/logging">
+  Log rotation policy, viewing logs, configuring log levels per module.
+</Card>
+
+---
+
+## 13. Alert Budget
+
+The rate-aggregator subscribes to health/safety events on the typed event bus. When a per-`errorKind` threshold is exceeded in a sliding window, it emits `health:budget_exceeded { kind, count, windowMs }` exactly **once** until the window slides past — then re-arms (once-per-window latch).
+
+`health:budget_exceeded` is bridge entry #55, mapped to the `health.budget_exceeded` trajectory event.
+
+**Supported errorKind values:** `config`, `auth`, `timeout`, `internal`, `network`, `quota`, `resource`, `policy`, `agent`, `external`.
+
+<Info>
+Configurable via `observability.alertBudget` in your YAML config. Defaults are conservative — most production daemons will not see this fire under normal operation. Tune thresholds downward on high-traffic deployments where per-event noise is expected.
+</Info>
+
+**Query:**
+
+```bash
+jq 'select(.event == "health:budget_exceeded")' ~/.comis/logs/daemon.log
+```
+
+---
+
+## 14. Worked Example — 2026-05-24 Incident Replay
+
+This section shows how the four observability signals introduced in Milestones 1–3 surface the 2026-05-24 duplicate-adapter bug in under five minutes.
+
+**Setup:** fresh daemon, `setup-channels-runtime.ts:217` regression re-introduced (the same Telegram adapter passed into both `deps.adapters` and `deps.channelRegistry`). Boot the daemon, send one Telegram message.
+
+### Signal 1 — Boot WARN (Section 8)
+
+```json
+{
+  "level": 30,
+  "msg": "daemon:startup_invariants",
+  "handlersPerAdapter": { "telegram": 2 },
+  "adaptersByChannelType": { "telegram": 1 }
+}
+{
+  "level": 40,
+  "msg": "Duplicate adapter registration detected",
+  "hint": "Duplicate adapter registration detected; see AGENTS.md §6.1",
+  "errorKind": "config"
+}
+```
+
+Root cause visible at boot — before any user traffic.
+
+### Signal 2 — Two `queue.enqueued` trajectory events (Sections 4, 6)
+
+```bash
+jq 'select(.type == "queue.enqueued")' ~/.comis/workspace/sessions/default/**/*.trajectory.jsonl
+```
+
+Returns two entries with `queueDepth: 1` and `queueDepth: 2`, same `sessionKey`, same timestamp window — the duplicate processing visible in the structured artifact.
+
+### Signal 3 — dedup:duplicate_inbound (Section 7)
+
+```json
+{
+  "level": 40,
+  "event": "dedup:duplicate_inbound",
+  "messageId": "d9f5e08e",
+  "channelType": "telegram",
+  "deltaMs": 1,
+  "source": "pipeline",
+  "errorKind": "internal"
+}
+```
+
+Fires within 1 ms of the duplicate inbound. `deltaMs: 1` matches the original incident's two `Message enqueued` lines at `06:01:47.385` and `06:01:47.386`.
+
+### Signal 4 — comis trace (Section 10)
+
+```bash
+node packages/cli/dist/cli.js trace --message-id d9f5e08e
+```
+
+```
+06:01:47.377  channel     inbound          chat=678314278
+06:01:47.385  queue       enqueued         queueDepth=1   mode=steer+followup
+06:01:47.386  queue       enqueued         queueDepth=2   mode=steer+followup  ⚠ DUPLICATE
+06:01:47.386  dedup       duplicate_inbound source=pipeline  deltaMs=1
+06:01:47.576  agent       execution        traceId=...     (run 1)
+06:02:03.492  agent       execution        traceId=...     (run 2)              ⚠ DUPLICATE
+06:02:03.616  channel     outbound         msgId=5785
+```
+
+All four signals — in a single terminal session. Time from user complaint to identified root cause: **under 5 minutes**.
+
+---
+
+## 15. Existing Tracking Surfaces (pre-existing, preserved for completeness)
+
+<Note>
+The following tracking surfaces predate the Milestone 1–3 observability work and continue to operate as before. They are referenced by the web dashboard at [/web-dashboard/observability](/web-dashboard/observability).
+</Note>
 
 ### Token Tracking
 
-Every time an agent calls an AI provider, Comis counts the input tokens (what
-was sent to the model) and output tokens (what the model returned). Tokens are
-tracked per agent, per model, and per execution.
-
-**Why this matters:** Tokens directly translate to cost. Understanding your token
-usage patterns helps you optimize prompts, choose the right models, and set
-appropriate [budget limits](/agents/safety).
+Every agent execution counts input and output tokens per model and per agent. Token counts feed billing estimation and are exposed on the observability RPC contracts (`packages/core/src/api-contracts/observability.ts`).
 
 ### Billing Estimation
 
-Comis converts token counts into estimated dollar costs using known provider
-pricing. This gives you a running total of how much each agent session costs
-without needing to check your provider dashboard.
-
-<Info>
-Billing estimates are based on published provider pricing at the time of each
-request. They are approximations, not exact billing -- your actual invoice from
-Anthropic, OpenAI, or Google may differ slightly due to rounding, pricing
-changes, or promotional credits.
-</Info>
+Token counts are converted to estimated dollar costs using known provider pricing. Estimates are approximations — actual provider invoices may differ due to rounding, pricing changes, or promotional credits.
 
 ### Cache Savings Tracking
 
-Comis tracks prompt caching savings per provider. When the AI provider supports
-prompt caching (Anthropic, OpenAI, Google), cached tokens cost significantly
-less than regular input tokens -- anywhere from 50% to 90% less depending on
-the provider.
-
-The `savedVsUncached` metric shows net savings per execution: a positive value
-means caching saved money, while a negative value means the cache write
-investment has not yet paid off (typically on the first turn of a session only).
-
-Embedding cache hits further reduce costs by avoiding API calls entirely. When
-persistent L2 caching is enabled, embeddings are computed once and reused
-indefinitely -- even across daemon restarts.
-
-<Info>
-See [Compaction](/agents/compaction) for per-provider cache pricing
-details and the `savedVsUncached` formula.
-</Info>
+The `savedVsUncached` metric shows net cache savings per execution. Embedding cache hits (persistent L2 cache) further reduce costs by avoiding API calls entirely. See [Compaction](/agents/compaction) for per-provider cache pricing.
 
 ### Latency Recording
 
-Every agent execution is timed from start to finish. The latency recorder breaks
-down the total time into components:
-
-- **LLM call time** -- how long the AI provider took to generate a response
-- **Tool execution time** -- how long each tool call took (bash commands, file
-  operations, web requests)
-- **Total execution time** -- the full duration including routing, context
-  retrieval, and response delivery
-
-This helps you identify bottlenecks. If an agent is slow, you can see whether
-the delay is in the AI provider, in tool execution, or somewhere else.
+Every execution is timed: LLM call time, tool execution time, and total execution time. Breakdown helps identify whether latency is in the AI provider, tool execution, or routing.
 
 ### Diagnostic Collection
 
-The daemon collects system-level metrics at regular intervals (every 30 seconds
-by default):
-
-- **Event loop delay** -- how responsive the Node.js process is
-- **Memory usage** -- heap size and resident set size
-- **CPU usage** -- process-level CPU utilization
-
-These metrics surface on the [`/health` HTTP endpoint](/operations/monitoring#the-health-http-endpoint)
-to determine if the daemon is healthy.
+System-level metrics collected every 30 seconds: event loop delay, heap/RSS memory, CPU utilization. Surfaced on the `/health` HTTP endpoint. See [Monitoring](/operations/monitoring).
 
 ### Channel Activity Tracking
 
-Comis tracks message flow per channel:
-
-- **Message counts** -- how many messages were sent and received on each platform
-- **Delivery success rate** -- what percentage of outgoing messages were
-  confirmed by the platform
-- **Error rates** -- how often deliveries fail, broken down by error type
-
-This is useful for understanding which platforms are most active and whether
-any channels are experiencing reliability issues.
+Message counts, delivery success rate, and error rates per channel. Useful for identifying which platforms are active and whether any channel is experiencing reliability issues.
 
 ### Delivery Tracing
 
-Delivery tracing follows each outgoing message through the entire delivery
-pipeline: from when your agent sends it, through any formatting and chunking,
-to when the platform confirms receipt.
-
-**When to use this:** If a user reports "my message did not arrive," delivery
-tracing shows you exactly where the message got stuck -- whether it failed
-during formatting, hit a rate limit, or was rejected by the platform.
+Follows each outgoing message through formatting, chunking, and platform confirmation. When a user reports "my message did not arrive," delivery tracing shows exactly where it got stuck.
 
 ### Context Engine Metrics
 
-The context engine tracks per-turn statistics about how your agent's conversation
-is managed:
-
-- **Tokens loaded and masked** -- How many tokens were in the conversation and
-  how many were reduced by observation masking
-- **Compaction events** -- When LLM summarization is triggered and how many
-  messages were compacted
-- **Budget utilization** -- What percentage of the context window is in use
-  after all layers have run
-- **Cache performance** -- Cache hit, write, and miss rates for the AI
-  provider's prompt cache
-
-These metrics help you understand how efficiently your agent manages long
-conversations. High masking rates indicate the context engine is actively
-saving tokens, while frequent compaction events may suggest conversations are
-running unusually long.
+Per-turn context engine statistics: tokens loaded/masked, compaction events, budget utilization, cache hit/write/miss rates. High masking rates indicate active token savings; frequent compaction may indicate unusually long conversations.
 
 ### Gemini Cache Infrastructure
 
-Comis supports Gemini explicit CachedContent caching for Google AI Studio
-models. When enabled, Comis creates server-side cached content that provides a
-**guaranteed 90% discount** on cached input tokens. Unlike Anthropic's
-automatic prompt caching (which is implicit and best-effort), Gemini caching
-is explicit -- Comis manages the full lifecycle of CachedContent resources
-through the Google AI SDK.
+Comis supports Gemini explicit CachedContent caching (Google AI Studio only) with a guaranteed 90% discount on cached input tokens. Lifecycle operations: Create, Reuse, Invalidate, Dedup, Refresh, Eviction, Session Dispose, Shutdown Dispose, Orphan Cleanup. See the [config reference](/reference/config-yaml) for the full `geminiCache` schema.
 
-#### Configuration
-
-Gemini caching is configured per-agent under the `geminiCache` key:
-
-```yaml
-agents:
-  my-agent:
-    geminiCache:
-      enabled: false        # default: false
-      maxActiveCaches: 20   # default: 20, must be positive integer
-```
-
-<Tip>
-The `geminiCache` setting is completely separate from Anthropic's
-`cacheRetention` setting (`none` / `short` / `long`). They control different
-provider caching mechanisms. Gemini TTL is hardcoded at 3600 seconds (1 hour)
-and is not configurable per-agent.
-</Tip>
-
-See the [config reference](/reference/config-yaml) for the full `geminiCache`
-schema.
-
-#### Lifecycle Operations
-
-| Operation | Trigger | Description |
-|-----------|---------|-------------|
-| **Create** | First Gemini API call with sufficient tokens | Creates CachedContent via Google AI SDK. Content hash (SHA-256) from systemInstruction + tools + toolConfig. DisplayName: `comis:{agentId}:{sessionKey}:{hashPrefix8}`. TTL: 3600s. |
-| **Reuse** | Subsequent API call with matching content hash | Returns existing cache entry from in-memory map. No API call needed. |
-| **Invalidate** | Content hash mismatch (tools or system prompt changed) | Deletes old CachedContent via API, removes from map, falls through to Create. |
-| **Dedup** | Concurrent API calls for same session | Second call awaits the first's pending Promise. Prevents duplicate CachedContent creation. |
-| **Refresh** | Cache hit when elapsed > 50% of TTL (30 minutes) | Updates TTL via API. Failure is non-fatal (WARN log, cache still usable until server-side expiry). |
-| **Eviction** | Active cache count >= maxActiveCaches (default 20) | Evicts oldest cache entry for the agent. LRU strategy. |
-| **Session Dispose** | `session:expired` event | Fire-and-forget deletion of session's cached content. |
-| **Shutdown Dispose** | Daemon graceful shutdown | Deletes all active CachedContent entries via `Promise.allSettled`. |
-| **Orphan Cleanup** | Daemon startup | Lists all `comis:*` caches from previous runs, deletes them. |
-
-#### Minimum Cacheable Token Thresholds
-
-| Model Family | Min Tokens |
-|-------------|-----------|
-| Gemini Flash (2.5, 3) | 1,024 |
-| Gemini Flash (2.0) | 2,048 |
-| Gemini Pro (2.5, 3) | 4,096 |
-| Default (unrecognized) | 2,048 |
-
-<Info>
-Requests below the minimum token threshold silently fall through to uncached
-API calls. No error is raised.
-</Info>
-
-#### Provider Guard
-
-Gemini caching has a three-layer activation guard:
-
-1. **Provider family check** -- must be a Google provider family. No-op for
-   Anthropic, OpenAI, xAI, or any non-Google provider.
-2. **Per-agent config** -- `geminiCache.enabled` must be `true` in the agent's
-   configuration.
-3. **Google AI Studio only** -- only Google AI Studio supports the Caches API.
-   Vertex AI does not support this API, so Gemini caching is disabled for
-   Vertex AI providers.
-
-#### Injection Mechanics
-
-When a cache hit occurs, Comis performs atomic field stripping on the API
-request body: `systemInstruction`, `tools`, and `toolConfig` are removed from
-the request because they are already stored server-side in the CachedContent
-resource. This prevents double-billing -- without stripping, the provider
-would charge for both the cached content and the duplicate fields in the
-request.
-
-<Warning>
-Anthropic's `requestBodyInjector` (cache_control breakpoints) and Google's
-`geminiCacheInjector` (CachedContent) are mutually exclusive at runtime via
-provider family guards. Both exist in the stream wrapper chain but only
-activate for their respective provider. You never need to worry about
-conflicts between the two systems.
-</Warning>
+Minimum cacheable thresholds: Gemini Flash (2.5, 3) → 1,024 tokens; Gemini Flash (2.0) → 2,048 tokens; Gemini Pro (2.5, 3) → 4,096 tokens.
 
 ### Cache Observability Metrics
 
-Comis emits cache observability metrics covering breakpoint budget auditing,
-placement results, cache fence warnings, per-execution hit rates, cache break
-enrichment, session savings, and thinking block impact on cache fences. These
-metrics provide visibility into prompt cache behavior across all providers.
+Breakpoint budget auditing (INFO before each Anthropic API call), placement results (DEBUG when placed > 0), cache fence warnings (WARN when no `cache_control` marker on conversations with ≥ 10 messages), per-execution cache hit rate (added to "Execution complete" log), session cache savings rate, and thinking-block cleaner cache fence impact. See the [Web Dashboard Observability](/web-dashboard/observability) page for visual charts.
 
-#### Breakpoint Budget Audit
+---
 
-- **Level:** INFO
-- **Fires:** Every Anthropic API call (pre-message-placement)
-- **Log message:** `"Breakpoint budget audit (pre-message-placement)"`
-- **Payload:**
-  - `existingCount` -- total `cache_control` markers before placement
-  - `slotsAvailable` -- remaining slots (4 - existingCount)
-  - `systemBreakpoints` -- count on system blocks
-  - `toolBreakpoints` -- count on tool blocks
-  - `modelId` -- the model being called
-
-#### Breakpoint Placement Result
-
-- **Level:** DEBUG
-- **Fires:** After message breakpoint placement when placed > 0
-- **Log message:** `"Message breakpoints placed"`
-- **Payload:**
-  - `placed` -- number of breakpoints placed in this call
-  - `existingCount` -- pre-existing breakpoints
-  - `totalBreakpoints` -- existingCount + placed
-  - `minTokens` -- minimum token gap for placement
-  - `modelId` -- the model being called
-  - `strategy` -- breakpoint strategy: `"single"`, `"multi-zone"`, or `"auto"`
-
-#### Breakpoint Placement Skipped
-
-<Info>
-Breakpoint-placement-skipped behavior is covered by two implementations:
-
-1. **Threshold skip** (DEBUG) -- logged as `"Cache breakpoints skipped: token
-   gaps below minTokens threshold"` when `placed=0` and messages >= 4.
-2. **Budget exhausted** (WARN) -- logged when `slotsAvailable <= 0` and
-   messages >= 20. This is the W7 warning indicating all 4 breakpoint slots
-   are consumed.
-</Info>
-
-#### Cache Fence Unset Warning
-
-- **Level:** WARN
-- **Fires:** When no `cache_control` marker is found on ANY message in a conversation with >= 10 messages
-- **Log message:** `"Cache fence unset in mature session"`
-- **Payload:**
-  - `messageCount` -- total messages in the conversation
-  - `modelId` -- the model being called
-  - `hint` -- `"No cache breakpoint found on any message..."`
-  - `errorKind` -- `"performance"`
-
-#### Per-Execution Cache Hit Rate
-
-- **Level:** INFO (added to existing "Execution complete" log -- zero new log lines)
-- **Fires:** After every agent execution completes
-- **Formula:** `cacheHitRate = round(cacheRead / (cacheRead + input) * 100)` -- 0 when no cache reads
-- **Payload:**
-  - `cacheHitRate` -- percentage 0-100
-
-#### Cache Break Enrichment
-
-- **Level:** N/A (enriches existing `observability:cache_break` event payload and diff JSON files)
-- **Fires:** When a cache break is detected
-- **Payload:**
-  - `breakpointBudget.total` -- total `cache_control` markers
-  - `breakpointBudget.system` -- breakpoints on system blocks
-  - `breakpointBudget.tool` -- breakpoints on tool blocks
-  - `breakpointBudget.message` -- breakpoints on message blocks
-  - `breakpointBudget.sdkAuto` -- breakpoints placed by SDK automatically
-
-#### Session Cache Savings Rate
-
-- **Level:** INFO (added to existing "Execution complete" log -- zero new log lines)
-- **Fires:** After every agent execution completes
-- **Formula:** `sessionCacheSavingsRate = round(sessionCacheSavedUsd / (sessionCostUsd + sessionCacheSavedUsd) * 100)` -- 0 when no savings
-- **Payload:**
-  - `sessionCacheSavingsRate` -- percentage 0-100
-
-#### Thinking Block Cleaner Cache Fence Impact
-
-- **Level:** DEBUG (reported via callback, logged in context engine)
-- **Fires:** When thinking blocks are removed AND a cache fence is active (`cacheFenceIndex >= 0`)
-- **Payload:**
-  - `blocksRemoved` -- number of thinking blocks removed
-  - `cacheFenceIndex` -- index of the cache fence (only when fence active)
-  - `messagesProtected` -- `cacheFenceIndex + 1` (messages before the fence)
-  - `totalMessages` -- total messages in the conversation
-
-#### Event Bus Events
-
-The following events are emitted on the TypedEventBus for cache observability:
-
-**`observability:cache_break`** -- emitted when a cache break is detected.
-
-```typescript
-{
-  provider: string;
-  reason: string;  // CacheBreakReason value
-  tokenDrop: number;
-  tokenDropRelative: number;
-  previousCacheRead: number;
-  currentCacheRead: number;
-  callCount: number;
-  changes: {
-    systemChanged: boolean;
-    toolsChanged: boolean;
-    metadataChanged: boolean;
-    modelChanged: boolean;
-    retentionChanged: boolean;
-    addedTools: string[];
-    removedTools: string[];
-    changedSchemaTools: string[];
-    headersChanged: boolean;
-    extraBodyChanged: boolean;
-  };
-  toolsChanged: string[];
-  ttlCategory: string | undefined;
-  agentId: string;
-  sessionKey: string;
-  timestamp: number;
-  toolsAdded?: string[];
-  toolsRemoved?: string[];
-  toolsSchemaChanged?: string[];
-  systemCharDelta?: number;
-  model?: string;
-  effortValue?: string;
-}
-```
-
-**CacheBreakReason** is a union of 14 values indicating why the cache broke:
-
-| Reason | Description |
-|--------|-------------|
-| `model_changed` | LLM model was switched |
-| `system_changed` | System prompt content changed |
-| `tools_changed` | Tool definitions were added, removed, or modified |
-| `retention_changed` | Cache retention setting changed |
-| `cache_metadata_changed` | Cache metadata (non-content) changed |
-| `headers_changed` | HTTP headers changed |
-| `extra_body_changed` | Extra body parameters changed |
-| `effort_changed` | Thinking effort level changed |
-| `cache_control_changed` | Cache control breakpoints changed |
-| `lookback_window_exceeded` | Detection lookback window exceeded |
-| `ttl_expiry` | Cache TTL expired (general) |
-| `ttl_expiry_long` | Long-retention TTL expired |
-| `ttl_expiry_short` | Short-retention TTL expired |
-| `likely_server_eviction` | Provider likely evicted cache server-side |
-| `server_eviction` | Confirmed server-side cache eviction |
-
-**`cache:graph_prefix_written`** -- emitted when a graph node writes to the
-prompt cache.
-
-```typescript
-{
-  graphId: string;
-  nodeId: string;
-  cacheWriteTokens: number;
-  timestamp: number;
-}
-```
-
-## How It Works
-
-All tracking happens automatically in the background. There is no configuration
-required and no performance impact you would notice -- the tracking is lightweight
-and runs alongside normal message processing.
-
-The data is collected in memory and made available through two interfaces:
-
-- **Web dashboard** -- visual charts and tables at
-  [localhost:4766](/web-dashboard/observability)
-- **RPC API** -- programmatic access via the JSON-RPC gateway for integration
-  with external monitoring tools
-
-<Tip>
-Observability data resets when the daemon restarts. For persistent cost tracking
-across restarts, check the web dashboard's billing view, which shows
-session-level data stored in the database.
-</Tip>
-
-## Using Observability Data
-
-Here are some practical questions observability data helps you answer:
-
-**"Which agent costs the most?"**
-
-Check token tracking sorted by agent. The billing estimator shows estimated
-costs per agent per session. If one agent is significantly more expensive than
-others, consider whether it needs a less expensive model or whether its system
-prompt can be shortened.
-
-**"Are messages getting delivered?"**
-
-Check delivery tracing for failed deliveries. The channel activity tracker shows
-success rates per platform. If a specific channel has a low delivery rate, the
-delivery trace for individual messages shows where failures occur.
-
-**"Why is my agent slow?"**
-
-Check latency recording for a breakdown of time spent. Common causes of slow
-responses:
-
-- **High LLM call time** -- the AI provider is slow (try a different model or
-  check provider status pages)
-- **High tool execution time** -- a specific tool is taking too long (check
-  network connectivity for web tools, or command timeout for bash tools)
-- **High total time with low component times** -- the delay is in context
-  retrieval or message routing (check memory database performance)
-
-**"Is the daemon healthy?"**
-
-Check diagnostic collection. Event loop delays above 500ms indicate the daemon
-is under stress. High memory usage might mean you need to restart the daemon or
-increase available memory.
-
-## Observability vs. Web Dashboard
-
-This page explains **what is tracked and why**. The
-[Web Dashboard Observability](/web-dashboard/observability) page shows you
-**how to view this data in the browser** -- the charts, tables, and filters
-available in the dashboard UI.
-
-## Related Pages
+## 16. Related Pages
 
 <CardGroup cols={2}>
-  <Card title="Monitoring" icon="heart-pulse" href="/operations/monitoring">
-    System health checks and threshold alerts.
+  <Card title="Logging" icon="file-lines" href="/operations/logging">
+    Log rotation policy, viewing logs, log levels per module.
   </Card>
-  <Card title="Daemon" icon="server" href="/operations/daemon">
-    The process that collects all observability data.
+  <Card title="Incident Bundle" icon="folder-tree" href="/operations/incident-bundle">
+    Bundle export workflow and redaction policy.
+  </Card>
+  <Card title="Trace CLI" icon="terminal" href="/operations/trace-cli">
+    `comis trace` subcommands with copy-pasteable examples.
+  </Card>
+  <Card title="Monitoring" icon="heart-pulse" href="/operations/monitoring">
+    Health checks and threshold alerts.
   </Card>
   <Card title="Web Dashboard Observability" icon="chart-line" href="/web-dashboard/observability">
-    View observability data visually in your browser.
+    Visual dashboard for token, billing, and delivery data.
   </Card>
   <Card title="Agent Safety" icon="shield" href="/agents/safety">
     Budget limits, token caps, and cost controls.
