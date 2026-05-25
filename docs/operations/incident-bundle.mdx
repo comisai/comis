@@ -1,0 +1,334 @@
+---
+title: "Incident Bundle Export"
+description: "Export a self-contained diagnostic bundle for a session — CLI + slash command + redaction policy"
+icon: "folder-tree"
+---
+
+When a user reports a problem, the incident bundle is the artifact you hand to an engineer. It's a
+self-contained directory with the full session history, redacted at export time, ready to share over
+a secure channel.
+
+There are two ways to export a bundle:
+
+1. **Operator (CLI):** `comis trace export <sessionId>` from a terminal on the host.
+2. **End-user / owner (slash command):** `/export-trajectory` in a Telegram DM with the bot (or in
+   a group — the bundle path is DM'd to the owner, never posted to the group).
+
+<Info>
+The `comis` CLI is not installed on PATH by default. Use `node packages/cli/dist/cli.js trace ...`
+for all invocations below. If you've created a shell alias (e.g. `alias comis='node packages/cli/dist/cli.js'`),
+the shorter form works too.
+</Info>
+
+---
+
+## Operator Workflow
+
+Four steps from complaint to engineer handoff.
+
+### Step 1 — Find the session
+
+A user reports an issue. Use the trace CLI to find the messageId or sessionId. The `--since` and
+`--where` flags scan the session index by time window and failure state:
+
+```bash
+node packages/cli/dist/cli.js trace --since 10m --where error --json
+```
+
+This returns all sessions with errors in the last 10 minutes. If the user can give you their
+messageId (shown in delivery confirmations), a direct lookup is faster:
+
+```bash
+node packages/cli/dist/cli.js trace --message-id <uuid> --json
+```
+
+See [Trace CLI](/operations/trace-cli) for the full subcommand reference.
+
+### Step 2 — Export the bundle
+
+```bash
+node packages/cli/dist/cli.js trace export <sessionId>
+# Output: Bundle written to: /workspace/.comis/trace-exports/comis-trace-<sid8>-<ts>/
+```
+
+The pipeline reads the session file, reconstructs the branch, merges and sorts events, applies
+`platform-aware-v1` redaction, and writes the 8-file bundle directory.
+
+### Step 3 — Inspect the bundle (optional)
+
+```bash
+cd /workspace/.comis/trace-exports/comis-trace-<sid8>-<ts>/
+ls -la
+
+# Count events by type
+jq -r '.event' events.jsonl | sort | uniq -c | sort -rn | head
+
+# Find dedup events (double-fire diagnostic)
+jq 'select(.event == "dedup.duplicate_inbound")' events.jsonl
+
+# Find queue events
+jq 'select(.event | startswith("queue."))' events.jsonl
+
+# Check redaction policy applied
+jq '.redaction.policy' manifest.json
+# Expected: "platform-aware-v1"
+
+# Inspect manifest warnings
+cat manifest.json | jq '.warnings'
+```
+
+### Step 4 — Share with engineer
+
+Compress and transmit via a secure channel (DM or encrypted transfer). Delete the local copy after
+triage:
+
+```bash
+tar czf bundle.tar.gz comis-trace-<sid8>-<ts>/
+# Send via DM or secure-channel transport. Delete bundle.tar.gz after triage.
+rm -rf comis-trace-<sid8>-<ts>/ bundle.tar.gz
+```
+
+---
+
+## Bundle Directory Shape
+
+Each export produces a single directory containing exactly 8 files. The directory path is:
+
+```
+<workspaceDir>/.comis/trace-exports/comis-trace-<sid8>-<ts>/
+```
+
+The directory is created with mode `0o700` (owner-only access). Every file inside is written with
+mode `0o600`.
+
+| File | Purpose | Format |
+|------|---------|--------|
+| `manifest.json` | TrajectoryBundleManifest: contents array, redaction policy, warnings (capped at 20 rows per code) | JSON |
+| `events.jsonl` | Merged runtime + transcript events, ts-sorted with (source, sourceSeq) tiebreak | JSONL (one event per line) |
+| `session-branch.json` | Reconstructed branch from leaf back, with parentId chain | JSON |
+| `metadata.json` | trace.metadata payload (harness, model, config snapshot) | JSON |
+| `artifacts.json` | trace.artifacts payload (final outcome, token usage, error) | JSON |
+| `prompts.json` | Prompt fragments (redacted) | JSON |
+| `system-prompt.txt` | System prompt at export time (redacted) | Plain text |
+| `tools.json` | Tool definitions snapshot | JSON |
+
+**Round-trip property:** `events.jsonl` alone reconstructs the chronological turn timeline. The
+other files provide supporting context (model config, prompt fragments, tool definitions) and are
+not required for primary diagnosis.
+
+---
+
+## Hard Limits
+
+The bundle pipeline enforces four hard limits (BUNDLE-03). Exceeding a limit does not crash the
+pipeline — it records a structured warning in `manifest.json` or returns a typed error.
+
+| Limit | Value | Behavior on hit |
+|-------|-------|-----------------|
+| Max runtime events | 200,000 | Excess events dropped; warning recorded in `manifest.json` |
+| Max total events (runtime + transcript) | 250,000 | Same as above |
+| Max session file bytes | 50 MB | `session-file-too-large` error returned; export refuses |
+| Max warning rows per code | 20 | Excess rows truncated; total count preserved in manifest |
+
+<Info>
+Bundle export never crashes on malformed data. All errors are returned via the `Result<T, E>`
+pattern and emitted as structured warnings in `manifest.json`. If a section can't be read, the
+pipeline writes partial output and records a warning rather than aborting.
+</Info>
+
+---
+
+## Redaction Policy
+
+All bundle output passes through `platform-aware-v1` redaction at export time. This is the policy
+id pinned in `manifest.json` under the `redaction.policy` field. You can verify it was applied:
+
+```bash
+jq '.redaction.policy' manifest.json
+# "platform-aware-v1"
+```
+
+### 11 Value-Shape Patterns
+
+The redactor applies 11 value-shape regex patterns to every string leaf in the bundle:
+
+| Pattern | Catches |
+|---------|---------|
+| Secret fields | `apiKey`, `token`, `password`, `secret`, `authorization`, `botToken`, `privateKey`, `cookie`, `webhookSecret` |
+| Payload fields | Identified PII fields per platform adapter |
+| Identifier fields | Platform-specific user or chat ID fields |
+| AWS access keys | `AKIA[0-9A-Z]{16}` and similar formats |
+| JWTs | `eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+` |
+| URL userinfo | `https://user:pass@host/...` |
+| URL params | Sensitive query-string parameters |
+| Basic auth | `Basic <base64>` |
+| Cookie headers | `Cookie: ...` header values |
+| Emails | `user@domain.tld` |
+| Long decimal IDs | `\b\d{9,}\b` (catches Telegram chat IDs and similar) |
+
+<Warning>
+Long-decimal-ID redaction (`\b\d{9,}\b`) is intentionally aggressive — it catches Telegram chat
+IDs but also legitimate counters and timestamps. This is the §8.3 design tradeoff: more aggressive
+at the export boundary, lighter at runtime. Do not rely on counters or sequence numbers surviving
+redaction in exported bundles.
+</Warning>
+
+### Path Substitutions
+
+Absolute paths in the bundle are replaced with placeholder tokens (longest-match wins):
+
+| Token | Replaced path |
+|-------|---------------|
+| `$WORKSPACE_DIR` | The workspace root directory |
+| `$HOME` | The user's home directory |
+| `$STATE_DIR` | The `~/.comis` state directory |
+
+The substitution is longest-first: if `$STATE_DIR` is nested inside `$HOME`, the `$STATE_DIR`
+token wins. This makes bundle paths portable and prevents home-directory enumeration.
+
+---
+
+## Privacy Notice
+
+<Warning>
+**Privacy notice**
+
+Bundle contents reflect the raw session and runtime trajectory at export time. Redaction applies platform-aware patterns (Telegram chat IDs, JWTs, AWS keys, URL userinfo, basic-auth, cookie headers, emails), substitutes paths, and omits identified PII fields — but redaction is heuristic. Always treat exported bundles as containing sensitive content; share only with authorized engineers, prefer DM/secure channels, and delete after triage.
+</Warning>
+
+---
+
+## `/export-trajectory` Slash Command
+
+The `/export-trajectory` slash command gives the daemon owner a way to trigger a bundle export
+from within Telegram itself, without needing terminal access.
+
+**Owner gate:** Only the configured daemon owner can invoke this command. Non-owner invocations
+are silently ignored — the command name `export-trajectory` is in `KNOWN_COMMANDS`, so the text
+never reaches the LLM.
+
+### In a Telegram DM
+
+When the owner types `/export-trajectory` in a direct message with the bot:
+
+1. The bot exports the most recent session associated with that DM.
+2. The bundle path is returned inline in the DM thread.
+
+```
+/export-trajectory
+→  Bundle written to: /workspace/.comis/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/
+```
+
+### In a Telegram group
+
+When the owner types `/export-trajectory` in a group chat:
+
+1. The bot replies in the group: `"Bundle sent to owner DM."`
+2. The bot sends the bundle path to the owner's personal DM.
+3. **The bundle path never appears in the group thread.** This is an enforced invariant — the
+   bundle path is routed exclusively to the owner's DM, not to `deliverToChannel`.
+
+<Warning>
+Owner gate is enforced at the slash-command handler. Non-owner invocations are silently ignored —
+the command name `export-trajectory` is in `KNOWN_COMMANDS` so the text never reaches the LLM.
+This means non-owners see no reply at all when they type the command.
+</Warning>
+
+---
+
+## `comis trace export` CLI Reference
+
+```bash
+node packages/cli/dist/cli.js trace export <sessionId>
+```
+
+### Arguments
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<sessionId>` | Yes | UUID of the session to export |
+| `--json` | No | Emit machine-readable JSON instead of human-readable path string |
+
+### Output
+
+**Human-readable (default):**
+```
+Bundle written to: /workspace/.comis/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/
+```
+
+**JSON mode (`--json`):**
+```json
+{"bundlePath": "/workspace/.comis/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/"}
+```
+
+**JSON mode is useful for scripting:**
+```bash
+BUNDLE_PATH=$(node packages/cli/dist/cli.js trace export <sessionId> --json | jq -r '.bundlePath')
+ls -la "$BUNDLE_PATH"
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Export succeeded; bundle path printed |
+| 1 | Export failed; error message printed to stderr |
+
+---
+
+## Bundle Inspection Worked Example
+
+A complete diagnostic walkthrough using only the bundle directory and `jq`:
+
+```bash
+# Navigate to the bundle
+cd /workspace/.comis/trace-exports/comis-trace-a1b2c3d4-20260525T074621Z/
+
+# 1. Count events by type — understand what happened at a glance
+jq -r '.event' events.jsonl | sort | uniq -c | sort -rn | head
+
+# 2. Find dedup events (double-fire diagnostic)
+jq 'select(.event == "dedup.duplicate_inbound")' events.jsonl
+
+# 3. Find all queue events (enqueue, dequeue, failures)
+jq 'select(.event | startswith("queue."))' events.jsonl
+
+# 4. Find the enqueue event for a specific message
+jq 'select(.event == "queue.enqueued")' events.jsonl
+
+# 5. Pull session metadata (harness, model, config snapshot)
+jq '.harness, .model, .config' metadata.json
+
+# 6. Final outcome (status, duration, last error)
+jq '.finalStatus, .durationMs, .lastToolError' artifacts.json
+
+# 7. Check redaction policy applied
+jq '.redaction.policy' manifest.json
+# Expected: "platform-aware-v1"
+
+# 8. Inspect manifest warnings (truncated events, missing parents, etc.)
+jq '.warnings' manifest.json
+```
+
+`events.jsonl` alone reconstructs the chronological turn timeline. The other files are supporting
+context — not required for primary diagnosis, but useful for understanding the model configuration
+and exact tool definitions active during the session.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Trace CLI" icon="terminal" href="/operations/trace-cli">
+    All 5 `comis trace` subcommands — messageId, traceId, tail, since/where, export.
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/operations/observability">
+    Bridge mapping, lifecycle envelopes, INFO promotions, and the dedup detector.
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/operations/logging">
+    Log levels, field dictionary, and log rotation policy.
+  </Card>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    The process that runs all of this — startup, shutdown, and configuration.
+  </Card>
+</CardGroup>
