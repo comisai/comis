@@ -345,6 +345,53 @@ describe("SqliteDeliveryQueueAdapter", () => {
   });
 
   // -----------------------------------------------------------------------
+  // unconfirmedEntries (MCP resources/read CONFIRMED-only leak guard)
+  //
+  // pendingEntries() is scoped to the drainer ("due to send now" =
+  // status='pending' AND scheduled_at<=now) and intentionally hides in_flight
+  // rows. The MCP resources/read CONFIRMED-only filter needs the OPPOSITE: the
+  // full set of NOT-yet-delivered entries (anything except 'delivered') so an
+  // in-flight / failed / future-scheduled outbound message is never reported as
+  // confirmed and leaked to an MCP client. unconfirmedEntries() is that query.
+  // -----------------------------------------------------------------------
+
+  describe("unconfirmedEntries", () => {
+    it("returns pending + in_flight + failed entries and excludes delivered", async () => {
+      // pending (also future-scheduled, to prove no scheduled_at gate)
+      await queue.enqueue(makeEntry({ text: "p-now", scheduledAt: now }));
+      await queue.enqueue(makeEntry({ text: "p-future", scheduledAt: now + 60_000 }));
+      // in_flight
+      await queue.enqueueInFlight(makeEntry({ text: "inflight" }));
+      // failed
+      const failResult = await queue.enqueue(makeEntry({ text: "failed" }));
+      if (failResult.ok) await queue.fail(failResult.value, "boom");
+      // delivered (must be excluded)
+      const okResult = await queue.enqueue(makeEntry({ text: "delivered" }));
+      if (okResult.ok) await queue.ack(okResult.value, "msg-1");
+
+      const result = await queue.unconfirmedEntries();
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const texts = result.value.map((e) => e.text).sort();
+        expect(texts).toEqual(["failed", "inflight", "p-future", "p-now"]);
+        expect(texts).not.toContain("delivered");
+      }
+    });
+
+    it("includes in_flight rows that pendingEntries hides (the leak the filter must close)", async () => {
+      await queue.enqueueInFlight(makeEntry({ text: "inflight-only" }));
+
+      const pending = await queue.pendingEntries();
+      const unconfirmed = await queue.unconfirmedEntries();
+      expect(pending.ok && unconfirmed.ok).toBe(true);
+      if (pending.ok) expect(pending.value).toHaveLength(0);
+      if (unconfirmed.ok) {
+        expect(unconfirmed.value.map((e) => e.text)).toEqual(["inflight-only"]);
+      }
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // recoverInFlight (SPEC-R3 startup sweep)
   // -----------------------------------------------------------------------
 
