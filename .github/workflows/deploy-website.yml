@@ -43,4 +43,8 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           packageManager: npm
-          command: pages deploy website/dist --project-name=comis --branch=${{ github.head_ref || github.ref_name }}
+          # Run wrangler's install + command from website/ (a clean npm package) rather than
+          # the repo root, whose pnpm-workspace package.json has `workspace:*` specifiers that
+          # npm cannot parse (EUNSUPPORTEDPROTOCOL). `dist` is now relative to website/.
+          workingDirectory: website
+          command: pages deploy dist --project-name=comis --branch=${{ github.head_ref || github.ref_name }}
