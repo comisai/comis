@@ -1,0 +1,98 @@
+# Phase 69 Plan 04 -- MCP server rate-limit stress-test config (port 8570).
+#
+# Single mcp-client token with allowlist = ["memory_search"] and
+# default rate-limit (no toolRateLimit override). The dispatcher uses the
+# 30/min/tool default; the stress test fires 100 calls -> ~30 succeed,
+# ~70 return rate_limit_exceeded.
+#
+# Port 8570 to avoid conflicts with Plan 03's 8569 and Plan 04's
+# tools-call test's 8571 when running under vitest pool: "forks".
+
+tenantId: "test"
+logLevel: "info"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  test-agent:
+    model: default
+    thinkingLevel: "off"
+    name: MCP Server Rate-Limit Test Agent
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+memory:
+  dbPath: "test-memory-mcp-server-rate-limit.db"
+  walMode: true
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8570
+  tokens:
+    # Primary daemon auth token (rpc/ws/admin) so the harness health check works.
+    - id: test-token
+      secret: mcp-svr-ratelimit-primary-tok-1
+      scopes: ["rpc", "ws", "admin"]
+    # mcp-client with memory_search allowlisted; no toolRateLimit override
+    # (uses the default 30/min ceiling from the dispatcher).
+    - id: mcp-ratelimit
+      secret: mcp-svr-ratelimit-tok-1-test-fixture-aaa
+      scopes: ["mcp-client"]
+      mcpClient:
+        allowlist: ["memory_search"]
+        sessionAllowlist: []
+        toolRateLimit: {}
+  rateLimit:
+    # Generous layer-1 (per-IP) limit so it never trips before our per-tool
+    # cap; the test validates the per-tool layer at 30/min.
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic
