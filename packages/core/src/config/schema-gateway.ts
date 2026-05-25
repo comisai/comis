@@ -26,15 +26,43 @@ export const GatewayTlsConfigSchema = z.strictObject({
  * ensuring sufficient entropy for bearer tokens. The field
  * is optional — when omitted, the secret is resolved at runtime via
  * environment variable or auto-generation.
+ *
+ * Phase 69 SERVE-02: the `mcpClient` block is only meaningful when `scopes`
+ * includes `"mcp-client"`. The `.refine` below enforces ADMIN-DISJOINTNESS —
+ * a single token MUST NOT co-issue both `"admin"` and `"mcp-client"` (privilege
+ * escalation per threat T-69-02). The refine surfaces at config-load with the
+ * literal token `[scope_disjointness]` and `errorKind: "config"`.
  */
 export const GatewayTokenSchema = z.strictObject({
     /** Unique identifier for this token */
     id: z.string().min(1),
     /** The secret value (min 32 chars; resolved at runtime if omitted; string or SecretRef) */
     secret: z.union([z.string().min(32), SecretRefSchema]).optional(),
-    /** Allowed scopes for this token (e.g., ["rpc", "ws", "admin"]) */
+    /** Allowed scopes for this token (e.g., ["rpc", "ws", "admin", "mcp-client"]) */
     scopes: z.array(z.string().min(1)).default([]),
-  });
+    /** Per-MCP-client config block; only meaningful when `scopes` includes
+     *  `"mcp-client"` (Phase 69 SERVE-02). Operators may omit it entirely when
+     *  not provisioning an MCP client. */
+    mcpClient: z.strictObject({
+      /** Tool names this MCP client may invoke. Empty = only `"safe"`-classified
+       *  tools are exposed (no `"permission-gated"` access). See SERVE-03/04. */
+      allowlist: z.array(z.string()).default([]),
+      /** Session keys this MCP client may read via `resources/*`. Empty = no
+       *  sessions exposed (Phase 69 SERVE-06). */
+      sessionAllowlist: z.array(z.string()).default([]),
+      /** Per-tool rate-limit override (calls/min). Falls back to the
+       *  30-calls/min/tool default in SERVE-07. */
+      toolRateLimit: z.record(z.string(), z.number().int().positive()).default({}),
+    }).optional(),
+  })
+  .refine(
+    (t) => !(t.scopes.includes("admin") && t.scopes.includes("mcp-client")),
+    {
+      message:
+        "[scope_disjointness] admin and mcp-client scopes MUST NOT be co-issued on a token",
+      path: ["scopes"],
+    },
+  );
 
 /**
  * Rate limiting configuration for the gateway.

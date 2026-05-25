@@ -167,6 +167,51 @@ describe("tool metadata -- ToolCapabilityMetadata (v1.1)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// mcpExportPolicy tests (Phase 69 SERVE-03)
+// ---------------------------------------------------------------------------
+
+describe("registerToolMetadata mcpExportPolicy merge -- Phase 69 SERVE-03", () => {
+  it("registerToolMetadata preserves mcpExportPolicy across spread-merges from different categories", () => {
+    registerToolMetadata("mcp_export_merge_a", { isReadOnly: true });
+    registerToolMetadata("mcp_export_merge_a", {
+      mcpExportPolicy: "permission-gated",
+    });
+    const meta = getToolMetadata("mcp_export_merge_a");
+    expect(meta).toBeDefined();
+    expect(meta).toMatchObject({
+      isReadOnly: true,
+      mcpExportPolicy: "permission-gated",
+    });
+  });
+
+  it("re-registering mcpExportPolicy overrides the previous value wholesale", () => {
+    registerToolMetadata("mcp_export_override_b", {
+      mcpExportPolicy: "permission-gated",
+    });
+    registerToolMetadata("mcp_export_override_b", { mcpExportPolicy: "safe" });
+    const meta = getToolMetadata("mcp_export_override_b");
+    expect(meta!.mcpExportPolicy).toBe("safe");
+  });
+
+  it("accepts all three literal policy values from the union", () => {
+    registerToolMetadata("mcp_export_safe_c", { mcpExportPolicy: "safe" });
+    registerToolMetadata("mcp_export_gated_c", {
+      mcpExportPolicy: "permission-gated",
+    });
+    registerToolMetadata("mcp_export_never_c", {
+      mcpExportPolicy: "never-export",
+    });
+    expect(getToolMetadata("mcp_export_safe_c")!.mcpExportPolicy).toBe("safe");
+    expect(getToolMetadata("mcp_export_gated_c")!.mcpExportPolicy).toBe(
+      "permission-gated",
+    );
+    expect(getToolMetadata("mcp_export_never_c")!.mcpExportPolicy).toBe(
+      "never-export",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Truncation tests
 // ---------------------------------------------------------------------------
 
