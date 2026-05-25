@@ -26,7 +26,7 @@ import { redactString, substitutePathsInString } from "@comis/observability";
  * `userPromptPrefixText` field and the optional `pathOpts` for path
  * substitution context.
  */
-export function buildPromptingSnapshot(input: {
+export function buildPromptingSnapshot(state: {
   systemPromptDigest?: string;
   systemPromptByteLen?: number;
   userPromptPrefixText?: string;
@@ -38,19 +38,19 @@ export function buildPromptingSnapshot(input: {
 } {
   const out: Record<string, unknown> = {};
 
-  if (input.systemPromptDigest !== undefined) {
-    out.systemPromptDigest = input.systemPromptDigest;
+  if (state.systemPromptDigest !== undefined) {
+    out.systemPromptDigest = state.systemPromptDigest;
   }
-  if (input.systemPromptByteLen !== undefined) {
-    out.systemPromptByteLen = input.systemPromptByteLen;
+  if (state.systemPromptByteLen !== undefined) {
+    out.systemPromptByteLen = state.systemPromptByteLen;
   }
-  if (input.userPromptPrefixText !== undefined) {
-    const opts = input.pathOpts ?? {};
+  if (state.userPromptPrefixText !== undefined) {
+    const opts = state.pathOpts ?? {};
     // Route through value-shape redactor FIRST, then path substitution.
     // Defense-in-depth: credentials embedded in path-like strings are caught
     // by redactString before substitutePathsInString normalizes the prefix.
     out.userPromptPrefixText = substitutePathsInString(
-      redactString(input.userPromptPrefixText),
+      redactString(state.userPromptPrefixText),
       opts,
     );
   }
