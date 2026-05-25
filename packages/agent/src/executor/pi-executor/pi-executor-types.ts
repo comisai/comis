@@ -126,6 +126,19 @@ export interface PiExecutorDeps {
   skillRegistry?: {
     getEligibleSkillNames(): Set<string>;
     initFromSdkSkills(sdkSkills: Array<{ name: string; description: string; filePath: string; baseDir: string; source: string; disableModelInvocation: boolean }>): void;
+    /**
+     * WR-01 (Plan 05-04): optional accessor for the populated trace.metadata snapshot.
+     * Structural (not importing SkillSnapshot from @comis/skills) to avoid an
+     * agent -> skills circular dependency.
+     * Daemon wiring passes the full @comis/skills SkillRegistry which implements
+     * this shape; tests can pass the legacy two-method mock (getSnapshot absent).
+     */
+    getSnapshot?(): {
+      readonly skills: ReadonlyArray<{
+        readonly name: string;
+        readonly version?: number | string;
+      }>;
+    };
   };
   /** Fire-and-forget embedding enqueue callback. Injected by daemon wiring. */
   embeddingEnqueue?: (entryId: string, content: string) => void;
