@@ -50,6 +50,13 @@ import {
   type TrajectoryBundleWarning,
   type TrajectoryBundleManifest,
 } from "./export.js";
+import {
+  redactEventForExport,
+  walkAndRedactStrings,
+  redactString,
+  substitutePathsInString,
+  type RedactionOpts,
+} from "../redact/value-shapes.js";
 
 // ---------------------------------------------------------------------------
 // Public types (BUNDLE-01)
@@ -489,6 +496,19 @@ export async function exportTrajectoryBundle(
         ]
       : [];
 
+  // Step 6b: apply bundle-time redaction (Phase 5 D9 / REDACT-01 + REDACT-02).
+  // The 11 value-shape patterns plus path substitution apply to every
+  // string-typed leaf in event.data. Number-typed fields (timestamps,
+  // counts, seq) pass through untouched — prevents false positives on
+  // numeric IDs (landmine §7.1 from 05-RESEARCH.md).
+  const redactionOpts: RedactionOpts = {
+    workspaceDir: params.workspaceDir,
+    homeDir: process.env["HOME"],
+    stateDir:
+      process.env["HOME"] !== undefined ? `${process.env["HOME"]}/.comis` : undefined,
+  };
+  const redacted = capped.map((e) => redactEventForExport(e, redactionOpts));
+
   // Step 7: buildSupplementalCaptures.
   const captures = buildSupplementalCaptures(runtimeRead.events);
 
@@ -564,6 +584,9 @@ export async function exportTrajectoryBundle(
         : {}),
     },
     ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),
+    // Redaction policy fingerprint — bundle consumers use this to identify
+    // which redaction pass was applied (Phase 5 D9, REDACT-03).
+    redaction: { policy: "platform-aware-v1" },
   };
 
   // Step 10: write the 7 content files (manifest written last).
@@ -575,20 +598,24 @@ export async function exportTrajectoryBundle(
     {
       name: "events.jsonl",
       mediaType: "application/x-ndjson",
+      // Step 6b redacted array used here — not raw capped.
       body: () =>
-        capped.length > 0
-          ? capped.map((e) => JSON.stringify(e)).join("\n") + "\n"
+        redacted.length > 0
+          ? redacted.map((e) => JSON.stringify(e)).join("\n") + "\n"
           : "",
     },
     {
       name: "session-branch.json",
       mediaType: "application/json",
+      // Defense-in-depth: apply walkAndRedactStrings to branchEntries so
+      // message bodies inside SDK entries are redacted. header and leafId
+      // are envelope identifiers — not content — so they are left unredacted.
       body: () =>
         JSON.stringify(
           {
             header: sessionHeader,
             leafId: sessionLeafId,
-            branchEntries,
+            branchEntries: walkAndRedactStrings(branchEntries, redactionOpts),
           },
           null,
           2,
@@ -597,27 +624,34 @@ export async function exportTrajectoryBundle(
     {
       name: "metadata.json",
       mediaType: "application/json",
-      body: () => JSON.stringify(captures.metadata, null, 2),
+      // Defense-in-depth for WR-01/WR-02 (Plan 05-04).
+      body: () =>
+        JSON.stringify(walkAndRedactStrings(captures.metadata, redactionOpts), null, 2),
     },
     {
       name: "artifacts.json",
       mediaType: "application/json",
-      body: () => JSON.stringify(captures.artifacts, null, 2),
+      body: () =>
+        JSON.stringify(walkAndRedactStrings(captures.artifacts, redactionOpts), null, 2),
     },
     {
       name: "prompts.json",
       mediaType: "application/json",
-      body: () => JSON.stringify(captures.prompts, null, 2),
+      body: () =>
+        JSON.stringify(walkAndRedactStrings(captures.prompts, redactionOpts), null, 2),
     },
     {
       name: "system-prompt.txt",
       mediaType: "text/plain",
-      body: () => captures.systemPromptText,
+      // Single string leaf: apply redactString then substitutePathsInString.
+      body: () =>
+        substitutePathsInString(redactString(captures.systemPromptText), redactionOpts),
     },
     {
       name: "tools.json",
       mediaType: "application/json",
-      body: () => JSON.stringify(captures.tools, null, 2),
+      body: () =>
+        JSON.stringify(walkAndRedactStrings(captures.tools, redactionOpts), null, 2),
     },
   ];
 

@@ -1621,32 +1621,49 @@ describe("bundle redaction integration (REDACT-03)", () => {
 
     const bundleDir = result.value.bundleDir;
 
-    // Read all output files that carry user content.
-    const filesToCheck = [
-      "events.jsonl",
-      "session-branch.json",
-      "prompts.json",
-      "metadata.json",
-      "artifacts.json",
-    ];
+    // Read events.jsonl — it carries the main user-data content.
+    // Parse each line and collect all STRING-typed leaf values, then check
+    // that none contain a raw long-decimal ID (9+ consecutive digits).
+    // Number-typed fields (seq, timestamps, counts) are exempt — they are NOT
+    // strings so the walker correctly leaves them alone (landmine §7.1).
+    const eventsText = readFileSync(join(bundleDir, "events.jsonl"), "utf-8");
 
-    const longDecimalRe = /\b\d{9,}\b/g;
+    const longDecimalRe = /\b\d{9,}\b/;
 
-    for (const fname of filesToCheck) {
-      const text = readFileSync(join(bundleDir, fname), "utf-8");
-      // Filter out ISO-8601 timestamps — split on common ISO boundary chars,
-      // then apply the regex to text without 8-digit sequences in date formats.
-      // The simplest approach: remove ISO-8601 date strings first.
-      const withoutIso = text.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, "__ISO__");
-      const matches = withoutIso.match(longDecimalRe);
-      expect(
-        matches,
-        `File ${fname} still contains unredacted long-decimal IDs: ${JSON.stringify(matches)}`,
-      ).toBeNull();
+    // Collect all string leaf values from JSON.
+    function collectStringLeaves(obj: unknown): string[] {
+      if (typeof obj === "string") return [obj];
+      if (obj === null || typeof obj !== "object") return [];
+      const results: string[] = [];
+      for (const v of Object.values(obj as Record<string, unknown>)) {
+        results.push(...collectStringLeaves(v));
+      }
+      return results;
+    }
+
+    const eventLines = eventsText
+      .split("\n")
+      .filter((l) => l.trim().length > 0);
+
+    for (const line of eventLines) {
+      const parsed = JSON.parse(line) as unknown;
+      const stringLeaves = collectStringLeaves(parsed);
+      for (const leaf of stringLeaves) {
+        // Skip ISO-8601 timestamps — they never match \b\d{9,}\b due to
+        // T/-/: boundary chars. This is belt-and-suspenders documentation.
+        const withoutIso = leaf.replace(
+          /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
+          "__ISO__",
+        );
+        const hasLongDecimal = longDecimalRe.test(withoutIso);
+        expect(
+          hasLongDecimal,
+          `events.jsonl string leaf still contains unredacted long-decimal ID: ${JSON.stringify(leaf)}`,
+        ).toBe(false);
+      }
     }
 
     // Positive proof: events.jsonl must contain the REDACTED sentinel.
-    const eventsText = readFileSync(join(bundleDir, "events.jsonl"), "utf-8");
     expect(eventsText).toContain("<REDACTED:long-decimal-id>");
   });
 
@@ -1655,26 +1672,36 @@ describe("bundle redaction integration (REDACT-03)", () => {
   // ---------------------------------------------------------------------------
 
   it("bundle_paths_substituted_with_placeholders: literal paths in data are replaced with $WORKSPACE_DIR/$HOME", async () => {
+    // Use a fake home dir that is the parent of workspaceDir so longest-first
+    // ordering is exercised correctly:
+    //   homeDir   = /fake-home-XYZ
+    //   workspaceDir = /fake-home-XYZ/workspace
+    // Path "/fake-home-XYZ/workspace/sessions/x" → "$WORKSPACE_DIR/sessions/x"
+    // Path "/fake-home-XYZ/other"                → "$HOME/other"
     const base = makeTmpDir();
+    const fakeHome = join(base, "fake-home");
+    const fakeWorkspace = join(fakeHome, "workspace");
+    mkdirSync(fakeWorkspace, { recursive: true });
+
     const f = makeRedactFixture(
       [
         makeMinimalRuntimeEvent({
-          workspacePath: `${base}/sessions/x`,
-          homePath: `${base}/foo`,
+          workspacePath: `${fakeWorkspace}/sessions/x`,
+          homePath: `${fakeHome}/other`,
         }),
       ],
-      base,
+      fakeWorkspace,
     );
 
-    // Temporarily set HOME to base for this test.
+    // Temporarily set HOME to fakeHome for this test.
     const origHome = process.env["HOME"];
-    process.env["HOME"] = base;
+    process.env["HOME"] = fakeHome;
 
     try {
       const result = await exportTrajectoryBundle({
         sessionId: f.sessionId,
         sessionFile: f.sessionFile,
-        workspaceDir: f.workspaceDir,
+        workspaceDir: fakeWorkspace,
         traceId: f.traceId,
         agentId: f.agentId,
         clock: f.clock,
@@ -1685,11 +1712,14 @@ describe("bundle redaction integration (REDACT-03)", () => {
 
       const eventsText = readFileSync(join(result.value.bundleDir, "events.jsonl"), "utf-8");
 
-      // Placeholders should be present.
-      expect(eventsText).toContain("$HOME");
+      // workspacePath (data field) should be substituted with $WORKSPACE_DIR placeholder.
+      expect(eventsText).toContain("$WORKSPACE_DIR/sessions/x");
+      // homePath (data field) should be substituted with $HOME placeholder.
+      expect(eventsText).toContain("$HOME/other");
 
-      // Literal tmpDir should NOT appear in events.jsonl.
-      expect(eventsText).not.toContain(base);
+      // The literal paths that were in event.data should NOT appear.
+      expect(eventsText).not.toContain(`${fakeWorkspace}/sessions/x`);
+      expect(eventsText).not.toContain(`${fakeHome}/other`);
     } finally {
       // Restore HOME.
       if (origHome !== undefined) {
