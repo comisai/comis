@@ -165,7 +165,7 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Owner-Gated Bundle Export
 
-- [ ] **EXPORT-01**: `/export-trajectory` slash command works in a Telegram DM; in a group chat the result is DM'd to the owner, never inline
+- [x] **EXPORT-01**: `/export-trajectory` slash command works in a Telegram DM; in a group chat the result is DM'd to the owner, never inline
   - Design: M2.7 *(files: `packages/orchestrator/src/commands/...`, command handler)*
 
 ### Log Rotation
@@ -276,7 +276,7 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | CLI-05 | Phase 6 | Complete |
 | CLI-06 | Phase 6 | Complete |
 | CLI-07 | Phase 6 | Complete |
-| EXPORT-01 | Phase 6 | Pending |
+| EXPORT-01 | Phase 6 | Complete |
 | ROTATE-01 | Phase 7 | Pending |
 | ROTATE-02 | Phase 7 | Pending |
 | ROTATE-03 | Phase 7 | Pending |

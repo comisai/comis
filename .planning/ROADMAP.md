@@ -27,7 +27,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 - [x] **Phase 3: Boot Invariants, INFO Promotion & Dedup Detector** — Today's bug visible at boot AND at first message AND at queue layer (completed 2026-05-24)
 - [x] **Phase 4: Session DAG & Bundle Exporter** — Parent-linked session entries enable one-command bundle export with manifest + redaction-safe contents (completed 2026-05-24)
 - [x] **Phase 5: Trajectory Pointer & Platform-Aware Redaction** — Trajectory storage is relocatable; bundles ship with platform-aware redaction at export boundary (completed 2026-05-25)
-- [ ] **Phase 6: Operator CLI & Slash-Command Export** — `comis trace` subcommands + session index + `/export-trajectory` owner-gated DM delivery
+- [x] **Phase 6: Operator CLI & Slash-Command Export** — `comis trace` subcommands + session index + `/export-trajectory` owner-gated DM delivery (completed 2026-05-25)
 - [ ] **Phase 7: Log Rotation & Alert Budget** — Auto-rotating logs with compressed aged files + rate-aggregated health budget alerts
 - [ ] **Phase 8: Pipeline-Tag Discipline & Operator Docs** — `step:` coverage ≥50% architecture-test-enforced + three new operator docs published
 
@@ -163,7 +163,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 - [x] 06-02-PLAN.md — Three new RPC contracts (CLI-06): ObsTraceSearchContract / ObsTraceTailContract / ObsTraceExportContract appended to packages/core/src/api-contracts/observability.ts with zod schemas matching research §9; OBSERVABILITY_CONTRACTS grows 21→24 [wave 1, type: tdd, parallel with 06-01]
 - [x] 06-03-PLAN.md — Daemon RPC handlers + messageId LRU: new packages/daemon/src/api/obs-handlers/obs-trace.ts with bindObsTraceHandlers(deps); admin-only trust gate; bounded LRU (1024 entries) seeded from session-index; closes the bidirectional 1:1 arch test that 06-02 leaves red [wave 2, depends 06-01 + 06-02, type: tdd]
 - [x] 06-04-PLAN.md — `comis trace` CLI subcommands (CLI-01..05, CLI-07): new packages/cli/src/commands/trace.ts with registerTraceCommand(program); 5 subcommands (--message-id, --trace-id, --chat --tail, --since/--where, export); --json boolean on every subcommand; --tail polling loop with AbortSignal; uses callTyped only (no client.call) [wave 3, depends 06-02 + 06-03, type: tdd]
-- [ ] 06-05-PLAN.md — `/export-trajectory` slash command (EXPORT-01): adds "export-trajectory" to KNOWN_COMMANDS so text never reaches LLM; new packages/orchestrator/src/commands/export-trajectory.ts with handleExportTrajectory; special-case dispatch in inbound-gate.ts BEFORE generic handleSlashCommand block; owner gate (msg.senderId === sessionKey.userId); isGroupMessage routing: DM → inline path + privacy reminder, group → "Bundle sent to owner DM" inline + DM-to-owner with path (path NEVER inline in group); deps.exportSessionBundle DI seam [wave 3, depends 06-02 + 06-03, type: tdd, parallel with 06-04]
+- [x] 06-05-PLAN.md — `/export-trajectory` slash command (EXPORT-01): adds "export-trajectory" to KNOWN_COMMANDS so text never reaches LLM; new packages/orchestrator/src/commands/export-trajectory.ts with handleExportTrajectory; special-case dispatch in inbound-gate.ts BEFORE generic handleSlashCommand block; owner gate (msg.senderId === sessionKey.userId); isGroupMessage routing: DM → inline path + privacy reminder, group → "Bundle sent to owner DM" inline + DM-to-owner with path (path NEVER inline in group); deps.exportSessionBundle DI seam [wave 3, depends 06-02 + 06-03, type: tdd, parallel with 06-04]
 
 ### Phase 7: Log Rotation & Alert Budget
 
@@ -210,7 +210,7 @@ Phase ordering reflects this priority: M1 closes the today's-bug-class gaps firs
 | 3. Boot Invariants, INFO Promotion & Dedup Detector | 4/4 | Complete   | 2026-05-24 |
 | 4. Session DAG & Bundle Exporter | 4/4 | Complete   | 2026-05-24 |
 | 5. Trajectory Pointer & Platform-Aware Redaction | 4/4 | Complete   | 2026-05-25 |
-| 6. Operator CLI & Slash-Command Export | 3/5 | In Progress|  |
+| 6. Operator CLI & Slash-Command Export | 5/5 | Complete   | 2026-05-25 |
 | 7. Log Rotation & Alert Budget | 0/0 | Not started | - |
 | 8. Pipeline-Tag Discipline & Operator Docs | 0/0 | Not started | - |
 
