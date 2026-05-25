@@ -127,6 +127,13 @@ function buildRuntimeConfig(
     ...(entry.command !== undefined && { command: entry.command }),
     ...(entry.args !== undefined && { args: entry.args }),
     ...(entry.url !== undefined && { url: entry.url }),
+    // WR-02: bundle entries with an explicit `cwd` must use it at install-
+    // time connect — omitting cwd here made the install-connect run with
+    // the default workspace CWD until the next daemon restart picked up
+    // the field via setupMcp's full-entry projection. setup-mcp.ts:198
+    // already reads `server.cwd` (with a workspace-root fallback); the
+    // bundle install path now matches that behaviour.
+    ...(entry.cwd !== undefined && { cwd: entry.cwd }),
     ...(entry.env !== undefined && { env: entry.env }),
     ...(entry.headers !== undefined && { headers: entry.headers }),
     ...(entry.maxConcurrency !== undefined && { maxConcurrency: entry.maxConcurrency }),

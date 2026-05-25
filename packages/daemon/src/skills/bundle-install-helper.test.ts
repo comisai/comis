@@ -427,6 +427,49 @@ describe("applyBundleInstall — atomic two-phase install hook (BUNDLE-05/06)", 
   //    "yfinance" carries _bundleSource === skillId AND _bundleArchive set
   //    to the prior user entry shape.
   // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // 8. WR-02 — bundle entry with explicit `cwd` MUST forward to manager.connect.
+  //    Pre-fix `buildRuntimeConfig` omitted `cwd`, so a bundle declaring
+  //    `cwd: "/specific/dir"` connected with the default workspace cwd at
+  //    install-time, silently mis-rooting the MCP child until the next daemon
+  //    restart. The next-restart setupMcp path read cwd correctly so the
+  //    persisted entry was always correct — the bug was the install-time
+  //    connect's runtime config projection.
+  // -------------------------------------------------------------------------
+  it("WR-02: bundle entry with explicit cwd forwards to manager.connect at install time", async () => {
+    writeSkillManifest(
+      [
+        "---",
+        "name: cwd-skill",
+        "description: entry with explicit cwd",
+        "mcpServers:",
+        "  - name: rooted",
+        "    transport: stdio",
+        "    command: npx",
+        "    args: [some-pkg]",
+        "    cwd: /opt/skill-roots/rooted",
+        "---",
+        "Body",
+      ].join("\n"),
+    );
+    const { deps, connectSpy } = makeDeps();
+
+    const result = await applyBundleInstall({
+      skillId: "cwd-skill",
+      skillDir,
+      force: false,
+      ctx: undefined,
+      deps,
+    });
+
+    expect(result.persistence).toBe("persisted");
+    expect(connectSpy.mock.calls.length).toBe(1);
+    const connectArg = connectSpy.mock.calls[0]![0] as { cwd?: string };
+    // The cwd field reaches manager.connect — the bug pre-WR-02 was
+    // omitting it from buildRuntimeConfig's field projection.
+    expect(connectArg.cwd).toBe("/opt/skill-roots/rooted");
+  });
+
   it("name-collision with user entry, force=true ⇒ user entry archived to _bundleArchive; persist + connect proceed (BUNDLE-05 force override)", async () => {
     const userEntry: McpServerEntry = {
       name: "yfinance",
