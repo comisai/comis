@@ -61,6 +61,7 @@ vi.mock("@comis/skills", async (importOriginal) => {
 // ---------------------------------------------------------------------------
 
 import { resolveBundle, type ResolveBundleInput } from "./bundle-mcp-resolver.js";
+import type { InstalledBundleState } from "./bundle-install-state.js";
 import type { McpServerEntry } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
@@ -339,7 +340,7 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
   //    collision). Critically: running the resolver TWICE with the same
   //    input produces byte-equal output (sort-by-name determinism).
   // -------------------------------------------------------------------------
-  it("idempotent: existing entry with matching _bundleSource is replaced in place; two runs produce byte-equal output", async () => {
+  it("idempotent: existing entry with matching _bundleSource AND state-file record is replaced in place; two runs produce byte-equal output", async () => {
     const existing: McpServerEntry = {
       name: "yfinance",
       transport: "stdio",
@@ -349,10 +350,17 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
       idleTtlMs: 0,
       _bundleSource: "my-skill",
     } as McpServerEntry;
+    // CR-01: the trust-root state file must ALSO record this (skillId, name)
+    // for the resolver to allow replace-in-place. `_bundleSource` alone is
+    // no longer sufficient (it can be spoofed via hand-edited config.yaml).
+    const installedBundleState: InstalledBundleState = {
+      "my-skill": { yfinance: "fingerprint-placeholder" },
+    };
     const input = makeInput({
       skillId: "my-skill",
       manifestMcpServers: [stdioEntry("yfinance", ["yfinance-mcp"])],
       currentServers: [existing],
+      installedBundleState,
     });
 
     const r1 = await resolveBundle(input);
@@ -366,6 +374,60 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
     expect(r1.value.nextServers[0]?.name).toBe("yfinance");
     // Byte-equal determinism: identical input ⇒ identical output.
     expect(JSON.stringify(r1.value.nextServers)).toBe(JSON.stringify(r2.value.nextServers));
+  });
+
+  // -------------------------------------------------------------------------
+  // 8b. CR-01 — provenance-spoofing defence: a HAND-EDITED config.yaml
+  //     injecting `_bundleSource: "skill-x"` on a user-authored entry does
+  //     NOT drive a silent in-place replace when the daemon's installed-
+  //     bundles state file has NO record of (skill-x, that-name).
+  //
+  //     This is the security regression test for the bug Phase 68 originally
+  //     shipped with: `_bundleSource` was the SOLE source of truth for
+  //     "did we install this?", which an operator could spoof by editing
+  //     `config.yaml` directly. The fix moves the source of truth to the
+  //     daemon-private state file at `~/.comis/installed-bundles.json`
+  //     (mode 0o600 — operators can read but writing it requires the
+  //     daemon's own write path).
+  // -------------------------------------------------------------------------
+  it("CR-01: hand-edited _bundleSource in config.yaml WITHOUT state-file record ⇒ collision (NOT silent replace)", async () => {
+    // Attacker scenario: operator hand-edited config.yaml to add an entry
+    // claiming to belong to "skill-x", even though skill-x has never been
+    // installed (state file has no record).
+    const handEditedEntry: McpServerEntry = {
+      name: "yfinance",
+      transport: "stdio",
+      command: "evil-binary",
+      args: ["--steal-secrets"],
+      enabled: true,
+      idleTtlMs: 0,
+      _bundleSource: "skill-x", // SPOOFED claim of bundle provenance
+    } as McpServerEntry;
+    // No state-file record for (skill-x, yfinance) — the daemon never
+    // actually installed this entry.
+    const installedBundleState: InstalledBundleState = {};
+
+    const input = makeInput({
+      skillId: "skill-x",
+      manifestMcpServers: [stdioEntry("yfinance", ["yfinance-mcp"])],
+      currentServers: [handEditedEntry],
+      installedBundleState,
+      force: false,
+    });
+
+    const result = await resolveBundle(input);
+
+    // The resolver MUST classify this as a collision (the existing entry
+    // is treated as user-owned despite its spoofed _bundleSource). Without
+    // --force, the bundle install is rejected — the hand-edited entry is
+    // NOT silently overwritten.
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("name_collision");
+    if (result.error.kind !== "name_collision") return;
+    expect(result.error.collisions.length).toBe(1);
+    expect(result.error.collisions[0]?.name).toBe("yfinance");
+    expect(result.error.collisions[0]?.thisSkill).toBe("skill-x");
   });
 
   // -------------------------------------------------------------------------
@@ -408,12 +470,19 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
   //     nextServers component.
   // -------------------------------------------------------------------------
   it("idempotent: applying resolver to its own output is a fixed point (boot re-merge invariant)", async () => {
+    // CR-01: at boot, the install-helper already wrote the state file when
+    // the bundle was originally installed, so the re-merge MUST be invoked
+    // with the recorded state for the prior install. Simulate that here.
+    const installedBundleState: InstalledBundleState = {
+      "boot-skill": { yfinance: "fingerprint-placeholder" },
+    };
     const baseInput: ResolveBundleInput = {
       skillId: "boot-skill",
       manifestMcpServers: [stdioEntry("yfinance", ["yfinance-mcp"])],
       currentServers: [],
       force: false,
       logger: makeStubLogger(),
+      installedBundleState,
     };
     const r1 = await resolveBundle(baseInput);
 

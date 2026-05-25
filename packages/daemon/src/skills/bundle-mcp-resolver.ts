@@ -38,6 +38,10 @@ import {
   DEFAULT_OSV_CACHE_DIR,
 } from "@comis/skills";
 import type { BundleError, ResolvedBundle } from "./bundle-types.js";
+import {
+  hasBundleRecord,
+  type InstalledBundleState,
+} from "./bundle-install-state.js";
 
 export type { BundleError, ResolvedBundle };
 
@@ -70,6 +74,20 @@ export interface ResolveBundleInput {
   readonly osvCacheTtlMs?: number;
   /** Pino logger; canonical fields; never logs secrets. */
   readonly logger: ComisLogger;
+  /**
+   * CR-01 trust-root: the daemon-private installed-bundles state read from
+   * `${dataDir}/installed-bundles.json`. The resolver checks
+   * `hasBundleRecord(state, skillId, name)` — NOT `existing._bundleSource`
+   * — to decide whether an existing entry is one we previously installed
+   * (replace-in-place) or user-authored (collision).
+   *
+   * Omitting this field is equivalent to passing `{}` (no recorded
+   * bundles). The omission case treats EVERY existing entry as user-owned,
+   * so callers that genuinely want the prior `_bundleSource`-as-trust-root
+   * behavior must thread the actual state through. The install-helper and
+   * boot-orchestrator both pass it explicitly.
+   */
+  readonly installedBundleState?: InstalledBundleState;
 }
 
 /**
@@ -139,6 +157,12 @@ export async function resolveBundle(
   }> = [];
   const newBundleEntries: McpServerEntry[] = [];
 
+  // CR-01: trust root for "did WE install this entry as a bundle?". An
+  // empty state (no file, malformed file, or absent from input) treats
+  // EVERY existing entry as user-owned regardless of its _bundleSource
+  // field — the fail-CLOSED stance that defeats provenance spoofing.
+  const installedBundleState: InstalledBundleState = input.installedBundleState ?? {};
+
   for (const bundleEntry of input.manifestMcpServers) {
     const existing = currentByName.get(bundleEntry.name);
     if (existing === undefined) {
@@ -147,7 +171,13 @@ export async function resolveBundle(
       newBundleEntries.push({ ...bundleEntry, _bundleSource: input.skillId });
       continue;
     }
-    if (existing._bundleSource === input.skillId) {
+    // CR-01: the trust-root check. The existing entry is "ours to replace"
+    // ONLY IF the daemon's private state file records us (this skillId) as
+    // having installed an entry with this name. The entry's own
+    // `_bundleSource` field is informational — a hand-edited config.yaml
+    // could spoof it, and using it as the trust root opens the silent-
+    // replace privilege-escalation vector (CR-01).
+    if (hasBundleRecord(installedBundleState, input.skillId, bundleEntry.name)) {
       // BUNDLE-03 idempotent replace-in-place. The new entry's definition
       // overwrites the existing slot; _bundleSource stays the same skill.
       // _bundleArchive (if any) is NOT carried forward — last-write-wins
@@ -158,7 +188,10 @@ export async function resolveBundle(
       });
       continue;
     }
-    // Cross-bundle OR user-owned collision.
+    // Cross-bundle OR user-owned collision (including the spoofed-
+    // `_bundleSource` case: existing.entry._bundleSource may match
+    // input.skillId, but the state file does NOT record us as having
+    // installed it — so we MUST classify it as user-owned).
     if (!input.force) {
       collisionList.push({
         name: bundleEntry.name,
