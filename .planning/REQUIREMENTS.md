@@ -148,19 +148,19 @@ Each requirement maps to a design move (D1–D16) in `.planning/design/OBSERVABI
 
 ### Operator CLI
 
-- [ ] **CLI-01**: `comis trace --message-id <uuid>` returns channel→queue→agent→delivery rows in <2s on a session of 100 turns — closes G8
+- [x] **CLI-01**: `comis trace --message-id <uuid>` returns channel→queue→agent→delivery rows in <2s on a session of 100 turns — closes G8
   - Design: D13 *(files: `packages/cli/src/commands/trace.ts` NEW, `packages/daemon/src/api/obs-handlers/obs-trace.ts` NEW)*
-- [ ] **CLI-02**: `comis trace --trace-id <uuid>` returns every log/event/trajectory row sharing the traceId
+- [x] **CLI-02**: `comis trace --trace-id <uuid>` returns every log/event/trajectory row sharing the traceId
   - Design: D13
-- [ ] **CLI-03**: `comis trace --chat <chatId> --tail` streams trace events live for a chat
+- [x] **CLI-03**: `comis trace --chat <chatId> --tail` streams trace events live for a chat
   - Design: D13
-- [ ] **CLI-04**: `comis trace --since 10m --where error` returns the last 10 minutes of failures across all chats, using session index as primary scan
+- [x] **CLI-04**: `comis trace --since 10m --where error` returns the last 10 minutes of failures across all chats, using session index as primary scan
   - Design: D13
-- [ ] **CLI-05**: `comis trace export <sessionId>` writes a bundle and prints the path
+- [x] **CLI-05**: `comis trace export <sessionId>` writes a bundle and prints the path
   - Design: D13
 - [x] **CLI-06**: Three new RPC contracts added: `ObsTraceSearchContract`, `ObsTraceTailContract`, `ObsTraceExportContract`
   - Design: D13 *(file: `packages/core/src/api-contracts/observability.ts`)*
-- [ ] **CLI-07**: All `comis trace` subcommands support `--json` for machine consumption (human-readable columns by default)
+- [x] **CLI-07**: All `comis trace` subcommands support `--json` for machine consumption (human-readable columns by default)
   - Design: D13
 
 ### Owner-Gated Bundle Export
@@ -269,13 +269,13 @@ Mapped 2026-05-24 by `/gsd-new-project` roadmapper. Phase numbers refer to `.pla
 | INDEX-01 | Phase 6 | Complete |
 | INDEX-02 | Phase 6 | Complete |
 | INDEX-03 | Phase 6 | Complete |
-| CLI-01 | Phase 6 | Pending |
-| CLI-02 | Phase 6 | Pending |
-| CLI-03 | Phase 6 | Pending |
-| CLI-04 | Phase 6 | Pending |
-| CLI-05 | Phase 6 | Pending |
+| CLI-01 | Phase 6 | Complete |
+| CLI-02 | Phase 6 | Complete |
+| CLI-03 | Phase 6 | Complete |
+| CLI-04 | Phase 6 | Complete |
+| CLI-05 | Phase 6 | Complete |
 | CLI-06 | Phase 6 | Complete |
-| CLI-07 | Phase 6 | Pending |
+| CLI-07 | Phase 6 | Complete |
 | EXPORT-01 | Phase 6 | Pending |
 | ROTATE-01 | Phase 7 | Pending |
 | ROTATE-02 | Phase 7 | Pending |
