@@ -20,6 +20,7 @@ import type { InboundPipelineDeps } from "./inbound-pipeline.js";
 import { evaluateAutoReply, isGroupMessage } from "@comis/channels";
 import { matchesResetTrigger } from "./inbound-pipeline.js";
 import type { SendOverrideStore } from "@comis/channels";
+import { handleExportTrajectory } from "../commands/export-trajectory.js";
 
 // ---------------------------------------------------------------------------
 // Deps narrowing
@@ -40,7 +41,15 @@ export type GateDeps = Pick<
   | "activeRunRegistry"
   | "sessionResolver"
   | "deliveryService"
->;
+> & {
+  /**
+   * Phase 6 (EXPORT-01): bundle export DI. Injected by daemon wiring.
+   * Optional — when absent, /export-trajectory falls through to the generic
+   * handleSlashCommand block (where it will be handled as unrecognised if
+   * the daemon has not provided this dep).
+   */
+  exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
+};
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -275,6 +284,34 @@ export async function evaluateInboundGate(
       }
       return { action: "handled" }; // Do not route to agent
     }
+  }
+
+  // -------------------------------------------------------------------
+  // /export-trajectory — owner-gated bundle export (Phase 6, EXPORT-01)
+  //
+  // Handled BEFORE the generic handleSlashCommand block because:
+  //   1. handleSlashCommand(text, sessionKey, agentId) is synchronous-shaped
+  //      and cannot carry the async DM side-effect to the owner.
+  //   2. The handler needs direct access to msg + adapter for owner-gate
+  //      (msg.senderId === sessionKey.userId) and DM routing (adapter.sendMessage).
+  //
+  // "export-trajectory" is also in KNOWN_COMMANDS so parseSlashCommand
+  // returns found:true — the text NEVER reaches the LLM (STRIDE T-06-05-04).
+  // -------------------------------------------------------------------
+  if (
+    msg.text &&
+    msg.text.trim().startsWith("/export-trajectory") &&
+    deps.exportSessionBundle
+  ) {
+    return await handleExportTrajectory({
+      msg,
+      sessionKey,
+      agentId,
+      adapter,
+      deliveryService: deps.deliveryService,
+      exportSessionBundle: deps.exportSessionBundle,
+      logger: deps.logger,
+    });
   }
 
   // -------------------------------------------------------------------

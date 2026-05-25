@@ -109,6 +109,13 @@ export interface InboundPipelineDeps {
    *  messageId before Phase 1 and emits dedup:duplicate_inbound + WARN on a duplicate within
    *  the window. Does NOT suppress — processing continues. */
   dedupDetector?: DedupDetector;
+  /**
+   * Phase 6 (EXPORT-01): bundle export DI for the /export-trajectory slash command.
+   * When present, inbound-gate.ts handles /export-trajectory with owner-gate + DM routing.
+   * When absent, /export-trajectory falls through to generic handleSlashCommand (no-op).
+   * Injected by daemon wiring (packages/daemon/src/wiring/).
+   */
+  exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
 }
 
 // ---------------------------------------------------------------------------

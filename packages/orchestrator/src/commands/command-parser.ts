@@ -25,6 +25,7 @@ const KNOWN_COMMANDS = new Set<string>([
   "stop",
   "fork", "branch",
   "budget",
+  "export-trajectory",
 ]);
 
 /** Commands that are directives (stripped from text, modify execution state) */
@@ -79,8 +80,9 @@ export function parseSlashCommand(text: string): ParsedCommand {
   }
 
   // Match: /command [optional rest]
-  // The `s` flag makes `.` match newlines in the rest
-  const match = /^\/(\w+)(?:\s+(.*))?$/s.exec(trimmed);
+  // The `s` flag makes `.` match newlines in the rest.
+  // [\w-]+ allows hyphened commands (e.g. /export-trajectory)
+  const match = /^\/([\w-]+)(?:\s+(.*))?$/s.exec(trimmed);
   if (!match) {
     return notFound(trimmed);
   }

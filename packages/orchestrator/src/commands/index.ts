@@ -25,3 +25,7 @@ export type { ParsedBudget } from "./budget-command.js";
 // Prompt skill command matcher
 export { matchPromptSkillCommand, detectSkillCollisions, RESERVED_COMMAND_NAMES } from "./prompt-skill-command.js";
 export type { PromptSkillMatch, CollisionWarning } from "./prompt-skill-command.js";
+
+// /export-trajectory slash command handler (Phase 6, EXPORT-01)
+export { handleExportTrajectory } from "./export-trajectory.js";
+export type { HandleExportTrajectoryDeps } from "./export-trajectory.js";

@@ -239,8 +239,12 @@ describe("handleExportTrajectory (EXPORT-01)", () => {
   it("Test 6: KNOWN_COMMANDS includes 'export-trajectory' (parser-level)", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
+    const url = await import("node:url");
+    // Use import.meta.url to resolve relative to this test file regardless
+    // of where vitest is invoked from (workspace root or package root).
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
     const src = fs.readFileSync(
-      path.join(process.cwd(), "src/commands/command-parser.ts"),
+      path.join(__dirname, "command-parser.ts"),
       "utf-8",
     );
     expect(src).toMatch(/"export-trajectory"/);
