@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: CLI helper consumed by command entry points; throws caught at Commander.js boundary.
+// @allow-throw: CLI helper consumed by command entry points; throws caught at Commander.js boundary (CLI user-facing flows exception).
 /**
  * CLI spinner utility using ora.
  *

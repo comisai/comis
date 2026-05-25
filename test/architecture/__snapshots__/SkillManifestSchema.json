@@ -1,0 +1,366 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "type": {
+      "default": "prompt",
+      "type": "string",
+      "const": "prompt"
+    },
+    "version": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    },
+    "userInvocable": {
+      "default": true,
+      "type": "boolean"
+    },
+    "disableModelInvocation": {
+      "default": false,
+      "type": "boolean"
+    },
+    "allowedTools": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "argumentHint": {
+      "type": "string"
+    },
+    "permissions": {
+      "default": {
+        "fsRead": [],
+        "fsWrite": [],
+        "net": [],
+        "env": []
+      },
+      "type": "object",
+      "properties": {
+        "fsRead": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fsWrite": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "net": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "fsRead",
+        "fsWrite",
+        "net",
+        "env"
+      ],
+      "additionalProperties": false
+    },
+    "inputSchema": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "metadata": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "comis": {
+      "type": "object",
+      "properties": {
+        "os": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requires": {
+          "type": "object",
+          "properties": {
+            "bins": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "env": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "bins",
+            "env"
+          ],
+          "additionalProperties": false
+        },
+        "skill-key": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "primary-env": {
+          "type": "string"
+        },
+        "command-dispatch": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "object",
+          "properties": {
+            "cluster": {
+              "type": "string",
+              "minLength": 1
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1
+            },
+            "replacesPackages": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "replacesPackages"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcpServers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema0"
+      }
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "type",
+    "userInvocable",
+    "disableModelInvocation",
+    "allowedTools",
+    "permissions"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "transport": {
+          "type": "string",
+          "enum": [
+            "stdio",
+            "sse",
+            "http"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "env": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "maxConcurrency": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "disablePlaintextSecretCheck": {
+          "type": "boolean"
+        },
+        "rlimits": {
+          "type": "object",
+          "properties": {
+            "as": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "nofile": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cpu": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        "keepaliveIntervalMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "circuitBreakerThreshold": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "circuitBreakerCooldownMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "toolAllowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "toolBlocklist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "idleTtlMs": {
+          "default": 0,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "enableResources": {
+          "type": "boolean"
+        },
+        "enablePrompts": {
+          "type": "boolean"
+        },
+        "supportsParallelToolCalls": {
+          "type": "boolean"
+        },
+        "auth": {
+          "type": "string",
+          "enum": [
+            "none",
+            "bearer",
+            "oauth"
+          ]
+        },
+        "oauth": {
+          "type": "object",
+          "properties": {
+            "authorizationEndpoint": {
+              "type": "string",
+              "format": "uri"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "stripeAccount": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "_bundleSource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "_bundleArchive": {
+          "$ref": "#/$defs/__schema0"
+        }
+      },
+      "required": [
+        "name",
+        "transport",
+        "enabled",
+        "idleTtlMs"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

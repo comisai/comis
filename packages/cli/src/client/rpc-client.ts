@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: CLI helper consumed by command entry points; throws caught at Commander.js boundary.
+// @allow-throw: CLI helper consumed by command entry points; throws caught at Commander.js boundary (CLI user-facing flows exception).
 /**
  * WebSocket JSON-RPC 2.0 client for communicating with the Comis daemon gateway.
  *
@@ -429,7 +429,7 @@ export async function withClient<T>(fn: (client: RpcClient) => Promise<T>): Prom
   const url = systemGetEnv("COMIS_GATEWAY_URL") ?? configDefaults.url;
   const token = systemGetEnv("COMIS_GATEWAY_TOKEN") ?? configDefaults.token;
 
-  // Hard-fail if sending bearer token over cleartext WebSocket to non-localhost.
+  // Hard-fail if sending bearer token over cleartext WebSocket to non-localhost
   const allowInsecure = systemGetEnv("COMIS_INSECURE") === "1";
   checkTransportSecurity(url, token, allowInsecure);
 

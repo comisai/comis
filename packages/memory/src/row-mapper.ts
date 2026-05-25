@@ -336,7 +336,7 @@ function issuesFromZod(
  *
  * The schema is run via `safeParse` — never throws.
  * Failures are surfaced as `Result.err(MapperError)`; callers chain via
- * early-return.
+ * early-return pattern.
  *
  * @example
  * ```ts

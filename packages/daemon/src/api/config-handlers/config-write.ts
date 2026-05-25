@@ -79,8 +79,8 @@ export function bindConfigWriteHandlers(
       // Single-writer guard: integrations.mcp.servers is managed
       // by mcp_manage. Precedence: trust → single-writer → rate-limit. MUTABLE_CONFIG_OVERRIDES
       // at immutable-keys.ts:38 stays — only the gateway-patch route is closed.
-      // Also catch parent-path shapes whose merged value lands
-      // on integrations.mcp.servers, e.g. { section:"integrations", key:"mcp",
+      // Also catch parent-path shapes whose merged value lands on
+      // integrations.mcp.servers, e.g. { section:"integrations", key:"mcp",
       // value:{servers:[]} } and the two `path:` variants.
       {
         const rp = typeof rawParams.path === "string" ? rawParams.path : undefined;

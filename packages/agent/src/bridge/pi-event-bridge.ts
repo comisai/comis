@@ -222,9 +222,9 @@ export interface PiEventBridgeDeps {
   /**
    * Session-scoped trajectory registry. When present, the bridge's
    * `agent_start` case consults `hasSessionStartedBeenEmitted(formattedKey)`
-   * to suppress per-turn `session:started` re-emits — `session.started`
-   * fires once per session, NOT per pi-mono turn. The bridge itself is
-   * per-turn; the registry survives every turn so the latch lives there.
+   * to suppress per-turn `session:started` re-emits (`session.started`
+   * fires once per session, NOT per pi-mono turn). The bridge itself is per-turn; the registry survives every
+   * turn so the latch lives there.
    *
    * When omitted (legacy/test callers), the bridge falls back to the
    * pre-tlx unconditional emit so existing harnesses keep working.
@@ -369,13 +369,13 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             m.agentStartMs = systemNowMs();
           }
           // Suppress per-turn re-emits: session.started fires ONCE per
-          // session (not per pi-mono turn). The bridge is per-turn, so
-          // consult the session-scoped trajectoryRegistry latch — it
-          // survives across turns and resets only when the session is
-          // destroyed (or the daemon restarts and rebuilds the registry
-          // fresh). When the registry is absent (legacy/test callers),
-          // fall through to the legacy unconditional emit so existing
-          // harnesses keep working.
+          // session (not per pi-mono turn). The bridge is
+          // per-turn, so consult the session-scoped trajectoryRegistry
+          // latch — it survives across turns and resets only when the
+          // session is destroyed (or the daemon restarts and rebuilds
+          // the registry fresh). When the registry is absent
+          // (legacy/test callers), fall through to the legacy
+          // unconditional emit so existing harnesses keep working.
           const formattedKey = formatSessionKey(deps.sessionKey);
           if (deps.trajectoryRegistry?.hasSessionStartedBeenEmitted(formattedKey) === true) {
             break;
@@ -426,10 +426,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         case "agent_end": {
           // session:ended is NO LONGER emitted from agent_end —
           // "(session) ended" is a session-destroy semantic, not
-          // per-turn. The emit moved to ComisSessionManager.destroySession.
-          // Per-turn duration metrics are surfaced via
-          // observability:token_usage → model.completed, which already
-          // carries durationMs.
+          // per-turn. The emit moved to
+          // ComisSessionManager.destroySession. Per-turn duration metrics
+          // are surfaced via observability:token_usage → model.completed,
+          // which already carries durationMs.
           //
           // We preserve the m.agentStartMs / m.lastStopReason reads since
           // other accumulators may rely on these — only the eventBus

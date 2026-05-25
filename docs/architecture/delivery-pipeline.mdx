@@ -113,9 +113,9 @@ Key drain behaviors:
 The daemon wires the delivery queue in two phases to resolve a circular
 dependency:
 
-1. **Phase 1** (before `setupChannels`): Create the queue adapter. Pass the
+1. **Step 1** (before `setupChannels`): Create the queue adapter. Pass the
    `channelAdapters` map by reference (empty at this point).
-2. **Phase 2** (after `setupChannels`): Populate the adapters map, then run
+2. **Step 2** (after `setupChannels`): Populate the adapters map, then run
    drain + start the prune timer.
 
 This ensures the queue adapter is available when `setupChannels` wires the

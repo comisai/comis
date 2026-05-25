@@ -1,0 +1,210 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * mountMcpServerEndpoint body-size limit tests.
+ *
+ * Enforces that POST /mcp/v1 honors a bodyLimit middleware before the route
+ * handler buffers the request body. Without this gate, a holder of any valid
+ * `mcp-client`-scoped token can POST a multi-gigabyte body and the daemon's
+ * heap allocates proportional memory per concurrent request
+ * (`c.req.json()` buffers the entire body before parsing).
+ *
+ * The fix mounts a `bodyLimit({ maxSize: deps.bodyLimitBytes })` middleware
+ * on the route — same posture as `rest-api.ts` does for POST /api/chat
+ * (see `packages/gateway/src/web/rest-api.ts:329-337`).
+ *
+ * @module
+ */
+
+import { describe, it, expect, vi } from "vitest";
+import { Hono } from "hono";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  mountMcpServerEndpoint,
+  type McpServerEndpointDeps,
+} from "./mcp-server-endpoint.js";
+import { createTokenStore, type TokenClient } from "./auth/token-auth.js";
+import type { GatewayLogger } from "./server/gateway-logger.js";
+import { createMockLogger as _createMockLogger } from "../../../test/support/mock-logger.js";
+
+const createMockLogger = (): GatewayLogger =>
+  _createMockLogger() as unknown as GatewayLogger;
+
+/**
+ * Construct a real McpServer with no tools registered. The body-limit
+ * middleware fires BEFORE the route handler reads the body, so the McpServer
+ * factory is irrelevant for this test — we only need a non-null value to
+ * satisfy the deps shape; the route should reject 413 before ever calling
+ * `buildMcpServerForClient(client)`.
+ */
+function makeNoopBuildMcpServer(): (client: TokenClient) => McpServer {
+  return (_client) =>
+    new McpServer(
+      { name: "test", version: "0.0.0" },
+      { capabilities: { tools: {}, resources: { subscribe: false } } },
+    );
+}
+
+/**
+ * Mount the endpoint on a fresh Hono app with the supplied bodyLimitBytes.
+ * Uses an in-memory token store with a single `mcp-client`-scoped token by
+ * default; supply `tokenScopes` to override (e.g., `["*", "mcp-client"]` for
+ * wildcard runtime-gate tests).
+ */
+function mountForTest(opts: {
+  bodyLimitBytes: number;
+  buildMcpServerForClient?: McpServerEndpointDeps["buildMcpServerForClient"];
+  tokenScopes?: string[];
+}): { app: Hono; token: string } {
+  const token = "x".repeat(64);
+  const scopes = opts.tokenScopes ?? ["mcp-client"];
+  const tokenStore = createTokenStore([
+    {
+      id: "mcp-test",
+      secret: token,
+      scopes,
+      mcpClient: { allowlist: [], sessionAllowlist: [], toolRateLimit: {} },
+    },
+  ]);
+
+  const app = new Hono();
+  mountMcpServerEndpoint(
+    app as unknown as Parameters<typeof mountMcpServerEndpoint>[0],
+    {
+      tokenStore,
+      buildMcpServerForClient:
+        opts.buildMcpServerForClient ?? makeNoopBuildMcpServer(),
+      logger: createMockLogger(),
+      bodyLimitBytes: opts.bodyLimitBytes,
+    },
+  );
+  return { app, token };
+}
+
+describe("mountMcpServerEndpoint -- body-size limit", () => {
+  it("mountMcpServerEndpoint rejects POST /mcp/v1 with a body larger than the configured bodyLimitBytes with 413", async () => {
+    const { app, token } = mountForTest({ bodyLimitBytes: 256 });
+
+    // Craft a JSON-RPC body well over 256 bytes. Set Content-Length so the
+    // bodyLimit middleware can short-circuit before buffering.
+    const padding = "x".repeat(512);
+    const jsonBody = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "initialize",
+      id: 1,
+      params: { padding },
+    });
+
+    const res = await app.request("/mcp/v1", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(jsonBody)),
+      },
+      body: jsonBody,
+    });
+
+    // Contract: bodyLimit fires BEFORE the route handler buffers the
+    // body via c.req.json(). 413 is the canonical Hono bodyLimit status.
+    expect(res.status).toBe(413);
+  });
+
+  it("mountMcpServerEndpoint accepts POST /mcp/v1 with a body within the configured bodyLimitBytes", async () => {
+    // Track whether the route's downstream handler is reached -- a small
+    // body should pass the bodyLimit gate and fall through to the
+    // buildMcpServerForClient factory (which we record).
+    const factorySpy = vi.fn(() =>
+      new McpServer(
+        { name: "test", version: "0.0.0" },
+        { capabilities: { tools: {}, resources: { subscribe: false } } },
+      ),
+    );
+    const { app, token } = mountForTest({
+      bodyLimitBytes: 4096,
+      buildMcpServerForClient: factorySpy,
+    });
+
+    // A 50-byte payload comfortably under the 4096-byte ceiling.
+    const jsonBody = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "initialize",
+      id: 1,
+    });
+
+    const res = await app.request("/mcp/v1", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(jsonBody)),
+      },
+      body: jsonBody,
+    });
+
+    // The body-limit gate passed -- the route reached the McpServer factory.
+    // The SDK transport may or may not produce a meaningful response in this
+    // unit-test path (no c.env.incoming/outgoing in Hono's app.request), so
+    // we assert on the GATE not the SDK happy-path: status is NOT 413.
+    expect(res.status).not.toBe(413);
+    expect(factorySpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runtime Gate 4 must reject wildcard "*" alongside admin
+//
+// `client.scopes.includes("admin")` was the original Gate 4 check.
+// `checkScope` treats `"*"` as a wildcard that grants ALL scopes including
+// "admin", so a token with `["*", "mcp-client"]` has admin-equivalent
+// access AND mcp-client access -- the exact privilege-escalation pathway
+// the disjointness invariant prevents.
+//
+// The runtime gate must reject admin-EQUIVALENT scopes (`"admin"` OR `"*"`)
+// in addition to literal `"admin"`. Defense-in-depth: a config-load bypass
+// should not silently let a wildcard-scoped token reach the McpServer factory.
+// ---------------------------------------------------------------------------
+
+describe("mountMcpServerEndpoint -- wildcard admin-equivalent runtime gate", () => {
+  it("mountMcpServerEndpoint Gate 4 rejects a token with wildcard star and mcp-client co-issued", async () => {
+    const factorySpy = vi.fn(() =>
+      new McpServer(
+        { name: "test", version: "0.0.0" },
+        { capabilities: { tools: {}, resources: { subscribe: false } } },
+      ),
+    );
+    // The wildcard "*" satisfies checkScope(scopes, "admin") yet was not
+    // rejected by the literal `includes("admin")` check — the runtime gate
+    // closes this hole.
+    const { app, token } = mountForTest({
+      bodyLimitBytes: 1_048_576,
+      tokenScopes: ["*", "mcp-client"],
+      buildMcpServerForClient: factorySpy,
+    });
+
+    const jsonBody = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "initialize",
+      id: 1,
+    });
+
+    const res = await app.request("/mcp/v1", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(jsonBody)),
+      },
+      body: jsonBody,
+    });
+
+    // Gate 4 fires BEFORE the McpServer factory. The factory must NOT be
+    // called; the response is HTTP 403 with the disjoint-scope JSON-RPC
+    // error envelope.
+    expect(factorySpy).not.toHaveBeenCalled();
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as {
+      error?: { code?: number; message?: string };
+    };
+    expect(body.error?.message).toMatch(/disjoint-scope/i);
+  });
+});

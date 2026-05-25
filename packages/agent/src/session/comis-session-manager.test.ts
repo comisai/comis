@@ -238,7 +238,7 @@ describe("destroySession — session:ended emit + trajectoryRegistry close", () 
   });
 });
 
-describe("comis-session-manager honors §1.4 mode invariants on substrate-routed writes", () => {
+describe("comis-session-manager mode invariants on substrate-routed writes", () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const d of dirs) {
@@ -249,7 +249,7 @@ describe("comis-session-manager honors §1.4 mode invariants on substrate-routed
 
   it("with_session_creates_per_channel_dir_with_mode_0o700", async () => {
     // withSession routes the per-channel directory creation through
-    // ensureContainedDir so the `0o700` invariant holds for every
+    // ensureContainedDir so the `0o700` mode invariant holds for every
     // artifact dir under ~/.comis/agents/.
     const baseDir = makeTmpDir();
     const lockDir = makeTmpDir();
@@ -270,7 +270,7 @@ describe("comis-session-manager honors §1.4 mode invariants on substrate-routed
 
   it("write_session_metadata_writes_companion_file_with_mode_0o600", async () => {
     // writeSessionMetadata routes the sentinel JSON write through
-    // writeRegularFile so the `0o600` invariant holds for the
+    // writeRegularFile so the `0o600` mode invariant holds for the
     // `_session-metadata.json` companion file.
     const baseDir = makeTmpDir();
     const lockDir = makeTmpDir();

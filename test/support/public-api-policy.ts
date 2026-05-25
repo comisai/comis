@@ -779,8 +779,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "HookGatewayStopEvent",
       // HookGatewayStartContext + HookGatewayStopContext became orphans when
       // the dead hookRunner?.runGatewayStart() / runGatewayStop() invocations
-      // were removed from packages/gateway/src/server/hono-server.ts (Plan
-      // 55-01). The Event types remain because plugin authors may still
+      // were removed from packages/gateway/src/server/hono-server.ts.
+      // The Event types remain because plugin authors may still
       // declare gateway lifecycle hooks; the Context types are kept in the
       // public surface for symmetry with other Hook* pairs.
       "HookGatewayStartContext",
@@ -1394,6 +1394,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "EnsureWorkspaceOptions",
       "WorkspaceFiles",
       "WorkspaceStatus",
+      // SystemIntervalHandle was the paired opaque-handle type for
+      // `systemSetInterval`, consumed via mcp-client-types.ts state Map
+      // generic + index.ts factory initializer. The SystemTimeoutHandle
+      // consumer in packages/daemon/src/api/mcp-config-mutated-coalescer.ts
+      // (trailing-edge debounce timer) removed the planned-orphan entry that
+      // previously tracked SystemTimeoutHandle -- the symbol is now consumed.
+      // The mcp.oauth_login / mcp.oauth_logout contract registry, mirroring
+      // MCP_CONTRACTS / SESSION_CONTRACTS etc. Consumed by the dispatcher
+      // composition + the contract-handler-parity AST walker, both of which
+      // iterate the union of *_CONTRACTS arrays via patterns the AST
+      // consumer-scan does not flag. Documented public-contract surface;
+      // not a baseline orphan.
+      "MCP_OAUTH_CONTRACTS",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
@@ -1437,8 +1450,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ContextHandlerDeps",
       "createAgentHandlers",
       "AgentHandlerDeps",
-      // MCP install persistence — re-exported so the integration
-      // test at test/integration/mcp-persistence.test.ts can drive the real
+      // MCP install persistence — re-exported so the integration test at
+      // test/integration/mcp-persistence.test.ts can drive the real
       // mcp.connect / mcp.disconnect handlers against a tmpdir config path.
       // The test imports these statically from @comis/daemon, but the
       // public-export-consumers AST walker only scans packages/*/src/**
@@ -1451,14 +1464,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // writer (see persist-to-config.ts:12-43 module-level state docs).
       "_resetSigusr1Timer",
       "_resetMutationFence",
-      // Plaintext-secret heuristic helper re-exported
-      // so the architecture-tier negative + positive control table at
+      // _resetConfigMutatedCoalescer is the process-wide reset for the
+      // trailing-edge debounce coalescer that packs config:mutated emits
+      // (per mcp-config-mutated-coalescer.ts). Consumer is
+      // test/integration/mcp-config-refresh.test.ts; public-export-consumers
+      // AST walker excludes test/** so this is the canonical place to record
+      // the planned consumer.
+      "_resetConfigMutatedCoalescer",
+      // plaintext-secret heuristic helper re-exported so the
+      // architecture-tier negative + positive control table at
       // test/architecture/mcp-plaintext-secret-false-positives.test.ts can
       // assert the heuristic shape against real-world token samples
-      // without duplicating the prefix list. The
-      // public-export-consumers AST walker only scans packages/*/src/**
-      // (NOT test/), mirroring the precedent set by
-      // MCP_STDIO_BUILTIN_ENV_ALLOWLIST / scrubStdioEnv.
+      // without duplicating the prefix list. The public-export-consumers
+      // AST walker only scans packages/*/src/** (NOT test/), mirroring the
+      // precedent set by MCP_STDIO_BUILTIN_ENV_ALLOWLIST / scrubStdioEnv.
       "looksLikePlaintextSecret",
       // Residency-test harness consumers (dynamic require).
       "createTracingLogger",
@@ -1468,6 +1487,43 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "emitStartupInvariants",
       "StartupInvariantsDeps",
       "StartupInvariants",
+      // mcp.oauth_login / mcp.oauth_logout handler factory + deps type.
+      // Mounted by the dispatcher composition root; the
+      // public-export-consumers walker does not pick the boot-path wiring
+      // up because the dispatcher setup imports them via the index barrel
+      // for the same reason createMcpHandlers + McpHandlerDeps appear here
+      // (test-API surface for the integration test
+      // mcp-oauth-roundtrip.test.ts to harness the handlers against a
+      // tmpdir token store, mirroring the mcp-persistence precedent).
+      // Not a baseline orphan.
+      "createMcpOauthHandlers",
+      "McpOauthHandlerDeps",
+      // Bundle-install helper + boot-orchestrator + thin discovery-only
+      // registry pre-pass surfaced through the daemon barrel so the
+      // integration test at test/integration/skill-bundle-install.test.ts
+      // can drive the atomic-install reject path + the boot re-merge
+      // idempotence path against the REAL persistToConfig + audit JSONL
+      // pipeline. Mirrors the createMcpHandlers / persistMcpServers
+      // precedents above (public-export-consumers AST walker excludes
+      // test/** so the orphan list is the canonical place to record planned
+      // test consumers).
+      "applyBundleInstall",
+      "ApplyBundleInstallArgs",
+      "ApplyBundleInstallResult",
+      "setupSkillBundles",
+      "buildSkillRegistriesForBundles",
+      "SetupSkillBundlesDeps",
+      // Extracted single-writer persistMcpServers, surfaced through the
+      // daemon barrel as the rule-of-three fulfillment. Direct in-repo
+      // consumers live in packages/daemon/src/ leaf modules
+      // (bundle-install-helper, setup-skill-bundles, mcp-handlers) — all
+      // of which import via the LEAF path
+      // (`./api/shared/persist-mcp-servers.js`) rather than the barrel to
+      // avoid a self-cycle through packages/daemon/src/index.ts. The barrel
+      // re-export is the documented test-API surface (mirrors the
+      // createMcpHandlers / _resetSigusr1Timer precedents above).
+      "persistMcpServers",
+      "PersistMcpResult",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
@@ -1759,8 +1815,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "expandGroups",
       "ToolFilterReason",
       "ToolPolicyResult",
-      // Consumed by the architecture
-      // test `test/architecture/mcp-prespawn-allowlist.test.ts` and the
+      // Consumed by the architecture test
+      // `test/architecture/mcp-prespawn-allowlist.test.ts` and the
       // integration test `test/integration/mcp-env-scrub.test.ts` — both
       // outside packages/skills/, so the source-only consumer scan does
       // not pick them up. Internal-to-skills consumers live in
@@ -1788,5 +1844,59 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // test-API surface; not a baseline orphan.
       "createRedirectPolicyFetch",
       "RedirectPolicyOptions",
+      // The OAuth login orchestrator, its associated config/logger types,
+      // and the connect-time needs_oauth_login signal guard are re-exported
+      // so the daemon RPC handler `mcp-oauth-handlers.ts` can run
+      // mcp.oauth_login / oauth_logout WITHOUT a direct
+      // @modelcontextprotocol/sdk dep (the daemon depends on @comis/skills,
+      // not the SDK). Daemon-side consumers live OUTSIDE packages/skills/,
+      // so the source-only consumer scan does not pick them up; the daemon
+      // imports them statically via @comis/skills. Documented test-API
+      // surface; not a baseline orphan.
+      "OAuthLoginConfig",
+      "OAuthLoginLogger",
+      "TokenStoreDeps",
+      "isNeedsOAuthLoginError",
+      // The 401 refresh-deduper factory + its types are re-exported so the
+      // integration test `test/integration/mcp-oauth-roundtrip.test.ts` can
+      // drive Notion rotation + Stripe-Account header + 100-concurrent dedup
+      // against the in-process mock authorization server through the PUBLIC
+      // @comis/skills barrel (integration tests may not reach src internals
+      // — missing re-exports are added to the barrel). Internal-to-skills
+      // consumer lives in mcp-client-connect.ts (where connectServer wires
+      // the deduper's critical section to state.callQueues). Documented
+      // test-API surface; not a baseline orphan.
+      "createRefreshDeduper",
+      "RefreshDeduper",
+      "RefreshDeduperDeps",
+      "RefreshResult",
+      "DedupedRefreshArgs",
+      "RefreshFn",
+      // The deduped-refresh fetch wrapper that wires the RefreshDeduper into
+      // the production 401 path on the SSE/HTTP transport. Re-exported so
+      // the production-path integration test
+      // `test/integration/mcp-oauth-deduped-fetch.test.ts` can prove 100
+      // concurrent in-flight tool calls hitting a 401 collapse to ONE
+      // refresh POST WITHOUT calling dedupedRefresh directly.
+      // Internal-to-skills consumer lives in mcp-client-oauth-connect.ts
+      // (prepareOAuthProvider composes the wrapper onto
+      // `effectiveConfig.oauthFetch`) + mcp-client-discover.ts
+      // (createTransport uses `config.oauthFetch ??
+      // createRedirectPolicyFetch(...)` as the SSE/HTTP transport's `fetch`
+      // option). Documented test-API surface; not a baseline orphan.
+      "createDedupedRefreshFetch",
+      "DedupedRefreshFetchDeps",
+      // SkillManifestSchema + SkillManifestParsed are re-exported through
+      // the @comis/skills barrel so daemon-side consumers (bundle-install
+      // helper + boot orchestrator) can validate the optional mcpServers
+      // block on freshly-written SKILL.md content WITHOUT reaching into
+      // the manifest deep-path. The direct in-repo consumers live OUTSIDE
+      // packages/skills/ (parseSkillManifest is invoked from
+      // packages/daemon/src/skills/), so the public-export-consumers AST
+      // walker — which only scans packages/*/src/** — does not pick them
+      // up. Documented test-API + cross-package integration surface;
+      // not a baseline orphan.
+      "SkillManifestSchema",
+      "SkillManifestParsed",
     ])],
   ]);

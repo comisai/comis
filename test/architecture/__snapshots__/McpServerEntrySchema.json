@@ -83,12 +83,88 @@
         }
       },
       "additionalProperties": false
+    },
+    "keepaliveIntervalMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "circuitBreakerThreshold": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "circuitBreakerCooldownMs": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "toolAllowlist": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "toolBlocklist": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "idleTtlMs": {
+      "default": 0,
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "enableResources": {
+      "type": "boolean"
+    },
+    "enablePrompts": {
+      "type": "boolean"
+    },
+    "supportsParallelToolCalls": {
+      "type": "boolean"
+    },
+    "auth": {
+      "type": "string",
+      "enum": [
+        "none",
+        "bearer",
+        "oauth"
+      ]
+    },
+    "oauth": {
+      "type": "object",
+      "properties": {
+        "authorizationEndpoint": {
+          "type": "string",
+          "format": "uri"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "stripeAccount": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "_bundleSource": {
+      "type": "string",
+      "minLength": 1
+    },
+    "_bundleArchive": {
+      "$ref": "#"
     }
   },
   "required": [
     "name",
     "transport",
-    "enabled"
+    "enabled",
+    "idleTtlMs"
   ],
   "additionalProperties": false
 }

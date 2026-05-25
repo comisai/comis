@@ -52,9 +52,9 @@ export type TlsPreflightFailureKind = "tls-cert" | "network";
 /**
  * Discriminated union returned by runOAuthTlsPreflight.
  *
- * NOTE on Result<T,E> deviation: this shape predates the Result convention in
- * the OpenClaw port. Callers pattern-match on `.kind` for actionable
- * routing, which is more ergonomic than `.error.kind`.
+ * NOTE on Result<T,E> deviation: this shape is from the OpenClaw port.
+ * Callers pattern-match on `.kind` for actionable routing, which is
+ * more ergonomic than `.error.kind`.
  */
 export type TlsPreflightResult =
   | { ok: true }

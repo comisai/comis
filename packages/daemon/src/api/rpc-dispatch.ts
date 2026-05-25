@@ -40,6 +40,7 @@ import { createChannelHandlers } from "./channel-handlers.js";
 import { createTokenHandlers } from "./token-handlers.js";
 import { createDaemonHandlers } from "./daemon-handlers.js";
 import { createMcpHandlers } from "./mcp-handlers.js";
+import { createMcpOauthHandlers } from "./mcp-oauth-handlers.js";
 import { createContextHandlers } from "./context-handlers.js";
 import { createGraphHandlers } from "./graph-handlers/index.js";
 import { createWorkspaceHandlers } from "./workspace-handlers.js";
@@ -84,8 +85,8 @@ import { createProviderHandlers } from "./provider-handlers.js";
  * are migrated to `throw new PreconditionError(...)` /
  * `throw new ValidationError(...)`. The typed-error migration of the
  * remaining bare-Error handlers in packages/daemon/src/api/ is deferred.
- * The deletion is intentional — keeping the substring fallbacks was the
- * BC shim; the migration is incremental hardening.
+ * The deletion is intentional — keeping the substring fallbacks was the BC
+ * shim; the migration is incremental hardening.
  */
 export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: string; level: "warn" | "error" } {
   // Typed errors: instanceof checks. Add new typed classes here as
@@ -264,6 +265,19 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         configGitManager: deps.configGitManager,
         logger: deps.logger,
       } : undefined,
+    }),
+    // mcp-oauth-handlers consumes WorkspaceApiDeps (mcpClientManager + logger +
+    // container for the persisted server config). oauth_login runs the
+    // server-side discovery + loopback callback + SDK auth() flow (via
+    // the @comis/skills runOauthLogin orchestrator — the daemon has no direct SDK
+    // dep) and returns the authUrl for the CLI to open; oauth_logout clears the
+    // three token files. The browser is NEVER launched daemon-side (the injected
+    // openUrl defaults to a no-op). The login orchestrator + token-store factory
+    // default to the real @comis/skills exports.
+    ...createMcpOauthHandlers({
+      ...deps,
+      mcpClientManager: deps.mcpClientManager,
+      logger: deps.logger,
     }),
     // daemon-handlers consumes DaemonApiDeps; spread `...deps` so the
     // cluster slice's required `logger` is present alongside the

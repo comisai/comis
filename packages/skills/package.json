@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "@comis/core": "workspace:*",
+    "@comis/observability": "workspace:*",
     "@comis/shared": "workspace:*",
     "@elevenlabs/elevenlabs-js": "2.45.0",
     "@fal-ai/client": "1.9.6",

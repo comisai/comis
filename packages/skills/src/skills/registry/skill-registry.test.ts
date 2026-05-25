@@ -2182,4 +2182,81 @@ describe("getPromptSkillCapabilities", () => {
     expect(result[0].summary).toBe("Fetches data");
     expect(result[0].replacesPackages).toEqual(["yfinance"]);
   });
+
+  // -------------------------------------------------------------------------
+  // getAllMetadata() boot-orchestrator enumeration
+  // -------------------------------------------------------------------------
+
+  it("getAllMetadata returns one entry per discovered skill", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createSkill(skillsDir, "alpha", makeSkillMd("alpha", "alpha desc"));
+    createSkill(skillsDir, "beta", makeSkillMd("beta", "beta desc"));
+    createSkill(skillsDir, "gamma", makeSkillMd("gamma", "gamma desc"));
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const all = registry.getAllMetadata();
+    expect(all).toHaveLength(3);
+    expect(all.map((m) => m.name).sort()).toEqual(["alpha", "beta", "gamma"]);
+  });
+
+  it("getAllMetadata returns SkillMetadata with non-empty filePath for each entry", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createSkill(skillsDir, "with-path", makeSkillMd("with-path", "test"));
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const all = registry.getAllMetadata();
+    expect(all).toHaveLength(1);
+    expect(typeof all[0].filePath).toBe("string");
+    expect(all[0].filePath.length).toBeGreaterThan(0);
+    // The filePath points at the SKILL.md on disk inside the per-skill dir.
+    expect(all[0].filePath).toContain("with-path");
+    expect(all[0].filePath).toContain("SKILL.md");
+  });
+
+  it("getAllMetadata is idempotent — two calls return the same data set", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createSkill(skillsDir, "stable", makeSkillMd("stable", "stable desc"));
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const first = registry.getAllMetadata();
+    const second = registry.getAllMetadata();
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(first[0].name).toBe(second[0].name);
+    expect(first[0].filePath).toBe(second[0].filePath);
+    expect(first[0].description).toBe(second[0].description);
+  });
+
+  it("getAllMetadata reflects rediscovery after re-init (skill added then removed)", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createSkill(skillsDir, "initial", makeSkillMd("initial", "first round"));
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+    expect(registry.getAllMetadata().map((m) => m.name).sort()).toEqual(["initial"]);
+
+    // Add a second skill on disk, re-init the registry.
+    createSkill(skillsDir, "added", makeSkillMd("added", "second round"));
+    registry.init();
+    expect(registry.getAllMetadata().map((m) => m.name).sort()).toEqual(["added", "initial"]);
+
+    // Remove the original from disk, re-init: registry should drop it.
+    fs.rmSync(path.join(skillsDir, "initial"), { recursive: true, force: true });
+    registry.init();
+    expect(registry.getAllMetadata().map((m) => m.name).sort()).toEqual(["added"]);
+  });
 });

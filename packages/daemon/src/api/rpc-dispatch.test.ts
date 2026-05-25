@@ -176,7 +176,7 @@ describe("classifyRpcError", () => {
   // The 5 substring-match fallbacks (`errMsg.includes("immutable") |
   // "Admin access required" | "Unknown RPC method" | "not found" |
   // "validation failed" | "Invalid input"`) were deleted alongside their
-  // pinning tests per PATTERNS.md §"Track 8" rule. Handlers still
+  // pinning tests. Handlers still
   // throwing bare `Error("Admin access required" | ...)` now classify as
   // `internal`/`error` until they migrate to typed errors (deferred).
 

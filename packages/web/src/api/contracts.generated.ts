@@ -4420,6 +4420,21 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "disablePlaintextSecretCheck": {
           "type": "boolean"
+        },
+        "keepaliveIntervalMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "circuitBreakerThreshold": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "circuitBreakerCooldownMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -4608,6 +4623,89 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "required": [
         "servers",
         "total"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "mcp.oauth_login": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "server_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "server_name"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "server_name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "authorized",
+            "headless_hint",
+            "failed"
+          ]
+        },
+        "portForwardHint": {
+          "type": "string"
+        },
+        "authUrl": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "mcp.oauth_logout": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "server_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "server_name"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "server_name": {
+          "type": "string"
+        },
+        "cleared": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "server_name",
+        "cleared"
       ],
       "additionalProperties": false
     },
@@ -8183,6 +8281,13 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               },
               "timestamp": {
                 "type": "number"
+              },
+              "deliveryStatus": {
+                "type": "string",
+                "enum": [
+                  "confirmed",
+                  "pending"
+                ]
               }
             },
             "required": [
@@ -8639,6 +8744,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "agentId": {
           "type": "string"
+        },
+        "force": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -8734,6 +8842,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "agentId": {
           "type": "string"
+        },
+        "force": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -8919,6 +9030,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "agentId": {
           "type": "string"
+        },
+        "force": {
+          "type": "boolean"
         }
       },
       "required": [

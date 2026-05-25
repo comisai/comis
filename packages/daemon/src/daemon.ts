@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract — bootstrap() returns Result but daemon.ts is the entry point that catches it and exits.
+// @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits).
 /**
  * Daemon Entry Point: composition root for the entire daemon process.
  *
@@ -132,6 +132,8 @@ import {
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
   setupMcp,
+  setupSkillBundles,
+  buildSkillRegistriesForBundles,
   setupOutputRetention,
   type SetupOutputRetentionHandle,
 } from "./wiring/index.js";
@@ -852,28 +854,70 @@ type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
 /**
  * Resolve gateway tokens from config (config -> env -> auto-generated).
  */
+/**
+ * Per-token MCP-client config block. Surface to the gateway TokenStore via
+ * `TokenEntry.mcpClient` so the verified TokenClient carries the allowlist +
+ * sessionAllowlist + per-tool rate-limit overrides.
+ */
+interface ResolvedGatewayToken {
+  id: string;
+  secret: string;
+  scopes: string[];
+  mcpClient?: {
+    allowlist: string[];
+    sessionAllowlist: string[];
+    toolRateLimit: Record<string, number>;
+  };
+}
+
 function resolveGatewayTokens(deps: {
   container: BootContext["container"];
   daemonLogger: BootContext["daemonLogger"];
-}): Array<{ id: string; secret: string; scopes: string[] }> {
+}): Array<ResolvedGatewayToken> {
   const { container, daemonLogger } = deps;
-  const resolved: Array<{ id: string; secret: string; scopes: string[] }> = [];
+  const resolved: Array<ResolvedGatewayToken> = [];
   for (const t of container.config.gateway?.tokens ?? []) {
     const tokenId = t.id ?? "unknown";
     const tokenScopes = [...(t.scopes ?? [])];
+    // Preserve the per-MCP-client config block so the TokenStore can surface
+    // it on verified TokenClient instances. Schema defaults guarantee the
+    // fields are populated when the block is present.
+    const mcpClient = t.mcpClient
+      ? {
+          allowlist: [...t.mcpClient.allowlist],
+          sessionAllowlist: [...t.mcpClient.sessionAllowlist],
+          toolRateLimit: { ...t.mcpClient.toolRateLimit },
+        }
+      : undefined;
+
     if (typeof t.secret === "string" && t.secret.length >= 32) {
       // Source: config (explicit secret present and valid)
-      resolved.push({ id: tokenId, secret: t.secret, scopes: tokenScopes });
+      resolved.push({
+        id: tokenId,
+        secret: t.secret,
+        scopes: tokenScopes,
+        ...(mcpClient && { mcpClient }),
+      });
     } else {
       const envKey = `GATEWAY_TOKEN_${tokenId.toUpperCase().replace(/-/g, "_")}`;
       const envSecret = container.secretManager.get(envKey);
       if (envSecret) {
         // Source: env / SecretManager
-        resolved.push({ id: tokenId, secret: envSecret, scopes: tokenScopes });
+        resolved.push({
+          id: tokenId,
+          secret: envSecret,
+          scopes: tokenScopes,
+          ...(mcpClient && { mcpClient }),
+        });
       } else {
         // Source: auto-generated (ephemeral)
         const generated = generateStrongToken();
-        resolved.push({ id: tokenId, secret: generated, scopes: tokenScopes });
+        resolved.push({
+          id: tokenId,
+          secret: generated,
+          scopes: tokenScopes,
+          ...(mcpClient && { mcpClient }),
+        });
         daemonLogger.warn(
           { tokenId, envVar: envKey, hint: `Set ${envKey} in environment or secrets store for persistence`, errorKind: "config" as const },
           "Gateway token auto-generated (ephemeral -- will be lost on restart)",
@@ -1629,6 +1673,35 @@ async function bootAgents(
     ({} as PerAgentConfig);
   const defaultWorkspaceDir = resolveWorkspaceDir(defaultAgentConfig, defaultAgentId);
 
+  // Boot-path skill-bundle re-merge MUST run BEFORE setupMcp (sequencing
+  // gate). The orchestrator
+  // re-runs the bundle resolver across every installed skill's mcpServers
+  // block and persists the merged array via persistMcpServers — which
+  // mutates container.config.integrations.mcp.servers via its in-memory
+  // swap. setupMcp on the next line then connects from the POST-merge
+  // state. Reversing the order leaves setupMcp connecting to the pre-merge
+  // list (a new bundle entry persists on disk but stays disconnected).
+  //
+  // Pre-pass: build thin discovery-only skill registries inline (the real
+  // per-agent registries with eligibility + watcher are built later inside
+  // setupAgents). createSkillRegistry is idempotent so the two passes
+  // don't race; the discovery-only registries are discarded after the
+  // orchestrator returns.
+  const skillRegistriesForBundles = buildSkillRegistriesForBundles(container, skillsLogger);
+  await setupSkillBundles({
+    container,
+    skillRegistries: skillRegistriesForBundles,
+    persistDeps: {
+      container,
+      configPaths: foundation.configPaths,
+      defaultConfigPaths: DEFAULT_CONFIG_PATHS,
+      configGitManager: foundation.configGitManager,
+      logger: skillsLogger,
+    },
+    eventBus: container.eventBus,
+    logger: skillsLogger,
+  });
+
   // Construct daemon-global MCP manager BEFORE setupAgents (ordering constraint
   // -- per-agent ToolCapabilityPort adapters close over mcpClientManager).
   // Inlined setupMcpManager — pure in-memory state holder construction.
@@ -1640,6 +1713,12 @@ async function bootAgents(
     eventBus: container.eventBus,
     stdioDefaultConcurrency: container.config.integrations.mcp.stdioDefaultConcurrency,
     httpDefaultConcurrency: container.config.integrations.mcp.httpDefaultConcurrency,
+    // Forward the global reliability config so daemon-wide
+    // keepalive/circuit-breaker overrides apply to startup-connected servers
+    // (otherwise only per-server mcp.connect overrides take effect).
+    keepaliveIntervalMs: container.config.integrations.mcp.keepaliveIntervalMs,
+    circuitBreakerThreshold: container.config.integrations.mcp.circuitBreakerThreshold,
+    circuitBreakerCooldownMs: container.config.integrations.mcp.circuitBreakerCooldownMs,
   });
 
   const {
@@ -1949,7 +2028,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
     eventBus: container.eventBus, skillsLogger, linkRunner,
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     subprocessEnv: handle.execToolEnv, onSuspiciousContent: handle.onSuspiciousContent,
-    mcpClientManager, sandboxProvider, imageGenProvider, backgroundTaskManager,
+    mcpClientManager,
+    // Fresh accessor for per-server tool filtering — read live so
+    // config:mutated server edits surface on the next tool assembly.
+    getMcpServerEntries: () => container.config.integrations?.mcp?.servers ?? [],
+    sandboxProvider, imageGenProvider, backgroundTaskManager,
     sessionTrackerRegistry: handle.sessionTrackerRegistry, getCapabilityPortForAgent,
   });
 
@@ -2189,6 +2272,7 @@ async function bootGateway(
     costTrackers, workspaceDirs,
     _createGatewayServer, piSessionAdapters,
     resolvedTokens: resolvedGatewayTokens,
+    daemonVersion: boot.daemonVersion,
     suspendedAgents,
     instanceId, startupStartMs,
   });

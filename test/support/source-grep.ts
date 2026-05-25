@@ -11,7 +11,7 @@
  * enforce production/test boundary invariants.
  *
  * Implementation: plain `node:fs.readdirSync` recursion (no glob transitive
- * dep) -- keeps the helper dependency-free.
+ * dep) -- keeps the helper dependency-free (KISS/YAGNI).
  *
  * @module
  */

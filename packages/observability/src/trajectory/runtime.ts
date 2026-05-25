@@ -348,10 +348,10 @@ export function createTrajectoryRecorder(
   });
 
   // Best-effort pointer-file sidecar at `<sessionFile>.trajectory-path.json`.
-  // Only emit when the recorder was constructed alongside a per-session
-  // JSONL file — the env / cwd fallback paths have no session file to
-  // anchor the pointer to. Errors are swallowed by the helper; a missing
-  // pointer MUST NOT block trajectory writes.
+  // Only emit when the recorder was constructed
+  // alongside a per-session JSONL file — the env / cwd fallback paths
+  // have no session file to anchor the pointer to. Errors are swallowed
+  // by the helper; a missing pointer MUST NOT block trajectory writes.
   if (init.sessionFile !== undefined) {
     writeTrajectoryPointerFileBestEffort({
       sessionFile: init.sessionFile,

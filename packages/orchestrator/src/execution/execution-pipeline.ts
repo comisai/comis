@@ -134,7 +134,7 @@ export function resolveStreamingConfig(
   streamingConfig?: StreamingConfig,
 ): PerChannelStreamingConfig {
   // No global streaming config provided — return the per-channel schema defaults.
-  // (Schema is the SSOT; no inline literals.)
+  // (Schema is the single source of truth; no inline literals.)
   //
   // Documented deviation: the `StreamingConfigSchema.parse({})` lane is
   // satisfied at AppConfig parse time (operator YAML → AppConfig in

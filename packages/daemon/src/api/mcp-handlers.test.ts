@@ -291,12 +291,11 @@ describe("MCP RPC Handlers", () => {
   // McpConnectContract.request.parse. It scans userParams.env values for
   // (a) known credential prefixes (ghp_, sk-, AKIA, etc.) OR (b) the
   // entropy backstop (Shannon entropy > 3.5 AND length >= 44). The
-  // per-server `disablePlaintextSecretCheck: true` opt-out in
+  // per-server `disablePlaintextSecretCheck: true` opt-out from
   // McpServerEntrySchema is the last-resort escape hatch — WARN-and-allow.
   //
-  // Length floor 44 (NOT 40): eliminates the
-  // OpenAI 40-char org-ID false positive without losing any real-token
-  // rejection.
+  // Length floor 44 (NOT 40): eliminates the OpenAI 40-char org-ID false
+  // positive without losing any real-token rejection.
   // -------------------------------------------------------------------------
   describe("mcp.connect plaintext-secret guard", () => {
     it("rejects ghp_ GitHub PAT prefix with [plaintext_secret_in_env] naming the variable", async () => {
@@ -461,9 +460,7 @@ describe("MCP RPC Handlers", () => {
   //
   // Direct pure-function coverage so the heuristic shape (prefix list +
   // entropy >3.5 AND length >=44 backstop) is pinned independent of the
-  // RPC handler integration. Architecture-tier negative-control test
-  // (test/architecture/mcp-plaintext-secret-false-positives.test.ts)
-  // covers the broader matrix; this block is the daemon-resident smoke check.
+  // RPC handler integration. This block is the daemon-resident smoke check.
   // -------------------------------------------------------------------------
   describe("looksLikePlaintextSecret pure-function heuristic", () => {
     it("returns true for ghp_ GitHub PAT prefix", () => {
@@ -680,8 +677,8 @@ describe("MCP RPC Handlers", () => {
     });
 
     // -------------------------------------------------------------------------
-    // mcp.test must apply the same pre-spawn safety controls
-    // as mcp.connect. Pre-fix the handler built McpServerConfig and called
+    // mcp.test must apply the same pre-spawn safety controls as mcp.connect.
+    // Pre-fix the handler built McpServerConfig and called
     // tempManager.connect(config) WITHOUT:
     //   - plaintext-secret guard (raw tokens could be passed in env and
     //     would reach the child process)
@@ -694,9 +691,7 @@ describe("MCP RPC Handlers", () => {
     //   - rlimits plumb-through (test spawns had no resource caps)
     //
     // mcp.test IS a pre-spawn surface (it actually spawns the child to
-    // probe it). The earlier hardening covered only mcp.connect — an attacker could
-    // simply call mcp.test instead. The fix mirrors every guard from
-    // mcp.connect onto mcp.test.
+    // probe it). The fix mirrors every guard from mcp.connect onto mcp.test.
     // -------------------------------------------------------------------------
     describe("mcp.test safety parity", () => {
       it("rejects ghp_ plaintext secret with [plaintext_secret_in_env] same as mcp.connect", async () => {
@@ -1039,8 +1034,8 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Persistence + audit-log integration. These
-  // tests are the minimum surface to prove the wiring is correct.
+  // Persistence + audit-log integration.
+  // These tests prove the wiring is correct.
   // -------------------------------------------------------------------------
 
   // makePersistDeps used to return two DIFFERENT object literals for
@@ -1068,12 +1063,11 @@ describe("MCP RPC Handlers", () => {
   }
 
   // -------------------------------------------------------------------------
-  // Production parity: makePersistDeps's `persistDeps.container` and
-  // outer `container` MUST refer to the same object. In production wiring
-  // (rpc-dispatch.ts) both reach the same `deps.container`. Pre-fix the
-  // fixture returned two object literals and a bug in the in-memory swap
-  // path that wrote to the wrong container would pass tests but fail in
-  // production.
+  // Production parity: makePersistDeps's `persistDeps.container` and outer
+  // `container` MUST refer to the same object. In production wiring
+  // (rpc-dispatch.ts) both reach the same `deps.container`. A bug in the
+  // in-memory swap path that wrote to the wrong container would pass tests
+  // but fail in production.
   // -------------------------------------------------------------------------
   describe("makePersistDeps — production parity (shared container reference)", () => {
     it("persistDeps.container and outer container point to the SAME object", () => {
@@ -1248,12 +1242,121 @@ describe("MCP RPC Handlers", () => {
         args: ["v2", "--verbose"],
       }));
     });
+
+    // -----------------------------------------------------------------------
+    // SECURITY REGRESSION fix: the persisted `newEntry` must RETAIN the
+    // config-only fields from the prior persisted entry.
+    //
+    // mcp.connect has NO RPC params for toolAllowlist/toolBlocklist/
+    // enableResources/enablePrompts/supportsParallelToolCalls/idleTtlMs
+    // (config-only by design). The runtime McpServerConfig already forwards
+    // them from `persistedEntry`, but the PERSISTED McpServerEntry (the entry
+    // written back to config.yaml via persistToConfig) dropped them and
+    // hardcoded idleTtlMs:0.
+    //
+    // Consequence — dropping toolAllowlist/toolBlocklist on persist is a
+    // SECURITY REGRESSION: an operator who set `toolAllowlist: ["safe_tool"]`
+    // in config.yaml and then triggers mcp.connect on that server gets the
+    // entry rewritten WITHOUT the allowlist, so on the next daemon restart
+    // ALL tools from that server surface to the agent — bypassing the filter.
+    // -----------------------------------------------------------------------
+    it("retains toolAllowlist/toolBlocklist/enableResources/enablePrompts/supportsParallelToolCalls + positive idleTtlMs from the prior persisted entry on the persisted patch (security regression)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("guarded", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "guarded",
+          transport: "stdio",
+          command: "npx",
+          args: ["guarded-mcp"],
+          enabled: true,
+          // Config-only fields the operator set in config.yaml — mcp.connect
+          // has no RPC param for any of these.
+          toolAllowlist: ["safe_tool"],
+          toolBlocklist: ["dangerous_tool"],
+          enableResources: false,
+          enablePrompts: false,
+          supportsParallelToolCalls: true,
+          idleTtlMs: 300_000,
+          // auth/oauth are config-only on mcp.connect too —
+          // dropping them on persist downgrades the server to no-auth.
+          auth: "oauth",
+          oauth: { scope: "read", stripeAccount: "acct_1" },
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "guarded",
+        transport: "stdio",
+        command: "npx",
+        args: ["guarded-mcp"],
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      const persisted = callOpts.patch.integrations.mcp.servers.find(
+        (s: { name: string }) => s.name === "guarded",
+      );
+      expect(persisted).toBeDefined();
+      // The allowlist/blocklist MUST survive the rewrite — dropping them is the
+      // security regression described above.
+      expect(persisted.toolAllowlist).toEqual(["safe_tool"]);
+      expect(persisted.toolBlocklist).toEqual(["dangerous_tool"]);
+      // Resources/prompts opt-outs must survive.
+      expect(persisted.enableResources).toBe(false);
+      expect(persisted.enablePrompts).toBe(false);
+      // Parallel-calls opt-in must survive.
+      expect(persisted.supportsParallelToolCalls).toBe(true);
+      // Positive idleTtlMs must be preserved, NOT reset to 0.
+      expect(persisted.idleTtlMs).toBe(300_000);
+      // auth/oauth must survive the persist rewrite.
+      expect(persisted.auth).toBe("oauth");
+      expect(persisted.oauth).toEqual({ scope: "read", stripeAccount: "acct_1" });
+    });
+
+    // Corollary: a server with NO config-only fields set must persist a clean
+    // entry — no spurious allowlist/blocklist keys, idleTtlMs defaults to 0
+    // (disabled). Guards against the helper accidentally injecting undefined
+    // values via unconditional spreads.
+    it("persists idleTtlMs:0 and omits tool filters when the prior entry had none", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("plain", [])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "plain",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      const persisted = callOpts.patch.integrations.mcp.servers.find(
+        (s: { name: string }) => s.name === "plain",
+      );
+      expect(persisted).toBeDefined();
+      expect(persisted.idleTtlMs).toBe(0);
+      expect(persisted).not.toHaveProperty("toolAllowlist");
+      expect(persisted).not.toHaveProperty("toolBlocklist");
+      expect(persisted).not.toHaveProperty("enableResources");
+      expect(persisted).not.toHaveProperty("enablePrompts");
+      expect(persisted).not.toHaveProperty("supportsParallelToolCalls");
+      expect(persisted).not.toHaveProperty("auth");
+      expect(persisted).not.toHaveProperty("oauth");
+    });
   });
 
   // -------------------------------------------------------------------------
-  // rlimits accepted on mcp.connect AND persisted to the
-  // McpServerEntry, then applied to the spawn-time wrap on this and
-  // subsequent connects.
+  // rlimits accepted on mcp.connect AND persisted to the McpServerEntry, then
+  // applied to the spawn-time wrap on this and subsequent connects.
   //
   // Pre-fix the handler computed `rlimits: persistedEntry?.rlimits` from an
   // already-persisted entry, so a fresh `mcp.connect` of a new server
@@ -1361,6 +1464,210 @@ describe("MCP RPC Handlers", () => {
 
       expect(sharedContainer.config.integrations).toBeDefined();
       expect(sharedContainer.config.integrations.mcp.servers).toHaveLength(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // mcp.connect forwards the persisted fields
+  // (idleTtlMs, toolAllowlist, toolBlocklist, enableResources, enablePrompts)
+  // into the runtime McpServerConfig handed to manager.connect.
+  //
+  // Pre-fix the handler omitted all five from the constructed config, so a
+  // mcp.reconnect-after-disconnect (which routes through this handler) lost
+  // config-file-set idle eviction / tool filtering / resources-prompts
+  // opt-outs. mcp.connect accepts no CLI params for these, so the source is
+  // the persisted entry.
+  // -------------------------------------------------------------------------
+  describe("mcp.connect forwards persisted fields to manager.connect", () => {
+    it("forwards idleTtlMs/toolAllowlist/toolBlocklist/enableResources/enablePrompts from the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "ctx7",
+          transport: "stdio",
+          command: "npx",
+          enabled: true,
+          // `any` cast — makePersistDeps's signature doesn't model these
+          // fields, but McpServerEntrySchema does and the handler reads them
+          // off the persisted entry directly.
+          idleTtlMs: 300_000,
+          toolAllowlist: ["safe-tool"],
+          toolBlocklist: ["dangerous-tool"],
+          enableResources: false,
+          enablePrompts: true,
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "ctx7",
+          idleTtlMs: 300_000,
+          toolAllowlist: ["safe-tool"],
+          toolBlocklist: ["dangerous-tool"],
+          enableResources: false,
+          enablePrompts: true,
+        }),
+      );
+    });
+
+    it("omits idleTtlMs from the runtime config when the persisted value is 0 (disabled)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "ctx7", transport: "stdio", command: "npx", enabled: true, idleTtlMs: 0 } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const callArg = (manager.connect as any).mock.calls[0][0];
+      expect(callArg).not.toHaveProperty("idleTtlMs");
+    });
+  });
+
+  // mcp.connect forwards the persisted supportsParallelToolCalls into the
+  // runtime McpServerConfig handed to manager.connect. mcp.connect accepts no
+  // CLI param for it (config-only forward), so the source is the persisted
+  // entry. A reconnect-after-disconnect routes through this handler; without
+  // the forward the PQueue concurrency opt-in is lost (silent no-op).
+  describe("mcp.connect forwards persisted supportsParallelToolCalls to manager.connect", () => {
+    it("forwards supportsParallelToolCalls: true from the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "ctx7",
+          transport: "stdio",
+          command: "npx",
+          enabled: true,
+          supportsParallelToolCalls: true,
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "ctx7",
+          supportsParallelToolCalls: true,
+        }),
+      );
+    });
+
+    it("omits supportsParallelToolCalls when absent on the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "ctx7", transport: "stdio", command: "npx", enabled: true } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const callArg = (manager.connect as any).mock.calls[0][0];
+      expect(callArg).not.toHaveProperty("supportsParallelToolCalls");
+    });
+  });
+
+  // mcp.connect forwards the persisted auth/oauth into the runtime
+  // McpServerConfig handed to manager.connect. mcp.connect accepts no CLI
+  // param for them (config-only forward), so the source is the persisted
+  // entry. A reconnect-after-disconnect routes through this handler; without
+  // the forward the OAuthClientProvider is never wired (silent downgrade to
+  // no-auth).
+  describe("mcp.connect forwards persisted auth/oauth to manager.connect", () => {
+    it("forwards auth='oauth' + oauth block from the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("notion", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "notion",
+          transport: "http",
+          url: "https://mcp.notion.com/mcp",
+          enabled: true,
+          auth: "oauth",
+          oauth: { scope: "read", stripeAccount: "acct_1" },
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "notion",
+        transport: "http",
+        url: "https://mcp.notion.com/mcp",
+      });
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "notion",
+          auth: "oauth",
+          oauth: { scope: "read", stripeAccount: "acct_1" },
+        }),
+      );
+    });
+
+    it("omits auth/oauth when absent on the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+      const { persistDeps, container } = makePersistDeps([
+        { name: "ctx7", transport: "stdio", command: "npx", enabled: true } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      const callArg = (manager.connect as any).mock.calls[0][0];
+      expect(callArg).not.toHaveProperty("auth");
+      expect(callArg).not.toHaveProperty("oauth");
     });
   });
 
@@ -1492,8 +1799,8 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // disablePlaintextSecretCheck:true must be persisted to
-  // the McpServerEntry so the opt-out survives a daemon restart.
+  // disablePlaintextSecretCheck:true must be persisted to the McpServerEntry
+  // so the opt-out survives a daemon restart.
   //
   // Pre-fix the handler read `userParams.disablePlaintextSecretCheck === true`
   // at runtime (working correctly at connect-time) but the newEntry built
@@ -1636,24 +1943,28 @@ describe("MCP RPC Handlers", () => {
   });
 
   // ===========================================================================
-  // Additional per-criterion unit tests
+  // Focused unit tests: persistence contract, reconnect-override guard,
+  // runtime_only / audit outcomes.
   //
-  // Extends the baseline persistence test scaffolding with explicit
-  // per-criterion tests and the per-field override loop. Net new behavioral
-  // coverage delivered here:
+  // Coverage delivered here:
   //
-  //   - sole-entry (disconnect of the only entry leaves `[]`, not undefined)
+  //   - sole-entry disconnect (leaves `[]`, not undefined)
   //   - skipRestart explicitly asserted on both connect AND disconnect
-  //   - per-field override loop (command, args, url, headers, env in addition to
-  //     the existing transport assertion)
-  //   - happy-path: reconnect with NO override fields does not fire guard
+  //   - per-field reconnect-override-rejection loop (command, args, url,
+  //     headers, env in addition to the existing transport assertion)
+  //   - reconnect happy-path: NO override fields does not fire guard
   //   - runtime_only outcome: persist err → response has warning
   //   - disconnect happy-path explicitly returns persistence:'persisted'
   //   - failed-audit branch: appendConfigAuditWithOutcome called with
   //     {kind:'failed', message} when persistToConfig returns err
+  //
+  // Earlier tests already cover connect-success persistence, spawn-failure
+  // isolation, env-ref preservation, same-name overwrite, fail-loud
+  // disconnect. These blocks are intentionally separated so each behavior
+  // is independently traceable.
   // ===========================================================================
 
-  describe("sole-entry — disconnect of the only entry leaves []", () => {
+  describe("sole-entry disconnect — disconnect of the only entry leaves []", () => {
     it("persists an empty array (NOT undefined) when removing the sole entry", async () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
       const { persistDeps, container } = makePersistDeps([
@@ -1717,14 +2028,13 @@ describe("MCP RPC Handlers", () => {
   });
 
   // ===========================================================================
-  // In-memory state effect
+  // In-memory state effect after persist
   //
-  // The orphan-branch persistMcpServers wrote to disk but did NOT update
-  // container.config.integrations.mcp.servers. The in-memory refresh
-  // is now part of the contract. After a successful persist, the
-  // container.config.integrations subtree is structuredClone'd, .mcp.servers
-  // is overwritten with the new array, and the whole subtree is atomically
-  // swapped onto container.config.integrations.
+  // An earlier implementation wrote to disk but did NOT update
+  // container.config.integrations.mcp.servers. After a successful persist,
+  // the container.config.integrations subtree is structuredClone'd,
+  // .mcp.servers is overwritten with the new array, and the whole subtree is
+  // atomically swapped onto container.config.integrations.
   // ===========================================================================
 
   describe("in-memory state effect — container.config refresh after persist", () => {
@@ -1786,8 +2096,8 @@ describe("MCP RPC Handlers", () => {
       } as any);
 
       // Capture the pre-call integrations object identity. After a successful
-      // persist, the swap must replace the .integrations subtree
-      // with a structuredClone'd copy (NOT mutate the original in place) —
+      // persist, the swap replaces the .integrations subtree with a
+      // structuredClone'd copy (NOT mutate the original in place) —
       // so a reader holding the prior reference observes the pre-state.
       const preIntegrations = container.config.integrations;
 
@@ -1814,7 +2124,7 @@ describe("MCP RPC Handlers", () => {
     it("does NOT throw and skips the swap when deps.container is absent (existing test fixture invariant)", async () => {
       // persistDeps is still wired so persistToConfig runs; container is OMITTED.
       // The orphan-branch test fixtures construct deps without container and
-      // the swap MUST optional-chain away cleanly.
+      // the swap MUST optional-chain away cleanly (defense-in-depth).
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
       const { persistDeps } = makePersistDeps([]);
       const handlers = createMcpHandlers({
@@ -1864,10 +2174,9 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
-  describe("per-field — reconnect-override-rejection fires for every override field independently", () => {
-    // Earlier work covered the `transport` override; this adds explicit coverage
-    // for command, args, url, headers, env so every override surface is
-    // pinned to a regression-safe assertion.
+  describe("reconnect-override-rejection fires for every override field independently", () => {
+    // Explicit coverage for command, args, url, headers, env so every
+    // override surface is pinned to a regression-safe assertion.
     const overrideFields: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
       ["command", { command: "node" }],
       ["args", { args: ["new"] }],
@@ -1943,7 +2252,7 @@ describe("MCP RPC Handlers", () => {
       expect(result.warning).toBe("ENOSPC: out of disk");
     });
 
-    it("disconnect happy path explicitly returns persistence:'persisted' (disconnect mirror)", async () => {
+    it("disconnect happy path explicitly returns persistence:'persisted'", async () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("yfinance"));
       const { persistDeps, container } = makePersistDeps([
         { name: "yfinance", transport: "stdio", command: "npx", enabled: true },
@@ -2029,23 +2338,21 @@ describe("MCP RPC Handlers", () => {
 });
 
 // ===========================================================================
-// Cross-test — gateway-patch single-writer guard
+// Gateway-patch single-writer guard (cross-test)
 //
-// The single-writer guard is delivered as the `integrations.mcp.servers is managed by mcp_manage`
-// throw in config-write.ts. The full positive-and-negative coverage
-// lives in packages/daemon/src/api/config-handlers.test.ts:2154+ (5 tests).
-// This describe block adds a focused mcp-handlers-resident cross-test that
-// asserts the guard fires from the same factory consumers use in production,
-// keeping acceptance traceable to a test in the file collocated
-// with the mcp_manage writer surface.
+// The `integrations.mcp.servers is managed by mcp_manage` guard fires in
+// config-write.ts. The full positive-and-negative coverage lives in
+// packages/daemon/src/api/config-handlers.test.ts. This describe block adds
+// a focused cross-test asserting the guard fires from the same factory
+// consumers use in production.
 // ===========================================================================
 
 describe("gateway-patch single-writer guard (cross-test from mcp-handlers test file)", () => {
   it("rejects config.patch against integrations.mcp.servers and routes the caller to mcp_manage", async () => {
     // Lazy-load the SUT here so the file-top vi.mock for persist-to-config does
     // not interfere — config-write.ts imports persist-to-config too, but the
-    // guard fires BEFORE that import is exercised (trust-check → single-writer guard →
-    // rate-limit → persist). The mock is therefore a non-issue.
+    // guard fires BEFORE that import is exercised (trust-check → single-writer
+    // guard → rate-limit → persist). The mock is therefore a non-issue.
     const { bindConfigWriteHandlers } = await import("./config-handlers/config-write.js");
 
     // Minimal handler deps. The guard fires BEFORE deps.container, configPaths,
@@ -2094,7 +2401,7 @@ describe("gateway-patch single-writer guard (cross-test from mcp-handlers test f
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("admin-trust check takes precedence over the guard (non-admin trust gets the trust error, not the redirect)", async () => {
+  it("admin-trust check takes precedence over the single-writer guard (non-admin trust gets the trust error, not the mcp_manage redirect)", async () => {
     const { bindConfigWriteHandlers } = await import("./config-handlers/config-write.js");
     const handlers = bindConfigWriteHandlers(
       {

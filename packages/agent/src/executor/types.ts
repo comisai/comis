@@ -101,7 +101,7 @@ export interface ExecutionOverrides {
    *  context via the graph envelope. Prevents cross-run memory contamination
    *  from the tenantId-only RAG search that lacks graphId awareness. */
   skipRag?: boolean;
-  /** Ephemeral session adapter override for sub-agent in-memory sessions (R-11).
+  /** Ephemeral session adapter override for sub-agent in-memory sessions.
    *  When provided, PiExecutor uses this instead of deps.sessionAdapter for
    *  withSession and writeSessionMetadata calls. Skips write lock and JSONL persistence. */
   ephemeralSessionAdapter?: ComisSessionManager;

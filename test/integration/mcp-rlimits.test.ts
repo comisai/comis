@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stdio rlimits integration test (Linux-only).
+ * stdio rlimits integration test (Linux-only).
  *
  * Validates the `prlimit(1)` composition end-to-end against a real
  * subprocess on Linux. Tests that:

@@ -133,14 +133,14 @@ async function waitForRestart(host: string, port: number): Promise<boolean> {
     }
   };
 
-  // Phase 1: wait for the gateway to disappear (signal landed).
+  // Step 1: wait for the gateway to disappear (signal landed).
   const downDeadline = systemNowMs() + 5_000;
   while (systemNowMs() < downDeadline) {
     if (!(await probe())) break;
     await new Promise<void>((r) => systemSetTimeout(() => r(), READY_POLL_MS));
   }
 
-  // Phase 2: wait for the gateway to come back (container restarted).
+  // Step 2: wait for the gateway to come back (container restarted).
   const upDeadline = systemNowMs() + READY_TIMEOUT_MS;
   while (systemNowMs() < upDeadline) {
     if (await probe()) return true;

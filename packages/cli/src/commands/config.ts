@@ -385,7 +385,7 @@ export function registerConfigCommand(program: Command): void {
   //
   // Wiring boundary: this callback is the orchestrator. All discovery,
   // AST mutation, fs I/O, and daemon probing live in
-  // `packages/cli/src/sync-tooling/*`.
+  // `packages/cli/src/sync-tooling/`.
   config
     .command("sync-tooling")
     .description("Discover MCPs/skills and sync the tooling: config block")
@@ -625,14 +625,13 @@ export function registerConfigCommand(program: Command): void {
   // --- config tooling-fill --------------------------------------------------
   // Operator UX for materializing the description + replacesPackages fields
   // on tooling capability hints via the live Comis daemon. The orchestrator
-  // owns the full state machine; this callback is the composition root —
-  // it builds the OrchestratorOpts bag, instantiates the
-  // confirm-helper-backed PromptIO, and routes the result's exitCode into
-  // process.exit.
+  // owns the full state machine; this callback is the composition root — it
+  // builds the OrchestratorOpts bag, instantiates the confirm-helper-backed
+  // PromptIO, and routes the result's exitCode into process.exit.
   //
   // Wiring boundary: ALL discovery, AST mutation, fs I/O, daemon probing,
   // supervisor calls, and LLM round-trips live in
-  // `packages/cli/src/tooling-fill/*`.
+  // `packages/cli/src/tooling-fill/`.
   config
     .command("tooling-fill [hint-name]")
     .description(

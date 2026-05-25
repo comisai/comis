@@ -48,8 +48,8 @@ import {
 export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 
 /**
- * Build the composite-key triple from a SubAgentRun for resolver lookups
- * (R3, B37). Sub-agent runs only carry a formatted `sessionKey` string +
+ * Build the composite-key triple from a SubAgentRun for resolver lookups.
+ * Sub-agent runs only carry a formatted `sessionKey` string +
  * `agentId` + optional announce-channel context, so:
  *   - agentId    -> run.agentId
  *   - channelType-> run.announceChannelType ?? "sub-agent"
@@ -194,7 +194,7 @@ export interface SubAgentRunnerDeps {
     get(sessionKey: string): { abort(): Promise<void> } | undefined;
   };
   /**
-   * Optional composite-key resolver (R3, B37). When provided, supersedes
+   * Optional composite-key resolver. When provided, supersedes
    * `activeRunRegistry.get(sessionKey)` for production aborts: the resolver
    * accepts `{ agentId, channelType, channelId }` so multi-agent /
    * multi-channel sessions are distinguishable. Locally re-declared to a
@@ -594,7 +594,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         );
       }
 
-      // Abort SDK session (best-effort, R3 / B37 -- composite-key resolver)
+      // Abort SDK session (best-effort, composite-key resolver)
       if (deps.sessionResolver) {
         const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
         if (handle) {
@@ -1558,7 +1558,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         );
       }
 
-      // Abort SDK session via composite-key resolver (R3 / B37). The
+      // Abort SDK session via composite-key resolver. The
       // previous lookup keyed on the formatted sessionKey only; the
       // resolver makes the `(agentId, channelType, channelId)` triple
       // explicit so multi-agent collisions are distinguishable.
@@ -1717,7 +1717,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     // Abort the in-flight SDK session via composite-key resolver
-    // (R3 / B37, best-effort).
+    // (best-effort).
     if (deps.sessionResolver) {
       const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
       if (handle) {

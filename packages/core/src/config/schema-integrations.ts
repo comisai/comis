@@ -28,11 +28,13 @@ export const BraveSearchConfigSchema = z.strictObject({
  * always wins.
  *
  * REJECTS ambiguous entries that supply BOTH `command` AND `url`
- * without an explicit `transport`. Surfaces a structured error key
- * (via `z.NEVER` — which converts the entry into a Zod-detected
- * invalid value, producing a parse error pointing at the ambiguity)
- * so the operator must opt IN explicitly via
- * `transport: "stdio" | "http" | "sse"`.
+ * without an explicit `transport`. Otherwise the first matching branch
+ * (command -> stdio) would win and the unused field would pass through,
+ * silently ignored at runtime by createTransport, with no operator
+ * warning. Instead this surfaces a structured error key (via `z.NEVER` —
+ * which converts the entry into a Zod-detected invalid value, producing
+ * a parse error pointing at the ambiguity) so the operator must opt
+ * IN explicitly via `transport: "stdio" | "http" | "sse"`.
  */
 const inferTransport = (input: unknown, ctx: z.RefinementCtx): unknown => {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -109,6 +111,77 @@ export const McpServerEntrySchema = z.preprocess(
       /** RLIMIT_CPU — wall CPU seconds before SIGXCPU (module default: 300). */
       cpu: z.number().int().positive().optional(),
     }).optional(),
+    /** Per-server override of mcp.keepaliveIntervalMs. 0 disables for this server. Undefined ⇒ global default applies. */
+    keepaliveIntervalMs: z.number().int().nonnegative().optional(),
+    /** Per-server override of mcp.circuitBreakerThreshold. */
+    circuitBreakerThreshold: z.number().int().positive().optional(),
+    /** Per-server override of mcp.circuitBreakerCooldownMs. */
+    circuitBreakerCooldownMs: z.number().int().positive().optional(),
+    /** Per-server tool allowlist (whitelist). When non-empty,
+     *  ONLY listed tool names from this server are surfaced to the agent. The
+     *  blocklist is then applied on top — a name on BOTH lists is still
+     *  filtered out (the blocklist always wins). Filter applied EXCLUSIVELY at
+     *  mcp-tool-bridge.ts. */
+    toolAllowlist: z.array(z.string().min(1)).optional(),
+    /** Per-server tool blocklist. Listed tool names are
+     *  filtered out of the agent's registry regardless of whether they also
+     *  appear on the allowlist — the blocklist always wins. Applied after the
+     *  allowlist filter at mcp-tool-bridge.ts. */
+    toolBlocklist: z.array(z.string().min(1)).optional(),
+    /** Per-server idle eviction TTL (ms). Default 0 disables
+     *  (opt-in only). When non-zero AND no successful tool call has hit this
+     *  server for idleTtlMs, the transport is closed WITHOUT setting
+     *  userDisconnectedFlags so the next callTool reconnects transparently. */
+    idleTtlMs: z.number().int().nonnegative().default(0),
+    /** Opt-out for resources utility tools (list_resources/
+     *  read_resource). Default undefined ⇒ auto-register IF server advertises
+     *  capabilities.resources. Set false to suppress (mitigates Cursor's 40-tool
+     *  ceiling on resources-noisy servers). */
+    enableResources: z.boolean().optional(),
+    /** Opt-out for prompts utility tools (list_prompts/
+     *  get_prompt). Same semantics as enableResources but for capabilities.prompts. */
+    enablePrompts: z.boolean().optional(),
+    /** Opt-in parallel tool calls. When true AND transport "stdio",
+     *  the per-server PQueue concurrency bumps from 1 to maxConcurrency ?? 4. Default
+     *  undefined => stdio stays serialized (concurrency 1). Ignored for sse/http
+     *  (already default concurrency 4). Read at PQueue construction (mcp-client-connect.ts). */
+    supportsParallelToolCalls: z.boolean().optional(),
+    /** Per-server authentication scheme. "oauth" opts the
+     *  server into the OAuth 2.1 + PKCE flow (mcp.oauth_login / token store).
+     *  "bearer" / "none" are explicit no-OAuth markers. Undefined ⇒ no OAuth
+     *  (treated as "none"). Threaded schema→runtime→persist (locked decision #7)
+     *  so a reconnect cannot silently strip a server's OAuth requirement. */
+    auth: z.enum(["none", "bearer", "oauth"]).optional(),
+    /** OAuth provider hints for an `auth:"oauth"` server.
+     *  strictObject so unknown keys are rejected (tampering defence). */
+    oauth: z
+      .strictObject({
+        /** Cascade fallback: user-provided authorization endpoint used
+         *  when RFC 8414/9728 discovery does not surface one. */
+        authorizationEndpoint: z.url().optional(),
+        /** OAuth scope string requested at authorization time. */
+        scope: z.string().optional(),
+        /** Stripe Connect `Stripe-Account` header value
+         *  threaded into token + refresh requests for connected-account servers. */
+        stripeAccount: z.string().optional(),
+      })
+      .optional(),
+    // Skill-bundle provenance marker. SYSTEM-MANAGED -- operators
+    // inspect via `comis mcp list --show-bundle-overrides`. Set by the bundle resolver
+    // when a bundle entry lands; absent on user-authored entries. Optional + min(1) so
+    // empty strings cannot accidentally claim a bundle source (spoofing defence).
+    _bundleSource: z.string().min(1).optional(),
+
+    // Archived bundle entry when a user override (or a second
+    // skill's bundle entry with --force) replaced it. Recursive shape: an
+    // _bundleArchive may itself carry _bundleSource (the original skill's marker).
+    // z.lazy() defers the self-reference at type-check time; the runtime closure
+    // resolves at parse time (TS circular-type error without it). The explicit
+    // `z.ZodTypeAny` annotation on the lazy callback matches the Zod 4
+    // "Resolve recursive type inference errors" guidance -- without it tsc fires
+    // TS7022 (self-reference in initializer). Not modelled past one level: archive
+    // of an archive is replaced last-write-wins on the archive slot.
+    _bundleArchive: z.lazy((): z.ZodTypeAny => McpServerEntrySchema).optional(),
   }),
 );
 
@@ -131,6 +204,12 @@ export const McpConfigSchema = z.strictObject({
     osvCheckEnabled: z.boolean().default(true),
     /** OSV cache TTL in milliseconds (default: 24h = 86_400_000). */
     osvCacheTtlMs: z.number().int().positive().default(86_400_000),
+    /** Per-server keepalive ping interval (ms). Default 180000 (3 min). 0 disables for chatty servers (e.g., servers already receiving frequent tool calls). */
+    keepaliveIntervalMs: z.number().int().nonnegative().default(180_000),
+    /** Consecutive failed tool calls before circuit breaker opens. Default 3. Setting 1 effectively trips the breaker on every failure. */
+    circuitBreakerThreshold: z.number().int().positive().default(3),
+    /** Circuit breaker cooldown in ms before transitioning open → half-open. Default 60000 (1 min). */
+    circuitBreakerCooldownMs: z.number().int().positive().default(60_000),
   });
 
 /**

@@ -123,7 +123,7 @@ export function handleDisconnection(
   state: McpClientManagerState,
   deps: McpClientManagerDeps,
   serverName: string,
-  reason: "transport_closed" | "transport_error" | "client_closed" | "client_error",
+  reason: "transport_closed" | "transport_error" | "client_closed" | "client_error" | "keepalive_failed",
 ): void {
   // Emit disconnected event
   deps.eventBus?.emit("mcp:server:disconnected", {
@@ -217,10 +217,10 @@ async function reconnectionLoop(
       // Increment generation counter
       state.generations.set(serverName, (state.generations.get(serverName) ?? 0) + 1);
 
-      // Create new transport and client (logger threaded for the
-      // prlimit-skip WARN; reconnect re-spawns the child each attempt so
-      // the same WARN-once gate in mcp-client-discover.ts applies across
-      // all reconnect attempts in the same daemon process).
+      // Create new transport and client (logger threaded for the prlimit-skip
+      // WARN; reconnect re-spawns the child each attempt so the same WARN-once
+      // gate in mcp-client-discover.ts applies across all reconnect attempts
+      // in the same daemon process).
       const transport = createTransport(config, logger);
       // Wire stderr capture for stdio re-spawns
       wireStderrCapture(deps, config, transport);
@@ -272,6 +272,12 @@ async function reconnectionLoop(
         serverInfo: metadata.serverInfo,
       };
       state.connections.set(serverName, newConnection);
+
+      // Reset the circuit breaker on every successful reconnect. Per-generation
+      // lifecycle -- breaker state does NOT survive across reconnect (enforced
+      // by architecture test
+      // test/architecture/mcp-circuit-breaker-reset-on-reconnect.test.ts).
+      state.circuitBreakers.set(serverName, { status: "closed", failureCount: 0 });
 
       // Emit reconnected event
       deps.eventBus?.emit("mcp:server:reconnected", {

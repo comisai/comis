@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Co-located unit tests for the OSV malware check + MCP-command
- * package-name extractor at `mcp-client-osv-check.ts`.
+ * Unit tests for the OSV malware check + MCP-command package-name
+ * extractor introduced at `mcp-client-osv-check.ts`.
  *
- * TDD: every behavior change in production source starts with a failing
- * test. This file pins:
+ * This file pins:
  *
  *   - extractMcpPackageName: 8 cases over npx / uvx / pnpm dlx /
  *     unknown / absolute-path commands + npm `pkg@1.2.3` version strip.

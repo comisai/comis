@@ -47,7 +47,7 @@ const NEGATIVE_CASES: ReadonlyArray<{ label: string; sample: string }> = [
   // Notion DB ID undashed (32 hex)
   { label: "Notion DB ID undashed 32-hex",     sample: "8f3b2c1a9d4e7f60b5e2c8d1a4f7b9c3" },
   // -----------------------------------------------------------------------
-  // Regression cases — common operator-config values that the entropy
+  // Regressions — common operator-config values that the entropy
   // backstop must NOT reject. Each value is a realistic non-secret an
   // operator might place in `integrations.mcp.servers[*].env`. The
   // pre-fix heuristic (length >= 44 AND entropy > 3.5) rejected all of

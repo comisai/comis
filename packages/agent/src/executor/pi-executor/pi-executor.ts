@@ -589,8 +589,8 @@ async function runSessionLocked(
     //     lifetime, this `execute()` call just looks it up (or
     //     materializes it on the first turn). `flushAndClose` runs in
     //     the daemon's shutdown chain via `closeAll()`, NOT in this
-    //     execute's finally — that's what fixes the per-turn seq
-    //     reset + repeated session.started/ended deviations.
+    //     execute's finally — that's what fixes per-turn seq reset
+    //     and repeated session.started/ended deviations.
     //   - `deps.trajectoryRegistry` undefined → fall back to per-turn
     //     construction (legacy path; kept so tests + non-daemon callers
     //     keep working).
@@ -1178,7 +1178,7 @@ async function runSessionLocked(
     },
     getSessionJsonlPath: () => sessionAdapter.getSessionPath(sessionKey),
     // Forward the session-scoped registry so the bridge's `agent_start`
-    // case can suppress per-turn `session:started` re-emits.
+    // case can suppress per-turn `session:started` re-emits (session-scoped recorder lifecycle).
     // When undefined (non-daemon callers), the bridge falls back to the
     // legacy unconditional emit.
     ...(deps.trajectoryRegistry !== undefined ? { trajectoryRegistry: deps.trajectoryRegistry } : {}),

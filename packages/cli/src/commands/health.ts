@@ -174,8 +174,9 @@ export function registerHealthCommand(program: Command): void {
           // Y warnings)". There was NO leading "N checks, X fail, Y warn"
           // preamble. Suppress the preamble by passing total=0 and empty
           // counts; the renderer's `summaryParts()` then yields no entries
-          // and `emitSummary()` only emits the footer. The pre-vs-post-filter
-          // `total`/`counts` mismatch is moot once no preamble renders.
+          // and `emitSummary()` only emits the footer. This also means the
+          // pre-vs-post-filter `total`/`counts` mismatch is moot once no
+          // preamble renders.
           const summary = {
             total: 0,
             counts: {},

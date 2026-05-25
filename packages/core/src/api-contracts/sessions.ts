@@ -283,6 +283,16 @@ export const SessionHistoryContract = defineContract({
       role: z.string(),
       content: z.string(),
       timestamp: z.number(),
+      /** Derived delivery status. Outbound messages are "confirmed" iff no
+       *  matching pending/in_flight/failed entry exists in the
+       *  DeliveryQueuePort for the session's channelId + this message text;
+       *  inbound (role "user") is always confirmed. Computed by the handler
+       *  via DeliveryQueuePort join. The field is optional so existing RPC
+       *  consumers that do not project it continue to validate. The MCP
+       *  `resources/read` surface filters by `deliveryStatus === "confirmed"`
+       *  to avoid exposing in-progress outbound messages to external MCP
+       *  clients. */
+      deliveryStatus: z.enum(["confirmed", "pending"]).optional(),
     })),
     total: z.number(),
     offset: z.number(),

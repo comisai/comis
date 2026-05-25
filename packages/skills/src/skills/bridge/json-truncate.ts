@@ -108,7 +108,12 @@ function recurseSingleValue(value: unknown, charBudget: number): string | undefi
 function truncateArray(parsed: unknown[], maxChars: number, originalText: string): TruncateResult {
   const totalLen = parsed.length;
   if (totalLen === 0) {
-    return { truncated: "[]", wasTruncated: false };
+    // "[]" is 2 chars. When the original input was longer (e.g. a
+    // whitespace-padded array that exceeded maxChars), content WAS replaced —
+    // report wasTruncated so the caller's truncation telemetry fires. When
+    // called recursively with originalText="" (recursion-bottom signal) this
+    // is false, which is the correct "no user-facing truncation" outcome.
+    return { truncated: "[]", wasTruncated: originalText.length > 2 };
   }
 
   // Check if even a single element fits
@@ -163,7 +168,10 @@ function truncateObject(
   const entries = Object.entries(parsed);
   const totalLen = entries.length;
   if (totalLen === 0) {
-    return { truncated: "{}", wasTruncated: false };
+    // Mirror of the empty-array case. "{}" is 2 chars; an originalText
+    // longer than that means content was replaced (telemetry should fire),
+    // while the recursion-bottom "" yields false.
+    return { truncated: "{}", wasTruncated: originalText.length > 2 };
   }
 
   // Check if even a single entry fits

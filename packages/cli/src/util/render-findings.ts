@@ -141,7 +141,7 @@ function summaryParts(summary: FindingsSummary): string[] {
         break;
       case "warning":
         // Security uses "warning" as the count key — preserve the plural
-        // pre-fusion label `${result.warningCount} warnings`.
+        // pre-fusion label `${result.warningCount} warnings` (preserves plural form).
         parts.push(chalk.yellow(`${count} warnings`));
         break;
       case "skip":
@@ -166,8 +166,8 @@ function summaryParts(summary: FindingsSummary): string[] {
  * The footer is emitted as-is (no chalk wrapping). Callers that want a colored
  * footer must supply pre-colored strings (e.g., `chalk.green("Audit PASSED")`
  * or `chalk.red.bold("Audit FAILED")`). This preserves severity-conditioned
- * styling; an unconditional `chalk.cyan` wrap here would obliterate
- * caller-supplied red/green/etc. ANSI codes.
+ * styling is caller-controlled; an unconditional `chalk.cyan` wrap here would
+ * obliterate caller-supplied red/green/etc. ANSI codes.
  */
 function emitSummary(summary: FindingsSummary): void {
   const parts = summaryParts(summary);
@@ -301,7 +301,7 @@ function renderSections(sections: ReadonlyArray<Section>): void {
  * Render findings or sections to stdout.
  *
  * Single source of truth for CLI table/listing rendering across the 5 CLI
- * sites. See module doc for the per-site mapping.
+ * sites consolidated in this module. See module doc for the per-site mapping.
  *
  * @param input - Discriminated payload: "findings" or "sections" variant
  * @param options - Render-mode + grouping options for findings variant

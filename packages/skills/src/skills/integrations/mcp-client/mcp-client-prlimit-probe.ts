@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * prlimit(1) availability probe + WARN-once state for the rlimits wrap.
- * Extracted from mcp-client-discover.ts to keep that leaf under the
- * 500-line per-subdirectory cap.
+ * prlimit(1) availability probe + WARN-once state for the
+ * stdio rlimit wrap. Extracted from mcp-client-discover.ts to
+ * keep that leaf under the 500-line per-subdirectory cap.
+ *
+ * prlimit availability probe (lazy + cached).
  *
  * Whether `prlimit(1)` is on PATH. Probed LAZILY on first
  * `wrapStdioCommand` invocation rather than at module-load time. The

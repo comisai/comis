@@ -272,8 +272,8 @@ export function sanitizeSessionSecrets(sessionPath: string): number {
 
   if (totalChanged > 0) {
     // Route through @comis/observability fs-safe substrate so the
-    // rewritten session JSONL lands at mode 0o600 (design §1.4
-    // confidentiality invariant). `confinedBaseDir` is intentionally
+    // rewritten session JSONL lands at mode 0o600 (file-mode confidentiality
+    // invariant). `confinedBaseDir` is intentionally
     // omitted — the caller (`comis-session-manager.ts`) holds the
     // session write-lock and constructs `sessionPath` via
     // `sessionKeyToPath` + the SDK's `sessionBaseDir`, so the

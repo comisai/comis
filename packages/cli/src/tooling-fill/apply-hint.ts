@@ -23,7 +23,7 @@
  * Design notes:
  *  - Pure function: no fs I/O, no Commander wiring. Caller wraps
  *    parseDocument + this module + doc.toString() in a Result shell.
- *  - Result<void, ApplyHintError> over throw.
+ *  - Result<void, ApplyHintError> over throw — never throws at the public boundary.
  *  - Same yaml@2.8.4 primitives as generate.ts (hasIn, setIn,
  *    createNode); no js-yaml dependency.
  *  - replacesPackages is fully replaced (not merged) — `--force=replace`

@@ -60,7 +60,7 @@ interface HeartbeatExecutor {
  * for the queue-busy check. The scheduler package cannot import @comis/agent
  * (would create a cycle), so we re-declare the structural minimum here. The
  * daemon wires `createBackgroundSessionResolver({activeRunRegistry})` and
- * the resulting object is structurally assignable to this shape (R3, B36).
+ * the resulting object is structurally assignable to this shape.
  */
 interface HeartbeatSessionResolver {
   hasActiveSession(key: { agentId: string; channelType: string; channelId: string }): boolean;
@@ -116,7 +116,7 @@ export interface AgentHeartbeatSourceDeps {
   /** Delivery bridge dependencies for routing notifications. */
   deliveryBridge: DeliveryBridgeDeps;
   /**
-   * Optional composite-key resolver for queue-busy detection (R3, B36).
+   * Optional composite-key resolver for queue-busy detection.
    * Wired by the daemon as
    * `createBackgroundSessionResolver({activeRunRegistry})`.
    */
@@ -154,7 +154,7 @@ export function resolveHeartbeatModel(
 }
 
 /**
- * Check if a session is actively running an agent turn (R3, B36).
+ * Check if a session is actively running an agent turn.
  *
  * Uses the composite-key resolver: `(agentId, channelType, channelId)`
  * uniquely identifies a session across multi-agent / multi-channel
@@ -234,7 +234,7 @@ export function createAgentHeartbeatSource(
         }
       }
 
-      // 5. Queue-busy check (R3, B36): composite-key lookup distinguishes
+      // 5. Queue-busy check: composite-key lookup distinguishes
       // multi-agent / multi-channel collisions. The msg.channelType is the
       // configured target's channelType (defaulting to "heartbeat" when no
       // delivery target is wired). channelId is sessionKey.channelId

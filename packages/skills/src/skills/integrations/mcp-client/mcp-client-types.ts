@@ -13,8 +13,14 @@
 
 import type { Result } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { TypedEventBus } from "@comis/core";
+import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { SystemIntervalHandle, SystemTimeoutHandle, TypedEventBus } from "@comis/core";
 import type PQueue from "p-queue";
+
+import type { RefreshResult } from "./oauth/refresh-deduper.js";
+import type { TokenStore } from "./oauth/token-store.js";
+import type { ResolveDiscoveryArgs } from "./oauth/discovery.js";
 
 // ---------------------------------------------------------------------------
 // Qualified name helpers (pure; co-located with types to break no-cycles)
@@ -55,6 +61,7 @@ export function parseQualifiedName(
 // ---------------------------------------------------------------------------
 
 /** Configuration for a single MCP server connection. */
+// @optional-field-count: User-facing MCP server config. Each optional captures a real operator override across sub-systems — base transport (command, args, url, env, cwd, headers, maxConcurrency), safety/OSV/rlimits (safetyAllowedEnvKeys, osvCheckEnabled, osvCacheTtlMs, rlimits), reliability (keepaliveIntervalMs, circuitBreakerThreshold, circuitBreakerCooldownMs), tool-filtering/idle/utility (toolAllowlist, toolBlocklist, idleTtlMs, enableResources, enablePrompts), and concurrency (supportsParallelToolCalls). Splitting into per-subsystem sub-objects would force every connect path + persistence/audit hook to walk nested groups while gaining no type safety (all use the same `??`/`=== true` global-default fallback). The interface fits the single-sub-object pattern used by all other MCP transports; only the optional count grew over time.
 export interface McpServerConfig {
   /** Unique name identifying this server. */
   readonly name: string;
@@ -77,46 +84,134 @@ export interface McpServerConfig {
   /** Maximum concurrent tool calls. Undefined = transport-based default. */
   readonly maxConcurrency?: number;
   /**
-   * Operator-extension allowlist for the stdio child env scrub. Copied
-   * verbatim from `config.integrations.mcp.safetyAllowedEnvKeys` by the
-   * daemon RPC handler (`mcp-handlers.ts:McpConnect`); the field is
-   * additive over the built-in `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` and only
-   * applies to the stdio transport. Undefined ⇒ built-in allowlist only.
+   * Operator-extension allowlist for the stdio child env scrub. Copied verbatim
+   * from `config.integrations.mcp.safetyAllowedEnvKeys` by the daemon RPC
+   * handler (`mcp-handlers.ts:McpConnect`); the field is additive over the
+   * built-in `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` and only applies to the stdio
+   * transport. Undefined ⇒ built-in allowlist only.
    */
   readonly safetyAllowedEnvKeys?: readonly string[];
   /**
    * OSV malware check toggle. Copied from
-   * `config.integrations.mcp.osvCheckEnabled` (default `true`) by the
-   * daemon RPC handler. Set `false` in air-gapped deployments to skip
+   * `config.integrations.mcp.osvCheckEnabled` (schema field, default `true`)
+   * by the daemon RPC handler. Set `false` in air-gapped deployments to skip
    * the pre-spawn api.osv.dev check entirely. Undefined ⇒ default `true`
    * applies at the call site.
    */
   readonly osvCheckEnabled?: boolean;
   /**
-   * OSV cache TTL (ms). Copied from
-   * `config.integrations.mcp.osvCacheTtlMs` (default 86_400_000 = 24h)
-   * by the daemon RPC handler. Undefined ⇒ caller falls back to the 24h
-   * default at the call site.
+   * OSV cache TTL (ms). Copied from `config.integrations.mcp.osvCacheTtlMs`
+   * (schema field, default 86_400_000 = 24h) by the daemon RPC handler.
+   * Undefined ⇒ caller falls back to the 24h default at the call site.
    */
   readonly osvCacheTtlMs?: number;
   /**
    * Per-server stdio rlimits override. Copied from the persisted
-   * `McpServerEntrySchema.rlimits` by the daemon RPC handler. Applied
-   * via `prlimit(1)` wrap on Linux when set; partial overrides accepted
-   * (`{ cpu: 600 }` emits only `--cpu=600`). When unset → NO prlimit
-   * wrap (existing env-only wrap retained). On macOS dev (prlimit
-   * absent) → WARN once per daemon process + skip. Only applies to the
-   * stdio transport. See mcp-client-discover.ts:wrapStdioCommand.
+   * `McpServerEntrySchema.rlimits` (schema field) by the daemon RPC handler.
+   * Applied via `prlimit(1)` wrap on Linux when set; partial overrides accepted
+   * (`{ cpu: 600 }` emits only `--cpu=600`). When unset → NO prlimit wrap
+   * (existing env-only wrap retained). On macOS dev (prlimit absent) → WARN
+   * once per daemon process + skip. Only applies to the stdio transport.
+   * See mcp-client-discover.ts:wrapStdioCommand.
    */
   readonly rlimits?: {
     readonly as?: number;
     readonly nofile?: number;
     readonly cpu?: number;
   };
+  /**
+   * Per-server override of mcp.keepaliveIntervalMs (ms). `0` disables the
+   * keepalive ticker for this server (use for chatty servers that already
+   * receive frequent tool calls). Undefined ⇒ global
+   * `state.options.keepaliveIntervalMs` default applies.
+   * Resolution: `config.keepaliveIntervalMs ?? state.options.keepaliveIntervalMs`
+   * — use `??` (nullish coalescing), NOT `||`, so `0` is preserved.
+   */
+  readonly keepaliveIntervalMs?: number;
+  /**
+   * Per-server override of mcp.circuitBreakerThreshold. Setting `1` effectively
+   * disables the breaker (opens on first failure but cooldown still applies).
+   * Undefined ⇒ global default applies.
+   */
+  readonly circuitBreakerThreshold?: number;
+  /**
+   * Per-server override of mcp.circuitBreakerCooldownMs. Cooldown between
+   * open → half-open transitions. Undefined ⇒ global default.
+   */
+  readonly circuitBreakerCooldownMs?: number;
+  /** Per-server tool allowlist. Read by setup-tools.ts's serverFiltersFn
+   *  closure; applied at mcp-tool-bridge.ts only. */
+  readonly toolAllowlist?: readonly string[];
+  /** Per-server tool blocklist. Read by setup-tools.ts's serverFiltersFn
+   *  closure; applied at mcp-tool-bridge.ts only. */
+  readonly toolBlocklist?: readonly string[];
+  /** Per-server idle eviction TTL (ms). 0 ⇒ disabled (opt-in). Consumed by
+   *  mcp-client-idle-eviction.ts. */
+  readonly idleTtlMs?: number;
+  /** Opt-out for resources utility tools. undefined ⇒ auto-register if
+   *  capabilities.resources present. */
+  readonly enableResources?: boolean;
+  /** Opt-out for prompts utility tools. undefined ⇒ auto-register if
+   *  capabilities.prompts present. */
+  readonly enablePrompts?: boolean;
+  /** Opt-in parallel tool calls. true + transport "stdio" ⇒ per-server PQueue
+   *  concurrency = maxConcurrency ?? 4; undefined/false ⇒ stdio stays
+   *  serialized (1). No-op for sse/http (already 4). Read at PQueue
+   *  construction (mcp-client-connect.ts). */
+  readonly supportsParallelToolCalls?: boolean;
+  /** Per-server authentication scheme. "oauth" wires the OAuthClientProvider
+   *  adapter onto the transport (mcp-client-discover.ts); "bearer"/"none"/
+   *  undefined leave the existing header/no-auth behaviour. Sourced from the
+   *  persisted McpServerEntry and threaded through both daemon runtime-config
+   *  sites + buildPersistedMcpEntry. */
+  readonly auth?: "none" | "bearer" | "oauth";
+  /** OAuth provider hints for an `auth:"oauth"` server. authorizationEndpoint =
+   *  discovery fallback; scope = requested OAuth scope; stripeAccount =
+   *  Stripe-Account header value. */
+  readonly oauth?: {
+    readonly authorizationEndpoint?: string;
+    readonly scope?: string;
+    readonly stripeAccount?: string;
+  };
+  /**
+   * RUNTIME-ONLY OAuthClientProvider adapter. Constructed in connectServer from
+   * the token store keyed by `name` and threaded onto the runtime config so the
+   * PURE `createTransport` helper can attach it to the sse/http transport when
+   * `auth === "oauth"`. NOT persisted — deliberately absent from
+   * `buildPersistedMcpEntry` (it is a live object graph holding the token store
+   * + deduper, not serializable config). Undefined ⇒ no authProvider attached
+   * (the SDK runs without OAuth, surfacing needs_oauth_login on a 401).
+   */
+  readonly oauthProvider?: OAuthClientProvider;
+  /** RUNTIME-ONLY FetchLike wrapping the redirect-policy fetch with the
+   *  deduped-refresh 401 path (oauth/deduped-fetch.ts). Built by
+   *  prepareOAuthProvider for auth:"oauth" + the OAuth seam; createTransport
+   *  installs it as the SSE/HTTP transport's fetch. NOT persisted. Undefined ⇒
+   *  bare redirect-policy fetch (SDK's own auth() handles 401 without dedup). */
+  readonly oauthFetch?: FetchLike;
 }
 
 /** Connection status for an MCP server. */
 export type McpConnectionStatus = "connected" | "disconnected" | "connecting" | "reconnecting" | "error";
+
+/**
+ * Per-server circuit breaker state.
+ *
+ * Discriminated union — `status` is the closed string-literal discriminator;
+ * exhaustive switch sites must include `const _exhaustive: never = state.status`
+ * default branches (exhaustive union handling).
+ *
+ * Lifecycle:
+ *   closed --(failureCount ≥ threshold)--> open
+ *   open --(now - openedAtMs ≥ cooldownMs)--> half-open
+ *   half-open --(probe call success)--> closed
+ *   half-open --(probe call failure)--> open (reset openedAtMs)
+ *   * --(reconnect success)--> closed (per-generation reset)
+ */
+export type CircuitState =
+  | { readonly status: "closed"; readonly failureCount: number }
+  | { readonly status: "open"; readonly failureCount: number; readonly openedAtMs: number }
+  | { readonly status: "half-open"; readonly failureCount: number };
 
 /** Configuration for automatic reconnection behavior. */
 export interface McpReconnectOptions {
@@ -156,6 +251,21 @@ export interface McpConnection {
   readonly serverInfo?: { name: string; version: string };
   /** Connection generation counter -- increments on each reconnection. */
   readonly generation: number;
+  /**
+   * Mirror of the per-server config opt-out for the resources utility tools.
+   * Populated from McpServerConfig.enableResources at connect time so the
+   * platform-tool registry's capability-gate predicate can honor the opt-out
+   * WITHOUT a separate config lookup (the manager surfaces only runtime
+   * connections). undefined ⇒ auto-register when capabilities.resources is
+   * present; false ⇒ suppress.
+   */
+  readonly enableResources?: boolean;
+  /**
+   * Mirror of the per-server config opt-out for the prompts utility tools.
+   * Populated from McpServerConfig.enablePrompts at connect time. Same
+   * semantics as enableResources but for capabilities.prompts.
+   */
+  readonly enablePrompts?: boolean;
 }
 
 /** A tool definition discovered from an MCP server. */
@@ -212,6 +322,51 @@ export interface McpClientManagerDeps {
   readonly stdioDefaultConcurrency?: number;
   /** Default max concurrent tool calls for HTTP/SSE servers (default: 4). */
   readonly httpDefaultConcurrency?: number;
+  /** Default keepalive interval (ms). 0 disables. Resolved at factory construction. */
+  readonly keepaliveIntervalMs?: number;
+  /** Default circuit breaker failure threshold. Resolved at factory construction. */
+  readonly circuitBreakerThreshold?: number;
+  /** Default circuit breaker cooldown (ms). Resolved at factory construction. */
+  readonly circuitBreakerCooldownMs?: number;
+  /**
+   * OAuth integration seam. When present, connectServer constructs an
+   * OAuthClientProvider adapter for `auth:"oauth"` servers (token store +
+   * deduper), runs the discovery pre-flight, and threads the provider onto
+   * the runtime config so createTransport attaches it. When ABSENT, an
+   * `auth:"oauth"` server still connects (the SDK runs without a provider) and
+   * a 401 still surfaces needs_oauth_login — the adapter is simply not wired.
+   * Injected by the daemon composition root (production) or a test.
+   */
+  readonly oauthDeps?: McpOAuthDeps;
+}
+
+/**
+ * OAuth integration dependencies. A thin seam so the skills package owns no
+ * `~/.comis` path policy or redirect-fetch construction at import time — the
+ * daemon composition root supplies these, tests inject mocks.
+ */
+export interface McpOAuthDeps {
+  /**
+   * Lazily build the shared disk-backed token store. Called once per connect
+   * for an `auth:"oauth"` server. Implementations SHOULD return a process-wide
+   * singleton (the chokidar watch + cache are per-store) rather than a fresh
+   * store each call.
+   */
+  readonly createTokenStore: () => TokenStore;
+  /**
+   * OAuth metadata discovery cascade. Resolves + persists `<server>.meta.json`;
+   * throws an actionable `errorKind:"config"` error on total cascade failure.
+   * Signature matches `resolveDiscovery`.
+   */
+  readonly resolveDiscovery: (args: ResolveDiscoveryArgs) => Promise<OAuthDiscoveryState>;
+  /**
+   * Browser-launch side-effect (`open`). NOT imported in skills/daemon (it is a
+   * cli/agent/comis dep) — injected here. connectServer NEVER calls it (the
+   * connect path surfaces needs_oauth_login; the operator-initiated oauth_login
+   * RPC owns the launch). Held so the adapter + future login wiring share one
+   * injection point. Optional: a headless deployment may omit it.
+   */
+  readonly openUrl?: (url: string) => void | Promise<void>;
 }
 
 /** MCP Client Manager: manages connections to MCP servers and their tools. */
@@ -255,6 +410,12 @@ export interface McpClientManagerOptions {
   readonly stdioDefaultConcurrency: number;
   readonly httpDefaultConcurrency: number;
   readonly reconnectOpts: McpReconnectOptions;
+  /** Global default keepalive interval (ms). 0 = disabled. Per-server override on McpServerConfig. */
+  readonly keepaliveIntervalMs: number;
+  /** Global default consecutive failure threshold before breaker opens. Per-server override on McpServerConfig. */
+  readonly circuitBreakerThreshold: number;
+  /** Global default cooldown (ms) between open → half-open transitions. Per-server override on McpServerConfig. */
+  readonly circuitBreakerCooldownMs: number;
 }
 
 /**
@@ -279,8 +440,56 @@ export interface McpClientManagerState {
   readonly generations: Map<string, number>;
   /** server-name -> PQueue serializing tool calls to respect server concurrency limits. */
   readonly callQueues: Map<string, PQueue>;
+  /**
+   * server-name -> dedicated concurrency-1 keepalive queue, used ONLY when the
+   * primary call queue concurrency > 1 (supportsParallelToolCalls mode). The
+   * ping body awaits the primary queue's onIdle() before pinging, so a
+   * synthetic keepalive can never interleave with parallel tool calls. Lazily
+   * created in maybeEnqueueKeepalivePing; torn down (clear + delete) on
+   * disconnect and idle-eviction alongside callQueues so it cannot leak across
+   * reconnect generations. When primary concurrency === 1 (default/stdio) this
+   * map is never populated — the ping shares the primary queue.
+   */
+  readonly keepaliveQueues: Map<string, PQueue>;
   /** server-name -> consecutive onerror count (absorbed below threshold, triggers reconnect at threshold). */
   readonly consecutiveErrors: Map<string, number>;
+  /**
+   * server-name -> systemSetInterval handle for the keepalive ticker (started
+   * on connect, stopped on disconnect).
+   *
+   * With concurrency === 1 the ticker shares the per-server PQueue with tool
+   * calls (stdio single-pipe serialization). With concurrency > 1 the ping
+   * routes through the dedicated cc-1 `keepaliveQueues` entry above and waits
+   * for primary.onIdle(), so it never interleaves with parallel tool calls.
+   * See mcp-client-keepalive.ts.
+   */
+  readonly keepaliveTickers: Map<string, SystemIntervalHandle>;
+  /**
+   * server-name -> circuit breaker state. Per-generation — reset to
+   * { status: "closed", failureCount: 0 } in reconnectionLoop's success block
+   * (mcp-client-reconnect.ts:274).
+   */
+  readonly circuitBreakers: Map<string, CircuitState>;
+  /**
+   * server-name -> idle eviction timer handle. Started on connect when
+   * idleTtlMs > 0; cleared on disconnect/evict.
+   */
+  readonly idleEvictionTimers: Map<string, SystemTimeoutHandle>;
+  /**
+   * server-name -> last successful-call timestamp (ms). resetIdleActivity
+   * updates it; the timer compares against it on fire.
+   */
+  readonly lastActivityMs: Map<string, number>;
+  /**
+   * expired-access-token -> in-flight refresh shared future (401 dedup; 5s
+   * straggler cache). The dedup state lives on the manager — NOT module scope
+   * — so concurrent 401s for the same token coalesce into exactly one
+   * `refresh_token` POST. Keyed by the EXPIRED access token; an entry is
+   * retained for the straggler-cache TTL after it resolves and evicted
+   * immediately on a refresh failure (no poisoned future). Managed by
+   * `oauth/refresh-deduper.ts`.
+   */
+  readonly inflightRefreshes: Map<string, Promise<RefreshResult>>;
   /** Resolved options (timeouts, defaults, reconnect opts) computed once at construction time. */
   readonly options: McpClientManagerOptions;
 }

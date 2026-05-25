@@ -66,7 +66,7 @@ function makeMockManager() {
       connections.set(cfg.name, {
         name: cfg.name,
         config: cfg,
-        // R11 acceptance: toolCount === 20 (per SPEC.md §R11).
+        // R11 acceptance: toolCount === 20.
         tools: Array.from({ length: 20 }, (_, i) => ({ name: `tool${i}` })),
       });
       return {
@@ -364,7 +364,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
   });
 
   it("R3+R11: bootstrap round-trip — persist → fresh re-read → reconnect succeeds without override params", async () => {
-    // Phase 1: original setup — connect + persist.
+    // Step 1: original setup — connect + persist.
     const container1 = makeContainer(parseYaml(readFileSync(configPath, "utf-8")));
     const manager1 = makeMockManager();
     const handlers1 = createMcpHandlers({
@@ -380,8 +380,8 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
       args: ["yfinance-mcp-ts"],
     } as never);
 
-    // Phase 2: simulated daemon restart — fresh container, fresh manager,
-    // but config is re-read from the same on-disk YAML that Phase 1 wrote.
+    // Step 2: simulated daemon restart — fresh container, fresh manager,
+    // but config is re-read from the same on-disk YAML that Step 1 wrote.
     const reloadedConfig = parseYaml(readFileSync(configPath, "utf-8")) as {
       integrations?: {
         mcp?: { servers?: Array<{ name: string; transport: string; command: string }> };
@@ -413,8 +413,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
       name: "yfinance",
       status: "connected",
     });
-    // R11 acceptance per SPEC: toolCount === 20 from the deterministic
-    // mockManager (the SPEC's locked acceptance number).
+    // R11 acceptance: toolCount === 20 from the deterministic mockManager.
     expect(result.toolCount).toBe(20);
   });
 });

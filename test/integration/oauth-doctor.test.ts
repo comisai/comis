@@ -25,7 +25,7 @@
  * `dataDir: <tempDir>` and pass `COMIS_CONFIG_PATHS=<tempConfigYaml>`
  * to the spawned CLI.
  *
- * Imports from dist/ — requires `pnpm build` first.
+ * Integration tests import from dist/ — requires `pnpm build` first.
  *
  * Run with: `pnpm build && pnpm test:integration -- oauth-doctor`.
  *

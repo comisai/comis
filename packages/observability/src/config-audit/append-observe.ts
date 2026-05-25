@@ -10,7 +10,7 @@
  * Two entry points:
  *
  *   - `createConfigObserveAuditRecord(...)` — produce a fully-formed
- *     `ConfigObserveAuditRecord` matching design §9.2. Captures
+ *     `ConfigObserveAuditRecord` with the config.observe schema shape. Captures
  *     caller provenance via `process.pid`, `process.ppid`,
  *     `process.argv`, `process.cwd()`, `process.execArgv`. The
  *     suspicious-flag heuristic mirrors the write-side
@@ -45,7 +45,7 @@ import type { ConfigObserveAuditRecord } from "./types.js";
 import type { FileSnapshot } from "../shared/file-snapshot.js";
 
 /**
- * Optional design-§9.2 observation cluster.
+ * Optional config-observe observation cluster.
  *
  * The daemon-side `readConfigFileObservation` aggregator (in
  * `@comis/daemon/src/config/read-config-file-observation.ts`) builds this
@@ -66,7 +66,7 @@ export interface ObserveObservation {
 }
 
 /**
- * Optional design-§9.2 recovery state cluster.
+ * Optional config-observe recovery state cluster.
  *
  * Populated by callers that own a restore flow (`--restore-last-good`,
  * future `--restore-backup`). Default (when undefined) is the
@@ -88,20 +88,20 @@ export interface CreateObserveRecordParams {
   /** Caller-source identifier (e.g. "daemon-bootstrap", "cli-config-show"). */
   readonly callerSource: string;
   /**
-   * §9.2 file-state observation. When omitted, defaults to the
+   * File-state observation. When omitted, defaults to the
    * `exists:false` / all-null shape — the caller doesn't know whether
    * the file exists or what its hash is.
    */
   readonly observation?: ObserveObservation;
   /**
-   * §9.2 validity bit. Default `true` — non-bootstrap callers (e.g.
+   * Validity bit. Default `true` — non-bootstrap callers (e.g.
    * `comis config show`) are read-only and have no Zod-validation
    * outcome to report; the daemon-bootstrap caller passes `false` when
    * `bootResult.ok === false`.
    */
   readonly valid?: boolean;
   /**
-   * §9.2 recovery state. Default `{restoredFromBackup:false,
+   * Recovery state. Default `{restoredFromBackup:false,
    * clobberedPath:null, restoredBackupPath:null, restoreErrorCode:null,
    * restoreErrorMessage:null}`.
    */
@@ -171,7 +171,7 @@ export function createConfigObserveAuditRecord(
     ...(params.entryScript !== undefined ? { entryScript: params.entryScript } : {}),
   });
 
-  // §9.2 observation projection — when the caller passed an
+  // Observation projection — when the caller passed an
   // observation cluster, project the snapshots onto the record fields;
   // otherwise fall through to the null defaults.
   const obs = params.observation;
@@ -199,7 +199,7 @@ export function createConfigObserveAuditRecord(
     execArgv,
     watchMode: false,
 
-    // §9.2 file-state — projected from the observation cluster's snapshot.
+    // File-state fields — projected from the observation cluster's snapshot.
     exists: obs?.exists ?? false,
     valid,
     hash: snap?.hash ?? null,
@@ -212,15 +212,15 @@ export function createConfigObserveAuditRecord(
     nlink: snap?.nlink ?? null,
     uid: snap?.uid ?? null,
     gid: snap?.gid ?? null,
-    // §9.2 LKG triple — design narrows FileSnapshot to {hash, bytes, mtimeMs}.
+    // LKG triple — FileSnapshot narrowed to {hash, bytes, mtimeMs}.
     lastKnownGoodHash: lkg?.hash ?? null,
     lastKnownGoodBytes: lkg?.bytes ?? null,
     lastKnownGoodMtimeMs: lkg?.mtimeMs ?? null,
-    // §9.2 backup triple — same narrowing.
+    // Backup triple — same narrowing.
     backupHash: bak?.hash ?? null,
     backupBytes: bak?.bytes ?? null,
     backupMtimeMs: bak?.mtimeMs ?? null,
-    // §9.2 recovery state — defaults to "no recovery" shape.
+    // Recovery state — defaults to "no recovery" shape.
     clobberedPath: rec?.clobberedPath ?? null,
     restoredFromBackup: rec?.restoredFromBackup ?? false,
     restoredBackupPath: rec?.restoredBackupPath ?? null,

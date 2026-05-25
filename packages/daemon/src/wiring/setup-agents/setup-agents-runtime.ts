@@ -187,7 +187,7 @@ export async function setupSingleAgent(
   // surface as TS errors, not silent runtime failures.
   //
   // All path constructions in this block use safePath from @comis/core (NOT
-  // path.join — ESLint security rule).
+  // path.join — required by the ESLint security rule).
   // When storage === "encrypted", the OAuth profile adapter SHARES the
   // existing secretsDb handle from createSqliteSecretStore (no dual-handle).
   // -------------------------------------------------------------------------
@@ -298,7 +298,7 @@ export async function setupSingleAgent(
     // triage of EACCES / disk-full vs lock contention.
     logger: agentLogger,
     // Bus + registry let destroySession emit `session:ended` and drain
-    // the trajectory recorder before unlinking the JSONL.
+    // the trajectory recorder before unlinking the JSONL (session lifecycle invariant).
     eventBus: container.eventBus,
     trajectoryRegistry: deps.trajectoryRegistry,
   });
@@ -539,7 +539,7 @@ export async function setupSingleAgent(
       : undefined,
     // Session-scoped trajectory recorder registry — same instance for
     // every per-agent executor so a session's recorder spans every
-    // turn. Daemon shutdown drains via
+    // turn (session-scoped recorder lifecycle invariant). Daemon shutdown drains via
     // `closeAll()` on the registry surfaced through AgentsResult.
     trajectoryRegistry: deps.trajectoryRegistry,
     // Forward AppConfig.diagnostics.cacheTrace into the executor. The

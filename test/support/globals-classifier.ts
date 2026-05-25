@@ -72,7 +72,7 @@ export interface GlobalsViolation {
 }
 
 /**
- * Bootstrap-path exemption regex set (sanctioned paths).
+ * Bootstrap-path exemption regex set (sanctioned bootstrap entry-point paths).
  * Notes:
  *   - `packages/shared/src/runtime/` does NOT exist on disk.
  *   - `packages/core/src/env-layer.ts` does NOT exist (actual path is
@@ -250,8 +250,8 @@ function classifyNode(
   //   - `process.env.NODE_ENV`              (the outer PropAccess wraps this one)
   //   - `process.env["HOME"]`               (the outer ElemAccess wraps this one)
   //   - `process.env.X = "..."`             (LHS of assignment — same inner PropAccess)
-  // process.env mutation IS flagged because both directions are forbidden
-  // outside sanctioned paths. Flagging at the inner `process.env`
+  // process.env mutation IS flagged (both read and write are forbidden outside
+  // sanctioned paths). Flagging at the inner `process.env`
   // node dedupes naturally — the outer PropAccess / ElemAccess /
   // AssignmentExpression isn't itself flagged because its `node.expression`
   // is the inner `process.env` PropAccess, not a `process` Identifier.

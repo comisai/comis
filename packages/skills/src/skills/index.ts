@@ -34,6 +34,14 @@
 export { createSkillRegistry } from "./registry/skill-registry/index.js";
 export type { SkillRegistry, SkillWatcherHandle } from "./registry/skill-registry/index.js";
 
+// Manifest schema + parser
+// SkillManifestSchema lives at `./manifest/schema.ts:137-164` and parseSkillManifest at
+// `./manifest/parser.ts:80-95`. Re-exported here so daemon-side consumers
+// can read freshly-written SKILL.md content + validate the optional mcpServers block
+// WITHOUT reaching into `@comis/skills/src/skills/manifest/...` deep-paths.
+export { SkillManifestSchema, type SkillManifestParsed } from "./manifest/schema.js";
+export { parseSkillManifest } from "./manifest/parser.js";
+
 // Eligibility
 export { createRuntimeEligibilityContext } from "./registry/eligibility.js";
 
@@ -50,6 +58,7 @@ export { agentToolsToToolDefinitions } from "./bridge/tool-definition-adapter.js
 // Bridge -- MCP tool bridge
 export {
   mcpToolsToAgentTools,
+  extractServerToolFilters,
   jsonSchemaToTypeBox,
   sanitizeMcpToolName,
   classifyMcpErrorType,
@@ -63,6 +72,39 @@ export { scanSkillContent, type ContentScanResult, type ContentScanFinding } fro
 
 // Integrations -- MCP client manager
 export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./integrations/mcp-client/index.js";
+// OAuth login orchestrator + disk token-store factory.
+// Consumed by the daemon RPC handler (`mcp-oauth-handlers.ts`) so it can run
+// mcp.oauth_login / mcp.oauth_logout without a direct MCP SDK dependency.
+export { runOauthLogin, createTokenStore } from "./integrations/mcp-client/index.js";
+export type {
+  OAuthLoginResult,
+  RunOauthLoginDeps,
+  OAuthLoginConfig,
+  OAuthLoginLogger,
+  TokenStore,
+  TokenStoreDeps,
+} from "./integrations/mcp-client/index.js";
+// The connect-time needs_oauth_login signal guard — surfaced
+// so the daemon can tell the operator to run `comis mcp login <server>`.
+export { isNeedsOAuthLoginError } from "./integrations/mcp-client/index.js";
+// The 401 refresh-deduper. Surfaced so the full-cycle integration gate
+// (test/integration/mcp-oauth-roundtrip.test.ts) can drive rotation +
+// Stripe-Account + 100-concurrent dedup against the mock authorization
+// server through the PUBLIC package barrel (not src internals).
+export { createRefreshDeduper } from "./integrations/mcp-client/index.js";
+export type {
+  RefreshDeduper,
+  RefreshDeduperDeps,
+  RefreshResult,
+  DedupedRefreshArgs,
+  RefreshFn,
+} from "./integrations/mcp-client/index.js";
+// The deduped-refresh fetch wrapper (the production 401 path).
+// Surfaced so the production-path integration test
+// (test/integration/mcp-oauth-deduped-fetch.test.ts) can drive the wiring
+// through the public barrel.
+export { createDedupedRefreshFetch } from "./integrations/mcp-client/index.js";
+export type { DedupedRefreshFetchDeps } from "./integrations/mcp-client/index.js";
 // Stdio env-scrub primitives (built-in allowlist constant + pure scrub
 // function). Consumed by the daemon RPC handler (`mcp-handlers.ts`) and
 // the architecture / integration tests under

@@ -1,0 +1,94 @@
+# MCP server tools/call dispatcher round-trip test config (port 8571).
+#
+# Single mcp-client token with allowlist = ["memory_search"]. The dispatcher
+# uses the default 30/min ceiling -- this test only fires a small number of
+# calls so rate-limit does not interfere.
+#
+# Port 8571 to avoid conflicts with other integration test configs
+# (8569/8570/8572) when running under vitest pool: "forks".
+
+tenantId: "test"
+logLevel: "info"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  test-agent:
+    model: default
+    thinkingLevel: "off"
+    name: MCP Server Tools-Call Test Agent
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+memory:
+  dbPath: "test-memory-mcp-server-tools-call.db"
+  walMode: true
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8571
+  tokens:
+    # Primary daemon auth token (rpc/ws/admin) for the harness health check.
+    - id: test-token
+      secret: mcp-svr-toolscall-primary-token-1234
+      scopes: ["rpc", "ws", "admin"]
+    # mcp-client with memory_search allowlisted.
+    - id: mcp-toolscall
+      secret: mcp-svr-toolscall-tok-1-fixture-bbb
+      scopes: ["mcp-client"]
+      mcpClient:
+        allowlist: ["memory_search"]
+        sessionAllowlist: []
+        toolRateLimit: {}
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic

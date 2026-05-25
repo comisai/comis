@@ -224,7 +224,7 @@ export interface TrajectoryEvent {
   readonly sourceSeq?: number;
 
   // Payload — passed through `sanitizeForPersistence` before write.
-  // Shape is intentionally `Record<string, unknown>`;
+  // Shape is intentionally `Record<string, unknown>` (envelope-vs-data contract);
   // `sanitizeForPersistence` always returns an object-shaped value.
   readonly data?: Record<string, unknown>;
 }
@@ -290,12 +290,13 @@ export interface TrajectoryRecorderInit {
   readonly workspaceDir?: string;
   /**
    * Model-metadata cluster (provider id + model id + model API). Adding
-   * `modelApi` at the top level would push TrajectoryRecorderInit past
-   * the ≤12-optional-fields architecture invariant — clustering the
-   * three model identifiers into one optional field collapses three
-   * slots into one. Resolver in `runtime.ts` reads
-   * `init.model?.provider`, `init.model?.modelId`, `init.model?.modelApi`
-   * and lifts each onto the trajectory envelope when defined.
+   * `modelApi` at the top level would push
+   * TrajectoryRecorderInit past the ≤12-optional-fields architecture
+   * invariant — clustering the three model identifiers into one
+   * optional field collapses three slots into one. Resolver in
+   * `runtime.ts` reads `init.model?.provider`, `init.model?.modelId`,
+   * `init.model?.modelApi` and lifts each onto the trajectory envelope
+   * when defined.
    */
   readonly model?: {
     /** Provider id (e.g., "anthropic"). */
@@ -394,10 +395,11 @@ export interface TrajectoryRecorder {
    * When `data` exceeds `maxRuntimeEventBytes` after sanitization the
    * entire event is replaced with a single-key sentinel record.
    *
-   * `data` is typed `Record<string, unknown> | undefined`. Pass
-   * `undefined` (or omit) when there is no payload — bridge translators
-   * that intentionally produce no correlation data still hand back an
-   * object so consumers can grep by key.
+   * `data` is typed `Record<string, unknown> | undefined` to match the
+   * envelope-vs-data contract. Pass `undefined` (or omit) when there is no
+   * payload — bridge translators that intentionally produce no
+   * correlation data still hand back an object so consumers can grep
+   * by key.
    *
    * Returns "queued" on accept, "dropped" when the per-writer queue cap
    * would be exceeded (operator-tunable backpressure).

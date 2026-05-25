@@ -19,6 +19,14 @@ export { setupAgents, type AgentsResult } from "./setup-agents/index.js";
 export { setupSchedulers, type SchedulersResult } from "./setup-schedulers.js";
 export { setupChannels, type ChannelsResult } from "./setup-channels/index.js";
 export { setupMcp, type McpResult } from "./setup-mcp.js";
+// Boot-path skill-bundle re-merge orchestrator + the thin discovery-only
+// registry pre-pass it consumes. Wired in daemon.ts BEFORE setupMcp so the
+// merged servers array is in place when the manager connects.
+export {
+  setupSkillBundles,
+  buildSkillRegistriesForBundles,
+  type SetupSkillBundlesDeps,
+} from "./setup-skill-bundles.js";
 export { setupTools, type ToolsResult } from "./setup-tools.js";
 export { setupHeartbeat, type HeartbeatSetupDeps, type HeartbeatSetupResult } from "./setup-heartbeat.js";
 export { setupShutdown, type ShutdownResult } from "./setup-shutdown.js";

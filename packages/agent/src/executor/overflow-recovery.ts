@@ -52,8 +52,8 @@ export interface OverflowRecoveryResult {
  *
  * The `recover` method applies a two-phase strategy to reduce context size:
  *
- * Phase 1: Truncate oversized tool results to a fraction of the context window.
- * Phase 2: Emergency-compact old tool results (before last assistant message)
+ * Step 1: Truncate oversized tool results to a fraction of the context window.
+ * Step 2: Emergency-compact old tool results (before last assistant message)
  *          to placeholder text if total still exceeds the budget.
  *
  * Does not mutate the input messages array.
@@ -78,7 +78,7 @@ export function createOverflowRecovery(
       );
 
       // ---------------------------------------------------------------
-      // Phase 1: Truncate oversized tool results
+      // Step 1: Truncate oversized tool results
       // ---------------------------------------------------------------
 
       let phase1CharsFreed = 0;
@@ -114,7 +114,7 @@ export function createOverflowRecovery(
       }
 
       // ---------------------------------------------------------------
-      // Phase 2: Emergency compact
+      // Step 2: Emergency compact
       // ---------------------------------------------------------------
 
       let phase2CharsFreed = 0;

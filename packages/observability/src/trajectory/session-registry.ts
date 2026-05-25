@@ -48,10 +48,10 @@ interface SessionEntry {
   readonly unsubscribe: (() => void) | undefined;
   /**
    * Latch consulted by the pi-event-bridge `agent_start` case to suppress
-   * per-turn `session:started` re-emits — `session.started` fires once
-   * per session, NOT once per pi-mono turn. The bridge is created per
-   * turn, but the registry survives every turn, so the latch lives here.
-   * Defaults to `false`; flipped to `true` by
+   * per-turn `session:started` re-emits (mapping table —
+   * `session.started` fires once per session, NOT once per pi-mono turn).
+   * The bridge is created per turn, but the registry survives every turn,
+   * so the latch lives here. Defaults to `false`; flipped to `true` by
    * `markSessionStarted(formattedKey)`. Reset implicitly by `close()`
    * dropping the entry — a fresh `getOrCreate` on the same key starts
    * with `false` again.
@@ -69,7 +69,7 @@ export type SessionTrajectoryFilter = (
 ) => boolean;
 
 /**
- * Public registry surface. The shape mirrors the recorder lifecycle:
+ * Public registry surface. The shape mirrors the lifecycle:
  *   - `getOrCreate` (called per-turn; first call materializes the
  *      recorder + bridge subscription, later calls reuse the same
  *      recorder),
@@ -130,9 +130,10 @@ export interface SessionTrajectoryHandleRegistry {
    * called for this session's registry lifetime, `false` otherwise.
    *
    * Used by the pi-event-bridge `agent_start` case to suppress per-turn
-   * `session:started` re-emits — `session.started` is a once-per-session
-   * event (not once-per-turn). Per-turn bridges consult this latch so
-   * the second + subsequent turns short-circuit the emit.
+   * `session:started` re-emits — the mapping table makes
+   * `session.started` a once-per-session event (not once-per-turn).
+   * Per-turn bridges consult this latch so the second + subsequent
+   * turns short-circuit the emit.
    *
    * Defaults to `false` for unknown keys (the bridge may consult this
    * for a session whose entry hasn't been materialized yet via

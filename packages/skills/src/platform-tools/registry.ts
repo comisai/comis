@@ -77,6 +77,17 @@ import { createCtxInspectTool } from "./tools/ctx-inspect-tool.js";
 import { createCtxRecallTool } from "./tools/ctx-recall-tool.js";
 import { createCtxSearchTool } from "./tools/ctx-search-tool.js";
 import { createBrowserTool } from "./tools/browser-tool.js";
+import { createListResourcesTool, createReadResourceTool } from "./tools/mcp-resources-tool.js";
+import { createListPromptsTool, createGetPromptTool } from "./tools/mcp-prompts-tool.js";
+
+// Capability-gate helpers + manager type for the resources/prompts descriptor
+// conditionals. Imported from the mcp-client barrel (the public surface of
+// that integration subtree).
+import {
+  serverAdvertisesResources,
+  serverAdvertisesPrompts,
+  type McpClientManager,
+} from "../skills/integrations/mcp-client/index.js";
 
 // ===========================================================================
 // Types
@@ -107,6 +118,16 @@ export interface PlatformToolBuildContext {
   readonly approvalGate?: unknown;
   /** Typed event bus reference (unused by most descriptors; held for future use). */
   readonly eventBus?: unknown;
+  /**
+   * MCP client manager. Gates the resources/prompts descriptors
+   * (list_resources/read_resource/list_prompts/get_prompt) — each descriptor's
+   * `conditional` predicate registers the tool iff this manager is present AND
+   * any connected server advertises the matching capability (resources/prompts)
+   * without a per-server enableResources/enablePrompts:false opt-out. Optional
+   * so non-MCP build contexts (parity-test stub, agents without MCP wired)
+   * simply skip the 4 descriptors.
+   */
+  readonly mcpClientManager?: McpClientManager;
   /**
    * Optional callback for suspicious content detection. Forwarded by the
    * daemon (built once per process inside `bootAgents` in `daemon.ts`,
@@ -152,6 +173,31 @@ export interface PlatformToolDescriptor {
    */
   readonly build: (ctx: PlatformToolBuildContext) => AgentTool | undefined;
   readonly conditional?: (ctx: PlatformToolBuildContext) => boolean;
+}
+
+// ===========================================================================
+// Capability-gate walks
+// ===========================================================================
+
+/**
+ * True when ANY connected server advertises resources support (per-server
+ * `enableResources:false` opt-out honored via the threaded connection field).
+ * Drives the `conditional` predicate for list_resources / read_resource.
+ */
+function anyServerAdvertisesResources(manager: McpClientManager): boolean {
+  return manager
+    .getAllConnections()
+    .some((c) => c.status === "connected" && serverAdvertisesResources(c.capabilities, c.enableResources));
+}
+
+/**
+ * True when ANY connected server advertises prompts support (per-server
+ * `enablePrompts:false` opt-out honored). Drives list_prompts / get_prompt.
+ */
+function anyServerAdvertisesPrompts(manager: McpClientManager): boolean {
+  return manager
+    .getAllConnections()
+    .some((c) => c.status === "connected" && serverAdvertisesPrompts(c.capabilities, c.enablePrompts));
 }
 
 // ===========================================================================
@@ -279,6 +325,35 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       name: "mcp_manage",
       category: "mcp",
       build: (ctx) => createMcpManageTool(ctx.rpcCall as never, ctx.approvalGate as never),
+    },
+    // Capability-gated resources/prompts utility tools.
+    // GLOBAL (server parameter) — exactly 4 descriptors regardless of how many
+    // MCP servers are connected. Each `conditional` re-evaluates per agent
+    // assemble, so the tools register on the first turn AFTER the relevant
+    // server connects (no daemon restart) and honor per-server opt-outs.
+    {
+      name: "get_prompt",
+      category: "mcp",
+      conditional: (ctx) => ctx.mcpClientManager !== undefined && anyServerAdvertisesPrompts(ctx.mcpClientManager),
+      build: (ctx) => createGetPromptTool(ctx.mcpClientManager as McpClientManager),
+    },
+    {
+      name: "list_prompts",
+      category: "mcp",
+      conditional: (ctx) => ctx.mcpClientManager !== undefined && anyServerAdvertisesPrompts(ctx.mcpClientManager),
+      build: (ctx) => createListPromptsTool(ctx.mcpClientManager as McpClientManager),
+    },
+    {
+      name: "list_resources",
+      category: "mcp",
+      conditional: (ctx) => ctx.mcpClientManager !== undefined && anyServerAdvertisesResources(ctx.mcpClientManager),
+      build: (ctx) => createListResourcesTool(ctx.mcpClientManager as McpClientManager),
+    },
+    {
+      name: "read_resource",
+      category: "mcp",
+      conditional: (ctx) => ctx.mcpClientManager !== undefined && anyServerAdvertisesResources(ctx.mcpClientManager),
+      build: (ctx) => createReadResourceTool(ctx.mcpClientManager as McpClientManager),
     },
 
     // ---- media ----

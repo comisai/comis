@@ -9,9 +9,9 @@
  * `mode:` option of `0o700` (mkdir context) or `0o600` (writeFile context).
  *
  * Variable references, function calls, ternaries, bitwise expressions
- * all fail (per CONTEXT.md D-07). Inline `// fs-safe-allowed: <reason>`
- * opt-out comment on the line immediately above the call is honored
- * (D-09). `packages/observability/src/shared/fs-safe.ts` is
+ * all fail. Inline `// fs-safe-allowed: <reason>` opt-out comment on the
+ * line immediately above the call is honored.
+ * `packages/observability/src/shared/fs-safe.ts` is
  * path-allowlisted (it's the layer the rule defers to).
  *
  * Fixture-pre-flight runs BEFORE the production scan: the classifier
@@ -361,9 +361,9 @@ describe("observability-mode-invariants — production source", () => {
           "must call fs.mkdirSync / fs.writeFileSync / fs.promises.mkdir / " +
           "fs.promises.writeFile (and bare-import equivalents) ONLY with " +
           "an explicit literal mode arg of 0o700 (mkdir) or 0o600 " +
-          "(writeFile), per design §1.4 file-mode invariant. Variable " +
+          "(writeFile). Variable " +
           "references, function calls, ternaries, bitwise expressions are " +
-          "not allowed — see CONTEXT.md D-07.",
+          "not allowed.",
         violations: offenders.map((v) => ({
           file: `${repoRelative(v.file)}:${v.line}`,
           line: v.line,

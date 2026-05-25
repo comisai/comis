@@ -191,6 +191,148 @@ describe("GatewayTokenSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
+// GatewayTokenSchema -- mcp-client scope disjointness + mcpClient block
+// ---------------------------------------------------------------------------
+
+describe("GatewayTokenSchema -- mcp-client disjointness", () => {
+  it("GatewayTokenSchema accepts a token with only the rpc scope", () => {
+    const result = GatewayTokenSchema.safeParse({ id: "t1", scopes: ["rpc"] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scopes).toEqual(["rpc"]);
+    }
+  });
+
+  it("GatewayTokenSchema accepts a token with only the mcp-client scope and an mcpClient block", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t2",
+      scopes: ["mcp-client"],
+      mcpClient: { allowlist: ["memory_search"] },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scopes).toEqual(["mcp-client"]);
+      expect(result.data.mcpClient).toBeDefined();
+      expect(result.data.mcpClient!.allowlist).toEqual(["memory_search"]);
+      // Defaults applied via the inner .default([]) / .default({}):
+      expect(result.data.mcpClient!.sessionAllowlist).toEqual([]);
+      expect(result.data.mcpClient!.toolRateLimit).toEqual({});
+    }
+  });
+
+  it("GatewayTokenSchema rejects a token co-issuing admin and mcp-client scopes", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t3",
+      scopes: ["admin", "mcp-client"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues[0];
+      expect(issue.message).toContain("[scope_disjointness]");
+      expect(issue.path).toEqual(["scopes"]);
+    }
+  });
+
+  it("GatewayTokenSchema accepts a token with admin scope but no mcp-client", () => {
+    const result = GatewayTokenSchema.safeParse({ id: "t4", scopes: ["admin"] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scopes).toEqual(["admin"]);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Wildcard scope co-issuance defense
+  //
+  // The wildcard scope "*" grants ALL scopes via checkScope(), including
+  // "admin". A token with `scopes: ["*", "mcp-client"]` has admin-equivalent
+  // access AND mcp-client access -- the same privilege-escalation pathway
+  // blocked for literal "admin + mcp-client".
+  //
+  // The refine must reject `*` alongside `mcp-client` for the same reason
+  // it rejects `admin` alongside `mcp-client`.
+  // -------------------------------------------------------------------------
+
+  it("GatewayTokenSchema rejects a token co-issuing the wildcard star and mcp-client", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t5",
+      scopes: ["*", "mcp-client"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues[0];
+      expect(issue.message).toContain("[scope_disjointness]");
+      expect(issue.path).toEqual(["scopes"]);
+    }
+  });
+
+  it("GatewayTokenSchema rejects a token co-issuing mcp-client and wildcard star in either order", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t6",
+      scopes: ["mcp-client", "*"],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // mcp-client must be the SOLE scope
+  //
+  // The original refine only blocked `admin + mcp-client` (and the wildcard
+  // rule added `* + mcp-client`). A token with `["rpc", "mcp-client"]` still
+  // passed:
+  //   1. It satisfies the `/mcp/v1` gates (has mcp-client; no admin/*).
+  //   2. It also authenticates to /ws and satisfies checkScope(scopes, "rpc")
+  //      on every rpc-scoped RPC method.
+  //
+  // Operationally, an mcp-client token is supposed to be an EXTERNAL trust
+  // boundary -- its compromise should be containable to the MCP surface
+  // only. Allowing co-issuance with rpc/ws turns one compromised credential
+  // into a full RPC + WS escalation.
+  //
+  // The refine must therefore enforce: when `mcp-client` is in scopes, it
+  // is the ONLY scope.
+  // -------------------------------------------------------------------------
+
+  it("GatewayTokenSchema rejects a token co-issuing rpc and mcp-client -- mcp-client must be sole scope", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t7",
+      scopes: ["rpc", "mcp-client"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues[0];
+      expect(issue.message).toContain("[scope_disjointness]");
+      expect(issue.path).toEqual(["scopes"]);
+    }
+  });
+
+  it("GatewayTokenSchema rejects a token co-issuing ws and mcp-client", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t8",
+      scopes: ["ws", "mcp-client"],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("GatewayTokenSchema rejects a token co-issuing rpc ws and mcp-client", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t9",
+      scopes: ["rpc", "ws", "mcp-client"],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("GatewayTokenSchema accepts a token with only mcp-client scope -- happy path", () => {
+    const result = GatewayTokenSchema.safeParse({
+      id: "t10",
+      scopes: ["mcp-client"],
+      mcpClient: { allowlist: [] },
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GatewayRateLimitSchema
 // ---------------------------------------------------------------------------
 

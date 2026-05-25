@@ -105,8 +105,8 @@ export interface CacheTraceInit {
    *
    * Every event of the recorder carries these fields verbatim (the
    * envelope is per-event, not per-stage). `modelApi` is `string | null`
-   * to allow null for the "no API discriminator" case (Anthropic
-   * provider without a sub-API split).
+   * because the schema explicitly allows null for the "no API
+   * discriminator" case (Anthropic provider without a sub-API split).
    */
   readonly envelope?: {
     readonly runId?: string;
@@ -521,7 +521,7 @@ function buildEvent(input: BuildEventInput): CacheTraceEvent {
   };
   if (input.init.provider !== undefined) envelope.provider = input.init.provider;
   if (input.init.modelId !== undefined) envelope.modelId = input.init.modelId;
-  // Envelope fields — lift each from the cluster when defined.
+  // Envelope cluster fields — lift each from the cluster when defined.
   const env = input.init.envelope;
   if (env?.runId !== undefined) envelope.runId = env.runId;
   if (env?.sessionKey !== undefined) envelope.sessionKey = env.sessionKey;

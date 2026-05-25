@@ -19,7 +19,7 @@
  *     `event: "config.observe"` events (currently unused by the writer
  *     hooks, but the file format reserves space for it).
  *
- * Both shapes follow the record schemas verbatim:
+ * Both shapes match the record schemas verbatim:
  *
  *   - `event` is the discriminant ("config.write" | "config.observe"),
  *     NOT `phase` (renamed).
@@ -195,15 +195,14 @@ export type ConfigWriteAuditRecord = z.infer<typeof ConfigWriteAuditRecordSchema
  *     `backupMtimeMs`. All nullable when no backup sibling.
  *   - **Recovery quartet** — `clobberedPath`, `restoredFromBackup`,
  *     `restoredBackupPath`, `restoreErrorCode`, `restoreErrorMessage`.
- *     Quintet by count; mismatched names follow the
- *     "recovery state" group.
+ *     Quintet by count; grouped as the "recovery state" fields.
  *   - **Heuristics** — `suspicious` array.
  *
- * No-BC policy: every field is REQUIRED on the
- * schema. The sole producer (`createConfigObserveAuditRecord` in
- * `append-observe.ts`) is updated in lock-step to populate them.
- * On-disk records written by prior versions of the producer will not
- * re-parse — this is the intentional forward-only contract change.
+ * Every field is REQUIRED on the schema. The sole producer
+ * (`createConfigObserveAuditRecord` in `append-observe.ts`) is updated in
+ * lock-step to populate them. On-disk records written by prior versions of
+ * the producer will not re-parse — this is the intentional forward-only
+ * contract change.
  */
 export const ConfigObserveAuditRecordSchema = z.object({
   traceSchema: z.literal("comis-config-audit"),
@@ -223,7 +222,7 @@ export const ConfigObserveAuditRecordSchema = z.object({
   execArgv: z.array(z.string()),
   watchMode: z.boolean(),
 
-  // File-state — required, nullable when exists:false.
+  // File-state fields — required, nullable when exists:false.
   exists: z.boolean(),
   valid: z.boolean(),
   hash: z.string().nullable(),

@@ -1,0 +1,101 @@
+# MCP server end-to-end SDK Client roundtrip test config (port 8573).
+#
+# Two tokens:
+#   - test-token (admin): the primary daemon token (rpc/ws/admin) used by the harness
+#     for the /health check.
+#   - mcp-roundtrip: scope ["mcp-client"], allowlist=["memory_search"],
+#                    sessionAllowlist=["test:roundtrip-user:chan-RT"].
+#                    Exercises the FULL surface in one session:
+#                      tools/list (safe + memory_search)
+#                      tools/call memory_search (happy path)
+#                      tools/call tokens_manage (never-export -> rejected)
+#                      resources/list (one allowlisted session)
+#                      resources/read on that session (CONFIRMED-only filter)
+#
+# Port 8573 to avoid conflicts with other integration test configs.
+
+tenantId: "test"
+logLevel: "info"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  test-agent:
+    model: default
+    thinkingLevel: "off"
+    name: MCP Server Roundtrip Test Agent
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+memory:
+  dbPath: "test-memory-mcp-server-roundtrip.db"
+  walMode: true
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8573
+  tokens:
+    # Primary daemon auth token (rpc/ws/admin) for the harness health check.
+    - id: test-token
+      secret: mcp-svr-roundtrip-primary-token-12
+      scopes: ["rpc", "ws", "admin"]
+    # mcp-client token used for the full lifecycle roundtrip.
+    - id: mcp-roundtrip
+      secret: mcp-svr-roundtrip-client-tok-1-fix
+      scopes: ["mcp-client"]
+      mcpClient:
+        allowlist: ["memory_search"]
+        sessionAllowlist: ["test:roundtrip-user:chan-RT"]
+        toolRateLimit: {}
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic

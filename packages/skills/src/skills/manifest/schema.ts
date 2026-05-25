@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
+import { McpServerEntrySchema } from "@comis/core";
 
 /**
  * Schema for skill names: lowercase alphanumeric with hyphens,
@@ -128,6 +129,36 @@ export const ComisNamespaceSchema = z.strictObject({
 export type ComisNamespaceParsed = z.infer<typeof ComisNamespaceSchema>;
 
 /**
+ * Per-entry shape for bundled MCP servers in a skill manifest.
+ * Normalizes the two acceptable shapes:
+ *   Array form (Comis-native):
+ *     mcpServers: [{ name: "yfinance", transport: "stdio", ... }]
+ *   Nested-object form (Claude-Desktop-compatible):
+ *     mcpServers: { yfinance: { transport: "stdio", ... } }
+ * Both normalize to the array form so per-entry validation runs against the
+ * canonical McpServerEntrySchema. Defensive: `Object.entries` iterates only
+ * own-enumerable properties (mitigates the prototype-pollution class).
+ *
+ * The inner schema is the SAME `McpServerEntrySchema` consumed by
+ * `integrations.mcp.servers` -- so bundle entries enforce the canonical
+ * per-server invariants (name regex, transport enum, etc.) at parse time.
+ * Empty `[]` / `{}` both produce `[]`; absent stays `undefined`.
+ */
+export const McpServersBundleSchema = z.preprocess(
+  (input: unknown) => {
+    if (Array.isArray(input)) return input;
+    if (input !== null && typeof input === "object") {
+      return Object.entries(input as Record<string, unknown>).map(([name, entry]) => {
+        if (entry === null || typeof entry !== "object") return entry;
+        return { ...(entry as Record<string, unknown>), name };
+      });
+    }
+    return input;
+  },
+  z.array(McpServerEntrySchema).optional(),
+);
+
+/**
  * Full SKILL.md manifest schema.
  * Validated from YAML frontmatter extracted from a SKILL.md file.
  *
@@ -161,6 +192,8 @@ export const SkillManifestSchema = z.strictObject({
     metadata: z.record(z.string(), z.string()).optional(),
     /** Comis-specific namespace block for platform-only fields */
     comis: ComisNamespaceSchema,
+    /** Optional bundled MCP servers declaration (array OR Claude-Desktop nested-object form). */
+    mcpServers: McpServersBundleSchema,
   });
 
 /** Parsed and validated skill manifest. */

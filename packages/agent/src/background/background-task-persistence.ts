@@ -7,8 +7,8 @@
  * substrate to ensure task state is persisted before returning a
  * placeholder to the caller. Every write goes through `writeRegularFile`
  * (file mode `0o600`) and every dir creation goes through
- * `ensureContainedDir` (dir mode `0o700`), honoring the design §1.4
- * mode invariants. `dataDir` is threaded as the `confinedBaseDir`
+ * `ensureContainedDir` (dir mode `0o700`), honoring file-mode invariants
+ * (files at `0o600`, dirs at `0o700`). `dataDir` is threaded as the `confinedBaseDir`
  * ancestor-symlink defense.
  *
  * @module
@@ -49,7 +49,7 @@ function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedT
  *
  * Writes to `dataDir/{agentId}/{taskId}.json`. Routes through the
  * `@comis/observability` fs-safe substrate so the parent dir lands at
- * `0o700` and the file at `0o600` (design §1.4 invariants). `dataDir`
+ * `0o700` and the file at `0o600` (file-mode invariants). `dataDir`
  * is passed as `confinedBaseDir` for the ancestor-symlink defense.
  *
  * Result errors are intentionally swallowed — this writer's existing

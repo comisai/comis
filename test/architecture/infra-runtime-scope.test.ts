@@ -81,6 +81,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
         })),
         suggestedFix:
           'Use `import type { ComisLogger } from "@comis/core"` for type-only consumers; inject the runtime logger via the `Deps` interface. The Pino-backed runtime implementation lives in @comis/infra and is wired only at the composition root (daemon).',
+        designRef: "Logger injection via Deps interface",
         allowlistRef: "ALLOWED_INFRA_RUNTIME_DIRS + FACADE_REEXPORT_ALLOWLIST (in-file)",
       }),
     ).toEqual([]);

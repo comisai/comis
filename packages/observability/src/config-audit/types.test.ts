@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Schema-shape tests for `ConfigWriteAuditRecordSchema` /
- * `ConfigObserveAuditRecordSchema` per design §9.2 (deviation G fix).
+ * `ConfigObserveAuditRecordSchema` (deviation G fix).
  *
  * New schema invariants:
  *   - `event` discriminant ("config.write" | "config.observe"), NOT
@@ -24,7 +24,7 @@ import {
   type ConfigObserveAuditRecord,
 } from "./types.js";
 
-describe("config-audit/types — design §9.2 shape", () => {
+describe("config-audit/types — config audit schema shape", () => {
   it("rejects empty object on both write and read schemas", () => {
     const writeResult = ConfigWriteAuditRecordSchema.safeParse({});
     expect(writeResult.success).toBe(false);
@@ -158,7 +158,7 @@ describe("config-audit/types — design §9.2 shape", () => {
     expect(r.success).toBe(false);
   });
 
-  it("accepts result=`copy-fallback` (new design §9.2 value)", () => {
+  it("accepts result=`copy-fallback` (new config audit result value)", () => {
     const valid: ConfigWriteAuditRecord = {
       traceSchema: "comis-config-audit",
       schemaVersion: 1,
@@ -202,7 +202,7 @@ describe("config-audit/types — design §9.2 shape", () => {
     expect(parsed.result).toBe("copy-fallback");
   });
 
-  it("accepts a fully-populated observe record with event=`config.observe` carrying the full §9.2 field set", () => {
+  it("accepts a fully-populated observe record with event=`config.observe` carrying the full config audit field set", () => {
     const valid: ConfigObserveAuditRecord = {
       traceSchema: "comis-config-audit",
       schemaVersion: 1,
@@ -218,7 +218,7 @@ describe("config-audit/types — design §9.2 shape", () => {
       cwd: "/home/test",
       execArgv: [],
       watchMode: true,
-      // §9.2 file-state.
+      // file-state fields.
       exists: true,
       valid: true,
       hash: "0".repeat(64),
@@ -231,15 +231,15 @@ describe("config-audit/types — design §9.2 shape", () => {
       nlink: 1,
       uid: 1000,
       gid: 1000,
-      // §9.2 LKG triple.
+      // last-known-good triple.
       lastKnownGoodHash: "1".repeat(64),
       lastKnownGoodBytes: 100,
       lastKnownGoodMtimeMs: 1_779_148_000_000,
-      // §9.2 backup triple.
+      // backup triple.
       backupHash: null,
       backupBytes: null,
       backupMtimeMs: null,
-      // §9.2 recovery state.
+      // recovery state.
       clobberedPath: null,
       restoredFromBackup: false,
       restoredBackupPath: null,
@@ -374,7 +374,7 @@ describe("config-audit/types — design §9.2 shape", () => {
       bytes: 0,
       mtimeMs: 0,
       ctimeMs: 0,
-      dev: 17, // number — must be string|null per §9.2
+      dev: 17, // number — must be string|null per the config audit schema
       ino: "999",
       mode: 0o600,
       nlink: 1,

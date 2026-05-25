@@ -4534,7 +4534,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
   {
     "default": {
       "callToolTimeoutMs": 120000,
+      "circuitBreakerCooldownMs": 60000,
+      "circuitBreakerThreshold": 3,
       "httpDefaultConcurrency": 4,
+      "keepaliveIntervalMs": 180000,
       "osvCacheTtlMs": 86400000,
       "osvCheckEnabled": true,
       "safetyAllowedEnvKeys": [],
@@ -4552,9 +4555,27 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "type": "integer"
   },
   {
+    "default": 60000,
+    "immutable": true,
+    "path": "integrations.mcp.circuitBreakerCooldownMs",
+    "type": "integer"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "integrations.mcp.circuitBreakerThreshold",
+    "type": "integer"
+  },
+  {
     "default": 4,
     "immutable": true,
     "path": "integrations.mcp.httpDefaultConcurrency",
+    "type": "integer"
+  },
+  {
+    "default": 180000,
+    "immutable": true,
+    "path": "integrations.mcp.keepaliveIntervalMs",
     "type": "integer"
   },
   {
@@ -9764,7 +9785,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       },
       "mcp": {
         "callToolTimeoutMs": 120000,
+        "circuitBreakerCooldownMs": 60000,
+        "circuitBreakerThreshold": 3,
         "httpDefaultConcurrency": 4,
+        "keepaliveIntervalMs": 180000,
         "osvCacheTtlMs": 86400000,
         "osvCheckEnabled": true,
         "safetyAllowedEnvKeys": [],
@@ -9942,7 +9966,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "callToolTimeoutMs": 120000,
+      "circuitBreakerCooldownMs": 60000,
+      "circuitBreakerThreshold": 3,
       "httpDefaultConcurrency": 4,
+      "keepaliveIntervalMs": 180000,
       "osvCacheTtlMs": 86400000,
       "osvCheckEnabled": true,
       "safetyAllowedEnvKeys": [],
@@ -9960,9 +9987,27 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
+    "default": 60000,
+    "immutable": true,
+    "path": "integrations.mcp.circuitBreakerCooldownMs",
+    "type": "integer"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "integrations.mcp.circuitBreakerThreshold",
+    "type": "integer"
+  },
+  {
     "default": 4,
     "immutable": true,
     "path": "integrations.mcp.httpDefaultConcurrency",
+    "type": "integer"
+  },
+  {
+    "default": 180000,
+    "immutable": true,
+    "path": "integrations.mcp.keepaliveIntervalMs",
     "type": "integer"
   },
   {
@@ -18566,6 +18611,43 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("gat
             "minLength": 1,
             "type": "string"
           },
+          "mcpClient": {
+            "additionalProperties": false,
+            "properties": {
+              "allowlist": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sessionAllowlist": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "toolRateLimit": {
+                "additionalProperties": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "default": {},
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "allowlist",
+              "sessionAllowlist",
+              "toolRateLimit"
+            ],
+            "type": "object"
+          },
           "scopes": {
             "default": [],
             "items": {
@@ -18713,6 +18795,177 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("gat
 
 exports[`section-registry parity > schema-serializer view > getConfigSchema("integrations") 1`] = `
 "{
+  "$defs": {
+    "__schema0": {
+      "additionalProperties": false,
+      "properties": {
+        "_bundleArchive": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "_bundleSource": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "auth": {
+          "enum": [
+            "none",
+            "bearer",
+            "oauth"
+          ],
+          "type": "string"
+        },
+        "circuitBreakerCooldownMs": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "circuitBreakerThreshold": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "command": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "cwd": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "disablePlaintextSecretCheck": {
+          "type": "boolean"
+        },
+        "enablePrompts": {
+          "type": "boolean"
+        },
+        "enableResources": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "idleTtlMs": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keepaliveIntervalMs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxConcurrency": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "name": {
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "type": "string"
+        },
+        "oauth": {
+          "additionalProperties": false,
+          "properties": {
+            "authorizationEndpoint": {
+              "format": "uri",
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "stripeAccount": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "rlimits": {
+          "additionalProperties": false,
+          "properties": {
+            "as": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "cpu": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "nofile": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "supportsParallelToolCalls": {
+          "type": "boolean"
+        },
+        "toolAllowlist": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "toolBlocklist": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "transport": {
+          "enum": [
+            "stdio",
+            "sse",
+            "http"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "transport",
+        "enabled",
+        "idleTtlMs"
+      ],
+      "type": "object"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -18847,7 +19100,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
       "additionalProperties": false,
       "default": {
         "callToolTimeoutMs": 120000,
+        "circuitBreakerCooldownMs": 60000,
+        "circuitBreakerThreshold": 3,
         "httpDefaultConcurrency": 4,
+        "keepaliveIntervalMs": 180000,
         "osvCacheTtlMs": 86400000,
         "osvCheckEnabled": true,
         "safetyAllowedEnvKeys": [],
@@ -18861,10 +19117,28 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
           "maximum": 9007199254740991,
           "type": "integer"
         },
+        "circuitBreakerCooldownMs": {
+          "default": 60000,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "circuitBreakerThreshold": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
         "httpDefaultConcurrency": {
           "default": 4,
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "keepaliveIntervalMs": {
+          "default": 180000,
+          "maximum": 9007199254740991,
+          "minimum": 0,
           "type": "integer"
         },
         "osvCacheTtlMs": {
@@ -18888,97 +19162,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
         "servers": {
           "default": [],
           "items": {
-            "additionalProperties": false,
-            "properties": {
-              "args": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "command": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "cwd": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "disablePlaintextSecretCheck": {
-                "type": "boolean"
-              },
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "env": {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "propertyNames": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              "headers": {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "propertyNames": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              "maxConcurrency": {
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "name": {
-                "minLength": 1,
-                "pattern": "^[a-zA-Z0-9_-]+$",
-                "type": "string"
-              },
-              "rlimits": {
-                "additionalProperties": false,
-                "properties": {
-                  "as": {
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  },
-                  "cpu": {
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  },
-                  "nofile": {
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  }
-                },
-                "type": "object"
-              },
-              "transport": {
-                "enum": [
-                  "stdio",
-                  "sse",
-                  "http"
-                ],
-                "type": "string"
-              },
-              "url": {
-                "format": "uri",
-                "type": "string"
-              }
-            },
-            "required": [
-              "name",
-              "transport",
-              "enabled"
-            ],
-            "type": "object"
+            "$ref": "#/$defs/__schema0"
           },
           "type": "array"
         },
@@ -18996,7 +19180,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
         "httpDefaultConcurrency",
         "safetyAllowedEnvKeys",
         "osvCheckEnabled",
-        "osvCacheTtlMs"
+        "osvCacheTtlMs",
+        "keepaliveIntervalMs",
+        "circuitBreakerThreshold",
+        "circuitBreakerCooldownMs"
       ],
       "type": "object"
     },
@@ -21275,6 +21462,177 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("too
 
 exports[`section-registry parity > schema-serializer view > getConfigSchema() â€” full schema 1`] = `
 "{
+  "$defs": {
+    "__schema0": {
+      "additionalProperties": false,
+      "properties": {
+        "_bundleArchive": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "_bundleSource": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "auth": {
+          "enum": [
+            "none",
+            "bearer",
+            "oauth"
+          ],
+          "type": "string"
+        },
+        "circuitBreakerCooldownMs": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "circuitBreakerThreshold": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "command": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "cwd": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "disablePlaintextSecretCheck": {
+          "type": "boolean"
+        },
+        "enablePrompts": {
+          "type": "boolean"
+        },
+        "enableResources": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "idleTtlMs": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keepaliveIntervalMs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxConcurrency": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "name": {
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "type": "string"
+        },
+        "oauth": {
+          "additionalProperties": false,
+          "properties": {
+            "authorizationEndpoint": {
+              "format": "uri",
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "stripeAccount": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "rlimits": {
+          "additionalProperties": false,
+          "properties": {
+            "as": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "cpu": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "nofile": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "supportsParallelToolCalls": {
+          "type": "boolean"
+        },
+        "toolAllowlist": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "toolBlocklist": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "transport": {
+          "enum": [
+            "stdio",
+            "sse",
+            "http"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "transport",
+        "enabled",
+        "idleTtlMs"
+      ],
+      "type": "object"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -27692,6 +28050,43 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "minLength": 1,
                 "type": "string"
               },
+              "mcpClient": {
+                "additionalProperties": false,
+                "properties": {
+                  "allowlist": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "sessionAllowlist": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "toolRateLimit": {
+                    "additionalProperties": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "default": {},
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "allowlist",
+                  "sessionAllowlist",
+                  "toolRateLimit"
+                ],
+                "type": "object"
+              },
               "scopes": {
                 "default": [],
                 "items": {
@@ -27849,7 +28244,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         },
         "mcp": {
           "callToolTimeoutMs": 120000,
+          "circuitBreakerCooldownMs": 60000,
+          "circuitBreakerThreshold": 3,
           "httpDefaultConcurrency": 4,
+          "keepaliveIntervalMs": 180000,
           "osvCacheTtlMs": 86400000,
           "osvCheckEnabled": true,
           "safetyAllowedEnvKeys": [],
@@ -28083,7 +28481,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "additionalProperties": false,
           "default": {
             "callToolTimeoutMs": 120000,
+            "circuitBreakerCooldownMs": 60000,
+            "circuitBreakerThreshold": 3,
             "httpDefaultConcurrency": 4,
+            "keepaliveIntervalMs": 180000,
             "osvCacheTtlMs": 86400000,
             "osvCheckEnabled": true,
             "safetyAllowedEnvKeys": [],
@@ -28097,10 +28498,28 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maximum": 9007199254740991,
               "type": "integer"
             },
+            "circuitBreakerCooldownMs": {
+              "default": 60000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "circuitBreakerThreshold": {
+              "default": 3,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
             "httpDefaultConcurrency": {
               "default": 4,
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "keepaliveIntervalMs": {
+              "default": 180000,
+              "maximum": 9007199254740991,
+              "minimum": 0,
               "type": "integer"
             },
             "osvCacheTtlMs": {
@@ -28124,97 +28543,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "servers": {
               "default": [],
               "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "args": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "command": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "cwd": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "disablePlaintextSecretCheck": {
-                    "type": "boolean"
-                  },
-                  "enabled": {
-                    "default": true,
-                    "type": "boolean"
-                  },
-                  "env": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "type": "object"
-                  },
-                  "headers": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "type": "object"
-                  },
-                  "maxConcurrency": {
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  },
-                  "name": {
-                    "minLength": 1,
-                    "pattern": "^[a-zA-Z0-9_-]+$",
-                    "type": "string"
-                  },
-                  "rlimits": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "as": {
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991,
-                        "type": "integer"
-                      },
-                      "cpu": {
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991,
-                        "type": "integer"
-                      },
-                      "nofile": {
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991,
-                        "type": "integer"
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "transport": {
-                    "enum": [
-                      "stdio",
-                      "sse",
-                      "http"
-                    ],
-                    "type": "string"
-                  },
-                  "url": {
-                    "format": "uri",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "name",
-                  "transport",
-                  "enabled"
-                ],
-                "type": "object"
+                "$ref": "#/$defs/__schema0"
               },
               "type": "array"
             },
@@ -28232,7 +28561,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "httpDefaultConcurrency",
             "safetyAllowedEnvKeys",
             "osvCheckEnabled",
-            "osvCacheTtlMs"
+            "osvCacheTtlMs",
+            "keepaliveIntervalMs",
+            "circuitBreakerThreshold",
+            "circuitBreakerCooldownMs"
           ],
           "type": "object"
         },

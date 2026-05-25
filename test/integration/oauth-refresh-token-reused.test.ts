@@ -233,10 +233,10 @@ describe("refresh-failure error classification", () => {
       });
       expect(events[0]!.hint).toContain("re-login required");
 
-      // (b) WARN log captured with module=oauth-token-manager. Pino
-      //     `errorKind` is a closed union, so the WARN payload's
-      //     `errorKind` is the literal `"auth"`. The OAuth domain
-      //     discriminator flows via the event payload and OAuthError instead.
+      // (b) WARN log captured with module=oauth-token-manager. Pino `errorKind`
+      //     is a closed union, so the WARN payload's `errorKind` is the literal
+      //     `"auth"`. The OAuth domain discriminator flows via the event payload
+      //     and OAuthError instead.
       const warnCalls = logger._calls("warn");
       const refreshWarn = warnCalls.find(
         (c) => c.payload?.submodule === "oauth-token-manager",

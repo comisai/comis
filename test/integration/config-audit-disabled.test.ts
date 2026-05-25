@@ -28,7 +28,7 @@
  * `test/integration/cli-sync-tooling.test.ts`; the gate logic is
  * locked in by the source-grep regression guard here).
  *
- * Imports from `dist/` — requires `pnpm build` first.
+ * Integration test: imports from `dist/` — requires `pnpm build` first.
  *
  * @module
  */

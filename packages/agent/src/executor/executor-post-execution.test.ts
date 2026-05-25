@@ -234,7 +234,7 @@ describe("buildSessionEndMetadata", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 260521-0bn FOLLOWUP-260521-0bn-02: costCorrectionDeltaUsd on Execution-complete
+// costCorrectionDeltaUsd on Execution-complete
 //
 // Regression contract: the Execution-complete log payload conditionally
 // includes `costCorrectionDeltaUsd` when `bridgeResult.totalCostCorrectionDeltaUsd
@@ -247,7 +247,7 @@ describe("buildSessionEndMetadata", () => {
 // asserting the conditional spread shape via source-grep is the
 // proportional check.
 // ---------------------------------------------------------------------------
-describe("Execution-complete log — costCorrectionDeltaUsd (260521-0bn)", () => {
+describe("Execution-complete log — costCorrectionDeltaUsd", () => {
   function readPostExec(): string {
     return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
   }

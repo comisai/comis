@@ -11,7 +11,7 @@
  * the fill/verify stages.
  *
  * Pure of process I/O — only fs.readFileSync, yaml.parseDocument, and
- * `@comis/core`'s loadConfigFile.
+ * `@comis/core`'s loadConfigFile (separation of I/O from logic).
  *
  * @module
  */

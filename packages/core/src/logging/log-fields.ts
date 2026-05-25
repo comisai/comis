@@ -79,8 +79,9 @@ export type ErrorKind =
  *       are assignable, because contravariant parameter checking
  *       collapses when the source type uses pure rest args).
  *
- * Pino runtime invariants (object-first logging; never string-interpolate
- * the message) are enforced by lint, not by the structural contract.
+ * Pino runtime invariants (object-first logging;
+ * never string-interpolate the message) are enforced by lint, not by
+ * the structural contract.
  */
 export type LogMethod = (...args: unknown[]) => void;
 
@@ -94,8 +95,8 @@ export type LogMethod = (...args: unknown[]) => void;
  * proves the Pino impl satisfies the structural shape via
  * `expectTypeOf<PinoComisLogger>().toExtend<CoreComisLogger>()`.
  *
- * Every WARN/ERROR call must include `errorKind` (closed union, see
- * ErrorKind above) and `hint` (actionable diagnostic).
+ * Every WARN/ERROR call must include `errorKind`
+ * (closed union, see ErrorKind above) and `hint` (actionable diagnostic).
  *
  * Pino redaction (`apiKey`, `token`, `password`, etc., 3 levels deep) is
  * a runtime feature of the Pino impl in @comis/infra; this structural

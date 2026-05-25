@@ -88,6 +88,44 @@ describe("setupMcp", () => {
     expect(result.mcpClientManager.getAllConnections()).toEqual([]);
   });
 
+  // The global reliability config (integrations.mcp.keepaliveIntervalMs /
+  // circuitBreakerThreshold / circuitBreakerCooldownMs) MUST be forwarded into
+  // createMcpClientManager. Without this, a daemon-wide override (e.g.
+  // keepaliveIntervalMs: 0 to disable keepalives) is silently ignored for all
+  // startup-connected servers — only per-server overrides via mcp.connect RPC
+  // would take effect.
+  it("forwards global keepaliveIntervalMs/circuitBreakerThreshold/circuitBreakerCooldownMs into createMcpClientManager", async () => {
+    mockGetAllConnections.mockReturnValue([]);
+    await callSetupMcp({
+      servers: [],
+      logger,
+      keepaliveIntervalMs: 0,
+      circuitBreakerThreshold: 7,
+      circuitBreakerCooldownMs: 12_345,
+    });
+
+    expect(mockCreateMcpClientManager).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keepaliveIntervalMs: 0,
+        circuitBreakerThreshold: 7,
+        circuitBreakerCooldownMs: 12_345,
+      }),
+    );
+  });
+
+  it("omits the global reliability fields from the factory call when not provided", async () => {
+    mockGetAllConnections.mockReturnValue([]);
+    await callSetupMcp({ servers: [], logger });
+
+    const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+    // Undefined-valued forwards are acceptable (createMcpClientManager applies
+    // its own ?? defaults), but the keys must not carry a stale non-undefined
+    // value when the operator did not set them.
+    expect(factoryArg.keepaliveIntervalMs).toBeUndefined();
+    expect(factoryArg.circuitBreakerThreshold).toBeUndefined();
+    expect(factoryArg.circuitBreakerCooldownMs).toBeUndefined();
+  });
+
   it("always returns a defined manager when all servers disabled", async () => {
     mockGetAllConnections.mockReturnValue([]);
     const result = await callSetupMcp({
@@ -522,6 +560,175 @@ describe("setupMcp", () => {
 
     const callArg = mockConnect.mock.calls[0][0];
     expect(callArg).not.toHaveProperty("cwd");
+  });
+
+  // The five per-server fields (idleTtlMs, toolAllowlist, toolBlocklist,
+  // enableResources, enablePrompts) parsed by McpServerEntrySchema MUST reach
+  // the runtime McpServerConfig that setupMcp hands to manager.connect().
+  // Without this, config-defined idle eviction / tool filtering /
+  // resources-prompts opt-outs are silently ignored for servers loaded from
+  // config.yaml.
+  it("forwards idleTtlMs/toolAllowlist/toolBlocklist/enable* fields to McpServerConfig", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "filtered",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        {
+          name: "filtered",
+          transport: "stdio",
+          command: "mcp-server",
+          enabled: true,
+          idleTtlMs: 300_000,
+          toolAllowlist: ["safe-tool"],
+          toolBlocklist: ["dangerous-tool"],
+          enableResources: false,
+          enablePrompts: true,
+        },
+      ],
+      logger,
+    });
+
+    expect(mockConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "filtered",
+        idleTtlMs: 300_000,
+        toolAllowlist: ["safe-tool"],
+        toolBlocklist: ["dangerous-tool"],
+        enableResources: false,
+        enablePrompts: true,
+      }),
+    );
+  });
+
+  it("omits idleTtlMs from McpServerConfig when the config value is 0 (disabled)", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "no-idle",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        { name: "no-idle", transport: "stdio", command: "mcp-server", enabled: true, idleTtlMs: 0 },
+      ],
+      logger,
+    });
+
+    const callArg = mockConnect.mock.calls[0][0];
+    // 0 is the schema default (disabled); forwarding it would carry an inert
+    // field, so the construction site drops it (mirrors startIdleTicker opt-in).
+    expect(callArg).not.toHaveProperty("idleTtlMs");
+  });
+
+  // supportsParallelToolCalls parsed by McpServerEntrySchema MUST reach the
+  // runtime McpServerConfig handed to manager.connect(), else the PQueue
+  // concurrency derivation never sees the opt-in (silent no-op).
+  it("forwards supportsParallelToolCalls: true to McpServerConfig", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "parallel",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        {
+          name: "parallel",
+          transport: "stdio",
+          command: "mcp-server",
+          enabled: true,
+          supportsParallelToolCalls: true,
+        },
+      ],
+      logger,
+    });
+
+    expect(mockConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "parallel",
+        supportsParallelToolCalls: true,
+      }),
+    );
+  });
+
+  it("omits supportsParallelToolCalls from McpServerConfig when absent on the entry", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "serial",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        { name: "serial", transport: "stdio", command: "mcp-server", enabled: true },
+      ],
+      logger,
+    });
+
+    const callArg = mockConnect.mock.calls[0][0];
+    expect(callArg).not.toHaveProperty("supportsParallelToolCalls");
+  });
+
+  // auth/oauth parsed by McpServerEntrySchema MUST reach the runtime
+  // McpServerConfig handed to manager.connect(), else createTransport never
+  // wires the OAuthClientProvider (silent downgrade to no-auth).
+  it("forwards auth/oauth to McpServerConfig", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "notion",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        {
+          name: "notion",
+          transport: "http",
+          url: "https://mcp.notion.com/mcp",
+          enabled: true,
+          auth: "oauth",
+          oauth: { scope: "read", stripeAccount: "acct_1" },
+        },
+      ],
+      logger,
+    });
+
+    expect(mockConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "notion",
+        auth: "oauth",
+        oauth: { scope: "read", stripeAccount: "acct_1" },
+      }),
+    );
+  });
+
+  it("omits auth/oauth from McpServerConfig when absent on the entry", async () => {
+    mockConnect.mockResolvedValueOnce(ok({
+      name: "plain",
+      status: "connected",
+      tools: [],
+      lastHealthCheck: Date.now(),
+    }));
+
+    await callSetupMcp({
+      servers: [
+        { name: "plain", transport: "stdio", command: "mcp-server", enabled: true },
+      ],
+      logger,
+    });
+
+    const callArg = mockConnect.mock.calls[0][0];
+    expect(callArg).not.toHaveProperty("auth");
+    expect(callArg).not.toHaveProperty("oauth");
   });
 
   it("logs tool names from connected servers", async () => {

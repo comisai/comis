@@ -53,6 +53,9 @@ export type { AgentHandlerDeps } from "./api/agent-handlers.js";
 // docs at packages/daemon/src/api/shared/persist-to-config.ts:12-43).
 export { createMcpHandlers } from "./api/mcp-handlers.js";
 export type { McpHandlerDeps } from "./api/mcp-handlers.js";
+// mcp.oauth_login / mcp.oauth_logout RPC handlers.
+export { createMcpOauthHandlers } from "./api/mcp-oauth-handlers.js";
+export type { McpOauthHandlerDeps } from "./api/mcp-oauth-handlers.js";
 // Re-exported so the architecture-tier negative +
 // positive control table at
 // test/architecture/mcp-plaintext-secret-false-positives.test.ts can pin
@@ -63,10 +66,37 @@ export type { McpHandlerDeps } from "./api/mcp-handlers.js";
 // import via @comis/daemon, alongside the daemon-side mcp.connect
 // integration tests in packages/daemon/src/api/mcp-handlers.test.ts).
 export { looksLikePlaintextSecret } from "./api/mcp-handlers.js";
+// Extracted single-writer for integrations.mcp.servers.
+// Consumers: the bundle-install helper and boot-path orchestrator both reach
+// the helper through this barrel re-export so neither needs a direct
+// daemon-internal import.
+export { persistMcpServers, type PersistMcpResult } from "./api/shared/persist-mcp-servers.js";
 export {
   _resetSigusr1Timer,
   _resetMutationFence,
 } from "./api/shared/persist-to-config.js";
+// Test seam: 500ms trailing-edge coalescer holds
+// closure-captured state across all persistMcpServers calls in a daemon
+// process. Integration tests call this in `beforeEach` to clear pending
+// added/removed maps and cancel any armed timer, mirroring the
+// _resetSigusr1Timer / _resetMutationFence pattern at persist-to-config.ts.
+// Consumer: test/integration/mcp-config-refresh.test.ts.
+export { _resetConfigMutatedCoalescer } from "./api/mcp-config-mutated-coalescer.js";
+
+// Bundle-install helper + boot orchestrator surfaced through the daemon barrel
+// so the skill-bundle-install integration test
+// (test/integration/skill-bundle-install.test.ts) can drive the
+// atomic-install reject path + the boot re-merge idempotence path
+// against the REAL persistToConfig + audit JSONL pipeline pointed at a
+// tmpdir config path. Mirrors the createMcpHandlers / persistMcpServers
+// re-export pattern above.
+export { applyBundleInstall } from "./skills/bundle-install-helper.js";
+export type {
+  ApplyBundleInstallArgs,
+  ApplyBundleInstallResult,
+} from "./skills/bundle-install-helper.js";
+export { setupSkillBundles, buildSkillRegistriesForBundles } from "./wiring/setup-skill-bundles.js";
+export type { SetupSkillBundlesDeps } from "./wiring/setup-skill-bundles.js";
 
 // Re-export createTracingLogger so the test daemon harness can thread the
 // `LoggerOptions.disableRedaction` opt-in through to the SAME logger

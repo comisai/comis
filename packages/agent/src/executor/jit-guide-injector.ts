@@ -81,7 +81,7 @@ export function wrapToolResultWithGuide(
   // That's invisible and was the root cause of the NVDA team-agent session
   // never seeing TOOL_GUIDES["agents_manage"]. Mutate only on success.
 
-  // Phase 1 — collect candidate guides (read-only on deliveredGuides)
+  // Step 1 — collect candidate guides (read-only on deliveredGuides)
   const toolGuide = getToolGuideWithSchema(toolName);
   const wantsTool = !!toolGuide && !deliveredGuides.has(toolName);
 
@@ -106,7 +106,7 @@ export function wrapToolResultWithGuide(
   // discovery tools, validation wrappers).
   if ((result as unknown as Record<string, unknown>).isError) return result;
 
-  // Phase 2 — commit: mark delivered, build guide texts, append.
+  // Step 2 — commit: mark delivered, build guide texts, append.
   const guideTexts: string[] = [];
   const guideTypes: string[] = [];
 

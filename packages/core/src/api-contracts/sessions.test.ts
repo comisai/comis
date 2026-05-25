@@ -333,6 +333,68 @@ describe("SessionHistoryContract", () => {
       hasMore: false,
     })).toBeDefined();
   });
+
+  // -------------------------------------------------------------------------
+  // Additive optional `deliveryStatus` field on every messages[] entry.
+  // The handler computes it via a DeliveryQueuePort join (inbound msgs always
+  // confirmed; outbound confirmed iff the queue has no matching
+  // pending/in_flight/failed entry for that text+channel pair).
+  // The MCP resources/read filter exposes ONLY `confirmed` messages.
+  // -------------------------------------------------------------------------
+
+  it("SessionHistoryContract.response accepts messages with optional deliveryStatus confirmed or pending", () => {
+    // The schema MUST preserve `deliveryStatus` through parse (not strip it).
+    // The schema declares `deliveryStatus` so the parsed value carries the
+    // field through.
+    const parsed = SessionHistoryContract.response.parse({
+      session: {
+        key: "k", agentId: "default", channelType: "dm",
+        messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0,
+        toolCalls: 0, compactions: 0, resetCount: 0,
+        createdAt: 0, lastActiveAt: 0,
+      },
+      messages: [
+        { role: "user", content: "Hi", timestamp: 1, deliveryStatus: "confirmed" as const },
+        { role: "assistant", content: "Yes", timestamp: 2, deliveryStatus: "pending" as const },
+      ],
+      total: 2, offset: 0, limit: 20, hasMore: false,
+    });
+    expect(parsed.messages[0]).toHaveProperty("deliveryStatus", "confirmed");
+    expect(parsed.messages[1]).toHaveProperty("deliveryStatus", "pending");
+  });
+
+  it("SessionHistoryContract.response accepts messages without deliveryStatus (backward-compatible with callers that omit the field)", () => {
+    expect(SessionHistoryContract.response.parse({
+      session: {
+        key: "k", agentId: "default", channelType: "dm",
+        messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0,
+        toolCalls: 0, compactions: 0, resetCount: 0,
+        createdAt: 0, lastActiveAt: 0,
+      },
+      messages: [
+        // No deliveryStatus field -- pre-Phase-69 callers continue to work.
+        { role: "user", content: "Hello", timestamp: 1 },
+      ],
+      total: 1, offset: 0, limit: 20, hasMore: false,
+    })).toBeDefined();
+  });
+
+  it("SessionHistoryContract.response rejects messages with an invalid deliveryStatus value", () => {
+    // The schema must enum-validate deliveryStatus. z.enum(["confirmed","pending"])
+    // rejects unknown literals.
+    expect(() => SessionHistoryContract.response.parse({
+      session: {
+        key: "k", agentId: "default", channelType: "dm",
+        messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0,
+        toolCalls: 0, compactions: 0, resetCount: 0,
+        createdAt: 0, lastActiveAt: 0,
+      },
+      messages: [
+        { role: "user", content: "Hi", timestamp: 1, deliveryStatus: "delivered" /* not in enum */ },
+      ],
+      total: 1, offset: 0, limit: 20, hasMore: false,
+    })).toThrow();
+  });
 });
 
 describe("SessionSendContract", () => {

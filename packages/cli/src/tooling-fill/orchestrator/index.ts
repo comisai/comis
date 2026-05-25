@@ -32,8 +32,8 @@ import { fillTools } from "./orchestrator-fill.js";
 import { verifyFill } from "./orchestrator-verify.js";
 
 /**
- * Top-level entry. Always resolves a `{exitCode, summary}` — never throws;
- * orchestrator catches Result errors internally.
+ * Top-level entry. Always resolves a `{exitCode, summary}` — never throws
+ * (orchestrator catches Result errors internally).
  */
 export async function runToolingFill(
   opts: OrchestratorOpts,

@@ -25,8 +25,8 @@
  *
  * Distro detection (`/etc/os-release` parser + 5-distro install-hint switch)
  * is duplicated inline from `packages/cli/src/doctor/checks/oauth-health.ts`.
- * By the rule of three, two callers do not yet justify a shared
- * helper. If a third caller appears, extract the pair to
+ * Two callers do not yet justify a shared helper (rule of three). If a third
+ * caller appears, extract the pair to
  * `packages/agent/src/model/oauth-os-release.ts`.
  *
  * The logger is injected — no `@comis/infra` import.
@@ -67,7 +67,7 @@ interface OsRelease {
  * error (missing file, permission denied, malformed contents).
  *
  * Verbatim duplication from `oauth-health.ts` — see module JSDoc for the
- * deferral rationale.
+ * rule-of-three deferral rationale.
  */
 async function readOsRelease(path = "/etc/os-release"): Promise<OsRelease | null> {
   try {
@@ -89,7 +89,7 @@ async function readOsRelease(path = "/etc/os-release"): Promise<OsRelease | null
  * Produces a distro-aware install command for the system CA bundle.
  *
  * Verbatim duplication from `oauth-health.ts` — see module JSDoc for the
- * deferral rationale.
+ * rule-of-three deferral rationale.
  */
 function caCertificatesInstallHint(os: OsRelease | null): string {
   if (!os) return "Install ca-certificates via your distro's package manager and retry";

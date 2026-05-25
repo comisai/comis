@@ -12,7 +12,7 @@
  * Composite key (mtime + sha256) — both must match for a cache hit, otherwise
  * recompute. `version: 1` invalidates old caches when walker logic changes.
  *
- * The valid 9-member closed union is (`config | network |
+ * The valid 9-member closed union mirrors the canonical ErrorKind union (`config | network |
  * auth | validation | timeout | resource | dependency | internal | platform`).
  *
  * @module

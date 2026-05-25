@@ -49,6 +49,7 @@
     "@comis/shared": "workspace:*",
     "@comis/skills": "workspace:*",
     "@earendil-works/pi-ai": "0.75.3",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "better-sqlite3": "12.9.0",
     "hono": "4.12.18",
     "pino": "10.3.1",

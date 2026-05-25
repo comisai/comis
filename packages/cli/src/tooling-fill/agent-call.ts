@@ -20,7 +20,7 @@
  *
  * The token comes from the caller — this module never reads the
  * environment directly. The Commander callback resolves the token via
- * `loadEnvFile` and passes it explicitly.
+ * `loadEnvFile` and passes it explicitly (credentials are never read from the environment directly by this module).
  *
  * @module
  */

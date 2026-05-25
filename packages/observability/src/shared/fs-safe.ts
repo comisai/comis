@@ -26,10 +26,10 @@
  *      swapped after we opened it.
  *
  * Returns `Result<{ totalBytes }, SymlinkParentRejected |
- * FileSizeLimitExceeded | Error>`. The size cap (`maxFileBytes`) is
- * optional; when set, the helper rejects an append that would push the
- * cumulative size past the cap (strict greater-than — an append landing
- * exactly at the cap is allowed).
+ * FileSizeLimitExceeded | Error>`. The size cap
+ * (`maxFileBytes`) is optional; when set, the helper rejects an append
+ * that would push the cumulative size past the cap (strict greater-than
+ * — an append landing exactly at the cap is allowed).
  *
  * The implementation is intentionally synchronous (`fs.openSync` /
  * `fs.writeSync` / `fs.fstatSync`) — the observability writer chassis

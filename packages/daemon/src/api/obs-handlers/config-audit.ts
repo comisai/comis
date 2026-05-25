@@ -129,7 +129,7 @@ export function bindConfigAuditHandlers(
 
       const filtered = all.filter((record) => {
         // Time-window filter via `ts` (ISO string). `tsMs` was dropped —
-        // records now carry only `ts` per design §9.2. Legacy records that
+        // records now carry only `ts` (config.observe schema shape). Legacy records that
         // still have `tsMs` fall through to `ts` parsing; the parse of a
         // missing field yields NaN which both comparisons reject (treat as
         // out-of-window).

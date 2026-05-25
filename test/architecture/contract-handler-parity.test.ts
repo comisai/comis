@@ -3,22 +3,22 @@
  * Contract↔handler-body field parity AST gate.
  *
  * Every REQUIRED (non-optional, non-`_X`-internal) request field of every
- * `defineContract(...)` MUST appear by literal name in the matching
- * handler body. This walker exists to prevent the class of bug where
- * contract scaffolding (e.g., a new `persistence` field on a response)
- * is merged but the matching handler-body path is not — so the method
- * silently drops the corresponding call. With this gate in place, any
- * future PR that adds a new required request field but forgets to wire
- * the handler body fails the build with the contract name + missing
+ * `defineContract(...)` MUST appear by literal name in the matching handler
+ * body. This walker exists to prevent the exact class of bug where contract
+ * scaffolding (`McpConnectContract.response` with a new `persistence` field)
+ * is merged but NOT the matching handler-body persistence path — so
+ * `mcp.connect` silently dropped the persistence call. With this gate in
+ * place, any future PR that adds a new required request field but forgets to
+ * wire the handler body fails the build with the contract name + missing
  * field name.
  *
  * Legitimate parse-then-spread handlers (e.g., handlers that do
  * `const params = Contract.request.parse(...)` and then
  * `manager.connect({ ...params })`) can whitelist deferred fields via a
- * `// @contract-deferred-fields: <field1>,<field2>` annotation comment
- * on the same handler-factory line (or in the leading trivia immediately
- * before the `[Contract.method]:` key). Annotations are CI-visible in PR
- * diffs and easy to grep.
+ * `// @contract-deferred-fields: <field1>,<field2>` annotation comment on
+ * the same handler-factory line (or in the leading trivia immediately before
+ * the `[Contract.method]:` key). Annotations are CI-visible in PR diffs and
+ * easy to grep.
  *
  * Walked AST: contracts under `packages/core/src/api-contracts/**\/*.ts`;
  * handlers under `packages/daemon/src/api/**\/*.ts`. Failure message
@@ -60,13 +60,12 @@
  *   - If no migrated handler exists for a contract, also a violation
  *     (`<name>: no migrated handler found`).
  *
- * Reused / duplicated helpers: `listContractFiles`, `listHandlerFiles`
- * mirror the implementation in
- * `api-contracts-bidirectional.test.ts:45-108`. The two helpers are
- * duplicated here rather than extracted to a shared module so this
- * test file is self-contained and the shared-helper extraction can
- * be revisited under the rule-of-three when a third architecture test
- * wants them.
+ * Reused / duplicated helpers: `listContractFiles`, `listHandlerFiles` mirror
+ * the implementation in `api-contracts-bidirectional.test.ts:45-108`. The
+ * two helpers are duplicated here rather than extracted to a shared module
+ * so this test file is self-contained and the shared-helper extraction can
+ * be revisited under a rule-of-three when a third architecture test wants
+ * them.
  *
  * @module
  */
@@ -100,7 +99,7 @@ const INTERNAL_SET: ReadonlySet<string> = new Set<string>(INTERNAL_FIELD_NAMES);
 const DEFERRED_TAG = "@contract-deferred-fields:";
 
 // ---------------------------------------------------------------------------
-// Helpers — duplicated verbatim from api-contracts-bidirectional.test.ts.
+// Helpers — duplicated verbatim from api-contracts-bidirectional.test.ts
 // ---------------------------------------------------------------------------
 
 /**
@@ -440,8 +439,8 @@ describe("contract↔handler-body field parity", () => {
         // distinct from a missing field: surfaces author drift
         // where a contract was added without a matching computed-key
         // handler. The bidirectional test enforces the same shape
-        // from the opposite direction; reasserting here keeps this
-        // test self-contained.
+        // from the opposite direction; reasserting here keeps this gate
+        // self-contained.
         violations.push(`${contractName}: no migrated handler found`);
         continue;
       }

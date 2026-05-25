@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * persistSystemPromptReport — TDD cases.
+ * persistSystemPromptReport — unit tests.
  *
  * Both dual targets (`observabilityStore` and the
  * `SessionStoreReportSink` soft port) are exercised. The persist

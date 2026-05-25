@@ -19,8 +19,8 @@ export { chunkBlocks } from "../delivery/block-chunker.js";
 // Note: block-chunker's ChunkMode + ChunkOptions are intentionally NOT
 // re-exported — block-chunker's "paragraph"/"newline"/"sentence"/"length"
 // ChunkMode collides with the streaming-config ChunkMode in
-// exports/config.js, and the KISS/YAGNI principle forbids speculative
-// public exports without callers. chunkBlocks is the only block-chunker
+// exports/config.js, and KISS/YAGNI forbids speculative public exports
+// without callers. chunkBlocks is the only block-chunker
 // symbol consumed cross-package.
 export { createRetryEngine, createBlockRetryGuard } from "../delivery/retry-engine.js";
 export type { RetryEngine, BlockRetryGuard } from "../delivery/retry-engine.js";

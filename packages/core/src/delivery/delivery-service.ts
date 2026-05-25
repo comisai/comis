@@ -113,9 +113,9 @@ export interface DeliveryServiceDeps {
 /**
  * DeliveryService — outbound delivery + shutdown drain.
  *
- * No speculative methods — add ops only when call sites exist. `abortSignal`
- * rides on a per-call options channel (consistent with the standalone
- * function's `deps.abortSignal`).
+ * No speculative methods — add ops only when call sites exist.
+ * `abortSignal` rides on a per-call options channel (consistent with
+ * the standalone function's `deps.abortSignal`).
  */
 export interface DeliveryService {
   deliverToChannel(

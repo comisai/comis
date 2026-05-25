@@ -490,7 +490,7 @@ describe("sanitizeSessionSecrets", () => {
     expect(msg.message.content[1].arguments.command).not.toContain("sk-");
   });
 
-  describe("sanitize-session-secrets honors design §1.4 file-mode invariant", () => {
+  describe("sanitize-session-secrets honors file-mode invariant (0o600)", () => {
     it("rewrites the session JSONL with mode 0o600 when secrets are redacted", () => {
       const sessionPath = writeJsonl(tmpDir, [
         { type: "session", version: 1, id: "s1" },

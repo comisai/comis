@@ -91,6 +91,13 @@ export interface SessionsApiDeps {
   approvalGate?: import("@comis/core").ApprovalGate;
   /** Optional LLM summarizer for session search results. */
   summarizeSession?: (messages: unknown[], query: string) => Promise<string | null>;
+  /** Optional DeliveryQueuePort for the session.history handler's
+   *  deliveryStatus join. Absent in deployments that have no delivery queue
+   *  (no channel adapters) -- the handler then reports every message as
+   *  confirmed (nothing pending to mark). The MCP resources/read surface
+   *  consumes the derived field to filter to CONFIRMED-only messages, but the
+   *  field is also useful to the dashboard / observers. */
+  deliveryQueue?: import("@comis/core").DeliveryQueuePort;
 }
 
 /**

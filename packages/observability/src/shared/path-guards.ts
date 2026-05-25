@@ -9,9 +9,9 @@
  *   1. **`resolveContainedPath` / `resolveContainedPathOrThrow`** —
  *      `path.resolve(base, ...segments)` + a contained-prefix check.
  *      The non-throwing variant returns `Result<string, PathEscapeError>`
- *      (the default); the throwing variant exists for the thin boundary
- *      callers that re-translate the throw to a `Result` one level up
- *      (see the file header `@allow-throw`).
+ *      (the default early-return pattern); the throwing variant exists for the
+ *      thin boundary callers that re-translate the throw to a `Result`
+ *      one level up (see the file header `@allow-throw`).
  *
  *      NOTE: this is intentionally a lighter sibling of
  *      `@comis/core/security.safePath`. `safePath` also walks symlinks

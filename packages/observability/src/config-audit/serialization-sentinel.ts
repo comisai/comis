@@ -5,7 +5,7 @@
  * string + number literals so JSON.stringify CANNOT return undefined.
  *
  * Used by append.ts, scrub.ts, append-observe.ts. Consolidated from 3
- * byte-identical copies per design §9.2.
+ * byte-identical copies (config-audit serialization invariant).
  *
  * @module
  */

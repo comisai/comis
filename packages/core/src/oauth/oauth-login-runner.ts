@@ -47,7 +47,7 @@ import { systemNowMs, systemSetTimeout, systemClearTimeout } from "../runtime/sy
 /**
  * Minimal prompter shape used by the runner. Defined locally — the runner
  * cannot import WizardPrompter from @comis/cli (cli depends on agent, not
- * the reverse — hexagonal architecture).
+ * the reverse — hexagonal architecture: core cannot depend on cli).
  *
  * Production: @comis/cli's WizardPrompter STRUCTURALLY satisfies this
  * (TypeScript structural typing); the CLI passes its WizardPrompter
@@ -310,7 +310,7 @@ const NO_OP_LOGGER: ComisLogger = {
 /**
  * Shared identity-derivation + LoginRunnerSuccess builder used by both
  * the browser flow and the device-code flow. Extracted on the third
- * caller per rule-of-three.
+ * caller (rule-of-three: extracted on the third caller).
  *
  * Returns ok(success) on identity success; err(identity_decode_failed)
  * when neither email nor profileName can be derived from the JWT.

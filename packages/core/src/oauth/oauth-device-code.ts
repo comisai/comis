@@ -12,12 +12,12 @@
  *   1. ORIGINATOR header is the literal "comis".
  *   2. The cosmetic version-header lookup is DROPPED — header is
  *      informational; CLAUDE.md forbids reading runtime env in library code.
- *   3. trimNonEmptyString is INLINE (3-line helper).
+ *   3. trimNonEmptyString is INLINE (3-line helper; rule of three not met).
  *   4. resolveCodexAccessTokenExpiry is imported from Comis's
  *      oauth-identity.ts module (same signature as the upstream variant).
- *   5. Public boundary returns Result<T,E> — internal helpers still throw,
- *      but the top-level loginOpenAICodexDeviceCode wraps everything in
- *      try/catch + rewriteOAuthError + narrowing.
+ *   5. Public boundary returns Result<T,E> (never throws) — internal
+ *      helpers still throw, but the top-level loginOpenAICodexDeviceCode
+ *      wraps everything in try/catch + rewriteOAuthError + narrowing.
  *
  * Protocol: OpenAI's proprietary 3-step device-code flow (NOT RFC 8628):
  *   1. POST /api/accounts/deviceauth/usercode -> device_auth_id + user_code
@@ -108,8 +108,8 @@ interface OpenAICodexDeviceCodeCredentials {
 // -------- Helpers (port verbatim from upstream, with Comis adaptations) --------
 
 /**
- * INLINE 3-line helper (rule of three not met — same shape as the helper
- * in oauth-identity.ts but kept local to avoid coupling).
+ * INLINE 3-line helper (rule of three not met — same shape as the helper in
+ * oauth-identity.ts but kept local to avoid coupling).
  */
 function trimNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;

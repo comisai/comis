@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { BackgroundTaskOrigin } from "../domain/background-task-origin.js";
+import type { McpServerEntry } from "../config/schema-integrations.js";
 
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
@@ -42,6 +43,28 @@ export interface InfraEvents {
     section: string;
     key?: string;
     patchedBy: string;
+    timestamp: number;
+  };
+
+  /**
+   * In-memory config subtree replaced atomically after a successful
+   * skipRestart-true persist. Coalesced with 500ms trailing-edge debounce
+   * so bulk operations (e.g. skill-install adding N MCPs) produce ONE event
+   * with combined diffs.
+   *
+   * - `path`: the subtree key that was swapped. Closed literal union;
+   *   additional swap paths may be added in future.
+   * - `added`: McpServerEntry[] inserted into integrations.mcp.servers since
+   *   last emit.
+   * - `removed`: McpServerEntry[] removed from integrations.mcp.servers since
+   *   last emit.
+   * - `timestamp`: ms-epoch of the emit (NOT the underlying persist -- the
+   *   debounce delays it by up to 500ms).
+   */
+  "config:mutated": {
+    path: "integrations.mcp.servers";
+    added: McpServerEntry[];
+    removed: McpServerEntry[];
     timestamp: number;
   };
 
@@ -358,6 +381,20 @@ export interface InfraEvents {
     timestamp: number;
   };
 
+  /** An MCP tool result exceeded its source-profile maxChars and was truncated
+   *  by the bridge. Lets operators see which servers/tools return verbose blobs.
+   *  originalSize/truncatedSize are character counts (post-sanitize, pre-wrap).
+   *  The payload carries only sizes + identifiers — never the (untrusted)
+   *  truncated content (never log bodies). */
+  "mcp:server:result_truncated": {
+    server: string;
+    tool: string;
+    originalSize: number;
+    truncatedSize: number;
+    traceId: string;
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // MCP server connection lifecycle events
   // -------------------------------------------------------------------------
@@ -365,7 +402,7 @@ export interface InfraEvents {
   /** MCP server connection lost (transport closed or error) */
   "mcp:server:disconnected": {
     serverName: string;
-    reason: "transport_closed" | "transport_error" | "client_closed" | "client_error";
+    reason: "transport_closed" | "transport_error" | "client_closed" | "client_error" | "keepalive_failed";
     timestamp: number;
   };
 

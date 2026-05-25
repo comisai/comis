@@ -39,5 +39,5 @@ Before merging any change to a secret RPC handler, verify EVERY box below.
 - [ ] No new admin-scope drift: every `/^secrets\./` method registered at `"admin"` (architecture test enforces)
 
 ## G. Documentation alignment
-- [ ] Logging guidance is consistent with this handler's logging shape
+- [ ] `AGENTS.md` logging rules are consistent with this handler's logging shape
 - [ ] CLI help text matches the pattern: `"Requires the comis daemon to be running."` on every store-backed secrets subcommand

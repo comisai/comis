@@ -16,10 +16,9 @@ export default defineConfig({
   // trajectory-event-types-known.test.ts also needs the compiled
   // TRAJECTORY_BRIDGE_MAPPING from @comis/observability for the same
   // reason — the bridge mapping is the runtime closed set. `@comis/skills`
-  // is included for the same reason: the
-  // mcp-prespawn-allowlist test pins the runtime MCP_STDIO_BUILTIN_ENV_ALLOWLIST
-  // constant value, not its AST. `@comis/daemon` is included for the
-  // negative-control test
+  // is included for the same reason: the mcp-prespawn-allowlist test pins
+  // the runtime MCP_STDIO_BUILTIN_ENV_ALLOWLIST constant value, not its AST.
+  // `@comis/daemon` is included for the negative-control test
   // (mcp-plaintext-secret-false-positives.test.ts) which pins the runtime
   // behavior of the looksLikePlaintextSecret heuristic against real-world
   // token samples — the test invokes the compiled function, not the AST.

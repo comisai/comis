@@ -28,3 +28,8 @@ export {
   systemEnvSnapshot,
   systemScheduleTimeout,
 } from "../runtime/system-time.js";
+// Opaque timer-handle type aliases re-exported from the @comis/core barrel so
+// consumers can `import type { ... } from "@comis/core"` cleanly instead of
+// reaching into the runtime/ subpath. Type-only export — the value re-exports
+// above already cover `systemSetInterval` / `systemSetTimeout`.
+export type { SystemIntervalHandle, SystemTimeoutHandle } from "../runtime/system-time.js";

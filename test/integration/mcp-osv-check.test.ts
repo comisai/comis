@@ -5,7 +5,8 @@
  * Pins the public-API contract surfaced through @comis/skills (loaded
  * from `dist/` per the Vitest alias). Covers the 5 OSV API branches
  * + 6 package-name extraction cases from a real consumer's vantage
- * point, mirroring the integration pattern of `mcp-env-scrub.test.ts`.
+ * point, mirroring the integration pattern set with
+ * `mcp-env-scrub.test.ts`.
  *
  * The unit-level branch coverage lives in the co-located
  * `packages/skills/src/skills/integrations/mcp-client/mcp-client-osv-check.test.ts`;

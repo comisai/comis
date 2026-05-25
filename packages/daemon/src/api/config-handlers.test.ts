@@ -945,7 +945,7 @@ describe("config.patch env var reference validation", () => {
     tempConfig.cleanup();
   });
 
-  // Gateway-patch on integrations.mcp.servers is now REJECTED
+  // The gateway-patch on integrations.mcp.servers is REJECTED
   // before the env-ref validator runs. The env-validator logic itself is
   // unchanged and still exercised by persistToConfig at the AppConfigSchema
   // safeParse boundary. The tests below assert that the single-writer
