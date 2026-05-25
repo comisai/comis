@@ -1283,6 +1283,7 @@ async function runSessionLocked(
   // Execution started bookend
   deps.logger.info(
     {
+      step: "agent-execute",
       agentId,
       sessionKey: formattedKey,
       modelId: resolvedModel?.id,

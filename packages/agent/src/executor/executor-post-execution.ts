@@ -533,6 +533,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const scrubCounters = ceSetup.getSignatureScrubCounters();
   deps.logger.info(
     {
+      step: "agent-execute",
       sessionKey: formattedKey,
       durationMs,
       llmDurationMs,

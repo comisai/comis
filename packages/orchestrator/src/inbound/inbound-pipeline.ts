@@ -198,6 +198,7 @@ export async function processInboundMessage(
       });
       deps.logger.warn(
         {
+          step: "dedup",
           messageId: msg.id,
           channelType: adapter.channelType,
           chatId: msg.channelId,

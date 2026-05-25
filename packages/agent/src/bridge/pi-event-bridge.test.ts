@@ -811,7 +811,7 @@ describe("createPiEventBridge", () => {
       listener(makeAutoCompactionStartEvent() as any);
 
       expect(deps.logger.info).toHaveBeenCalledWith(
-        { sessionKey: "t1:u1:c1" },
+        { step: "compaction", sessionKey: "t1:u1:c1" },
         "Auto-compaction started",
       );
     });

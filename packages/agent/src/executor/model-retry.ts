@@ -234,6 +234,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
     promptError = primaryError;
     logger.warn(
       {
+        step: "retry",
         err: primaryError,
         model: displayModel,
         attempt: 1,

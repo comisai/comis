@@ -44,7 +44,7 @@ const REPO_ROOT = resolve(here, "../..");
  * "mcp" accepts "mcp","export-trajectory" because export-trajectory.ts already uses it.
  */
 const STAGE_TOKEN_MAP = {
-  inbound: ["channels-inbound"] as const,
+  inbound: ["channels-inbound", "channel-registry"] as const,
   queue: ["queue-enqueue", "queue-dequeue"] as const,
   execution: ["agent-execute"] as const,
   retry: ["retry"] as const,

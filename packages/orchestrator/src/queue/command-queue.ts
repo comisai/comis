@@ -237,7 +237,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
           waitTimeMs: dequeuedAt - enqueuedAt,
           timestamp: dequeuedAt,
         });
-        logger?.info({ channelType, waitTimeMs: dequeuedAt - enqueuedAt }, "Message dequeued");
+        logger?.info({ step: "queue-dequeue", channelType, waitTimeMs: dequeuedAt - enqueuedAt }, "Message dequeued");
         lane.isExecuting = true;
         lane.abortController = new AbortController();
         try {
@@ -280,7 +280,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
 
         const mode = channelConfig.mode;
 
-        logger?.info({ channelType, mode: channelConfig.mode, queueDepth: lane.queue.size + lane.queue.pending + 1 }, "Message enqueued");
+        logger?.info({ step: "queue-enqueue", channelType, mode: channelConfig.mode, queueDepth: lane.queue.size + lane.queue.pending + 1 }, "Message enqueued");
 
         // ---------------------------------------------------------------
         // followup mode: Each message gets its own execution (default)

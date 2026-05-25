@@ -372,7 +372,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
 
         _activeCount++;
         deps.logger.info(
-          { adapterId: adapter.channelId, channelType: adapter.channelType },
+          { step: "channel-registry", adapterId: adapter.channelId, channelType: adapter.channelType },
           "Adapter registered",
         );
       }

@@ -1449,7 +1449,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         case "compaction_start": {
           m.compactionStartMs = systemNowMs();
           deps.logger.info(
-            { sessionKey: formatSessionKey(deps.sessionKey) },
+            { step: "compaction", sessionKey: formatSessionKey(deps.sessionKey) },
             "Auto-compaction started",
           );
           deps.eventBus.emit("compaction:started", {
@@ -1518,6 +1518,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // INFO for successful completion
             deps.logger.info(
               {
+                step: "compaction",
                 durationMs,
                 aborted: false,
                 hasSummary: !!compactionEvent.result?.summary,
