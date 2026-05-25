@@ -209,6 +209,32 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
         } as WSEvents;
       }
 
+      // Phase 69 WR-05 -- reject mcp-client-scoped tokens at WS upgrade
+      // time. Per WR-03, mcp-client is the SOLE scope of any token that
+      // has it, so `includes("mcp-client")` is sufficient and means
+      // "this is an external MCP credential". Such a token does not have
+      // rpc/ws/admin and would silently fail every RPC method call after
+      // a successful upgrade -- wasting a connection slot, a rate-limit
+      // bucket, a WsConnectionManager entry, and giving the credential
+      // holder a confusing debugging experience. Close with 4003 ("scope
+      // not permitted at this endpoint") and surface the correct route.
+      if (client.scopes.includes("mcp-client")) {
+        logger.warn(
+          {
+            clientId: client.id,
+            errorKind: "auth" as const,
+            hint:
+              "mcp-client tokens must use POST /mcp/v1 -- per WR-03 mcp-client is the sole scope of its token and cannot be co-issued with rpc/ws/admin",
+          },
+          "WebSocket connection rejected: mcp-client-scoped token cannot open /ws",
+        );
+        return {
+          onOpen(_evt: Event, ws: WSContext) {
+            ws.close(4003, "mcp-client tokens must use POST /mcp/v1");
+          },
+        } as WSEvents;
+      }
+
       const rpcContext: RpcContext = { clientId: client.id, scopes: client.scopes };
       return createWsHandler(
         {
